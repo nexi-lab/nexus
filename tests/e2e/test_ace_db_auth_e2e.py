@@ -513,6 +513,15 @@ class TestConsolidationWithDbAuth:
         )
         assert resp.status_code == 200, f"Consolidate failed: {resp.text}"
 
+        # Verify response body structure (Issue #1026 review 9A)
+        body = resp.json()
+        assert "clusters_formed" in body, f"Missing clusters_formed: {body}"
+        assert "total_consolidated" in body, f"Missing total_consolidated: {body}"
+        assert "results" in body, f"Missing results: {body}"
+        assert isinstance(body["clusters_formed"], int)
+        assert isinstance(body["total_consolidated"], int)
+        assert isinstance(body["results"], list)
+
 
 # =============================================================================
 # Reflect + Curate endpoints with database auth + permissions
@@ -736,6 +745,15 @@ class TestNonAdminConsolidation:
             json={"memory_ids": ids, "affinity_threshold": 0.5},
         )
         assert resp.status_code == 200, f"Non-admin consolidate failed: {resp.text}"
+
+        # Verify response body structure (Issue #1026 review 9A)
+        body = resp.json()
+        assert "clusters_formed" in body, f"Missing clusters_formed: {body}"
+        assert "total_consolidated" in body, f"Missing total_consolidated: {body}"
+        assert "results" in body, f"Missing results: {body}"
+        assert isinstance(body["clusters_formed"], int)
+        assert isinstance(body["total_consolidated"], int)
+        assert isinstance(body["results"], list)
 
 
 class TestCrossUserIsolation:

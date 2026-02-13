@@ -13,7 +13,6 @@ https://arxiv.org/html/2601.02553
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 import uuid
@@ -36,6 +35,24 @@ if TYPE_CHECKING:
     from nexus.search.embeddings import EmbeddingProvider
 
 logger = logging.getLogger(__name__)
+
+
+def _run_coroutine(coro: Any) -> Any:
+    """Run a coroutine from synchronous code.
+
+    Uses asyncio.run() directly. Callers that need running-event-loop
+    support (e.g. FastAPI, Jupyter) should use the thread-safe path in
+    ``sync_consolidate`` / ``sync_consolidate_by_affinity`` instead.
+
+    Args:
+        coro: Coroutine to execute.
+
+    Returns:
+        The coroutine's return value.
+    """
+    import asyncio
+
+    return asyncio.run(coro)
 
 
 class ConsolidationEngine:
@@ -65,6 +82,7 @@ class ConsolidationEngine:
             zone_id: Optional zone ID
         """
         self.session = session
+        self._session_bind = session.get_bind()
         self.backend = backend
         self.llm_provider = llm_provider
         self.user_id = user_id
@@ -164,14 +182,18 @@ class ConsolidationEngine:
         Returns:
             List of consolidation results
         """
-        import asyncio
-
         # Query candidate memories
         query = self.session.query(MemoryModel).filter(
             MemoryModel.agent_id == self.agent_id,
             MemoryModel.importance <= importance_max,
             MemoryModel.consolidated_from.is_(None),  # Not already consolidated
         )
+
+        # Ownership filters (match _query_candidate_memories)
+        if self.user_id:
+            query = query.filter(MemoryModel.user_id == self.user_id)
+        if self.zone_id:
+            query = query.filter(MemoryModel.zone_id == self.zone_id)
 
         if memory_type:
             query = query.filter_by(memory_type=memory_type)
@@ -182,7 +204,8 @@ class ConsolidationEngine:
         if namespace:
             query = query.filter_by(namespace=namespace)
         elif namespace_prefix:
-            query = query.filter(MemoryModel.namespace.like(f"{namespace_prefix}%"))
+            safe_prefix = namespace_prefix.replace("%", r"\%").replace("_", r"\_")
+            query = query.filter(MemoryModel.namespace.like(f"{safe_prefix}%"))
 
         query = query.order_by(MemoryModel.created_at.desc()).limit(limit)
         memories = query.all()
@@ -200,11 +223,11 @@ class ConsolidationEngine:
             memory_ids = [m.memory_id for m in batch]
 
             try:
-                result = asyncio.run(self.consolidate_async(memory_ids, importance_max))
+                result = _run_coroutine(self.consolidate_async(memory_ids, importance_max))
                 results.append(result)
             except Exception as e:
                 # Log error but continue with other batches
-                print(f"Consolidation batch failed: {e}")
+                logger.warning("Consolidation batch failed: %s", e)
                 continue
 
         return results
@@ -218,7 +241,12 @@ class ConsolidationEngine:
         Returns:
             Memory data dictionary or None if not found
         """
-        memory = self.session.query(MemoryModel).filter_by(memory_id=memory_id).first()
+        query = self.session.query(MemoryModel).filter_by(memory_id=memory_id)
+        if self.user_id:
+            query = query.filter(MemoryModel.user_id == self.user_id)
+        if self.zone_id:
+            query = query.filter(MemoryModel.zone_id == self.zone_id)
+        memory = query.first()
         if not memory:
             return None
 
@@ -333,26 +361,33 @@ Provide only the consolidated summary, no additional commentary.
     def _mark_memories_consolidated(
         self,
         memory_ids: list[str],
-        _consolidated_memory_id: str,
+        consolidated_memory_id: str,
     ) -> None:
-        """Mark source memories as consolidated.
+        """Mark source memories as consolidated, archived, and linked.
+
+        Archives source memories and lowers their importance so they don't
+        appear alongside the consolidated result in search. Links each source
+        to the consolidated parent via parent_memory_id.
 
         Args:
-            memory_ids: List of source memory IDs
-            _consolidated_memory_id: ID of consolidated memory
-
-        Note:
-            This doesn't delete source memories, just marks them as consolidated.
-            They can be cleaned up later by a garbage collection process.
+            memory_ids: List of source memory IDs.
+            consolidated_memory_id: ID of the new consolidated memory.
         """
-        # Update source memories to track consolidation
-        for memory_id in memory_ids:
-            memory = self.session.query(MemoryModel).filter_by(memory_id=memory_id).first()
-            if memory:
-                # Track consolidation (could add a consolidated_into field in future)
-                memory.importance = max(memory.importance or 0.0, 0.1)  # Lower importance
-                # Could also add: memory.consolidated_into = _consolidated_memory_id
+        from sqlalchemy import update
 
+        if not memory_ids:
+            return
+
+        stmt = update(MemoryModel).where(MemoryModel.memory_id.in_(memory_ids))
+        if self.user_id:
+            stmt = stmt.where(MemoryModel.user_id == self.user_id)
+
+        stmt = stmt.values(
+            parent_memory_id=consolidated_memory_id,
+            is_archived=True,
+            importance=0.1,
+        )
+        self.session.execute(stmt)
         self.session.commit()
 
     def sync_consolidate(
@@ -362,6 +397,10 @@ Provide only the consolidated summary, no additional commentary.
         max_consolidated_memories: int = 10,
     ) -> dict[str, Any]:
         """Synchronous wrapper for consolidate_async.
+
+        Safe to call from both sync and async contexts. When a running
+        event loop is detected, spins up a fresh session in a new thread
+        to avoid sharing the SQLAlchemy session across threads.
 
         Args:
             memory_ids: List of memory IDs to consolidate
@@ -373,9 +412,41 @@ Provide only the consolidated summary, no additional commentary.
         """
         import asyncio
 
-        return asyncio.run(
-            self.consolidate_async(memory_ids, importance_threshold, max_consolidated_memories)
-        )
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            # No event loop — safe to use asyncio.run directly
+            result: dict[str, Any] = _run_coroutine(
+                self.consolidate_async(memory_ids, importance_threshold, max_consolidated_memories)
+            )
+            return result
+
+        # Running event loop detected — create a fresh engine + session in a
+        # new thread so the SQLAlchemy session is never shared across threads.
+        import concurrent.futures
+
+        def _thread_target() -> dict[str, Any]:
+            thread_session = Session(bind=self._session_bind)
+            try:
+                engine = ConsolidationEngine(
+                    session=thread_session,
+                    backend=self.backend,
+                    llm_provider=self.llm_provider,
+                    user_id=self.user_id,
+                    agent_id=self.agent_id,
+                    zone_id=self.zone_id,
+                )
+                return asyncio.run(
+                    engine.consolidate_async(
+                        memory_ids, importance_threshold, max_consolidated_memories
+                    )
+                )
+            finally:
+                thread_session.close()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(_thread_target)
+            return future.result()
 
     # =========================================================================
     # Affinity-based consolidation (Issue #1026 - SimpleMem-inspired)
@@ -468,24 +539,29 @@ Provide only the consolidated summary, no additional commentary.
             }
 
         # Step 2: Ensure all memories have embeddings
-        memory_vectors = await self._ensure_embeddings(memory_vectors, embedding_provider)
+        memory_vectors, embedding_warnings = await self._ensure_embeddings(
+            memory_vectors, embedding_provider
+        )
 
         # Filter out memories without embeddings
         memory_vectors = [m for m in memory_vectors if m.embedding]
         if len(memory_vectors) < 2:
             logger.warning("Not enough memories with embeddings for clustering")
-            return {
+            result: dict[str, Any] = {
                 "clusters_formed": 0,
                 "total_consolidated": 0,
                 "results": [],
                 "cluster_statistics": [],
             }
+            if embedding_warnings:
+                result["warnings"] = embedding_warnings
+            return result
 
         # Step 3: Cluster by affinity
         try:
             cluster_result = cluster_by_affinity(memory_vectors, affinity_config)
         except Exception as e:
-            logger.error(f"Clustering failed: {e}")
+            logger.error("Clustering failed: %s", e)
             return {
                 "clusters_formed": 0,
                 "total_consolidated": 0,
@@ -497,38 +573,47 @@ Provide only the consolidated summary, no additional commentary.
         # Step 4: Get cluster statistics
         cluster_stats = get_cluster_statistics(memory_vectors, cluster_result, affinity_config)
 
-        # Step 5: Consolidate each cluster
-        results = []
-        total_consolidated = 0
+        # Step 5: Consolidate each cluster concurrently (bounded)
+        import asyncio
 
-        for cluster_ids in cluster_result.clusters:
-            # Limit cluster size
+        semaphore = asyncio.Semaphore(3)  # Max 3 concurrent LLM calls
+
+        async def _consolidate_cluster(cluster_ids: list[str]) -> dict[str, Any] | None:
             cluster_ids_limited = cluster_ids[:max_cluster_size]
+            async with semaphore:
+                try:
+                    return await self.consolidate_async(
+                        memory_ids=cluster_ids_limited,
+                        importance_threshold=importance_max + 0.1,
+                        max_consolidated_memories=max_cluster_size,
+                    )
+                except Exception as e:
+                    logger.warning("Cluster consolidation failed: %s", e)
+                    return None
 
-            try:
-                # Use existing consolidate_async for LLM summarization
-                result = await self.consolidate_async(
-                    memory_ids=cluster_ids_limited,
-                    importance_threshold=importance_max + 0.1,  # Allow all in cluster
-                    max_consolidated_memories=max_cluster_size,
-                )
-                results.append(result)
-                total_consolidated += result.get("memories_consolidated", 0)
-            except Exception as e:
-                logger.warning(f"Cluster consolidation failed: {e}")
-                continue
-
-        logger.info(
-            f"Affinity consolidation complete: {len(results)} clusters, "
-            f"{total_consolidated} memories consolidated"
+        cluster_results = await asyncio.gather(
+            *[_consolidate_cluster(cids) for cids in cluster_result.clusters]
         )
 
-        return {
+        results = [r for r in cluster_results if r is not None]
+        total_consolidated = sum(r.get("memories_consolidated", 0) for r in results)
+
+        logger.info(
+            "Affinity consolidation complete: %d clusters, %d memories consolidated",
+            len(results),
+            total_consolidated,
+        )
+
+        final: dict[str, Any] = {
             "clusters_formed": len(results),
             "total_consolidated": total_consolidated,
+            "archived_count": total_consolidated,
             "results": results,
             "cluster_statistics": cluster_stats,
         }
+        if embedding_warnings:
+            final["warnings"] = embedding_warnings
+        return final
 
     async def _load_memory_vectors(
         self,
@@ -536,44 +621,30 @@ Provide only the consolidated summary, no additional commentary.
     ) -> list[MemoryVector]:
         """Load memories as MemoryVector objects for clustering.
 
+        Uses a single batch query (IN clause) instead of N individual queries.
+        Filters by user_id and zone_id for ownership enforcement.
+
         Args:
             memory_ids: List of memory IDs to load.
 
         Returns:
             List of MemoryVector objects with content and embeddings.
         """
-        vectors = []
+        if not memory_ids:
+            return []
 
-        for memory_id in memory_ids:
-            memory = self.session.query(MemoryModel).filter_by(memory_id=memory_id).first()
-            if not memory:
-                continue
+        # Batch query with ownership filter
+        query = self.session.query(MemoryModel).filter(
+            MemoryModel.memory_id.in_(memory_ids),
+        )
+        if self.user_id:
+            query = query.filter(MemoryModel.user_id == self.user_id)
+        if self.zone_id:
+            query = query.filter(MemoryModel.zone_id == self.zone_id)
 
-            # Load content
-            try:
-                content_bytes = self.backend.read_content(memory.content_hash).unwrap()
-                content = content_bytes.decode("utf-8")
-            except Exception:
-                content = ""
+        memories = query.all()
 
-            # Parse embedding if available
-            embedding = None
-            if memory.embedding:
-                with contextlib.suppress(json.JSONDecodeError, TypeError):
-                    embedding = json.loads(memory.embedding)
-
-            vectors.append(
-                MemoryVector(
-                    memory_id=memory.memory_id,
-                    embedding=embedding or [],
-                    created_at=memory.created_at or datetime.now(UTC),
-                    content=content,
-                    importance=memory.importance,
-                    memory_type=memory.memory_type,
-                )
-            )
-
-        return vectors
+        return self._models_to_vectors(memories)
 
     async def _query_candidate_memories(
         self,
@@ -583,6 +654,9 @@ Provide only the consolidated summary, no additional commentary.
         limit: int = 100,
     ) -> list[MemoryVector]:
         """Query candidate memories for consolidation.
+
+        Builds MemoryVector objects directly from query results (no second
+        round-trip). Filters by agent_id, user_id, and zone_id for ownership.
 
         Args:
             importance_max: Maximum importance score.
@@ -597,8 +671,13 @@ Provide only the consolidated summary, no additional commentary.
             MemoryModel.agent_id == self.agent_id,
             MemoryModel.importance <= importance_max,
             MemoryModel.consolidated_from.is_(None),  # Not already consolidated
+            MemoryModel.is_archived == False,  # noqa: E712 — skip archived
         )
 
+        if self.user_id:
+            query = query.filter(MemoryModel.user_id == self.user_id)
+        if self.zone_id:
+            query = query.filter(MemoryModel.zone_id == self.zone_id)
         if memory_type:
             query = query.filter_by(memory_type=memory_type)
         if namespace:
@@ -607,30 +686,78 @@ Provide only the consolidated summary, no additional commentary.
         query = query.order_by(MemoryModel.created_at.desc()).limit(limit)
         memories = query.all()
 
-        return await self._load_memory_vectors([m.memory_id for m in memories])
+        # Build MemoryVectors directly — no second DB round-trip
+        return self._models_to_vectors(memories)
+
+    def _models_to_vectors(self, memories: list[MemoryModel]) -> list[MemoryVector]:
+        """Convert MemoryModel objects to MemoryVector for clustering.
+
+        Loads content from CAS and parses embeddings from JSON.
+
+        Args:
+            memories: List of MemoryModel objects.
+
+        Returns:
+            List of MemoryVector objects with content and embeddings.
+        """
+        vectors = []
+        for memory in memories:
+            # Load content from CAS
+            try:
+                content_bytes = self.backend.read_content(memory.content_hash).unwrap()
+                content = content_bytes.decode("utf-8")
+            except Exception:
+                content = ""
+
+            # Parse embedding if available
+            embedding: list[float] = []
+            if memory.embedding:
+                try:
+                    parsed = json.loads(memory.embedding)
+                    if isinstance(parsed, list):
+                        embedding = parsed
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+            vectors.append(
+                MemoryVector(
+                    memory_id=memory.memory_id,
+                    embedding=embedding,
+                    created_at=memory.created_at or datetime.now(UTC),
+                    content=content,
+                    importance=memory.importance,
+                    memory_type=memory.memory_type,
+                )
+            )
+        return vectors
 
     async def _ensure_embeddings(
         self,
         memory_vectors: list[MemoryVector],
         embedding_provider: EmbeddingProvider | None = None,
-    ) -> list[MemoryVector]:
+    ) -> tuple[list[MemoryVector], list[str]]:
         """Ensure all memory vectors have embeddings.
 
-        Generates embeddings for memories that don't have them using the
-        provided embedding provider.
+        Returns a new list — does not mutate the input. Memories that already
+        have embeddings are passed through; memories without embeddings get
+        new MemoryVector instances with the generated embedding.
+
+        Also persists new embeddings to the database.
 
         Args:
-            memory_vectors: List of MemoryVector objects.
+            memory_vectors: List of MemoryVector objects (not mutated).
             embedding_provider: Provider for generating embeddings.
 
         Returns:
-            Updated list of MemoryVector objects with embeddings.
+            Tuple of (vectors with embeddings filled in, list of warning messages).
         """
-        # Find memories without embeddings
-        needs_embedding = [m for m in memory_vectors if not m.embedding]
+        warnings: list[str] = []
 
-        if not needs_embedding:
-            return memory_vectors
+        # Split into has-embedding and needs-embedding
+        needs_embedding_indices = [i for i, m in enumerate(memory_vectors) if not m.embedding]
+
+        if not needs_embedding_indices:
+            return list(memory_vectors), warnings
 
         # Create embedding provider if not provided
         if embedding_provider is None:
@@ -639,36 +766,47 @@ Provide only the consolidated summary, no additional commentary.
 
                 embedding_provider = create_embedding_provider("openai", "text-embedding-3-small")
             except Exception as e:
-                logger.warning(f"Could not create embedding provider: {e}")
-                return memory_vectors
+                msg = f"Could not create embedding provider: {e}"
+                logger.warning("Could not create embedding provider: %s", e)
+                warnings.append(msg)
+                return list(memory_vectors), warnings
+
+        # Build result list (copy to avoid mutation)
+        result = list(memory_vectors)
 
         # Generate embeddings in batch
         try:
-            texts = [m.content or "" for m in needs_embedding]
+            texts = [memory_vectors[i].content or "" for i in needs_embedding_indices]
             embeddings = await embedding_provider.embed_texts_batched(texts)
 
-            # Update memory vectors with new embeddings
-            for i, mem_vector in enumerate(needs_embedding):
-                mem_vector.embedding = embeddings[i]
-
-                # Also persist to database
-                memory = (
-                    self.session.query(MemoryModel)
-                    .filter_by(memory_id=mem_vector.memory_id)
-                    .first()
+            # Create new MemoryVector instances with embeddings (immutable)
+            for batch_idx, vec_idx in enumerate(needs_embedding_indices):
+                old = memory_vectors[vec_idx]
+                result[vec_idx] = MemoryVector(
+                    memory_id=old.memory_id,
+                    embedding=embeddings[batch_idx],
+                    created_at=old.created_at,
+                    content=old.content,
+                    importance=old.importance,
+                    memory_type=old.memory_type,
                 )
+
+                # Persist to database
+                memory = self.session.query(MemoryModel).filter_by(memory_id=old.memory_id).first()
                 if memory:
-                    memory.embedding = json.dumps(embeddings[i])
+                    memory.embedding = json.dumps(embeddings[batch_idx])
                     memory.embedding_model = getattr(embedding_provider, "model", "unknown")
-                    memory.embedding_dim = len(embeddings[i])
+                    memory.embedding_dim = len(embeddings[batch_idx])
 
             self.session.commit()
-            logger.info(f"Generated embeddings for {len(needs_embedding)} memories")
+            logger.info("Generated embeddings for %d memories", len(needs_embedding_indices))
 
         except Exception as e:
-            logger.error(f"Failed to generate embeddings: {e}")
+            msg = f"Failed to generate embeddings: {e}"
+            logger.error("Failed to generate embeddings: %s", e)
+            warnings.append(msg)
 
-        return memory_vectors
+        return result, warnings
 
     def sync_consolidate_by_affinity(
         self,
@@ -682,6 +820,9 @@ Provide only the consolidated summary, no additional commentary.
         importance_max: float = 0.5,
     ) -> dict[str, Any]:
         """Synchronous wrapper for consolidate_by_affinity_async.
+
+        Safe to call from both sync and async contexts. When a running
+        event loop is detected, spins up a fresh session in a new thread.
 
         Args:
             memory_ids: Optional list of specific memory IDs to consider.
@@ -698,15 +839,43 @@ Provide only the consolidated summary, no additional commentary.
         """
         import asyncio
 
-        return asyncio.run(
-            self.consolidate_by_affinity_async(
-                memory_ids=memory_ids,
-                embedding_provider=embedding_provider,
-                beta=beta,
-                lambda_decay=lambda_decay,
-                affinity_threshold=affinity_threshold,
-                time_unit_hours=time_unit_hours,
-                max_cluster_size=max_cluster_size,
-                importance_max=importance_max,
+        coro_kwargs: dict[str, Any] = {
+            "memory_ids": memory_ids,
+            "embedding_provider": embedding_provider,
+            "beta": beta,
+            "lambda_decay": lambda_decay,
+            "affinity_threshold": affinity_threshold,
+            "time_unit_hours": time_unit_hours,
+            "max_cluster_size": max_cluster_size,
+            "importance_max": importance_max,
+        }
+
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            result: dict[str, Any] = _run_coroutine(
+                self.consolidate_by_affinity_async(**coro_kwargs)
             )
-        )
+            return result
+
+        # Running event loop — thread-safe path with fresh session
+        import concurrent.futures
+
+        def _thread_target() -> dict[str, Any]:
+            thread_session = Session(bind=self._session_bind)
+            try:
+                engine = ConsolidationEngine(
+                    session=thread_session,
+                    backend=self.backend,
+                    llm_provider=self.llm_provider,
+                    user_id=self.user_id,
+                    agent_id=self.agent_id,
+                    zone_id=self.zone_id,
+                )
+                return asyncio.run(engine.consolidate_by_affinity_async(**coro_kwargs))
+            finally:
+                thread_session.close()
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(_thread_target)
+            return future.result()

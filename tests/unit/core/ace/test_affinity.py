@@ -439,3 +439,57 @@ class TestAffinityConfig:
         assert config.cluster_threshold == 0.9
         assert config.linkage == "complete"
         assert config.min_cluster_size == 3
+
+    def test_beta_out_of_range_raises(self):
+        """beta outside [0, 1] should raise ValueError."""
+        with pytest.raises(ValueError, match="beta"):
+            AffinityConfig(beta=-0.1)
+        with pytest.raises(ValueError, match="beta"):
+            AffinityConfig(beta=1.1)
+
+    def test_lambda_decay_negative_raises(self):
+        """Negative lambda_decay should raise ValueError."""
+        with pytest.raises(ValueError, match="lambda_decay"):
+            AffinityConfig(lambda_decay=-0.01)
+
+    def test_time_unit_hours_non_positive_raises(self):
+        """time_unit_hours <= 0 should raise ValueError."""
+        with pytest.raises(ValueError, match="time_unit_hours"):
+            AffinityConfig(time_unit_hours=0)
+        with pytest.raises(ValueError, match="time_unit_hours"):
+            AffinityConfig(time_unit_hours=-1.0)
+
+    def test_cluster_threshold_out_of_range_raises(self):
+        """cluster_threshold outside [0, 1] should raise ValueError."""
+        with pytest.raises(ValueError, match="cluster_threshold"):
+            AffinityConfig(cluster_threshold=-0.1)
+        with pytest.raises(ValueError, match="cluster_threshold"):
+            AffinityConfig(cluster_threshold=1.5)
+
+    def test_invalid_linkage_raises(self):
+        """Invalid linkage method should raise ValueError."""
+        with pytest.raises(ValueError, match="linkage"):
+            AffinityConfig(linkage="ward")
+
+    def test_min_cluster_size_below_two_raises(self):
+        """min_cluster_size < 2 should raise ValueError."""
+        with pytest.raises(ValueError, match="min_cluster_size"):
+            AffinityConfig(min_cluster_size=1)
+        with pytest.raises(ValueError, match="min_cluster_size"):
+            AffinityConfig(min_cluster_size=0)
+
+    def test_boundary_values_accepted(self):
+        """Boundary values should be accepted without error."""
+        # beta = 0 and 1
+        AffinityConfig(beta=0.0)
+        AffinityConfig(beta=1.0)
+        # lambda_decay = 0
+        AffinityConfig(lambda_decay=0.0)
+        # cluster_threshold = 0 and 1
+        AffinityConfig(cluster_threshold=0.0)
+        AffinityConfig(cluster_threshold=1.0)
+        # min_cluster_size = 2
+        AffinityConfig(min_cluster_size=2)
+        # all valid linkages
+        AffinityConfig(linkage="single")
+        AffinityConfig(linkage="complete")

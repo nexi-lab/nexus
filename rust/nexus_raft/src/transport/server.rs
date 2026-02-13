@@ -11,6 +11,7 @@
 )]
 
 use super::proto::nexus::raft::{
+    raft_client_service_client::RaftClientServiceClient,
     raft_client_service_server::{RaftClientService, RaftClientServiceServer},
     raft_command::Command as ProtoCommandVariant,
     raft_query::Query as ProtoQueryVariant,
@@ -19,11 +20,11 @@ use super::proto::nexus::raft::{
     raft_service_server::{RaftService, RaftServiceServer},
     AppendEntriesRequest, AppendEntriesResponse, ClusterConfig as ProtoClusterConfig,
     GetClusterInfoRequest, GetClusterInfoResponse, GetMetadataResult, InstallSnapshotResponse,
-    JoinZoneRequest, JoinZoneResponse, ListMetadataResult, LockInfoResult, LockResult,
-    NodeInfo as ProtoNodeInfo, ProposeRequest, ProposeResponse, QueryRequest, QueryResponse,
-    RaftCommand, RaftQueryResponse, RaftResponse, ReplicateEntriesRequest,
-    ReplicateEntriesResponse, SnapshotChunk, StepMessageRequest, StepMessageResponse,
-    TransferLeaderRequest, TransferLeaderResponse, VoteRequest, VoteResponse,
+    InviteZoneRequest, InviteZoneResponse, JoinZoneRequest, JoinZoneResponse,
+    ListMetadataResult, LockInfoResult, LockResult, NodeInfo as ProtoNodeInfo, ProposeRequest,
+    ProposeResponse, QueryRequest, QueryResponse, RaftCommand, RaftQueryResponse, RaftResponse,
+    ReplicateEntriesRequest, ReplicateEntriesResponse, SnapshotChunk, StepMessageRequest,
+    StepMessageResponse, TransferLeaderRequest, TransferLeaderResponse, VoteRequest, VoteResponse,
 };
 use super::{NodeAddress, Result, TransportError};
 use crate::raft::{
@@ -71,12 +72,23 @@ impl Default for ServerConfig {
 pub struct RaftGrpcServer {
     config: ServerConfig,
     registry: Arc<ZoneRaftRegistry>,
+    /// This node's own gRPC address (for InviteZone → JoinZone callback).
+    self_address: String,
 }
 
 impl RaftGrpcServer {
     /// Create a new server backed by the given zone registry.
-    pub fn new(registry: Arc<ZoneRaftRegistry>, config: ServerConfig) -> Self {
-        Self { config, registry }
+    ///
+    /// # Arguments
+    /// * `registry` — Zone registry for routing requests.
+    /// * `config` — Server configuration.
+    /// * `self_address` — This node's gRPC address (e.g., "http://10.0.0.2:2026").
+    pub fn new(registry: Arc<ZoneRaftRegistry>, config: ServerConfig, self_address: String) -> Self {
+        Self {
+            config,
+            registry,
+            self_address,
+        }
     }
 
     /// Get the bind address.
@@ -98,6 +110,7 @@ impl RaftGrpcServer {
         };
         let client_service = RaftClientServiceImpl {
             registry: self.registry.clone(),
+            self_address: self.self_address.clone(),
         };
 
         tonic::transport::Server::builder()
@@ -127,6 +140,7 @@ impl RaftGrpcServer {
         };
         let client_service = RaftClientServiceImpl {
             registry: self.registry.clone(),
+            self_address: self.self_address.clone(),
         };
 
         tonic::transport::Server::builder()
@@ -385,6 +399,9 @@ impl RaftService for RaftServiceImpl {
 /// Zone-routed implementation of the RaftClientService gRPC trait.
 struct RaftClientServiceImpl {
     registry: Arc<ZoneRaftRegistry>,
+    /// This node's own gRPC address (e.g., "http://10.0.0.2:2026").
+    /// Needed by InviteZone to tell the leader our address when calling JoinZone.
+    self_address: String,
 }
 
 #[tonic::async_trait]
@@ -750,6 +767,170 @@ impl RaftClientService for RaftClientServiceImpl {
             })),
         }
     }
+
+    /// Handle an InviteZone request — inverse of JoinZone.
+    ///
+    /// This node is being asked to join a zone and create a DT_MOUNT locally.
+    /// Steps: (1) create local zone replica, (2) call JoinZone on leader,
+    /// (3) create DT_MOUNT in root zone.
+    async fn invite_zone(
+        &self,
+        request: Request<InviteZoneRequest>,
+    ) -> std::result::Result<Response<InviteZoneResponse>, Status> {
+        let req = request.into_inner();
+        let node_id = self.registry.node_id();
+
+        tracing::info!(
+            zone = req.zone_id,
+            mount_path = req.mount_path,
+            inviter_node_id = req.inviter_node_id,
+            inviter_address = req.inviter_address,
+            "InviteZone request received",
+        );
+
+        // Step 1: Create local zone replica (reuses registry.join_zone — DRY).
+        let inviter_peer = NodeAddress {
+            id: req.inviter_node_id,
+            endpoint: req.inviter_address.clone(),
+        };
+        let runtime_handle = tokio::runtime::Handle::current();
+        if let Err(e) = self.registry.join_zone(
+            &req.zone_id,
+            vec![inviter_peer],
+            &runtime_handle,
+        ) {
+            return Ok(Response::new(InviteZoneResponse {
+                success: false,
+                error: Some(format!("Failed to create local zone replica: {}", e)),
+                node_id: 0,
+                node_address: String::new(),
+            }));
+        }
+
+        // Step 2: Call JoinZone on the inviter (leader) to be added as Voter.
+        // Uses tonic-generated client — same RPC definition, no duplication.
+        let channel = match tonic::transport::Endpoint::from_shared(req.inviter_address.clone()) {
+            Ok(ep) => match ep
+                .connect_timeout(std::time::Duration::from_secs(10))
+                .timeout(std::time::Duration::from_secs(30))
+                .connect()
+                .await
+            {
+                Ok(ch) => ch,
+                Err(e) => {
+                    let _ = self.registry.remove_zone(&req.zone_id);
+                    return Ok(Response::new(InviteZoneResponse {
+                        success: false,
+                        error: Some(format!("Failed to connect to inviter: {}", e)),
+                        node_id: 0,
+                        node_address: String::new(),
+                    }));
+                }
+            },
+            Err(e) => {
+                let _ = self.registry.remove_zone(&req.zone_id);
+                return Ok(Response::new(InviteZoneResponse {
+                    success: false,
+                    error: Some(format!("Invalid inviter address: {}", e)),
+                    node_id: 0,
+                    node_address: String::new(),
+                }));
+            }
+        };
+
+        let mut client = RaftClientServiceClient::new(channel);
+        let join_request = tonic::Request::new(JoinZoneRequest {
+            zone_id: req.zone_id.clone(),
+            node_id,
+            node_address: self.self_address.clone(),
+        });
+
+        match client.join_zone(join_request).await {
+            Ok(resp) => {
+                let join_resp = resp.into_inner();
+                if !join_resp.success {
+                    let _ = self.registry.remove_zone(&req.zone_id);
+                    return Ok(Response::new(InviteZoneResponse {
+                        success: false,
+                        error: Some(format!(
+                            "JoinZone rejected by leader: {}",
+                            join_resp.error.unwrap_or_default()
+                        )),
+                        node_id: 0,
+                        node_address: String::new(),
+                    }));
+                }
+            }
+            Err(e) => {
+                let _ = self.registry.remove_zone(&req.zone_id);
+                return Ok(Response::new(InviteZoneResponse {
+                    success: false,
+                    error: Some(format!("JoinZone RPC failed: {}", e)),
+                    node_id: 0,
+                    node_address: String::new(),
+                }));
+            }
+        }
+
+        // Step 3: Create DT_MOUNT in local root zone.
+        // Reuses existing propose infrastructure (same as any SetMetadata).
+        let root_zone_id = "root";
+        let root_node = match self.registry.get_node(root_zone_id) {
+            Some(node) => node,
+            None => {
+                // Zone joined but can't create mount — partial success.
+                return Ok(Response::new(InviteZoneResponse {
+                    success: false,
+                    error: Some("Root zone not found on this node".to_string()),
+                    node_id,
+                    node_address: self.self_address.clone(),
+                }));
+            }
+        };
+
+        // Build DT_MOUNT FileMetadata proto
+        let mount_metadata = super::proto::nexus::core::FileMetadata {
+            path: req.mount_path.clone(),
+            backend_name: "virtual".to_string(),
+            entry_type: 2, // DT_MOUNT
+            target_zone_id: req.zone_id.clone(),
+            zone_id: root_zone_id.to_string(),
+            ..Default::default()
+        };
+        let key = mount_metadata.path.clone();
+        let value = prost::Message::encode_to_vec(&mount_metadata);
+
+        match root_node
+            .propose(Command::SetMetadata { key, value })
+            .await
+        {
+            Ok(_) => {
+                tracing::info!(
+                    zone = req.zone_id,
+                    mount_path = req.mount_path,
+                    "InviteZone complete: zone joined + DT_MOUNT created",
+                );
+                Ok(Response::new(InviteZoneResponse {
+                    success: true,
+                    error: None,
+                    node_id,
+                    node_address: self.self_address.clone(),
+                }))
+            }
+            Err(e) => {
+                // Zone joined but DT_MOUNT failed — partial success.
+                Ok(Response::new(InviteZoneResponse {
+                    success: false,
+                    error: Some(format!(
+                        "Zone joined but DT_MOUNT creation failed: {}",
+                        e
+                    )),
+                    node_id,
+                    node_address: self.self_address.clone(),
+                }))
+            }
+        }
+    }
 }
 
 // =============================================================================
@@ -992,7 +1173,7 @@ mod tests {
             ..Default::default()
         };
 
-        let server = RaftGrpcServer::new(registry, config);
+        let server = RaftGrpcServer::new(registry, config, "http://127.0.0.1:0".to_string());
         assert_eq!(
             server.bind_address(),
             "127.0.0.1:0".parse::<SocketAddr>().unwrap()

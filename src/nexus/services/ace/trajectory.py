@@ -49,7 +49,7 @@ class TrajectoryManager:
         )
         self._active_trajectories: dict[str, dict[str, Any]] = {}
 
-    def _check_permission(self, trajectory: TrajectoryModel, permission: Permission) -> bool:
+    def _check_permission(self, trajectory: TrajectoryModel, _permission: Permission) -> bool:
         """Check if current user has permission to access trajectory.
 
         Uses identity-based ReBAC logic:

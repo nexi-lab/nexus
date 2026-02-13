@@ -20,7 +20,7 @@ struct CacheMetadata {
     ttl_seconds: u32,
     is_text: bool,
     #[allow(dead_code)]
-    tenant_id: String,
+    zone_id: String,
 }
 
 /// L1 Metadata Cache — lock-free in-memory cache for connector content metadata.
@@ -47,7 +47,7 @@ impl L1MetadataCache {
         }
     }
 
-    #[pyo3(signature = (key, path_id, content_hash, disk_path, original_size, ttl_seconds=0, is_text=true, tenant_id="default"))]
+    #[pyo3(signature = (key, path_id, content_hash, disk_path, original_size, ttl_seconds=0, is_text=true, zone_id="default"))]
     #[allow(clippy::too_many_arguments)]
     fn put(
         &self,
@@ -58,7 +58,7 @@ impl L1MetadataCache {
         original_size: u64,
         ttl_seconds: i32,
         is_text: bool,
-        tenant_id: &str,
+        zone_id: &str,
     ) {
         if self.cache.len() >= self.max_entries {
             let to_remove = self.max_entries / 10;
@@ -92,7 +92,7 @@ impl L1MetadataCache {
             synced_at: now,
             ttl_seconds: ttl,
             is_text,
-            tenant_id: tenant_id.to_string(),
+            zone_id: zone_id.to_string(),
         };
 
         self.cache.insert(key.to_string(), metadata);

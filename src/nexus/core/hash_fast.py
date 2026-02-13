@@ -32,16 +32,15 @@ logger = logging.getLogger(__name__)
 _RUST_AVAILABLE = False
 _PYTHON_BLAKE3_AVAILABLE = False
 _python_blake3: Any = None
+_rust_hash_content: Any = None
+_rust_hash_content_smart: Any = None
 
 # Priority 1: Rust-accelerated BLAKE3
-_rust_hash_content: Callable[[bytes], str] | None = None
-_rust_hash_content_smart: Callable[[bytes], str] | None = None
 try:
-    from nexus._nexus_fast import hash_content as _rust_hash_content  # type: ignore[no-redef]
-    from nexus._nexus_fast import (  # type: ignore[no-redef]
-        hash_content_smart as _rust_hash_content_smart,
-    )
+    import nexus._nexus_fast as _nexus_fast_mod
 
+    _rust_hash_content = _nexus_fast_mod.hash_content
+    _rust_hash_content_smart = _nexus_fast_mod.hash_content_smart
     _RUST_AVAILABLE = True
     logger.debug("Using Rust BLAKE3 acceleration")
 except ImportError:
@@ -52,8 +51,9 @@ except ImportError:
 
 # Priority 2: Python blake3 package (Issue #582, #833)
 try:
-    import blake3 as _python_blake3
+    import blake3 as _blake3_mod
 
+    _python_blake3 = _blake3_mod
     _PYTHON_BLAKE3_AVAILABLE = True
     if not _RUST_AVAILABLE:
         logger.debug("Using Python blake3 package (consistent with Rust)")
@@ -80,10 +80,11 @@ def hash_content(content: bytes) -> str:
         64-character hex string (256-bit hash)
     """
     if _RUST_AVAILABLE and _rust_hash_content is not None:
-        return _rust_hash_content(content)
+        result: str = _rust_hash_content(content)
+        return result
 
     if _PYTHON_BLAKE3_AVAILABLE:
-        result: str = _python_blake3.blake3(content).hexdigest()
+        result = _python_blake3.blake3(content).hexdigest()
         return result
 
     return hashlib.sha256(content).hexdigest()
@@ -113,14 +114,15 @@ def hash_content_smart(content: bytes) -> str:
         64-character hex string (256-bit hash)
     """
     if _RUST_AVAILABLE and _rust_hash_content_smart is not None:
-        return _rust_hash_content_smart(content)
+        result: str = _rust_hash_content_smart(content)
+        return result
 
     threshold = 256 * 1024  # 256KB
     sample_size = 64 * 1024  # 64KB per sample
 
     if _PYTHON_BLAKE3_AVAILABLE:
         if len(content) < threshold:
-            result: str = _python_blake3.blake3(content).hexdigest()
+            result = _python_blake3.blake3(content).hexdigest()
             return result
 
         blake3_hasher = _python_blake3.blake3()

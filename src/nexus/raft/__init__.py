@@ -36,85 +36,74 @@ Example (RaftClient - remote):
 
 from __future__ import annotations
 
-import contextlib
 import logging
-from typing import TYPE_CHECKING
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
+# =========================================================================
 # gRPC client for remote Raft access (used by RemoteNexusFS)
-# Requires generated protobuf code (metadata_pb2, transport_pb2, etc.)
-try:
-    from nexus.raft.client import (
-        LockInfo as RemoteLockInfo,  # Renamed to avoid conflict with PyO3 LockInfo
-    )
-    from nexus.raft.client import (
-        LockResult,
-        RaftClient,
-        RaftClientConfig,
-        RaftClientPool,
-        RaftError,
-        RaftNotLeaderError,
-    )
+# Declare with Any so mypy doesn't complain about None fallback.
+# =========================================================================
+_HAS_GRPC_CLIENT = False
+RemoteLockInfo: Any = None
+LockResult: Any = None
+RaftClient: Any = None
+RaftClientConfig: Any = None
+RaftClientPool: Any = None
+RaftError: Any = None
+RaftNotLeaderError: Any = None
 
+try:
+    from nexus.raft import client as _raft_client_mod
+
+    RemoteLockInfo = _raft_client_mod.LockInfo  # Renamed to avoid conflict with PyO3 LockInfo
+    LockResult = _raft_client_mod.LockResult
+    RaftClient = _raft_client_mod.RaftClient
+    RaftClientConfig = _raft_client_mod.RaftClientConfig
+    RaftClientPool = _raft_client_mod.RaftClientPool
+    RaftError = _raft_client_mod.RaftError
+    RaftNotLeaderError = _raft_client_mod.RaftNotLeaderError
     _HAS_GRPC_CLIENT = True
 except ImportError:
-    # Generated protobuf code not available (CI, pure-Python installs)
-    _HAS_GRPC_CLIENT = False
-    RemoteLockInfo = None  # type: ignore[assignment,misc]
-    LockResult = None  # type: ignore[assignment,misc]
-    RaftClient = None  # type: ignore[assignment,misc]
-    RaftClientConfig = None  # type: ignore[assignment,misc]
-    RaftClientPool = None  # type: ignore[assignment,misc]
-    RaftError = None  # type: ignore[assignment,misc]
-    RaftNotLeaderError = None  # type: ignore[assignment,misc]
     logger.debug(
         "RaftClient not available (protobuf code not generated). "
         "This is expected in CI/testing environments."
     )
 
-# PyO3 FFI: Metastore (direct sled access, built by maturin)
-# Import from _nexus_raft (top-level, like nexus_fast)
-if TYPE_CHECKING:
-    from _nexus_raft import (
-        HolderInfo as HolderInfo,
-    )
-    from _nexus_raft import (
-        LockInfo as LockInfo,
-    )
-    from _nexus_raft import (
-        LockState as LockState,
-    )
-    from _nexus_raft import (
-        Metastore as Metastore,
-    )
+# =========================================================================
+# PyO3 FFI: Metastore (direct redb access, built by maturin)
+# =========================================================================
+_HAS_METASTORE = False
+Metastore: Any = None
+LockState: Any = None
+LockInfo: Any = None
+HolderInfo: Any = None
 
 try:
-    from _nexus_raft import (
-        HolderInfo,
-        LockInfo,
-        LockState,
-        Metastore,
-    )
+    import _nexus_raft as _pyo3_mod
 
+    Metastore = _pyo3_mod.Metastore
+    LockState = _pyo3_mod.LockState
+    LockInfo = _pyo3_mod.LockInfo
+    HolderInfo = _pyo3_mod.HolderInfo
     _HAS_METASTORE = True
 except ImportError:
-    # Native module not available - maturin build required
-    # Run: maturin develop -m rust/nexus_raft/Cargo.toml --features python
-    _HAS_METASTORE = False
-    Metastore = None
-    LockState = None
-    LockInfo = None
-    HolderInfo = None
     logger.debug(
         "Metastore not available. Install with: "
         "maturin develop -m rust/nexus_raft/Cargo.toml --features python"
     )
 
+# =========================================================================
 # ZoneHandle: Per-zone Raft node handle (requires --features full)
-ZoneHandle = None
-with contextlib.suppress(ImportError):
-    from _nexus_raft import ZoneHandle
+# =========================================================================
+ZoneHandle: Any = None
+try:
+    import _nexus_raft as _pyo3_mod2
+
+    ZoneHandle = _pyo3_mod2.ZoneHandle
+except (ImportError, AttributeError):
+    pass
 
 # Python wrappers for multi-zone federation
 from nexus.raft.zone_aware_metadata import ZoneAwareMetadataStore

@@ -466,7 +466,7 @@ A Zone is both a **logical namespace** and a **consensus boundary**:
 
 | Spanner | NexusFS |
 |---------|---------|
-| Universe | **Federation** (全网唯一) |
+| Universe | **Federation** (globally unique) |
 | Zone (datacenter) | **Zone** (consensus domain, own Raft group) |
 | Paxos Group (data shard) | Raft group (1:1 with zone for MVP; sharding later if needed) |
 | Placement Driver | Manual zone placement (future: automatic) |
@@ -523,7 +523,7 @@ at mount time. Same as NFS mount authentication. No new auth system needed.
 
 **No redirect-only mode**: Every participant has a local redb replica through Raft.
 If a zone owner doesn't want you to access their data, they don't grant mount permission.
-"贡献 storage 的一方有绝对主动权" — the zone owner controls who can join.
+"The party contributing storage has absolute initiative" — the zone owner controls who can join.
 
 **Unified mount logic (DRY)**: System topology and user mounts use the **same operation**:
 ```python
@@ -754,7 +754,7 @@ your ZoneManager and call peers via RaftClient. No "remote federation proxy" sce
 
 **Status**: Design decided. Implementation pending (P2).
 
-**Source**: Discussion in `document-ai/notes/Nexus Federation inter-zones 架构设计重新决策 (消息131-142).md`
+**Source**: Discussion in `document-ai/notes/Nexus Federation inter-zones architecture redesign decision (messages 131-142).md`
 
 #### Core Principle: Flattened Storage + Hierarchical Mounts
 

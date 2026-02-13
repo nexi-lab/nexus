@@ -62,9 +62,9 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nexus.core._metadata_generated import FileMetadataProtocol, PaginatedResult
-    from nexus.core.mount_router import MountRouter
     from nexus.core.permissions import OperationContext, PermissionEnforcer
     from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.core.router import PathRouter
     from nexus.search.async_search import AsyncSemanticSearch
     from nexus.search.semantic import SemanticSearch
 
@@ -115,7 +115,7 @@ class SearchService:
         self,
         metadata_store: FileMetadataProtocol,
         permission_enforcer: PermissionEnforcer | None = None,
-        router: MountRouter | None = None,
+        router: PathRouter | None = None,
         rebac_manager: EnhancedReBACManager | None = None,
         enforce_permissions: bool = True,
         default_context: OperationContext | None = None,

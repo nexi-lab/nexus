@@ -149,6 +149,19 @@ def validate_user_uniqueness(
         raise ValueError(f"Username {username} already exists")
 
 
+def _verify_user_login_eligibility(user: UserModel) -> None:
+    """Check if user is eligible to login.
+
+    Args:
+        user: User model instance
+
+    Raises:
+        ValueError: If user email is not verified
+    """
+    if not user.email_verified:
+        raise ValueError("Email not verified. Please check your inbox for verification link.")
+
+
 class DatabaseLocalAuth(LocalAuth):
     """Database-backed local username/password authentication.
 
@@ -350,9 +363,8 @@ class DatabaseLocalAuth(LocalAuth):
                 logger.debug(f"Login failed: invalid password ({identifier})")
                 return None
 
-            # TODO: Check email_verified before allowing login to sensitive operations
-            # if not user.email_verified:
-            #     raise ValueError("Email not verified")
+            # Enforce email verification before login
+            _verify_user_login_eligibility(user)
 
             # Update last_login_at (session will autocommit on exit)
             user.last_login_at = datetime.utcnow()
@@ -543,20 +555,92 @@ class DatabaseLocalAuth(LocalAuth):
                 "api_key": user.api_key,
             }
 
-    # TODO: Implement email verification
-    def verify_email(self, user_id: str, verification_token: str) -> bool:
-        """Verify user email with token.
+    def create_email_verification_token(self, user_id: str, email: str) -> str:
+        """Create a JWT token for email verification (24h expiry).
 
         Args:
             user_id: User ID
-            verification_token: Verification token from email
+            email: Email address to verify
+
+        Returns:
+            Encoded JWT verification token
+        """
+        import time
+
+        from authlib.jose import jwt as jose_jwt
+
+        header = {"alg": "HS256"}
+        payload = {
+            "sub": user_id,
+            "email": email,
+            "purpose": "email_verify",
+            "iat": int(time.time()),
+            "exp": int(time.time()) + 86400,  # 24 hours
+        }
+        token = jose_jwt.encode(header, payload, self.jwt_secret)
+        result: str = token.decode() if isinstance(token, bytes) else token
+        return result
+
+    def verify_email_token(self, token: str) -> tuple[str, str]:
+        """Verify email verification token.
+
+        Args:
+            token: JWT verification token
+
+        Returns:
+            Tuple of (user_id, email)
+
+        Raises:
+            ValueError: If token is invalid, expired, or wrong purpose
+        """
+        from authlib.jose import JoseError
+        from authlib.jose import jwt as jose_jwt
+
+        try:
+            claims = jose_jwt.decode(token, self.jwt_secret)
+            claims.validate()
+        except JoseError as e:
+            raise ValueError(f"Invalid verification token: {e}") from e
+
+        if claims.get("purpose") != "email_verify":
+            raise ValueError("Invalid token: not an email verification token")
+
+        user_id = claims.get("sub")
+        email = claims.get("email")
+        if not user_id or not email:
+            raise ValueError("Invalid token: missing user information")
+
+        return (str(user_id), str(email))
+
+    def verify_email(self, user_id: str, verification_token: str) -> bool:
+        """Verify user email. Decodes token, sets email_verified=1.
+
+        Args:
+            user_id: User ID (for additional validation)
+            verification_token: JWT verification token
 
         Returns:
             True if email verified successfully
 
-        TODO: Implement verification token generation and validation
+        Raises:
+            ValueError: If token is invalid or user not found
         """
-        raise NotImplementedError("Email verification not yet implemented")
+        token_user_id, _email = self.verify_email_token(verification_token)
+
+        if token_user_id != user_id:
+            raise ValueError("Token user_id does not match")
+
+        with self.session_factory() as session, session.begin():
+            user = get_user_by_id(session, user_id)
+            if not user:
+                raise ValueError(f"User not found: {user_id}")
+
+            user.email_verified = 1
+            user.updated_at = datetime.utcnow()
+            session.add(user)
+
+        logger.info(f"Email verified for user: {user_id}")
+        return True
 
     # TODO: Implement password reset
     def request_password_reset(self, email: str) -> str | None:

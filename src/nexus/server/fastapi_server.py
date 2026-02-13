@@ -839,7 +839,11 @@ async def lifespan(_app: FastAPI) -> Any:
     # Prefer the pre-configured service from factory (reads NEXUS_UPLOAD_* env vars).
     # Fall back to creating one here if the factory didn't provide it.
     _upload_cleanup_task = None
-    _factory_upload_svc = getattr(_app_state.nexus_fs, "_chunked_upload_service", None) if _app_state.nexus_fs else None
+    _factory_upload_svc = (
+        getattr(_app_state.nexus_fs, "_chunked_upload_service", None)
+        if _app_state.nexus_fs
+        else None
+    )
     if _factory_upload_svc is not None:
         _app_state.chunked_upload_service = _factory_upload_svc
         _upload_cleanup_task = asyncio.create_task(

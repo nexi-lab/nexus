@@ -120,9 +120,7 @@ def nexus_server(isolated_db, tmp_path):
     env = os.environ.copy()
     env["NEXUS_JWT_SECRET"] = "test-secret-key-for-e2e-12345"
     # Allow PostgreSQL via NEXUS_E2E_DATABASE_URL env var; default to SQLite
-    env["NEXUS_DATABASE_URL"] = os.environ.get(
-        "NEXUS_E2E_DATABASE_URL", f"sqlite:///{isolated_db}"
-    )
+    env["NEXUS_DATABASE_URL"] = os.environ.get("NEXUS_E2E_DATABASE_URL", f"sqlite:///{isolated_db}")
     env["PYTHONPATH"] = str(_src_path)
 
     # Set API key for authenticated tests

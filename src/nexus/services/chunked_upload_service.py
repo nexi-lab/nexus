@@ -169,7 +169,9 @@ class ChunkedUploadService:
                 backend_upload_id = await asyncio.to_thread(
                     mixin.init_multipart,
                     target_path,
-                    metadata.get("content_type", "application/octet-stream") if metadata else "application/octet-stream",
+                    metadata.get("content_type", "application/octet-stream")
+                    if metadata
+                    else "application/octet-stream",
                     metadata,
                 )
                 backend_name = getattr(self._backend, "name", "unknown")
@@ -250,7 +252,7 @@ class ChunkedUploadService:
             # Validate chunk size
             chunk_size = len(chunk_data)
             remaining = session.remaining_bytes
-            is_last_chunk = (chunk_size == remaining)
+            is_last_chunk = chunk_size == remaining
 
             if chunk_size > remaining:
                 raise ValidationError(
@@ -610,9 +612,7 @@ class ChunkedUploadService:
             for part_info in sorted_parts:
                 part_hash = part_info.get("content_hash")
                 if part_hash:
-                    response = await asyncio.to_thread(
-                        self._backend.read_content, part_hash
-                    )
+                    response = await asyncio.to_thread(self._backend.read_content, part_hash)
                     if response.success and response.data:
                         assembled.extend(response.data)
                     else:
@@ -740,9 +740,7 @@ class ChunkedUploadService:
         """
         parts = checksum_header.strip().split(" ", 1)
         if len(parts) != 2:
-            raise ValidationError(
-                f"Invalid Upload-Checksum header format: {checksum_header}"
-            )
+            raise ValidationError(f"Invalid Upload-Checksum header format: {checksum_header}")
 
         algorithm, expected_b64 = parts[0].lower(), parts[1]
 
@@ -755,8 +753,7 @@ class ChunkedUploadService:
             actual = base64.b64encode(crc.to_bytes(4, "big")).decode()
         else:
             raise ValidationError(
-                f"Unsupported checksum algorithm: {algorithm}. "
-                f"Supported: {TUS_CHECKSUM_ALGORITHMS}"
+                f"Unsupported checksum algorithm: {algorithm}. Supported: {TUS_CHECKSUM_ALGORITHMS}"
             )
 
         if actual != expected_b64:

@@ -354,10 +354,7 @@ class UploadOffsetMismatchError(NexusError):
         self.upload_id = upload_id
         self.expected_offset = expected
         self.received_offset = received
-        msg = (
-            f"Upload offset mismatch for {upload_id}: "
-            f"expected {expected}, received {received}"
-        )
+        msg = f"Upload offset mismatch for {upload_id}: expected {expected}, received {received}"
         super().__init__(msg)
 
 

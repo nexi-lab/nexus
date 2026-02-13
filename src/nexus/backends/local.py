@@ -1252,7 +1252,6 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         except Exception as e:
             raise OSError(f"Failed to list directory {path}: {e}") from e
 
-
     # === Multipart Upload Operations (Issue #788) ===
 
     def init_multipart(

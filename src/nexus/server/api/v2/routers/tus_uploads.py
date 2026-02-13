@@ -226,13 +226,9 @@ def create_tus_uploads_router(
                 checksum_header=checksum_header,
             )
         except UploadNotFoundError as e:
-            raise HTTPException(
-                status_code=404, detail=f"Upload not found: {upload_id}"
-            ) from e
+            raise HTTPException(status_code=404, detail=f"Upload not found: {upload_id}") from e
         except UploadExpiredError as e:
-            raise HTTPException(
-                status_code=410, detail=f"Upload expired: {upload_id}"
-            ) from e
+            raise HTTPException(status_code=410, detail=f"Upload expired: {upload_id}") from e
         except UploadOffsetMismatchError as e:
             raise HTTPException(
                 status_code=409,
@@ -270,13 +266,9 @@ def create_tus_uploads_router(
         try:
             session = await service.get_upload_status(upload_id)
         except UploadNotFoundError as e:
-            raise HTTPException(
-                status_code=404, detail=f"Upload not found: {upload_id}"
-            ) from e
+            raise HTTPException(status_code=404, detail=f"Upload not found: {upload_id}") from e
         except UploadExpiredError as e:
-            raise HTTPException(
-                status_code=410, detail=f"Upload expired: {upload_id}"
-            ) from e
+            raise HTTPException(status_code=410, detail=f"Upload expired: {upload_id}") from e
 
         headers = {
             "Tus-Resumable": TUS_RESUMABLE,
@@ -304,9 +296,7 @@ def create_tus_uploads_router(
         try:
             await service.terminate_upload(upload_id)
         except UploadNotFoundError as e:
-            raise HTTPException(
-                status_code=404, detail=f"Upload not found: {upload_id}"
-            ) from e
+            raise HTTPException(status_code=404, detail=f"Upload not found: {upload_id}") from e
 
         return Response(
             status_code=204,

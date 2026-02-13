@@ -99,7 +99,9 @@ def config() -> ChunkedUploadConfig:
 
 
 @pytest.fixture
-def service(fake_db: FakeSessionContext, mock_backend: MagicMock, config: ChunkedUploadConfig) -> ChunkedUploadService:
+def service(
+    fake_db: FakeSessionContext, mock_backend: MagicMock, config: ChunkedUploadConfig
+) -> ChunkedUploadService:
     return ChunkedUploadService(
         session_factory=lambda: fake_db,
         backend=mock_backend,

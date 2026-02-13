@@ -273,8 +273,8 @@ Map **data requiring properties** ↔ **storage providing properties**.
 
 | Data Type | Read | Write | Consistency | Query | Size | Card | Dur | Scope | Why Exists | Current Storage | Optimal Storage | Action |
 |-----------|------|-------|-------------|-------|------|------|-----|-------|------------|----------------|-----------------|--------|
-| **PermissionCacheProtocol** | Critical | Med | EC | KV (by cache key) | Tiny | Very High | Session | Zone | Permission check result cache (avoid ReBAC recomputation) | Dragonfly/PostgreSQL/In-memory | **Dragonfly** (in-memory, TTL) | ✅ KEEP |
-| **TigerCacheProtocol** | Critical | Low | EC | KV (by object_id → bitmap) | Small | High | Session | Zone | Pre-materialized permission bitmaps for O(1) filtering | Dragonfly/PostgreSQL | **Dragonfly** (in-memory, fast bitmap ops) | ✅ KEEP |
+| **PermissionCacheProtocol** | Critical | Med | EC | KV (by cache key) | Tiny | Very High | Session | Zone | Permission check result cache (avoid ReBAC recomputation) | Dragonfly/PostgreSQL/In-memory | **CacheStore** (in-memory, TTL) | ✅ KEEP |
+| **TigerCacheProtocol** | Critical | Low | EC | KV (by object_id → bitmap) | Small | High | Session | Zone | Pre-materialized permission bitmaps for O(1) filtering | Dragonfly/PostgreSQL | **CacheStore** (in-memory, fast bitmap ops) | ✅ KEEP |
 
 **Analysis:**
 - Both are performance caches, not SSOT
@@ -304,7 +304,7 @@ Relational queries, FK, unique constraints, vector search, encryption, BRIN inde
 | Category | Data Types | Rationale |
 |----------|-----------|-----------|
 | **Users & Auth** | UserModel, UserOAuthAccountModel, OAuthCredentialModel | Relational queries, FK, unique constraints, encryption |
-| **ReBAC (Partial)** | ReBACGroupClosureModel, ReBACChangelogModel | Materialized view, append-only BRIN |
+| **ReBAC** | ReBACTupleModel, ReBACGroupClosureModel, ReBACChangelogModel | Composite indexes (SSOT), materialized view, append-only BRIN |
 | **Memory System** | MemoryModel, **MemoryConfig**, TrajectoryModel, TrajectoryFeedbackModel, PlaybookModel | Complex relational + vector search; MemoryConfig co-exists with MemoryModel |
 | **Versioning** | VersionHistoryModel, WorkspaceSnapshotModel | Parent FK, BRIN time-series |
 | **Semantic Search** | DocumentChunkModel | Vector index (pgvector/sqlite-vec) |
@@ -314,8 +314,8 @@ Relational queries, FK, unique constraints, vector search, encryption, BRIN inde
 | **Sandboxes** | SandboxMetadataModel | Relational queries |
 | **Path Registration** | **PathRegistrationModel** (NEW: WorkspaceConfig + MemoryConfig merged) | Co-exists with SnapshotModel/MemoryModel |
 
-### ✅ **Metastore (Ordered KV — redb via Raft)** — 4 surviving types
-KV access pattern, strong consistency needed (multi-node)
+### ✅ **Metastore (Ordered KV — redb)** — 5 types
+KV access pattern, redb via Raft (multi-node SC) or local-only
 
 | Data Type | Current | Reason |
 |-----------|---------|--------|
@@ -323,13 +323,7 @@ KV access pattern, strong consistency needed (multi-node)
 | FileMetadataModel (custom KV) | SQLAlchemy | Arbitrary KV metadata by path_id + key |
 | ReBACNamespaceModel | SQLAlchemy | KV by namespace_id, low cardinality |
 | SystemSettingsModel | SQLAlchemy | KV by key, low cardinality |
-
-### ✅ **Migrate to redb (local, no Raft)** - 1 type
-CAS (content-addressed), immutable
-
-| Data Type | Current | Reason |
-|-----------|---------|--------|
-| ContentChunkModel | SQLAlchemy | KV by content_hash, immutable (no SC needed) |
+| ContentChunkModel | SQLAlchemy | CAS dedup index, KV by content_hash, immutable (local only, no Raft) |
 
 ### ✅ **CacheStore (Ephemeral KV — Dragonfly / In-Memory)** — 4 types
 Performance cache, TTL, pub/sub
@@ -593,8 +587,6 @@ will be renamed to `FileMetadataProtocol` to avoid confusion with `MetastoreABC`
 
 **Action (Task #22)**: Unify into `CacheStoreABC` with `InMemoryCacheStore` fallback for all 4 data types.
 
-**Future work**: Unify these into a single `CacheStoreABC` with `InMemoryCacheStore` fallback.
-
 ---
 
 ## NEXT STEPS
@@ -602,7 +594,7 @@ will be renamed to `FileMetadataProtocol` to avoid confusion with `MetastoreABC`
 1. ✅ Review this matrix with user
 2. ✅ **Step 1+2+3 COMPLETE**: All data-storage affinity decisions resolved
 3. ❓ Identify missing Subscription/Delivery storage (Task #12)
-4. ❓ Clarify Dragonfly status post-Raft
+4. ✅ Dragonfly status post-Raft: Redis deprecated → Dragonfly only (Step 2 decided)
 5. ✅ Merge redundant data types (FilePathModel → FileMetadata, WorkspaceConfig + MemoryConfig → PathRegistrationModel)
 6. ✅ Rewrite federation-memo.md with this data architecture
 7. ✅ Storage medium orthogonality analysis complete — Redis deprecation identified (P2)

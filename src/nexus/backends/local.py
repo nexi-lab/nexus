@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend
 from nexus.backends.chunked_storage import ChunkedStorageMixin
+from nexus.backends.multipart_upload_mixin import MultipartUploadMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
@@ -39,7 +40,7 @@ DEFAULT_CAS_BLOOM_FP_RATE = 0.01  # 1% false positive rate
     description="Local filesystem with CAS deduplication",
     category="storage",
 )
-class LocalBackend(Backend, ChunkedStorageMixin):
+class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
     """
     Unified local filesystem backend with CDC chunked storage.
 
@@ -1250,6 +1251,148 @@ class LocalBackend(Backend, ChunkedStorageMixin):
             raise
         except Exception as e:
             raise OSError(f"Failed to list directory {path}: {e}") from e
+
+
+    # === Multipart Upload Operations (Issue #788) ===
+
+    def init_multipart(
+        self,
+        backend_path: str,
+        content_type: str = "application/octet-stream",
+        metadata: dict[str, str] | None = None,
+    ) -> str:
+        """Initialize a multipart upload by creating a temp directory.
+
+        Args:
+            backend_path: Logical path for the upload target.
+            content_type: MIME type (stored in metadata).
+            metadata: Optional key-value metadata.
+
+        Returns:
+            Upload ID (UUID-based directory name).
+        """
+        import uuid
+
+        upload_id = str(uuid.uuid4())
+        upload_dir = self.root_path / "uploads" / upload_id
+        upload_dir.mkdir(parents=True, exist_ok=True)
+
+        # Store metadata for the upload
+        meta = {"content_type": content_type, "backend_path": backend_path}
+        if metadata:
+            meta.update(metadata)
+
+        meta_path = upload_dir / "_meta.json"
+        meta_path.write_text(json.dumps(meta), encoding="utf-8")
+
+        logger.debug(f"Initialized multipart upload {upload_id} for {backend_path}")
+        return upload_id
+
+    def upload_part(
+        self,
+        backend_path: str,
+        upload_id: str,
+        part_number: int,
+        data: bytes,
+    ) -> dict[str, Any]:
+        """Write a part file to the upload temp directory.
+
+        Args:
+            backend_path: Logical path (unused for local, kept for interface).
+            upload_id: Upload ID from init_multipart().
+            part_number: 1-based part number.
+            data: Raw bytes for this chunk.
+
+        Returns:
+            Dict with "etag" (hash of the part data) and "part_number".
+        """
+        upload_dir = self.root_path / "uploads" / upload_id
+        if not upload_dir.exists():
+            raise BackendError(
+                f"Upload directory not found: {upload_id}",
+                backend="local",
+                path=backend_path,
+            )
+
+        part_path = upload_dir / f"part_{part_number:06d}"
+        part_path.write_bytes(data)
+
+        part_hash = hash_content(data)
+        return {"etag": part_hash, "part_number": part_number}
+
+    def complete_multipart(
+        self,
+        backend_path: str,
+        upload_id: str,
+        parts: list[dict[str, Any]],
+    ) -> str:
+        """Assemble all parts into final content and write via CAS.
+
+        Concatenates parts in order, writes to CAS via write_content(),
+        then cleans up the temp directory.
+
+        Args:
+            backend_path: Logical path (unused for local CAS).
+            upload_id: Upload ID from init_multipart().
+            parts: Ordered list of part dicts (from upload_part responses).
+
+        Returns:
+            Content hash of the assembled file.
+        """
+        upload_dir = self.root_path / "uploads" / upload_id
+        if not upload_dir.exists():
+            raise BackendError(
+                f"Upload directory not found: {upload_id}",
+                backend="local",
+                path=backend_path,
+            )
+
+        # Sort parts by part_number and concatenate
+        sorted_parts = sorted(parts, key=lambda p: p["part_number"])
+        assembled = bytearray()
+        for part_info in sorted_parts:
+            part_path = upload_dir / f"part_{part_info['part_number']:06d}"
+            if not part_path.exists():
+                raise BackendError(
+                    f"Part file not found: part_{part_info['part_number']:06d}",
+                    backend="local",
+                    path=backend_path,
+                )
+            assembled.extend(part_path.read_bytes())
+
+        # Write assembled content to CAS
+        content = bytes(assembled)
+        response = self.write_content(content)
+        if not response.success or response.data is None:
+            raise BackendError(
+                "Failed to write assembled content",
+                backend="local",
+                path=backend_path,
+            )
+
+        content_hash: str = response.data
+
+        # Clean up temp directory
+        shutil.rmtree(upload_dir, ignore_errors=True)
+        logger.debug(f"Completed multipart upload {upload_id} -> {content_hash}")
+
+        return content_hash
+
+    def abort_multipart(
+        self,
+        backend_path: str,
+        upload_id: str,
+    ) -> None:
+        """Abort a multipart upload and remove the temp directory.
+
+        Args:
+            backend_path: Logical path (unused for cleanup).
+            upload_id: Upload ID from init_multipart().
+        """
+        upload_dir = self.root_path / "uploads" / upload_id
+        if upload_dir.exists():
+            shutil.rmtree(upload_dir, ignore_errors=True)
+            logger.debug(f"Aborted multipart upload {upload_id}")
 
 
 class FileLock:

@@ -119,11 +119,17 @@ def nexus_server(isolated_db, tmp_path):
     # Environment for the server process
     env = os.environ.copy()
     env["NEXUS_JWT_SECRET"] = "test-secret-key-for-e2e-12345"
-    env["NEXUS_DATABASE_URL"] = f"sqlite:///{isolated_db}"
+    # Allow PostgreSQL via NEXUS_E2E_DATABASE_URL env var; default to SQLite
+    env["NEXUS_DATABASE_URL"] = os.environ.get(
+        "NEXUS_E2E_DATABASE_URL", f"sqlite:///{isolated_db}"
+    )
     env["PYTHONPATH"] = str(_src_path)
 
     # Set API key for authenticated tests
     env["NEXUS_API_KEY"] = "test-e2e-api-key-12345"
+
+    # Issue #788: Lower min chunk size for e2e tests (default 5MB too large for test payloads)
+    env["NEXUS_UPLOAD_MIN_CHUNK_SIZE"] = "1"
 
     # Issue #1186: Enable lock manager if Dragonfly/Redis is available
     dragonfly_url = env.get("NEXUS_DRAGONFLY_URL") or env.get("REDIS_URL")
@@ -152,8 +158,9 @@ def nexus_server(isolated_db, tmp_path):
         preexec_fn=os.setsid if sys.platform != "win32" else None,
     )
 
-    # Wait for server to be ready
-    if not wait_for_server(base_url, timeout=30.0):
+    # Wait for server to be ready (PG startup is heavier than SQLite)
+    _startup_timeout = 60.0 if "postgresql" in env.get("NEXUS_DATABASE_URL", "") else 30.0
+    if not wait_for_server(base_url, timeout=_startup_timeout):
         # Server failed to start, get output for debugging
         process.terminate()
         stdout, stderr = process.communicate(timeout=5)

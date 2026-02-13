@@ -177,12 +177,12 @@ class NexusFSSearchMixin:
     # Type hints for attributes that will be provided by NexusFS parent class
     if TYPE_CHECKING:
         from nexus.core._metadata_generated import FileMetadataProtocol
-        from nexus.core.mount_router import MountRouter
         from nexus.core.permissions import PermissionEnforcer
         from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
+        from nexus.core.router import PathRouter
 
         metadata: FileMetadataProtocol
-        router: MountRouter
+        router: PathRouter
         _enforce_permissions: bool
         _default_context: OperationContext
         _permission_enforcer: PermissionEnforcer | None
@@ -538,7 +538,7 @@ class NexusFSSearchMixin:
                                     # Convert virtual path to backend relative path
                                     # e.g., "/zone/.../connector/gmail/SENT" -> "SENT"
                                     backend_relative = entry_path[len(path) :].lstrip("/")
-                                    is_dir = route.backend.is_directory(
+                                    is_dir = route.backend.is_directory(  # type: ignore[assignment]
                                         backend_relative, context=list_context
                                     )
                                 except Exception:

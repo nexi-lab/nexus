@@ -18,7 +18,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from nexus.core._metadata_generated import FileMetadata
 from nexus.core.exceptions import BackendError, ConflictError, NexusFileNotFoundError
@@ -42,6 +42,8 @@ if TYPE_CHECKING:
 
 class NexusFSCoreMixin:
     """Mixin providing core file operations for NexusFS."""
+
+    _revision_notifier: ClassVar[Any] = None
 
     # Type hints for attributes/methods that will be provided by NexusFS parent class
     if TYPE_CHECKING:
@@ -299,12 +301,19 @@ class NexusFSCoreMixin:
         """Get or create the RevisionNotifier instance (Issue #1180 Phase B).
 
         Lazily initialized to avoid import overhead for callers that don't
-        use the consistency subsystem.
+        use the consistency subsystem.  Falls back to NullRevisionNotifier on
+        construction errors so callers never receive None.
         """
         if self._revision_notifier is None:
-            from nexus.core.revision_notifier import RevisionNotifier
+            try:
+                from nexus.core.revision_notifier import RevisionNotifier
 
-            NexusFSCoreMixin._revision_notifier = RevisionNotifier()
+                NexusFSCoreMixin._revision_notifier = RevisionNotifier()
+            except Exception:
+                from nexus.core.revision_notifier import NullRevisionNotifier
+
+                logger.warning("Failed to create RevisionNotifier; using NullRevisionNotifier")
+                NexusFSCoreMixin._revision_notifier = NullRevisionNotifier()
         return self._revision_notifier
 
     def _get_revision_lock(self, zone_id: str) -> threading.Lock:

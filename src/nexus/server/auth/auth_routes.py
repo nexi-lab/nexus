@@ -742,6 +742,92 @@ async def change_password(
 
 
 # ==============================================================================
+# Email Verification Routes
+# ==============================================================================
+
+
+class RequestVerificationRequest(BaseModel):
+    """Request email verification request."""
+
+    email: EmailStr | None = Field(
+        None, description="Email to verify (defaults to authenticated user)"
+    )
+
+
+class VerifyEmailRequest(BaseModel):
+    """Verify email with token."""
+
+    token: str = Field(..., description="Verification token from email link")
+
+
+@router.post("/request-verification", status_code=status.HTTP_202_ACCEPTED)
+async def request_verification(
+    request: RequestVerificationRequest,
+    auth: DatabaseLocalAuth = Depends(get_auth_provider),
+) -> dict[str, str]:
+    """Request an email verification link.
+
+    Always returns 202 to prevent email enumeration.
+
+    Args:
+        request: Request containing email
+        auth: Authentication provider
+
+    Returns:
+        Acceptance message (always 202)
+    """
+    from nexus.server.auth.email_sender import LogEmailSender
+
+    email = request.email
+    if not email:
+        return {"message": "If this email is registered, a verification link has been sent."}
+
+    try:
+        from nexus.server.auth.database_local import get_user_by_email
+
+        with auth.session_factory() as session:
+            user = get_user_by_email(session, str(email))
+            if user and not user.email_verified:
+                token = auth.create_email_verification_token(user.user_id, str(email))
+                verification_url = f"/auth/verify-email?token={token}"
+                sender = LogEmailSender()
+                sender.send_verification_email(str(email), verification_url)
+    except Exception as e:
+        # Log but don't reveal errors to prevent enumeration
+        logger.warning(f"Error during verification request: {e}")
+
+    return {"message": "If this email is registered, a verification link has been sent."}
+
+
+@router.post("/verify-email")
+async def verify_email(
+    request: VerifyEmailRequest,
+    auth: DatabaseLocalAuth = Depends(get_auth_provider),
+) -> dict[str, str]:
+    """Verify email with a verification token.
+
+    Args:
+        request: Request containing verification token
+        auth: Authentication provider
+
+    Returns:
+        Success message
+
+    Raises:
+        400: Invalid or expired token
+    """
+    try:
+        user_id, _email = auth.verify_email_token(request.token)
+        auth.verify_email(user_id, request.token)
+        return {"message": "Email verified successfully. You can now log in."}
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e),
+        ) from e
+
+
+# ==============================================================================
 # OAuth Routes
 # ==============================================================================
 

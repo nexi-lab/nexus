@@ -75,6 +75,12 @@ def oauth_provider(test_db):
     )
 
 
+def _verify_user_email(auth_provider: DatabaseLocalAuth, user) -> None:
+    """Helper to verify a user's email in tests (Issue #1434)."""
+    token = auth_provider.create_email_verification_token(user.user_id, user.email)
+    auth_provider.verify_email(user.user_id, token)
+
+
 # ==============================================================================
 # Password Authentication Tests
 # ==============================================================================
@@ -145,11 +151,12 @@ def test_duplicate_username_registration(auth_provider):
 def test_user_login(auth_provider):
     """Test user login with email/password."""
     # Register user
-    auth_provider.register_user(
+    user = auth_provider.register_user(
         email="dave@example.com",
         password="securepassword123",
         username="dave",
     )
+    _verify_user_email(auth_provider, user)
 
     # Login with email
     token = auth_provider.login("dave@example.com", "securepassword123")
@@ -195,6 +202,7 @@ def test_change_password(auth_provider):
         password="oldpassword123",
         username="frank",
     )
+    _verify_user_email(auth_provider, user)
 
     # Change password
     success = auth_provider.change_password(
@@ -501,6 +509,7 @@ def test_full_password_auth_flow(auth_provider):
         display_name="Integration Test User",
     )
     assert user.user_id is not None
+    _verify_user_email(auth_provider, user)
 
     # 2. Login
     token = auth_provider.login("integration@example.com", "password123")

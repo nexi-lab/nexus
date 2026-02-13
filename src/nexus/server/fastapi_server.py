@@ -4015,9 +4015,7 @@ def _register_routes(app: FastAPI) -> None:
                 content_generator=lambda s, e, cs: backend.stream_range(
                     content_hash, s, e, chunk_size=cs, context=stream_context
                 ),
-                full_generator=lambda: backend.stream_content(
-                    content_hash, context=stream_context
-                ),
+                full_generator=lambda: backend.stream_content(content_hash, context=stream_context),
                 total_size=total_size,
                 etag=content_hash,
                 content_type="application/octet-stream",

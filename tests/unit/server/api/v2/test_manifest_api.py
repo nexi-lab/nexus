@@ -231,7 +231,7 @@ class TestGetManifestAfterPut:
 class TestResolveHappyPath:
     def test_resolve_happy_path(self, app, agent_registry):
         """Set manifest then resolve — returns ManifestResult-like response."""
-        from nexus.core.context_manifest.models import ManifestResult, SourceResult
+        from nexus.services.context_manifest.models import ManifestResult, SourceResult
 
         agent_registry.register("agent-resolve", "owner-1")
         sources = [{"type": "file_glob", "pattern": "*.py", "max_files": 5}]

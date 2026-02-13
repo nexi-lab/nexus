@@ -214,8 +214,13 @@ def mock_consolidation_engine():
     """Mock ConsolidationEngine with sensible defaults."""
     engine = AsyncMock()
     engine.consolidate_by_affinity_async.return_value = {
-        "clusters": [{"cluster_id": "c1", "memory_ids": ["m1", "m2"], "summary": "test cluster"}],
-        "archived_count": 1,
+        "clusters_formed": 1,
+        "total_consolidated": 2,
+        "archived_count": 2,
+        "results": [
+            {"consolidated_memory_id": "c1", "source_memory_ids": ["m1", "m2"], "memories_consolidated": 2}
+        ],
+        "cluster_statistics": [],
     }
     return engine
 

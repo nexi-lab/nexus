@@ -25,11 +25,12 @@ def upgrade() -> None:
     the existing sandbox is stopped. The application layer will enforce uniqueness
     for active sandboxes only.
     """
-    # Drop the unique constraint
-    op.drop_constraint("uq_sandbox_user_name", "sandbox_metadata", type_="unique")
+    # batch_alter_table needed for SQLite (no native ALTER of constraints)
+    with op.batch_alter_table("sandbox_metadata") as batch_op:
+        batch_op.drop_constraint("uq_sandbox_user_name", type_="unique")
 
 
 def downgrade() -> None:
     """Restore unique constraint on (user_id, name)."""
-    # Re-create the unique constraint
-    op.create_unique_constraint("uq_sandbox_user_name", "sandbox_metadata", ["user_id", "name"])
+    with op.batch_alter_table("sandbox_metadata") as batch_op:
+        batch_op.create_unique_constraint("uq_sandbox_user_name", ["user_id", "name"])

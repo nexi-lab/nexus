@@ -39,13 +39,14 @@ def upgrade() -> None:
     op.add_column("api_keys", sa.Column("subject_id", sa.String(length=255), nullable=True))
 
     # Make name column NOT NULL (best practice)
-    op.alter_column(
-        "api_keys",
-        "name",
-        existing_type=sa.String(length=255),
-        nullable=False,
-        server_default="API Key",  # Default for existing rows
-    )
+    # batch_alter_table needed for SQLite (no native ALTER COLUMN support)
+    with op.batch_alter_table("api_keys") as batch_op:
+        batch_op.alter_column(
+            "name",
+            existing_type=sa.String(length=255),
+            nullable=False,
+            server_default="API Key",
+        )
 
     # Optional: Populate subject_id from user_id for existing rows
     op.execute("""
@@ -57,7 +58,8 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Remove subject_type and subject_id columns."""
-    op.alter_column("api_keys", "name", existing_type=sa.String(length=255), nullable=True)
+    with op.batch_alter_table("api_keys") as batch_op:
+        batch_op.alter_column("name", existing_type=sa.String(length=255), nullable=True)
 
     op.drop_column("api_keys", "subject_id")
     op.drop_column("api_keys", "subject_type")

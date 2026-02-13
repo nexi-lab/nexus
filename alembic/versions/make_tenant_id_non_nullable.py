@@ -34,7 +34,6 @@ Note: Cross-tenant sharing still works via subject_tenant_id != object_tenant_id
 for relations in CROSS_TENANT_ALLOWED_RELATIONS.
 """
 
-import contextlib
 from collections.abc import Sequence
 from typing import Union
 
@@ -68,26 +67,35 @@ TABLES_WITH_TENANT_ID = [
 REBAC_TENANT_COLUMNS = ["tenant_id", "subject_tenant_id", "object_tenant_id"]
 
 
+def _table_has_column(inspector, table: str, column: str) -> bool:
+    """Check if a table exists and has the given column."""
+    try:
+        columns = {c["name"] for c in inspector.get_columns(table)}
+    except sa.exc.NoSuchTableError:
+        return False
+    return column in columns
+
+
 def upgrade() -> None:
     """Make tenant_id columns non-nullable after backfilling."""
     bind = op.get_bind()
+    inspector = sa.inspect(bind)
     is_postgres = bind.dialect.name == "postgresql"
 
     # Step 1: Backfill NULL tenant_id values to 'default'
     for table in TABLES_WITH_TENANT_ID:
-        with contextlib.suppress(Exception):
-            # Table may not exist in some deployments
+        if _table_has_column(inspector, table, "tenant_id"):
             bind.execute(
                 sa.text(f"UPDATE {table} SET tenant_id = 'default' WHERE tenant_id IS NULL")
             )
 
     # Backfill rebac_tuples (has 3 tenant columns)
-    with contextlib.suppress(Exception):
-        for col in REBAC_TENANT_COLUMNS:
+    for col in REBAC_TENANT_COLUMNS:
+        if _table_has_column(inspector, "rebac_tuples", col):
             bind.execute(sa.text(f"UPDATE rebac_tuples SET {col} = 'default' WHERE {col} IS NULL"))
 
     # Backfill directory_entries (tenant_id is part of composite primary key)
-    with contextlib.suppress(Exception):
+    if _table_has_column(inspector, "directory_entries", "tenant_id"):
         bind.execute(
             sa.text("UPDATE directory_entries SET tenant_id = 'default' WHERE tenant_id IS NULL")
         )
@@ -96,7 +104,7 @@ def upgrade() -> None:
     if is_postgres:
         # PostgreSQL: Use ALTER COLUMN SET NOT NULL
         for table in TABLES_WITH_TENANT_ID:
-            with contextlib.suppress(Exception):
+            if _table_has_column(inspector, table, "tenant_id"):
                 op.alter_column(
                     table,
                     "tenant_id",
@@ -105,8 +113,8 @@ def upgrade() -> None:
                 )
 
         # rebac_tuples: Make all 3 tenant columns non-nullable
-        with contextlib.suppress(Exception):
-            for col in REBAC_TENANT_COLUMNS:
+        for col in REBAC_TENANT_COLUMNS:
+            if _table_has_column(inspector, "rebac_tuples", col):
                 op.alter_column(
                     "rebac_tuples",
                     col,
@@ -116,7 +124,7 @@ def upgrade() -> None:
 
         # directory_entries: tenant_id is primary key, already effectively non-null
         # But we make it explicit
-        with contextlib.suppress(Exception):
+        if _table_has_column(inspector, "directory_entries", "tenant_id"):
             op.alter_column(
                 "directory_entries",
                 "tenant_id",
@@ -127,37 +135,41 @@ def upgrade() -> None:
     else:
         # SQLite: Use batch_alter_table (recreates table)
         for table in TABLES_WITH_TENANT_ID:
-            with contextlib.suppress(Exception), op.batch_alter_table(table) as batch_op:
+            if _table_has_column(inspector, table, "tenant_id"):
+                with op.batch_alter_table(table) as batch_op:
+                    batch_op.alter_column(
+                        "tenant_id",
+                        existing_type=sa.String(255),
+                        nullable=False,
+                    )
+
+        if _table_has_column(inspector, "rebac_tuples", "tenant_id"):
+            with op.batch_alter_table("rebac_tuples") as batch_op:
+                for col in REBAC_TENANT_COLUMNS:
+                    batch_op.alter_column(
+                        col,
+                        existing_type=sa.String(255),
+                        nullable=False,
+                    )
+
+        if _table_has_column(inspector, "directory_entries", "tenant_id"):
+            with op.batch_alter_table("directory_entries") as batch_op:
                 batch_op.alter_column(
                     "tenant_id",
                     existing_type=sa.String(255),
                     nullable=False,
                 )
 
-        with contextlib.suppress(Exception), op.batch_alter_table("rebac_tuples") as batch_op:
-            for col in REBAC_TENANT_COLUMNS:
-                batch_op.alter_column(
-                    col,
-                    existing_type=sa.String(255),
-                    nullable=False,
-                )
-
-        with contextlib.suppress(Exception), op.batch_alter_table("directory_entries") as batch_op:
-            batch_op.alter_column(
-                "tenant_id",
-                existing_type=sa.String(255),
-                nullable=False,
-            )
-
 
 def downgrade() -> None:
     """Revert tenant_id columns to nullable."""
     bind = op.get_bind()
+    inspector = sa.inspect(bind)
     is_postgres = bind.dialect.name == "postgresql"
 
     if is_postgres:
         for table in TABLES_WITH_TENANT_ID:
-            with contextlib.suppress(Exception):
+            if _table_has_column(inspector, table, "tenant_id"):
                 op.alter_column(
                     table,
                     "tenant_id",
@@ -165,8 +177,8 @@ def downgrade() -> None:
                     nullable=True,
                 )
 
-        with contextlib.suppress(Exception):
-            for col in REBAC_TENANT_COLUMNS:
+        for col in REBAC_TENANT_COLUMNS:
+            if _table_has_column(inspector, "rebac_tuples", col):
                 op.alter_column(
                     "rebac_tuples",
                     col,
@@ -174,7 +186,7 @@ def downgrade() -> None:
                     nullable=True,
                 )
 
-        with contextlib.suppress(Exception):
+        if _table_has_column(inspector, "directory_entries", "tenant_id"):
             op.alter_column(
                 "directory_entries",
                 "tenant_id",
@@ -184,24 +196,27 @@ def downgrade() -> None:
 
     else:
         for table in TABLES_WITH_TENANT_ID:
-            with contextlib.suppress(Exception), op.batch_alter_table(table) as batch_op:
+            if _table_has_column(inspector, table, "tenant_id"):
+                with op.batch_alter_table(table) as batch_op:
+                    batch_op.alter_column(
+                        "tenant_id",
+                        existing_type=sa.String(255),
+                        nullable=True,
+                    )
+
+        if _table_has_column(inspector, "rebac_tuples", "tenant_id"):
+            with op.batch_alter_table("rebac_tuples") as batch_op:
+                for col in REBAC_TENANT_COLUMNS:
+                    batch_op.alter_column(
+                        col,
+                        existing_type=sa.String(255),
+                        nullable=True,
+                    )
+
+        if _table_has_column(inspector, "directory_entries", "tenant_id"):
+            with op.batch_alter_table("directory_entries") as batch_op:
                 batch_op.alter_column(
                     "tenant_id",
                     existing_type=sa.String(255),
                     nullable=True,
                 )
-
-        with contextlib.suppress(Exception), op.batch_alter_table("rebac_tuples") as batch_op:
-            for col in REBAC_TENANT_COLUMNS:
-                batch_op.alter_column(
-                    col,
-                    existing_type=sa.String(255),
-                    nullable=True,
-                )
-
-        with contextlib.suppress(Exception), op.batch_alter_table("directory_entries") as batch_op:
-            batch_op.alter_column(
-                "tenant_id",
-                existing_type=sa.String(255),
-                nullable=True,
-            )

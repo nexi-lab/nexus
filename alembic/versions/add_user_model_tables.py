@@ -171,18 +171,15 @@ def upgrade() -> None:
         sa.Column("provider_profile", sa.Text, nullable=True),
         sa.Column("created_at", sa.DateTime, nullable=False),
         sa.Column("last_used_at", sa.DateTime, nullable=True),
+        # Unique constraint inline for SQLite compatibility
+        sa.UniqueConstraint("provider", "provider_user_id", name="uq_provider_user"),
     )
 
-    # Create indexes and unique constraint for user_oauth_accounts
+    # Create indexes for user_oauth_accounts
     op.create_index("idx_user_oauth_user", "user_oauth_accounts", ["user_id"])
     op.create_index("idx_user_oauth_provider", "user_oauth_accounts", ["provider"])
     op.create_index(
         "idx_user_oauth_provider_user",
-        "user_oauth_accounts",
-        ["provider", "provider_user_id"],
-    )
-    op.create_unique_constraint(
-        "uq_provider_user",
         "user_oauth_accounts",
         ["provider", "provider_user_id"],
     )

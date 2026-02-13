@@ -26,16 +26,22 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Create SQL views for work detection."""
-    # Import views after op is available
+    import sqlalchemy as sa
+
     from nexus.storage import views
 
-    # Detect database type from connection
     connection = op.get_bind()
-    db_type = "sqlite"
-    if connection.dialect.name in ("postgresql", "postgres"):
-        db_type = "postgresql"
+    db_type = "postgresql" if connection.dialect.name in ("postgresql", "postgres") else "sqlite"
 
-    # Create all views with appropriate SQL for this database
+    # Views reference fp.zone_id from file_paths. If zone_id doesn't exist
+    # (e.g. test databases built from migrations — zone_id was never added
+    # via migration, only via create_all()), skip view creation to avoid
+    # creating invalid views that block SQLite ALTER TABLE operations.
+    inspector = sa.inspect(connection)
+    columns = {c["name"] for c in inspector.get_columns("file_paths")}
+    if "zone_id" not in columns:
+        return
+
     all_views = views.get_all_views(db_type)
     for _name, view_sql in all_views:
         connection.execute(view_sql)

@@ -1,9 +1,12 @@
 """Add entity extraction fields to memories for SimpleMem symbolic layer (#1025)
 
 Revision ID: add_entity_extraction
-Revises: add_migration_history, make_tenant_id_non_nullable
+Revises: eb9a31742e51
 Create Date: 2026-01-09
 
+Note: Original down_revision was ("add_migration_history", "make_tenant_id_non_nullable")
+but eb9a31742e51 already merges both of those. Linearized to avoid pathological
+Alembic topological sort (Issue #1296).
 """
 
 from collections.abc import Sequence
@@ -15,10 +18,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "add_entity_extraction"
-down_revision: Union[str, Sequence[str], None] = (
-    "add_migration_history",
-    "make_tenant_id_non_nullable",
-)
+down_revision: Union[str, Sequence[str], None] = "eb9a31742e51"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

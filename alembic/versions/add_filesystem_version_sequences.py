@@ -44,7 +44,7 @@ def upgrade() -> None:
     # Initialize default tenant with revision 0
     op.execute(
         "INSERT INTO filesystem_version_sequences (tenant_id, current_revision, updated_at) "
-        "VALUES ('default', 0, NOW())"
+        "VALUES ('default', 0, CURRENT_TIMESTAMP)"
     )
 
 

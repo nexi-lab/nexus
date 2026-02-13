@@ -275,8 +275,16 @@ def _register_pay_exception_handlers(app: Any) -> None:
         WalletNotFoundError,
     )
     from nexus.pay.sdk import BudgetExceededError, NexusPayError
+    from nexus.pay.spending_policy import (
+        ApprovalRequiredError,
+        PolicyDeniedError,
+        SpendingRateLimitError,
+    )
 
     exception_map: list[tuple[type, int, str]] = [
+        (ApprovalRequiredError, 402, "approval_required"),
+        (SpendingRateLimitError, 429, "rate_limit_exceeded"),
+        (PolicyDeniedError, 403, "policy_denied"),
         (InsufficientCreditsError, 402, "insufficient_credits"),
         (WalletNotFoundError, 404, "wallet_not_found"),
         (BudgetExceededError, 403, "budget_exceeded"),
@@ -483,6 +491,337 @@ async def meter(
         event_type=request.event_type,
     )
     return MeterResponse(success=success)
+
+
+# =============================================================================
+# Spending Policy Endpoints (#1358)
+# =============================================================================
+
+
+class BudgetSummaryResponse(BaseModel):
+    """Agent budget summary."""
+
+    has_policy: bool = Field(..., description="Whether a policy exists for this agent")
+    policy_id: str | None = Field(default=None, description="Active policy ID")
+    limits: dict[str, str] = Field(default_factory=dict, description="Configured limits per period")
+    spent: dict[str, str] = Field(default_factory=dict, description="Amount spent per period")
+    remaining: dict[str, str] = Field(
+        default_factory=dict, description="Remaining budget per period"
+    )
+    rate_limits: dict[str, int] = Field(default_factory=dict, description="Rate limit settings")
+    has_rules: bool = Field(default=False, description="Whether DSL rules are configured")
+
+
+class CreatePolicyRequest(BaseModel):
+    """Request to create a spending policy."""
+
+    agent_id: str | None = Field(default=None, description="Agent ID (null for zone default)")
+    daily_limit: str | None = Field(default=None, description="Daily spending limit")
+    weekly_limit: str | None = Field(default=None, description="Weekly spending limit")
+    monthly_limit: str | None = Field(default=None, description="Monthly spending limit")
+    per_tx_limit: str | None = Field(default=None, description="Per-transaction limit")
+    auto_approve_threshold: str | None = Field(
+        default=None, description="Auto-approve threshold (Phase 2)"
+    )
+    max_tx_per_hour: int | None = Field(
+        default=None, description="Max transactions per hour (Phase 3)"
+    )
+    max_tx_per_day: int | None = Field(
+        default=None, description="Max transactions per day (Phase 3)"
+    )
+    rules: list[dict[str, Any]] | None = Field(default=None, description="DSL rules (Phase 4)")
+    priority: int = Field(default=0, description="Priority (higher overrides lower)")
+    enabled: bool = Field(default=True, description="Whether policy is active")
+
+
+class PolicyResponse(BaseModel):
+    """Spending policy details."""
+
+    policy_id: str
+    zone_id: str
+    agent_id: str | None = None
+    daily_limit: str | None = None
+    weekly_limit: str | None = None
+    monthly_limit: str | None = None
+    per_tx_limit: str | None = None
+    auto_approve_threshold: str | None = None
+    max_tx_per_hour: int | None = None
+    max_tx_per_day: int | None = None
+    rules: list[dict[str, Any]] | None = None
+    priority: int = 0
+    enabled: bool = True
+
+
+class ApprovalResponse(BaseModel):
+    """Approval request details."""
+
+    approval_id: str
+    policy_id: str
+    agent_id: str
+    zone_id: str
+    amount: str
+    to: str
+    memo: str = ""
+    status: str
+    requested_at: str | None = None
+    decided_at: str | None = None
+    decided_by: str | None = None
+    expires_at: str | None = None
+
+
+def _get_policy_service(request: Request) -> Any:
+    """Get SpendingPolicyService from app state."""
+    service = getattr(request.app.state, "spending_policy_service", None)
+    if not service:
+        raise HTTPException(
+            status_code=503,
+            detail="Spending policy service not available",
+        )
+    return service
+
+
+@router.get("/budget", response_model=BudgetSummaryResponse)
+async def get_budget(
+    request: Request,
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+) -> BudgetSummaryResponse:
+    """Get agent's budget summary.
+
+    Returns active policy limits, current spending, and remaining budget
+    per period (daily, weekly, monthly).
+    """
+    agent_id = _extract_agent_id(auth_result)
+    zone_id = auth_result.get("zone_id", "default")
+    policy_service = _get_policy_service(request)
+
+    summary = await policy_service.get_budget_summary(agent_id, zone_id)
+    return BudgetSummaryResponse(**summary)
+
+
+@router.post("/policies", response_model=PolicyResponse, status_code=201)
+async def create_policy(
+    body: CreatePolicyRequest,
+    request: Request,
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+) -> PolicyResponse:
+    """Create a spending policy for an agent or zone.
+
+    Requires admin privileges.
+    """
+    if not auth_result.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    zone_id = auth_result.get("zone_id", "default")
+    policy_service = _get_policy_service(request)
+
+    policy = await policy_service.create_policy(
+        zone_id=zone_id,
+        agent_id=body.agent_id,
+        daily_limit=Decimal(body.daily_limit) if body.daily_limit else None,
+        weekly_limit=Decimal(body.weekly_limit) if body.weekly_limit else None,
+        monthly_limit=Decimal(body.monthly_limit) if body.monthly_limit else None,
+        per_tx_limit=Decimal(body.per_tx_limit) if body.per_tx_limit else None,
+        auto_approve_threshold=Decimal(body.auto_approve_threshold)
+        if body.auto_approve_threshold
+        else None,
+        max_tx_per_hour=body.max_tx_per_hour,
+        max_tx_per_day=body.max_tx_per_day,
+        rules=body.rules,
+        priority=body.priority,
+        enabled=body.enabled,
+    )
+
+    return _policy_to_response(policy)
+
+
+@router.get("/policies", response_model=list[PolicyResponse])
+async def list_policies(
+    request: Request,
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+) -> list[PolicyResponse]:
+    """List all spending policies for the current zone.
+
+    Requires admin privileges.
+    """
+    if not auth_result.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    zone_id = auth_result.get("zone_id", "default")
+    policy_service = _get_policy_service(request)
+
+    policies = await policy_service.list_policies(zone_id)
+    return [_policy_to_response(p) for p in policies]
+
+
+@router.delete("/policies/{policy_id}", status_code=204)
+async def delete_policy(
+    policy_id: str,
+    request: Request,
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+) -> None:
+    """Delete a spending policy.
+
+    Requires admin privileges.
+    """
+    if not auth_result.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    policy_service = _get_policy_service(request)
+    deleted = await policy_service.delete_policy(policy_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Policy not found")
+
+
+# =============================================================================
+# Approval Endpoints (Phase 2)
+# =============================================================================
+
+
+class RequestApprovalBody(BaseModel):
+    """Request body for creating an approval request."""
+
+    amount: str = Field(..., description="Amount requiring approval")
+    to: str = Field(..., description="Recipient agent ID")
+    memo: str = Field(default="", description="Optional memo")
+
+    @field_validator("amount")
+    @classmethod
+    def validate_amount(cls, v: str) -> str:
+        return _validate_amount(v)
+
+
+@router.post("/approvals", response_model=ApprovalResponse, status_code=201)
+async def request_approval(
+    body: RequestApprovalBody,
+    request: Request,
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+) -> ApprovalResponse:
+    """Request approval for a transaction exceeding auto-approve threshold.
+
+    Any authenticated agent can request approval for their own transfers.
+    """
+    agent_id = _extract_agent_id(auth_result)
+    zone_id = auth_result.get("zone_id", "default")
+    policy_service = _get_policy_service(request)
+
+    # Resolve the effective policy to get policy_id
+    policy = await policy_service.get_policy(agent_id, zone_id)
+    if policy is None:
+        policy = await policy_service.get_policy(None, zone_id)
+    if policy is None:
+        raise HTTPException(status_code=404, detail="No policy found for this agent")
+
+    approval = await policy_service.request_approval(
+        policy_id=policy.policy_id,
+        agent_id=agent_id,
+        zone_id=zone_id,
+        amount=Decimal(body.amount),
+        to=body.to,
+        memo=body.memo,
+    )
+    return _approval_to_response(approval)
+
+
+@router.get("/approvals", response_model=list[ApprovalResponse])
+async def list_approvals(
+    request: Request,
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+) -> list[ApprovalResponse]:
+    """List pending approval requests for the zone.
+
+    Requires admin privileges.
+    """
+    if not auth_result.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    zone_id = auth_result.get("zone_id", "default")
+    policy_service = _get_policy_service(request)
+    approvals = await policy_service.list_pending_approvals(zone_id)
+    return [_approval_to_response(a) for a in approvals]
+
+
+@router.post("/approvals/{approval_id}/approve", response_model=ApprovalResponse)
+async def approve(
+    approval_id: str,
+    request: Request,
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+) -> ApprovalResponse:
+    """Approve a pending approval request.
+
+    Requires admin privileges.
+    """
+    if not auth_result.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    admin_id = _extract_agent_id(auth_result)
+    policy_service = _get_policy_service(request)
+    result = await policy_service.approve_request(approval_id, decided_by=admin_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Approval not found or already decided")
+    return _approval_to_response(result)
+
+
+@router.post("/approvals/{approval_id}/reject", response_model=ApprovalResponse)
+async def reject(
+    approval_id: str,
+    request: Request,
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+) -> ApprovalResponse:
+    """Reject a pending approval request.
+
+    Requires admin privileges.
+    """
+    if not auth_result.get("is_admin"):
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    admin_id = _extract_agent_id(auth_result)
+    policy_service = _get_policy_service(request)
+    result = await policy_service.reject_request(approval_id, decided_by=admin_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Approval not found or already decided")
+    return _approval_to_response(result)
+
+
+# =============================================================================
+# Response Helpers
+# =============================================================================
+
+
+def _policy_to_response(p: Any) -> PolicyResponse:
+    """Convert SpendingPolicy to PolicyResponse."""
+    return PolicyResponse(
+        policy_id=p.policy_id,
+        zone_id=p.zone_id,
+        agent_id=p.agent_id,
+        daily_limit=str(p.daily_limit) if p.daily_limit else None,
+        weekly_limit=str(p.weekly_limit) if p.weekly_limit else None,
+        monthly_limit=str(p.monthly_limit) if p.monthly_limit else None,
+        per_tx_limit=str(p.per_tx_limit) if p.per_tx_limit else None,
+        auto_approve_threshold=str(p.auto_approve_threshold) if p.auto_approve_threshold else None,
+        max_tx_per_hour=p.max_tx_per_hour,
+        max_tx_per_day=p.max_tx_per_day,
+        rules=p.rules,
+        priority=p.priority,
+        enabled=p.enabled,
+    )
+
+
+def _approval_to_response(a: Any) -> ApprovalResponse:
+    """Convert SpendingApproval to ApprovalResponse."""
+    return ApprovalResponse(
+        approval_id=a.approval_id,
+        policy_id=a.policy_id,
+        agent_id=a.agent_id,
+        zone_id=a.zone_id,
+        amount=str(a.amount),
+        to=a.to,
+        memo=a.memo,
+        status=a.status,
+        requested_at=a.requested_at.isoformat() if a.requested_at else None,
+        decided_at=a.decided_at.isoformat() if a.decided_at else None,
+        decided_by=a.decided_by,
+        expires_at=a.expires_at.isoformat() if a.expires_at else None,
+    )
 
 
 # =============================================================================

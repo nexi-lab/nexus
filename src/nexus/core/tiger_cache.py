@@ -555,6 +555,7 @@ class TigerCache:
                     return (data, int(rev))
 
                 elif operation == "set":
+                    assert bitmap_data is not None, "bitmap_data required for set"
                     pipe = client.pipeline()
                     pipe.hset(key, mapping={"data": bitmap_data, "revision": str(revision)})
                     pipe.expire(key, ttl)

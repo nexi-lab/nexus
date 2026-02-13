@@ -64,7 +64,12 @@ class NexusPayError(Exception):
 
 
 class BudgetExceededError(NexusPayError):
-    """Raised when an operation exceeds budget limits."""
+    """Raised when an operation exceeds budget limits.
+
+    Note: This inherits from NexusPayError for backwards compatibility.
+    For new code, use PolicyDeniedError from nexus.pay.spending_policy instead,
+    which provides richer context (policy_id, remaining budget).
+    """
 
 
 # =============================================================================

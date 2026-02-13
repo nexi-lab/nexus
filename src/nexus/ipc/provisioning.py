@@ -31,7 +31,7 @@ class AgentProvisioner:
 
     Args:
         vfs: VFS operations for directory and file creation.
-        zone_id: Zone ID for multi-tenant isolation.
+        zone_id: Zone ID for multi-zone isolation.
     """
 
     def __init__(self, vfs: VFSOperations, zone_id: str = "default") -> None:

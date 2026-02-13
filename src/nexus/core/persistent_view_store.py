@@ -36,7 +36,7 @@ class PersistentView:
     Attributes:
         subject_type: Subject type (e.g., "user", "agent")
         subject_id: Subject identifier
-        zone_id: Zone for multi-tenant isolation (None → "default")
+        zone_id: Zone for multi-zone isolation (None → "default")
         mount_paths: Sorted tuple of mount prefix strings (immutable)
         grants_hash: 16-char SHA-256 hex digest of sorted grants
         revision_bucket: Zone revision bucket when view was built

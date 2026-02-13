@@ -157,7 +157,7 @@ class PostgresPermissionCache:
     Implements PermissionCacheProtocol via structural subtyping.
 
     Extracted from rebac_manager.py:3841-4575 and rebac_manager_zone_aware.py:909-992.
-    All queries include zone_id for multi-tenant isolation (P0 security).
+    All queries include zone_id for multi-zone isolation (P0 security).
     """
 
     def __init__(

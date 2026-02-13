@@ -166,7 +166,7 @@ class ArchivalStore:
 
         import numpy as np
 
-        from nexus.core.ace.affinity import compute_cosine_similarity
+        from nexus.services.ace.affinity import compute_cosine_similarity
 
         query_vec = np.array(query_embedding)
         scored: list[tuple[MemoryModel, float]] = []

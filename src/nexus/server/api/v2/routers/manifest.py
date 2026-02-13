@@ -93,7 +93,7 @@ def _validate_sources(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     from pydantic import TypeAdapter, ValidationError
 
-    from nexus.core.context_manifest.models import ContextSource
+    from nexus.services.context_manifest.models import ContextSource
 
     adapter: TypeAdapter[ContextSource] = TypeAdapter(ContextSource)
     validated: list[dict[str, Any]] = []
@@ -185,7 +185,7 @@ async def resolve_manifest(
     """
     from pydantic import TypeAdapter
 
-    from nexus.core.context_manifest.models import ContextSource, ManifestResolutionError
+    from nexus.services.context_manifest.models import ContextSource, ManifestResolutionError
 
     registry = _get_agent_registry(nexus_fs)
     resolver = _get_manifest_resolver(nexus_fs)

@@ -28,7 +28,7 @@ class PersistentNamespaceViewModel(Base):
         id: UUID primary key
         subject_type: Subject type (e.g., "user", "agent")
         subject_id: Subject identifier
-        zone_id: Zone for multi-tenant isolation (default: "default")
+        zone_id: Zone for multi-zone isolation (default: "default")
         mount_paths_json: JSON array of sorted mount path strings
         grants_hash: 16-char SHA-256 hex digest of sorted grants
         revision_bucket: Zone revision bucket when view was built

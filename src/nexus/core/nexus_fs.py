@@ -5940,7 +5940,7 @@ class NexusFS(  # type: ignore[misc]
         Returns:
             List of trajectory summaries
         """
-        from nexus.core.ace.trajectory import TrajectoryManager
+        from nexus.services.ace.trajectory import TrajectoryManager
 
         session = self.SessionLocal()
         try:
@@ -5980,7 +5980,7 @@ class NexusFS(  # type: ignore[misc]
         Returns:
             Dict with playbook_id
         """
-        from nexus.core.ace.playbook import PlaybookManager
+        from nexus.services.ace.playbook import PlaybookManager
 
         session = self.SessionLocal()
         try:
@@ -6008,7 +6008,7 @@ class NexusFS(  # type: ignore[misc]
         Returns:
             Playbook dict or None
         """
-        from nexus.core.ace.playbook import PlaybookManager
+        from nexus.services.ace.playbook import PlaybookManager
 
         session = self.SessionLocal()
         try:
@@ -6041,7 +6041,7 @@ class NexusFS(  # type: ignore[misc]
         Returns:
             List of playbook summaries
         """
-        from nexus.core.ace.playbook import PlaybookManager
+        from nexus.services.ace.playbook import PlaybookManager
 
         session = self.SessionLocal()
         try:

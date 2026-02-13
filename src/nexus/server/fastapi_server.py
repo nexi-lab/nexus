@@ -300,6 +300,8 @@ class AppState:
         self.reactive_subscription_manager: Any = None
         # Agent Registry for agent lifecycle (Issue #1240)
         self.agent_registry: Any = None
+        # Async Agent Registry wrapper (Issue #1440)
+        self.async_agent_registry: Any = None
         # Agent Event Log for sandbox lifecycle events (Issue #1307)
         self.agent_event_log: Any = None
         # SandboxAuthService for authenticated sandbox creation (Issue #1307)
@@ -795,12 +797,19 @@ async def lifespan(_app: FastAPI) -> Any:
             if perm_enforcer is not None:
                 perm_enforcer.agent_registry = _app_state.agent_registry
 
+            # Issue #1440: Create async wrapper for protocol conformance
+            from nexus.core.async_agent_registry import AsyncAgentRegistry
+
+            _app_state.async_agent_registry = AsyncAgentRegistry(_app_state.agent_registry)
+
             logger.info("[AGENT-REG] AgentRegistry initialized and wired")
         except Exception as e:
             logger.warning(f"[AGENT-REG] Failed to initialize AgentRegistry: {e}")
             _app_state.agent_registry = None
+            _app_state.async_agent_registry = None
     else:
         _app_state.agent_registry = None
+        _app_state.async_agent_registry = None
 
     # Issue #1355: Initialize KeyService for agent identity
     if _app_state.nexus_fs and getattr(_app_state.nexus_fs, "SessionLocal", None):

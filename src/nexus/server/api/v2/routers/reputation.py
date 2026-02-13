@@ -266,7 +266,7 @@ def submit_feedback(
     deps: tuple[Any, Any, dict[str, Any]] = Depends(get_reputation_context),
 ) -> FeedbackSubmitResponse:
     """Submit feedback for an exchange."""
-    from nexus.core.reputation_service import DuplicateFeedbackError
+    from nexus.services.reputation.reputation_service import DuplicateFeedbackError
 
     reputation_service, _dispute_service, auth_ctx = deps
     zone_id = auth_ctx.get("zone_id", "default") or "default"
@@ -312,7 +312,7 @@ def file_dispute(
     deps: tuple[Any, Any, dict[str, Any]] = Depends(get_reputation_context),
 ) -> DisputeResponse:
     """File a dispute for an exchange."""
-    from nexus.core.dispute_service import DuplicateDisputeError
+    from nexus.services.reputation.dispute_service import DuplicateDisputeError
 
     _reputation_service, dispute_service, auth_ctx = deps
     zone_id = auth_ctx.get("zone_id", "default") or "default"
@@ -356,7 +356,7 @@ def resolve_dispute(
     deps: tuple[Any, Any, dict[str, Any]] = Depends(get_reputation_context),
 ) -> DisputeResponse:
     """Resolve a dispute (admin/auto-mediation)."""
-    from nexus.core.dispute_service import (
+    from nexus.services.reputation.dispute_service import (
         DisputeNotFoundError,
         InvalidTransitionError,
     )

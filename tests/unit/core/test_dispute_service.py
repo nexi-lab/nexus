@@ -20,7 +20,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from nexus.core.dispute_service import (
+from nexus.services.reputation.dispute_service import (
     DisputeNotFoundError,
     DisputeService,
     DuplicateDisputeError,

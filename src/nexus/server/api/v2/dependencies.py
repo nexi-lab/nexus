@@ -330,8 +330,8 @@ async def get_reputation_context(
     Returns:
         Tuple of (ReputationService, DisputeService, auth_context dict).
     """
-    from nexus.core.dispute_service import DisputeService
-    from nexus.core.reputation_service import ReputationService
+    from nexus.services.reputation.dispute_service import DisputeService
+    from nexus.services.reputation.reputation_service import ReputationService
 
     session_factory = nexus_fs.SessionLocal
     reputation_service = ReputationService(

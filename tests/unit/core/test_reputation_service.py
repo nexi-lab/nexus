@@ -18,7 +18,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from nexus.core.reputation_service import DuplicateFeedbackError, ReputationService
+from nexus.services.reputation.reputation_service import DuplicateFeedbackError, ReputationService
 from nexus.storage.models import Base
 
 # ---------------------------------------------------------------------------

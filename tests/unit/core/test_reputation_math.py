@@ -17,7 +17,7 @@ import math
 
 import pytest
 
-from nexus.core.reputation_math import (
+from nexus.services.reputation.reputation_math import (
     DEFAULT_HALF_LIFE_SECONDS,
     compute_beta_score,
     compute_composite_score,

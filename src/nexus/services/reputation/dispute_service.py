@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, ClassVar
 
 from sqlalchemy import select
 
-from nexus.core.reputation_records import DisputeRecord
+from nexus.services.reputation.reputation_records import DisputeRecord
 from nexus.storage.models._base import _generate_uuid
 from nexus.storage.models.dispute import DisputeModel
 from nexus.storage.session_mixin import SessionMixin

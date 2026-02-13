@@ -21,8 +21,8 @@ from typing import TYPE_CHECKING
 from cachetools import TTLCache
 from sqlalchemy import select
 
-from nexus.core.reputation_math import compute_composite_score
-from nexus.core.reputation_records import ReputationEvent, ReputationScore
+from nexus.services.reputation.reputation_math import compute_composite_score
+from nexus.services.reputation.reputation_records import ReputationEvent, ReputationScore
 from nexus.storage.models._base import _generate_uuid
 from nexus.storage.models.reputation_event import ReputationEventModel
 from nexus.storage.models.reputation_score import ReputationScoreModel

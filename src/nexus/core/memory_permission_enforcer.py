@@ -120,14 +120,19 @@ class MemoryPermissionEnforcer(PermissionEnforcer):
         # 3. User ownership check
         # Check if the requesting user matches the memory's user
         # BUT only for user/zone/global scoped memories (not agent-scoped)
-        if memory.user_id and self.entity_registry and memory.scope in ["user", "zone", "global"]:
-            # Look up the requesting user/agent in the entity registry
-            requesting_entities = self.entity_registry.lookup_entity_by_id(context.user)
+        if memory.user_id and memory.scope in ["user", "zone", "global"]:
+            # 3a. Direct user_id match (no registry lookup needed)
+            if context.user == memory.user_id:
+                return True
 
-            for entity in requesting_entities:
-                # If requesting user matches memory user directly
-                if entity.entity_type == "user" and entity.entity_id == memory.user_id:
-                    return True
+            # 3b. Entity registry lookup (for agent→user ownership inheritance)
+            if self.entity_registry:
+                requesting_entities = self.entity_registry.lookup_entity_by_id(context.user)
+
+                for entity in requesting_entities:
+                    # If requesting user matches memory user directly
+                    if entity.entity_type == "user" and entity.entity_id == memory.user_id:
+                        return True
 
         # 4. Zone-scoped sharing
         if memory.scope == "zone" and memory.zone_id and self.entity_registry:

@@ -620,6 +620,38 @@ class AsyncNexusFS:
         async for chunk in self.backend.stream_content(meta.etag, chunk_size=chunk_size):
             yield chunk
 
+    async def stream_read_range(
+        self,
+        path: str,
+        start: int,
+        end: int,
+        chunk_size: int = 8192,
+        context: OperationContext | None = None,
+    ) -> AsyncIterator[bytes]:
+        """Stream a byte range of file content.
+
+        Args:
+            path: Virtual path to read
+            start: First byte position (inclusive, 0-based)
+            end: Last byte position (inclusive, 0-based)
+            chunk_size: Size of each chunk in bytes
+            context: Operation context for permission checking
+
+        Yields:
+            Byte chunks covering the requested range
+        """
+        path = self._validate_path(path)
+        await self._acheck_permission(path, Permission.READ, context)
+
+        meta = await self.metadata.aget(path)
+        if meta is None or meta.etag is None:
+            raise NexusFileNotFoundError(path=path)
+
+        async for chunk in self.backend.stream_range(
+            meta.etag, start, end, chunk_size=chunk_size
+        ):
+            yield chunk
+
     async def stream_write(
         self,
         path: str,

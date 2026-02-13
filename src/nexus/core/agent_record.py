@@ -124,6 +124,9 @@ class AgentRecord:
         generation: Session generation counter (increments on new session only)
         last_heartbeat: Timestamp of last heartbeat (None if never heartbeated)
         metadata: Arbitrary agent metadata (platform, endpoint_url, etc.)
+        context_manifest: Serialized context sources for deterministic pre-execution
+            (Issue #1341). Stored as tuple of dicts to keep kernel free of Pydantic.
+            Deserialized into ContextSource models at resolution time.
         created_at: When the agent was first registered
         updated_at: When the agent record was last modified
     """
@@ -138,3 +141,15 @@ class AgentRecord:
     metadata: types.MappingProxyType[str, Any]
     created_at: datetime
     updated_at: datetime
+    context_manifest: tuple[dict[str, Any], ...] = ()
+
+    @property
+    def capabilities(self) -> list[str]:
+        """Agent capabilities for discovery (stored in metadata).
+
+        Returns:
+            List of capability strings (e.g. ["search", "analyze", "code"]).
+            Empty list if no capabilities are set.
+        """
+        caps = self.metadata.get("capabilities", [])
+        return list(caps) if isinstance(caps, (list, tuple)) else []

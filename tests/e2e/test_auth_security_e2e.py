@@ -441,6 +441,116 @@ class TestPermissionEnforcement:
         with pytest.raises(PermissionError, match="[Aa]ccess denied"):
             nx.write(file_path, b"overwritten!", context=viewer_ctx)
 
+    def test_edit_denied_without_permission(self, nexus_fs_enforced: NexusFS):
+        """An unprivileged user cannot edit a file they have no grant for."""
+        nx = nexus_fs_enforced
+        admin_ctx = OperationContext(
+            user="admin",
+            groups=["admins"],
+            zone_id="default",
+            is_admin=True,
+        )
+        file_path = "/workspace/protected.py"
+        nx.write(file_path, b"def foo():\n    return 1\n", context=admin_ctx)
+
+        # Unprivileged user with no grants
+        user_ctx = OperationContext(
+            user="mallory",
+            groups=[],
+            zone_id="default",
+        )
+        with pytest.raises(PermissionError, match="[Aa]ccess denied"):
+            nx.edit(
+                file_path,
+                [{"old_str": "foo", "new_str": "bar"}],
+                context=user_ctx,
+            )
+
+    def test_edit_requires_write_permission(self, nexus_fs_enforced: NexusFS):
+        """A viewer (read-only grant) cannot edit a file — edit needs write permission."""
+        nx = nexus_fs_enforced
+        file_path = "/zone/default/user:admin/editable.py"
+
+        admin_ctx = OperationContext(
+            user="admin",
+            groups=["admins"],
+            zone_id="default",
+            is_admin=True,
+        )
+        nx.write(file_path, b"def hello():\n    return 'world'\n", context=admin_ctx)
+
+        # Create a read-only grant for "viewer" via ReBAC
+        if nx._rebac_manager:
+            nx._rebac_manager.rebac_write(
+                subject=("user", "viewer"),
+                relation="direct_viewer",
+                object=("file", file_path),
+                zone_id="default",
+            )
+
+        viewer_ctx = OperationContext(
+            user="viewer",
+            groups=[],
+            zone_id="default",
+        )
+
+        # Read should succeed (viewer has read permission)
+        content = nx.read(file_path, context=viewer_ctx)
+        assert content == b"def hello():\n    return 'world'\n"
+
+        # Edit should fail — edit delegates to write(), viewer has no write permission
+        with pytest.raises(PermissionError, match="[Aa]ccess denied"):
+            nx.edit(
+                file_path,
+                [{"old_str": "hello", "new_str": "goodbye"}],
+                context=viewer_ctx,
+            )
+
+        # Verify file unchanged
+        content_after = nx.read(file_path, context=viewer_ctx)
+        assert content_after == b"def hello():\n    return 'world'\n"
+
+    def test_edit_succeeds_with_write_permission(self, nexus_fs_enforced: NexusFS):
+        """A user with write permission can successfully edit a file."""
+        nx = nexus_fs_enforced
+        file_path = "/zone/default/user:admin/writable.py"
+
+        admin_ctx = OperationContext(
+            user="admin",
+            groups=["admins"],
+            zone_id="default",
+            is_admin=True,
+        )
+        nx.write(file_path, b"x = 1\n", context=admin_ctx)
+
+        # Create a write grant for "editor" via ReBAC
+        if nx._rebac_manager:
+            nx._rebac_manager.rebac_write(
+                subject=("user", "editor"),
+                relation="direct_editor",
+                object=("file", file_path),
+                zone_id="default",
+            )
+
+        editor_ctx = OperationContext(
+            user="editor",
+            groups=[],
+            zone_id="default",
+        )
+
+        # Edit should succeed (editor has write permission)
+        result = nx.edit(
+            file_path,
+            [{"old_str": "x = 1", "new_str": "x = 42"}],
+            context=editor_ctx,
+        )
+        assert result["success"] is True
+        assert result["applied_count"] == 1
+
+        # Verify content changed
+        content = nx.read(file_path, context=editor_ctx)
+        assert content == b"x = 42\n"
+
 
 # ---------------------------------------------------------------------------
 # D) Rate Limiting

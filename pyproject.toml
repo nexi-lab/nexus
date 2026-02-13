@@ -121,6 +121,7 @@ dependencies = [
     # Affinity-based memory consolidation (Issue #1026 - SimpleMem-inspired)
     "numpy>=1.26.0",
     "scikit-learn>=1.4.0",
+    "aiofiles>=25.1.0",
 ]
 
 [project.optional-dependencies]
@@ -250,14 +251,11 @@ Changelog = "https://github.com/nexi-lab/nexus/blob/main/CHANGELOG.md"
 nexus = "nexus.cli:main"
 
 [build-system]
-requires = ["maturin>=1.0,<2.0"]
-build-backend = "maturin"
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
 
-[tool.maturin]
-python-source = "src"
-module-name = "nexus._nexus_fast"
-# Build Rust extension as optional - pure Python wheel will work without it
-features = ["pyo3/extension-module"]
+[tool.setuptools.packages.find]
+where = ["src"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"
@@ -453,12 +451,17 @@ warn_unused_ignores = false
 module = "nexus.cache.dragonfly"
 # redis library has complex async types that mypy struggles with
 warn_unused_ignores = false
-disable_error_code = ["no-any-return", "no-untyped-def", "return-value", "import-untyped"]
+disable_error_code = ["no-any-return", "no-untyped-def", "return-value", "import-untyped", "attr-defined", "arg-type"]
+
+[[tool.mypy.overrides]]
+module = "nexus.core.event_bus"
+# redis PubSub.aclose() not in type stubs
+disable_error_code = ["attr-defined"]
 
 [[tool.mypy.overrides]]
 module = "nexus.core.tiger_cache"
 # redis library has complex types that mypy struggles with
-disable_error_code = ["import-untyped"]
+disable_error_code = ["import-untyped", "call-overload", "dict-item"]
 
 [[tool.mypy.overrides]]
 module = "nexus.storage.cache"
@@ -496,6 +499,7 @@ module = [
     "nexus.core.permission_boundary_cache",
     "nexus.core.agent_registry",
     "nexus.identity.key_service",
+    "nexus.core.reputation_service",
 ]
 # cachetools returns Any from generic cache
 disable_error_code = ["import-untyped", "no-any-return"]
@@ -562,7 +566,12 @@ warn_unused_ignores = false
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-exclude = ["benchmarks/"]
+exclude = [
+    "benchmarks/",
+    "src/nexus/core/_metadata_generated.py",  # Generated at install time
+    "src/nexus/core/_compact_generated.py",    # Generated at install time
+    "src/nexus/core/protocols/",               # Generated at install time
+]
 
 [tool.ruff.lint]
 select = [
@@ -598,6 +607,7 @@ ignore = [
 "src/nexus/raft/transport_pb2_grpc.py" = ["ARG002"]  # Auto-generated gRPC stubs
 "src/nexus/raft/client.py" = ["SIM105"]  # datetime parsing with fallback
 "src/nexus/storage/raft_metadata_store.py" = ["ARG002", "SIM105", "SIM108", "SIM102"]  # Interface + datetime parsing + style
+"src/nexus/storage/sql_metadata_store.py" = ["ARG002"]  # Interface consistency param for API compatibility
 "scripts/*.py" = ["ARG001"]  # Utility scripts
 
 [tool.ruff.lint.isort]
@@ -613,5 +623,8 @@ line-ending = "auto"
 dev = [
     "freezegun>=1.5.5",
     "grpcio-tools>=1.76.0",
+    "pytest-cov>=7.0.0",
+    "types-aiofiles>=25.1.0.20251011",
     "types-protobuf>=6.32.1.20251210",
+    "types-redis>=4.6.0.20241004",
 ]

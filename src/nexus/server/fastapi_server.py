@@ -32,6 +32,7 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from anyio import to_thread
@@ -75,6 +76,7 @@ from nexus.server.error_handlers import (  # noqa: E402
 from nexus.server.path_utils import (
     unscope_internal_dict,
     unscope_internal_path,
+    unscope_result,
 )
 from nexus.server.protocol import (
     RPCErrorCode,
@@ -306,8 +308,12 @@ class AppState:
         self.write_back_service: Any = None
         # Task Queue Runner (Issue #574)
         self.task_runner: Any = None
+        # Event Log WAL for durable event persistence (Issue #1397)
+        self.event_log: Any = None
         # Issue #1355: Agent identity KeyService
         self.key_service: Any = None
+        # Issue #788: Chunked upload service
+        self.chunked_upload_service: Any = None
 
 
 # Global state (set during app creation)
@@ -372,25 +378,22 @@ async def lifespan(_app: FastAPI) -> Any:
                 )
 
                 # Issue #1239: Create namespace manager for per-subject visibility
-                # NamespaceManager uses sync rebac_manager from nexus_fs for mount table queries
+                # Issue #1265: Factory function handles L3 persistent store wiring
                 namespace_manager = None
                 if enforce_permissions and hasattr(_app_state, "nexus_fs"):
                     sync_rebac = getattr(_app_state.nexus_fs, "_rebac_manager", None)
                     if sync_rebac:
-                        from nexus.core.namespace_manager import NamespaceManager
+                        from nexus.core.namespace_factory import create_namespace_manager
 
-                        ns_cache_ttl = int(os.getenv("NEXUS_NAMESPACE_CACHE_TTL", "300"))
-                        ns_revision_window = int(os.getenv("NEXUS_NAMESPACE_REVISION_WINDOW", "10"))
-                        namespace_manager = NamespaceManager(
+                        ns_record_store = getattr(_app_state.nexus_fs, "_record_store", None)
+                        namespace_manager = create_namespace_manager(
                             rebac_manager=sync_rebac,
-                            cache_maxsize=10_000,
-                            cache_ttl=ns_cache_ttl,
-                            revision_window=ns_revision_window,
+                            record_store=ns_record_store,
                         )
                         logger.info(
                             "[NAMESPACE] NamespaceManager initialized for AsyncPermissionEnforcer "
-                            f"(cache_ttl={ns_cache_ttl}, revision_window={ns_revision_window}, "
-                            "using sync rebac_manager for mount table queries)"
+                            "(using sync rebac_manager, L3=%s)",
+                            "enabled" if ns_record_store else "disabled",
                         )
 
                 # Create permission enforcer with async ReBAC
@@ -457,35 +460,56 @@ async def lifespan(_app: FastAPI) -> Any:
     except Exception as e:
         logger.warning(f"Failed to initialize cache factory: {e}")
 
-    # Reactive Subscription Manager for O(1) event matching (Issue #1167)
-    # Composes ReadSetRegistry for read-set subscriptions + legacy pattern fallback
+    # Event Log WAL for durable event persistence (Issue #1397)
+    # Service-layer concern: WAL-first durability for EventBus, not a kernel pillar.
+    # Rust WAL preferred; falls back to PG; None if neither available (graceful degrade).
+    _app_state.event_log = None
     try:
-        from nexus.core.reactive_subscriptions import ReactiveSubscriptionManager
+        from nexus.services.event_log import EventLogConfig, create_event_log
 
-        _app_state.reactive_subscription_manager = ReactiveSubscriptionManager()
-        logger.info("Reactive subscription manager initialized")
+        wal_dir = os.getenv("NEXUS_WAL_DIR", ".nexus-data/wal")
+        sync_mode = os.getenv("NEXUS_WAL_SYNC_MODE", "every")
+        segment_size = int(os.getenv("NEXUS_WAL_SEGMENT_SIZE", str(4 * 1024 * 1024)))
+
+        event_log_config = EventLogConfig(
+            wal_dir=Path(wal_dir),
+            segment_size_bytes=segment_size,
+            sync_mode=sync_mode,  # type: ignore[arg-type]
+        )
+        _app_state.event_log = create_event_log(
+            event_log_config,
+            session_factory=getattr(_app_state, "session_factory", None),
+        )
+        if _app_state.event_log:
+            logger.info(f"Event log initialized (wal_dir={wal_dir}, sync_mode={sync_mode})")
     except Exception as e:
-        logger.warning(f"Failed to initialize reactive subscription manager: {e}")
+        logger.warning(f"Failed to initialize event log: {e}")
 
-    # Reactive Subscription Manager for O(1) event matching (Issue #1167)
-    # Composes ReadSetRegistry for read-set subscriptions + legacy pattern fallback
-    try:
-        from nexus.core.reactive_subscriptions import ReactiveSubscriptionManager
+    # Issue #1397: Start event bus and wire event log for WAL-first persistence
+    if _app_state.nexus_fs:
+        event_bus_ref = getattr(_app_state.nexus_fs, "_event_bus", None)
+        if event_bus_ref is not None:
+            # Connect the underlying DragonflyClient (async init required)
+            redis_client = getattr(event_bus_ref, "_redis", None)
+            if redis_client and hasattr(redis_client, "connect"):
+                try:
+                    await redis_client.connect()
+                except Exception as e:
+                    logger.warning(f"Failed to connect event bus Redis client: {e}")
 
-        _app_state.reactive_subscription_manager = ReactiveSubscriptionManager()
-        logger.info("Reactive subscription manager initialized")
-    except Exception as e:
-        logger.warning(f"Failed to initialize reactive subscription manager: {e}")
+            # Start the event bus (sets _started=True, enables publish())
+            if hasattr(event_bus_ref, "start") and not getattr(event_bus_ref, "_started", True):
+                try:
+                    await event_bus_ref.start()
+                    logger.info("Event bus started for event publishing")
+                except Exception as e:
+                    logger.warning(f"Failed to start event bus: {e}")
 
-    # Reactive Subscription Manager for O(1) event matching (Issue #1167)
-    # Composes ReadSetRegistry for read-set subscriptions + legacy pattern fallback
-    try:
-        from nexus.core.reactive_subscriptions import ReactiveSubscriptionManager
-
-        _app_state.reactive_subscription_manager = ReactiveSubscriptionManager()
-        logger.info("Reactive subscription manager initialized")
-    except Exception as e:
-        logger.warning(f"Failed to initialize reactive subscription manager: {e}")
+            # Wire event_log into EventBus for WAL-first durability (Issue #1397).
+            # EventBus.publish() handles: WAL append (if available) → Dragonfly fan-out.
+            if _app_state.event_log is not None:
+                event_bus_ref._event_log = _app_state.event_log
+                logger.info("Event log wired into EventBus (WAL-first before pub/sub)")
 
     # WebSocket Manager for real-time events (Issue #1116)
     # Bridges Redis Pub/Sub to WebSocket clients for push notifications
@@ -811,6 +835,63 @@ async def lifespan(_app: FastAPI) -> Any:
     else:
         _app_state.key_service = None
 
+    # Issue #788: Initialize ChunkedUploadService for tus.io resumable uploads
+    # Prefer the pre-configured service from factory (reads NEXUS_UPLOAD_* env vars).
+    # Fall back to creating one here if the factory didn't provide it.
+    _upload_cleanup_task = None
+    _factory_upload_svc = (
+        _app_state.nexus_fs._service_extras.get("chunked_upload_service")
+        if _app_state.nexus_fs
+        else None
+    )
+    if _factory_upload_svc is not None:
+        _app_state.chunked_upload_service = _factory_upload_svc
+        _upload_cleanup_task = asyncio.create_task(
+            _app_state.chunked_upload_service.start_cleanup_loop()
+        )
+        logger.info("[TUS] ChunkedUploadService initialized from factory with background cleanup")
+    elif _app_state.nexus_fs and getattr(_app_state.nexus_fs, "SessionLocal", None):
+        try:
+            from nexus.services.chunked_upload_service import (
+                ChunkedUploadConfig,
+                ChunkedUploadService,
+            )
+
+            _backend = getattr(_app_state.nexus_fs, "backend", None)
+            _session_factory = _app_state.nexus_fs.SessionLocal
+            if _backend and _session_factory:
+                # Build config from env vars for fallback path
+                import os as _os
+
+                _upload_kwargs: dict = {}
+                for _env, _key in {
+                    "NEXUS_UPLOAD_MIN_CHUNK_SIZE": "min_chunk_size",
+                    "NEXUS_UPLOAD_MAX_CHUNK_SIZE": "max_chunk_size",
+                    "NEXUS_UPLOAD_MAX_CONCURRENT": "max_concurrent_uploads",
+                    "NEXUS_UPLOAD_SESSION_TTL_HOURS": "session_ttl_hours",
+                    "NEXUS_UPLOAD_CLEANUP_INTERVAL": "cleanup_interval_seconds",
+                    "NEXUS_UPLOAD_MAX_SIZE": "max_upload_size",
+                }.items():
+                    _v = _os.getenv(_env)
+                    if _v is not None:
+                        _upload_kwargs[_key] = int(_v)
+
+                _app_state.chunked_upload_service = ChunkedUploadService(
+                    session_factory=_session_factory,
+                    backend=_backend,
+                    metadata_store=getattr(_app_state.nexus_fs, "metadata", None),
+                    config=ChunkedUploadConfig(**_upload_kwargs),
+                )
+                _upload_cleanup_task = asyncio.create_task(
+                    _app_state.chunked_upload_service.start_cleanup_loop()
+                )
+                logger.info("[TUS] ChunkedUploadService initialized with background cleanup")
+        except Exception as e:
+            logger.warning(f"[TUS] Failed to initialize ChunkedUploadService: {e}")
+            _app_state.chunked_upload_service = None
+    else:
+        _app_state.chunked_upload_service = None
+
     # Issue #1240: Start agent heartbeat and stale detection background tasks
     _heartbeat_task = None
     _stale_detection_task = None
@@ -848,7 +929,7 @@ async def lifespan(_app: FastAPI) -> Any:
                 # (separate from NexusFS's lazy sandbox manager — different layers)
                 sandbox_config = getattr(_app_state.nexus_fs, "_config", None)
                 sandbox_mgr = SandboxManager(
-                    db_session=session_factory(),
+                    session_factory=session_factory,
                     e2b_api_key=os.getenv("E2B_API_KEY"),
                     e2b_team_id=os.getenv("E2B_TEAM_ID"),
                     e2b_template_id=os.getenv("E2B_TEMPLATE_ID"),
@@ -856,19 +937,17 @@ async def lifespan(_app: FastAPI) -> Any:
                 )
 
                 # Get NamespaceManager if available (best-effort)
+                # Issue #1265: Factory function handles L3 persistent store wiring
                 namespace_manager = None
                 sync_rebac = getattr(_app_state.nexus_fs, "_rebac_manager", None)
                 if sync_rebac:
                     try:
-                        from nexus.core.namespace_manager import NamespaceManager
+                        from nexus.core.namespace_factory import create_namespace_manager
 
-                        ns_cache_ttl = int(os.getenv("NEXUS_NAMESPACE_CACHE_TTL", "300"))
-                        ns_revision_window = int(os.getenv("NEXUS_NAMESPACE_REVISION_WINDOW", "10"))
-                        namespace_manager = NamespaceManager(
+                        ns_record_store = getattr(_app_state.nexus_fs, "_record_store", None)
+                        namespace_manager = create_namespace_manager(
                             rebac_manager=sync_rebac,
-                            cache_maxsize=10_000,
-                            cache_ttl=ns_cache_ttl,
-                            revision_window=ns_revision_window,
+                            record_store=ns_record_store,
                         )
                     except Exception as e:
                         logger.info(
@@ -992,6 +1071,13 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.warning(f"Error shutting down event bus: {e}")
 
+    # Issue #788: Stop upload cleanup task
+    if _upload_cleanup_task:
+        _upload_cleanup_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await _upload_cleanup_task
+        logger.info("[TUS] Upload cleanup task stopped")
+
     # Issue #574: Stop Task Queue runner
     if task_runner_task:
         try:
@@ -1057,15 +1143,19 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception:
             logger.warning("[AGENT-REG] Final heartbeat flush failed", exc_info=True)
 
-    # Issue #1307: Close SandboxAuthService database session
-    if _app_state.sandbox_auth_service:
+    # Issue #1397: Close Event Log WAL
+    if _app_state.event_log:
         try:
-            sandbox_mgr = _app_state.sandbox_auth_service._sandbox_manager
-            if hasattr(sandbox_mgr, "db") and sandbox_mgr.db:
-                sandbox_mgr.db.close()
-            logger.info("[SANDBOX-AUTH] SandboxAuthService session closed")
+            await _app_state.event_log.close()
+            logger.info("Event log closed")
         except Exception as e:
-            logger.warning(f"[SANDBOX-AUTH] Error closing session: {e}")
+            logger.warning(f"Error closing event log: {e}")
+
+    # SandboxManager now uses session-per-operation — no persistent session to close
+    if _app_state.sandbox_auth_service:
+        logger.info(
+            "[SANDBOX-AUTH] SandboxAuthService cleaned up (session-per-op, no persistent session)"
+        )
 
     # Cancel Tiger Cache task
     if tiger_task:
@@ -1756,74 +1846,30 @@ def _register_routes(app: FastAPI) -> None:
     except ImportError as e:
         logger.warning(f"Failed to import zone routes: {e}. Zone management unavailable.")
 
-    # API v2 routes - Memory & ACE endpoints (Issue #1193)
+    # API v2 routes — centralized registration via versioning module (#995)
+    from nexus.server.api.v2.versioning import (
+        DeprecationMiddleware,
+        VersionHeaderMiddleware,
+        build_v2_registry,
+        register_v2_routers,
+    )
+
+    v2_registry = build_v2_registry(
+        async_nexus_fs_getter=lambda: _app_state.async_nexus_fs,
+        chunked_upload_service_getter=lambda: _app_state.chunked_upload_service,
+    )
+    register_v2_routers(app, v2_registry)
+    app.add_middleware(VersionHeaderMiddleware)
+    app.add_middleware(DeprecationMiddleware, registry=v2_registry)
+
+    # Exchange Protocol error handler (Issue #1361)
     try:
-        from nexus.server.api.v2.routers import (
-            audit,
-            conflicts,
-            consolidation,
-            curate,
-            feedback,
-            memories,
-            mobile_search,
-            operations,
-            playbooks,
-            reflect,
-            trajectories,
-        )
+        from nexus.server.api.v2.error_handler import register_exchange_error_handler
 
-        app.include_router(memories.router)
-        app.include_router(trajectories.router)
-        app.include_router(feedback.router)
-        app.include_router(playbooks.router)
-        app.include_router(reflect.router)
-        app.include_router(curate.router)
-        app.include_router(consolidation.router)
-        app.include_router(mobile_search.router)
-        app.include_router(conflicts.router)
-        app.include_router(operations.router)
-        app.include_router(audit.router)
-        logger.info("API v2 routes registered (48 endpoints)")
+        register_exchange_error_handler(app)
+        logger.info("Exchange protocol error handler registered")
     except ImportError as e:
-        logger.warning(
-            f"Failed to import API v2 routes: {e}. Memory/ACE v2 endpoints will not be available."
-        )
-
-    # Nexus Pay API routes (Issue #1209)
-    try:
-        from nexus.server.api.v2.routers.pay import _register_pay_exception_handlers
-        from nexus.server.api.v2.routers.pay import router as pay_router
-
-        app.include_router(pay_router)
-        _register_pay_exception_handlers(app)
-        logger.info("Nexus Pay API routes registered (8 endpoints)")
-    except ImportError as e:
-        logger.warning(
-            f"Failed to import Nexus Pay routes: {e}. Pay endpoints will not be available."
-        )
-
-    # Scheduler REST API routes (Issue #1212)
-    try:
-        from nexus.server.api.v2.routers.scheduler import router as scheduler_router
-
-        app.include_router(scheduler_router)
-        logger.info("Scheduler API routes registered (3 endpoints)")
-    except ImportError as e:
-        logger.warning(
-            f"Failed to import Scheduler routes: {e}. Scheduler endpoints will not be available."
-        )
-
-    # Issue #940: Register async files router (lazy initialization via lifespan)
-    try:
-        from nexus.server.api.v2.routers.async_files import create_async_files_router
-
-        async_files_router = create_async_files_router(
-            get_fs=lambda: _app_state.async_nexus_fs,
-        )
-        app.include_router(async_files_router, prefix="/api/v2/files")
-        logger.info("Async files router registered (9 endpoints)")
-    except ImportError as e:
-        logger.warning(f"Failed to import async files router: {e}")
+        logger.warning(f"Failed to register Exchange error handler: {e}.")
 
     # A2A Protocol Endpoint (Issue #1256)
     try:
@@ -4207,7 +4253,7 @@ def _get_cache_headers(method: str, result: Any) -> dict[str, str]:
         headers["Cache-Control"] = "private, max-age=60"
 
     # Write/delete operations - no cache
-    elif method in ("write", "delete", "rename", "copy", "mkdir", "rmdir", "delta_write"):
+    elif method in ("write", "delete", "rename", "copy", "mkdir", "rmdir", "delta_write", "edit"):
         headers["Cache-Control"] = "no-store"
 
     # Delta read - cache like regular read
@@ -5031,14 +5077,7 @@ def _handle_grep(params: Any, context: Any) -> dict[str, Any]:
 
     results = nexus_fs.grep(params.pattern, **kwargs)
     # Issue #1202: Strip internal zone/tenant/user prefixes from paths
-    results = [
-        unscope_internal_dict(r, ["path", "file"])
-        if isinstance(r, dict)
-        else unscope_internal_path(r)
-        if isinstance(r, str)
-        else r
-        for r in results
-    ]
+    results = [unscope_result(r) for r in results]
     # Return "results" key to match RemoteNexusFS.grep() expectations
     return {"results": results}
 

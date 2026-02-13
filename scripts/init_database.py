@@ -58,7 +58,7 @@ def init_database(database_url: str) -> None:
         print("🔄 Running pending migrations...")
 
         alembic_cfg = Config(str(ALEMBIC_INI_PATH))
-        command.upgrade(alembic_cfg, "head")
+        command.upgrade(alembic_cfg, "heads")
 
         print("✓ Database migrations up to date")
 
@@ -69,7 +69,7 @@ def init_database(database_url: str) -> None:
         print("📌 Stamping database with latest migration version...")
 
         alembic_cfg = Config(str(ALEMBIC_INI_PATH))
-        command.stamp(alembic_cfg, "head")
+        command.stamp(alembic_cfg, "heads")
 
         print("✓ Database stamped with current schema version")
         print("ℹ️  Future schema changes will be applied via migrations")
@@ -87,7 +87,7 @@ def init_database(database_url: str) -> None:
         print("📌 Stamping with latest migration version...")
 
         alembic_cfg = Config(str(ALEMBIC_INI_PATH))
-        command.stamp(alembic_cfg, "head")
+        command.stamp(alembic_cfg, "heads")
 
         print("✓ Database initialized successfully")
 

@@ -1,0 +1,1062 @@
+openapi: 3.1.0
+info:
+  title: Nexus Agent Exchange Protocol
+  version: "2026.1"
+  description: |
+    The Nexus Agent Exchange Protocol defines a formal, versioned API surface
+    for agent-to-agent economic operations including identity verification,
+    credit transfers, reservations, metering, and immutable audit trails.
+
+    ## Authentication
+    All endpoints require authentication via one of:
+    - **API Key**: `X-API-Key` header
+    - **Bearer JWT**: `Authorization: Bearer <token>` header
+    - **x402 Payment**: `X-402-Payment` header (for external wallet operations)
+
+    ## Versioning
+    Include `Nexus-Protocol-Version: 2026.1` header in all requests.
+
+    ## Error Format
+    All errors follow the google.rpc.Status pattern:
+    ```json
+    {
+      "error": {
+        "code": "INSUFFICIENT_BALANCE",
+        "message": "Agent agent-123 has insufficient balance",
+        "details": {"available": "10.00", "required": "25.00"},
+        "trace_id": "abc-123-def-456"
+      }
+    }
+    ```
+  contact:
+    name: Nexus Team
+    url: https://github.com/nexi-lab/nexus
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://nexus.sudorouter.ai
+    description: Production
+  - url: http://35.197.30.59:2026
+    description: Staging
+  - url: http://localhost:2026
+    description: Local development
+
+security:
+  - apiKey: []
+  - bearerAuth: []
+
+tags:
+  - name: identity
+    description: Agent identity and cryptographic key management
+  - name: pay
+    description: Credit transfers, reservations, and metering
+  - name: audit
+    description: Immutable exchange transaction audit trail
+
+paths:
+  # ===========================================================================
+  # Identity Endpoints
+  # ===========================================================================
+  /api/v2/agents/{agent_id}/verify:
+    post:
+      operationId: verifyIdentity
+      summary: Verify agent identity
+      description: |
+        Returns the agent's active public key and owner information.
+        Any authenticated user can verify any agent (public verification).
+      tags: [identity]
+      parameters:
+        - $ref: "#/components/parameters/AgentIdPath"
+        - $ref: "#/components/parameters/ProtocolVersion"
+      responses:
+        "200":
+          description: Identity verified successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentIdentityResponse"
+              example:
+                agent_id: "agent-abc-123"
+                owner_id: "user-xyz-789"
+                zone_id: "default"
+                key_id: "JWK_THUMB_abc123"
+                algorithm: "Ed25519"
+                public_key_jwk:
+                  kty: "OKP"
+                  crv: "Ed25519"
+                  x: "base64url-encoded-public-key"
+                created_at: "2026-01-15T10:30:00Z"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+
+  /api/v2/agents/{agent_id}/keys:
+    get:
+      operationId: listKeys
+      summary: List agent public keys
+      description: |
+        List all public keys for an agent. Public keys are visible to
+        any authenticated user by design.
+      tags: [identity]
+      parameters:
+        - $ref: "#/components/parameters/AgentIdPath"
+        - $ref: "#/components/parameters/ProtocolVersion"
+        - name: include_revoked
+          in: query
+          schema:
+            type: boolean
+            default: false
+          description: Include revoked keys in the response
+      responses:
+        "200":
+          description: Keys listed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentKeyListResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v2/agents/{agent_id}/keys/rotate:
+    post:
+      operationId: rotateKey
+      summary: Rotate agent key pair
+      description: |
+        Generate a new Ed25519 key pair for the agent. The old key is NOT
+        automatically revoked. Requires ownership or admin privileges.
+      tags: [identity]
+      parameters:
+        - $ref: "#/components/parameters/AgentIdPath"
+        - $ref: "#/components/parameters/ProtocolVersion"
+      responses:
+        "200":
+          description: Key rotated successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentKeyRotateResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v2/agents/{agent_id}/keys/{key_id}:
+    delete:
+      operationId: revokeKey
+      summary: Revoke an agent key
+      description: |
+        Revoke a specific agent key. Requires ownership or admin privileges.
+        Revoked keys cannot be used for identity verification.
+      tags: [identity]
+      parameters:
+        - $ref: "#/components/parameters/AgentIdPath"
+        - $ref: "#/components/parameters/ProtocolVersion"
+        - name: key_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: JWK Thumbprint key ID
+      responses:
+        "200":
+          description: Key revoked successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentKeyRevokeResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  # ===========================================================================
+  # Payment Endpoints
+  # ===========================================================================
+  /api/v2/pay/balance:
+    get:
+      operationId: getBalance
+      summary: Get agent balance
+      description: Returns available, reserved, and total balance.
+      tags: [pay]
+      parameters:
+        - $ref: "#/components/parameters/ProtocolVersion"
+      responses:
+        "200":
+          description: Balance retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BalanceResponse"
+              example:
+                available: "100.50"
+                reserved: "25.00"
+                total: "125.50"
+          headers:
+            X-RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            X-RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            X-RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+
+  /api/v2/pay/can-afford:
+    get:
+      operationId: canAfford
+      summary: Check affordability
+      description: |
+        Check if agent can afford a given amount. This is a point-in-time check.
+        For guaranteed atomicity, use the reserve endpoint instead.
+      tags: [pay]
+      parameters:
+        - $ref: "#/components/parameters/ProtocolVersion"
+        - name: amount
+          in: query
+          required: true
+          schema:
+            type: string
+            pattern: "^\\d+(\\.\\d{1,6})?$"
+          description: Amount to check as decimal string
+          example: "10.50"
+      responses:
+        "200":
+          description: Affordability check result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CanAffordResponse"
+
+  /api/v2/pay/transfer:
+    post:
+      operationId: transfer
+      summary: Transfer credits
+      description: |
+        Transfer credits to another agent or external wallet.
+        Auto-routes to credits (internal) or x402 (external wallet address).
+      tags: [pay]
+      parameters:
+        - $ref: "#/components/parameters/ProtocolVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TransferRequest"
+            example:
+              to: "agent-recipient-456"
+              amount: "10.50"
+              memo: "Payment for API usage"
+              method: "auto"
+      responses:
+        "201":
+          description: Transfer completed successfully
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReceiptResponse"
+        "402":
+          $ref: "#/components/responses/InsufficientBalance"
+        "400":
+          $ref: "#/components/responses/InvalidArgument"
+
+  /api/v2/pay/transfer/batch:
+    post:
+      operationId: batchTransfer
+      summary: Atomic batch transfer
+      description: |
+        Execute multiple transfers atomically. All succeed or all fail.
+        Maximum 1000 transfers per batch.
+      tags: [pay]
+      parameters:
+        - $ref: "#/components/parameters/ProtocolVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BatchTransferRequest"
+      responses:
+        "201":
+          description: Batch transfer completed
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ReceiptResponse"
+        "402":
+          $ref: "#/components/responses/InsufficientBalance"
+
+  /api/v2/pay/reserve:
+    post:
+      operationId: reserve
+      summary: Reserve credits
+      description: |
+        Create a two-phase credit reservation. Reserved credits are held
+        until committed or released (or auto-released after timeout).
+      tags: [pay]
+      parameters:
+        - $ref: "#/components/parameters/ProtocolVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReserveRequest"
+      responses:
+        "201":
+          description: Reservation created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReservationResponse"
+        "402":
+          $ref: "#/components/responses/InsufficientBalance"
+
+  /api/v2/pay/reserve/{reservation_id}/commit:
+    post:
+      operationId: commitReservation
+      summary: Commit a reservation
+      description: |
+        Charge the actual amount from a pending reservation. If actual_amount
+        is less than reserved, the difference is refunded.
+      tags: [pay]
+      parameters:
+        - $ref: "#/components/parameters/ProtocolVersion"
+        - name: reservation_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CommitReservationRequest"
+      responses:
+        "204":
+          description: Reservation committed
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v2/pay/reserve/{reservation_id}/release:
+    post:
+      operationId: releaseReservation
+      summary: Release a reservation
+      description: Release a pending reservation (full refund to available balance).
+      tags: [pay]
+      parameters:
+        - $ref: "#/components/parameters/ProtocolVersion"
+        - name: reservation_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Reservation released
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v2/pay/meter:
+    post:
+      operationId: meter
+      summary: Record metered usage
+      description: |
+        Fast credit deduction for high-throughput operations like API call metering.
+        Returns success=true if deduction succeeded, false if insufficient credits.
+      tags: [pay]
+      parameters:
+        - $ref: "#/components/parameters/ProtocolVersion"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MeterRequest"
+      responses:
+        "200":
+          description: Metering result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeterResponse"
+
+  # ===========================================================================
+  # Audit Endpoints
+  # ===========================================================================
+  /api/v2/audit/transactions:
+    get:
+      operationId: listTransactions
+      summary: List audit transactions
+      description: |
+        List exchange audit transactions with cursor-based pagination.
+        All results are scoped to the authenticated user's zone.
+      tags: [audit]
+      parameters:
+        - $ref: "#/components/parameters/ProtocolVersion"
+        - name: since
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Transactions after this time (ISO-8601)
+        - name: until
+          in: query
+          schema:
+            type: string
+            format: date-time
+          description: Transactions before this time (ISO-8601)
+        - name: protocol
+          in: query
+          schema:
+            type: string
+        - name: buyer_agent_id
+          in: query
+          schema:
+            type: string
+        - name: seller_agent_id
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: application
+          in: query
+          schema:
+            type: string
+        - name: trace_id
+          in: query
+          schema:
+            type: string
+        - name: amount_min
+          in: query
+          schema:
+            type: string
+          description: Minimum amount filter (decimal string)
+        - name: amount_max
+          in: query
+          schema:
+            type: string
+          description: Maximum amount filter (decimal string)
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+        - name: cursor
+          in: query
+          schema:
+            type: string
+          description: Cursor from previous response
+        - name: include_total
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        "200":
+          description: Transactions listed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditTransactionListResponse"
+
+  /api/v2/audit/transactions/aggregations:
+    get:
+      operationId: getAggregations
+      summary: Get transaction aggregations
+      description: |
+        Compute aggregations: total volume, count, top buyers and sellers.
+      tags: [audit]
+      parameters:
+        - $ref: "#/components/parameters/ProtocolVersion"
+        - name: since
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: until
+          in: query
+          schema:
+            type: string
+            format: date-time
+      responses:
+        "200":
+          description: Aggregation results
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditAggregationResponse"
+
+  /api/v2/audit/transactions/export:
+    get:
+      operationId: exportTransactions
+      summary: Export transactions
+      description: Export audit transactions as CSV or JSON (streaming).
+      tags: [audit]
+      parameters:
+        - $ref: "#/components/parameters/ProtocolVersion"
+        - name: format
+          in: query
+          schema:
+            type: string
+            enum: [json, csv]
+            default: json
+        - name: since
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: until
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: protocol
+          in: query
+          schema:
+            type: string
+        - name: buyer_agent_id
+          in: query
+          schema:
+            type: string
+        - name: seller_agent_id
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            type: string
+        - name: application
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Export data
+          content:
+            text/csv:
+              schema:
+                type: string
+            application/json:
+              schema:
+                type: object
+
+  /api/v2/audit/transactions/{record_id}:
+    get:
+      operationId: getTransaction
+      summary: Get a single transaction
+      description: Retrieve a single audit transaction by ID.
+      tags: [audit]
+      parameters:
+        - $ref: "#/components/parameters/ProtocolVersion"
+        - name: record_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Transaction found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditTransactionResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/v2/audit/integrity/{record_id}:
+    get:
+      operationId: verifyIntegrity
+      summary: Verify record integrity
+      description: |
+        Verify a record's hash matches its data for tamper detection.
+      tags: [audit]
+      parameters:
+        - $ref: "#/components/parameters/ProtocolVersion"
+        - name: record_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Integrity check result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditIntegrityResponse"
+              example:
+                record_id: "tx-abc-123"
+                is_valid: true
+                record_hash: "sha256:abcdef..."
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+components:
+  securitySchemes:
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Nexus API key
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token from Nexus auth
+    x402Payment:
+      type: apiKey
+      in: header
+      name: X-402-Payment
+      description: x402 payment proof header
+
+  parameters:
+    AgentIdPath:
+      name: agent_id
+      in: path
+      required: true
+      schema:
+        type: string
+      description: Agent identifier
+    ProtocolVersion:
+      name: Nexus-Protocol-Version
+      in: header
+      required: false
+      schema:
+        type: string
+        default: "2026.1"
+      description: |
+        Protocol version for compatibility negotiation.
+        Current version: 2026.1
+
+  headers:
+    RateLimitLimit:
+      description: Maximum requests per window
+      schema:
+        type: integer
+    RateLimitRemaining:
+      description: Remaining requests in current window
+      schema:
+        type: integer
+    RateLimitReset:
+      description: Seconds until rate limit resets
+      schema:
+        type: integer
+
+  responses:
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/NexusError"
+          example:
+            error:
+              code: "NOT_FOUND"
+              message: "Resource not found"
+              details: {}
+              trace_id: "abc-123"
+    Unauthenticated:
+      description: Authentication required
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/NexusError"
+          example:
+            error:
+              code: "UNAUTHENTICATED"
+              message: "Valid authentication required"
+              details: {}
+              trace_id: "abc-123"
+    Forbidden:
+      description: Permission denied
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/NexusError"
+          example:
+            error:
+              code: "PERMISSION_DENIED"
+              message: "Not authorized to perform this action"
+              details: {}
+              trace_id: "abc-123"
+    InsufficientBalance:
+      description: Insufficient balance for operation
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/NexusError"
+          example:
+            error:
+              code: "INSUFFICIENT_BALANCE"
+              message: "Agent has insufficient balance for transfer"
+              details:
+                available: "10.00"
+                required: "25.00"
+              trace_id: "abc-123"
+    InvalidArgument:
+      description: Invalid request argument
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/NexusError"
+
+  schemas:
+    # --- Common ---
+    NexusError:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: Machine-readable error code
+            message:
+              type: string
+              description: Human-readable error message
+            details:
+              type: object
+              additionalProperties:
+                type: string
+              description: Additional context
+            trace_id:
+              type: string
+              description: Distributed trace ID
+
+    # --- Identity ---
+    AgentIdentityResponse:
+      type: object
+      required: [agent_id, owner_id, key_id, algorithm, public_key_jwk, created_at]
+      properties:
+        agent_id:
+          type: string
+        owner_id:
+          type: string
+        zone_id:
+          type: string
+          nullable: true
+        key_id:
+          type: string
+        algorithm:
+          type: string
+        public_key_jwk:
+          type: object
+        created_at:
+          type: string
+          format: date-time
+
+    AgentKeyResponse:
+      type: object
+      required: [key_id, agent_id, algorithm, public_key_jwk, created_at]
+      properties:
+        key_id:
+          type: string
+        agent_id:
+          type: string
+        zone_id:
+          type: string
+          nullable: true
+        algorithm:
+          type: string
+        public_key_jwk:
+          type: object
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        revoked_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    AgentKeyListResponse:
+      type: object
+      required: [keys]
+      properties:
+        keys:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentKeyResponse"
+
+    AgentKeyRotateResponse:
+      type: object
+      required: [new_key]
+      properties:
+        new_key:
+          $ref: "#/components/schemas/AgentKeyResponse"
+
+    AgentKeyRevokeResponse:
+      type: object
+      required: [key_id, revoked_at]
+      properties:
+        key_id:
+          type: string
+        revoked_at:
+          type: string
+          format: date-time
+
+    # --- Payment ---
+    BalanceResponse:
+      type: object
+      required: [available, reserved, total]
+      properties:
+        available:
+          type: string
+          description: Available balance (decimal string)
+        reserved:
+          type: string
+          description: Reserved balance (decimal string)
+        total:
+          type: string
+          description: Total balance (decimal string)
+
+    TransferRequest:
+      type: object
+      required: [to, amount]
+      properties:
+        to:
+          type: string
+          description: Recipient agent ID or wallet address
+        amount:
+          type: string
+          pattern: "^\\d+(\\.\\d{1,6})?$"
+          description: Amount as decimal string
+        memo:
+          type: string
+          default: ""
+        idempotency_key:
+          type: string
+          nullable: true
+        method:
+          type: string
+          enum: [auto, credits, x402]
+          default: auto
+
+    ReceiptResponse:
+      type: object
+      required: [id, method, amount, from_agent, to_agent]
+      properties:
+        id:
+          type: string
+        method:
+          type: string
+        amount:
+          type: string
+        from_agent:
+          type: string
+        to_agent:
+          type: string
+        memo:
+          type: string
+          nullable: true
+        timestamp:
+          type: string
+          format: date-time
+          nullable: true
+        tx_hash:
+          type: string
+          nullable: true
+
+    BatchTransferRequest:
+      type: object
+      required: [transfers]
+      properties:
+        transfers:
+          type: array
+          minItems: 1
+          maxItems: 1000
+          items:
+            type: object
+            required: [to, amount]
+            properties:
+              to:
+                type: string
+              amount:
+                type: string
+              memo:
+                type: string
+                default: ""
+
+    ReserveRequest:
+      type: object
+      required: [amount]
+      properties:
+        amount:
+          type: string
+        timeout:
+          type: integer
+          minimum: 1
+          maximum: 86400
+          default: 300
+        purpose:
+          type: string
+          default: general
+        task_id:
+          type: string
+          nullable: true
+
+    ReservationResponse:
+      type: object
+      required: [id, amount, purpose, status]
+      properties:
+        id:
+          type: string
+        amount:
+          type: string
+        purpose:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+          enum: [pending, committed, released]
+
+    CommitReservationRequest:
+      type: object
+      properties:
+        actual_amount:
+          type: string
+          nullable: true
+
+    MeterRequest:
+      type: object
+      required: [amount]
+      properties:
+        amount:
+          type: string
+        event_type:
+          type: string
+          default: api_call
+
+    MeterResponse:
+      type: object
+      required: [success]
+      properties:
+        success:
+          type: boolean
+
+    CanAffordResponse:
+      type: object
+      required: [can_afford, amount]
+      properties:
+        can_afford:
+          type: boolean
+        amount:
+          type: string
+
+    # --- Audit ---
+    AuditTransactionResponse:
+      type: object
+      required: [id, record_hash, created_at, protocol, buyer_agent_id, seller_agent_id, amount, currency, status, application, zone_id]
+      properties:
+        id:
+          type: string
+        record_hash:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        protocol:
+          type: string
+        buyer_agent_id:
+          type: string
+        seller_agent_id:
+          type: string
+        amount:
+          type: string
+        currency:
+          type: string
+        status:
+          type: string
+        application:
+          type: string
+        zone_id:
+          type: string
+        trace_id:
+          type: string
+          nullable: true
+        metadata_hash:
+          type: string
+          nullable: true
+        transfer_id:
+          type: string
+          nullable: true
+
+    AuditTransactionListResponse:
+      type: object
+      required: [transactions, limit]
+      properties:
+        transactions:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditTransactionResponse"
+        limit:
+          type: integer
+        has_more:
+          type: boolean
+          default: false
+        total:
+          type: integer
+          nullable: true
+        next_cursor:
+          type: string
+          nullable: true
+
+    AuditAggregationResponse:
+      type: object
+      required: [total_volume, tx_count, top_buyers, top_sellers]
+      properties:
+        total_volume:
+          type: string
+        tx_count:
+          type: integer
+        top_buyers:
+          type: array
+          items:
+            $ref: "#/components/schemas/CounterpartyVolume"
+        top_sellers:
+          type: array
+          items:
+            $ref: "#/components/schemas/CounterpartyVolume"
+
+    CounterpartyVolume:
+      type: object
+      required: [agent_id, volume, count]
+      properties:
+        agent_id:
+          type: string
+          description: Agent identifier
+        volume:
+          type: string
+          description: Total transaction volume (decimal string)
+        count:
+          type: integer
+          description: Number of transactions
+
+    AuditIntegrityResponse:
+      type: object
+      required: [record_id, is_valid, record_hash]
+      properties:
+        record_id:
+          type: string
+        is_valid:
+          type: boolean
+        record_hash:
+          type: string

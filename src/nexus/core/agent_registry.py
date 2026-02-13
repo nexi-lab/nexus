@@ -55,6 +55,21 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _safe_json_loads(raw: str | None, field_name: str, agent_id: str) -> Any:
+    """Safely deserialize a JSON text column, returning a typed default on failure.
+
+    Returns {} for 'agent_metadata', [] for all other fields (e.g. 'context_manifest').
+    """
+    default: Any = {} if field_name == "agent_metadata" else []
+    if not raw:
+        return default
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        logger.warning("[AGENT-REG] Corrupt %s for agent %s", field_name, agent_id)
+        return default
+
+
 class InvalidTransitionError(Exception):
     """Raised when a state transition is not allowed by the allowlist."""
 
@@ -143,6 +158,8 @@ class AgentRegistry:
         zone_id: str | None = None,
         name: str | None = None,
         metadata: dict[str, Any] | None = None,
+        capabilities: list[str] | None = None,
+        context_manifest: list[dict[str, Any]] | None = None,
     ) -> AgentRecord:
         """Register a new agent. Returns existing record if agent_id already exists.
 
@@ -155,6 +172,10 @@ class AgentRegistry:
             zone_id: Zone/organization ID for multi-zone isolation.
             name: Human-readable display name.
             metadata: Arbitrary agent metadata.
+            capabilities: Optional list of agent capabilities for discovery
+                (e.g. ["search", "analyze", "code"]). Stored in metadata.
+            context_manifest: Optional list of context source dicts for
+                deterministic pre-execution (Issue #1341/1427).
 
         Returns:
             AgentRecord snapshot of the registered agent.
@@ -166,6 +187,11 @@ class AgentRegistry:
             raise ValueError("agent_id is required")
         if not owner_id:
             raise ValueError("owner_id is required")
+
+        # Merge capabilities into metadata (Issue #1210)
+        if capabilities:
+            metadata = dict(metadata) if metadata else {}
+            metadata["capabilities"] = list(capabilities)
 
         with self._get_session() as session:
             # Check for existing
@@ -187,6 +213,7 @@ class AgentRegistry:
                 generation=0,
                 last_heartbeat=None,
                 agent_metadata=json.dumps(metadata) if metadata else None,
+                context_manifest=json.dumps(context_manifest) if context_manifest else None,
                 created_at=now,
                 updated_at=now,
             )
@@ -345,15 +372,8 @@ class AgentRegistry:
                 raise InvalidTransitionError(agent_id, actual_state, target_state)
 
             # Build record from known values (no re-read needed)
-            metadata_dict: dict[str, Any] = {}
-            if model.agent_metadata:
-                try:
-                    metadata_dict = json.loads(model.agent_metadata)
-                except (json.JSONDecodeError, TypeError):
-                    logger.warning(
-                        "[AGENT-REG] Corrupt metadata for agent %s",
-                        agent_id,
-                    )
+            metadata_dict = _safe_json_loads(model.agent_metadata, "agent_metadata", agent_id)
+            manifest_list = _safe_json_loads(model.context_manifest, "context_manifest", agent_id)
 
             record = AgentRecord(
                 agent_id=model.agent_id,
@@ -366,6 +386,7 @@ class AgentRegistry:
                 metadata=types.MappingProxyType(metadata_dict),
                 created_at=model.created_at,
                 updated_at=now,
+                context_manifest=tuple(manifest_list),
             )
 
         # Invalidate cache after transition
@@ -376,6 +397,15 @@ class AgentRegistry:
             f"[AGENT-REG] Transition {agent_id}: {current_state.value} -> {target_state.value} "
             f"(gen {model.generation} -> {new_generation})"
         )
+
+        # Structured log for observability when agent connects with manifest
+        if target_state is AgentState.CONNECTED and record.context_manifest:
+            logger.info(
+                "[AGENT-REG] Agent %s connected with %d manifest sources",
+                agent_id,
+                len(record.context_manifest),
+            )
+
         return record
 
     def heartbeat(self, agent_id: str) -> None:
@@ -598,6 +628,61 @@ class AgentRegistry:
         logger.debug(f"[AGENT-REG] Unregistered agent {agent_id}")
         return True
 
+    def update_manifest(
+        self,
+        agent_id: str,
+        manifest: list[dict[str, Any]],
+    ) -> AgentRecord:
+        """Replace the context manifest for an existing agent.
+
+        Args:
+            agent_id: Agent identifier.
+            manifest: List of context source dicts (serialized ContextSource models).
+
+        Returns:
+            Updated AgentRecord snapshot.
+
+        Raises:
+            ValueError: If agent not found.
+        """
+        with self._get_session() as session:
+            # Verify agent exists
+            existing = session.execute(
+                select(AgentRecordModel.agent_id).where(AgentRecordModel.agent_id == agent_id)
+            ).scalar_one_or_none()
+
+            if existing is None:
+                raise ValueError(f"Agent '{agent_id}' not found")
+
+            now = datetime.now(UTC)
+            stmt = (
+                update(AgentRecordModel)
+                .where(AgentRecordModel.agent_id == agent_id)
+                .values(
+                    context_manifest=json.dumps(manifest),
+                    updated_at=now,
+                )
+            )
+            session.execute(stmt)
+            session.flush()
+
+            # Re-read for immutable snapshot
+            refreshed = session.execute(
+                select(AgentRecordModel).where(AgentRecordModel.agent_id == agent_id)
+            ).scalar_one()
+            record = self._model_to_record(refreshed)
+
+        # Invalidate cache
+        with self._cache_lock:
+            self._record_cache.pop(agent_id, None)
+
+        logger.debug(
+            "[AGENT-REG] Updated manifest for agent %s (%d sources)",
+            agent_id,
+            len(manifest),
+        )
+        return record
+
     def detect_stale(self, threshold_seconds: int = 300) -> list[AgentRecord]:
         """Find CONNECTED agents with stale heartbeats.
 
@@ -653,15 +738,8 @@ class AgentRegistry:
         Returns:
             Frozen AgentRecord dataclass.
         """
-        metadata: dict[str, Any] = {}
-        if model.agent_metadata:
-            try:
-                metadata = json.loads(model.agent_metadata)
-            except (json.JSONDecodeError, TypeError):
-                logger.warning(
-                    "[AGENT-REG] Corrupt metadata for agent %s",
-                    model.agent_id,
-                )
+        metadata = _safe_json_loads(model.agent_metadata, "agent_metadata", model.agent_id)
+        manifest_list = _safe_json_loads(model.context_manifest, "context_manifest", model.agent_id)
 
         return AgentRecord(
             agent_id=model.agent_id,
@@ -674,4 +752,5 @@ class AgentRegistry:
             metadata=types.MappingProxyType(metadata),
             created_at=model.created_at,
             updated_at=model.updated_at,
+            context_manifest=tuple(manifest_list),
         )

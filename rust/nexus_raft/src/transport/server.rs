@@ -11,6 +11,7 @@
 )]
 
 use super::proto::nexus::raft::{
+    raft_client_service_client::RaftClientServiceClient,
     raft_client_service_server::{RaftClientService, RaftClientServiceServer},
     raft_command::Command as ProtoCommandVariant,
     raft_query::Query as ProtoQueryVariant,
@@ -19,17 +20,19 @@ use super::proto::nexus::raft::{
     raft_service_server::{RaftService, RaftServiceServer},
     AppendEntriesRequest, AppendEntriesResponse, ClusterConfig as ProtoClusterConfig,
     GetClusterInfoRequest, GetClusterInfoResponse, GetMetadataResult, InstallSnapshotResponse,
-    JoinZoneRequest, JoinZoneResponse, ListMetadataResult, LockInfoResult, LockResult,
-    NodeInfo as ProtoNodeInfo, ProposeRequest, ProposeResponse, QueryRequest, QueryResponse,
-    RaftCommand, RaftQueryResponse, RaftResponse, SnapshotChunk, StepMessageRequest,
+    InviteZoneRequest, InviteZoneResponse, JoinZoneRequest, JoinZoneResponse, ListMetadataResult,
+    LockInfoResult, LockResult, NodeInfo as ProtoNodeInfo, ProposeRequest, ProposeResponse,
+    QueryRequest, QueryResponse, RaftCommand, RaftQueryResponse, RaftResponse,
+    ReplicateEntriesRequest, ReplicateEntriesResponse, SnapshotChunk, StepMessageRequest,
     StepMessageResponse, TransferLeaderRequest, TransferLeaderResponse, VoteRequest, VoteResponse,
 };
 use super::{NodeAddress, Result, TransportError};
 use crate::raft::{
-    Command, CommandResult, FullStateMachine, RaftError, RaftNode, RaftNodeDriver,
-    WitnessStateMachine, ZoneRaftRegistry,
+    Command, CommandResult, FullStateMachine, RaftError, WitnessStateMachine, ZoneConsensus,
+    ZoneConsensusDriver, ZoneRaftRegistry,
 };
 use crate::storage::RedbStore;
+use bincode;
 use prost::Message;
 use protobuf::Message as ProtobufV2Message;
 use std::collections::HashMap;
@@ -46,6 +49,8 @@ pub struct ServerConfig {
     pub max_connections: usize,
     /// Maximum message size in bytes.
     pub max_message_size: usize,
+    /// Optional TLS configuration for mTLS. None = plain HTTP/2.
+    pub tls: Option<super::TlsConfig>,
 }
 
 impl Default for ServerConfig {
@@ -54,6 +59,7 @@ impl Default for ServerConfig {
             bind_address: "0.0.0.0:2026".parse().unwrap(),
             max_connections: 100,
             max_message_size: 64 * 1024 * 1024, // 64MB
+            tls: None,
         }
     }
 }
@@ -69,12 +75,27 @@ impl Default for ServerConfig {
 pub struct RaftGrpcServer {
     config: ServerConfig,
     registry: Arc<ZoneRaftRegistry>,
+    /// This node's own gRPC address (for InviteZone → JoinZone callback).
+    self_address: String,
 }
 
 impl RaftGrpcServer {
     /// Create a new server backed by the given zone registry.
-    pub fn new(registry: Arc<ZoneRaftRegistry>, config: ServerConfig) -> Self {
-        Self { config, registry }
+    ///
+    /// # Arguments
+    /// * `registry` — Zone registry for routing requests.
+    /// * `config` — Server configuration.
+    /// * `self_address` — This node's gRPC address (e.g., "http://10.0.0.2:2026").
+    pub fn new(
+        registry: Arc<ZoneRaftRegistry>,
+        config: ServerConfig,
+        self_address: String,
+    ) -> Self {
+        Self {
+            config,
+            registry,
+            self_address,
+        }
     }
 
     /// Get the bind address.
@@ -85,10 +106,12 @@ impl RaftGrpcServer {
     /// Start the gRPC server.
     pub async fn serve(self) -> Result<()> {
         let addr = self.config.bind_address;
+        let tls_enabled = self.config.tls.is_some();
         tracing::info!(
-            "Starting Raft gRPC server on {} (zones={})",
+            "Starting Raft gRPC server on {} (zones={}, tls={})",
             addr,
-            self.registry.list_zones().len()
+            self.registry.list_zones().len(),
+            tls_enabled,
         );
 
         let raft_service = RaftServiceImpl {
@@ -96,9 +119,23 @@ impl RaftGrpcServer {
         };
         let client_service = RaftClientServiceImpl {
             registry: self.registry.clone(),
+            self_address: self.self_address.clone(),
+            tls: self.config.tls.clone(),
         };
 
-        tonic::transport::Server::builder()
+        let mut builder = tonic::transport::Server::builder();
+        if let Some(ref tls) = self.config.tls {
+            let identity = tonic::transport::Identity::from_pem(&tls.cert_pem, &tls.key_pem);
+            let client_ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
+            let tls_config = tonic::transport::ServerTlsConfig::new()
+                .identity(identity)
+                .client_ca_root(client_ca);
+            builder = builder
+                .tls_config(tls_config)
+                .map_err(|e| TransportError::Connection(format!("TLS config error: {}", e)))?;
+        }
+
+        builder
             .add_service(RaftServiceServer::new(raft_service))
             .add_service(RaftClientServiceServer::new(client_service))
             .serve(addr)
@@ -114,10 +151,12 @@ impl RaftGrpcServer {
         shutdown: impl std::future::Future<Output = ()> + Send + 'static,
     ) -> Result<()> {
         let addr = self.config.bind_address;
+        let tls_enabled = self.config.tls.is_some();
         tracing::info!(
-            "Starting Raft gRPC server on {} (zones={}, with shutdown signal)",
+            "Starting Raft gRPC server on {} (zones={}, tls={}, with shutdown signal)",
             addr,
-            self.registry.list_zones().len()
+            self.registry.list_zones().len(),
+            tls_enabled,
         );
 
         let raft_service = RaftServiceImpl {
@@ -125,9 +164,23 @@ impl RaftGrpcServer {
         };
         let client_service = RaftClientServiceImpl {
             registry: self.registry.clone(),
+            self_address: self.self_address.clone(),
+            tls: self.config.tls.clone(),
         };
 
-        tonic::transport::Server::builder()
+        let mut builder = tonic::transport::Server::builder();
+        if let Some(ref tls) = self.config.tls {
+            let identity = tonic::transport::Identity::from_pem(&tls.cert_pem, &tls.key_pem);
+            let client_ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
+            let tls_config = tonic::transport::ServerTlsConfig::new()
+                .identity(identity)
+                .client_ca_root(client_ca);
+            builder = builder
+                .tls_config(tls_config)
+                .map_err(|e| TransportError::Connection(format!("TLS config error: {}", e)))?;
+        }
+
+        builder
             .add_service(RaftServiceServer::new(raft_service))
             .add_service(RaftClientServiceServer::new(client_service))
             .serve_with_shutdown(addr, shutdown)
@@ -177,11 +230,11 @@ fn proto_command_to_internal(proto: RaftCommand) -> Option<Command> {
     }
 }
 
-/// Look up a zone's RaftNode from the registry, or return a gRPC error.
+/// Look up a zone's ZoneConsensus from the registry, or return a gRPC error.
 fn get_zone_node(
     registry: &ZoneRaftRegistry,
     zone_id: &str,
-) -> std::result::Result<RaftNode<FullStateMachine>, Status> {
+) -> std::result::Result<ZoneConsensus<FullStateMachine>, Status> {
     registry.get_node(zone_id).ok_or_else(|| {
         Status::not_found(format!(
             "zone '{}' not found on this node",
@@ -284,7 +337,7 @@ impl RaftService for RaftServiceImpl {
 
     /// Handle a raw raft-rs message forwarded from another node.
     ///
-    /// Routes by zone_id to the correct Raft group's RaftNode.
+    /// Routes by zone_id to the correct Raft group's ZoneConsensus.
     async fn step_message(
         &self,
         request: Request<StepMessageRequest>,
@@ -323,6 +376,57 @@ impl RaftService for RaftServiceImpl {
             error: None,
         }))
     }
+
+    /// Handle EC replication entries from a peer (Phase C).
+    ///
+    /// Deserializes each entry's command bytes and applies to the local state
+    /// machine via `apply_ec_from_peer`. Returns the highest seq applied.
+    async fn replicate_entries(
+        &self,
+        request: Request<ReplicateEntriesRequest>,
+    ) -> std::result::Result<Response<ReplicateEntriesResponse>, Status> {
+        let req = request.into_inner();
+        let node = get_zone_node(&self.registry, &req.zone_id)?;
+
+        let mut max_applied: u64 = 0;
+
+        for entry in &req.entries {
+            let command: Command = match bincode::deserialize(&entry.command) {
+                Ok(cmd) => cmd,
+                Err(e) => {
+                    tracing::warn!(seq = entry.seq, "Failed to deserialize EC entry: {}", e);
+                    continue;
+                }
+            };
+
+            match node.apply_ec_from_peer(command, entry.timestamp).await {
+                Ok(_) => {
+                    max_applied = max_applied.max(entry.seq);
+                    tracing::trace!(
+                        seq = entry.seq,
+                        zone = req.zone_id,
+                        from = req.sender_node_id,
+                        "Applied EC entry from peer"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(seq = entry.seq, "Failed to apply EC entry from peer: {}", e);
+                    // Return what we've applied so far
+                    return Ok(Response::new(ReplicateEntriesResponse {
+                        success: false,
+                        error: Some(format!("Failed at seq {}: {}", entry.seq, e)),
+                        applied_up_to: max_applied,
+                    }));
+                }
+            }
+        }
+
+        Ok(Response::new(ReplicateEntriesResponse {
+            success: true,
+            error: None,
+            applied_up_to: max_applied,
+        }))
+    }
 }
 
 // =============================================================================
@@ -332,6 +436,35 @@ impl RaftService for RaftServiceImpl {
 /// Zone-routed implementation of the RaftClientService gRPC trait.
 struct RaftClientServiceImpl {
     registry: Arc<ZoneRaftRegistry>,
+    /// This node's own gRPC address (e.g., "http://10.0.0.2:2026").
+    /// Needed by InviteZone to tell the leader our address when calling JoinZone.
+    self_address: String,
+    /// TLS config for outbound connections (InviteZone → JoinZone callback).
+    tls: Option<super::TlsConfig>,
+}
+
+/// Build a tonic Endpoint, optionally with TLS client config.
+fn build_endpoint_with_tls(
+    address: &str,
+    tls: Option<&super::TlsConfig>,
+) -> Result<tonic::transport::Endpoint> {
+    let mut endpoint = tonic::transport::Endpoint::from_shared(address.to_string())
+        .map_err(|e| TransportError::InvalidAddress(e.to_string()))?
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(30));
+
+    if let Some(tls) = tls {
+        let identity = tonic::transport::Identity::from_pem(&tls.cert_pem, &tls.key_pem);
+        let ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
+        let tls_config = tonic::transport::ClientTlsConfig::new()
+            .identity(identity)
+            .ca_certificate(ca);
+        endpoint = endpoint
+            .tls_config(tls_config)
+            .map_err(|e| TransportError::Connection(format!("TLS config error: {}", e)))?;
+    }
+
+    Ok(endpoint)
 }
 
 #[tonic::async_trait]
@@ -697,16 +830,168 @@ impl RaftClientService for RaftClientServiceImpl {
             })),
         }
     }
+
+    /// Handle an InviteZone request — inverse of JoinZone.
+    ///
+    /// This node is being asked to join a zone and create a DT_MOUNT locally.
+    /// Steps: (1) create local zone replica, (2) call JoinZone on leader,
+    /// (3) create DT_MOUNT in root zone.
+    async fn invite_zone(
+        &self,
+        request: Request<InviteZoneRequest>,
+    ) -> std::result::Result<Response<InviteZoneResponse>, Status> {
+        let req = request.into_inner();
+        let node_id = self.registry.node_id();
+
+        tracing::info!(
+            zone = req.zone_id,
+            mount_path = req.mount_path,
+            inviter_node_id = req.inviter_node_id,
+            inviter_address = req.inviter_address,
+            "InviteZone request received",
+        );
+
+        // Step 1: Create local zone replica (reuses registry.join_zone — DRY).
+        let inviter_peer = NodeAddress {
+            id: req.inviter_node_id,
+            endpoint: req.inviter_address.clone(),
+        };
+        let runtime_handle = tokio::runtime::Handle::current();
+        if let Err(e) = self
+            .registry
+            .join_zone(&req.zone_id, vec![inviter_peer], &runtime_handle)
+        {
+            return Ok(Response::new(InviteZoneResponse {
+                success: false,
+                error: Some(format!("Failed to create local zone replica: {}", e)),
+                node_id: 0,
+                node_address: String::new(),
+            }));
+        }
+
+        // Step 2: Call JoinZone on the inviter (leader) to be added as Voter.
+        // Uses tonic-generated client — same RPC definition, no duplication.
+        let channel = match build_endpoint_with_tls(&req.inviter_address, self.tls.as_ref()) {
+            Ok(ep) => match ep.connect().await {
+                Ok(ch) => ch,
+                Err(e) => {
+                    let _ = self.registry.remove_zone(&req.zone_id);
+                    return Ok(Response::new(InviteZoneResponse {
+                        success: false,
+                        error: Some(format!("Failed to connect to inviter: {}", e)),
+                        node_id: 0,
+                        node_address: String::new(),
+                    }));
+                }
+            },
+            Err(e) => {
+                let _ = self.registry.remove_zone(&req.zone_id);
+                return Ok(Response::new(InviteZoneResponse {
+                    success: false,
+                    error: Some(format!("Invalid inviter address: {}", e)),
+                    node_id: 0,
+                    node_address: String::new(),
+                }));
+            }
+        };
+
+        let mut client = RaftClientServiceClient::new(channel);
+        let join_request = tonic::Request::new(JoinZoneRequest {
+            zone_id: req.zone_id.clone(),
+            node_id,
+            node_address: self.self_address.clone(),
+        });
+
+        match client.join_zone(join_request).await {
+            Ok(resp) => {
+                let join_resp = resp.into_inner();
+                if !join_resp.success {
+                    let _ = self.registry.remove_zone(&req.zone_id);
+                    return Ok(Response::new(InviteZoneResponse {
+                        success: false,
+                        error: Some(format!(
+                            "JoinZone rejected by leader: {}",
+                            join_resp.error.unwrap_or_default()
+                        )),
+                        node_id: 0,
+                        node_address: String::new(),
+                    }));
+                }
+            }
+            Err(e) => {
+                let _ = self.registry.remove_zone(&req.zone_id);
+                return Ok(Response::new(InviteZoneResponse {
+                    success: false,
+                    error: Some(format!("JoinZone RPC failed: {}", e)),
+                    node_id: 0,
+                    node_address: String::new(),
+                }));
+            }
+        }
+
+        // Step 3: Create DT_MOUNT in local root zone.
+        // Reuses existing propose infrastructure (same as any SetMetadata).
+        let root_zone_id = "root";
+        let root_node = match self.registry.get_node(root_zone_id) {
+            Some(node) => node,
+            None => {
+                // Zone joined but can't create mount — partial success.
+                return Ok(Response::new(InviteZoneResponse {
+                    success: false,
+                    error: Some("Root zone not found on this node".to_string()),
+                    node_id,
+                    node_address: self.self_address.clone(),
+                }));
+            }
+        };
+
+        // Build DT_MOUNT FileMetadata proto
+        let mount_metadata = super::proto::nexus::core::FileMetadata {
+            path: req.mount_path.clone(),
+            backend_name: "virtual".to_string(),
+            entry_type: 2, // DT_MOUNT
+            target_zone_id: req.zone_id.clone(),
+            zone_id: root_zone_id.to_string(),
+            ..Default::default()
+        };
+        let key = mount_metadata.path.clone();
+        let value = prost::Message::encode_to_vec(&mount_metadata);
+
+        match root_node.propose(Command::SetMetadata { key, value }).await {
+            Ok(_) => {
+                tracing::info!(
+                    zone = req.zone_id,
+                    mount_path = req.mount_path,
+                    "InviteZone complete: zone joined + DT_MOUNT created",
+                );
+                Ok(Response::new(InviteZoneResponse {
+                    success: true,
+                    error: None,
+                    node_id,
+                    node_address: self.self_address.clone(),
+                }))
+            }
+            Err(e) => {
+                // Zone joined but DT_MOUNT failed — partial success.
+                Ok(Response::new(InviteZoneResponse {
+                    success: false,
+                    error: Some(format!("Zone joined but DT_MOUNT creation failed: {}", e)),
+                    node_id,
+                    node_address: self.self_address.clone(),
+                }))
+            }
+        }
+    }
 }
 
 // =============================================================================
 // Witness Server (lightweight, vote-only — separate StateMachine type)
 // =============================================================================
 
-/// Shared state for the Witness server, backed by `RaftNode<WitnessStateMachine>` handle.
+/// Shared state for the Witness server, backed by `ZoneConsensus<WitnessStateMachine>` handle.
 pub struct WitnessServerState {
-    /// The RaftNode handle (Clone + Send + Sync).
-    pub node: RaftNode<WitnessStateMachine>,
+    /// The ZoneConsensus handle (Clone + Send + Sync).
+    pub node: ZoneConsensus<WitnessStateMachine>,
     /// This node's ID.
     pub node_id: u64,
     /// Known peers.
@@ -721,7 +1006,7 @@ impl WitnessServerState {
         node_id: u64,
         db_path: &str,
         peers: Vec<NodeAddress>,
-    ) -> Result<(Self, RaftNodeDriver<WitnessStateMachine>)> {
+    ) -> Result<(Self, ZoneConsensusDriver<WitnessStateMachine>)> {
         use crate::raft::{RaftConfig, RaftStorage};
         let sm_path = std::path::Path::new(db_path).join("sm");
         let raft_path = std::path::Path::new(db_path).join("raft");
@@ -740,9 +1025,10 @@ impl WitnessServerState {
         let peer_ids: Vec<u64> = peers.iter().map(|p| p.id).collect();
         let config = RaftConfig::witness(node_id, peer_ids);
 
-        let (handle, driver) = RaftNode::new(config, raft_storage, state_machine).map_err(|e| {
-            TransportError::Connection(format!("Failed to create witness RaftNode: {}", e))
-        })?;
+        let (handle, driver) = ZoneConsensus::new(config, raft_storage, state_machine, None)
+            .map_err(|e| {
+                TransportError::Connection(format!("Failed to create witness ZoneConsensus: {}", e))
+            })?;
 
         let peer_map: HashMap<u64, NodeAddress> = peers.into_iter().map(|p| (p.id, p)).collect();
 
@@ -762,7 +1048,7 @@ pub struct RaftWitnessServer {
     config: ServerConfig,
     state: Arc<WitnessServerState>,
     /// The driver, held temporarily until passed to the transport loop.
-    driver: Option<RaftNodeDriver<WitnessStateMachine>>,
+    driver: Option<ZoneConsensusDriver<WitnessStateMachine>>,
 }
 
 impl RaftWitnessServer {
@@ -791,13 +1077,13 @@ impl RaftWitnessServer {
         self.config.bind_address
     }
 
-    /// Get the RaftNode handle.
-    pub fn node(&self) -> RaftNode<WitnessStateMachine> {
+    /// Get the ZoneConsensus handle.
+    pub fn node(&self) -> ZoneConsensus<WitnessStateMachine> {
         self.state.node.clone()
     }
 
     /// Take the driver out (must be passed to the transport loop).
-    pub fn take_driver(&mut self) -> RaftNodeDriver<WitnessStateMachine> {
+    pub fn take_driver(&mut self) -> ZoneConsensusDriver<WitnessStateMachine> {
         self.driver.take().expect("driver already taken")
     }
 
@@ -807,13 +1093,30 @@ impl RaftWitnessServer {
         shutdown: impl std::future::Future<Output = ()> + Send + 'static,
     ) -> Result<()> {
         let addr = self.config.bind_address;
-        tracing::info!("Starting Raft Witness gRPC server on {}", addr);
+        let tls_enabled = self.config.tls.is_some();
+        tracing::info!(
+            "Starting Raft Witness gRPC server on {} (tls={})",
+            addr,
+            tls_enabled,
+        );
 
         let service = WitnessServiceImpl {
             state: self.state.clone(),
         };
 
-        tonic::transport::Server::builder()
+        let mut builder = tonic::transport::Server::builder();
+        if let Some(ref tls) = self.config.tls {
+            let identity = tonic::transport::Identity::from_pem(&tls.cert_pem, &tls.key_pem);
+            let client_ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
+            let tls_config = tonic::transport::ServerTlsConfig::new()
+                .identity(identity)
+                .client_ca_root(client_ca);
+            builder = builder
+                .tls_config(tls_config)
+                .map_err(|e| TransportError::Connection(format!("TLS config error: {}", e)))?;
+        }
+
+        builder
             .add_service(RaftServiceServer::new(service))
             .serve_with_shutdown(addr, shutdown)
             .await
@@ -900,6 +1203,16 @@ impl RaftService for WitnessServiceImpl {
             error: None,
         }))
     }
+
+    /// Witness nodes do not participate in EC replication.
+    async fn replicate_entries(
+        &self,
+        _request: Request<ReplicateEntriesRequest>,
+    ) -> std::result::Result<Response<ReplicateEntriesResponse>, Status> {
+        Err(Status::unimplemented(
+            "Witness nodes do not support EC replication",
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -928,7 +1241,7 @@ mod tests {
             ..Default::default()
         };
 
-        let server = RaftGrpcServer::new(registry, config);
+        let server = RaftGrpcServer::new(registry, config, "http://127.0.0.1:0".to_string());
         assert_eq!(
             server.bind_address(),
             "127.0.0.1:0".parse::<SocketAddr>().unwrap()

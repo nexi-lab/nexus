@@ -66,9 +66,14 @@ jobs:
           cd rust/nexus_tasks
           cargo fmt --check
 
-      - name: Check Rust formatting (nexus_fast)
+      - name: Check Rust formatting (nexus_core)
         run: |
-          cd rust/nexus_fast
+          cd rust/nexus_core
+          cargo fmt --check
+
+      - name: Check Rust formatting (nexus_pyo3)
+        run: |
+          cd rust/nexus_pyo3
           cargo fmt --check
 
       - name: Check Rust formatting (nexus_raft)
@@ -76,14 +81,24 @@ jobs:
           cd rust/nexus_raft
           cargo fmt --check
 
+      - name: Check Rust formatting (nexus_wal)
+        run: |
+          cd rust/nexus_wal
+          cargo fmt --check
+
       - name: Run Clippy (nexus_tasks)
         run: |
           cd rust/nexus_tasks
           cargo clippy -- -D warnings
 
-      - name: Run Clippy (nexus_fast)
+      - name: Run Clippy (nexus_core)
         run: |
-          cd rust/nexus_fast
+          cd rust/nexus_core
+          cargo clippy -- -D warnings
+
+      - name: Run Clippy (nexus_pyo3)
+        run: |
+          cd rust/nexus_pyo3
           cargo clippy -- -D warnings
 
       - name: Run Clippy (nexus_raft)
@@ -91,17 +106,37 @@ jobs:
           cd rust/nexus_raft
           cargo clippy --all-features -- -D warnings
 
+      - name: Run Clippy (nexus_wal)
+        run: |
+          cd rust/nexus_wal
+          cargo clippy -- -D warnings
+
       - name: Run Rust tests (nexus_tasks)
         run: |
           cd rust/nexus_tasks
           cargo test
 
-      - name: Run Rust tests (nexus_fast)
+      - name: Run Rust tests (nexus_core)
         run: |
-          cd rust/nexus_fast
+          cd rust/nexus_core
           cargo test
+
+      - name: Run Rust tests (nexus_pyo3)
+        run: |
+          cd rust/nexus_pyo3
+          cargo test
+
+      - name: Verify WASM compilation (nexus_core)
+        run: |
+          rustup target add wasm32-unknown-unknown
+          cargo check --target wasm32-unknown-unknown -p nexus_core
 
       - name: Run Rust tests (nexus_raft)
         run: |
           cd rust/nexus_raft
           cargo test --all-features
+
+      - name: Run Rust tests (nexus_wal)
+        run: |
+          cd rust/nexus_wal
+          cargo test

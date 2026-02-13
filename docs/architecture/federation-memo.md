@@ -10,7 +10,7 @@
 
 ### What Works
 - **Raft consensus core** (Rust): 100% complete
-  - `RaftNode` wrapping tikv/raft-rs `RawNode` with async propose API
+  - `ZoneConsensus` wrapping tikv/raft-rs `RawNode` with async propose API
   - `RaftStorage` backed by sled (persistent log, hard state, snapshots, compaction)
   - `FullStateMachine` (metadata + locks) and `WitnessStateMachine` (vote-only)
   - `WitnessStateMachineInMemory` for testing
@@ -45,7 +45,7 @@
   │ ┌──────────────┐     │  ┌──────────────┐    (Witness)   │  │
   │ │   NexusFS    │     │  │   NexusFS    │  ┌──────────┐  │  │
   │ │  + RPC Srv   │     │  │  + RPC Srv   │  │ Vote-only│  │  │
-  │ │  + RaftNode  │◄────┼──┤  + RaftNode  │──┤ RaftNode │  │  │
+  │ │  + ZoneConsensus  │◄────┼──┤  + ZoneConsensus  │──┤ ZoneConsensus │  │  │
   │ │              │  gRPC│  │              │  │          │  │  │
   │ │ StateMachine │     │  │ StateMachine │  │ (no SM)  │  │  │
   │ │  ├─ meta     │     │  │  ├─ meta     │  │          │  │  │
@@ -70,7 +70,7 @@
 Every non-witness node runs in a single process:
 1. **NexusFS** — filesystem operations, backend connectors, caching
 2. **RPC Server** — FastAPI (HTTP) + gRPC (Raft transport)
-3. **RaftNode** — consensus participant (Leader or Follower, code-wise identical)
+3. **ZoneConsensus** — consensus participant (Leader or Follower, code-wise identical)
 4. **StateMachine** — metadata + locks, persisted in sled
 5. **SQLAlchemy** — relational data (users, permissions, ReBAC)
 
@@ -242,7 +242,7 @@ NEXUS_METADATA_STORE=sqlalchemy  # Use PostgreSQL (current)
 ┌─────────────────────────────────────────────────────────┐
 │ USER SPACE                                              │
 │                                                         │
-│  RaftNode.send_message(peer_id, msg)                   │
+│  ZoneConsensus.send_message(peer_id, msg)                   │
 │  EventBus.publish(event)                               │
 │  RPC.call_remote_method(method, args)                  │
 └─────────────────────────────────────────────────────────┘
@@ -451,7 +451,7 @@ Client → NexusFS.write() → RaftMetadataStore (local mode)
 ### 5.3 Multi-Node with Raft (Distributed, Future)
 ```
 Client → NexusFS.write() → RaftMetadataStore (remote mode)
-                              → RaftNode.propose()
+                              → ZoneConsensus.propose()
                               → gRPC replicate to followers
                               → Majority ACK (2/3 or 2/2+witness)
                               → StateMachine.apply() on all nodes
@@ -605,52 +605,68 @@ node3 mounts node2:/folderA → discovers zone-X already exists → joins as Vot
 - Storage quota management
 - Admin/ops operations
 
-### 6.5 Zone Discovery: DNS-Style Hierarchical Resolution (DECIDED 2026-02-11)
+### 6.5 Peer Discovery: No Custom DNS Needed (DECIDED 2026-02-13)
 
-**Source**: Validated by Gemini analysis (Spanner, AFS, Ceph, HDFS comparison).
+**Source**: Architecture review, validated against current implementation.
 
-**Decision**: DNS-style hierarchical delegation, NOT a global registry.
+**Decision**: Standard OS DNS + static bootstrap + Raft membership exchange covers all
+peer discovery scenarios. **No custom NexusFS-level discovery mechanism needed.**
 
-Each zone only knows about its **direct DT_MOUNT targets** (child zones). Path resolution
-is zone-by-zone, like DNS recursive resolution. No global zone registry on the critical path.
+**Why no custom DNS?** Mounting = joining a Raft group as Voter. By the time a DT_MOUNT
+entry exists, the node has already joined the target zone (via `JoinZone` RPC) and has
+a local sled replica. Path resolution is always local (~5μs). There is no scenario where
+path resolution encounters an "unknown" zone — if you can see the DT_MOUNT, you're
+already a Voter in that zone.
 
+**Three-layer discovery (all already implemented):**
+
+| Layer | Mechanism | When | Status |
+|-------|-----------|------|--------|
+| **Bootstrap** | `NEXUS_PEERS` env var | First cluster formation (like etcd `--initial-cluster`) | ✅ Implemented |
+| **First contact** | OS DNS (hostname → IP) | `join_zone(peers=["2@bob-laptop:2126"])` — tonic/tokio delegates to OS resolver | ✅ Automatic |
+| **After join** | `JoinZoneResponse.ClusterConfig` | Returns all voter `NodeInfo{id, address}` | ✅ Implemented |
+| **Ongoing** | Raft `ConfChange` | Membership changes propagated automatically | ✅ Implemented |
+
+**OS DNS covers all deployment modes transparently:**
+- Docker Compose: container name = hostname (Docker DNS)
+- Kubernetes: service name resolves via kube-dns/CoreDNS
+- LAN: mDNS/Bonjour (`.local` hostnames resolve automatically)
+- Public: standard DNS
+
+**Path resolution across zones** (all local, no network hops):
 ```
-Path resolution for /company/engineering/team1/file.txt:
+Path: /company/engineering/team1/file.txt
 
-  Step 1: Root Zone → /company is DT_MOUNT → Zone_Company @ us-west:2126
-  Step 2: Zone_Company → /engineering is DT_MOUNT → Zone_Eng @ us-east:2126
-  Step 3: Zone_Eng → /team1/file.txt is local → return FileMetadata
+  Step 1: Root Zone (local sled) → /company is DT_MOUNT → Zone_Company
+  Step 2: Zone_Company (local sled) → /engineering is DT_MOUNT → Zone_Eng
+  Step 3: Zone_Eng (local sled) → /team1/file.txt → return FileMetadata
 
-  Note: once mounted, node is a Voter in each zone on the path, so ALL reads are local (~5μs).
-  DNS-style resolution is only needed for initial mount discovery, not per-read.
+  All reads are local (~5μs) because mounting = Voter = full local replica.
+  No "DNS resolution" on the read path. Ever.
 ```
 
-**Root Zone** (like DNS root servers):
-- A special zone maintaining only top-level domain entries (e.g., `/google`, `/meta`)
-- NOT a global registry of all zones — only top-level entries
-- Data structure: `Map<DomainName, ZoneID/Address>`
-- MVP: manual zone address config. Future: zones register with root on startup.
+**Node bootstrap flow:**
+```
+nexus start (first time)
+  → bootstrap(root_zone_id="root", peers=None)
+  → create_zone("root", peers=[])       # single-node Raft group
+  → put("/", DT_DIR, i_links_count=1)   # POSIX root self-reference
 
-**Client-side PathResolver cache** (per Gemini recommendation):
-```python
-class PathResolver:
-    def resolve(self, path: str) -> (ZoneClient, RelativePath):
-        # Longest prefix match → skip already-resolved zone hops
-        cached = self.cache.longest_prefix_match(path)
-        if cached:
-            return cached.zone_client, cached.remaining_path
-        # Cold path: recursive resolution from root
-        return self.resolve_from_root(path)
+nexus start (multi-node static bootstrap)
+  → NEXUS_PEERS="2@node2:2126,3@node3:2126"
+  → bootstrap(root_zone_id="root", peers=[...])
+  → create_zone("root", peers=[...])    # N-node Raft group
+  → put("/", DT_DIR, i_links_count=1)
 ```
 
-**Scalability**: Supports billions of zones (same as DNS supporting billions of domains).
-Root zone only stores top-level zones. Subtree failure is isolated.
-99.9% of requests hit local cache (0-hop). Only first access or zone migration needs resolution.
-
-**Optional enhancement — Global Search** (not on critical path):
-For "I know the zone UUID but not the path" use case, a lightweight global registry
-(Bloom Filter or DHT) can be added as an auxiliary lookup. This is for search/admin only,
-never on the file access critical path.
+**Previous design note**: An earlier draft (§6.5 pre-2026-02-13) proposed DNS-style
+hierarchical zone discovery with a Root Zone acting like DNS root servers, client-side
+PathResolver caches, and optional global search via Bloom Filter/DHT. This is
+**superseded** — all of those mechanisms are unnecessary because (a) Voters have local
+replicas so path resolution never hits the network, and (b) OS DNS already handles
+hostname→IP for the `JoinZone` RPC. The only "discovery" needed is knowing at least one
+peer's hostname to send the initial `JoinZone` request, which is a standard networking
+problem solved by DNS, not a filesystem problem.
 
 ### 6.6 DT_MOUNT Entry Structure
 
@@ -697,9 +713,48 @@ No `cache_sled` or Dragonfly needed for metadata caching.
 | Mount operation | N/A | Create new zone, all participants join as Voters |
 | Read path | Local sled | Local sled (always, Voter has full replica) |
 | Write path | Raft propose | Raft propose to target zone's leader |
-| Node discovery | `NEXUS_PEERS` (static) | DNS-style resolution + bootstrap |
+| Node discovery | `NEXUS_PEERS` (static) | OS DNS + `NEXUS_PEERS` + `JoinZoneResponse.ClusterConfig` |
 | 3-node compose | 1 zone, 3 replicas | Still 1 zone; multi-zone needs multiple Raft groups |
 | Multi-Raft sharding | N/A | Future: Issue #1327 (when single zone too large) |
+
+### 6.9 Federation as Optional DI Subsystem (DECIDED 2026-02-13)
+
+Federation is **NOT kernel**. It is an optional, DI-injected subsystem at the same
+level as CacheStore and RecordStore. NexusFS without federation gracefully degrades
+to client-server mode (via RemoteNexusFS) or single-node embedded mode.
+
+**Degradation path:**
+```
+Full (Federation + Remote + RecordStore + CacheStore)
+  ↓ remove Federation
+Client-Server (RemoteNexusFS ↔ NexusFS server)
+  ↓ remove RemoteNexusFS
+Single-node embedded (NexusFS kernel: Metastore + ObjectStore only)
+```
+
+**Layering:**
+```
+                NexusFS (kernel)           Federation (optional subsystem)
+User:           NexusFilesystem (ABC)      — (no ABC needed, inherently asymmetric)
+Kernel/Service: NexusFS                    NexusFederation (orchestration)
+HAL:            FileMetadataProtocol       ZoneManager (wraps PyO3)
+Driver:         RaftMetadataStore          PyZoneManager (Rust/redb/Raft)
+Comms:          —                          RaftClient (gRPC to peers)
+```
+
+Federation does NOT need a remote implementation (unlike NexusFS → RemoteNexusFS)
+because zone operations are inherently asymmetric: you always operate locally on
+your ZoneManager and call peers via RaftClient. No "remote federation proxy" scenario.
+
+**`NexusFederation` class** (`nexus.raft.federation`):
+- Orchestrates ZoneManager (local ops) + RaftClient (peer gRPC)
+- Dependencies injected: `ZoneManager`, client factory
+- Exposes `share()` and `join()` as high-level async workflows
+- CLI and future REST/MCP endpoints are thin wrappers over this class
+
+**CLI `nexus mount`** (merged with FUSE mount via argument detection):
+- 1 arg → FUSE mount (existing)
+- 2 args with `peer:path` syntax → federation share/join (new)
 
 ---
 
@@ -842,7 +897,7 @@ hide upper directories — the namespace boundary is the zone boundary.
 - NexusFS (filesystem ops, backend connectors, caching)
 - FastAPI (HTTP API)
 - RPC Server (client-facing RPC)
-- RaftNode + sled (consensus + embedded storage)
+- ZoneConsensus + sled (consensus + embedded storage)
 - gRPC transport (inter-node Raft replication)
 - SQLAlchemy (users, permissions, ReBAC)
 

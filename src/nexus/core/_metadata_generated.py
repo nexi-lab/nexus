@@ -172,9 +172,27 @@ class FileMetadataProtocol(ABC):
         pass
 
     @abstractmethod
-    def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> None:
-        """Store or update file metadata."""
+    def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
+        """Store or update file metadata.
+
+        Returns:
+            EC mode: write token (int) for polling via is_committed().
+            SC mode: None (write is already committed when this returns).
+        """
         pass
+
+    def is_committed(self, token: int) -> str | None:  # noqa: ARG002
+        """Check if an EC write token has been replicated to a majority.
+
+        Args:
+            token: Write token returned by put() with consistency="ec".
+
+        Returns:
+            "committed" — replicated to majority.
+            "pending" — local only, awaiting replication.
+            None — invalid token or no replication log.
+        """
+        return None
 
     @abstractmethod
     def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
@@ -271,8 +289,11 @@ class AsyncFileMetadataWrapper:
     async def aget(self, path: str) -> FileMetadata | None:
         return await asyncio.to_thread(self._store.get, path)
 
-    async def aput(self, metadata: FileMetadata, *, consistency: str = "sc") -> None:
+    async def aput(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
         return await asyncio.to_thread(self._store.put, metadata, consistency=consistency)
+
+    async def ais_committed(self, token: int) -> str | None:
+        return await asyncio.to_thread(self._store.is_committed, token)
 
     async def adelete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         return await asyncio.to_thread(self._store.delete, path, consistency=consistency)

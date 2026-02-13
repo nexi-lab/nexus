@@ -39,6 +39,12 @@ service RaftService {
   // (raft-rs's native format). This is the standard pattern (etcd, tikv) for
   // routing all raft-rs internal message types (~15 types) through a single RPC.
   rpc StepMessage(StepMessageRequest) returns (StepMessageResponse);
+
+  // ReplicateEntries sends EC (eventually consistent) entries to a peer.
+  // This is NOT Raft consensus — EC writes bypass Raft and use async replication.
+  // Used by the background replication loop (Phase C) for peer data sync.
+  // Entries are idempotent — receivers skip already-applied sequence numbers.
+  rpc ReplicateEntries(ReplicateEntriesRequest) returns (ReplicateEntriesResponse);
 }
 
 // EventStreamService provides streaming events (reusable for webhooks).
@@ -79,6 +85,13 @@ service RaftClientService {
   // This is a one-time setup operation — after joining, the new node receives
   // a snapshot from the leader and becomes an equal Voter with a local sled replica.
   rpc JoinZone(JoinZoneRequest) returns (JoinZoneResponse);
+
+  // InviteZone is the inverse of JoinZone: the zone leader tells a remote node
+  // to join a zone and create a DT_MOUNT at a specified path.
+  // Used by `nexus mount /local-path peer:/remote-path` — the sharing initiator
+  // calls this on the remote peer so it joins the newly created zone.
+  // Handler: (1) join zone as peer, (2) call JoinZone on leader, (3) create DT_MOUNT.
+  rpc InviteZone(InviteZoneRequest) returns (InviteZoneResponse);
 }
 
 // === Client Messages ===
@@ -151,6 +164,35 @@ message JoinZoneResponse {
   optional string leader_address = 3;
   // Current cluster config so the joiner knows all peers.
   optional ClusterConfig config = 4;
+}
+
+// InviteZoneRequest is sent by a zone leader to a remote node, asking it to
+// join the zone and create a DT_MOUNT at the specified path.
+// This is the inverse of JoinZone: JoinZone = new_node → leader,
+// InviteZone = leader → new_node.
+// The remote handler: (1) creates local zone replica, (2) calls JoinZone on
+// the leader to be added as Voter, (3) creates DT_MOUNT at mount_path.
+// The mount_path must already exist as a directory on the remote node (NFS behavior).
+message InviteZoneRequest {
+  // Zone to join.
+  string zone_id = 1;
+  // Where to create DT_MOUNT on the remote node's root zone.
+  // Must already exist as a directory (like NFS mount points).
+  string mount_path = 2;
+  // The inviter (leader) node's Raft ID.
+  uint64 inviter_node_id = 3;
+  // The inviter (leader) node's gRPC address.
+  string inviter_address = 4;
+}
+
+// InviteZoneResponse is returned after the remote node has joined and mounted.
+message InviteZoneResponse {
+  bool success = 1;
+  optional string error = 2;
+  // The remote node's Raft ID (assigned during join).
+  uint64 node_id = 3;
+  // The remote node's gRPC address.
+  string node_address = 4;
 }
 
 // === Raft Protocol Messages ===
@@ -270,6 +312,39 @@ message StepMessageRequest {
 message StepMessageResponse {
   bool success = 1;
   optional string error = 2;
+}
+
+// === EC Replication Messages (Phase C) ===
+
+// ECReplicationEntry is a single entry from the EC replication WAL.
+// Sent from the writer node to peers for async replication.
+message ECReplicationEntry {
+  // Sequence number in the writer's replication log (WriteToken).
+  uint64 seq = 1;
+  // Serialized Command bytes (same format as Raft log entries).
+  bytes command = 2;
+  // Wall clock timestamp (Unix seconds) for LWW conflict resolution (Phase D).
+  uint64 timestamp = 3;
+  // Writer node ID for LWW tie-breaking (Phase D).
+  uint64 node_id = 4;
+}
+
+// ReplicateEntriesRequest sends a batch of EC entries to a peer.
+message ReplicateEntriesRequest {
+  // Zone this replication belongs to.
+  string zone_id = 1;
+  // Batch of EC entries to replicate.
+  repeated ECReplicationEntry entries = 2;
+  // The sender's node ID.
+  uint64 sender_node_id = 3;
+}
+
+// ReplicateEntriesResponse acknowledges receipt and application.
+message ReplicateEntriesResponse {
+  bool success = 1;
+  optional string error = 2;
+  // Highest sequence number successfully applied by the receiver.
+  uint64 applied_up_to = 3;
 }
 
 // === Event Streaming Messages (Webhook Pattern) ===

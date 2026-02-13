@@ -116,7 +116,7 @@ async def get_trajectory_manager(
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
 ) -> Any:
     """Get TrajectoryManager with current user context."""
-    from nexus.core.ace.trajectory import TrajectoryManager
+    from nexus.services.ace.trajectory import TrajectoryManager
 
     context = _get_operation_context(auth_result)
     session = nexus_fs.memory.session
@@ -136,7 +136,7 @@ async def get_feedback_manager(
     nexus_fs: Any = Depends(get_nexus_fs),
 ) -> Any:
     """Get FeedbackManager instance."""
-    from nexus.core.ace.feedback import FeedbackManager
+    from nexus.services.ace.feedback import FeedbackManager
 
     session = nexus_fs.memory.session
     return FeedbackManager(session=session)
@@ -147,7 +147,7 @@ async def get_playbook_manager(
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
 ) -> Any:
     """Get PlaybookManager with current user context."""
-    from nexus.core.ace.playbook import PlaybookManager
+    from nexus.services.ace.playbook import PlaybookManager
 
     context = _get_operation_context(auth_result)
     session = nexus_fs.memory.session
@@ -171,8 +171,8 @@ async def get_reflector(
 
     Requires LLM provider for reflection analysis.
     """
-    from nexus.core.ace.reflection import Reflector
-    from nexus.core.ace.trajectory import TrajectoryManager
+    from nexus.services.ace.reflection import Reflector
+    from nexus.services.ace.trajectory import TrajectoryManager
 
     context = _get_operation_context(auth_result)
     session = nexus_fs.memory.session
@@ -204,8 +204,8 @@ async def get_curator(
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
 ) -> Any:
     """Get Curator with current user context."""
-    from nexus.core.ace.curation import Curator
-    from nexus.core.ace.playbook import PlaybookManager
+    from nexus.services.ace.curation import Curator
+    from nexus.services.ace.playbook import PlaybookManager
 
     context = _get_operation_context(auth_result)
     session = nexus_fs.memory.session
@@ -235,7 +235,7 @@ async def get_consolidation_engine(
 
     Requires LLM provider for consolidation summaries.
     """
-    from nexus.core.ace.consolidation import ConsolidationEngine
+    from nexus.services.ace.consolidation import ConsolidationEngine
 
     context = _get_operation_context(auth_result)
     session = nexus_fs.memory.session
@@ -274,8 +274,8 @@ async def get_hierarchy_manager(
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
 ) -> Any:
     """Get HierarchicalMemoryManager with current user context."""
-    from nexus.core.ace.consolidation import ConsolidationEngine
-    from nexus.core.ace.memory_hierarchy import HierarchicalMemoryManager
+    from nexus.services.ace.consolidation import ConsolidationEngine
+    from nexus.services.ace.memory_hierarchy import HierarchicalMemoryManager
 
     context = _get_operation_context(auth_result)
     session = nexus_fs.memory.session
@@ -314,3 +314,40 @@ async def get_exchange_audit_logger(
 
     session_factory = nexus_fs.SessionLocal
     return ExchangeAuditLogger(session_factory=session_factory), zone_id
+
+
+# =============================================================================
+# Reputation & Trust dependencies (Issue #1356)
+# =============================================================================
+
+
+async def get_reputation_context(
+    nexus_fs: Any = Depends(get_nexus_fs),
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+) -> tuple[Any, Any, dict[str, Any]]:
+    """Get ReputationService + DisputeService + auth context.
+
+    Returns:
+        Tuple of (ReputationService, DisputeService, auth_context dict).
+    """
+    from nexus.services.reputation.dispute_service import DisputeService
+    from nexus.services.reputation.reputation_service import ReputationService
+
+    session_factory = nexus_fs.SessionLocal
+    reputation_service = ReputationService(
+        session_factory=session_factory,
+        cache_maxsize=10_000,
+        cache_ttl=60,
+    )
+    dispute_service = DisputeService(session_factory=session_factory)
+
+    context = _get_operation_context(auth_result)
+    auth_ctx = {
+        "user_id": context.user_id or context.user or "",
+        "subject_id": getattr(context, "subject_id", ""),
+        "subject_type": getattr(context, "subject_type", ""),
+        "is_admin": getattr(context, "is_admin", False),
+        "zone_id": context.zone_id,
+    }
+
+    return reputation_service, dispute_service, auth_ctx

@@ -46,12 +46,14 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "macros", "signal"], optional = true }
 
 # gRPC (general-purpose, reusable for Raft and webhooks)
-tonic = { version = "0.12", optional = true }
+# tls feature enables rustls for mTLS (mutual TLS) transport encryption.
+tonic = { version = "0.12", features = ["tls"], optional = true }
 prost = { version = "0.13", optional = true }
 
 # Utilities
 bytes = { version = "1", optional = true }
 dashmap = { version = "6", optional = true }
+time = { version = "0.3", features = ["parsing"], optional = true }
 
 # Python bindings (PyO3 FFI)
 pyo3 = { version = "0.22", features = ["extension-module"], optional = true }
@@ -80,7 +82,7 @@ consensus = ["raft", "protobuf", "slog", "async"]
 # Enable gRPC transport (tonic + protobuf) — EXPERIMENTAL, default OFF.
 # Requires `consensus` feature. Not used in production.
 # See: docs/rfcs/adr-raft-sled-strategy.md (Decision 4)
-grpc = ["tonic", "prost", "bytes", "tonic-build", "async", "tracing-subscriber", "consensus", "dashmap"]
+grpc = ["tonic", "prost", "bytes", "tonic-build", "async", "tracing-subscriber", "consensus", "dashmap", "time"]
 
 # Enable everything (including experimental features)
 full = ["grpc", "consensus", "python"]

@@ -18,7 +18,7 @@ import threading
 import time
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from nexus.core._metadata_generated import FileMetadata
 from nexus.core.exceptions import BackendError, ConflictError, NexusFileNotFoundError
@@ -42,6 +42,8 @@ if TYPE_CHECKING:
 
 class NexusFSCoreMixin:
     """Mixin providing core file operations for NexusFS."""
+
+    _revision_notifier: ClassVar[Any] = None
 
     # Type hints for attributes/methods that will be provided by NexusFS parent class
     if TYPE_CHECKING:
@@ -72,7 +74,11 @@ class NexusFSCoreMixin:
 
         def _validate_path(self, path: str) -> str: ...
         def _check_permission(
-            self, path: str, permission: Permission, context: OperationContext | None
+            self,
+            path: str,
+            permission: Permission,
+            context: OperationContext | None,
+            file_metadata: FileMetadata | None = None,
         ) -> None: ...
         def _inherit_permissions_from_parent(
             self, path: str, is_directory: bool
@@ -336,12 +342,19 @@ class NexusFSCoreMixin:
         """Get or create the RevisionNotifier instance (Issue #1180 Phase B).
 
         Lazily initialized to avoid import overhead for callers that don't
-        use the consistency subsystem.
+        use the consistency subsystem.  Falls back to NullRevisionNotifier on
+        construction errors so callers never receive None.
         """
         if self._revision_notifier is None:
-            from nexus.core.revision_notifier import RevisionNotifier
+            try:
+                from nexus.core.revision_notifier import RevisionNotifier
 
-            NexusFSCoreMixin._revision_notifier = RevisionNotifier()
+                NexusFSCoreMixin._revision_notifier = RevisionNotifier()
+            except Exception:
+                from nexus.core.revision_notifier import NullRevisionNotifier
+
+                logger.warning("Failed to create RevisionNotifier; using NullRevisionNotifier")
+                NexusFSCoreMixin._revision_notifier = NullRevisionNotifier()
         return self._revision_notifier
 
     def _get_revision_lock(self, zone_id: str) -> threading.Lock:
@@ -1834,26 +1847,14 @@ class NexusFSCoreMixin:
 
         # Check write permission (use ReBAC, not UNIX permissions)
         if self._enforce_permissions:  # type: ignore[attr-defined]
-            import logging
-
-            logger = logging.getLogger(__name__)
-
             ctx = context or self._default_context
-            logger.info(
-                f"📝 WRITE PERMISSION CHECK: path={path}, meta_exists={meta is not None}, user={ctx.user}, is_admin={ctx.is_admin}"
-            )
 
             if meta is not None:
                 # For existing files, check permission on the file itself
-                logger.info(f"  -> ⚠️  File metadata EXISTS - checking permission on FILE: {path}")
-                logger.info(
-                    f"  -> Existing file etag: {meta.etag}, version: {meta.version}, size: {meta.size}"
-                )
-                self._check_permission(path, Permission.WRITE, ctx)
+                self._check_permission(path, Permission.WRITE, ctx, file_metadata=meta)
             else:
                 # For new files, check permission on parent directory
                 parent_path = self._get_parent_path(path)  # type: ignore[attr-defined]
-                logger.info(f"  -> ✨ NEW file - checking permission on PARENT: {parent_path}")
                 if parent_path:
                     self._check_permission(parent_path, Permission.WRITE, ctx)
 
@@ -2558,12 +2559,13 @@ class NexusFSCoreMixin:
         paths = [path for path, _ in validated_files]
         existing_metadata = self.metadata.get_batch(paths)
 
-        # Check write permissions for existing files owned by current user
-        for path in paths:
-            meta = existing_metadata.get(path)
-            if meta is not None and self._enforce_permissions:  # type: ignore[attr-defined]
-                # Check write permissions via ReBAC
-                self._check_permission(path, Permission.WRITE, context)
+        # Check write permissions for existing files (pass pre-fetched metadata
+        # to avoid redundant FFI calls in _check_permission's owner fast-path)
+        if self._enforce_permissions:  # type: ignore[attr-defined]
+            for path in paths:
+                meta = existing_metadata.get(path)
+                if meta is not None:
+                    self._check_permission(path, Permission.WRITE, context, file_metadata=meta)
 
         now = datetime.now(UTC)
         metadata_list: list[FileMetadata] = []

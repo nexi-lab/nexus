@@ -65,14 +65,11 @@ async def consolidate_by_affinity(
             limit=request.limit,
         )
 
-        clusters = result.get("clusters", [])
-        total_consolidated = sum(len(c.get("memory_ids", [])) for c in clusters)
-
         return ConsolidationResponse(
-            clusters_formed=len(clusters),
-            total_consolidated=total_consolidated,
+            clusters_formed=result.get("clusters_formed", 0),
+            total_consolidated=result.get("total_consolidated", 0),
             archived_count=result.get("archived_count", 0),
-            results=clusters,
+            results=result.get("results", []),
         )
 
     except Exception as e:

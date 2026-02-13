@@ -8,17 +8,17 @@
 //!
 //! We enforce this at **compile time** by splitting into two types:
 //!
-//! - [`RaftNode`] — the public **handle** (Clone + Send + Sync). External code
+//! - [`ZoneConsensus`] — the public **handle** (Clone + Send + Sync). External code
 //!   (gRPC handlers, PyO3, tests) uses this. All mutating operations go through
 //!   an `mpsc` channel to the driver.
 //!
-//! - [`RaftNodeDriver`] — the private **actor** that exclusively owns `RawNode`.
+//! - [`ZoneConsensusDriver`] — the private **actor** that exclusively owns `RawNode`.
 //!   Only the transport loop's single task may call its methods. `RawNode` is a
 //!   private field that cannot be accessed from outside this module.
 //!
 //! ```text
 //! ┌─────────────────────────────────────────────────────────┐
-//! │  RaftNodeDriver (single owner, runs in TransportLoop)   │
+//! │  ZoneConsensusDriver (single owner, runs in TransportLoop)   │
 //! │  ┌──────────────┐  ┌────────────────┐                   │
 //! │  │ RawNode       │  │ StateMachine   │ ← shared Arc     │
 //! │  │ (NO lock)     │  │ (RwLock, read) │                   │
@@ -27,7 +27,7 @@
 //! └────────┬────────────────────────────────────────────────┘
 //!          │ mpsc::UnboundedReceiver<RaftMsg>
 //!     ┌────┴──────┐
-//!     │ RaftNode   │  ← Clone + Send + Sync (the handle)
+//!     │ ZoneConsensus   │  ← Clone + Send + Sync (the handle)
 //!     │ (tx only)  │
 //!     └────┬──────┘
 //!          │ mpsc::UnboundedSender<RaftMsg>
@@ -40,7 +40,7 @@
 //!
 //! # INVARIANT
 //!
-//! **`RawNode` must NEVER be exposed outside `RaftNodeDriver`.** Do not add
+//! **`RawNode` must NEVER be exposed outside `ZoneConsensusDriver`.** Do not add
 //! `pub` to `raw_node`, do not return references to it, do not create methods
 //! that bypass the channel. Violating this invariant causes the
 //! `"not leader but has new msg after advance"` panic under concurrent load.
@@ -55,6 +55,7 @@ use raft::{Config, RawNode, Storage};
 use slog::{o, Logger};
 use tokio::sync::{mpsc, oneshot, RwLock};
 
+use super::replication_log::ReplicationLog;
 use super::state_machine::StateMachine;
 use super::storage::RaftStorage;
 use super::{Command, CommandResult, RaftError, Result};
@@ -179,7 +180,7 @@ struct PendingProposal {
 // RaftMsg — the message type for the actor channel
 // ---------------------------------------------------------------------------
 
-/// Messages sent from the [`RaftNode`] handle to the [`RaftNodeDriver`] actor.
+/// Messages sent from the [`ZoneConsensus`] handle to the [`ZoneConsensusDriver`] actor.
 ///
 /// Each variant carries enough data for the driver to execute the operation
 /// on `RawNode` sequentially. Request-response variants include a `oneshot`
@@ -204,19 +205,19 @@ pub enum RaftMsg {
 }
 
 // ---------------------------------------------------------------------------
-// RaftNode — the public HANDLE (Clone + Send + Sync)
+// ZoneConsensus — the public HANDLE (Clone + Send + Sync)
 // ---------------------------------------------------------------------------
 
 /// The public API for Raft operations.
 ///
 /// All mutating operations (step, propose, campaign) go through an internal
-/// `mpsc` channel to the [`RaftNodeDriver`] actor. Read operations (role,
+/// `mpsc` channel to the [`ZoneConsensusDriver`] actor. Read operations (role,
 /// term, leader_id) use atomic cached values updated by the driver after
 /// each `advance()`. State machine reads use a shared `Arc<RwLock<S>>`.
 ///
 /// This type is `Clone + Send + Sync` and can be freely shared across
 /// gRPC handlers, PyO3, and other contexts.
-pub struct RaftNode<S: StateMachine + 'static> {
+pub struct ZoneConsensus<S: StateMachine + 'static> {
     /// Channel sender to the driver actor.
     msg_tx: mpsc::UnboundedSender<RaftMsg>,
     /// Shared state machine for read-only queries (no channel needed).
@@ -229,9 +230,11 @@ pub struct RaftNode<S: StateMachine + 'static> {
     cached_leader_id: Arc<AtomicU64>,
     /// Cached term, updated by driver after each advance().
     cached_term: Arc<AtomicU64>,
+    /// EC replication WAL (None for witness nodes that don't store data).
+    replication_log: Option<Arc<ReplicationLog>>,
 }
 
-impl<S: StateMachine + 'static> Clone for RaftNode<S> {
+impl<S: StateMachine + 'static> Clone for ZoneConsensus<S> {
     fn clone(&self) -> Self {
         Self {
             msg_tx: self.msg_tx.clone(),
@@ -240,12 +243,13 @@ impl<S: StateMachine + 'static> Clone for RaftNode<S> {
             cached_role: self.cached_role.clone(),
             cached_leader_id: self.cached_leader_id.clone(),
             cached_term: self.cached_term.clone(),
+            replication_log: self.replication_log.clone(),
         }
     }
 }
 
 // ---------------------------------------------------------------------------
-// RaftNodeDriver — the private ACTOR (single owner, NOT Clone)
+// ZoneConsensusDriver — the private ACTOR (single owner, NOT Clone)
 // ---------------------------------------------------------------------------
 
 /// SAFETY: This struct owns the raft-rs `RawNode` **exclusively**.
@@ -258,7 +262,7 @@ impl<S: StateMachine + 'static> Clone for RaftNode<S> {
 /// See: `"not leader but has new msg after advance"` panic.
 ///
 /// Only the transport loop's single task may call methods on this struct.
-pub struct RaftNodeDriver<S: StateMachine + 'static> {
+pub struct ZoneConsensusDriver<S: StateMachine + 'static> {
     /// PRIVATE — NEVER make pub. raft-rs `RawNode` is NOT thread-safe.
     /// All access must go through the channel ([`RaftMsg`]). Exposing this
     /// field will cause `"not leader but has new msg after advance"` panics.
@@ -288,10 +292,13 @@ pub struct RaftNodeDriver<S: StateMachine + 'static> {
     /// Set by `set_peer_map()` before the transport loop starts.
     #[cfg(all(feature = "grpc", has_protos))]
     peer_map: Option<SharedPeerMap>,
+    /// EC replication WAL (shared with handle via Arc).
+    /// Used by the transport loop for Phase C background replication.
+    replication_log: Option<Arc<ReplicationLog>>,
 }
 
 // ---------------------------------------------------------------------------
-// RaftNode (handle) implementation
+// ZoneConsensus (handle) implementation
 // ---------------------------------------------------------------------------
 
 /// Atomic encoding for [`NodeRole`].
@@ -323,13 +330,13 @@ impl NodeRole {
     }
 }
 
-impl<S: StateMachine + 'static> RaftNode<S> {
+impl<S: StateMachine + 'static> ZoneConsensus<S> {
     /// Create a new Raft node, returning a (handle, driver) pair.
     ///
     /// The **handle** is Clone + Send + Sync and should be shared with gRPC
     /// handlers, PyO3, etc. The **driver** must be passed to the transport
-    /// loop which will call [`RaftNodeDriver::process_messages`] and
-    /// [`RaftNodeDriver::advance`] sequentially from a single task.
+    /// loop which will call [`ZoneConsensusDriver::process_messages`] and
+    /// [`ZoneConsensusDriver::advance`] sequentially from a single task.
     ///
     /// If the storage has no existing ConfState (fresh cluster), initializes
     /// the voter set with this node and all configured peers.
@@ -337,7 +344,8 @@ impl<S: StateMachine + 'static> RaftNode<S> {
         config: RaftConfig,
         storage: RaftStorage,
         state_machine: S,
-    ) -> Result<(Self, RaftNodeDriver<S>)> {
+        replication_log: Option<Arc<ReplicationLog>>,
+    ) -> Result<(Self, ZoneConsensusDriver<S>)> {
         // Bootstrap: set initial ConfState if this is a fresh cluster
         let initial_state = storage
             .initial_state()
@@ -375,16 +383,17 @@ impl<S: StateMachine + 'static> RaftNode<S> {
         // Channel
         let (msg_tx, msg_rx) = mpsc::unbounded_channel();
 
-        let handle = RaftNode {
+        let handle = ZoneConsensus {
             msg_tx,
             state_machine: state_machine.clone(),
             config: config.clone(),
             cached_role: cached_role.clone(),
             cached_leader_id: cached_leader_id.clone(),
             cached_term: cached_term.clone(),
+            replication_log,
         };
 
-        let driver = RaftNodeDriver {
+        let driver = ZoneConsensusDriver {
             raw_node,
             state_machine,
             config,
@@ -398,6 +407,7 @@ impl<S: StateMachine + 'static> RaftNode<S> {
             cached_term,
             #[cfg(all(feature = "grpc", has_protos))]
             peer_map: None,
+            replication_log: handle.replication_log.clone(),
         };
 
         Ok((handle, driver))
@@ -525,6 +535,61 @@ impl<S: StateMachine + 'static> RaftNode<S> {
         }
     }
 
+    /// True Local-First EC write — bypasses Raft entirely.
+    ///
+    /// Applies the command directly to the local state machine, then appends
+    /// to the replication WAL. Returns the WAL sequence number as a write token.
+    /// Callers can later poll [`is_committed`] to check replication status.
+    ///
+    /// Only metadata operations (SetMetadata, DeleteMetadata) are supported.
+    /// Lock operations require linearizability and must use SC ([`propose`]).
+    ///
+    /// Latency: ~5-50μs (redb write, no network).
+    pub async fn propose_ec_local(&self, command: Command) -> Result<u64> {
+        let repl_log = self.replication_log.as_ref().ok_or_else(|| {
+            RaftError::InvalidState("EC local writes require a ReplicationLog".into())
+        })?;
+
+        // Serialize command for WAL before acquiring lock
+        let command_bytes = bincode::serialize(&command)?;
+
+        // Apply to local state machine (write lock)
+        {
+            let mut sm = self.state_machine.write().await;
+            sm.apply_local(&command)?;
+        }
+
+        // Append to replication WAL → returns write token
+        repl_log.append(&command_bytes)
+    }
+
+    /// Apply an EC entry received from a peer (Phase C receiver side).
+    ///
+    /// Uses LWW (Last Writer Wins) conflict resolution: compares the incoming
+    /// entry's timestamp against the existing metadata to reject stale writes.
+    /// Applies to local state machine only — no WAL append (that's the sender's
+    /// concern). Used by the gRPC `ReplicateEntries` handler.
+    pub async fn apply_ec_from_peer(
+        &self,
+        command: Command,
+        entry_timestamp: u64,
+    ) -> Result<CommandResult> {
+        let mut sm = self.state_machine.write().await;
+        sm.apply_ec_with_lww(&command, entry_timestamp)
+    }
+
+    /// Check if an EC write token has been replicated to a majority.
+    ///
+    /// Returns:
+    /// - `Some("committed")` — write has been replicated
+    /// - `Some("pending")` — write is local-only, awaiting replication
+    /// - `None` — no replication log, or invalid token
+    pub fn is_committed(&self, token: u64) -> Option<&str> {
+        self.replication_log
+            .as_ref()
+            .and_then(|log| log.is_committed(token))
+    }
+
     /// Propose a configuration change and wait for it to be committed.
     ///
     /// `context` carries the new node's gRPC address (etcd pattern).
@@ -576,10 +641,10 @@ impl<S: StateMachine + 'static> RaftNode<S> {
 }
 
 // ---------------------------------------------------------------------------
-// RaftNodeDriver implementation
+// ZoneConsensusDriver implementation
 // ---------------------------------------------------------------------------
 
-impl<S: StateMachine + 'static> RaftNodeDriver<S> {
+impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
     /// Get the node configuration.
     pub fn config(&self) -> &RaftConfig {
         &self.config
@@ -590,6 +655,12 @@ impl<S: StateMachine + 'static> RaftNodeDriver<S> {
     #[cfg(all(feature = "grpc", has_protos))]
     pub fn set_peer_map(&mut self, peer_map: SharedPeerMap) {
         self.peer_map = Some(peer_map);
+    }
+
+    /// Get the EC replication log (if present).
+    /// Used by the transport loop for Phase C background replication.
+    pub fn replication_log(&self) -> Option<&Arc<ReplicationLog>> {
+        self.replication_log.as_ref()
     }
 
     /// Drain all pending messages from the channel and process them.
@@ -866,8 +937,8 @@ mod tests {
 
     /// Create a test node pair (handle + driver).
     fn create_test_node() -> (
-        RaftNode<WitnessStateMachine>,
-        RaftNodeDriver<WitnessStateMachine>,
+        ZoneConsensus<WitnessStateMachine>,
+        ZoneConsensusDriver<WitnessStateMachine>,
         TempDir,
     ) {
         let dir = TempDir::new().unwrap();
@@ -881,7 +952,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (handle, driver) = RaftNode::new(config, storage, state_machine).unwrap();
+        let (handle, driver) = ZoneConsensus::new(config, storage, state_machine, None).unwrap();
         (handle, driver, dir)
     }
 
@@ -902,7 +973,7 @@ mod tests {
         let state_machine = WitnessStateMachine::new(&store).unwrap();
 
         let config = RaftConfig::witness(1, vec![2, 3]);
-        let (handle, _driver) = RaftNode::new(config, storage, state_machine).unwrap();
+        let (handle, _driver) = ZoneConsensus::new(config, storage, state_machine, None).unwrap();
 
         assert!(handle.is_witness());
     }
@@ -920,7 +991,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (handle, _driver) = RaftNode::new(config, storage, state_machine).unwrap();
+        let (handle, _driver) = ZoneConsensus::new(config, storage, state_machine, None).unwrap();
         assert_eq!(handle.id(), 1);
         assert_eq!(handle.role(), NodeRole::Follower);
     }
@@ -938,7 +1009,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (handle, _driver) = RaftNode::new(config, storage, state_machine).unwrap();
+        let (handle, _driver) = ZoneConsensus::new(config, storage, state_machine, None).unwrap();
 
         let result = handle
             .with_state_machine(|sm| sm.get_metadata("/nonexistent"))
@@ -949,9 +1020,9 @@ mod tests {
     /// Mini transport loop for tests — mirrors production TransportLoop.
     /// Each driver runs in its own task, routes messages via handles.
     async fn run_test_driver(
-        mut driver: RaftNodeDriver<FullStateMachine>,
+        mut driver: ZoneConsensusDriver<FullStateMachine>,
         my_idx: usize,
-        all_handles: Vec<RaftNode<FullStateMachine>>,
+        all_handles: Vec<ZoneConsensus<FullStateMachine>>,
         mut shutdown_rx: tokio::sync::watch::Receiver<bool>,
     ) {
         let mut interval = tokio::time::interval(Duration::from_millis(10));
@@ -997,7 +1068,8 @@ mod tests {
                 ..Default::default()
             };
 
-            let (handle, driver) = RaftNode::new(config, storage, state_machine).unwrap();
+            let (handle, driver) =
+                ZoneConsensus::new(config, storage, state_machine, None).unwrap();
             handles.push(handle);
             drivers.push(driver);
             _dirs.push(dir);

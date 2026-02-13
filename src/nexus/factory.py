@@ -62,6 +62,73 @@ if TYPE_CHECKING:
     from nexus.storage.record_store import RecordStoreABC
 
 
+def _create_wallet_provisioner() -> Any:
+    """Create a sync wallet provisioner for NexusFS agent registration.
+
+    Returns a callable ``(agent_id: str, zone_id: str) -> None`` that creates
+    a TigerBeetle wallet account. Returns None if tigerbeetle is not installed.
+
+    Uses the sync TigerBeetle client (``tb.Client``) since NexusFS methods are
+    synchronous. The client is lazily created on first call and reused.
+    Account creation is idempotent (safe to call multiple times).
+    """
+    import logging
+    import os
+
+    logger = logging.getLogger(__name__)
+
+    tb_address = os.environ.get("TIGERBEETLE_ADDRESS", "127.0.0.1:3000")
+    tb_cluster = int(os.environ.get("TIGERBEETLE_CLUSTER_ID", "0"))
+    pay_enabled = os.environ.get("NEXUS_PAY_ENABLED", "").lower() in ("true", "1", "yes")
+
+    if not pay_enabled:
+        logger.debug("[WALLET] NEXUS_PAY_ENABLED not set, wallet provisioner disabled")
+        return None
+
+    try:
+        import tigerbeetle as _tb  # noqa: F401 — verify availability
+    except ImportError:
+        logger.debug("[WALLET] tigerbeetle package not installed, wallet provisioner disabled")
+        return None
+
+    # Shared state for the closure (lazy client)
+    _state: dict[str, Any] = {"client": None}
+
+    def _provision_wallet(agent_id: str, zone_id: str = "default") -> None:
+        """Create TigerBeetle account for agent. Idempotent."""
+        import tigerbeetle as tb
+
+        from nexus.pay.constants import (
+            ACCOUNT_CODE_WALLET,
+            LEDGER_CREDITS,
+            make_tb_account_id,
+        )
+
+        if _state["client"] is None:
+            _state["client"] = tb.ClientSync(
+                cluster_id=tb_cluster,
+                replica_addresses=tb_address,
+            )
+
+        tb_id = make_tb_account_id(zone_id, agent_id)
+        account = tb.Account(
+            id=tb_id,
+            ledger=LEDGER_CREDITS,
+            code=ACCOUNT_CODE_WALLET,
+            flags=tb.AccountFlags.DEBITS_MUST_NOT_EXCEED_CREDITS,
+        )
+
+        client = _state["client"]
+        assert client is not None
+        errors = client.create_accounts([account])
+        # Ignore EXISTS (21) — idempotent operation
+        if errors and errors[0].result not in (0, 21):
+            raise RuntimeError(f"TigerBeetle account creation failed: {errors[0].result}")
+
+    logger.info("[WALLET] Wallet provisioner enabled (TigerBeetle @ %s)", tb_address)
+    return _provision_wallet
+
+
 def create_nexus_services(
     record_store: RecordStoreABC,
     metadata_store: FileMetadataProtocol,
@@ -246,6 +313,79 @@ def create_nexus_services(
         session_factory=session_factory,
     )
 
+    # --- Observability Subsystem (Issue #1301) ---
+    from nexus.core.config import ObservabilityConfig
+    from nexus.services.subsystems.observability_subsystem import ObservabilitySubsystem
+
+    observability_config = ObservabilityConfig()
+    observability_subsystem = ObservabilitySubsystem(
+        config=observability_config,
+        engines=[engine],
+    )
+
+    # --- Chunked Upload Service (Issue #788) ---
+    # Build upload config from environment variables (match NexusConfig field names)
+    import os as _os
+
+    from nexus.services.chunked_upload_service import ChunkedUploadConfig, ChunkedUploadService
+
+    _upload_config_kwargs: dict[str, Any] = {}
+    _upload_env_mapping = {
+        "NEXUS_UPLOAD_MIN_CHUNK_SIZE": "min_chunk_size",
+        "NEXUS_UPLOAD_MAX_CHUNK_SIZE": "max_chunk_size",
+        "NEXUS_UPLOAD_DEFAULT_CHUNK_SIZE": "default_chunk_size",
+        "NEXUS_UPLOAD_MAX_CONCURRENT": "max_concurrent_uploads",
+        "NEXUS_UPLOAD_SESSION_TTL_HOURS": "session_ttl_hours",
+        "NEXUS_UPLOAD_CLEANUP_INTERVAL": "cleanup_interval_seconds",
+        "NEXUS_UPLOAD_MAX_SIZE": "max_upload_size",
+    }
+    for _env_var, _config_key in _upload_env_mapping.items():
+        _val = _os.getenv(_env_var)
+        if _val is not None:
+            _upload_config_kwargs[_config_key] = int(_val)
+
+    chunked_upload_service = ChunkedUploadService(
+        session_factory=session_factory,
+        backend=backend,
+        metadata_store=metadata_store,
+        config=ChunkedUploadConfig(**_upload_config_kwargs),
+    )
+
+    # --- Wallet Provisioner (Issue #1210) ---
+    # Creates TigerBeetle wallet accounts on agent registration.
+    # Uses sync TigerBeetle client since NexusFS methods are sync.
+    # Gracefully no-ops if tigerbeetle package is not installed.
+    wallet_provisioner = _create_wallet_provisioner()
+
+    # --- Manifest Resolver (Issue #1427) ---
+    # Only create FileGlobExecutor when backend has local storage.
+    # For non-local backends (GCS/S3), file_glob sources are skipped.
+    import logging as _logging
+
+    _factory_logger = _logging.getLogger(__name__)
+    manifest_resolver: Any = None
+
+    try:
+        from nexus.services.context_manifest import ManifestResolver
+        from nexus.services.context_manifest.executors.file_glob import FileGlobExecutor
+
+        executors: dict[str, Any] = {}
+        root_path = getattr(backend, "root_path", None)
+        if isinstance(root_path, str):
+            from pathlib import Path
+
+            executors["file_glob"] = FileGlobExecutor(workspace_root=Path(root_path))
+
+        manifest_resolver = ManifestResolver(
+            executors=executors,
+            max_resolve_seconds=5.0,
+        )
+        _factory_logger.debug(
+            "[FACTORY] ManifestResolver created with %d executors", len(executors)
+        )
+    except ImportError as _e:
+        _factory_logger.warning("Failed to create ManifestResolver: %s", _e)
+
     result = {
         "rebac_manager": rebac_manager,
         "dir_visibility_cache": dir_visibility_cache,
@@ -259,6 +399,10 @@ def create_nexus_services(
         "workspace_manager": workspace_manager,
         "write_observer": write_observer,
         "version_service": version_service,
+        "observability_subsystem": observability_subsystem,
+        "wallet_provisioner": wallet_provisioner,
+        "chunked_upload_service": chunked_upload_service,
+        "manifest_resolver": manifest_resolver,
     }
 
     return result
@@ -352,7 +496,15 @@ def create_nexus_fs(
             enable_write_buffer=enable_write_buffer,
         )
 
-    return NexusFS(
+    # Pop services that NexusFS doesn't accept as constructor params.
+    # These are stored in nx._service_extras for server-layer access.
+    service_extras: dict[str, Any] = {}
+    for key in ("observability_subsystem", "chunked_upload_service", "manifest_resolver"):
+        val = services.pop(key, None)
+        if val is not None:
+            service_extras[key] = val
+
+    nx = NexusFS(
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
@@ -383,3 +535,7 @@ def create_nexus_fs(
         enable_distributed_locks=enable_distributed_locks,
         **services,
     )
+
+    nx._service_extras = service_extras
+
+    return nx

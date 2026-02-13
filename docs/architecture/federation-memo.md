@@ -308,12 +308,8 @@ Names explain the **"What"** and **"Why"**, not the **"How"**.
 
 **Naming Clarification**: The existing proto-generated `MetadataStore` (from `metadata.proto`, specific to `FileMetadata` typed operations) will be renamed to `FileMetadataProtocol` to avoid confusion with `MetastoreABC` (the underlying ordered KV primitive).
 
-**Data Type → Pillar Mapping** (see `data-storage-matrix.md` for full details):
-
-- **Metastore**: FileMetadata (inodes + merged FilePathModel + DirectoryEntry), FileMetadataModel (custom KV), ReBACNamespaceModel, SystemSettings, ContentChunkModel (CAS, local only)
-- **RecordStore**: Users, ReBAC (Graph), Memory (Vector), Audit, Workflows, Versioning, Zones, Sandboxes, Search
-- **ObjectStore**: File content (actual bytes on disk/cloud) — mounted via `router.add_mount()`
-- **CacheStore**: UserSession, PermissionCache, TigerCache, FileEvent (pub/sub)
+**Data Type → Pillar Mapping**: See §3.2 for full per-pillar tables with rationale.
+See `data-storage-matrix.md` for the complete 50+ type catalog.
 
 **CacheStore Note**: ✅ **Implemented** (Task #22, #27). `CacheStoreABC` unifies all cache access
 behind a single ABC with drivers (Dragonfly, InMemory, Null). Domain caches (PermissionCache,
@@ -529,6 +525,12 @@ at mount time. Same as NFS mount authentication. No new auth system needed.
 If a zone owner doesn't want you to access their data, they don't grant mount permission.
 "贡献 storage 的一方有绝对主动权" — the zone owner controls who can join.
 
+**Unified mount logic (DRY)**: System topology and user mounts use the **same operation**:
+```python
+nexus zone create /company/engineering  →  link_zone("/company", "engineering", Zone_B_UUID)
+nexus mount /home/wife /company/ceo_wife  →  link_zone("/company", "ceo_wife", Zone_C_UUID)
+```
+
 ### 6.3 Multi-Party Sharing (Example)
 
 ```
@@ -672,9 +674,8 @@ class DT_MOUNT:
 DT_DIR, mount shadows it (existing dir becomes inaccessible until unmount).
 DT_REG conflict is rejected. See Issue #1326 for implementation.
 
-**Reference counting**: `i_links_count` tracks DT_MOUNT refs to a zone.
-New zone starts at 1 (owner reference). Each DT_MOUNT adds 1. Drop to 0 is impossible
-(owner ref is implicit). `nexus zone destroy` required for actual deletion.
+**Reference counting**: See §7a Zone Lifecycle for the full hard-link model
+(`i_links_count`, shared_ptr semantics, orphan → `/nexus/trash/`).
 
 ### 6.7 Metastore as Cache Backing Store
 
@@ -773,42 +774,14 @@ Physical Reality (what Raft sees):         Logical View (what users see):
 Zone A stores `engineering` as `DT_MOUNT → Zone_B_UUID` — it knows nothing about
 Zone B's contents. Zone A and Zone B **never sync metadata**.
 
-#### Directory Entry: DT_MOUNT
+#### DT_MOUNT, Cross-Zone Reads, Unified Mount Logic
 
-A new entry type alongside `DT_DIR` and `DT_REG`:
-
-| Field | Value |
-|-------|-------|
-| `name` | `engineering` |
-| `entry_type` | `DT_MOUNT` |
-| `target_zone_id` | `Zone_B_UUID` |
-
-#### Cross-Zone Read Path (All-Voter Model)
-
-Since mounting = creating a new zone where all participants are Voters, cross-zone reads
-are **always local**:
-
-1. Node has local redb replicas for ALL zones it participates in (Voter)
-2. `ls -R /company/` → Zone A redb (local) → sees DT_MOUNT → Zone B redb (also local)
-3. All reads are ~5μs — no gRPC needed for data access
-4. gRPC is only used for Raft log replication (background, async)
+See §6.6 for DT_MOUNT structure, §6.2 for mount semantics (all reads local ~5μs,
+All-Voter model). Creating a child zone and manual cross-zone mount are the **same
+operation** — one `link_zone()` mechanism for all zone relationships.
 
 **Mixed consistency**: Zone A can be EC, Zone B can be SC. Each zone's Raft group
 operates independently. The node participates as **Voter** in both.
-
-#### Unified Mount Logic (DRY)
-
-Creating a child zone and manually mounting a cross-zone path are the **same operation**:
-
-```python
-# System topology (automatic):
-nexus zone create /company/engineering  →  link_zone("/company", "engineering", Zone_B_UUID)
-
-# User mount (manual):
-nexus mount /home/wife /company/ceo_wife  →  link_zone("/company", "ceo_wife", Zone_C_UUID)
-```
-
-One mechanism for all zone relationships.
 
 #### Zone Lifecycle: Hard Link Model (shared_ptr semantics)
 

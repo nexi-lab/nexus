@@ -16,7 +16,7 @@ References:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Discriminator, Field
 
@@ -26,6 +26,37 @@ from pydantic import BaseModel, ConfigDict, Discriminator, Field
 
 DEFAULT_TIMEOUT_SECONDS: float = 30.0
 DEFAULT_MAX_RESULT_BYTES: int = 1_048_576  # 1 MB
+
+
+# ===========================================================================
+# ContextSourceProtocol — structural interface for all source types (CQ-3)
+# ===========================================================================
+
+
+@runtime_checkable
+class ContextSourceProtocol(Protocol):
+    """Structural protocol defining the shared interface for all context sources.
+
+    Every source type must expose these fields. The resolver uses this protocol
+    instead of ``Any`` for type safety without coupling to Pydantic models.
+    """
+
+    @property
+    def type(self) -> str: ...
+
+    @property
+    def required(self) -> bool: ...
+
+    @property
+    def timeout_seconds(self) -> float: ...
+
+    @property
+    def max_result_bytes(self) -> int: ...
+
+    @property
+    def source_name(self) -> str:
+        """Human-readable name for this source (CQ-1)."""
+        ...
 
 
 # ===========================================================================
@@ -48,11 +79,16 @@ class MCPToolSource(BaseModel):
 
     type: Literal["mcp_tool"] = "mcp_tool"
     tool_name: str
-    args: dict[str, Any] = {}
+    args: dict[str, Any] = Field(default_factory=dict)
     pre_exec: bool = True
     required: bool = True
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
     max_result_bytes: int = DEFAULT_MAX_RESULT_BYTES
+
+    @property
+    def source_name(self) -> str:
+        """Human-readable name for this source."""
+        return self.tool_name
 
 
 class WorkspaceSnapshotSource(BaseModel):
@@ -69,6 +105,11 @@ class WorkspaceSnapshotSource(BaseModel):
     required: bool = True
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
     max_result_bytes: int = DEFAULT_MAX_RESULT_BYTES
+
+    @property
+    def source_name(self) -> str:
+        """Human-readable name for this source."""
+        return self.snapshot_id
 
 
 class FileGlobSource(BaseModel):
@@ -87,6 +128,11 @@ class FileGlobSource(BaseModel):
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
     max_result_bytes: int = DEFAULT_MAX_RESULT_BYTES
 
+    @property
+    def source_name(self) -> str:
+        """Human-readable name for this source."""
+        return self.pattern
+
 
 class MemoryQuerySource(BaseModel):
     """Run a semantic search over agent memory and inject top results.
@@ -103,6 +149,11 @@ class MemoryQuerySource(BaseModel):
     required: bool = True
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS
     max_result_bytes: int = DEFAULT_MAX_RESULT_BYTES
+
+    @property
+    def source_name(self) -> str:
+        """Human-readable name for this source."""
+        return self.query
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +194,94 @@ class SourceResult:
     data: Any
     error_message: str | None = None
     elapsed_ms: float = 0.0
+
+    @classmethod
+    def ok(
+        cls,
+        source_type: str,
+        source_name: str,
+        data: Any,
+        elapsed_ms: float = 0.0,
+    ) -> SourceResult:
+        """Create a successful result."""
+        return cls(
+            source_type=source_type,
+            source_name=source_name,
+            status="ok",
+            data=data,
+            elapsed_ms=elapsed_ms,
+        )
+
+    @classmethod
+    def error(
+        cls,
+        source_type: str,
+        source_name: str,
+        error_message: str,
+        elapsed_ms: float = 0.0,
+    ) -> SourceResult:
+        """Create an error result."""
+        return cls(
+            source_type=source_type,
+            source_name=source_name,
+            status="error",
+            data=None,
+            error_message=error_message,
+            elapsed_ms=elapsed_ms,
+        )
+
+    @classmethod
+    def timeout(
+        cls,
+        source_type: str,
+        source_name: str,
+        error_message: str,
+        elapsed_ms: float = 0.0,
+    ) -> SourceResult:
+        """Create a timeout result."""
+        return cls(
+            source_type=source_type,
+            source_name=source_name,
+            status="timeout",
+            data=None,
+            error_message=error_message,
+            elapsed_ms=elapsed_ms,
+        )
+
+    @classmethod
+    def skipped(
+        cls,
+        source_type: str,
+        source_name: str,
+        error_message: str,
+    ) -> SourceResult:
+        """Create a skipped result (e.g., no executor registered)."""
+        return cls(
+            source_type=source_type,
+            source_name=source_name,
+            status="skipped",
+            data=None,
+            error_message=error_message,
+        )
+
+    @classmethod
+    def truncated(
+        cls,
+        source_type: str,
+        source_name: str,
+        data: Any,
+        error_message: str,
+        elapsed_ms: float = 0.0,
+    ) -> SourceResult:
+        """Create a truncated result."""
+        return cls(
+            source_type=source_type,
+            source_name=source_name,
+            status="truncated",
+            data=data,
+            error_message=error_message,
+            elapsed_ms=elapsed_ms,
+        )
 
 
 @dataclass(frozen=True, slots=True)

@@ -16,6 +16,7 @@ from pydantic import ValidationError
 # ---------------------------------------------------------------------------
 from nexus.core.context_manifest.models import (
     ContextSource,
+    ContextSourceProtocol,
     FileGlobSource,
     ManifestResolutionError,
     ManifestResult,
@@ -411,3 +412,101 @@ class TestManifestResolutionError:
         assert isinstance(err, Exception)
         with pytest.raises(ManifestResolutionError):
             raise err
+
+
+# ===========================================================================
+# CQ-1: source_name property on each source model
+# ===========================================================================
+
+
+class TestSourceNameProperty:
+    """Tests for the source_name property on each source model."""
+
+    def test_mcp_tool_source_name(self) -> None:
+        source = MCPToolSource(tool_name="search_codebase")
+        assert source.source_name == "search_codebase"
+
+    def test_workspace_snapshot_source_name(self) -> None:
+        source = WorkspaceSnapshotSource(snapshot_id="snap-42")
+        assert source.source_name == "snap-42"
+
+    def test_workspace_snapshot_default_source_name(self) -> None:
+        source = WorkspaceSnapshotSource()
+        assert source.source_name == "latest"
+
+    def test_file_glob_source_name(self) -> None:
+        source = FileGlobSource(pattern="src/**/*.py")
+        assert source.source_name == "src/**/*.py"
+
+    def test_memory_query_source_name(self) -> None:
+        source = MemoryQuerySource(query="relevant to auth")
+        assert source.source_name == "relevant to auth"
+
+
+# ===========================================================================
+# CQ-2: SourceResult factory classmethods
+# ===========================================================================
+
+
+class TestSourceResultFactories:
+    """Tests for SourceResult factory classmethods."""
+
+    def test_ok_factory(self) -> None:
+        result = SourceResult.ok("file_glob", "*.py", {"files": ["a.py"]}, elapsed_ms=10.0)
+        assert result.status == "ok"
+        assert result.data == {"files": ["a.py"]}
+        assert result.error_message is None
+        assert result.elapsed_ms == 10.0
+
+    def test_error_factory(self) -> None:
+        result = SourceResult.error("mcp_tool", "search", "tool not found", elapsed_ms=1.0)
+        assert result.status == "error"
+        assert result.data is None
+        assert result.error_message == "tool not found"
+        assert result.elapsed_ms == 1.0
+
+    def test_timeout_factory(self) -> None:
+        result = SourceResult.timeout("memory_query", "test", "timed out", elapsed_ms=30000.0)
+        assert result.status == "timeout"
+        assert result.data is None
+        assert result.error_message == "timed out"
+
+    def test_skipped_factory(self) -> None:
+        result = SourceResult.skipped("mcp_tool", "broken", "no executor")
+        assert result.status == "skipped"
+        assert result.data is None
+        assert result.error_message == "no executor"
+        assert result.elapsed_ms == 0.0
+
+    def test_truncated_factory(self) -> None:
+        result = SourceResult.truncated(
+            "file_glob", "*.py", "partial...", "truncated at 1000 bytes", elapsed_ms=5.0
+        )
+        assert result.status == "truncated"
+        assert result.data == "partial..."
+        assert result.error_message == "truncated at 1000 bytes"
+
+
+# ===========================================================================
+# CQ-3: ContextSourceProtocol structural typing
+# ===========================================================================
+
+
+class TestContextSourceProtocol:
+    """Tests for ContextSourceProtocol structural compliance."""
+
+    def test_mcp_tool_satisfies_protocol(self) -> None:
+        source = MCPToolSource(tool_name="test")
+        assert isinstance(source, ContextSourceProtocol)
+
+    def test_workspace_snapshot_satisfies_protocol(self) -> None:
+        source = WorkspaceSnapshotSource()
+        assert isinstance(source, ContextSourceProtocol)
+
+    def test_file_glob_satisfies_protocol(self) -> None:
+        source = FileGlobSource(pattern="*.py")
+        assert isinstance(source, ContextSourceProtocol)
+
+    def test_memory_query_satisfies_protocol(self) -> None:
+        source = MemoryQuerySource(query="test")
+        assert isinstance(source, ContextSourceProtocol)

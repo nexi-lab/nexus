@@ -38,24 +38,15 @@ class IntegrationOkExecutor:
     def __init__(self, data_factory: Any = None) -> None:
         self._factory = data_factory
 
-    async def execute(self, source: Any, variables: dict[str, str]) -> SourceResult:
-        name = _name(source)
+    async def execute(self, source: Any, variables: dict[str, str]) -> SourceResult:  # noqa: ARG002
         data = self._factory(source, variables) if self._factory else {"files": ["a.py", "b.py"]}
         return SourceResult(
             source_type=source.type,
-            source_name=name,
+            source_name=source.source_name,
             status="ok",
             data=data,
             elapsed_ms=5.0,
         )
-
-
-def _name(source: Any) -> str:
-    for attr in ("tool_name", "snapshot_id", "pattern", "query"):
-        v = getattr(source, attr, None)
-        if v is not None:
-            return str(v)
-    return "unknown"
 
 
 def _make_all_ok_executors() -> dict[str, Any]:
@@ -156,11 +147,10 @@ class TestIndexJsonSchema:
 
 
 class LargeDataExecutor:
-    async def execute(self, source: Any, variables: dict[str, str]) -> SourceResult:
-        name = _name(source)
+    async def execute(self, source: Any, variables: dict[str, str]) -> SourceResult:  # noqa: ARG002
         return SourceResult(
             source_type=source.type,
-            source_name=name,
+            source_name=source.source_name,
             status="ok",
             data="A" * 500_000,  # 500KB
             elapsed_ms=3.0,

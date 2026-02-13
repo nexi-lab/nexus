@@ -17,7 +17,11 @@ from nexus.core.context_manifest.models import (
     ManifestResolutionError,
     SourceResult,
 )
-from nexus.core.context_manifest.resolver import ManifestResolver, SourceExecutor
+from nexus.core.context_manifest.resolver import (
+    ManifestResolver,
+    SourceExecutor,
+    _sanitize_filename,
+)
 
 from .conftest import make_source
 
@@ -36,10 +40,9 @@ class OkExecutor:
     async def execute(self, source: Any, variables: dict[str, str]) -> SourceResult:
         if self._delay > 0:
             await asyncio.sleep(self._delay)
-        name = _get_source_name(source)
         return SourceResult(
             source_type=source.type,
-            source_name=name,
+            source_name=source.source_name,
             status="ok",
             data=self._data,
             elapsed_ms=self._delay * 1000,
@@ -53,15 +56,24 @@ class ErrorExecutor:
         self._message = message
 
     async def execute(self, source: Any, variables: dict[str, str]) -> SourceResult:
-        name = _get_source_name(source)
         return SourceResult(
             source_type=source.type,
-            source_name=name,
+            source_name=source.source_name,
             status="error",
             data=None,
             error_message=self._message,
             elapsed_ms=1.0,
         )
+
+
+class RaisingExecutor:
+    """Executor that raises an exception instead of returning a SourceResult (TEST-1)."""
+
+    def __init__(self, exception: Exception | None = None) -> None:
+        self._exception = exception or RuntimeError("executor crashed")
+
+    async def execute(self, source: Any, variables: dict[str, str]) -> SourceResult:
+        raise self._exception
 
 
 class SlowExecutor:
@@ -72,10 +84,9 @@ class SlowExecutor:
 
     async def execute(self, source: Any, variables: dict[str, str]) -> SourceResult:
         await asyncio.sleep(self._delay)
-        name = _get_source_name(source)
         return SourceResult(
             source_type=source.type,
-            source_name=name,
+            source_name=source.source_name,
             status="ok",
             data={"result": "slow"},
             elapsed_ms=self._delay * 1000,
@@ -89,10 +100,9 @@ class LargeDataExecutor:
         self._size = size_bytes
 
     async def execute(self, source: Any, variables: dict[str, str]) -> SourceResult:
-        name = _get_source_name(source)
         return SourceResult(
             source_type=source.type,
-            source_name=name,
+            source_name=source.source_name,
             status="ok",
             data="x" * self._size,
             elapsed_ms=5.0,
@@ -103,27 +113,13 @@ class NoneDataExecutor:
     """Returns ok with None data."""
 
     async def execute(self, source: Any, variables: dict[str, str]) -> SourceResult:
-        name = _get_source_name(source)
         return SourceResult(
             source_type=source.type,
-            source_name=name,
+            source_name=source.source_name,
             status="ok",
             data=None,
             elapsed_ms=0.5,
         )
-
-
-def _get_source_name(source: Any) -> str:
-    """Extract the human-readable name from a source model."""
-    if hasattr(source, "tool_name"):
-        return source.tool_name
-    if hasattr(source, "snapshot_id"):
-        return source.snapshot_id
-    if hasattr(source, "pattern"):
-        return source.pattern
-    if hasattr(source, "query"):
-        return source.query
-    return "unknown"
 
 
 def _make_executors(
@@ -502,6 +498,25 @@ class TestGlobalTimeout:
         # Both should be timeout due to global timeout
         assert all(r.status == "timeout" for r in result.sources)
 
+    @pytest.mark.asyncio
+    async def test_global_timeout_preserves_completed_results(self, tmp_path: Path) -> None:
+        """Fast source completes before global timeout; slow source times out (TEST-4)."""
+        executors = _make_executors(
+            file_glob=OkExecutor(data={"files": ["a.py"]}, delay_ms=10),
+            memory=SlowExecutor(delay_seconds=10.0),
+        )
+        resolver = ManifestResolver(executors=executors, max_resolve_seconds=0.5)
+        sources = [
+            make_source("file_glob", pattern="*.py", required=False, timeout_seconds=60),
+            make_source("memory_query", query="test", required=False, timeout_seconds=60),
+        ]
+
+        result = await resolver.resolve(sources, {}, tmp_path)
+
+        # Fast source should have completed ok, slow source should be timeout
+        assert result.sources[0].status == "ok"
+        assert result.sources[1].status == "timeout"
+
 
 # ===========================================================================
 # Executor missing for source type
@@ -546,3 +561,112 @@ class TestConstructorValidation:
     def test_positive_max_resolve_seconds_ok(self) -> None:
         resolver = ManifestResolver(executors={}, max_resolve_seconds=0.1)
         assert resolver._max_resolve_seconds == 0.1
+
+
+# ===========================================================================
+# TEST-1: Executor that raises an exception (covers lines 216-229, 275-284)
+# ===========================================================================
+
+
+class TestRaisingExecutor:
+    """Tests for executors that raise instead of returning SourceResult."""
+
+    @pytest.mark.asyncio
+    async def test_raising_executor_optional_produces_error(self, tmp_path: Path) -> None:
+        """Optional source where executor raises produces error status, does not abort."""
+        executors = _make_executors(
+            file_glob=RaisingExecutor(RuntimeError("connection lost")),
+        )
+        resolver = ManifestResolver(executors=executors)
+        sources = [make_source("file_glob", pattern="*.py", required=False)]
+
+        result = await resolver.resolve(sources, {}, tmp_path)
+
+        assert result.sources[0].status == "error"
+        assert "connection lost" in (result.sources[0].error_message or "")
+
+    @pytest.mark.asyncio
+    async def test_raising_executor_required_raises_manifest_error(self, tmp_path: Path) -> None:
+        """Required source where executor raises causes ManifestResolutionError."""
+        executors = _make_executors(
+            file_glob=RaisingExecutor(ValueError("bad input")),
+        )
+        resolver = ManifestResolver(executors=executors)
+        sources = [make_source("file_glob", pattern="*.py", required=True)]
+
+        with pytest.raises(ManifestResolutionError) as exc_info:
+            await resolver.resolve(sources, {}, tmp_path)
+
+        assert len(exc_info.value.failed_sources) == 1
+        assert "bad input" in (exc_info.value.failed_sources[0].error_message or "")
+
+    @pytest.mark.asyncio
+    async def test_raising_executor_with_ok_sources(self, tmp_path: Path) -> None:
+        """Mix of raising and OK executors — OK sources still succeed."""
+        executors = _make_executors(
+            file_glob=OkExecutor(data={"files": ["a.py"]}),
+            mcp=RaisingExecutor(RuntimeError("boom")),
+        )
+        resolver = ManifestResolver(executors=executors)
+        sources = [
+            make_source("file_glob", pattern="*.py", required=True),
+            make_source("mcp_tool", tool_name="broken", required=False),
+        ]
+
+        result = await resolver.resolve(sources, {}, tmp_path)
+
+        assert result.sources[0].status == "ok"
+        assert result.sources[1].status == "error"
+        assert "boom" in (result.sources[1].error_message or "")
+
+
+# ===========================================================================
+# TEST-2: _sanitize_filename edge cases
+# ===========================================================================
+
+
+class TestSanitizeFilename:
+    """Tests for _sanitize_filename edge cases (lines 407-409)."""
+
+    @pytest.mark.parametrize(
+        "input_name,expected",
+        [
+            ("simple", "simple"),
+            ("with spaces", "with_spaces"),
+            ("path/to/file", "path_to_file"),
+            ("src/**/*.py", "src______py"),
+            ("../../../etc/passwd", "etc_passwd"),
+            ("normal-name", "normal-name"),
+            ("under_score", "under_score"),
+        ],
+    )
+    def test_basic_sanitization(self, input_name: str, expected: str) -> None:
+        assert _sanitize_filename(input_name) == expected
+
+    def test_long_name_truncated_to_50(self) -> None:
+        long_name = "a" * 100
+        result = _sanitize_filename(long_name)
+        assert len(result) == 50
+        assert result == "a" * 50
+
+    def test_all_special_chars_returns_unnamed(self) -> None:
+        result = _sanitize_filename("@#$%^&*()")
+        assert result == "unnamed"
+
+    def test_only_dots_and_underscores_stripped(self) -> None:
+        result = _sanitize_filename("___...")
+        assert result == "unnamed"
+
+    def test_unicode_normalized(self) -> None:
+        # NFKC normalization: ﬁ → fi
+        result = _sanitize_filename("ﬁle")
+        assert "fi" in result
+
+    def test_empty_string_returns_unnamed(self) -> None:
+        result = _sanitize_filename("")
+        assert result == "unnamed"
+
+    def test_path_traversal_blocked(self) -> None:
+        result = _sanitize_filename("..%2F..%2Fetc%2Fpasswd")
+        assert ".." not in result
+        assert "/" not in result

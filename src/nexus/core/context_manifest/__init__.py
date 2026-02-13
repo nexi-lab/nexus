@@ -29,6 +29,7 @@ References:
 
 from nexus.core.context_manifest.models import (
     ContextSource,
+    ContextSourceProtocol,
     FileGlobSource,
     ManifestResolutionError,
     ManifestResult,
@@ -43,6 +44,7 @@ from nexus.core.context_manifest.template import ALLOWED_VARIABLES, resolve_temp
 __all__ = [
     # Models
     "ContextSource",
+    "ContextSourceProtocol",
     "FileGlobSource",
     "ManifestResolutionError",
     "ManifestResult",

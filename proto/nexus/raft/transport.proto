@@ -39,6 +39,12 @@ service RaftService {
   // (raft-rs's native format). This is the standard pattern (etcd, tikv) for
   // routing all raft-rs internal message types (~15 types) through a single RPC.
   rpc StepMessage(StepMessageRequest) returns (StepMessageResponse);
+
+  // ReplicateEntries sends EC (eventually consistent) entries to a peer.
+  // This is NOT Raft consensus — EC writes bypass Raft and use async replication.
+  // Used by the background replication loop (Phase C) for peer data sync.
+  // Entries are idempotent — receivers skip already-applied sequence numbers.
+  rpc ReplicateEntries(ReplicateEntriesRequest) returns (ReplicateEntriesResponse);
 }
 
 // EventStreamService provides streaming events (reusable for webhooks).
@@ -270,6 +276,39 @@ message StepMessageRequest {
 message StepMessageResponse {
   bool success = 1;
   optional string error = 2;
+}
+
+// === EC Replication Messages (Phase C) ===
+
+// ECReplicationEntry is a single entry from the EC replication WAL.
+// Sent from the writer node to peers for async replication.
+message ECReplicationEntry {
+  // Sequence number in the writer's replication log (WriteToken).
+  uint64 seq = 1;
+  // Serialized Command bytes (same format as Raft log entries).
+  bytes command = 2;
+  // Wall clock timestamp (Unix seconds) for LWW conflict resolution (Phase D).
+  uint64 timestamp = 3;
+  // Writer node ID for LWW tie-breaking (Phase D).
+  uint64 node_id = 4;
+}
+
+// ReplicateEntriesRequest sends a batch of EC entries to a peer.
+message ReplicateEntriesRequest {
+  // Zone this replication belongs to.
+  string zone_id = 1;
+  // Batch of EC entries to replicate.
+  repeated ECReplicationEntry entries = 2;
+  // The sender's node ID.
+  uint64 sender_node_id = 3;
+}
+
+// ReplicateEntriesResponse acknowledges receipt and application.
+message ReplicateEntriesResponse {
+  bool success = 1;
+  optional string error = 2;
+  // Highest sequence number successfully applied by the receiver.
+  uint64 applied_up_to = 3;
 }
 
 // === Event Streaming Messages (Webhook Pattern) ===

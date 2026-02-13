@@ -6,9 +6,9 @@ use super::proto::nexus::raft::{
     raft_client_service_client::RaftClientServiceClient,
     raft_command::Command as ProtoCommandVariant, raft_query::Query as ProtoQueryVariant,
     raft_service_client::RaftServiceClient, AcquireLock, AppendEntriesRequest, DeleteMetadata,
-    ExtendLock, GetClusterInfoRequest, GetLockInfo, GetMetadata, ListMetadata,
+    EcReplicationEntry, ExtendLock, GetClusterInfoRequest, GetLockInfo, GetMetadata, ListMetadata,
     LogEntry as ProtoLogEntry, ProposeRequest, PutMetadata, QueryRequest, RaftCommand, RaftQuery,
-    ReleaseLock, StepMessageRequest, VoteRequest,
+    ReleaseLock, ReplicateEntriesRequest, StepMessageRequest, VoteRequest,
 };
 use super::{NodeAddress, Result, TransportError};
 use std::collections::HashMap;
@@ -241,6 +241,35 @@ impl RaftClient {
         }
 
         Ok(())
+    }
+
+    /// Send a batch of EC replication entries to this peer.
+    ///
+    /// Returns the highest sequence number the peer successfully applied.
+    /// Used by the transport loop's Phase C background replication.
+    pub async fn replicate_entries(
+        &mut self,
+        zone_id: String,
+        entries: Vec<EcReplicationEntry>,
+        sender_node_id: u64,
+    ) -> Result<u64> {
+        let request = tonic::Request::new(ReplicateEntriesRequest {
+            zone_id,
+            entries,
+            sender_node_id,
+        });
+
+        let response = self.inner.replicate_entries(request).await?;
+        let resp = response.into_inner();
+
+        if !resp.success {
+            return Err(TransportError::Rpc(
+                resp.error
+                    .unwrap_or_else(|| "replicate_entries failed".to_string()),
+            ));
+        }
+
+        Ok(resp.applied_up_to)
     }
 }
 

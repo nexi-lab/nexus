@@ -18,11 +18,12 @@ use super::proto::nexus::raft::{
     raft_response::Result as ProtoResponseResultVariant,
     raft_service_server::{RaftService, RaftServiceServer},
     AppendEntriesRequest, AppendEntriesResponse, ClusterConfig as ProtoClusterConfig,
-    GetClusterInfoRequest, GetClusterInfoResponse, GetMetadataResult, InstallSnapshotResponse,
-    JoinZoneRequest, JoinZoneResponse, ListMetadataResult, LockInfoResult, LockResult,
-    NodeInfo as ProtoNodeInfo, ProposeRequest, ProposeResponse, QueryRequest, QueryResponse,
-    RaftCommand, RaftQueryResponse, RaftResponse, SnapshotChunk, StepMessageRequest,
-    StepMessageResponse, TransferLeaderRequest, TransferLeaderResponse, VoteRequest, VoteResponse,
+    GetClusterInfoRequest, GetClusterInfoResponse, GetMetadataResult,
+    InstallSnapshotResponse, JoinZoneRequest, JoinZoneResponse, ListMetadataResult, LockInfoResult,
+    LockResult, NodeInfo as ProtoNodeInfo, ProposeRequest, ProposeResponse, QueryRequest,
+    QueryResponse, RaftCommand, RaftQueryResponse, RaftResponse, ReplicateEntriesRequest,
+    ReplicateEntriesResponse, SnapshotChunk, StepMessageRequest, StepMessageResponse,
+    TransferLeaderRequest, TransferLeaderResponse, VoteRequest, VoteResponse,
 };
 use super::{NodeAddress, Result, TransportError};
 use crate::raft::{
@@ -30,6 +31,7 @@ use crate::raft::{
     ZoneConsensusDriver, ZoneRaftRegistry,
 };
 use crate::storage::RedbStore;
+use bincode;
 use prost::Message;
 use protobuf::Message as ProtobufV2Message;
 use std::collections::HashMap;
@@ -321,6 +323,57 @@ impl RaftService for RaftServiceImpl {
         Ok(Response::new(StepMessageResponse {
             success: true,
             error: None,
+        }))
+    }
+
+    /// Handle EC replication entries from a peer (Phase C).
+    ///
+    /// Deserializes each entry's command bytes and applies to the local state
+    /// machine via `apply_ec_from_peer`. Returns the highest seq applied.
+    async fn replicate_entries(
+        &self,
+        request: Request<ReplicateEntriesRequest>,
+    ) -> std::result::Result<Response<ReplicateEntriesResponse>, Status> {
+        let req = request.into_inner();
+        let node = get_zone_node(&self.registry, &req.zone_id)?;
+
+        let mut max_applied: u64 = 0;
+
+        for entry in &req.entries {
+            let command: Command = match bincode::deserialize(&entry.command) {
+                Ok(cmd) => cmd,
+                Err(e) => {
+                    tracing::warn!(seq = entry.seq, "Failed to deserialize EC entry: {}", e);
+                    continue;
+                }
+            };
+
+            match node.apply_ec_from_peer(command).await {
+                Ok(_) => {
+                    max_applied = max_applied.max(entry.seq);
+                    tracing::trace!(
+                        seq = entry.seq,
+                        zone = req.zone_id,
+                        from = req.sender_node_id,
+                        "Applied EC entry from peer"
+                    );
+                }
+                Err(e) => {
+                    tracing::warn!(seq = entry.seq, "Failed to apply EC entry from peer: {}", e);
+                    // Return what we've applied so far
+                    return Ok(Response::new(ReplicateEntriesResponse {
+                        success: false,
+                        error: Some(format!("Failed at seq {}: {}", entry.seq, e)),
+                        applied_up_to: max_applied,
+                    }));
+                }
+            }
+        }
+
+        Ok(Response::new(ReplicateEntriesResponse {
+            success: true,
+            error: None,
+            applied_up_to: max_applied,
         }))
     }
 }
@@ -900,6 +953,16 @@ impl RaftService for WitnessServiceImpl {
             success: true,
             error: None,
         }))
+    }
+
+    /// Witness nodes do not participate in EC replication.
+    async fn replicate_entries(
+        &self,
+        _request: Request<ReplicateEntriesRequest>,
+    ) -> std::result::Result<Response<ReplicateEntriesResponse>, Status> {
+        Err(Status::unimplemented(
+            "Witness nodes do not support EC replication",
+        ))
     }
 }
 

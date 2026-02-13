@@ -83,8 +83,8 @@ COPY rust/ ./rust/
 
 # Build nexus_fast (crate renamed to nexus_pyo3, but produces nexus_fast wheel)
 WORKDIR /build/rust/nexus_pyo3
-RUN maturin build --release && \
-    pip install --no-cache-dir target/wheels/nexus_fast-*-manylinux*.whl
+RUN maturin build --release --out /build/dist && \
+    pip install --no-cache-dir /build/dist/nexus_fast-*.whl
 
 # Build nexus_raft
 WORKDIR /build/rust/nexus_raft

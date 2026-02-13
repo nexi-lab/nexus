@@ -66,7 +66,7 @@ dependencies = [
     "aiosqlite>=0.20.0", # SQLite driver (async)
     # Caching
     "cachetools>=6.2.2",
-    "redis>=7.0.0",  # Redis/Dragonfly client (async support)
+    "redis>=7.0.0", # Redis/Dragonfly client (async support)
     # Authentication
     "authlib>=1.6.5", # JWT and OAuth support for OIDC auth
     "bcrypt>=4.0.0", # Password hashing for local auth
@@ -120,6 +120,7 @@ dependencies = [
     # Affinity-based memory consolidation (Issue #1026 - SimpleMem-inspired)
     "numpy>=1.26.0",
     "scikit-learn>=1.4.0",
+    "aiofiles>=25.1.0",
 ]
 
 [project.optional-dependencies]
@@ -625,6 +626,7 @@ dev = [
     "freezegun>=1.5.5",
     "grpcio-tools>=1.76.0",
     "pytest-cov>=7.0.0",
+    "types-aiofiles>=25.1.0.20251011",
     "types-protobuf>=6.32.1.20251210",
     "types-redis>=4.6.0.20241004",
 ]

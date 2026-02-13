@@ -14,6 +14,16 @@ from nexus.remote import RemoteNexusFS
 from nexus.tools.langgraph.nexus_tools import get_nexus_tools
 
 
+def _get_tool_by_name(name: str):
+    """Look up a LangGraph tool by name (avoids fragile index-based access)."""
+    tools = get_nexus_tools()
+    by_name = {t.name: t for t in tools}
+    if name not in by_name:
+        available = ", ".join(sorted(by_name))
+        raise KeyError(f"Tool {name!r} not found. Available: {available}")
+    return by_name[name]
+
+
 class TestGetNexusTools:
     """Tests for get_nexus_tools function."""
 
@@ -52,8 +62,7 @@ class TestGrepFilesTool:
 
     def test_grep_basic_search(self):
         """Test basic grep search."""
-        tools = get_nexus_tools()
-        grep_tool = tools[0].func
+        grep_tool = _get_tool_by_name("grep_files").func
 
         mock_nx = Mock(spec=RemoteNexusFS)
         mock_nx.grep.return_value = [
@@ -82,8 +91,7 @@ class TestGrepFilesTool:
 
     def test_grep_with_path(self):
         """Test grep with custom path."""
-        tools = get_nexus_tools()
-        grep_tool = tools[0].func
+        grep_tool = _get_tool_by_name("grep_files").func
 
         mock_nx = Mock(spec=RemoteNexusFS)
         mock_nx.grep.return_value = []
@@ -108,8 +116,7 @@ class TestGrepFilesTool:
 
     def test_grep_case_insensitive(self):
         """Test grep with case insensitive flag."""
-        tools = get_nexus_tools()
-        grep_tool = tools[0].func
+        grep_tool = _get_tool_by_name("grep_files").func
 
         mock_nx = Mock(spec=RemoteNexusFS)
         mock_nx.grep.return_value = []
@@ -132,8 +139,7 @@ class TestGrepFilesTool:
 
     def test_grep_with_file_pattern(self):
         """Test grep with file_pattern parameter."""
-        tools = get_nexus_tools()
-        grep_tool = tools[0].func
+        grep_tool = _get_tool_by_name("grep_files").func
 
         mock_nx = Mock(spec=RemoteNexusFS)
         mock_nx.grep.return_value = [
@@ -159,8 +165,7 @@ class TestGrepFilesTool:
 
     def test_grep_with_max_results(self):
         """Test grep with custom max_results."""
-        tools = get_nexus_tools()
-        grep_tool = tools[0].func
+        grep_tool = _get_tool_by_name("grep_files").func
 
         mock_nx = Mock(spec=RemoteNexusFS)
         mock_nx.grep.return_value = []
@@ -183,8 +188,7 @@ class TestGrepFilesTool:
 
     def test_grep_with_all_parameters(self):
         """Test grep with all parameters specified."""
-        tools = get_nexus_tools()
-        grep_tool = tools[0].func
+        grep_tool = _get_tool_by_name("grep_files").func
 
         mock_nx = Mock(spec=RemoteNexusFS)
         mock_nx.grep.return_value = [
@@ -219,8 +223,7 @@ class TestGrepFilesTool:
 
     def test_grep_from_state_context(self):
         """Test getting auth from state context."""
-        tools = get_nexus_tools()
-        grep_tool = tools[0].func
+        grep_tool = _get_tool_by_name("grep_files").func
 
         mock_nx = Mock(spec=RemoteNexusFS)
         mock_nx.grep.return_value = []
@@ -257,8 +260,7 @@ class TestGrepFilesTool:
 
     def test_grep_missing_auth(self):
         """Test error when auth is missing."""
-        tools = get_nexus_tools()
-        grep_tool = tools[0].func
+        grep_tool = _get_tool_by_name("grep_files").func
 
         state = {}
         config: RunnableConfig = {"metadata": {}}
@@ -268,8 +270,7 @@ class TestGrepFilesTool:
 
     def test_grep_invalid_auth_format(self):
         """Test error with invalid auth format."""
-        tools = get_nexus_tools()
-        grep_tool = tools[0].func
+        grep_tool = _get_tool_by_name("grep_files").func
 
         state = {}
         config: RunnableConfig = {
@@ -281,8 +282,7 @@ class TestGrepFilesTool:
 
     def test_grep_truncates_long_lines(self):
         """Test that grep truncates very long lines."""
-        tools = get_nexus_tools()
-        grep_tool = tools[0].func
+        grep_tool = _get_tool_by_name("grep_files").func
 
         mock_nx = Mock(spec=RemoteNexusFS)
         long_content = "x" * 500
@@ -301,8 +301,7 @@ class TestGrepFilesTool:
 
     def test_grep_limits_results(self):
         """Test that grep limits display to first 50 matches."""
-        tools = get_nexus_tools()
-        grep_tool = tools[0].func
+        grep_tool = _get_tool_by_name("grep_files").func
 
         mock_nx = Mock(spec=RemoteNexusFS)
         matches = [{"file": f"/file{i}.py", "line": i, "content": "match"} for i in range(100)]
@@ -321,8 +320,7 @@ class TestGrepFilesTool:
 
     def test_grep_respects_max_results_display_limit(self):
         """Test that grep display limit respects max_results parameter."""
-        tools = get_nexus_tools()
-        grep_tool = tools[0].func
+        grep_tool = _get_tool_by_name("grep_files").func
 
         mock_nx = Mock(spec=RemoteNexusFS)
         # Simulate nx.grep returning fewer results due to max_results=10
@@ -350,8 +348,7 @@ class TestGlobFilesTool:
 
     def test_glob_basic_pattern(self):
         """Test basic glob pattern."""
-        tools = get_nexus_tools()
-        glob_tool = tools[1].func
+        glob_tool = _get_tool_by_name("glob_files").func
 
         mock_nx = Mock(spec=RemoteNexusFS)
         mock_nx.glob.return_value = ["/file1.py", "/file2.py", "/file3.py"]
@@ -370,8 +367,7 @@ class TestGlobFilesTool:
 
     def test_glob_with_path(self):
         """Test glob with custom path."""
-        tools = get_nexus_tools()
-        glob_tool = tools[1].func
+        glob_tool = _get_tool_by_name("glob_files").func
 
         mock_nx = Mock(spec=RemoteNexusFS)
         mock_nx.glob.return_value = ["/workspace/test.md"]
@@ -388,8 +384,7 @@ class TestGlobFilesTool:
 
     def test_glob_no_matches(self):
         """Test glob with no matches."""
-        tools = get_nexus_tools()
-        glob_tool = tools[1].func
+        glob_tool = _get_tool_by_name("glob_files").func
 
         mock_nx = Mock(spec=RemoteNexusFS)
         mock_nx.glob.return_value = []
@@ -406,8 +401,7 @@ class TestGlobFilesTool:
 
     def test_glob_limits_results(self):
         """Test that glob limits to first 100 files."""
-        tools = get_nexus_tools()
-        glob_tool = tools[1].func
+        glob_tool = _get_tool_by_name("glob_files").func
 
         mock_nx = Mock(spec=RemoteNexusFS)
         files = [f"/file{i}.py" for i in range(150)]
@@ -429,8 +423,7 @@ class TestReadFileTool:
 
     def test_read_file_cat(self):
         """Test reading file with cat command."""
-        tools = get_nexus_tools()
-        read_tool = tools[2].func
+        read_tool = _get_tool_by_name("read_file").func
 
         mock_nx = Mock(spec=RemoteNexusFS)
         mock_nx.read.return_value = b"Hello World\nLine 2\nLine 3"
@@ -449,8 +442,7 @@ class TestReadFileTool:
 
     def test_read_file_less(self):
         """Test reading file with less command (preview)."""
-        tools = get_nexus_tools()
-        read_tool = tools[2].func
+        read_tool = _get_tool_by_name("read_file").func
 
         mock_nx = Mock(spec=RemoteNexusFS)
         lines = [f"Line {i}" for i in range(150)]
@@ -470,8 +462,7 @@ class TestReadFileTool:
 
     def test_read_file_with_line_range(self):
         """Test reading file with line range."""
-        tools = get_nexus_tools()
-        read_tool = tools[2].func
+        read_tool = _get_tool_by_name("read_file").func
 
         mock_nx = Mock(spec=RemoteNexusFS)
         lines = [f"Line {i}" for i in range(1, 21)]
@@ -492,8 +483,7 @@ class TestReadFileTool:
 
     def test_read_file_too_large(self):
         """Test error when file is too large."""
-        tools = get_nexus_tools()
-        read_tool = tools[2].func
+        read_tool = _get_tool_by_name("read_file").func
 
         mock_nx = Mock(spec=RemoteNexusFS)
         large_content = "x" * 40000
@@ -511,8 +501,7 @@ class TestReadFileTool:
 
     def test_read_file_not_found(self):
         """Test error when file not found."""
-        tools = get_nexus_tools()
-        read_tool = tools[2].func
+        read_tool = _get_tool_by_name("read_file").func
 
         mock_nx = Mock(spec=RemoteNexusFS)
         mock_nx.read.side_effect = FileNotFoundError("File not found")
@@ -533,8 +522,7 @@ class TestWriteFileTool:
 
     def test_write_file_success(self):
         """Test successful file write."""
-        tools = get_nexus_tools()
-        write_tool = tools[3].func
+        write_tool = _get_tool_by_name("write_file").func
 
         mock_nx = Mock(spec=RemoteNexusFS)
         mock_nx.exists.return_value = True
@@ -553,8 +541,7 @@ class TestWriteFileTool:
 
     def test_write_file_strips_mnt_nexus_prefix(self):
         """Test that /mnt/nexus prefix is stripped."""
-        tools = get_nexus_tools()
-        write_tool = tools[3].func
+        write_tool = _get_tool_by_name("write_file").func
 
         mock_nx = Mock(spec=RemoteNexusFS)
         mock_nx.exists.return_value = True
@@ -571,8 +558,7 @@ class TestWriteFileTool:
 
     def test_write_file_error_handling(self):
         """Test write error handling."""
-        tools = get_nexus_tools()
-        write_tool = tools[3].func
+        write_tool = _get_tool_by_name("write_file").func
 
         mock_nx = Mock(spec=RemoteNexusFS)
         mock_nx.write.side_effect = Exception("Permission denied")
@@ -594,8 +580,7 @@ class TestEditFileTool:
 
     def _get_edit_tool(self):
         """Get the edit_file tool function."""
-        tools = get_nexus_tools()
-        return tools[4].func
+        return _get_tool_by_name("edit_file").func
 
     def _make_config(self) -> RunnableConfig:
         """Create a standard test config."""
@@ -802,8 +787,7 @@ class TestPythonTool:
 
     def test_python_execution_success(self):
         """Test successful Python execution."""
-        tools = get_nexus_tools()
-        python_tool = tools[5].func
+        python_tool = _get_tool_by_name("python").func
 
         mock_nx = Mock(spec=RemoteNexusFS)
         mock_nx.sandbox_run.return_value = {
@@ -838,8 +822,7 @@ class TestPythonTool:
 
     def test_python_execution_with_error(self):
         """Test Python execution with errors."""
-        tools = get_nexus_tools()
-        python_tool = tools[5].func
+        python_tool = _get_tool_by_name("python").func
 
         mock_nx = Mock(spec=RemoteNexusFS)
         mock_nx.sandbox_run.return_value = {
@@ -866,8 +849,7 @@ class TestPythonTool:
 
     def test_python_missing_sandbox_id(self):
         """Test error when sandbox_id is missing."""
-        tools = get_nexus_tools()
-        python_tool = tools[5].func
+        python_tool = _get_tool_by_name("python").func
 
         state = {}
         config: RunnableConfig = {
@@ -883,8 +865,7 @@ class TestBashTool:
 
     def test_bash_execution_success(self):
         """Test successful bash execution."""
-        tools = get_nexus_tools()
-        bash_tool = tools[6].func
+        bash_tool = _get_tool_by_name("bash").func
 
         mock_nx = Mock(spec=RemoteNexusFS)
         mock_nx.sandbox_run.return_value = {
@@ -911,8 +892,7 @@ class TestBashTool:
 
     def test_bash_missing_sandbox_id(self):
         """Test error when sandbox_id is missing."""
-        tools = get_nexus_tools()
-        bash_tool = tools[6].func
+        bash_tool = _get_tool_by_name("bash").func
 
         state = {}
         config: RunnableConfig = {
@@ -928,8 +908,7 @@ class TestQueryMemoriesTool:
 
     def test_query_memories_success(self):
         """Test successful memory query."""
-        tools = get_nexus_tools()
-        memory_tool = tools[7].func
+        memory_tool = _get_tool_by_name("query_memories").func
 
         mock_nx = Mock(spec=RemoteNexusFS)
         mock_nx.memory = Mock()
@@ -957,8 +936,7 @@ class TestQueryMemoriesTool:
 
     def test_query_memories_empty(self):
         """Test query with no memories."""
-        tools = get_nexus_tools()
-        memory_tool = tools[7].func
+        memory_tool = _get_tool_by_name("query_memories").func
 
         mock_nx = Mock(spec=RemoteNexusFS)
         mock_nx.memory = Mock()

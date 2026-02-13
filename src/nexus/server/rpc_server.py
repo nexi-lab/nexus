@@ -41,7 +41,11 @@ from nexus.core.virtual_views import (
     get_parsed_content,
     parse_virtual_path,
 )
-from nexus.server.path_utils import unscope_internal_dict, unscope_internal_path
+from nexus.server.path_utils import (
+    unscope_internal_dict,
+    unscope_internal_path,
+    unscope_result,
+)
 from nexus.server.protocol import (
     RPCErrorCode,
     RPCRequest,
@@ -1247,14 +1251,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 else:
                     serializable_results.append(str(result))
             # Issue #1202: Strip internal prefixes from grep result paths
-            serializable_results = [
-                unscope_internal_dict(r, ["path", "file"])
-                if isinstance(r, dict)
-                else unscope_internal_path(r)
-                if isinstance(r, str)
-                else r
-                for r in serializable_results
-            ]
+            serializable_results = [unscope_result(r) for r in serializable_results]
             return {"results": serializable_results}
 
         # Directory operations

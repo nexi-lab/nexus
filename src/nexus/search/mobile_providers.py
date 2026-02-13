@@ -537,11 +537,12 @@ async def download_gguf_model(
     loop = asyncio.get_event_loop()
 
     def _download() -> str:
-        return hf_hub_download(
+        result: str = hf_hub_download(
             repo_id=repo_id,
             filename=filename,
             cache_dir=cache_dir,
         )
+        return result
 
     return await loop.run_in_executor(None, _download)
 

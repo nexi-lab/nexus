@@ -1007,7 +1007,10 @@ class DockerSandboxProvider(SandboxProvider):
 
                 self._egress_proxy = EgressProxyManager(self.docker_client)
 
-            return self._egress_proxy.get_container_network_config(allowed_domains)
+            config: dict[str, Any] = self._egress_proxy.get_container_network_config(
+                allowed_domains
+            )
+            return config
         except Exception as e:
             logger.warning(
                 "Egress proxy unavailable, container will use profile network_mode: %s",

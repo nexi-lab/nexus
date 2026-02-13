@@ -66,6 +66,7 @@ def build_router(
     router = APIRouter(tags=["a2a"])
     if task_manager is None:
         task_manager = TaskManager()
+    tm: TaskManager = task_manager  # Final binding for closure narrowing
 
     # ------------------------------------------------------------------
     # Agent Card discovery (public — no auth)
@@ -163,7 +164,7 @@ def build_router(
                     request_id=request_id,
                     zone_id=zone_id,
                     agent_id=agent_id,
-                    task_manager=task_manager,
+                    task_manager=tm,
                 )
             except A2AError as e:
                 resp = A2AResponse.from_error(
@@ -192,7 +193,7 @@ def build_router(
                 params=params,
                 zone_id=zone_id,
                 agent_id=agent_id,
-                task_manager=task_manager,
+                task_manager=tm,
             )
             resp = A2AResponse.success(request_id, result)
         except A2AError as e:

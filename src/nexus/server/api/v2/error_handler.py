@@ -140,8 +140,9 @@ class NexusExchangeError(Exception):
 
 async def _nexus_exchange_error_handler(
     _request: Request,
-    exc: NexusExchangeError,
+    exc: Exception,
 ) -> JSONResponse:
+    assert isinstance(exc, NexusExchangeError)
     """FastAPI exception handler for NexusExchangeError."""
     if exc.http_status >= 500:
         logger.error(
@@ -172,4 +173,4 @@ def register_exchange_error_handler(app: FastAPI) -> None:
     Call this during app startup to enable structured error responses
     for all Exchange API endpoints.
     """
-    app.add_exception_handler(NexusExchangeError, _nexus_exchange_error_handler)  # type: ignore[arg-type]
+    app.add_exception_handler(NexusExchangeError, _nexus_exchange_error_handler)

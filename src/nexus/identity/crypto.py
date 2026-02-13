@@ -118,7 +118,8 @@ class IdentityCrypto:
         Returns:
             64-byte Ed25519 signature.
         """
-        return private_key.sign(message)
+        result: bytes = private_key.sign(message)
+        return result
 
     def verify(self, message: bytes, signature: bytes, public_key: Ed25519PublicKey) -> bool:
         """Verify an Ed25519 signature.
@@ -147,10 +148,11 @@ class IdentityCrypto:
         Returns:
             Raw 32-byte public key bytes.
         """
-        return public_key.public_bytes(
+        result: bytes = public_key.public_bytes(
             encoding=Encoding.Raw,
             format=PublicFormat.Raw,
         )
+        return result
 
     @staticmethod
     def public_key_from_bytes(raw_bytes: bytes) -> Ed25519PublicKey:

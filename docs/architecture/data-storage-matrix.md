@@ -298,66 +298,12 @@ Map **data requiring properties** ↔ **storage providing properties**.
 
 ## SUMMARY: STORAGE LAYER DECISIONS
 
-### ✅ **Keep SQLAlchemy (PostgreSQL/SQLite) = RecordStore** - 22 types (was 20, +2 from co-existence moves)
-Relational queries, FK, unique constraints, vector search, encryption, BRIN indexes
+All data-storage affinity decisions (Steps 1-3) are resolved. See per-Part analyses above for
+individual rationale, and the Quartet section below for complete data type → pillar mapping tables.
 
-| Category | Data Types | Rationale |
-|----------|-----------|-----------|
-| **Users & Auth** | UserModel, UserOAuthAccountModel, OAuthCredentialModel | Relational queries, FK, unique constraints, encryption |
-| **ReBAC** | ReBACTupleModel, ReBACGroupClosureModel, ReBACChangelogModel | Composite indexes (SSOT), materialized view, append-only BRIN |
-| **Memory System** | MemoryModel, **MemoryConfig**, TrajectoryModel, TrajectoryFeedbackModel, PlaybookModel | Complex relational + vector search; MemoryConfig co-exists with MemoryModel |
-| **Versioning** | VersionHistoryModel, WorkspaceSnapshotModel | Parent FK, BRIN time-series |
-| **Semantic Search** | DocumentChunkModel | Vector index (pgvector/sqlite-vec) |
-| **Workflows** | WorkflowModel, WorkflowExecutionModel | Version tracking, FK, BRIN |
-| **Zones** | ZoneModel, EntityRegistryModel, ExternalUserServiceModel | Unique constraints, hierarchical FK, encryption |
-| **Audit** | OperationLogModel | Append-only BRIN |
-| **Sandboxes** | SandboxMetadataModel | Relational queries |
-| **Path Registration** | **PathRegistrationModel** (NEW: WorkspaceConfig + MemoryConfig merged) | Co-exists with SnapshotModel/MemoryModel |
+### ⚠️ **Architecture Risk**
 
-### ✅ **Metastore (Ordered KV — redb)** — 5 types
-KV access pattern, redb via Raft (multi-node SC) or local-only
-
-| Data Type | Current | Reason |
-|-----------|---------|--------|
-| **FileMetadata** (proto) + ~~FilePathModel~~ + ~~DirectoryEntryModel~~ | Generated dataclass / SQLAlchemy | Core metadata KV by path; FilePathModel + DirectoryEntry merged in; dir listing = prefix scan |
-| FileMetadataModel (custom KV) | SQLAlchemy | Arbitrary KV metadata by path_id + key |
-| ReBACNamespaceModel | SQLAlchemy | KV by namespace_id, low cardinality |
-| SystemSettingsModel | SQLAlchemy | KV by key, low cardinality |
-| ContentChunkModel | SQLAlchemy | CAS dedup index, KV by content_hash, immutable (local only, no Raft) |
-
-### ✅ **CacheStore (Ephemeral KV — Dragonfly / In-Memory)** — 4 types
-Performance cache, TTL, pub/sub
-
-| Data Type | Current | Reason |
-|-----------|---------|--------|
-| PermissionCacheProtocol | Dragonfly/PostgreSQL/In-memory | Permission check cache, TTL |
-| TigerCacheProtocol | Dragonfly/PostgreSQL | Pre-materialized bitmaps, TTL |
-| **FileEvent** (pub/sub) | Dragonfly pub/sub | Ephemeral change notifications, pub/sub native |
-| **UserSessionModel** | SQLAlchemy | Pure KV with TTL, no relational features needed |
-
-### ✅ **Step 1 DECISIONS RESOLVED**
-
-1. ✅ **FilePathModel → FileMetadata**: MERGE confirmed, deprecate relational model
-2. ✅ **ContentCacheModel**: ELIMINATE DB metadata, pure disk cache
-3. ✅ **Cluster Topology**: ELIMINATED as standalone type (inherent in Raft layer)
-4. ✅ **WorkspaceConfig + MemoryConfig**: MERGE into PathRegistrationModel (RecordStore)
-5. ✅ **MemoryConfig pillar**: STAY RecordStore (cross-pillar co-existence principle)
-6. ✅ **ReBAC 4 types**: No merges needed (Zanzibar-correct)
-7. ✅ **User/Auth types**: No merges needed
-8. ✅ **Events/Subscriptions**: No merges, co-locate Subscription+Delivery in RecordStore
-
-### ✅ **Step 3 DECISIONS RESOLVED (Affinity Matching)**
-
-1. ✅ **ReBACTupleModel → RecordStore** (SSOT) + CacheStore (hot path). Composite indexes are dominant requirement; hot-path latency covered by TigerCache/PermissionCache.
-2. ✅ **FileEvent → CacheStore** (pub/sub). Ephemeral, fire-and-forget; missed events recoverable from Metastore SSOT.
-3. ✅ **UserSessionModel → CacheStore**. Pure KV with TTL, no relational features needed.
-4. ✅ **DirectoryEntryModel → MERGE into FileMetadata** (Metastore). Prefix scan replaces sparse index; one less data type.
-
-### ⚠️ **Architecture Risks Identified (Step 3)**
-
-1. **CacheStore dependency for permissions**: ReBAC hot path (TigerCache, PermissionCache) depends on CacheStore. If CacheStore unavailable, falls back to ~1ms SQL (RecordStore). Acceptable — optimization, not correctness.
-2. **Missing InMemoryEventBus**: EventBusProtocol has Dragonfly impl but NO in-memory impl. Kernel-only/dev mode has no event bus. Need `InMemoryEventBus` for CacheStoreABC.
-3. **Missing InMemory impls**: PermissionCache and TigerCache also lack in-memory impls. Same CacheStoreABC gap.
+**CacheStore dependency for permissions**: ReBAC hot path (TigerCache, PermissionCache) depends on CacheStore. If CacheStore unavailable, falls back to ~1ms SQL (RecordStore). Acceptable — optimization, not correctness. See Quartet "CacheStore Implementation Status" for InMemory impl gaps.
 
 ### ❓ **REMAINING GAPS**
 
@@ -541,41 +487,41 @@ will be renamed to `FileMetadataProtocol` to avoid confusion with `MetastoreABC`
 
 ### Complete Data Type → Pillar Mapping
 
-**Metastore** (Ordered KV — redb):
-| Data Type | From Part | Rationale |
-|-----------|-----------|-----------|
-| **FileMetadata** (+ merged FilePathModel, DirectoryEntryModel) | Part 1 | Core file attributes, KV by path. Dir listing = prefix scan. |
-| FileMetadataModel (custom KV) | Part 1 | Arbitrary user metadata, KV by path_id + key |
-| ContentChunkModel | Part 2 | CAS dedup index, KV by content_hash (immutable, local only) |
-| ReBACNamespaceModel | Part 5 | Permission config, KV by namespace_id |
-| SystemSettingsModel | Part 13 | System config, KV by key |
+**Metastore** (Ordered KV — redb) — 5 types:
+| Data Type | Current Storage | From Part | Rationale |
+|-----------|----------------|-----------|-----------|
+| **FileMetadata** (+ merged FilePathModel, DirectoryEntryModel) | Generated dataclass / SQLAlchemy | Part 1 | Core file attributes, KV by path. Dir listing = prefix scan. |
+| FileMetadataModel (custom KV) | SQLAlchemy | Part 1 | Arbitrary user metadata, KV by path_id + key |
+| ContentChunkModel | SQLAlchemy | Part 2 | CAS dedup index, KV by content_hash (immutable, local only) |
+| ReBACNamespaceModel | SQLAlchemy | Part 5 | Permission config, KV by namespace_id |
+| SystemSettingsModel | SQLAlchemy | Part 13 | System config, KV by key |
 
-**RecordStore** (Relational — PostgreSQL/SQLite):
-| Data Type | From Part | Rationale |
-|-----------|-----------|-----------|
-| UserModel, UserOAuthAccountModel, OAuthCredentialModel | Part 6 | FK, unique constraints, encryption |
-| ReBACTupleModel, ReBACGroupClosureModel, ReBACChangelogModel | Part 5 | Composite indexes, materialized view, BRIN |
-| MemoryModel, MemoryConfig, TrajectoryModel, TrajectoryFeedbackModel, PlaybookModel | Part 4 | Vector search (pgvector), relational FK; MemoryConfig co-exists with MemoryModel |
-| VersionHistoryModel, WorkspaceSnapshotModel | Part 3 | Parent FK, BRIN time-series |
-| DocumentChunkModel | Part 10 | Vector index (pgvector/sqlite-vec) |
-| WorkflowModel, WorkflowExecutionModel | Part 9 | Version tracking, FK, BRIN |
-| ZoneModel, EntityRegistryModel, ExternalUserServiceModel | Part 7 | Unique constraints, hierarchical FK |
-| OperationLogModel | Part 11 | Append-only BRIN |
-| SandboxMetadataModel | Part 12 | Relational queries |
-| **PathRegistrationModel** (NEW: merged WorkspaceConfig + MemoryConfig) | Part 15 | Co-exists with SnapshotModel/MemoryModel (cross-pillar principle) |
+**RecordStore** (Relational — PostgreSQL/SQLite) — 22 types:
+| Category | Data Types | From Part | Rationale |
+|----------|-----------|-----------|-----------|
+| **Users & Auth** | UserModel, UserOAuthAccountModel, OAuthCredentialModel | Part 6 | FK, unique constraints, encryption |
+| **ReBAC** | ReBACTupleModel, ReBACGroupClosureModel, ReBACChangelogModel | Part 5 | Composite indexes (SSOT), materialized view, append-only BRIN |
+| **Memory System** | MemoryModel, **MemoryConfig**, TrajectoryModel, TrajectoryFeedbackModel, PlaybookModel | Part 4 | Vector search (pgvector), relational FK; MemoryConfig co-exists with MemoryModel |
+| **Versioning** | VersionHistoryModel, WorkspaceSnapshotModel | Part 3 | Parent FK, BRIN time-series |
+| **Semantic Search** | DocumentChunkModel | Part 10 | Vector index (pgvector/sqlite-vec) |
+| **Workflows** | WorkflowModel, WorkflowExecutionModel | Part 9 | Version tracking, FK, BRIN |
+| **Zones** | ZoneModel, EntityRegistryModel, ExternalUserServiceModel | Part 7 | Unique constraints, hierarchical FK, encryption |
+| **Audit** | OperationLogModel | Part 11 | Append-only BRIN |
+| **Sandboxes** | SandboxMetadataModel | Part 12 | Relational queries |
+| **Path Registration** | **PathRegistrationModel** (NEW: WorkspaceConfig + MemoryConfig merged) | Part 15 | Co-exists with SnapshotModel/MemoryModel (cross-pillar principle) |
 
-**ObjectStore** (= existing `Backend` ABC — S3/Local Disk):
+**ObjectStore** (= existing `Backend` ABC — S3/Local Disk) — 1 type:
 | Data Type | From Part | Rationale |
 |-----------|-----------|-----------|
 | File Content (blobs) | Part 2 | Actual file bytes, petabyte scale, streaming I/O |
 
-**CacheStore** (Ephemeral KV + Pub/Sub — Dragonfly / In-Memory):
-| Data Type | From Part | Rationale |
-|-----------|-----------|-----------|
-| UserSessionModel | Part 6 | Session tokens, pure KV with TTL (Step 3 decided) |
-| PermissionCacheProtocol | Part 14 | Permission check cache, TTL |
-| TigerCacheProtocol | Part 14 | Pre-materialized bitmaps, TTL |
-| FileEvent (pub/sub) | Part 8 | Ephemeral change notifications, pub/sub (Step 3 decided) |
+**CacheStore** (Ephemeral KV + Pub/Sub — Dragonfly / In-Memory) — 4 types:
+| Data Type | Current Storage | From Part | Rationale |
+|-----------|----------------|-----------|-----------|
+| UserSessionModel | SQLAlchemy | Part 6 | Session tokens, pure KV with TTL (Step 3 decided) |
+| PermissionCacheProtocol | Dragonfly/PostgreSQL/In-memory | Part 14 | Permission check cache, TTL |
+| TigerCacheProtocol | Dragonfly/PostgreSQL | Part 14 | Pre-materialized bitmaps, TTL |
+| FileEvent (pub/sub) | Dragonfly pub/sub | Part 8 | Ephemeral change notifications, pub/sub (Step 3 decided) |
 
 ### CacheStore Implementation Status
 
@@ -591,22 +537,10 @@ will be renamed to `FileMetadataProtocol` to avoid confusion with `MetastoreABC`
 
 ## NEXT STEPS
 
-1. ✅ Review this matrix with user
-2. ✅ **Step 1+2+3 COMPLETE**: All data-storage affinity decisions resolved
-3. ❓ Identify missing Subscription/Delivery storage (Task #12)
-4. ✅ Dragonfly status post-Raft: Redis deprecated → Dragonfly only (Step 2 decided)
-5. ✅ Merge redundant data types (FilePathModel → FileMetadata, WorkspaceConfig + MemoryConfig → PathRegistrationModel)
-6. ✅ Rewrite federation-memo.md with this data architecture
-7. ✅ Storage medium orthogonality analysis complete — Redis deprecation identified (P2)
-8. ✅ "Nexus Quartet" — Four Pillars abstraction design decided (Metastore, RecordStore, ObjectStore, CacheStore)
-9. ✅ **COMPLETE**: Task #14 — MetastoreABC + RecordStoreABC in NexusFS constructor (Four Pillars DI)
-10. 📋 **PLANNED**: Rename proto-generated `MetadataStore` → `FileMetadataProtocol` (avoid confusion with MetastoreABC)
-11. ✅ **COMPLETE**: CI PyO3 build for nexus_raft (#1234)
-12. ❓ **DECISION**: Version history (VersionHistoryGC, TimeTravelReader) — kernel or services? (Related: Task #3, #11)
-13. 🆕 **PRINCIPLE**: Cross-pillar co-existence — if a config only serves data in another pillar, it belongs in that pillar
-14. ✅ **Step 2 COMPLETE**: 4 orthogonal storage mediums = 4 Pillars. Redis deprecated. In-Memory merged.
-15. ✅ **Step 3 COMPLETE**: ReBACTuple→RecordStore, FileEvent→CacheStore, UserSession→CacheStore, DirectoryEntry→merged into FileMetadata
-16. ⚠️ **GAP**: CacheStoreABC needs InMemory impls (EventBus, PermissionCache, TigerCache) for kernel-only/dev mode
+Completed items removed. See SUMMARY "REMAINING GAPS" for open tasks, REDUNDANCY ANALYSIS for merge decisions.
+
+1. 📋 **PLANNED**: Rename proto-generated `MetadataStore` → `FileMetadataProtocol` (avoid confusion with MetastoreABC)
+2. ❓ **DECISION**: Version history (VersionHistoryGC, TimeTravelReader) — kernel or services? (Related: Task #3, #11)
 
 ---
 

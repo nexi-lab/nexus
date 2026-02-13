@@ -70,6 +70,7 @@ class ConsolidationEngine:
         user_id: str,
         agent_id: str | None = None,
         zone_id: str | None = None,
+        session_factory: Any | None = None,
     ):
         """Initialize consolidation engine.
 
@@ -80,9 +81,10 @@ class ConsolidationEngine:
             user_id: User ID for ownership
             agent_id: Optional agent ID
             zone_id: Optional zone ID
+            session_factory: Callable that returns a new Session (for thread safety)
         """
         self.session = session
-        self._session_bind = session.get_bind()
+        self._session_factory = session_factory or (lambda: Session(bind=session.get_bind()))
         self.backend = backend
         self.llm_provider = llm_provider
         self.user_id = user_id
@@ -426,7 +428,7 @@ Provide only the consolidated summary, no additional commentary.
         import concurrent.futures
 
         def _thread_target() -> dict[str, Any]:
-            thread_session = Session(bind=self._session_bind)
+            thread_session = self._session_factory()
             try:
                 engine = ConsolidationEngine(
                     session=thread_session,
@@ -435,6 +437,7 @@ Provide only the consolidated summary, no additional commentary.
                     user_id=self.user_id,
                     agent_id=self.agent_id,
                     zone_id=self.zone_id,
+                    session_factory=self._session_factory,
                 )
                 return asyncio.run(
                     engine.consolidate_async(
@@ -862,7 +865,7 @@ Provide only the consolidated summary, no additional commentary.
         import concurrent.futures
 
         def _thread_target() -> dict[str, Any]:
-            thread_session = Session(bind=self._session_bind)
+            thread_session = self._session_factory()
             try:
                 engine = ConsolidationEngine(
                     session=thread_session,
@@ -871,6 +874,7 @@ Provide only the consolidated summary, no additional commentary.
                     user_id=self.user_id,
                     agent_id=self.agent_id,
                     zone_id=self.zone_id,
+                    session_factory=self._session_factory,
                 )
                 return asyncio.run(engine.consolidate_by_affinity_async(**coro_kwargs))
             finally:

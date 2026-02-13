@@ -538,7 +538,7 @@ class NexusFSSearchMixin:
                                     # Convert virtual path to backend relative path
                                     # e.g., "/zone/.../connector/gmail/SENT" -> "SENT"
                                     backend_relative = entry_path[len(path) :].lstrip("/")
-                                    is_dir = route.backend.is_directory(
+                                    is_dir = route.backend.is_directory(  # type: ignore[assignment]
                                         backend_relative, context=list_context
                                     )
                                 except Exception:

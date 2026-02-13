@@ -484,7 +484,7 @@ class ZoneManager:
                 )
             else:
                 # Rebase: /usr/alice/projectA/foo → /foo
-                relative = entry.path[len(prefix):]
+                relative = entry.path[len(prefix) :]
                 if not relative.startswith("/"):
                     relative = "/" + relative
                 rebased = replace(entry, path=relative, zone_id=new_zone_id)

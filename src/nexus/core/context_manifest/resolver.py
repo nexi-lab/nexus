@@ -28,7 +28,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+import aiofiles
+
 from nexus.core.context_manifest.models import (
+    ContextSourceProtocol,
     ManifestResolutionError,
     ManifestResult,
     SourceResult,
@@ -36,11 +39,6 @@ from nexus.core.context_manifest.models import (
 from nexus.core.context_manifest.template import resolve_template
 
 logger = logging.getLogger(__name__)
-
-# Field names used to extract a human-readable name from source models.
-# Shared between _validate_templates() and _get_source_name() to avoid
-# DRY violations (review HIGH-2).
-_SOURCE_NAME_FIELDS = ("tool_name", "snapshot_id", "pattern", "query")
 
 
 # ===========================================================================
@@ -55,11 +53,15 @@ class SourceExecutor(Protocol):
     Implementations handle the actual work: calling MCP tools, reading files,
     querying memory, loading snapshots, etc. Each source type gets its own
     executor, injected into the resolver at construction time.
+
+    The ``variables`` dict contains pre-resolved template values. Executors
+    should use these to substitute any template references in source fields
+    (e.g., ``source.query`` may contain ``{{task.description}}``).
     """
 
     async def execute(
         self,
-        source: Any,
+        source: ContextSourceProtocol,
         variables: dict[str, str],
     ) -> SourceResult: ...
 
@@ -73,14 +75,18 @@ class ManifestResolver:
     """Resolves a context manifest by executing all sources in parallel.
 
     Pipeline:
-        1. Validate template variables in all sources (fail-fast).
+        1. Pre-resolve template variables in all sources (fail-fast, single pass).
         2. Execute sources in parallel with ``asyncio.gather``.
         3. Apply per-source timeout via ``asyncio.wait_for()``.
         4. Apply global timeout via ``asyncio.timeout()``.
         5. Truncate results exceeding ``max_result_bytes``.
-        6. Write individual result files to ``output_dir/``.
+        6. Write individual result files to ``output_dir/`` (async via aiofiles).
         7. Write ``_index.json`` last (sentinel for crash safety).
         8. Return ``ManifestResult``.
+
+    Note:
+        Output files are written even when ``ManifestResolutionError`` is
+        raised, allowing callers to inspect partial results on disk.
 
     Args:
         executors: Mapping of source type name → executor implementation.
@@ -104,7 +110,7 @@ class ManifestResolver:
 
     async def resolve(
         self,
-        sources: Sequence[Any],
+        sources: Sequence[ContextSourceProtocol],
         variables: dict[str, str],
         output_dir: Path,
     ) -> ManifestResult:
@@ -120,6 +126,8 @@ class ManifestResolver:
 
         Raises:
             ManifestResolutionError: If any required source fails.
+                Output files are still written before this is raised,
+                allowing callers to inspect partial results on disk.
             ValueError: If template variables are invalid.
         """
         start = time.monotonic()
@@ -129,11 +137,11 @@ class ManifestResolver:
             self._max_resolve_seconds,
         )
 
-        # Step 1: Validate templates in all sources (fail-fast before execution)
-        self._validate_templates(sources, variables)
+        # Step 1: Pre-resolve templates in all sources (fail-fast, single pass — ARCH-1)
+        resolved_vars = self._pre_resolve_templates(sources, variables)
 
         # Step 2-4: Execute all sources with per-source + global timeout
-        results = await self._execute_all(sources, variables)
+        results = await self._execute_all(sources, resolved_vars)
 
         # Step 5: Apply truncation
         results = self._apply_truncation(sources, results)
@@ -149,13 +157,13 @@ class ManifestResolver:
 
         # Step 6-7: Write result files + _index.json (last)
         output_dir.mkdir(parents=True, exist_ok=True)
-        self._write_results(output_dir, sources, results, manifest_result)
+        await self._write_results(output_dir, sources, results, manifest_result)
 
         # Step 8: Check for required failures
         failed_required = [
             r
             for r, s in zip(results, sources, strict=True)
-            if getattr(s, "required", True) and r.status in ("error", "timeout", "skipped")
+            if s.required and r.status in ("error", "timeout", "skipped")
         ]
         if failed_required:
             raise ManifestResolutionError(failed_sources=tuple(failed_required))
@@ -174,39 +182,44 @@ class ManifestResolver:
     # Internal helpers
     # -------------------------------------------------------------------
 
-    def _validate_templates(self, sources: Sequence[Any], variables: dict[str, str]) -> None:
-        """Validate template variables in all sources before execution."""
+    def _pre_resolve_templates(
+        self,
+        sources: Sequence[ContextSourceProtocol],
+        variables: dict[str, str],
+    ) -> dict[str, str]:
+        """Validate and resolve all template variables in a single pass (ARCH-1).
+
+        Scans all source fields that may contain templates, validates them
+        against the whitelist, and returns the validated variables dict.
+        Raises ValueError on any invalid or missing template variable.
+
+        Returns:
+            The validated variables dict (same reference if all is well).
+        """
         for source in sources:
-            for field_name in _SOURCE_NAME_FIELDS:
-                value = getattr(source, field_name, None)
-                if value and "{{" in str(value):
-                    # This will raise ValueError if invalid
-                    resolve_template(str(value), variables)
+            name = source.source_name
+            if name and "{{" in name:
+                resolve_template(name, variables)
+        return variables
 
     async def _execute_all(
         self,
-        sources: Sequence[Any],
+        sources: Sequence[ContextSourceProtocol],
         variables: dict[str, str],
     ) -> list[SourceResult]:
         """Execute all sources in parallel with timeouts."""
         if not sources:
             return []
 
-        # CRITICAL-1 fix: Use asyncio.create_task() so cancellation works
-        # when global timeout fires. Plain coroutines can't be cancelled.
+        # Use asyncio.create_task() so cancellation works when global timeout fires.
         tasks = [asyncio.create_task(self._execute_one(source, variables)) for source in sources]
 
         try:
             async with asyncio.timeout(self._max_resolve_seconds):
                 results = await asyncio.gather(*tasks, return_exceptions=True)
         except TimeoutError:
-            # Global timeout hit — cancel remaining tasks
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
-            # Wait for cancellations to complete gracefully
-            await asyncio.gather(*tasks, return_exceptions=True)
-            return await self._collect_timeout_results(sources)
+            # Global timeout hit — collect completed results, mark remainder as timeout
+            return self._collect_partial_results(sources, tasks)
 
         # Process gather results
         processed: list[SourceResult] = []
@@ -214,46 +227,40 @@ class ManifestResolver:
             if isinstance(result, SourceResult):
                 processed.append(result)
             elif isinstance(result, Exception):
-                name = self._get_source_name(sources[i])
                 processed.append(
-                    SourceResult(
+                    SourceResult.error(
                         source_type=sources[i].type,
-                        source_name=name,
-                        status="error",
-                        data=None,
+                        source_name=sources[i].source_name,
                         error_message=str(result),
                     )
                 )
             else:
-                name = self._get_source_name(sources[i])
                 processed.append(
-                    SourceResult(
+                    SourceResult.error(
                         source_type=sources[i].type,
-                        source_name=name,
-                        status="error",
-                        data=None,
+                        source_name=sources[i].source_name,
                         error_message=f"Unexpected result type: {type(result)}",
                     )
                 )
         return processed
 
-    async def _execute_one(self, source: Any, variables: dict[str, str]) -> SourceResult:
+    async def _execute_one(
+        self, source: ContextSourceProtocol, variables: dict[str, str]
+    ) -> SourceResult:
         """Execute a single source with its per-source timeout."""
         source_type = source.type
-        name = self._get_source_name(source)
+        name = source.source_name
 
         executor = self._executors.get(source_type)
         if executor is None:
             logger.warning("No executor registered for source type %r", source_type)
-            return SourceResult(
+            return SourceResult.skipped(
                 source_type=source_type,
                 source_name=name,
-                status="skipped",
-                data=None,
                 error_message=f"No executor for source type '{source_type}'",
             )
 
-        timeout = getattr(source, "timeout_seconds", 30.0)
+        timeout = source.timeout_seconds
         start = time.monotonic()
 
         try:
@@ -264,57 +271,85 @@ class ManifestResolver:
             return result
         except TimeoutError:
             elapsed_ms = (time.monotonic() - start) * 1000
-            return SourceResult(
+            return SourceResult.timeout(
                 source_type=source_type,
                 source_name=name,
-                status="timeout",
-                data=None,
                 error_message=f"Source timed out after {timeout}s",
                 elapsed_ms=elapsed_ms,
             )
         except Exception as exc:
             elapsed_ms = (time.monotonic() - start) * 1000
-            return SourceResult(
+            return SourceResult.error(
                 source_type=source_type,
                 source_name=name,
-                status="error",
-                data=None,
                 error_message=str(exc),
                 elapsed_ms=elapsed_ms,
             )
 
-    async def _collect_timeout_results(self, sources: Sequence[Any]) -> list[SourceResult]:
-        """Build timeout results for all sources when global timeout fires."""
-        return [
-            SourceResult(
-                source_type=s.type,
-                source_name=self._get_source_name(s),
-                status="timeout",
-                data=None,
-                error_message="Global resolution timeout exceeded",
-            )
-            for s in sources
-        ]
+    def _collect_partial_results(
+        self,
+        sources: Sequence[ContextSourceProtocol],
+        tasks: list[asyncio.Task[SourceResult]],
+    ) -> list[SourceResult]:
+        """Collect results after global timeout, preserving completed tasks (TEST-4 fix).
+
+        Tasks that completed before the global timeout keep their results.
+        Tasks that are still running are cancelled and marked as timeout.
+        """
+        results: list[SourceResult] = []
+        for source, task in zip(sources, tasks, strict=True):
+            if task.done() and not task.cancelled():
+                try:
+                    result = task.result()
+                    if isinstance(result, SourceResult):
+                        results.append(result)
+                    else:
+                        results.append(
+                            SourceResult.error(
+                                source_type=source.type,
+                                source_name=source.source_name,
+                                error_message=f"Unexpected result type: {type(result)}",
+                            )
+                        )
+                except Exception as exc:
+                    results.append(
+                        SourceResult.error(
+                            source_type=source.type,
+                            source_name=source.source_name,
+                            error_message=str(exc),
+                        )
+                    )
+            else:
+                if not task.done():
+                    task.cancel()
+                results.append(
+                    SourceResult.timeout(
+                        source_type=source.type,
+                        source_name=source.source_name,
+                        error_message="Global resolution timeout exceeded",
+                    )
+                )
+        return results
 
     def _apply_truncation(
-        self, sources: Sequence[Any], results: list[SourceResult]
+        self,
+        sources: Sequence[ContextSourceProtocol],
+        results: list[SourceResult],
     ) -> list[SourceResult]:
-        """Truncate results that exceed max_result_bytes."""
+        """Truncate results that exceed max_result_bytes (PERF-1: json.dumps + single encode)."""
         truncated: list[SourceResult] = []
         for source, result in zip(sources, results, strict=True):
-            max_bytes = getattr(source, "max_result_bytes", 1_048_576)
+            max_bytes = source.max_result_bytes
             if result.status == "ok" and result.data is not None:
-                data_str = str(result.data)
-                data_size = len(data_str.encode("utf-8"))
-                if data_size > max_bytes:
-                    cut_data = data_str.encode("utf-8")[:max_bytes].decode("utf-8", errors="ignore")
+                serialized = json.dumps(result.data, default=str).encode("utf-8")
+                if len(serialized) > max_bytes:
+                    cut_data = serialized[:max_bytes].decode("utf-8", errors="ignore")
                     truncated.append(
-                        SourceResult(
+                        SourceResult.truncated(
                             source_type=result.source_type,
                             source_name=result.source_name,
-                            status="truncated",
                             data=cut_data,
-                            error_message=f"Result truncated from {data_size} to {max_bytes} bytes",
+                            error_message=f"Result truncated from {len(serialized)} to {max_bytes} bytes",
                             elapsed_ms=result.elapsed_ms,
                         )
                     )
@@ -322,30 +357,30 @@ class ManifestResolver:
             truncated.append(result)
         return truncated
 
-    def _write_results(
+    async def _write_results(
         self,
         output_dir: Path,
-        sources: Sequence[Any],
+        sources: Sequence[ContextSourceProtocol],
         results: list[SourceResult],
         manifest_result: ManifestResult,
     ) -> None:
-        """Write individual result files and _index.json to output_dir."""
+        """Write individual result files and _index.json to output_dir (async via aiofiles)."""
         index_entries: list[dict[str, Any]] = []
+        existing_files: set[str] = set()
 
-        for _i, (source, result) in enumerate(zip(sources, results, strict=True)):
+        for source, result in zip(sources, results, strict=True):
             # Generate a safe filename
-            name = self._get_source_name(source)
-            safe_name = _sanitize_filename(name)
+            safe_name = _sanitize_filename(source.source_name)
             base_filename = f"{source.type}__{safe_name}"
 
-            # MEDIUM-5 fix: Robust duplicate detection with counter loop
+            # Robust duplicate detection with counter loop
             filename = base_filename
-            existing = {e["file"] for e in index_entries}
             counter = 1
-            while f"{filename}.json" in existing:
+            while f"{filename}.json" in existing_files:
                 filename = f"{base_filename}_{counter}"
                 counter += 1
             filename = f"{filename}.json"
+            existing_files.add(filename)
 
             # Write result file
             result_data = {
@@ -356,9 +391,8 @@ class ManifestResolver:
                 "error_message": result.error_message,
                 "elapsed_ms": result.elapsed_ms,
             }
-            (output_dir / filename).write_text(
-                json.dumps(result_data, indent=2, default=str), encoding="utf-8"
-            )
+            async with aiofiles.open(output_dir / filename, "w", encoding="utf-8") as f:
+                await f.write(json.dumps(result_data, indent=2, default=str))
 
             index_entries.append(
                 {
@@ -377,22 +411,14 @@ class ManifestResolver:
             "source_count": len(results),
             "sources": index_entries,
         }
-        (output_dir / "_index.json").write_text(json.dumps(index_data, indent=2), encoding="utf-8")
-
-    @staticmethod
-    def _get_source_name(source: Any) -> str:
-        """Extract the human-readable name from a source model."""
-        for attr in _SOURCE_NAME_FIELDS:
-            value = getattr(source, attr, None)
-            if value is not None:
-                return str(value)
-        return "unknown"
+        async with aiofiles.open(output_dir / "_index.json", "w", encoding="utf-8") as f:
+            await f.write(json.dumps(index_data, indent=2))
 
 
 def _sanitize_filename(name: str) -> str:
     """Convert a source name to a safe filename component.
 
-    Hardened against path traversal (CRITICAL-2): normalizes Unicode,
+    Hardened against path traversal: normalizes Unicode,
     strips all dangerous characters, allows only alphanumeric + underscore + hyphen.
     """
     # Normalize Unicode to prevent lookalike attacks

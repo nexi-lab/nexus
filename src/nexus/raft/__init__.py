@@ -3,16 +3,14 @@
 This module provides Python clients to communicate with Rust Raft nodes
 for metadata and lock operations.
 
-Two metastore drivers are provided:
+Three access modes:
 1. Metastore (PyO3 FFI) - Direct redb access for embedded mode (~5μs)
-2. RaftConsensus (PyO3 FFI) - Full Raft consensus for replicated writes (~2-10ms)
-
-Plus a gRPC client for remote access:
-3. RaftClient (gRPC) - For RemoteNexusFS to access Raft cluster (remote mode)
+2. ZoneManager + ZoneHandle (PyO3 FFI) - Multi-zone Raft consensus (~2-10ms)
+3. RaftClient (gRPC) - For RemoteNexusFS to access Raft cluster (~200μs)
 
 Architecture:
     Embedded:   NexusFS -> Metastore (PyO3) -> redb (~5μs)
-    Consensus:  NexusFS -> RaftConsensus (PyO3) -> Raft consensus -> redb (~2-10ms)
+    Consensus:  NexusFS -> ZoneManager -> ZoneHandle (PyO3) -> Raft -> redb (~2-10ms)
     Remote:     RemoteNexusFS -> RaftClient (gRPC) -> Raft cluster (~200μs)
 
 Example (Metastore - embedded mode):
@@ -22,11 +20,12 @@ Example (Metastore - embedded mode):
     store.set_metadata("/path/to/file", metadata_bytes)
     metadata = store.get_metadata("/path/to/file")
 
-Example (RaftConsensus - consensus mode):
-    from nexus.raft import RaftConsensus
+Example (ZoneManager - consensus mode):
+    from nexus.raft import ZoneManager
 
-    node = RaftConsensus(1, "/var/lib/nexus/metadata", "0.0.0.0:2126", ["2@peer:2126"])
-    node.set_metadata("/path/to/file", metadata_bytes)  # replicated via consensus
+    mgr = ZoneManager(1, "/var/lib/nexus/zones", "0.0.0.0:2126")
+    handle = mgr.create_zone("default", ["2@peer:2126"])
+    handle.set_metadata("/path/to/file", metadata_bytes)  # replicated via consensus
 
 Example (RaftClient - remote):
     from nexus.raft import RaftClient
@@ -112,11 +111,6 @@ except ImportError:
         "maturin develop -m rust/nexus_raft/Cargo.toml --features python"
     )
 
-# RaftConsensus: Full Raft consensus for SC mode (requires --features full)
-RaftConsensus = None
-with contextlib.suppress(ImportError):
-    from _nexus_raft import RaftConsensus
-
 # ZoneHandle: Per-zone Raft node handle (requires --features full)
 ZoneHandle = None
 with contextlib.suppress(ImportError):
@@ -156,8 +150,6 @@ __all__ = [
     "RemoteLockInfo",
     # PyO3 FFI: Metastore driver (embedded mode)
     "Metastore",
-    # PyO3 FFI: Raft consensus driver (consensus mode)
-    "RaftConsensus",
     # Multi-zone federation
     "ZoneAwareMetadataStore",
     "ZoneManager",

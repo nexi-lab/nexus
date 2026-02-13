@@ -684,8 +684,8 @@ Since mounting = joining Raft group (All-Voter model), every mounted zone has a
 
 | Use case | redb instance | Raft? | Data |
 |----------|--------------|-------|------|
-| **Own zone** | RaftConsensus (SC/EC) | Yes (Voter) | This zone's metadata |
-| **Mounted zone** | RaftConsensus | Yes (Voter) | Shared zone's metadata |
+| **Own zone** | ZoneHandle (SC/EC) | Yes (Voter) | This zone's metadata |
+| **Mounted zone** | ZoneHandle | Yes (Voter) | Shared zone's metadata |
 
 Both use redb's built-in page cache (~5μs for hot data). **No separate cache layer needed.**
 Raft log replication IS the cache invalidation mechanism.
@@ -1056,7 +1056,7 @@ Can coexist with Raft Event Log (SC) and Dragonfly Pub/Sub (high-throughput).
 | Raft node | `rust/nexus_raft/src/raft/node.rs` | RawNode wrapper, propose API |
 | Raft storage | `rust/nexus_raft/src/raft/storage.rs` | redb-backed Storage trait impl |
 | State machine | `rust/nexus_raft/src/raft/state_machine.rs` | Full + Witness + InMemory |
-| PyO3 bindings | `rust/nexus_raft/src/pyo3_bindings.rs` | Metastore + RaftConsensus Python classes |
+| PyO3 bindings | `rust/nexus_raft/src/pyo3_bindings.rs` | Metastore + ZoneManager + ZoneHandle Python classes |
 | Raft proto | `rust/nexus_raft/proto/raft.proto` | gRPC transport definitions |
 | Proto build | `rust/nexus_raft/build.rs` | tonic-build, expects `../../proto/` |
 | RaftMetadataStore | `src/nexus/storage/raft_metadata_store.py` | Python Raft client (local+remote) |

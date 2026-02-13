@@ -4,16 +4,19 @@ This is the primary metadata storage for Nexus, using an embedded redb database
 with optional Raft consensus for multi-node deployments.
 
 Architecture:
-    Embedded:  Python -> Metastore (PyO3) -> redb (~5μs)
-    Consensus: Python -> RaftConsensus (PyO3) -> Raft consensus -> redb (~2-10ms)
-    Remote:    Python -> gRPC -> Rust (nexus_raft) -> redb (~200μs)
+    Embedded:   Python -> Metastore (PyO3) -> redb (~5μs)
+    Consensus:  Python -> ZoneManager -> ZoneHandle (PyO3) -> Raft -> redb (~2-10ms)
+    Remote:     Python -> gRPC -> Rust (nexus_raft) -> redb (~200μs)
 
 Usage:
     # Embedded mode (same box) - DEFAULT
     store = RaftMetadataStore.embedded("/var/lib/nexus/metadata")
 
-    # Consensus mode (multi-node with Raft)
-    store = RaftMetadataStore.consensus(1, "/var/lib/nexus/metadata", peers=["2@peer:2126"])
+    # Consensus mode (multi-node with Raft via ZoneManager)
+    from nexus.raft import ZoneManager
+    mgr = ZoneManager(1, "/var/lib/nexus/zones", "0.0.0.0:2126")
+    handle = mgr.create_zone("default", ["2@peer:2126"])
+    store = RaftMetadataStore(engine=handle, zone_id="default")
 
     # Remote mode (thin client)
     store = await RaftMetadataStore.remote("10.0.0.2:2026")
@@ -93,23 +96,28 @@ def _deserialize_metadata(data: bytes | list[int]) -> FileMetadata:
 
 
 class RaftMetadataStore(FileMetadataProtocol):
-    """Primary metadata store for Nexus using embedded sled database.
+    """Primary metadata store for Nexus using embedded redb database.
 
     This store provides fast local metadata operations (~5μs) with optional
     Raft consensus for multi-node replication.
 
-    Three modes of operation:
+    Two modes of operation:
     1. Embedded mode (DEFAULT): Direct redb via Metastore PyO3 (~5μs latency)
-    2. Consensus mode: Raft consensus via RaftConsensus PyO3 (~2-10ms, replicated)
-    3. Remote mode: gRPC client (~200μs latency)
+    2. Remote mode: gRPC client (~200μs latency)
+
+    For consensus mode, use ZoneManager to create a ZoneHandle, then pass it
+    as the engine parameter:
 
     Example:
         # Embedded mode (default)
         store = RaftMetadataStore.embedded("/var/lib/nexus/metadata")
         store.put(metadata)
 
-        # Consensus mode (multi-node)
-        store = RaftMetadataStore.consensus(1, "/var/lib/nexus/metadata", peers=["2@peer:2126"])
+        # Consensus mode (via ZoneManager + ZoneHandle)
+        from nexus.raft import ZoneManager
+        mgr = ZoneManager(1, "/var/lib/nexus/zones", "0.0.0.0:2126")
+        handle = mgr.create_zone("default", ["2@peer:2126"])
+        store = RaftMetadataStore(engine=handle, zone_id="default")
         store.put(metadata)  # replicated
 
         # Remote mode (thin client)
@@ -124,11 +132,11 @@ class RaftMetadataStore(FileMetadataProtocol):
     ):
         """Initialize RaftMetadataStore.
 
-        Use the factory methods `embedded()`, `consensus()`, or `remote()`
-        instead of calling this constructor directly.
+        Use the factory methods `embedded()` or `remote()`, or pass a
+        ZoneHandle from ZoneManager as the engine parameter.
 
         Args:
-            engine: Metastore or RaftConsensus instance (PyO3 FFI)
+            engine: Metastore or ZoneHandle instance (PyO3 FFI)
             client: RaftClient instance (gRPC)
             zone_id: Zone ID for this store
         """
@@ -183,7 +191,7 @@ class RaftMetadataStore(FileMetadataProtocol):
         Args:
             path: Virtual path
             consistency: "sc" (wait for commit) or "ec" (fire-and-forget).
-                         Only used when the engine is RaftConsensus.
+                         Only used when the engine is a ZoneHandle (consensus mode).
 
         Returns:
             Dictionary with deleted file info or None
@@ -257,45 +265,6 @@ class RaftMetadataStore(FileMetadataProtocol):
         metastore = Metastore(db_path)
         logger.info(f"Created embedded RaftMetadataStore at {db_path}")
         return cls(engine=metastore, zone_id=zone_id)
-
-    @classmethod
-    def consensus(
-        cls,
-        node_id: int,
-        db_path: str,
-        bind_address: str = "0.0.0.0:2126",
-        peers: list[str] | None = None,
-        zone_id: str | None = None,
-    ) -> RaftMetadataStore:
-        """Create a consensus metastore with Raft replication.
-
-        Each NexusFS node becomes a full Raft participant. Writes go through
-        consensus (replicated to peers), reads are local (~5us).
-
-        Args:
-            node_id: Unique node ID within the cluster (1-indexed).
-            db_path: Path to the redb database directory.
-            bind_address: gRPC bind address for Raft inter-node traffic.
-            peers: List of peer addresses in "id@host:port" format.
-            zone_id: Zone ID for this store.
-
-        Returns:
-            RaftMetadataStore instance with Raft consensus.
-        """
-        from nexus.raft import RaftConsensus
-
-        if RaftConsensus is None:
-            raise RuntimeError(
-                "RaftConsensus not available. Build with: "
-                "maturin develop -m rust/nexus_raft/Cargo.toml --features full"
-            )
-
-        consensus = RaftConsensus(node_id, db_path, bind_address, peers or [])
-        logger.info(
-            f"Created consensus RaftMetadataStore (node={node_id}, bind={bind_address}, "
-            f"peers={len(peers or [])})"
-        )
-        return cls(engine=consensus, zone_id=zone_id)
 
     @classmethod
     async def remote(
@@ -583,7 +552,7 @@ class RaftMetadataStore(FileMetadataProtocol):
         """Close the metadata store and release resources."""
         if self._has_engine:
             if hasattr(self._engine, "shutdown"):
-                # RaftConsensus: gracefully stop gRPC server + transport loop
+                # ZoneHandle/ZoneManager: gracefully stop gRPC server + transport loop
                 self._engine.shutdown()
             else:
                 # Metastore: just flush sled

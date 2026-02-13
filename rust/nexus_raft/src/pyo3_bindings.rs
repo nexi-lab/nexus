@@ -4,28 +4,27 @@
 
 //! PyO3 Python bindings for Nexus Metastore (sled state machine).
 //!
-//! Two drivers are exposed:
-//! - `Metastore`: Direct sled access for embedded/EC mode (~5μs per op).
-//! - `RaftConsensus`: Full Raft consensus for SC mode (writes replicated to peers).
-//!
-//! Both share the same `FullStateMachine` (sled KV). The difference is whether
-//! writes pass through Raft consensus before being applied.
+//! Three drivers are exposed:
+//! - `Metastore`: Direct redb access for embedded mode (~5μs per op).
+//! - `ZoneManager`: Multi-zone Raft registry owner (creates/manages zones).
+//! - `ZoneHandle`: Per-zone Raft node handle (metadata/lock operations).
 //!
 //! # Python Usage
 //!
 //! ```python
 //! from _nexus_raft import Metastore
 //!
-//! # Direct sled access (embedded mode)
+//! # Direct redb access (embedded mode)
 //! store = Metastore("/var/lib/nexus/metadata")
 //! store.set_metadata("/path/to/file", metadata_bytes)
 //! metadata = store.get_metadata("/path/to/file")
 //!
-//! from _nexus_raft import RaftConsensus
+//! from _nexus_raft import ZoneManager
 //!
-//! # SC mode with Raft consensus
-//! node = RaftConsensus(1, "/var/lib/nexus/metadata", "0.0.0.0:2126", ["2@peer:2126"])
-//! node.set_metadata("/path/to/file", metadata_bytes)  # replicated
+//! # Multi-zone Raft consensus
+//! mgr = ZoneManager(1, "/var/lib/nexus/zones", "0.0.0.0:2126")
+//! handle = mgr.create_zone("default", ["2@peer:2126"])
+//! handle.set_metadata("/path/to/file", metadata_bytes)  # replicated
 //! ```
 
 use pyo3::exceptions::PyRuntimeError;
@@ -560,481 +559,12 @@ impl PyMetastore {
 }
 
 // =============================================================================
-// RaftConsensus: Full Raft consensus participant for SC (Strong Consistency) mode
-// =============================================================================
-
-/// Raft consensus metastore driver — all writes go through Raft consensus.
-///
-/// Embeds a full Raft participant with gRPC server inside the Python process.
-/// Writes go through Raft consensus (replicated to peers).
-/// Reads come from the local state machine (~5us).
-///
-/// Per-op SC/EC hints: callers pass `consistency="sc"` (default) or `"ec"`
-/// to `set_metadata()` / `delete_metadata()`. EC writes submit to Raft but
-/// return immediately (~5-10μs) without waiting for commit confirmation.
-/// Lock operations always use SC for correctness.
-///
-/// This class is only available when built with `--features full` (grpc + python).
-#[cfg(all(feature = "grpc", has_protos))]
-#[pyclass(name = "RaftConsensus")]
-pub struct PyRaftConsensus {
-    /// ZoneConsensus handle (Clone + Send + Sync). The driver is owned by TransportLoop.
-    node: crate::raft::ZoneConsensus<FullStateMachine>,
-    /// Background Tokio runtime (owns the gRPC server + transport loop threads).
-    runtime: tokio::runtime::Runtime,
-    /// Shutdown signal sender.
-    shutdown_tx: Option<tokio::sync::watch::Sender<bool>>,
-    /// Node ID for status queries.
-    node_id: u64,
-}
-
-#[cfg(all(feature = "grpc", has_protos))]
-#[pymethods]
-impl PyRaftConsensus {
-    /// Create a new RaftConsensus node.
-    ///
-    /// This starts a full Raft participant with an embedded gRPC server
-    /// and transport loop. The gRPC server accepts inter-node Raft messages.
-    /// The transport loop drives ticks, applies committed entries, and
-    /// sends outgoing messages to peers.
-    ///
-    /// Args:
-    ///     node_id: Unique node ID within the cluster (1-indexed).
-    ///     db_path: Path to the redb database directory.
-    ///     bind_addr: gRPC bind address (e.g., "0.0.0.0:2126").
-    ///     advertise_addr: Address other nodes use to reach this node (e.g., "http://10.0.0.2:2126").
-    ///         Defaults to "http://{bind_addr}" if not provided.
-    ///     peers: List of peer addresses in "id@host:port" format.
-    ///     tls_cert_path: Path to PEM certificate file (mTLS). All three TLS paths must be set, or none.
-    ///     tls_key_path: Path to PEM private key file (mTLS).
-    ///     tls_ca_path: Path to PEM CA certificate file (mTLS).
-    ///
-    /// Raises:
-    ///     RuntimeError: If the node cannot be created or the server cannot start.
-    #[new]
-    #[pyo3(signature = (node_id, db_path, bind_addr="0.0.0.0:2126", advertise_addr=None, peers=vec![], tls_cert_path=None, tls_key_path=None, tls_ca_path=None))]
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "PyO3 constructor needs all params exposed to Python"
-    )]
-    pub fn new(
-        node_id: u64,
-        db_path: &str,
-        bind_addr: &str,
-        advertise_addr: Option<&str>,
-        peers: Vec<String>,
-        tls_cert_path: Option<&str>,
-        tls_key_path: Option<&str>,
-        tls_ca_path: Option<&str>,
-    ) -> PyResult<Self> {
-        use crate::raft::ZoneRaftRegistry;
-        use crate::transport::{NodeAddress, RaftGrpcServer, ServerConfig, TlsConfig};
-        use std::sync::Arc;
-
-        // Parse TLS config from file paths (all-or-nothing)
-        let tls_config = match (tls_cert_path, tls_key_path, tls_ca_path) {
-            (Some(cert), Some(key), Some(ca)) => {
-                let cert_pem = std::fs::read(cert).map_err(|e| {
-                    PyRuntimeError::new_err(format!("Failed to read TLS cert '{}': {}", cert, e))
-                })?;
-                let key_pem = std::fs::read(key).map_err(|e| {
-                    PyRuntimeError::new_err(format!("Failed to read TLS key '{}': {}", key, e))
-                })?;
-                let ca_pem = std::fs::read(ca).map_err(|e| {
-                    PyRuntimeError::new_err(format!("Failed to read TLS CA '{}': {}", ca, e))
-                })?;
-                Some(TlsConfig {
-                    cert_pem,
-                    key_pem,
-                    ca_pem,
-                })
-            }
-            (None, None, None) => None,
-            _ => {
-                return Err(PyRuntimeError::new_err(
-                    "TLS requires all three: tls_cert_path, tls_key_path, tls_ca_path",
-                ))
-            }
-        };
-
-        let use_tls = tls_config.is_some();
-
-        // Parse peer addresses
-        let peer_addrs: Vec<NodeAddress> = peers
-            .iter()
-            .map(|s| {
-                NodeAddress::parse_with_tls(s.trim(), use_tls)
-                    .map_err(|e| PyRuntimeError::new_err(format!("Invalid peer '{}': {}", s, e)))
-            })
-            .collect::<PyResult<Vec<_>>>()?;
-
-        // Parse bind address
-        let bind_socket: std::net::SocketAddr = bind_addr.parse().map_err(|e| {
-            PyRuntimeError::new_err(format!("Invalid bind address '{}': {}", bind_addr, e))
-        })?;
-
-        // Build Tokio runtime for background tasks
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_all()
-            .thread_name("nexus-raft-bg")
-            .build()
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {}", e)))?;
-
-        // Create zone registry and register a single zone
-        let registry = Arc::new(ZoneRaftRegistry::with_tls(
-            std::path::PathBuf::from(db_path),
-            node_id,
-            tls_config.clone(),
-        ));
-
-        let node = registry
-            .create_zone("default", peer_addrs, runtime.handle())
-            .map_err(|e| PyRuntimeError::new_err(format!("Failed to create zone: {}", e)))?;
-
-        // Shutdown signal for gRPC server
-        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-
-        // Start gRPC server in background
-        let config = ServerConfig {
-            bind_address: bind_socket,
-            tls: tls_config,
-            ..Default::default()
-        };
-        let self_addr = advertise_addr.map(|s| s.to_string()).unwrap_or_else(|| {
-            let scheme = if use_tls { "https" } else { "http" };
-            format!("{}://{}", scheme, bind_addr)
-        });
-        let server = RaftGrpcServer::new(registry.clone(), config, self_addr);
-        let shutdown_rx_server = shutdown_rx.clone();
-        runtime.spawn(async move {
-            let shutdown = async move {
-                let mut rx = shutdown_rx_server;
-                let _ = rx.changed().await;
-            };
-            if let Err(e) = server.serve_with_shutdown(shutdown).await {
-                tracing::error!("Raft gRPC server error: {}", e);
-            }
-        });
-
-        tracing::info!(
-            "RaftConsensus node {} started (bind={}, peers={}, tls={})",
-            node_id,
-            bind_addr,
-            peers.len(),
-            use_tls,
-        );
-
-        Ok(Self {
-            node,
-            runtime,
-            shutdown_tx: Some(shutdown_tx),
-            node_id,
-        })
-    }
-
-    // =========================================================================
-    // Metadata Operations (writes go through consensus)
-    // =========================================================================
-
-    /// Set metadata for a path.
-    ///
-    /// Args:
-    ///     path: The file path (key).
-    ///     value: Serialized metadata bytes.
-    ///     consistency: "sc" (default, wait for commit) or "ec" (local write + WAL token).
-    ///
-    /// Returns:
-    ///     EC mode: write token (int) for polling via is_committed().
-    ///     SC mode: None (write is already committed when this returns).
-    #[pyo3(signature = (path, value, consistency="sc"))]
-    pub fn set_metadata(
-        &self,
-        py: Python<'_>,
-        path: &str,
-        value: Vec<u8>,
-        consistency: &str,
-    ) -> PyResult<Option<u64>> {
-        validate_consistency(consistency)?;
-        let cmd = Command::SetMetadata {
-            key: path.to_string(),
-            value,
-        };
-        match consistency {
-            CONSISTENCY_EC => Ok(Some(self.propose_command_ec_local(py, cmd)?)),
-            _ => {
-                self.propose_command(py, cmd)?;
-                Ok(None)
-            }
-        }
-    }
-
-    /// Get metadata for a path (local read, no consensus).
-    pub fn get_metadata(&self, py: Python<'_>, path: &str) -> PyResult<Option<Vec<u8>>> {
-        let node = self.node.clone();
-        let path = path.to_string();
-        py.allow_threads(|| {
-            self.runtime.block_on(async {
-                node.with_state_machine(|sm| sm.get_metadata(&path))
-                    .await
-                    .map_err(|e| PyRuntimeError::new_err(format!("Failed to get metadata: {}", e)))
-            })
-        })
-    }
-
-    /// Get metadata for multiple paths in a single FFI call (local read, no consensus).
-    pub fn get_metadata_multi(
-        &self,
-        py: Python<'_>,
-        paths: Vec<String>,
-    ) -> PyResult<Vec<(String, Option<Vec<u8>>)>> {
-        let node = self.node.clone();
-        py.allow_threads(|| {
-            self.runtime.block_on(async {
-                node.with_state_machine(|sm| sm.get_metadata_multi(&paths))
-                    .await
-                    .map_err(|e| {
-                        PyRuntimeError::new_err(format!("Failed to get metadata multi: {}", e))
-                    })
-            })
-        })
-    }
-
-    /// Delete metadata for a path.
-    ///
-    /// Args:
-    ///     path: The file path.
-    ///     consistency: "sc" (default, wait for commit) or "ec" (local write + WAL token).
-    ///
-    /// Returns:
-    ///     EC mode: write token (int) for polling via is_committed().
-    ///     SC mode: None (write is already committed when this returns).
-    #[pyo3(signature = (path, consistency="sc"))]
-    pub fn delete_metadata(
-        &self,
-        py: Python<'_>,
-        path: &str,
-        consistency: &str,
-    ) -> PyResult<Option<u64>> {
-        validate_consistency(consistency)?;
-        let cmd = Command::DeleteMetadata {
-            key: path.to_string(),
-        };
-        match consistency {
-            CONSISTENCY_EC => Ok(Some(self.propose_command_ec_local(py, cmd)?)),
-            _ => {
-                self.propose_command(py, cmd)?;
-                Ok(None)
-            }
-        }
-    }
-
-    /// List all metadata with a prefix (local read, no consensus).
-    pub fn list_metadata(&self, py: Python<'_>, prefix: &str) -> PyResult<Vec<(String, Vec<u8>)>> {
-        let node = self.node.clone();
-        let prefix = prefix.to_string();
-        py.allow_threads(|| {
-            self.runtime.block_on(async {
-                node.with_state_machine(|sm| sm.list_metadata(&prefix))
-                    .await
-                    .map_err(|e| PyRuntimeError::new_err(format!("Failed to list metadata: {}", e)))
-            })
-        })
-    }
-
-    /// Check if an EC write token has been replicated to a majority.
-    ///
-    /// Args:
-    ///     token: Write token returned by set_metadata/delete_metadata with consistency="ec".
-    ///
-    /// Returns:
-    ///     "committed" — replicated to majority.
-    ///     "pending" — local only, awaiting replication.
-    ///     None — invalid token or no replication log.
-    pub fn is_committed(&self, token: u64) -> Option<String> {
-        self.node.is_committed(token).map(|s| s.to_string())
-    }
-
-    // =========================================================================
-    // Lock Operations (writes go through consensus)
-    // =========================================================================
-
-    /// Acquire a distributed lock (replicated through Raft consensus).
-    #[pyo3(signature = (path, lock_id, max_holders=1, ttl_secs=30, holder_info=""))]
-    pub fn acquire_lock(
-        &self,
-        py: Python<'_>,
-        path: &str,
-        lock_id: &str,
-        max_holders: u32,
-        ttl_secs: u32,
-        holder_info: &str,
-    ) -> PyResult<PyLockState> {
-        let cmd = Command::AcquireLock {
-            path: path.to_string(),
-            lock_id: lock_id.to_string(),
-            max_holders,
-            ttl_secs,
-            holder_info: holder_info.to_string(),
-        };
-        let result = self.propose_command_raw(py, cmd)?;
-        match result {
-            CommandResult::LockResult(state) => Ok(state.into()),
-            _ => Err(PyRuntimeError::new_err("Unexpected result type")),
-        }
-    }
-
-    /// Release a distributed lock (replicated through Raft consensus).
-    pub fn release_lock(&self, py: Python<'_>, path: &str, lock_id: &str) -> PyResult<bool> {
-        let cmd = Command::ReleaseLock {
-            path: path.to_string(),
-            lock_id: lock_id.to_string(),
-        };
-        let result = self.propose_command_raw(py, cmd)?;
-        Ok(matches!(result, CommandResult::Success))
-    }
-
-    /// Extend a lock's TTL (replicated through Raft consensus).
-    pub fn extend_lock(
-        &self,
-        py: Python<'_>,
-        path: &str,
-        lock_id: &str,
-        new_ttl_secs: u32,
-    ) -> PyResult<bool> {
-        let cmd = Command::ExtendLock {
-            path: path.to_string(),
-            lock_id: lock_id.to_string(),
-            new_ttl_secs,
-        };
-        let result = self.propose_command_raw(py, cmd)?;
-        Ok(matches!(result, CommandResult::Success))
-    }
-
-    /// Get lock info for a path (local read, no consensus).
-    pub fn get_lock(&self, py: Python<'_>, path: &str) -> PyResult<Option<PyLockInfo>> {
-        let node = self.node.clone();
-        let path = path.to_string();
-        py.allow_threads(|| {
-            self.runtime.block_on(async {
-                node.with_state_machine(|sm| sm.get_lock(&path))
-                    .await
-                    .map(|opt| opt.map(|l| l.into()))
-                    .map_err(|e| PyRuntimeError::new_err(format!("Failed to get lock: {}", e)))
-            })
-        })
-    }
-
-    /// List all locks matching a prefix (local read, no consensus).
-    #[pyo3(signature = (prefix="", limit=1000))]
-    pub fn list_locks(
-        &self,
-        py: Python<'_>,
-        prefix: &str,
-        limit: usize,
-    ) -> PyResult<Vec<PyLockInfo>> {
-        let node = self.node.clone();
-        let prefix = prefix.to_string();
-        py.allow_threads(|| {
-            self.runtime.block_on(async {
-                node.with_state_machine(|sm| sm.list_locks(&prefix, limit))
-                    .await
-                    .map(|locks| locks.into_iter().map(|l| l.into()).collect())
-                    .map_err(|e| PyRuntimeError::new_err(format!("Failed to list locks: {}", e)))
-            })
-        })
-    }
-
-    // =========================================================================
-    // Cluster Status
-    // =========================================================================
-
-    /// Check if this node is the current leader (atomic read, no I/O).
-    pub fn is_leader(&self) -> bool {
-        self.node.is_leader()
-    }
-
-    /// Get the current leader ID (None if unknown, atomic read).
-    pub fn leader_id(&self) -> Option<u64> {
-        self.node.leader_id()
-    }
-
-    /// Get this node's ID.
-    pub fn node_id(&self) -> u64 {
-        self.node_id
-    }
-
-    // =========================================================================
-    // Lifecycle
-    // =========================================================================
-
-    /// Gracefully shut down the Raft node, gRPC server, and transport loop.
-    pub fn shutdown(&mut self) -> PyResult<()> {
-        if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.send(true);
-            tracing::info!("RaftConsensus node {} shutting down", self.node_id);
-        }
-        Ok(())
-    }
-
-    /// Flush all pending writes to disk.
-    pub fn flush(&self) -> PyResult<()> {
-        // State machine flush is handled by redb internally (commits are durable)
-        Ok(())
-    }
-}
-
-#[cfg(all(feature = "grpc", has_protos))]
-impl PyRaftConsensus {
-    /// True Local-First EC write — bypasses Raft, returns WAL token.
-    fn propose_command_ec_local(&self, py: Python<'_>, cmd: Command) -> PyResult<u64> {
-        let node = self.node.clone();
-        py.allow_threads(|| {
-            self.runtime
-                .block_on(node.propose_ec_local(cmd))
-                .map_err(|e| PyRuntimeError::new_err(format!("EC local write failed: {}", e)))
-        })
-    }
-
-    /// Propose a command through consensus and return success/failure (SC path).
-    fn propose_command(&self, py: Python<'_>, cmd: Command) -> PyResult<bool> {
-        let result = self.propose_command_raw(py, cmd)?;
-        match result {
-            CommandResult::Success => Ok(true),
-            CommandResult::Error(e) => Err(PyRuntimeError::new_err(e)),
-            CommandResult::LockResult(state) => Ok(state.acquired),
-            CommandResult::Value(_) => Ok(true),
-        }
-    }
-
-    /// Propose a command through consensus and return the raw result (SC path).
-    fn propose_command_raw(&self, py: Python<'_>, cmd: Command) -> PyResult<CommandResult> {
-        let node = self.node.clone();
-        py.allow_threads(|| {
-            self.runtime
-                .block_on(node.propose(cmd))
-                .map_err(|e| PyRuntimeError::new_err(format!("Propose failed: {}", e)))
-        })
-    }
-}
-
-#[cfg(all(feature = "grpc", has_protos))]
-impl Drop for PyRaftConsensus {
-    fn drop(&mut self) {
-        if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.send(true);
-        }
-    }
-}
-
-// =============================================================================
 // ZoneManager: Multi-zone Raft registry exposed to Python
 // =============================================================================
 
 /// Multi-zone Raft manager — owns the registry, runtime, and gRPC server.
 ///
-/// Unlike `RaftConsensus` (single zone, backward-compatible), `ZoneManager`
-/// supports creating/removing multiple independent Raft zones that share
+/// Supports creating/removing multiple independent Raft zones that share
 /// a single gRPC port and Tokio runtime.
 ///
 /// # Python Usage
@@ -1295,8 +825,8 @@ impl Drop for PyZoneManager {
 
 /// Handle to a single zone's Raft node.
 ///
-/// Provides the same metadata/lock operations as `RaftConsensus` but scoped
-/// to one zone. Obtained from `ZoneManager.create_zone()` or `.get_zone()`.
+/// Provides metadata/lock operations scoped to one zone.
+/// Obtained from `ZoneManager.create_zone()` or `.get_zone()`.
 #[cfg(all(feature = "grpc", has_protos))]
 #[pyclass(name = "ZoneHandle")]
 pub struct PyZoneHandle {
@@ -1556,15 +1086,13 @@ impl PyZoneHandle {
 
 /// Python module initialization.
 /// Module name: _nexus_raft (consistent with _nexus_fast)
-/// Import as: from _nexus_raft import Metastore, RaftConsensus, ZoneManager
+/// Import as: from _nexus_raft import Metastore, ZoneManager, ZoneHandle
 #[pymodule]
 fn _nexus_raft(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyMetastore>()?;
     m.add_class::<PyLockState>()?;
     m.add_class::<PyLockInfo>()?;
     m.add_class::<PyHolderInfo>()?;
-    #[cfg(all(feature = "grpc", has_protos))]
-    m.add_class::<PyRaftConsensus>()?;
     #[cfg(all(feature = "grpc", has_protos))]
     m.add_class::<PyZoneManager>()?;
     #[cfg(all(feature = "grpc", has_protos))]

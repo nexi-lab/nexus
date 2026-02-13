@@ -314,3 +314,40 @@ async def get_exchange_audit_logger(
 
     session_factory = nexus_fs.SessionLocal
     return ExchangeAuditLogger(session_factory=session_factory), zone_id
+
+
+# =============================================================================
+# Reputation & Trust dependencies (Issue #1356)
+# =============================================================================
+
+
+async def get_reputation_context(
+    nexus_fs: Any = Depends(get_nexus_fs),
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+) -> tuple[Any, Any, dict[str, Any]]:
+    """Get ReputationService + DisputeService + auth context.
+
+    Returns:
+        Tuple of (ReputationService, DisputeService, auth_context dict).
+    """
+    from nexus.services.reputation.dispute_service import DisputeService
+    from nexus.services.reputation.reputation_service import ReputationService
+
+    session_factory = nexus_fs.SessionLocal
+    reputation_service = ReputationService(
+        session_factory=session_factory,
+        cache_maxsize=10_000,
+        cache_ttl=60,
+    )
+    dispute_service = DisputeService(session_factory=session_factory)
+
+    context = _get_operation_context(auth_result)
+    auth_ctx = {
+        "user_id": context.user_id or context.user or "",
+        "subject_id": getattr(context, "subject_id", ""),
+        "subject_type": getattr(context, "subject_type", ""),
+        "is_admin": getattr(context, "is_admin", False),
+        "zone_id": context.zone_id,
+    }
+
+    return reputation_service, dispute_service, auth_ctx

@@ -268,15 +268,19 @@ class RaftClient:
             logger.error(f"Query RPC failed: {e}")
             raise
 
-    async def get_cluster_info(self) -> dict:
+    async def get_cluster_info(self, zone_id: str | None = None) -> dict:
         """Get cluster information.
+
+        Args:
+            zone_id: Zone ID (uses default if not specified)
 
         Returns:
             Dict with node_id, leader_id, term, is_leader, leader_address
         """
         stub = self._ensure_connected()
+        zone = zone_id or self.zone_id or ""
 
-        request = transport_pb2.GetClusterInfoRequest()
+        request = transport_pb2.GetClusterInfoRequest(zone_id=zone)
 
         try:
             response = await stub.GetClusterInfo(
@@ -292,6 +296,108 @@ class RaftClient:
             }
         except grpc.RpcError as e:
             logger.error(f"GetClusterInfo RPC failed: {e}")
+            raise
+
+    # =========================================================================
+    # Zone Federation Operations (JoinZone / InviteZone RPCs)
+    # =========================================================================
+
+    async def join_zone(
+        self,
+        zone_id: str,
+        node_id: int,
+        node_address: str,
+    ) -> dict:
+        """Request the leader to add a new node to a zone's Raft group.
+
+        Must be sent to the leader; followers return a redirect.
+
+        Args:
+            zone_id: Zone to join.
+            node_id: The joining node's Raft ID.
+            node_address: The joining node's gRPC address.
+
+        Returns:
+            Dict with success, leader_address, config.
+        """
+        stub = self._ensure_connected()
+
+        request = transport_pb2.JoinZoneRequest(
+            zone_id=zone_id,
+            node_id=node_id,
+            node_address=node_address,
+        )
+
+        try:
+            response = await stub.JoinZone(
+                request,
+                timeout=self.config.timeout_ms / 1000,
+            )
+
+            if not response.success and response.leader_address:
+                raise RaftNotLeaderError(
+                    f"Not the leader. Redirect to: {response.leader_address}",
+                    leader_address=response.leader_address,
+                )
+
+            if not response.success:
+                raise RaftError(response.error or "JoinZone failed")
+
+            return {
+                "success": response.success,
+                "leader_address": response.leader_address or None,
+                "config": response.config,
+            }
+        except grpc.RpcError as e:
+            logger.error(f"JoinZone RPC failed: {e}")
+            raise
+
+    async def invite_zone(
+        self,
+        zone_id: str,
+        mount_path: str,
+        inviter_node_id: int,
+        inviter_address: str,
+    ) -> dict:
+        """Invite a remote node to join a zone and create a DT_MOUNT.
+
+        Inverse of join_zone (push model vs pull model).
+        Remote handler: (1) join zone, (2) JoinZone on leader, (3) create DT_MOUNT.
+
+        Args:
+            zone_id: Zone to join.
+            mount_path: Where to create DT_MOUNT on the remote node.
+            inviter_node_id: The inviter (leader) node's Raft ID.
+            inviter_address: The inviter (leader) node's gRPC address.
+
+        Returns:
+            Dict with success, node_id, node_address.
+        """
+        stub = self._ensure_connected()
+
+        request = transport_pb2.InviteZoneRequest(
+            zone_id=zone_id,
+            mount_path=mount_path,
+            inviter_node_id=inviter_node_id,
+            inviter_address=inviter_address,
+        )
+
+        try:
+            response = await stub.InviteZone(
+                request,
+                timeout=self.config.timeout_ms / 1000,
+            )
+
+            if not response.success:
+                raise RaftError(response.error or "InviteZone failed")
+
+            return {
+                "success": response.success,
+                "node_id": response.node_id,
+                "node_address": response.node_address,
+            }
+        except grpc.RpcError as e:
+            logger.error(f"InviteZone RPC failed: {e}")
             raise
 
     # =========================================================================

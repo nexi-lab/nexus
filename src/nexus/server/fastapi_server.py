@@ -76,6 +76,7 @@ from nexus.server.error_handlers import (  # noqa: E402
 from nexus.server.path_utils import (
     unscope_internal_dict,
     unscope_internal_path,
+    unscope_result,
 )
 from nexus.server.protocol import (
     RPCErrorCode,
@@ -4988,14 +4989,7 @@ def _handle_grep(params: Any, context: Any) -> dict[str, Any]:
 
     results = nexus_fs.grep(params.pattern, **kwargs)
     # Issue #1202: Strip internal zone/tenant/user prefixes from paths
-    results = [
-        unscope_internal_dict(r, ["path", "file"])
-        if isinstance(r, dict)
-        else unscope_internal_path(r)
-        if isinstance(r, str)
-        else r
-        for r in results
-    ]
+    results = [unscope_result(r) for r in results]
     # Return "results" key to match RemoteNexusFS.grep() expectations
     return {"results": results}
 

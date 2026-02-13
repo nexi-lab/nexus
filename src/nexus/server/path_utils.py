@@ -15,6 +15,25 @@ Related: Issue #1202 - list('/') returns paths with /tenant: prefix
 
 from __future__ import annotations
 
+from typing import overload
+
+
+@overload
+def unscope_result(r: dict) -> dict: ...
+@overload
+def unscope_result(r: str) -> str: ...
+@overload
+def unscope_result(r: object) -> object: ...
+
+
+def unscope_result(r: object) -> dict | str | object:
+    """Unscope a single grep/list result (dict, str, or passthrough)."""
+    if isinstance(r, dict):
+        return unscope_internal_dict(r, ["path", "file"])
+    if isinstance(r, str):
+        return unscope_internal_path(r)
+    return r
+
 
 def unscope_internal_path(path: str) -> str:
     """Strip internal zone/tenant/user prefix from a storage path.

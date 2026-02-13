@@ -470,6 +470,8 @@ class SearchService:
         chunk_size: int = 1024,
         chunk_strategy: str = "semantic",
         async_mode: bool = True,
+        contextual_chunking: bool = False,
+        context_generator: Any | None = None,
     ) -> None:
         """Initialize semantic search engine with embedding provider.
 
@@ -480,6 +482,8 @@ class SearchService:
             chunk_size: Chunk size in tokens
             chunk_strategy: "semantic", "fixed", or "recursive"
             async_mode: Use async backend for high throughput
+            contextual_chunking: Enable contextual chunking (Issue #1192)
+            context_generator: Callable for generating chunk context (Issue #1192)
 
         Examples:
             # Initialize with OpenAI
@@ -522,6 +526,8 @@ class SearchService:
                 embedding_provider=emb_provider,
                 chunk_size=chunk_size,
                 chunk_strategy=chunk_strat,
+                contextual_chunking=contextual_chunking,
+                context_generator=context_generator,
             )
             await self._async_search.initialize()
 

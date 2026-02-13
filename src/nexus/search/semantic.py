@@ -32,6 +32,11 @@ from nexus.search.chunking import (
     EntropyAwareChunker,
     EntropyFilterResult,
 )
+from nexus.search.contextual_chunking import (
+    ContextGenerator,
+    ContextualChunker,
+    ContextualChunkingConfig,
+)
 from nexus.search.embeddings import EmbeddingProvider
 from nexus.search.vector_db import VectorDatabase
 from nexus.storage.models import DocumentChunkModel, FilePathModel
@@ -88,6 +93,9 @@ class SemanticSearch:
         entropy_alpha: float = 0.5,
         ranking_config: RankingConfig | None = None,
         engine: Any | None = None,
+        contextual_chunking: bool = False,
+        contextual_config: ContextualChunkingConfig | None = None,
+        context_generator: ContextGenerator | None = None,
     ):
         """Initialize semantic search.
 
@@ -104,6 +112,9 @@ class SemanticSearch:
                            Default 0.5 gives equal weight to both signals
             ranking_config: Configuration for attribute-based ranking (Issue #1092)
             engine: SQLAlchemy engine for vector DB (DI from caller; required)
+            contextual_chunking: Enable contextual chunking (Issue #1192)
+            contextual_config: Configuration for contextual chunking
+            context_generator: Callable that generates context for each chunk
         """
         self.nx = nx
         self.chunk_size = chunk_size
@@ -137,6 +148,19 @@ class SemanticSearch:
                 redundancy_threshold=entropy_threshold,
                 alpha=entropy_alpha,
                 embedding_provider=embedding_provider,
+                base_chunker=self.chunker,
+            )
+
+        # Issue #1192: Initialize contextual chunking
+        self.contextual_chunking = contextual_chunking
+        self._contextual_config = contextual_config or ContextualChunkingConfig(
+            enabled=contextual_chunking
+        )
+        self._contextual_chunker: ContextualChunker | None = None
+        if contextual_chunking and context_generator is not None:
+            self._contextual_chunker = ContextualChunker(
+                context_generator=context_generator,
+                config=self._contextual_config,
                 base_chunker=self.chunker,
             )
 
@@ -220,10 +244,23 @@ class SemanticSearch:
             session.execute(delete(DocumentChunkModel).where(DocumentChunkModel.path_id == path_id))
             session.commit()
 
-        # Chunk document (with optional entropy filtering - Issue #1024)
+        # Issue #1192: Contextual chunking takes priority (includes base chunking internally)
+        contextual_result = None
+        source_document_id: str | None = None
         entropy_result: EntropyFilterResult | None = None
-        if self.entropy_filtering and self._entropy_chunker:
-            # Use entropy-aware chunking to filter redundant chunks
+
+        if self.contextual_chunking and self._contextual_chunker is not None:
+            doc_summary = content[:500].rsplit(". ", 1)[0] + "." if ". " in content[:500] else content[:500]
+            contextual_result = await self._contextual_chunker.chunk_with_context(
+                document=content,
+                doc_summary=doc_summary,
+                file_path=path,
+                compute_lines=True,
+            )
+            source_document_id = contextual_result.source_document_id
+            chunks = [cc.chunk for cc in contextual_result.chunks]
+        elif self.entropy_filtering and self._entropy_chunker:
+            # Issue #1024: Entropy-aware chunking to filter redundant chunks
             entropy_result = await self._entropy_chunker.chunk_with_filtering(
                 content, path, compute_lines=True
             )
@@ -249,20 +286,32 @@ class SemanticSearch:
             return 0
 
         # Generate embeddings (if provider available)
-        # Note: If entropy filtering was used WITH embeddings, they were already generated
-        # But we still need fresh embeddings for the filtered chunks only
+        # When contextual chunking is active, embed the composed text (context + original)
         embeddings = None
         if self.embedding_provider:
-            chunk_texts = [chunk.text for chunk in chunks]
+            if contextual_result is not None:
+                chunk_texts = [cc.contextual_text for cc in contextual_result.chunks]
+            else:
+                chunk_texts = [chunk.text for chunk in chunks]
             embeddings = await self.embedding_provider.embed_texts(chunk_texts)
+
+        # Issue #1192: Pre-compute contextual metadata outside the insert loop
+        context_jsons: list[str | None] = []
+        context_positions: list[int | None] = []
+        if contextual_result is not None:
+            for cc in contextual_result.chunks:
+                context_positions.append(cc.position)
+                context_jsons.append(
+                    cc.context.model_dump_json() if cc.context is not None else None
+                )
 
         # Store chunks in database with optional embeddings
         with self.nx.SessionLocal() as session:
             chunk_ids = []
             for i, chunk in enumerate(chunks):
-                # Create chunk model
                 chunk_id = str(uuid.uuid4())
                 chunk_ids.append(chunk_id)
+
                 chunk_model = DocumentChunkModel(
                     chunk_id=chunk_id,
                     path_id=path_id,
@@ -276,6 +325,9 @@ class SemanticSearch:
                     embedding_model=str(self.embedding_provider.__class__.__name__)
                     if self.embedding_provider
                     else None,
+                    chunk_context=context_jsons[i] if context_jsons else None,
+                    chunk_position=context_positions[i] if context_positions else None,
+                    source_document_id=source_document_id,
                     created_at=datetime.now(UTC),
                 )
                 session.add(chunk_model)

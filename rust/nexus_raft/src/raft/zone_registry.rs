@@ -2,7 +2,7 @@
 //!
 //! Each zone is an independent Raft group with its own:
 //! - sled database (at `{base_path}/{zone_id}/`)
-//! - RaftNode handle + RaftNodeDriver actor
+//! - ZoneConsensus handle + ZoneConsensusDriver actor
 //! - TransportLoop background task
 //!
 //! The registry is thread-safe (DashMap) and supports dynamic zone creation/removal.
@@ -11,12 +11,12 @@
 //!
 //! ```text
 //!   ZoneRaftRegistry
-//!   ├── "zone-alpha" → ZoneEntry { RaftNode, TransportLoop task, shutdown_tx }
-//!   ├── "zone-beta"  → ZoneEntry { RaftNode, TransportLoop task, shutdown_tx }
+//!   ├── "zone-alpha" → ZoneEntry { ZoneConsensus, TransportLoop task, shutdown_tx }
+//!   ├── "zone-beta"  → ZoneEntry { ZoneConsensus, TransportLoop task, shutdown_tx }
 //!   └── ...
 //! ```
 
-use crate::raft::{FullStateMachine, RaftConfig, RaftNode, RaftStorage, ReplicationLog};
+use crate::raft::{FullStateMachine, RaftConfig, RaftStorage, ReplicationLog, ZoneConsensus};
 use crate::storage::RedbStore;
 use crate::transport::{NodeAddress, RaftClientPool, SharedPeerMap, TransportError, TransportLoop};
 use dashmap::DashMap;
@@ -28,8 +28,8 @@ use tokio::task::JoinHandle;
 
 /// A single zone entry in the registry.
 struct ZoneEntry {
-    /// RaftNode handle (Clone + Send + Sync).
-    node: RaftNode<FullStateMachine>,
+    /// ZoneConsensus handle (Clone + Send + Sync).
+    node: ZoneConsensus<FullStateMachine>,
     /// Known peers for this zone. Shared with TransportLoop for runtime ConfChange updates.
     peers: SharedPeerMap,
     /// This node's ID within the zone.
@@ -85,7 +85,7 @@ impl ZoneRaftRegistry {
         zone_id: &str,
         peers: Vec<NodeAddress>,
         runtime_handle: &tokio::runtime::Handle,
-    ) -> Result<RaftNode<FullStateMachine>, TransportError> {
+    ) -> Result<ZoneConsensus<FullStateMachine>, TransportError> {
         let peer_ids: Vec<u64> = peers.iter().map(|p| p.id).collect();
         let config = RaftConfig {
             id: self.node_id,
@@ -112,7 +112,7 @@ impl ZoneRaftRegistry {
         zone_id: &str,
         peers: Vec<NodeAddress>,
         runtime_handle: &tokio::runtime::Handle,
-    ) -> Result<RaftNode<FullStateMachine>, TransportError> {
+    ) -> Result<ZoneConsensus<FullStateMachine>, TransportError> {
         // Empty peers in config → no ConfState bootstrap. Snapshot overwrites.
         let config = RaftConfig {
             id: self.node_id,
@@ -123,7 +123,7 @@ impl ZoneRaftRegistry {
         self.setup_zone(zone_id, config, peers, false, runtime_handle)
     }
 
-    /// Internal: open sled, create RaftNode + driver, spawn transport loop, register zone.
+    /// Internal: open sled, create ZoneConsensus + driver, spawn transport loop, register zone.
     #[expect(
         clippy::result_large_err,
         reason = "TransportError contains tonic types; will Box in transport refactor"
@@ -135,7 +135,7 @@ impl ZoneRaftRegistry {
         peers: Vec<NodeAddress>,
         campaign: bool,
         runtime_handle: &tokio::runtime::Handle,
-    ) -> Result<RaftNode<FullStateMachine>, TransportError> {
+    ) -> Result<ZoneConsensus<FullStateMachine>, TransportError> {
         if self.zones.contains_key(zone_id) {
             return Err(TransportError::Connection(format!(
                 "Zone '{}' already exists",
@@ -164,13 +164,13 @@ impl ZoneRaftRegistry {
             None
         };
 
-        // Create RaftNode handle + driver
+        // Create ZoneConsensus handle + driver
         let (handle, mut driver) =
-            RaftNode::new(config, raft_storage, state_machine, replication_log).map_err(|e| {
-                TransportError::Connection(format!("Failed to create RaftNode: {}", e))
-            })?;
+            ZoneConsensus::new(config, raft_storage, state_machine, replication_log).map_err(
+                |e| TransportError::Connection(format!("Failed to create ZoneConsensus: {}", e)),
+            )?;
 
-        // Peer map — shared between ZoneEntry, TransportLoop, and RaftNodeDriver.
+        // Peer map — shared between ZoneEntry, TransportLoop, and ZoneConsensusDriver.
         let peer_map: HashMap<u64, NodeAddress> = peers.into_iter().map(|p| (p.id, p)).collect();
         let shared_peers: SharedPeerMap = Arc::new(RwLock::new(peer_map));
 
@@ -215,8 +215,8 @@ impl ZoneRaftRegistry {
         Ok(handle)
     }
 
-    /// Get the RaftNode handle for a zone.
-    pub fn get_node(&self, zone_id: &str) -> Option<RaftNode<FullStateMachine>> {
+    /// Get the ZoneConsensus handle for a zone.
+    pub fn get_node(&self, zone_id: &str) -> Option<ZoneConsensus<FullStateMachine>> {
         self.zones.get(zone_id).map(|e| e.node.clone())
     }
 

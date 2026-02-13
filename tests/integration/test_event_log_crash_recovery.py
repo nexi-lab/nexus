@@ -15,10 +15,10 @@ from pathlib import Path
 import pytest
 
 from nexus.core.event_bus import FileEvent, FileEventType
-from nexus.core.protocols.event_log import EventLogConfig
+from nexus.services.event_log import EventLogConfig
 
 try:
-    from nexus.core.event_log_wal import WALEventLog, is_available
+    from nexus.services.event_log.wal_backend import WALEventLog, is_available
 
     if not is_available():
         pytest.skip("_nexus_wal extension not available", allow_module_level=True)

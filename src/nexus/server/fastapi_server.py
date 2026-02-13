@@ -76,6 +76,7 @@ from nexus.server.error_handlers import (  # noqa: E402
 from nexus.server.path_utils import (
     unscope_internal_dict,
     unscope_internal_path,
+    unscope_result,
 )
 from nexus.server.protocol import (
     RPCErrorCode,
@@ -458,11 +459,11 @@ async def lifespan(_app: FastAPI) -> Any:
         logger.warning(f"Failed to initialize cache factory: {e}")
 
     # Event Log WAL for durable event persistence (Issue #1397)
-    # Rust WAL preferred; falls back to PG if extension not available
+    # Service-layer concern: WAL-first durability for EventBus, not a kernel pillar.
+    # Rust WAL preferred; falls back to PG; None if neither available (graceful degrade).
     _app_state.event_log = None
     try:
-        from nexus.core.event_log_factory import create_event_log
-        from nexus.core.protocols.event_log import EventLogConfig
+        from nexus.services.event_log import EventLogConfig, create_event_log
 
         wal_dir = os.getenv("NEXUS_WAL_DIR", ".nexus-data/wal")
         sync_mode = os.getenv("NEXUS_WAL_SYNC_MODE", "every")
@@ -477,7 +478,8 @@ async def lifespan(_app: FastAPI) -> Any:
             event_log_config,
             session_factory=getattr(_app_state, "session_factory", None),
         )
-        logger.info(f"Event log initialized (wal_dir={wal_dir}, sync_mode={sync_mode})")
+        if _app_state.event_log:
+            logger.info(f"Event log initialized (wal_dir={wal_dir}, sync_mode={sync_mode})")
     except Exception as e:
         logger.warning(f"Failed to initialize event log: {e}")
 
@@ -501,9 +503,11 @@ async def lifespan(_app: FastAPI) -> Any:
                 except Exception as e:
                     logger.warning(f"Failed to start event bus: {e}")
 
-            # Note: WAL append is handled inline in _dispatch_method (Issue #1397)
-            # for <5μs durable writes without thread-per-event overhead.
-            # The event_bus handles Redis fan-out only; WAL is not wired into it.
+            # Wire event_log into EventBus for WAL-first durability (Issue #1397).
+            # EventBus.publish() handles: WAL append (if available) → Dragonfly fan-out.
+            if _app_state.event_log is not None:
+                event_bus_ref._event_log = _app_state.event_log
+                logger.info("Event log wired into EventBus (WAL-first before pub/sub)")
 
     # WebSocket Manager for real-time events (Issue #1116)
     # Bridges Redis Pub/Sub to WebSocket clients for push notifications
@@ -4161,7 +4165,7 @@ def _get_cache_headers(method: str, result: Any) -> dict[str, str]:
         headers["Cache-Control"] = "private, max-age=60"
 
     # Write/delete operations - no cache
-    elif method in ("write", "delete", "rename", "copy", "mkdir", "rmdir", "delta_write"):
+    elif method in ("write", "delete", "rename", "copy", "mkdir", "rmdir", "delta_write", "edit"):
         headers["Cache-Control"] = "no-store"
 
     # Delta read - cache like regular read
@@ -5031,14 +5035,7 @@ def _handle_grep(params: Any, context: Any) -> dict[str, Any]:
 
     results = nexus_fs.grep(params.pattern, **kwargs)
     # Issue #1202: Strip internal zone/tenant/user prefixes from paths
-    results = [
-        unscope_internal_dict(r, ["path", "file"])
-        if isinstance(r, dict)
-        else unscope_internal_path(r)
-        if isinstance(r, str)
-        else r
-        for r in results
-    ]
+    results = [unscope_result(r) for r in results]
     # Return "results" key to match RemoteNexusFS.grep() expectations
     return {"results": results}
 

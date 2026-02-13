@@ -9,9 +9,10 @@ Nexus Tools:
 2. glob_files: Find files by name pattern using glob syntax
 3. read_file: Read file content using cat/less-style commands
 4. write_file: Write content to Nexus filesystem
-5. python: Execute Python code in Nexus-managed sandbox
-6. bash: Execute bash commands in Nexus-managed sandbox
-7. query_memories: Query and retrieve stored memory records
+5. edit_file: Apply surgical search/replace edits to existing files
+6. python: Execute Python code in Nexus-managed sandbox
+7. bash: Execute bash commands in Nexus-managed sandbox
+8. query_memories: Query and retrieve stored memory records
 
 These tools enable agents to interact with a remote Nexus filesystem and execute
 code in isolated Nexus-managed sandboxes, allowing them to search, read, analyze, persist
@@ -457,6 +458,93 @@ def get_nexus_tools() -> list[BaseTool]:
         except Exception as e:
             return f"Error writing file {path}: {str(e)}"
 
+    @tool
+    def edit_file(
+        path: str,
+        edits: list[dict],
+        config: RunnableConfig,
+        state: Annotated[Any, InjectedState] = None,  # noqa: ARG001
+        fuzzy_threshold: float = 0.85,
+        preview: bool = False,
+    ) -> str:
+        """Apply surgical search/replace edits to an existing file.
+
+        More reliable than write_file for partial changes because it only modifies
+        specified portions, uses fuzzy matching if exact match fails, and returns
+        a clear diff of what changed.
+
+        USE THIS WHEN:
+        - Modifying an EXISTING file
+        - Changing specific functions or code blocks
+        - Adding or removing code sections
+        - Fixing bugs in specific locations
+
+        DO NOT USE WHEN:
+        - Creating a NEW file -> use write_file
+        - Rewriting >50% of the file -> use write_file
+
+        Args:
+            path: File path relative to workspace root
+            edits: List of {"old_str": "text to find", "new_str": "replacement"}
+            state: Agent state (injected by LangGraph, not used directly)
+            config: Runtime configuration (provided by framework)
+            fuzzy_threshold: Similarity threshold for fuzzy matching (0.0-1.0, default: 0.85)
+            preview: If True, show diff without actually writing changes (default: False)
+
+        Examples:
+            edit_file("/src/utils.py", [{"old_str": "def calc(x):", "new_str": "def calculate(x):"}])
+            edit_file("/src/app.py", [
+                {"old_str": "import os", "new_str": "import os\\nimport sys"},
+                {"old_str": "DEBUG = False", "new_str": "DEBUG = True"}
+            ])
+            edit_file("/src/main.py", [{"old_str": "old code", "new_str": "new code"}], preview=True)
+        """
+        try:
+            nx = _get_nexus_client(config, state)
+
+            if path.startswith("/mnt/nexus"):
+                path = path[len("/mnt/nexus") :]
+
+            result = nx.edit(
+                path,
+                edits,
+                fuzzy_threshold=fuzzy_threshold,
+                preview=preview,
+            )
+
+            if result.get("success"):
+                diff = result.get("diff", "")
+                applied = result.get("applied_count", 0)
+                action = "Preview" if preview else "Successfully edited"
+                return f"{action} {path} ({applied} edit(s) applied):\n\n{diff}"
+
+            # Edit failed — format error details
+            errors = result.get("errors", [])
+            matches = result.get("matches", [])
+
+            error_msg = f"Edit failed for {path}:\n"
+            if errors:
+                error_msg += "\n".join(f"  - {e}" for e in errors)
+            if matches:
+                error_msg += "\n\nMatch details:\n"
+                for m in matches:
+                    error_msg += (
+                        f"  Edit {m.get('edit_index', '?')}: "
+                        f"{m.get('match_type', 'unknown')} "
+                        f"(similarity: {m.get('similarity', 0):.2f})\n"
+                    )
+            return error_msg
+
+        except FileNotFoundError:
+            return (
+                f"Error: File not found at '{path}'. "
+                "Use glob_files or read_file to verify the path."
+            )
+        except PermissionError:
+            return f"Error: Permission denied for '{path}'. Check access rights."
+        except Exception as e:
+            return f"Error editing {path}: {str(e)}"
+
     # Nexus Sandbox Tools
     @tool
     def python(
@@ -622,6 +710,7 @@ def get_nexus_tools() -> list[BaseTool]:
         glob_files,
         read_file,
         write_file,
+        edit_file,
         python,
         bash,
         query_memories,

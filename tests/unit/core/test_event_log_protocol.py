@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from nexus.core.protocols.event_log import EventLogConfig, EventLogProtocol
+from nexus.services.event_log import EventLogConfig, EventLogProtocol
 
 
 class TestEventLogProtocol:
@@ -18,7 +18,7 @@ class TestEventLogProtocol:
 
     def test_wal_event_log_satisfies_protocol(self) -> None:
         """WALEventLog must be a structural subtype of EventLogProtocol."""
-        from nexus.core.event_log_wal import WALEventLog, is_available
+        from nexus.services.event_log.wal_backend import WALEventLog, is_available
 
         if not is_available():
             pytest.skip("_nexus_wal extension not available")
@@ -32,7 +32,7 @@ class TestEventLogProtocol:
         """PGEventLog must be a structural subtype of EventLogProtocol."""
         from unittest.mock import MagicMock
 
-        from nexus.core.event_log_pg import PGEventLog
+        from nexus.services.event_log.pg_backend import PGEventLog
 
         config = EventLogConfig()
         log = PGEventLog(config, session_factory=MagicMock())

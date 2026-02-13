@@ -50,7 +50,7 @@ pub mod storage;
 ///
 /// Provides distributed consensus using tikv/raft-rs for linearizable
 /// metadata and lock operations. Requires `consensus` feature for
-/// full RaftNode support (leader election, log replication).
+/// full ZoneConsensus support (leader election, log replication).
 pub mod raft;
 
 /// gRPC transport layer (requires `grpc` feature).
@@ -112,7 +112,7 @@ pub mod prelude {
     };
 
     #[cfg(feature = "consensus")]
-    pub use crate::raft::{NodeRole, RaftConfig, RaftNode, RaftStorage};
+    pub use crate::raft::{NodeRole, RaftConfig, RaftStorage, ZoneConsensus};
 
     #[cfg(all(feature = "grpc", has_protos))]
     pub use crate::transport::{

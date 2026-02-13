@@ -3,7 +3,7 @@
 Only VFSRouterProtocol lives here — it is a kernel concern (virtual path routing).
 EventLogProtocol is also a kernel concern (durable event persistence).
 
-The remaining service-layer protocols live in nexus.services.protocols/
+Service-layer protocols (EventLogProtocol, etc.) live in nexus.services/
 per the Four Pillars architecture (data-storage-matrix.md).
 
 References:

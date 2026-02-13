@@ -330,15 +330,7 @@ def connect(
             except (ImportError, RuntimeError):
                 pass
 
-            # Fallback: single-zone (basic PyO3 or embedded)
-            if nexus_peers:
-                peers = [p.strip() for p in nexus_peers.split(",") if p.strip()]
-                return RaftMetadataStore.consensus(
-                    node_id=node_id,
-                    db_path=metadata_path,
-                    bind_address=bind_addr,
-                    peers=peers,
-                )
+            # Fallback: embedded mode (no peers)
             return RaftMetadataStore.embedded(metadata_path)
 
         # Create backend based on configuration

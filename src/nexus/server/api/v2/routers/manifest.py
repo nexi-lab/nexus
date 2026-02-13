@@ -78,8 +78,8 @@ def _get_agent_registry(nexus_fs: Any) -> Any:
 
 
 def _get_manifest_resolver(nexus_fs: Any) -> Any:
-    """Extract ManifestResolver from NexusFS instance."""
-    resolver = getattr(nexus_fs, "manifest_resolver", None)
+    """Extract ManifestResolver from NexusFS._service_extras."""
+    resolver = nexus_fs._service_extras.get("manifest_resolver")
     if resolver is None:
         raise HTTPException(status_code=503, detail="Manifest resolver not initialized")
     return resolver

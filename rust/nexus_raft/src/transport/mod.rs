@@ -75,6 +75,23 @@ pub use server::{RaftGrpcServer, RaftWitnessServer, ServerConfig, WitnessServerS
 #[cfg(all(feature = "grpc", has_protos))]
 pub use transport_loop::TransportLoop;
 
+/// TLS configuration for gRPC transport (mTLS).
+///
+/// All fields are PEM-encoded bytes (read from files by the caller).
+/// Rust core holds bytes, not paths — file I/O happens at the boundary
+/// (PyO3 reads files, CLI reads files). This makes the core testable
+/// with in-memory certs.
+#[cfg(feature = "grpc")]
+#[derive(Debug, Clone)]
+pub struct TlsConfig {
+    /// Server/client certificate (PEM).
+    pub cert_pem: Vec<u8>,
+    /// Private key (PEM).
+    pub key_pem: Vec<u8>,
+    /// CA certificate for verifying the peer (PEM).
+    pub ca_pem: Vec<u8>,
+}
+
 // Re-export generated types when grpc feature is enabled and protos were compiled
 #[cfg(all(feature = "grpc", has_protos))]
 pub mod proto {
@@ -173,6 +190,15 @@ impl NodeAddress {
         reason = "TransportError contains tonic types; will Box in transport refactor"
     )]
     pub fn parse(s: &str) -> Result<Self> {
+        Self::parse_with_tls(s, false)
+    }
+
+    /// Parse from "id@host:port" format, using `https://` scheme when TLS is active.
+    #[expect(
+        clippy::result_large_err,
+        reason = "TransportError contains tonic types; will Box in transport refactor"
+    )]
+    pub fn parse_with_tls(s: &str, use_tls: bool) -> Result<Self> {
         let parts: Vec<&str> = s.splitn(2, '@').collect();
         if parts.len() != 2 {
             return Err(TransportError::InvalidAddress(format!(
@@ -188,7 +214,8 @@ impl NodeAddress {
         let endpoint = if parts[1].starts_with("http") {
             parts[1].to_string()
         } else {
-            format!("http://{}", parts[1])
+            let scheme = if use_tls { "https" } else { "http" };
+            format!("{}://{}", scheme, parts[1])
         };
 
         Ok(Self { id, endpoint })

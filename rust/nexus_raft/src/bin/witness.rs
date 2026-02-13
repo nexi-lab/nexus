@@ -72,8 +72,46 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(all(feature = "grpc", has_protos))]
     {
         use _nexus_raft::transport::{
-            NodeAddress, RaftClientPool, RaftWitnessServer, ServerConfig, TransportLoop,
+            NodeAddress, RaftClientPool, RaftWitnessServer, ServerConfig, TlsConfig, TransportLoop,
         };
+
+        // Parse TLS configuration from environment
+        let tls_config = match (
+            env::var("NEXUS_TLS_CERT").ok(),
+            env::var("NEXUS_TLS_KEY").ok(),
+            env::var("NEXUS_TLS_CA").ok(),
+        ) {
+            (Some(cert_path), Some(key_path), Some(ca_path)) => {
+                let cert_pem = std::fs::read(&cert_path)
+                    .unwrap_or_else(|e| panic!("Failed to read TLS cert '{}': {}", cert_path, e));
+                let key_pem = std::fs::read(&key_path)
+                    .unwrap_or_else(|e| panic!("Failed to read TLS key '{}': {}", key_path, e));
+                let ca_pem = std::fs::read(&ca_path)
+                    .unwrap_or_else(|e| panic!("Failed to read TLS CA '{}': {}", ca_path, e));
+                tracing::info!(
+                    "TLS enabled (cert={}, key={}, ca={})",
+                    cert_path,
+                    key_path,
+                    ca_path
+                );
+                Some(TlsConfig {
+                    cert_pem,
+                    key_pem,
+                    ca_pem,
+                })
+            }
+            (None, None, None) => {
+                tracing::info!("TLS disabled (no NEXUS_TLS_CERT/KEY/CA set)");
+                None
+            }
+            _ => {
+                panic!(
+                    "TLS requires all three env vars: NEXUS_TLS_CERT, NEXUS_TLS_KEY, NEXUS_TLS_CA"
+                );
+            }
+        };
+
+        let use_tls = tls_config.is_some();
 
         // Parse peers from NEXUS_PEERS env var
         let peers: Vec<NodeAddress> = env::var("NEXUS_PEERS")
@@ -81,7 +119,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .split(',')
             .filter(|s| !s.is_empty())
             .map(|s| {
-                NodeAddress::parse(s.trim())
+                NodeAddress::parse_with_tls(s.trim(), use_tls)
                     .unwrap_or_else(|e| panic!("Invalid peer address '{}': {}", s, e))
             })
             .collect();
@@ -101,6 +139,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let config = ServerConfig {
             bind_address: bind_addr,
+            tls: tls_config,
             ..Default::default()
         };
 

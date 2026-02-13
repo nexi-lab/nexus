@@ -49,6 +49,8 @@ pub struct ServerConfig {
     pub max_connections: usize,
     /// Maximum message size in bytes.
     pub max_message_size: usize,
+    /// Optional TLS configuration for mTLS. None = plain HTTP/2.
+    pub tls: Option<super::TlsConfig>,
 }
 
 impl Default for ServerConfig {
@@ -57,6 +59,7 @@ impl Default for ServerConfig {
             bind_address: "0.0.0.0:2026".parse().unwrap(),
             max_connections: 100,
             max_message_size: 64 * 1024 * 1024, // 64MB
+            tls: None,
         }
     }
 }
@@ -103,10 +106,12 @@ impl RaftGrpcServer {
     /// Start the gRPC server.
     pub async fn serve(self) -> Result<()> {
         let addr = self.config.bind_address;
+        let tls_enabled = self.config.tls.is_some();
         tracing::info!(
-            "Starting Raft gRPC server on {} (zones={})",
+            "Starting Raft gRPC server on {} (zones={}, tls={})",
             addr,
-            self.registry.list_zones().len()
+            self.registry.list_zones().len(),
+            tls_enabled,
         );
 
         let raft_service = RaftServiceImpl {
@@ -115,9 +120,22 @@ impl RaftGrpcServer {
         let client_service = RaftClientServiceImpl {
             registry: self.registry.clone(),
             self_address: self.self_address.clone(),
+            tls: self.config.tls.clone(),
         };
 
-        tonic::transport::Server::builder()
+        let mut builder = tonic::transport::Server::builder();
+        if let Some(ref tls) = self.config.tls {
+            let identity = tonic::transport::Identity::from_pem(&tls.cert_pem, &tls.key_pem);
+            let client_ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
+            let tls_config = tonic::transport::ServerTlsConfig::new()
+                .identity(identity)
+                .client_ca_root(client_ca);
+            builder = builder
+                .tls_config(tls_config)
+                .map_err(|e| TransportError::Connection(format!("TLS config error: {}", e)))?;
+        }
+
+        builder
             .add_service(RaftServiceServer::new(raft_service))
             .add_service(RaftClientServiceServer::new(client_service))
             .serve(addr)
@@ -133,10 +151,12 @@ impl RaftGrpcServer {
         shutdown: impl std::future::Future<Output = ()> + Send + 'static,
     ) -> Result<()> {
         let addr = self.config.bind_address;
+        let tls_enabled = self.config.tls.is_some();
         tracing::info!(
-            "Starting Raft gRPC server on {} (zones={}, with shutdown signal)",
+            "Starting Raft gRPC server on {} (zones={}, tls={}, with shutdown signal)",
             addr,
-            self.registry.list_zones().len()
+            self.registry.list_zones().len(),
+            tls_enabled,
         );
 
         let raft_service = RaftServiceImpl {
@@ -145,9 +165,22 @@ impl RaftGrpcServer {
         let client_service = RaftClientServiceImpl {
             registry: self.registry.clone(),
             self_address: self.self_address.clone(),
+            tls: self.config.tls.clone(),
         };
 
-        tonic::transport::Server::builder()
+        let mut builder = tonic::transport::Server::builder();
+        if let Some(ref tls) = self.config.tls {
+            let identity = tonic::transport::Identity::from_pem(&tls.cert_pem, &tls.key_pem);
+            let client_ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
+            let tls_config = tonic::transport::ServerTlsConfig::new()
+                .identity(identity)
+                .client_ca_root(client_ca);
+            builder = builder
+                .tls_config(tls_config)
+                .map_err(|e| TransportError::Connection(format!("TLS config error: {}", e)))?;
+        }
+
+        builder
             .add_service(RaftServiceServer::new(raft_service))
             .add_service(RaftClientServiceServer::new(client_service))
             .serve_with_shutdown(addr, shutdown)
@@ -406,6 +439,32 @@ struct RaftClientServiceImpl {
     /// This node's own gRPC address (e.g., "http://10.0.0.2:2026").
     /// Needed by InviteZone to tell the leader our address when calling JoinZone.
     self_address: String,
+    /// TLS config for outbound connections (InviteZone → JoinZone callback).
+    tls: Option<super::TlsConfig>,
+}
+
+/// Build a tonic Endpoint, optionally with TLS client config.
+fn build_endpoint_with_tls(
+    address: &str,
+    tls: Option<&super::TlsConfig>,
+) -> Result<tonic::transport::Endpoint> {
+    let mut endpoint = tonic::transport::Endpoint::from_shared(address.to_string())
+        .map_err(|e| TransportError::InvalidAddress(e.to_string()))?
+        .connect_timeout(std::time::Duration::from_secs(10))
+        .timeout(std::time::Duration::from_secs(30));
+
+    if let Some(tls) = tls {
+        let identity = tonic::transport::Identity::from_pem(&tls.cert_pem, &tls.key_pem);
+        let ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
+        let tls_config = tonic::transport::ClientTlsConfig::new()
+            .identity(identity)
+            .ca_certificate(ca);
+        endpoint = endpoint
+            .tls_config(tls_config)
+            .map_err(|e| TransportError::Connection(format!("TLS config error: {}", e)))?;
+    }
+
+    Ok(endpoint)
 }
 
 #[tonic::async_trait]
@@ -812,13 +871,8 @@ impl RaftClientService for RaftClientServiceImpl {
 
         // Step 2: Call JoinZone on the inviter (leader) to be added as Voter.
         // Uses tonic-generated client — same RPC definition, no duplication.
-        let channel = match tonic::transport::Endpoint::from_shared(req.inviter_address.clone()) {
-            Ok(ep) => match ep
-                .connect_timeout(std::time::Duration::from_secs(10))
-                .timeout(std::time::Duration::from_secs(30))
-                .connect()
-                .await
-            {
+        let channel = match build_endpoint_with_tls(&req.inviter_address, self.tls.as_ref()) {
+            Ok(ep) => match ep.connect().await {
                 Ok(ch) => ch,
                 Err(e) => {
                     let _ = self.registry.remove_zone(&req.zone_id);
@@ -1039,13 +1093,30 @@ impl RaftWitnessServer {
         shutdown: impl std::future::Future<Output = ()> + Send + 'static,
     ) -> Result<()> {
         let addr = self.config.bind_address;
-        tracing::info!("Starting Raft Witness gRPC server on {}", addr);
+        let tls_enabled = self.config.tls.is_some();
+        tracing::info!(
+            "Starting Raft Witness gRPC server on {} (tls={})",
+            addr,
+            tls_enabled,
+        );
 
         let service = WitnessServiceImpl {
             state: self.state.clone(),
         };
 
-        tonic::transport::Server::builder()
+        let mut builder = tonic::transport::Server::builder();
+        if let Some(ref tls) = self.config.tls {
+            let identity = tonic::transport::Identity::from_pem(&tls.cert_pem, &tls.key_pem);
+            let client_ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
+            let tls_config = tonic::transport::ServerTlsConfig::new()
+                .identity(identity)
+                .client_ca_root(client_ca);
+            builder = builder
+                .tls_config(tls_config)
+                .map_err(|e| TransportError::Connection(format!("TLS config error: {}", e)))?;
+        }
+
+        builder
             .add_service(RaftServiceServer::new(service))
             .serve_with_shutdown(addr, shutdown)
             .await

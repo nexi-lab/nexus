@@ -53,17 +53,32 @@ class NexusFederation:
     def __init__(
         self,
         zone_manager: Any,
-        client_factory: Callable[[str], Any],
+        client_factory: Callable[[str], Any] | None = None,
     ) -> None:
         """Initialize federation orchestrator.
 
         Args:
             zone_manager: ZoneManager instance for local zone operations.
             client_factory: Factory that creates a RaftClient for a given
-                peer address (e.g., ``lambda addr: RaftClient(address=addr)``).
+                peer address. If None, auto-creates RaftClients with TLS
+                config from the ZoneManager.
         """
         self._mgr = zone_manager
-        self._client_factory = client_factory
+        if client_factory is not None:
+            self._client_factory = client_factory
+        else:
+            # Auto-build factory with TLS config from ZoneManager
+            from nexus.raft.client import RaftClient, RaftClientConfig
+
+            tls_cert = getattr(zone_manager, "_tls_cert_path", None)
+            tls_key = getattr(zone_manager, "_tls_key_path", None)
+            tls_ca = getattr(zone_manager, "_tls_ca_path", None)
+            config = RaftClientConfig(
+                tls_cert_path=tls_cert,
+                tls_key_path=tls_key,
+                tls_ca_path=tls_ca,
+            )
+            self._client_factory = lambda addr: RaftClient(address=addr, config=config)
 
     async def share(
         self,

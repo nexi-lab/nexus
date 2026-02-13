@@ -605,27 +605,65 @@ impl PyRaftConsensus {
     ///     advertise_addr: Address other nodes use to reach this node (e.g., "http://10.0.0.2:2126").
     ///         Defaults to "http://{bind_addr}" if not provided.
     ///     peers: List of peer addresses in "id@host:port" format.
+    ///     tls_cert_path: Path to PEM certificate file (mTLS). All three TLS paths must be set, or none.
+    ///     tls_key_path: Path to PEM private key file (mTLS).
+    ///     tls_ca_path: Path to PEM CA certificate file (mTLS).
     ///
     /// Raises:
     ///     RuntimeError: If the node cannot be created or the server cannot start.
     #[new]
-    #[pyo3(signature = (node_id, db_path, bind_addr="0.0.0.0:2126", advertise_addr=None, peers=vec![]))]
+    #[pyo3(signature = (node_id, db_path, bind_addr="0.0.0.0:2126", advertise_addr=None, peers=vec![], tls_cert_path=None, tls_key_path=None, tls_ca_path=None))]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "PyO3 constructor needs all params exposed to Python"
+    )]
     pub fn new(
         node_id: u64,
         db_path: &str,
         bind_addr: &str,
         advertise_addr: Option<&str>,
         peers: Vec<String>,
+        tls_cert_path: Option<&str>,
+        tls_key_path: Option<&str>,
+        tls_ca_path: Option<&str>,
     ) -> PyResult<Self> {
         use crate::raft::ZoneRaftRegistry;
-        use crate::transport::{NodeAddress, RaftGrpcServer, ServerConfig};
+        use crate::transport::{NodeAddress, RaftGrpcServer, ServerConfig, TlsConfig};
         use std::sync::Arc;
+
+        // Parse TLS config from file paths (all-or-nothing)
+        let tls_config = match (tls_cert_path, tls_key_path, tls_ca_path) {
+            (Some(cert), Some(key), Some(ca)) => {
+                let cert_pem = std::fs::read(cert).map_err(|e| {
+                    PyRuntimeError::new_err(format!("Failed to read TLS cert '{}': {}", cert, e))
+                })?;
+                let key_pem = std::fs::read(key).map_err(|e| {
+                    PyRuntimeError::new_err(format!("Failed to read TLS key '{}': {}", key, e))
+                })?;
+                let ca_pem = std::fs::read(ca).map_err(|e| {
+                    PyRuntimeError::new_err(format!("Failed to read TLS CA '{}': {}", ca, e))
+                })?;
+                Some(TlsConfig {
+                    cert_pem,
+                    key_pem,
+                    ca_pem,
+                })
+            }
+            (None, None, None) => None,
+            _ => {
+                return Err(PyRuntimeError::new_err(
+                    "TLS requires all three: tls_cert_path, tls_key_path, tls_ca_path",
+                ))
+            }
+        };
+
+        let use_tls = tls_config.is_some();
 
         // Parse peer addresses
         let peer_addrs: Vec<NodeAddress> = peers
             .iter()
             .map(|s| {
-                NodeAddress::parse(s.trim())
+                NodeAddress::parse_with_tls(s.trim(), use_tls)
                     .map_err(|e| PyRuntimeError::new_err(format!("Invalid peer '{}': {}", s, e)))
             })
             .collect::<PyResult<Vec<_>>>()?;
@@ -644,10 +682,10 @@ impl PyRaftConsensus {
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {}", e)))?;
 
         // Create zone registry and register a single zone
-        // (ZoneRaftRegistry::create_zone spawns TransportLoop + auto-campaigns for single-node)
-        let registry = Arc::new(ZoneRaftRegistry::new(
+        let registry = Arc::new(ZoneRaftRegistry::with_tls(
             std::path::PathBuf::from(db_path),
             node_id,
+            tls_config.clone(),
         ));
 
         let node = registry
@@ -660,11 +698,13 @@ impl PyRaftConsensus {
         // Start gRPC server in background
         let config = ServerConfig {
             bind_address: bind_socket,
+            tls: tls_config,
             ..Default::default()
         };
-        let self_addr = advertise_addr
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| format!("http://{}", bind_addr));
+        let self_addr = advertise_addr.map(|s| s.to_string()).unwrap_or_else(|| {
+            let scheme = if use_tls { "https" } else { "http" };
+            format!("{}://{}", scheme, bind_addr)
+        });
         let server = RaftGrpcServer::new(registry.clone(), config, self_addr);
         let shutdown_rx_server = shutdown_rx.clone();
         runtime.spawn(async move {
@@ -678,10 +718,11 @@ impl PyRaftConsensus {
         });
 
         tracing::info!(
-            "RaftConsensus node {} started (bind={}, peers={})",
+            "RaftConsensus node {} started (bind={}, peers={}, tls={})",
             node_id,
             bind_addr,
-            peers.len()
+            peers.len(),
+            use_tls,
         );
 
         Ok(Self {
@@ -1030,17 +1071,49 @@ impl PyZoneManager {
     ///     bind_addr: gRPC bind address (e.g., "0.0.0.0:2126").
     ///     advertise_addr: Address other nodes use to reach this node (e.g., "http://10.0.0.2:2126").
     ///         Defaults to "http://{bind_addr}" if not provided.
+    ///     tls_cert_path: Path to PEM certificate file (mTLS). All three TLS paths must be set, or none.
+    ///     tls_key_path: Path to PEM private key file (mTLS).
+    ///     tls_ca_path: Path to PEM CA certificate file (mTLS).
     #[new]
-    #[pyo3(signature = (node_id, base_path, bind_addr="0.0.0.0:2126", advertise_addr=None))]
+    #[pyo3(signature = (node_id, base_path, bind_addr="0.0.0.0:2126", advertise_addr=None, tls_cert_path=None, tls_key_path=None, tls_ca_path=None))]
     pub fn new(
         node_id: u64,
         base_path: &str,
         bind_addr: &str,
         advertise_addr: Option<&str>,
+        tls_cert_path: Option<&str>,
+        tls_key_path: Option<&str>,
+        tls_ca_path: Option<&str>,
     ) -> PyResult<Self> {
         use crate::raft::ZoneRaftRegistry;
-        use crate::transport::{RaftGrpcServer, ServerConfig};
+        use crate::transport::{RaftGrpcServer, ServerConfig, TlsConfig};
         use std::sync::Arc;
+
+        // Parse TLS config from file paths (all-or-nothing)
+        let tls_config = match (tls_cert_path, tls_key_path, tls_ca_path) {
+            (Some(cert), Some(key), Some(ca)) => {
+                let cert_pem = std::fs::read(cert).map_err(|e| {
+                    PyRuntimeError::new_err(format!("Failed to read TLS cert '{}': {}", cert, e))
+                })?;
+                let key_pem = std::fs::read(key).map_err(|e| {
+                    PyRuntimeError::new_err(format!("Failed to read TLS key '{}': {}", key, e))
+                })?;
+                let ca_pem = std::fs::read(ca).map_err(|e| {
+                    PyRuntimeError::new_err(format!("Failed to read TLS CA '{}': {}", ca, e))
+                })?;
+                Some(TlsConfig {
+                    cert_pem,
+                    key_pem,
+                    ca_pem,
+                })
+            }
+            (None, None, None) => None,
+            _ => {
+                return Err(PyRuntimeError::new_err(
+                    "TLS requires all three: tls_cert_path, tls_key_path, tls_ca_path",
+                ))
+            }
+        };
 
         let bind_socket: std::net::SocketAddr = bind_addr.parse().map_err(|e| {
             PyRuntimeError::new_err(format!("Invalid bind address '{}': {}", bind_addr, e))
@@ -1053,20 +1126,24 @@ impl PyZoneManager {
             .build()
             .map_err(|e| PyRuntimeError::new_err(format!("Failed to create runtime: {}", e)))?;
 
-        let registry = Arc::new(ZoneRaftRegistry::new(
+        let registry = Arc::new(ZoneRaftRegistry::with_tls(
             std::path::PathBuf::from(base_path),
             node_id,
+            tls_config.clone(),
         ));
 
         let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
         let config = ServerConfig {
             bind_address: bind_socket,
+            tls: tls_config.clone(),
             ..Default::default()
         };
-        let self_addr = advertise_addr
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| format!("http://{}", bind_addr));
+        let use_tls = tls_config.is_some();
+        let self_addr = advertise_addr.map(|s| s.to_string()).unwrap_or_else(|| {
+            let scheme = if use_tls { "https" } else { "http" };
+            format!("{}://{}", scheme, bind_addr)
+        });
         let server = RaftGrpcServer::new(registry.clone(), config, self_addr);
         let shutdown_rx_server = shutdown_rx.clone();
         runtime.spawn(async move {
@@ -1079,7 +1156,12 @@ impl PyZoneManager {
             }
         });
 
-        tracing::info!("ZoneManager node {} started (bind={})", node_id, bind_addr);
+        tracing::info!(
+            "ZoneManager node {} started (bind={}, tls={})",
+            node_id,
+            bind_addr,
+            use_tls,
+        );
 
         Ok(Self {
             registry,

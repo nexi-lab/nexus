@@ -308,5 +308,71 @@ class AuthenticationError(NexusError):
         super().__init__(message, path)
 
 
+# --- Chunked Upload Exceptions (Issue #788) ---
+
+
+class UploadNotFoundError(NexusError):
+    """Raised when a chunked upload session is not found.
+
+    This is an expected error — the upload ID does not exist or was already cleaned up.
+    Maps to HTTP 404.
+    """
+
+    is_expected = True
+
+    def __init__(self, upload_id: str, message: str | None = None):
+        self.upload_id = upload_id
+        msg = message or f"Upload session not found: {upload_id}"
+        super().__init__(msg)
+
+
+class UploadExpiredError(NexusError):
+    """Raised when a chunked upload session has expired.
+
+    This is an expected error — the upload's TTL has been exceeded.
+    Maps to HTTP 410 Gone.
+    """
+
+    is_expected = True
+
+    def __init__(self, upload_id: str, message: str | None = None):
+        self.upload_id = upload_id
+        msg = message or f"Upload session expired: {upload_id}"
+        super().__init__(msg)
+
+
+class UploadOffsetMismatchError(NexusError):
+    """Raised when a PATCH offset does not match the current session offset.
+
+    This is an expected error — the client sent a chunk at the wrong offset.
+    Maps to HTTP 409 Conflict (tus protocol requirement).
+    """
+
+    is_expected = True
+
+    def __init__(self, upload_id: str, expected: int, received: int):
+        self.upload_id = upload_id
+        self.expected_offset = expected
+        self.received_offset = received
+        msg = f"Upload offset mismatch for {upload_id}: expected {expected}, received {received}"
+        super().__init__(msg)
+
+
+class UploadChecksumMismatchError(NexusError):
+    """Raised when the chunk checksum does not match the Upload-Checksum header.
+
+    This is an expected error — data corruption detected.
+    Maps to HTTP 460 (tus-specific status code).
+    """
+
+    is_expected = True
+
+    def __init__(self, upload_id: str, algorithm: str, message: str | None = None):
+        self.upload_id = upload_id
+        self.algorithm = algorithm
+        msg = message or f"Checksum mismatch ({algorithm}) for upload {upload_id}"
+        super().__init__(msg)
+
+
 # Alias for convenience (used in time-travel debugging)
 NotFoundError = NexusFileNotFoundError

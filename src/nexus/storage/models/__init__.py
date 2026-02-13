@@ -119,6 +119,9 @@ from nexus.storage.models.sync import BackendChangeLogModel as BackendChangeLogM
 from nexus.storage.models.sync import ConflictLogModel as ConflictLogModel
 from nexus.storage.models.sync import SyncBacklogModel as SyncBacklogModel
 from nexus.storage.models.sync import SyncJobModel as SyncJobModel
+
+# Domain: Uploads (Issue #788)
+from nexus.storage.models.upload_session import UploadSessionModel as UploadSessionModel
 from nexus.storage.models.version_history import VersionHistoryModel as VersionHistoryModel
 
 # Domain: Workflows

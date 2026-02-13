@@ -86,6 +86,8 @@ EXPECTED_MODELS = [
     "DisputeModel",
     "ReputationEventModel",
     "ReputationScoreModel",
+    # Chunked Uploads (Issue #788)
+    "UploadSessionModel",
 ]
 
 

@@ -31,7 +31,7 @@ Authentication:
 import logging
 import time
 from collections.abc import Iterator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import boto3
 from botocore.config import Config
@@ -40,6 +40,7 @@ from botocore.exceptions import ClientError
 from nexus.backends.backend import HandlerStatusResponse
 from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.backends.cache_mixin import CacheConnectorMixin
+from nexus.backends.multipart_upload_mixin import MultipartUploadMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.response import HandlerResponse
@@ -58,7 +59,7 @@ logger = logging.getLogger(__name__)
     category="storage",
     requires=["boto3"],
 )
-class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
+class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, MultipartUploadMixin):
     """
     AWS S3 connector backend with direct path mapping.
 
@@ -1211,3 +1212,125 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
                 backend_name=self.name,
                 path=blob_path,
             )
+
+    # === Multipart Upload Operations (Issue #788) ===
+
+    def init_multipart(
+        self,
+        backend_path: str,
+        content_type: str = "application/octet-stream",
+        metadata: dict[str, str] | None = None,
+    ) -> str:
+        """Initialize an S3 multipart upload.
+
+        Args:
+            backend_path: S3 key for the upload target.
+            content_type: MIME type of the content.
+            metadata: Optional key-value metadata for the upload.
+
+        Returns:
+            S3 UploadId string.
+        """
+        blob_path = self._get_blob_path(backend_path)
+        kwargs: dict[str, Any] = {
+            "Bucket": self.bucket_name,
+            "Key": blob_path,
+            "ContentType": content_type,
+        }
+        if metadata:
+            kwargs["Metadata"] = metadata
+
+        response = self.client.create_multipart_upload(**kwargs)
+        upload_id: str = response["UploadId"]
+        logger.debug(f"S3 multipart upload initiated: {upload_id} for {blob_path}")
+        return upload_id
+
+    def upload_part(
+        self,
+        backend_path: str,
+        upload_id: str,
+        part_number: int,
+        data: bytes,
+    ) -> dict[str, Any]:
+        """Upload a single part to S3 multipart upload.
+
+        Args:
+            backend_path: S3 key for the upload target.
+            upload_id: S3 UploadId from init_multipart().
+            part_number: 1-based part number.
+            data: Raw bytes for this chunk.
+
+        Returns:
+            Dict with "etag" and "part_number" keys.
+        """
+        blob_path = self._get_blob_path(backend_path)
+        response = self.client.upload_part(
+            Bucket=self.bucket_name,
+            Key=blob_path,
+            UploadId=upload_id,
+            PartNumber=part_number,
+            Body=data,
+        )
+        return {"etag": response["ETag"], "part_number": part_number}
+
+    def complete_multipart(
+        self,
+        backend_path: str,
+        upload_id: str,
+        parts: list[dict[str, Any]],
+    ) -> str:
+        """Complete an S3 multipart upload.
+
+        Args:
+            backend_path: S3 key for the upload target.
+            upload_id: S3 UploadId from init_multipart().
+            parts: Ordered list of part dicts with "etag" and "part_number".
+
+        Returns:
+            S3 ETag of the completed object.
+        """
+        blob_path = self._get_blob_path(backend_path)
+        multipart_upload = {
+            "Parts": [
+                {"ETag": p["etag"], "PartNumber": p["part_number"]}
+                for p in sorted(parts, key=lambda x: x["part_number"])
+            ]
+        }
+
+        response = self.client.complete_multipart_upload(
+            Bucket=self.bucket_name,
+            Key=blob_path,
+            UploadId=upload_id,
+            MultipartUpload=multipart_upload,
+        )
+        etag: str = response.get("ETag", "")
+        logger.debug(f"S3 multipart upload completed: {upload_id} -> {etag}")
+        return etag
+
+    def abort_multipart(
+        self,
+        backend_path: str,
+        upload_id: str,
+    ) -> None:
+        """Abort an S3 multipart upload and clean up parts.
+
+        Args:
+            backend_path: S3 key for the upload target.
+            upload_id: S3 UploadId from init_multipart().
+        """
+        blob_path = self._get_blob_path(backend_path)
+        try:
+            self.client.abort_multipart_upload(
+                Bucket=self.bucket_name,
+                Key=blob_path,
+                UploadId=upload_id,
+            )
+            logger.debug(f"S3 multipart upload aborted: {upload_id}")
+        except ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "")
+            if error_code != "NoSuchUpload":
+                raise BackendError(
+                    f"Failed to abort multipart upload: {e}",
+                    backend="s3_connector",
+                    path=blob_path,
+                ) from e

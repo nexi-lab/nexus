@@ -323,6 +323,34 @@ def create_nexus_services(
         engines=[engine],
     )
 
+    # --- Chunked Upload Service (Issue #788) ---
+    # Build upload config from environment variables (match NexusConfig field names)
+    import os as _os
+
+    from nexus.services.chunked_upload_service import ChunkedUploadConfig, ChunkedUploadService
+
+    _upload_config_kwargs: dict[str, Any] = {}
+    _upload_env_mapping = {
+        "NEXUS_UPLOAD_MIN_CHUNK_SIZE": "min_chunk_size",
+        "NEXUS_UPLOAD_MAX_CHUNK_SIZE": "max_chunk_size",
+        "NEXUS_UPLOAD_DEFAULT_CHUNK_SIZE": "default_chunk_size",
+        "NEXUS_UPLOAD_MAX_CONCURRENT": "max_concurrent_uploads",
+        "NEXUS_UPLOAD_SESSION_TTL_HOURS": "session_ttl_hours",
+        "NEXUS_UPLOAD_CLEANUP_INTERVAL": "cleanup_interval_seconds",
+        "NEXUS_UPLOAD_MAX_SIZE": "max_upload_size",
+    }
+    for _env_var, _config_key in _upload_env_mapping.items():
+        _val = _os.getenv(_env_var)
+        if _val is not None:
+            _upload_config_kwargs[_config_key] = int(_val)
+
+    chunked_upload_service = ChunkedUploadService(
+        session_factory=session_factory,
+        backend=backend,
+        metadata_store=metadata_store,
+        config=ChunkedUploadConfig(**_upload_config_kwargs),
+    )
+
     # --- Wallet Provisioner (Issue #1210) ---
     # Creates TigerBeetle wallet accounts on agent registration.
     # Uses sync TigerBeetle client since NexusFS methods are sync.
@@ -344,6 +372,7 @@ def create_nexus_services(
         "version_service": version_service,
         "observability_subsystem": observability_subsystem,
         "wallet_provisioner": wallet_provisioner,
+        "chunked_upload_service": chunked_upload_service,
     }
 
     return result
@@ -441,6 +470,10 @@ def create_nexus_fs(
     # and attach after construction for lifecycle access (health_check, cleanup).
     observability_subsystem = services.pop("observability_subsystem", None)
 
+    # ChunkedUploadService is not a NexusFS constructor param — pop it and
+    # attach after construction. The FastAPI lifespan reads it from NexusFS.
+    chunked_upload_service = services.pop("chunked_upload_service", None)
+
     nx = NexusFS(
         backend=backend,
         metadata_store=metadata_store,
@@ -475,5 +508,8 @@ def create_nexus_fs(
 
     if observability_subsystem is not None:
         nx._observability_subsystem = observability_subsystem  # type: ignore[attr-defined]
+
+    if chunked_upload_service is not None:
+        nx._chunked_upload_service = chunked_upload_service  # type: ignore[attr-defined]
 
     return nx

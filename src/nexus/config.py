@@ -263,6 +263,32 @@ class NexusConfig(BaseModel):
     user_id: str | None = Field(default=None, description="User ID for memory operations")
     agent_id: str | None = Field(default=None, description="Agent ID for memory operations")
 
+    # Chunked/resumable upload settings (Issue #788)
+    upload_min_chunk_size: int = Field(
+        default=5 * 1024 * 1024,
+        description="Minimum chunk size in bytes (default: 5MB)",
+    )
+    upload_max_chunk_size: int = Field(
+        default=64 * 1024 * 1024,
+        description="Maximum chunk size in bytes (default: 64MB)",
+    )
+    upload_default_chunk_size: int = Field(
+        default=10 * 1024 * 1024,
+        description="Default recommended chunk size in bytes (default: 10MB)",
+    )
+    upload_max_concurrent: int = Field(
+        default=20,
+        description="Maximum concurrent upload sessions (default: 20)",
+    )
+    upload_session_ttl_hours: int = Field(
+        default=24,
+        description="Upload session TTL in hours (default: 24)",
+    )
+    upload_cleanup_interval_seconds: int = Field(
+        default=3600,
+        description="Interval between expired session cleanup sweeps in seconds (default: 3600)",
+    )
+
     # Docker sandbox template configuration
     docker: DockerTemplateConfig = Field(
         default_factory=DockerTemplateConfig,
@@ -422,6 +448,13 @@ def _load_from_environment() -> NexusConfig:
         "NEXUS_OPERATION_TIMEOUT": "operation_timeout",
         "NEXUS_CACHE_TTL_JITTER": "cache_ttl_jitter",
         "NEXUS_CACHE_REFRESH_FACTOR": "cache_refresh_factor",
+        # Chunked/resumable upload settings (Issue #788)
+        "NEXUS_UPLOAD_MIN_CHUNK_SIZE": "upload_min_chunk_size",
+        "NEXUS_UPLOAD_MAX_CHUNK_SIZE": "upload_max_chunk_size",
+        "NEXUS_UPLOAD_DEFAULT_CHUNK_SIZE": "upload_default_chunk_size",
+        "NEXUS_UPLOAD_MAX_CONCURRENT": "upload_max_concurrent",
+        "NEXUS_UPLOAD_SESSION_TTL_HOURS": "upload_session_ttl_hours",
+        "NEXUS_UPLOAD_CLEANUP_INTERVAL": "upload_cleanup_interval_seconds",
     }
 
     for env_var, config_key in env_mapping.items():
@@ -436,6 +469,12 @@ def _load_from_environment() -> NexusConfig:
                 "cache_kv_size",
                 "cache_exists_size",
                 "thread_pool_size",
+                "upload_min_chunk_size",
+                "upload_max_chunk_size",
+                "upload_default_chunk_size",
+                "upload_max_concurrent",
+                "upload_session_ttl_hours",
+                "upload_cleanup_interval_seconds",
             ]:
                 converted_value = int(value)
             elif config_key in [

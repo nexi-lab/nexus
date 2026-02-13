@@ -28,9 +28,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Merge-only migration — no schema changes."""
-    pass
 
 
 def downgrade() -> None:
     """Merge-only migration — no schema changes."""
-    pass

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from nexus.core.context_manifest.template import ALLOWED_VARIABLES, resolve_template
+from nexus.services.context_manifest.template import ALLOWED_VARIABLES, resolve_template
 
 # ===========================================================================
 # Basic substitution

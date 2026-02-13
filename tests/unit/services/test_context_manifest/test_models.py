@@ -14,7 +14,7 @@ from pydantic import ValidationError
 # ---------------------------------------------------------------------------
 # Import targets — these don't exist yet (RED phase)
 # ---------------------------------------------------------------------------
-from nexus.core.context_manifest.models import (
+from nexus.services.context_manifest.models import (
     ContextSource,
     FileGlobSource,
     ManifestResolutionError,

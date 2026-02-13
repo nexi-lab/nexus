@@ -17,7 +17,7 @@ from typing import Any
 import pytest
 
 from nexus.core.agent_record import AgentRecord, AgentState
-from nexus.core.context_manifest.models import (
+from nexus.services.context_manifest.models import (
     FileGlobSource,
     ManifestResult,
     MCPToolSource,
@@ -25,7 +25,7 @@ from nexus.core.context_manifest.models import (
     SourceResult,
     WorkspaceSnapshotSource,
 )
-from nexus.core.context_manifest.resolver import ManifestResolver
+from nexus.services.context_manifest.resolver import ManifestResolver
 
 # ---------------------------------------------------------------------------
 # Stub executors
@@ -215,7 +215,7 @@ class TestAgentRecordManifestRoundTrip:
         """AgentRecord stores manifest as tuple of dicts, round-trips correctly."""
         from pydantic import TypeAdapter
 
-        from nexus.core.context_manifest.models import ContextSource
+        from nexus.services.context_manifest.models import ContextSource
 
         # Create sources via Pydantic models
         sources = [

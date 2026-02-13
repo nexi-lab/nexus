@@ -27,7 +27,7 @@ References:
     - Issue #1341: Context manifest with deterministic pre-execution
 """
 
-from nexus.core.context_manifest.models import (
+from nexus.services.context_manifest.models import (
     ContextSource,
     FileGlobSource,
     ManifestResolutionError,
@@ -37,8 +37,8 @@ from nexus.core.context_manifest.models import (
     SourceResult,
     WorkspaceSnapshotSource,
 )
-from nexus.core.context_manifest.resolver import ManifestResolver, SourceExecutor
-from nexus.core.context_manifest.template import ALLOWED_VARIABLES, resolve_template
+from nexus.services.context_manifest.resolver import ManifestResolver, SourceExecutor
+from nexus.services.context_manifest.template import ALLOWED_VARIABLES, resolve_template
 
 __all__ = [
     # Models

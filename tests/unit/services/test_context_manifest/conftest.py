@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from nexus.core.context_manifest.models import (
+from nexus.services.context_manifest.models import (
     FileGlobSource,
     MCPToolSource,
     MemoryQuerySource,

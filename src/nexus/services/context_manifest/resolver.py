@@ -28,12 +28,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
-from nexus.core.context_manifest.models import (
+from nexus.services.context_manifest.models import (
     ManifestResolutionError,
     ManifestResult,
     SourceResult,
 )
-from nexus.core.context_manifest.template import resolve_template
+from nexus.services.context_manifest.template import resolve_template
 
 logger = logging.getLogger(__name__)
 

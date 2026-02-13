@@ -26,7 +26,6 @@ from nexus.search.contextual_chunking import (
     create_heuristic_generator,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -569,7 +568,7 @@ class TestCreateContextGenerator:
         mock_llm = AsyncMock(return_value="not valid json")
         gen = await create_context_generator(mock_llm)
 
-        with pytest.raises(Exception):  # ValidationError or JSONDecodeError
+        with pytest.raises((ValueError, KeyError)):
             await gen("summary", "chunk", [], [])
 
 

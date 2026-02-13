@@ -38,12 +38,11 @@ SMALL_CHUNKER = DocumentChunker(chunk_size=40, strategy=ChunkStrategy.FIXED)
 async def _create_tables_and_path(db_url: str, async_session_factory, virtual_path: str, size: int) -> str:
     """Create DB tables and insert a file_paths row via ORM. Returns the path_id."""
     from sqlalchemy.ext.asyncio import create_async_engine
-    from nexus.storage.models._base import Base
-    from nexus.storage.models.file_path import FilePathModel
 
-    # Import models so their tables are registered on Base.metadata
     import nexus.storage.models.file_path  # noqa: F401
     import nexus.storage.models.filesystem  # noqa: F401
+    from nexus.storage.models._base import Base
+    from nexus.storage.models.file_path import FilePathModel
 
     engine = create_async_engine(db_url)
     async with engine.begin() as conn:

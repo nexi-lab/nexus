@@ -312,10 +312,7 @@ def _heuristic_context(
     when the LLM is unavailable, at zero API cost.
     """
     # 1. Position context
-    if position == 0:
-        position_text = "Opening section"
-    else:
-        position_text = f"Section {position + 1}"
+    position_text = "Opening section" if position == 0 else f"Section {position + 1}"
 
     # 2. Extract entities from chunk (capitalized multi-word phrases)
     entities = list(dict.fromkeys(_CAPITALIZED_WORDS.findall(chunk_text)))[:5]
@@ -367,7 +364,7 @@ def create_heuristic_generator() -> ContextGenerator:
         doc_summary: str,
         chunk_text: str,
         prev_chunks: list[str],
-        next_chunks: list[str],
+        _next_chunks: list[str],
     ) -> ChunkContext:
         # Position is not directly available here, but we can infer from prev_chunks
         position = len(prev_chunks)

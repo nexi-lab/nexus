@@ -166,7 +166,9 @@ def test_hierarchical_directory_listing_with_files(nexus_fs):
     )
 
 
-@pytest.mark.xfail(reason="Pre-existing failure from #1326 NFS mount — rebac_tuples not created for agent subjects")
+@pytest.mark.xfail(
+    reason="Pre-existing failure from #1326 NFS mount — rebac_tuples not created for agent subjects"
+)
 def test_deeply_nested_hierarchical_listing(nexus_fs):
     """Test hierarchical listing with deeply nested directories.
 

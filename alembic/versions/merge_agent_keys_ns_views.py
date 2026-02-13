@@ -7,7 +7,7 @@ Three branches diverged without a merge migration:
 
 This merge resolves the MultipleHeads error in init_database.py / Docker CI.
 
-Revision ID: merge_agent_keys_namespace_views_heads
+Revision ID: merge_agent_keys_ns_views
 Revises: a39d6aabdd22, add_agent_keys_table, add_persistent_namespace_views
 Create Date: 2026-02-13
 """
@@ -16,7 +16,7 @@ from collections.abc import Sequence
 from typing import Union
 
 # revision identifiers, used by Alembic.
-revision: str = "merge_agent_keys_namespace_views_heads"
+revision: str = "merge_agent_keys_ns_views"
 down_revision: Union[str, Sequence[str], None] = (
     "a39d6aabdd22",
     "add_agent_keys_table",

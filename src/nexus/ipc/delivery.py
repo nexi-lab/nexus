@@ -191,7 +191,10 @@ class MessageSender:
             )
 
         # CANCEL and RESPONSE must have correlation_id
-        if envelope.type in (MessageType.RESPONSE, MessageType.CANCEL) and not envelope.correlation_id:
+        if (
+            envelope.type in (MessageType.RESPONSE, MessageType.CANCEL)
+            and not envelope.correlation_id
+        ):
             raise EnvelopeValidationError(
                 f"Messages of type '{envelope.type.value}' require a correlation_id"
             )

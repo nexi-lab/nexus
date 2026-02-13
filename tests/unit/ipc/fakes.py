@@ -101,12 +101,12 @@ class InMemoryStorageDriver:
         results: list[str] = []
         for (fpath, fzone), _ in self._files.items():
             if fzone == zone_id and fpath.startswith(prefix):
-                rest = fpath[len(prefix):]
+                rest = fpath[len(prefix) :]
                 if "/" not in rest:
                     results.append(rest)
         for dpath, dzone in self._dirs:
             if dzone == zone_id and dpath.startswith(prefix):
-                rest = dpath[len(prefix):]
+                rest = dpath[len(prefix) :]
                 if "/" not in rest and rest:
                     results.append(rest)
         return sorted(set(results))

@@ -84,11 +84,13 @@ class IPCVFSDriver(Backend):
 
     # === Connection (no-op for IPC) ===
 
-    def connect(self, context: OperationContext | None = None) -> HandlerStatusResponse:        return HandlerStatusResponse(success=True, details={"backend": "ipc"})
+    def connect(self, context: OperationContext | None = None) -> HandlerStatusResponse:
+        return HandlerStatusResponse(success=True, details={"backend": "ipc"})
 
     # === Content Operations (path-oriented virtual FS) ===
 
-    def write_content(        self,
+    def write_content(
+        self,
         content: bytes,
         context: OperationContext | None = None,
     ) -> HandlerResponse[str]:
@@ -100,16 +102,13 @@ class IPCVFSDriver(Backend):
         """
         content_hash = hashlib.sha256(content).hexdigest()
         try:
-            self._run_async(
-                self._storage.write(f"/_cas/{content_hash}", content, self._zone_id)
-            )
+            self._run_async(self._storage.write(f"/_cas/{content_hash}", content, self._zone_id))
             return HandlerResponse.ok(data=content_hash, backend_name="ipc")
         except Exception as exc:
-            return HandlerResponse.error(
-                message=str(exc), code=500, backend_name="ipc"
-            )
+            return HandlerResponse.error(message=str(exc), code=500, backend_name="ipc")
 
-    def write_path(        self,
+    def write_path(
+        self,
         path: str,
         content: bytes,
         context: OperationContext | None = None,
@@ -125,11 +124,10 @@ class IPCVFSDriver(Backend):
             return HandlerResponse.ok(data=content_hash, backend_name="ipc", path=path)
         except Exception as exc:
             logger.error("IPC write failed at %s: %s", path, exc)
-            return HandlerResponse.error(
-                message=str(exc), code=500, backend_name="ipc", path=path
-            )
+            return HandlerResponse.error(message=str(exc), code=500, backend_name="ipc", path=path)
 
-    def read_content(        self,
+    def read_content(
+        self,
         content_hash: str,
         context: OperationContext | None = None,
     ) -> HandlerResponse[bytes]:
@@ -150,18 +148,18 @@ class IPCVFSDriver(Backend):
                 path=path,
             )
         except Exception as exc:
-            return HandlerResponse.error(
-                message=str(exc), code=500, backend_name="ipc", path=path
-            )
+            return HandlerResponse.error(message=str(exc), code=500, backend_name="ipc", path=path)
 
-    def delete_content(        self,
+    def delete_content(
+        self,
         content_hash: str,
         context: OperationContext | None = None,
     ) -> HandlerResponse[None]:
         """Delete content — IPC never hard-deletes (moves to dead_letter)."""
         return HandlerResponse.ok(data=None, backend_name="ipc")
 
-    def content_exists(        self,
+    def content_exists(
+        self,
         content_hash: str,
         context: OperationContext | None = None,
     ) -> HandlerResponse[bool]:
@@ -171,11 +169,10 @@ class IPCVFSDriver(Backend):
             exists = self._run_async(self._storage.exists(path, self._zone_id))
             return HandlerResponse.ok(data=exists, backend_name="ipc", path=path)
         except Exception as exc:
-            return HandlerResponse.error(
-                message=str(exc), code=500, backend_name="ipc", path=path
-            )
+            return HandlerResponse.error(message=str(exc), code=500, backend_name="ipc", path=path)
 
-    def get_content_size(        self,
+    def get_content_size(
+        self,
         content_hash: str,
         context: OperationContext | None = None,
     ) -> HandlerResponse[int]:
@@ -193,11 +190,10 @@ class IPCVFSDriver(Backend):
                 path=path,
             )
         except Exception as exc:
-            return HandlerResponse.error(
-                message=str(exc), code=500, backend_name="ipc", path=path
-            )
+            return HandlerResponse.error(message=str(exc), code=500, backend_name="ipc", path=path)
 
-    def get_ref_count(        self,
+    def get_ref_count(
+        self,
         content_hash: str,
         context: OperationContext | None = None,
     ) -> HandlerResponse[int]:
@@ -206,7 +202,8 @@ class IPCVFSDriver(Backend):
 
     # === Directory Operations ===
 
-    def mkdir(        self,
+    def mkdir(
+        self,
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
@@ -217,11 +214,10 @@ class IPCVFSDriver(Backend):
             self._run_async(self._storage.mkdir(path, self._zone_id))
             return HandlerResponse.ok(data=None, backend_name="ipc", path=path)
         except Exception as exc:
-            return HandlerResponse.error(
-                message=str(exc), code=500, backend_name="ipc", path=path
-            )
+            return HandlerResponse.error(message=str(exc), code=500, backend_name="ipc", path=path)
 
-    def rmdir(        self,
+    def rmdir(
+        self,
         path: str,
         recursive: bool = False,
         context: OperationContext | EnhancedOperationContext | None = None,
@@ -235,7 +231,8 @@ class IPCVFSDriver(Backend):
             path=path,
         )
 
-    def is_directory(        self,
+    def is_directory(
+        self,
         path: str,
         context: OperationContext | None = None,
     ) -> HandlerResponse[bool]:
@@ -250,7 +247,8 @@ class IPCVFSDriver(Backend):
         except Exception:
             return HandlerResponse.ok(data=False, backend_name="ipc", path=path)
 
-    def list_dir(        self,
+    def list_dir(
+        self,
         path: str,
         context: OperationContext | None = None,
     ) -> list[str]:

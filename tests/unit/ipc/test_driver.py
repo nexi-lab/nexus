@@ -181,9 +181,7 @@ class TestIPCVFSDriverWriteContent:
         card = json.dumps({"name": "agent:bob", "status": "idle"}).encode()
 
         # Writing to a specific path (via write_path helper)
-        response = driver.write_path(
-            f"{AGENTS_ROOT}/agent:bob/AGENT.json", card
-        )
+        response = driver.write_path(f"{AGENTS_ROOT}/agent:bob/AGENT.json", card)
         assert response.success
 
         # Verify it was written

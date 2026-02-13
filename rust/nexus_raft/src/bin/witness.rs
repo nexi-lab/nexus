@@ -88,7 +88,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .unwrap_or_else(|e| panic!("Failed to read TLS key '{}': {}", key_path, e));
                 let ca_pem = std::fs::read(&ca_path)
                     .unwrap_or_else(|e| panic!("Failed to read TLS CA '{}': {}", ca_path, e));
-                tracing::info!("TLS enabled (cert={}, key={}, ca={})", cert_path, key_path, ca_path);
+                tracing::info!(
+                    "TLS enabled (cert={}, key={}, ca={})",
+                    cert_path,
+                    key_path,
+                    ca_path
+                );
                 Some(TlsConfig {
                     cert_pem,
                     key_pem,

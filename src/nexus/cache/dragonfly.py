@@ -347,7 +347,7 @@ class DragonflyCacheStore(CacheStoreABC):
             yield _messages()
         finally:
             await pubsub.unsubscribe(channel)
-            await pubsub.aclose()
+            await pubsub.close()
 
     # --- Lifecycle ---
 
@@ -688,7 +688,7 @@ class DragonflyResourceMapCache:
             return
 
         # Group by (resource_type, zone_id) for efficient HSET
-        groups: dict[tuple[str, str], dict[str, str]] = {}
+        groups: dict[tuple[str, str], dict[str | bytes, bytes | float | int | str]] = {}
         for (resource_type, resource_id, zone_id), int_id in mappings.items():
             group_key = (resource_type, zone_id)
             if group_key not in groups:

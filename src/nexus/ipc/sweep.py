@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from datetime import UTC, datetime
 
 from nexus.ipc.conventions import AGENTS_ROOT, dead_letter_path, inbox_path
 from nexus.ipc.envelope import MessageEnvelope
@@ -105,9 +106,17 @@ class TTLSweeper:
         except Exception:
             return 0
 
+        now = datetime.now(UTC)
         for filename in filenames:
             if not filename.endswith(".json"):
                 continue
+
+            # P1: Skip recently-created messages based on filename timestamp.
+            # Messages newer than the sweep interval can't have been sitting
+            # long enough to matter — they'll be checked on the next cycle.
+            if self._is_recent_by_filename(filename, now):
+                continue
+
             msg_path = f"{agent_inbox}/{filename}"
             try:
                 data = await self._vfs.read(msg_path, self._zone_id)
@@ -129,3 +138,18 @@ class TTLSweeper:
                 )
 
         return expired
+
+    def _is_recent_by_filename(self, filename: str, now: datetime) -> bool:
+        """Check if a message is too recent to be expired based on filename.
+
+        Parses the timestamp prefix from ``{YYYYMMDDTHHMMSS}_{msg_id}.json``.
+        If the message was created less than ``interval`` seconds ago, skip it.
+        Unparseable filenames are never skipped (conservative).
+        """
+        try:
+            ts_str = filename.split("_", 1)[0]
+            file_ts = datetime.strptime(ts_str, "%Y%m%dT%H%M%S").replace(tzinfo=UTC)
+            age_seconds = (now - file_ts).total_seconds()
+            return age_seconds < self._interval
+        except (ValueError, IndexError):
+            return False

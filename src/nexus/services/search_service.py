@@ -63,10 +63,10 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from nexus.core._metadata_generated import FileMetadataProtocol, PaginatedResult
     from nexus.core.permissions import OperationContext, PermissionEnforcer
-    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
     from nexus.core.router import PathRouter
     from nexus.search.async_search import AsyncSemanticSearch
     from nexus.search.semantic import SemanticSearch
+    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
 
 class SearchService:

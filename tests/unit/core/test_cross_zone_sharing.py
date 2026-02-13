@@ -14,7 +14,10 @@ import pytest
 from sqlalchemy import create_engine
 
 from nexus.core.rebac import CROSS_ZONE_ALLOWED_RELATIONS
-from nexus.services.permissions.rebac_manager_zone_aware import ZoneAwareReBACManager, ZoneIsolationError
+from nexus.services.permissions.rebac_manager_zone_aware import (
+    ZoneAwareReBACManager,
+    ZoneIsolationError,
+)
 from nexus.storage.models import Base
 
 

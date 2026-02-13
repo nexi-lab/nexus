@@ -18,8 +18,8 @@ import pytest
 from sqlalchemy import create_engine
 
 from nexus.core.exceptions import NexusFileNotFoundError
-from nexus.services.permissions.namespace_manager import NamespaceManager
 from nexus.core.permissions import OperationContext, Permission, PermissionEnforcer
+from nexus.services.permissions.namespace_manager import NamespaceManager
 from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 from nexus.storage.models import Base
 

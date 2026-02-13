@@ -25,11 +25,11 @@ from enum import IntFlag
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
+    from nexus.core.read_set import ReadSet
     from nexus.services.permissions.hotspot_detector import HotspotDetector
     from nexus.services.permissions.namespace_manager import NamespaceManager
     from nexus.services.permissions.permission_boundary_cache import PermissionBoundaryCache
     from nexus.services.permissions.permissions_enhanced import AuditStore
-    from nexus.core.read_set import ReadSet
     from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)

@@ -33,8 +33,8 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
-    from nexus.services.permissions.rebac_manager import ReBACManager
     from nexus.services.gateway import NexusFSGateway
+    from nexus.services.permissions.rebac_manager import ReBACManager
 
 
 class SkillService:

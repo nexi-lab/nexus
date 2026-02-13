@@ -26,10 +26,10 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from nexus.core._metadata_generated import FileMetadataProtocol
-    from nexus.services.permissions.async_permissions import AsyncPermissionEnforcer
     from nexus.core.permissions import OperationContext
-    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
     from nexus.core.router import PathRouter
+    from nexus.services.permissions.async_permissions import AsyncPermissionEnforcer
+    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
 
 class VersionService:

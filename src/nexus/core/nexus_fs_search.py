@@ -178,8 +178,8 @@ class NexusFSSearchMixin:
     if TYPE_CHECKING:
         from nexus.core._metadata_generated import FileMetadataProtocol
         from nexus.core.permissions import PermissionEnforcer
-        from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
         from nexus.core.router import PathRouter
+        from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
         metadata: FileMetadataProtocol
         router: PathRouter
@@ -2764,8 +2764,8 @@ class NexusFSSearchMixin:
         Returns:
             List of memory paths or metadata dicts.
         """
-        from nexus.services.permissions.entity_registry import EntityRegistry
         from nexus.core.memory_router import MemoryViewRouter
+        from nexus.services.permissions.entity_registry import EntityRegistry
 
         # Parse path to extract filters
         parts = [p for p in path.split("/") if p]

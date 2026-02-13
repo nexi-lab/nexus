@@ -23,8 +23,8 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from nexus.backends.local import LocalBackend
-from nexus.services.permissions.entity_registry import EntityRegistry
 from nexus.core.memory_api import Memory
+from nexus.services.permissions.entity_registry import EntityRegistry
 from nexus.storage.models import Base, MemoryModel
 
 

@@ -14,7 +14,11 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import create_engine
 
-from nexus.services.permissions.namespace_manager import MountEntry, NamespaceManager, build_mount_entries
+from nexus.services.permissions.namespace_manager import (
+    MountEntry,
+    NamespaceManager,
+    build_mount_entries,
+)
 from nexus.storage.models import Base
 
 # ---------------------------------------------------------------------------

@@ -48,7 +48,10 @@ def test_hierarchical_directory_listing_empty_subdirectory(nexus_fs):
     Actual (buggy): /workspace is not visible because /workspace/joe is empty
     """
     # Create directories as admin user (system has path restrictions)
-    from nexus.services.permissions.permissions_enhanced import AdminCapability, EnhancedOperationContext
+    from nexus.services.permissions.permissions_enhanced import (
+        AdminCapability,
+        EnhancedOperationContext,
+    )
 
     system_ctx = EnhancedOperationContext(
         user="admin",
@@ -111,7 +114,10 @@ def test_hierarchical_directory_listing_with_files(nexus_fs):
     This test verifies the CURRENT working behavior (when subdirectory has files).
     """
     # Create directories and file as admin user (system has path restrictions)
-    from nexus.services.permissions.permissions_enhanced import AdminCapability, EnhancedOperationContext
+    from nexus.services.permissions.permissions_enhanced import (
+        AdminCapability,
+        EnhancedOperationContext,
+    )
 
     system_ctx = EnhancedOperationContext(
         user="admin",
@@ -174,7 +180,10 @@ def test_deeply_nested_hierarchical_listing(nexus_fs):
     - All intermediate directories should appear in their parent listings
     """
     # Create directories as admin user (system has path restrictions)
-    from nexus.services.permissions.permissions_enhanced import AdminCapability, EnhancedOperationContext
+    from nexus.services.permissions.permissions_enhanced import (
+        AdminCapability,
+        EnhancedOperationContext,
+    )
 
     system_ctx = EnhancedOperationContext(
         user="admin",

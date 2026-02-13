@@ -62,13 +62,9 @@ class WorkspaceManager:
         self.rebac_manager = rebac_manager
         self.zone_id = zone_id
         self.agent_id = agent_id
-        # Use provided session_factory or import from database module
-        if session_factory is not None:
-            self.metadata_session_factory = session_factory
-        else:
-            from nexus.storage.database import get_session_factory
-
-            self.metadata_session_factory = get_session_factory()
+        if session_factory is None:
+            raise ValueError("session_factory is required — use factory.py for DI wiring")
+        self.metadata_session_factory = session_factory
 
     def _check_workspace_permission(
         self,

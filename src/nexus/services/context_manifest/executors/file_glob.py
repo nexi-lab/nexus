@@ -87,7 +87,8 @@ class FileGlobExecutor:
                 )
 
         # Security: reject absolute paths and '..' traversal
-        if os.path.isabs(pattern):
+        # Check both native and POSIX absolute (/ prefix) for cross-platform safety
+        if os.path.isabs(pattern) or pattern.startswith("/"):
             elapsed_ms = (time.monotonic() - start) * 1000
             return SourceResult.error(
                 source_type=source_type,

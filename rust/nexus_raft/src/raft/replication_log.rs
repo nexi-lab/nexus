@@ -36,6 +36,8 @@ const TREE_REPLICATION_META: &str = "ec_replication_meta";
 const KEY_NEXT_SEQ: &[u8] = b"__next_seq__";
 /// Key for persisted replicated watermark.
 const KEY_REPLICATED_WATERMARK: &[u8] = b"__replicated_watermark__";
+/// Key for persisted earliest sequence number (compaction lower bound).
+const KEY_EARLIEST_SEQ: &[u8] = b"__earliest_seq__";
 
 /// An entry in the EC replication WAL.
 ///
@@ -67,6 +69,8 @@ pub struct ReplicationLog {
     next_seq: AtomicU64,
     /// Highest sequence number replicated to a majority of peers.
     replicated_watermark: AtomicU64,
+    /// Earliest sequence number still in the WAL (compaction lower bound).
+    earliest_seq: AtomicU64,
     /// This node's ID (for LWW tie-breaking in ReplicationEntry).
     node_id: u64,
 }
@@ -92,9 +96,16 @@ impl ReplicationLog {
             .and_then(|v| v.try_into().ok().map(u64::from_be_bytes))
             .unwrap_or(0);
 
+        // Restore persisted earliest_seq (compaction lower bound)
+        let earliest_seq = meta_tree
+            .get(KEY_EARLIEST_SEQ)?
+            .and_then(|v| v.try_into().ok().map(u64::from_be_bytes))
+            .unwrap_or(1); // Start at 1 (same as next_seq)
+
         tracing::debug!(
             next_seq,
             replicated_watermark,
+            earliest_seq,
             node_id,
             "ReplicationLog initialized"
         );
@@ -104,6 +115,7 @@ impl ReplicationLog {
             meta_tree,
             next_seq: AtomicU64::new(next_seq),
             replicated_watermark: AtomicU64::new(replicated_watermark),
+            earliest_seq: AtomicU64::new(earliest_seq),
             node_id,
         })
     }
@@ -200,6 +212,44 @@ impl ReplicationLog {
 
         Ok(entries)
     }
+
+    /// Get the earliest sequence number still in the WAL.
+    ///
+    /// Used for anti-entropy detection: if a peer's `acked_seq` is less than
+    /// this value, it has fallen behind the compacted region and needs a
+    /// full snapshot instead of incremental replication.
+    pub fn earliest_seq(&self) -> u64 {
+        self.earliest_seq.load(Ordering::SeqCst)
+    }
+
+    /// Remove WAL entries with seq <= `up_to_seq` (Kafka-style compaction).
+    ///
+    /// Called after all peers have consumed these entries. Returns the number
+    /// of entries deleted from the log tree.
+    ///
+    /// Safe to call concurrently — `earliest_seq` is updated atomically and
+    /// persisted to the meta tree for crash recovery.
+    pub fn compact(&self, up_to_seq: u64) -> Result<u64> {
+        let earliest = self.earliest_seq.load(Ordering::SeqCst);
+        if up_to_seq < earliest {
+            return Ok(0); // Already compacted past this point
+        }
+
+        let mut deleted = 0u64;
+        for seq in earliest..=up_to_seq {
+            if self.log_tree.delete(&seq.to_be_bytes())?.is_some() {
+                deleted += 1;
+            }
+        }
+
+        let new_earliest = up_to_seq + 1;
+        self.earliest_seq.store(new_earliest, Ordering::SeqCst);
+        self.meta_tree
+            .set(KEY_EARLIEST_SEQ, &new_earliest.to_be_bytes())?;
+
+        tracing::debug!(from = earliest, to = up_to_seq, deleted, "WAL compacted");
+        Ok(deleted)
+    }
 }
 
 #[cfg(test)]
@@ -285,5 +335,78 @@ mod tests {
         let entries = log.drain_unreplicated().unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].0, 3);
+    }
+
+    #[test]
+    fn test_compact() {
+        let store = RedbStore::open_temporary().unwrap();
+        let log = ReplicationLog::new(&store, 1).unwrap();
+
+        // Append 5 entries
+        for i in 1..=5 {
+            let cmd = format!("cmd{}", i);
+            log.append(cmd.as_bytes()).unwrap();
+        }
+        assert_eq!(log.earliest_seq(), 1);
+        assert_eq!(log.max_seq(), 6); // next_seq = 6
+
+        // Compact entries 1-3
+        let deleted = log.compact(3).unwrap();
+        assert_eq!(deleted, 3);
+        assert_eq!(log.earliest_seq(), 4);
+
+        // Verify entries 1-3 are gone from the tree
+        for seq in 1..=3u64 {
+            assert!(log.log_tree.get(&seq.to_be_bytes()).unwrap().is_none());
+        }
+
+        // Verify entries 4-5 still exist
+        for seq in 4..=5u64 {
+            assert!(log.log_tree.get(&seq.to_be_bytes()).unwrap().is_some());
+        }
+
+        // drain_unreplicated still works (watermark=0, so 4 and 5 should appear)
+        let entries = log.drain_unreplicated().unwrap();
+        // entries start from watermark+1=1, but 1-3 compacted (get returns None, skipped)
+        // Actually drain iterates from watermark+1..max, gets None for 1-3, Some for 4-5
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].0, 4);
+        assert_eq!(entries[1].0, 5);
+
+        // Compact again — idempotent for already-compacted region
+        let deleted = log.compact(2).unwrap();
+        assert_eq!(deleted, 0);
+        assert_eq!(log.earliest_seq(), 4); // unchanged
+    }
+
+    #[test]
+    fn test_compact_persistence() {
+        let tmpfile = tempfile::NamedTempFile::new().unwrap();
+        let path = tmpfile.path().to_path_buf();
+
+        // Write entries and compact
+        {
+            let store = RedbStore::open(&path).unwrap();
+            let log = ReplicationLog::new(&store, 1).unwrap();
+            log.append(b"cmd1").unwrap();
+            log.append(b"cmd2").unwrap();
+            log.append(b"cmd3").unwrap();
+            log.compact(2).unwrap();
+            assert_eq!(log.earliest_seq(), 3);
+        }
+
+        // Reopen and verify earliest_seq persisted
+        {
+            let store = RedbStore::open(&path).unwrap();
+            let log = ReplicationLog::new(&store, 1).unwrap();
+            assert_eq!(log.earliest_seq(), 3);
+            assert_eq!(log.max_seq(), 4); // next_seq preserved
+
+            // Entry 3 still exists
+            assert!(log.log_tree.get(&3u64.to_be_bytes()).unwrap().is_some());
+            // Entries 1-2 gone
+            assert!(log.log_tree.get(&1u64.to_be_bytes()).unwrap().is_none());
+            assert!(log.log_tree.get(&2u64.to_be_bytes()).unwrap().is_none());
+        }
     }
 }

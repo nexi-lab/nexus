@@ -48,6 +48,8 @@ struct PeerReplicationState {
     backoff: Duration,
     /// Earliest time to attempt the next replication to this peer.
     next_attempt: Instant,
+    /// Peer has fallen behind compacted WAL — needs full snapshot to catch up.
+    needs_snapshot: bool,
 }
 
 impl PeerReplicationState {
@@ -56,6 +58,7 @@ impl PeerReplicationState {
             acked_seq: 0,
             backoff: EC_BACKOFF_BASE,
             next_attempt: Instant::now(),
+            needs_snapshot: false,
         }
     }
 
@@ -281,6 +284,21 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
                 continue;
             }
 
+            // Anti-entropy: check if peer fell behind compacted WAL region
+            let earliest = repl_log.earliest_seq();
+            if state.acked_seq > 0 && state.acked_seq < earliest {
+                if !state.needs_snapshot {
+                    tracing::warn!(
+                        peer = peer_id,
+                        acked = state.acked_seq,
+                        earliest,
+                        "Peer fell behind compacted WAL — needs snapshot"
+                    );
+                    state.needs_snapshot = true;
+                }
+                continue; // Skip — incremental replication impossible
+            }
+
             // Filter entries: only send what this peer hasn't acked yet
             let filtered: Vec<EcReplicationEntry> = entries
                 .iter()
@@ -346,6 +364,20 @@ impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
                 tracing::error!("Failed to advance EC watermark: {}", e);
             }
         }
+
+        // WAL compaction: remove entries consumed by ALL peers (Kafka pattern)
+        let min_peer_acked = peer_snapshot
+            .iter()
+            .filter_map(|(id, _)| self.ec_peer_state.get(id).map(|s| s.acked_seq))
+            .filter(|&s| s > 0)
+            .min()
+            .unwrap_or(0);
+
+        if min_peer_acked > 0 {
+            if let Err(e) = repl_log.compact(min_peer_acked) {
+                tracing::error!("WAL compaction failed: {}", e);
+            }
+        }
     }
 }
 
@@ -393,6 +425,7 @@ mod tests {
                 acked_seq: 5,
                 backoff: EC_BACKOFF_BASE,
                 next_attempt: Instant::now(),
+                needs_snapshot: false,
             },
         );
         peer_state.insert(
@@ -401,6 +434,7 @@ mod tests {
                 acked_seq: 3,
                 backoff: EC_BACKOFF_BASE,
                 next_attempt: Instant::now(),
+                needs_snapshot: false,
             },
         );
 
@@ -433,6 +467,7 @@ mod tests {
                     acked_seq: ack,
                     backoff: EC_BACKOFF_BASE,
                     next_attempt: Instant::now(),
+                    needs_snapshot: false,
                 },
             );
             peers.push((id, addr.clone()));

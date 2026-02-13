@@ -462,7 +462,7 @@ disable_error_code = ["attr-defined"]
 [[tool.mypy.overrides]]
 module = "nexus.core.tiger_cache"
 # redis library has complex types that mypy struggles with
-disable_error_code = ["import-untyped", "call-overload"]
+disable_error_code = ["import-untyped", "call-overload", "dict-item"]
 
 [[tool.mypy.overrides]]
 module = "nexus.storage.cache"

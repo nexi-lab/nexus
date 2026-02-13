@@ -14,7 +14,7 @@ class ConsolidateRequest(ApiModel):
 
     memory_ids: list[str] | None = Field(None, description="Specific memories to consolidate")
     beta: float = Field(0.7, ge=0.0, le=1.0, description="Semantic weight (SimpleMem)")
-    lambda_decay: float = Field(0.1, description="Temporal decay rate")
+    lambda_decay: float = Field(0.1, ge=0.0, description="Temporal decay rate")
     affinity_threshold: float = Field(0.85, ge=0.0, le=1.0, description="Clustering threshold")
     importance_max: float = Field(0.5, ge=0.0, le=1.0, description="Max importance for candidates")
     memory_type: str | None = Field(None, description="Filter by memory type")
@@ -22,11 +22,8 @@ class ConsolidateRequest(ApiModel):
     limit: int = Field(
         100,
         ge=1,
-        le=1000,
-        description=(
-            "Max memories to process. WARNING: consolidation is O(n^2) on this value; "
-            "values > 200 may cause significant latency."
-        ),
+        le=200,
+        description=("Max memories to process. Consolidation is O(n^2) on this value."),
     )
 
 
@@ -37,7 +34,7 @@ class HierarchyBuildRequest(ApiModel):
     max_levels: int = Field(3, ge=1, le=10, description="Maximum hierarchy levels")
     cluster_threshold: float = Field(0.6, ge=0.0, le=1.0, description="Clustering threshold")
     beta: float = Field(0.7, ge=0.0, le=1.0, description="Semantic weight")
-    lambda_decay: float = Field(0.1, description="Temporal decay rate")
+    lambda_decay: float = Field(0.1, ge=0.0, description="Temporal decay rate")
     time_unit_hours: float = Field(24.0, description="Time unit for decay calculation")
 
 

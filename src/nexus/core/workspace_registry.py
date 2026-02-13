@@ -134,13 +134,9 @@ class WorkspaceRegistry:
         """
         self.metadata = metadata
         self.rebac_manager = rebac_manager  # v0.5.0
-        # Use provided session_factory or import from database module
-        if session_factory is not None:
-            self.metadata_session_factory = session_factory
-        else:
-            from nexus.storage.database import get_session_factory
-
-            self.metadata_session_factory = get_session_factory()
+        if session_factory is None:
+            raise ValueError("session_factory is required — use factory.py for DI wiring")
+        self.metadata_session_factory = session_factory
         self._workspaces: dict[str, WorkspaceConfig] = {}
         self._memories: dict[str, MemoryConfig] = {}
         self._load_from_db()

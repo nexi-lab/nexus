@@ -78,6 +78,7 @@ class RouterRegistry:
 def build_v2_registry(
     *,
     async_nexus_fs_getter: object | None = None,
+    chunked_upload_service_getter: object | None = None,
 ) -> RouterRegistry:
     """Import all v2 routers and return a populated registry.
 
@@ -155,6 +156,33 @@ def build_v2_registry(
         )
     except ImportError as e:
         logger.warning("Failed to import async files router: %s", e)
+
+    # ---- Reputation router (Issue #1356) ----
+    try:
+        from nexus.server.api.v2.routers.reputation import router as reputation_router
+
+        registry.add(RouterEntry(router=reputation_router, name="reputation", endpoint_count=7))
+    except ImportError as e:
+        logger.warning("Failed to import Reputation routes: %s", e)
+
+    # ---- tus.io resumable uploads router (Issue #788) ----
+    if chunked_upload_service_getter is not None:
+        try:
+            from nexus.server.api.v2.routers.tus_uploads import create_tus_uploads_router
+
+            tus_router = create_tus_uploads_router(
+                get_upload_service=chunked_upload_service_getter,
+            )
+            registry.add(
+                RouterEntry(
+                    router=tus_router,
+                    name="tus_uploads",
+                    prefix="/api/v2/uploads",
+                    endpoint_count=5,
+                )
+            )
+        except ImportError as e:
+            logger.warning("Failed to import tus uploads router: %s", e)
 
     return registry
 

@@ -292,6 +292,9 @@ pub struct ZoneConsensusDriver<S: StateMachine + 'static> {
     /// Set by `set_peer_map()` before the transport loop starts.
     #[cfg(all(feature = "grpc", has_protos))]
     peer_map: Option<SharedPeerMap>,
+    /// EC replication WAL (shared with handle via Arc).
+    /// Used by the transport loop for Phase C background replication.
+    replication_log: Option<Arc<ReplicationLog>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -404,6 +407,7 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
             cached_term,
             #[cfg(all(feature = "grpc", has_protos))]
             peer_map: None,
+            replication_log: handle.replication_log.clone(),
         };
 
         Ok((handle, driver))
@@ -559,6 +563,21 @@ impl<S: StateMachine + 'static> ZoneConsensus<S> {
         repl_log.append(&command_bytes)
     }
 
+    /// Apply an EC entry received from a peer (Phase C receiver side).
+    ///
+    /// Uses LWW (Last Writer Wins) conflict resolution: compares the incoming
+    /// entry's timestamp against the existing metadata to reject stale writes.
+    /// Applies to local state machine only — no WAL append (that's the sender's
+    /// concern). Used by the gRPC `ReplicateEntries` handler.
+    pub async fn apply_ec_from_peer(
+        &self,
+        command: Command,
+        entry_timestamp: u64,
+    ) -> Result<CommandResult> {
+        let mut sm = self.state_machine.write().await;
+        sm.apply_ec_with_lww(&command, entry_timestamp)
+    }
+
     /// Check if an EC write token has been replicated to a majority.
     ///
     /// Returns:
@@ -636,6 +655,12 @@ impl<S: StateMachine + 'static> ZoneConsensusDriver<S> {
     #[cfg(all(feature = "grpc", has_protos))]
     pub fn set_peer_map(&mut self, peer_map: SharedPeerMap) {
         self.peer_map = Some(peer_map);
+    }
+
+    /// Get the EC replication log (if present).
+    /// Used by the transport loop for Phase C background replication.
+    pub fn replication_log(&self) -> Option<&Arc<ReplicationLog>> {
+        self.replication_log.as_ref()
     }
 
     /// Drain all pending messages from the channel and process them.

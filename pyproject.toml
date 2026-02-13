@@ -66,7 +66,7 @@ dependencies = [
     "aiosqlite>=0.20.0", # SQLite driver (async)
     # Caching
     "cachetools>=6.2.2",
-    "redis>=7.0.0",  # Redis/Dragonfly client (async support)
+    "redis>=7.0.0", # Redis/Dragonfly client (async support)
     # Authentication
     "authlib>=1.6.5", # JWT and OAuth support for OIDC auth
     "bcrypt>=4.0.0", # Password hashing for local auth
@@ -120,6 +120,7 @@ dependencies = [
     # Affinity-based memory consolidation (Issue #1026 - SimpleMem-inspired)
     "numpy>=1.26.0",
     "scikit-learn>=1.4.0",
+    "aiofiles>=25.1.0",
 ]
 
 [project.optional-dependencies]
@@ -449,12 +450,17 @@ warn_unused_ignores = false
 module = "nexus.cache.dragonfly"
 # redis library has complex async types that mypy struggles with
 warn_unused_ignores = false
-disable_error_code = ["no-any-return", "no-untyped-def", "return-value", "import-untyped"]
+disable_error_code = ["no-any-return", "no-untyped-def", "return-value", "import-untyped", "attr-defined", "arg-type"]
+
+[[tool.mypy.overrides]]
+module = "nexus.core.event_bus"
+# redis PubSub.aclose() not in type stubs
+disable_error_code = ["attr-defined"]
 
 [[tool.mypy.overrides]]
 module = "nexus.core.tiger_cache"
 # redis library has complex types that mypy struggles with
-disable_error_code = ["import-untyped"]
+disable_error_code = ["import-untyped", "call-overload", "dict-item"]
 
 [[tool.mypy.overrides]]
 module = "nexus.storage.cache"
@@ -492,6 +498,7 @@ module = [
     "nexus.core.permission_boundary_cache",
     "nexus.core.agent_registry",
     "nexus.identity.key_service",
+    "nexus.core.reputation_service",
 ]
 # cachetools returns Any from generic cache
 disable_error_code = ["import-untyped", "no-any-return"]
@@ -558,7 +565,12 @@ warn_unused_ignores = false
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-exclude = ["benchmarks/"]
+exclude = [
+    "benchmarks/",
+    "src/nexus/core/_metadata_generated.py",  # Generated at install time
+    "src/nexus/core/_compact_generated.py",    # Generated at install time
+    "src/nexus/core/protocols/",               # Generated at install time
+]
 
 [tool.ruff.lint]
 select = [
@@ -611,6 +623,7 @@ dev = [
     "freezegun>=1.5.5",
     "grpcio-tools>=1.76.0",
     "pytest-cov>=7.0.0",
+    "types-aiofiles>=25.1.0.20251011",
     "types-protobuf>=6.32.1.20251210",
     "types-redis>=4.6.0.20241004",
 ]

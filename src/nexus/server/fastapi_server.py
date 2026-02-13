@@ -312,6 +312,8 @@ class AppState:
         self.event_log: Any = None
         # Issue #1355: Agent identity KeyService
         self.key_service: Any = None
+        # Issue #788: Chunked upload service
+        self.chunked_upload_service: Any = None
 
 
 # Global state (set during app creation)
@@ -833,6 +835,63 @@ async def lifespan(_app: FastAPI) -> Any:
     else:
         _app_state.key_service = None
 
+    # Issue #788: Initialize ChunkedUploadService for tus.io resumable uploads
+    # Prefer the pre-configured service from factory (reads NEXUS_UPLOAD_* env vars).
+    # Fall back to creating one here if the factory didn't provide it.
+    _upload_cleanup_task = None
+    _factory_upload_svc = (
+        getattr(_app_state.nexus_fs, "_chunked_upload_service", None)
+        if _app_state.nexus_fs
+        else None
+    )
+    if _factory_upload_svc is not None:
+        _app_state.chunked_upload_service = _factory_upload_svc
+        _upload_cleanup_task = asyncio.create_task(
+            _app_state.chunked_upload_service.start_cleanup_loop()
+        )
+        logger.info("[TUS] ChunkedUploadService initialized from factory with background cleanup")
+    elif _app_state.nexus_fs and getattr(_app_state.nexus_fs, "SessionLocal", None):
+        try:
+            from nexus.services.chunked_upload_service import (
+                ChunkedUploadConfig,
+                ChunkedUploadService,
+            )
+
+            _backend = getattr(_app_state.nexus_fs, "backend", None)
+            _session_factory = _app_state.nexus_fs.SessionLocal
+            if _backend and _session_factory:
+                # Build config from env vars for fallback path
+                import os as _os
+
+                _upload_kwargs: dict = {}
+                for _env, _key in {
+                    "NEXUS_UPLOAD_MIN_CHUNK_SIZE": "min_chunk_size",
+                    "NEXUS_UPLOAD_MAX_CHUNK_SIZE": "max_chunk_size",
+                    "NEXUS_UPLOAD_MAX_CONCURRENT": "max_concurrent_uploads",
+                    "NEXUS_UPLOAD_SESSION_TTL_HOURS": "session_ttl_hours",
+                    "NEXUS_UPLOAD_CLEANUP_INTERVAL": "cleanup_interval_seconds",
+                    "NEXUS_UPLOAD_MAX_SIZE": "max_upload_size",
+                }.items():
+                    _v = _os.getenv(_env)
+                    if _v is not None:
+                        _upload_kwargs[_key] = int(_v)
+
+                _app_state.chunked_upload_service = ChunkedUploadService(
+                    session_factory=_session_factory,
+                    backend=_backend,
+                    metadata_store=getattr(_app_state.nexus_fs, "metadata", None),
+                    config=ChunkedUploadConfig(**_upload_kwargs),
+                )
+                _upload_cleanup_task = asyncio.create_task(
+                    _app_state.chunked_upload_service.start_cleanup_loop()
+                )
+                logger.info("[TUS] ChunkedUploadService initialized with background cleanup")
+        except Exception as e:
+            logger.warning(f"[TUS] Failed to initialize ChunkedUploadService: {e}")
+            _app_state.chunked_upload_service = None
+    else:
+        _app_state.chunked_upload_service = None
+
     # Issue #1240: Start agent heartbeat and stale detection background tasks
     _heartbeat_task = None
     _stale_detection_task = None
@@ -990,6 +1049,13 @@ async def lifespan(_app: FastAPI) -> Any:
 
     # Cleanup
     logger.info("Shutting down FastAPI Nexus server...")
+
+    # Issue #788: Stop upload cleanup task
+    if _upload_cleanup_task:
+        _upload_cleanup_task.cancel()
+        with suppress(asyncio.CancelledError):
+            await _upload_cleanup_task
+        logger.info("[TUS] Upload cleanup task stopped")
 
     # Issue #574: Stop Task Queue runner
     if task_runner_task:
@@ -1769,6 +1835,7 @@ def _register_routes(app: FastAPI) -> None:
 
     v2_registry = build_v2_registry(
         async_nexus_fs_getter=lambda: _app_state.async_nexus_fs,
+        chunked_upload_service_getter=lambda: _app_state.chunked_upload_service,
     )
     register_v2_routers(app, v2_registry)
     app.add_middleware(VersionHeaderMiddleware)
@@ -4200,47 +4267,6 @@ def _error_response(
     return JSONResponse(content=error_dict)
 
 
-# Issue #1397: Inline WAL append — runs in FastAPI event loop, <5μs per write.
-# Avoids the thread-per-event overhead of the NexusFS _publish_file_event path.
-async def _wal_append(
-    event_type: str,
-    path: str,
-    context: Any,
-    old_path: str | None = None,
-    size: int | None = None,
-) -> None:
-    """Append a file event to the WAL inline (durable before response)."""
-    event_log = _app_state.event_log
-    if event_log is None:
-        return
-
-    try:
-        from nexus.core.event_bus import FileEvent, FileEventType
-
-        type_map = {
-            "file_write": FileEventType.FILE_WRITE,
-            "file_delete": FileEventType.FILE_DELETE,
-            "file_rename": FileEventType.FILE_RENAME,
-            "dir_create": FileEventType.DIR_CREATE,
-            "dir_delete": FileEventType.DIR_DELETE,
-        }
-
-        zone_id = getattr(context, "zone_id", None) or "default"
-        agent_id = getattr(context, "agent_id", None)
-
-        event = FileEvent(
-            type=type_map.get(event_type, event_type),
-            path=path,
-            zone_id=zone_id,
-            old_path=old_path,
-            size=size,
-            agent_id=agent_id,
-        )
-        await event_log.append(event)
-    except Exception as e:
-        logger.warning(f"WAL append failed for {event_type} {path}: {e}")
-
-
 # Issue #1115: Event firing helper for RPC handlers
 async def _fire_rpc_event(
     event_type: str,
@@ -4321,7 +4347,6 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
         return await _handle_read_async(params, context)
     elif method == "write":
         result = await to_thread_with_timeout(_handle_write, params, context)
-        await _wal_append("file_write", params.path, context, size=result.get("bytes_written"))
         await _fire_rpc_event("file_write", params.path, context, size=result.get("bytes_written"))
         return result
     elif method == "exists":
@@ -4330,24 +4355,20 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
         return await to_thread_with_timeout(_handle_list, params, context)
     elif method == "delete":
         result = await to_thread_with_timeout(_handle_delete, params, context)
-        await _wal_append("file_delete", params.path, context)
         await _fire_rpc_event("file_delete", params.path, context)
         return result
     elif method == "rename":
         result = await to_thread_with_timeout(_handle_rename, params, context)
-        await _wal_append("file_rename", params.new_path, context, old_path=params.old_path)
         await _fire_rpc_event("file_rename", params.new_path, context, old_path=params.old_path)
         return result
     elif method == "copy":
         return await to_thread_with_timeout(_handle_copy, params, context)
     elif method == "mkdir":
         result = await to_thread_with_timeout(_handle_mkdir, params, context)
-        await _wal_append("dir_create", params.path, context)
         await _fire_rpc_event("dir_create", params.path, context)
         return result
     elif method == "rmdir":
         result = await to_thread_with_timeout(_handle_rmdir, params, context)
-        await _wal_append("dir_delete", params.path, context)
         await _fire_rpc_event("dir_delete", params.path, context)
         return result
     elif method == "get_metadata":

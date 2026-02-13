@@ -82,6 +82,12 @@ EXPECTED_MODELS = [
     "ConflictLogModel",
     # Namespace
     "PersistentNamespaceViewModel",
+    # Reputation & Trust (Issue #1356)
+    "DisputeModel",
+    "ReputationEventModel",
+    "ReputationScoreModel",
+    # Chunked Uploads (Issue #788)
+    "UploadSessionModel",
 ]
 
 

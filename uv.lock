@@ -11,6 +11,15 @@ resolution-markers = [
 ]
 
 [[package]]
+name = "aiofiles"
+version = "25.1.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/41/c3/534eac40372d8ee36ef40df62ec129bee4fdb5ad9706e58a29be53b2c970/aiofiles-25.1.0.tar.gz", hash = "sha256:a8d728f0a29de45dc521f18f07297428d56992a742f0cd2701ba86e44d23d5b2", size = 46354, upload-time = "2025-10-09T20:51:04.358Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/bc/8a/340a1555ae33d7354dbca4faa54948d76d89a27ceef032c8c3bc661d003e/aiofiles-25.1.0-py3-none-any.whl", hash = "sha256:abe311e527c862958650f9438e859c1fa7568a141b22abcd015e120e86a85695", size = 14668, upload-time = "2025-10-09T20:51:03.174Z" },
+]
+
+[[package]]
 name = "aiohappyeyeballs"
 version = "2.6.1"
 source = { registry = "https://pypi.org/simple" }
@@ -3070,6 +3079,7 @@ name = "nexus-ai-fs"
 version = "0.7.1.dev0"
 source = { editable = "." }
 dependencies = [
+    { name = "aiofiles" },
     { name = "aiohttp" },
     { name = "aiosqlite" },
     { name = "alembic" },
@@ -3202,12 +3212,14 @@ dev = [
     { name = "freezegun" },
     { name = "grpcio-tools" },
     { name = "pytest-cov" },
+    { name = "types-aiofiles" },
     { name = "types-protobuf" },
     { name = "types-redis" },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "aiofiles", specifier = ">=25.1.0" },
     { name = "aiohttp", specifier = ">=3.11.0" },
     { name = "aiosqlite", specifier = ">=0.20.0" },
     { name = "alembic", specifier = ">=1.13.0" },
@@ -3317,6 +3329,7 @@ dev = [
     { name = "freezegun", specifier = ">=1.5.5" },
     { name = "grpcio-tools", specifier = ">=1.76.0" },
     { name = "pytest-cov", specifier = ">=7.0.0" },
+    { name = "types-aiofiles", specifier = ">=25.1.0.20251011" },
     { name = "types-protobuf", specifier = ">=6.32.1.20251210" },
     { name = "types-redis", specifier = ">=4.6.0.20241004" },
 ]
@@ -5467,6 +5480,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/a8/4b/29b4ef32e036bb34e4ab51796dd745cdba7ed47ad142a9f4a1eb8e0c744d/tqdm-4.67.1.tar.gz", hash = "sha256:f8aef9c52c08c13a65f30ea34f4e5aac3fd1a34959879d7e59e63027286627f2", size = 169737, upload-time = "2024-11-24T20:12:22.481Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/d0/30/dc54f88dd4a2b5dc8a0279bdd7270e735851848b762aeb1c1184ed1f6b14/tqdm-4.67.1-py3-none-any.whl", hash = "sha256:26445eca388f82e72884e0d580d5464cd801a3ea01e63e5601bdff9ba6a48de2", size = 78540, upload-time = "2024-11-24T20:12:19.698Z" },
+]
+
+[[package]]
+name = "types-aiofiles"
+version = "25.1.0.20251011"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/84/6c/6d23908a8217e36704aa9c79d99a620f2fdd388b66a4b7f72fbc6b6ff6c6/types_aiofiles-25.1.0.20251011.tar.gz", hash = "sha256:1c2b8ab260cb3cd40c15f9d10efdc05a6e1e6b02899304d80dfa0410e028d3ff", size = 14535, upload-time = "2025-10-11T02:44:51.237Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/71/0f/76917bab27e270bb6c32addd5968d69e558e5b6f7fb4ac4cbfa282996a96/types_aiofiles-25.1.0.20251011-py3-none-any.whl", hash = "sha256:8ff8de7f9d42739d8f0dadcceeb781ce27cd8d8c4152d4a7c52f6b20edb8149c", size = 14338, upload-time = "2025-10-11T02:44:50.054Z" },
 ]
 
 [[package]]

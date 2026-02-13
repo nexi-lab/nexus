@@ -26,6 +26,7 @@ from contextlib import suppress
 from typing import Union
 
 import sqlalchemy as sa
+from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from alembic import op
 
@@ -36,48 +37,87 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+# Intentionally duplicated from nexus.storage.views.VIEW_NAMES.
+# Migrations must be self-contained snapshots — importing from application
+# code would break if views.py changes after this migration is written.
+_VIEW_NAMES = [
+    "ready_work_items",
+    "pending_work_items",
+    "blocked_work_items",
+    "work_by_priority",
+    "in_progress_work",
+    "ready_for_indexing",
+    "hot_tier_eviction_candidates",
+    "orphaned_content_objects",
+]
+
+
 def upgrade() -> None:
     """Remove tenant_id from file_paths table for pure ReBAC."""
 
-    # Step 1: Drop the old unique constraint (tenant_id, virtual_path)
-    # This constraint was used for database-level tenant isolation
-    with suppress(Exception):  # Constraint may not exist in newer databases
-        op.drop_constraint("uq_tenant_virtual_path", "file_paths", type_="unique")
+    # Drop SQL views that reference fp.zone_id before modifying file_paths.
+    # SQLite validates ALL views on any ALTER TABLE DROP COLUMN, so invalid
+    # views would block unrelated schema changes during downgrade.
+    for view_name in _VIEW_NAMES:
+        op.execute(sa.text(f"DROP VIEW IF EXISTS {view_name}"))
 
-    # Step 2: Drop the tenant_id index
-    with suppress(Exception):  # Index may not exist
+    # batch_alter_table needed for SQLite (no native ALTER of constraints).
+    # Each step uses a separate batch context because combining them causes
+    # batch mode to try recreating indexes on dropped columns.
+    with (
+        suppress(OperationalError, ProgrammingError),
+        op.batch_alter_table("file_paths") as batch_op,
+    ):
+        batch_op.drop_constraint("uq_tenant_virtual_path", type_="unique")
+
+    with suppress(OperationalError, ProgrammingError):
         op.drop_index("idx_file_paths_tenant_id", table_name="file_paths")
 
-    # Step 3: Drop the tenant_id column
-    # NOTE: This is safe because current code doesn't use this column
-    # All tenant isolation is now handled via ReBAC
-    with suppress(Exception):  # Column may not exist
-        op.drop_column("file_paths", "tenant_id")
+    with (
+        suppress(OperationalError, ProgrammingError),
+        op.batch_alter_table("file_paths") as batch_op,
+    ):
+        batch_op.drop_column("tenant_id")
 
-    # Step 4: Create new unique constraint on virtual_path only
-    # This matches the current model definition (see models.py:91)
-    with suppress(Exception):  # Constraint may already exist
-        op.create_unique_constraint("uq_virtual_path", "file_paths", ["virtual_path"])
+    with (
+        suppress(OperationalError, ProgrammingError),
+        op.batch_alter_table("file_paths") as batch_op,
+    ):
+        batch_op.create_unique_constraint("uq_virtual_path", ["virtual_path"])
 
 
 def downgrade() -> None:
     """Restore tenant_id to file_paths table (for rollback to previous version)."""
 
-    # Step 1: Drop the new unique constraint
-    with suppress(Exception):
-        op.drop_constraint("uq_virtual_path", "file_paths", type_="unique")
+    # batch_alter_table needed for SQLite (no native ALTER of constraints)
+    with (
+        suppress(OperationalError, ProgrammingError),
+        op.batch_alter_table("file_paths") as batch_op,
+    ):
+        batch_op.drop_constraint("uq_virtual_path", type_="unique")
 
-    # Step 2: Re-add tenant_id column
-    # NOTE: Setting nullable=True to allow migration of existing data
-    # In v0.4.x, this was NOT NULL, but we can't enforce that during rollback
+    # Re-add tenant_id column
     op.add_column("file_paths", sa.Column("tenant_id", sa.String(length=36), nullable=True))
 
-    # Step 3: Re-create index
+    # Re-create index
     op.create_index("idx_file_paths_tenant_id", "file_paths", ["tenant_id"], unique=False)
 
-    # Step 4: Re-create old unique constraint
-    # NOTE: This will fail if there are duplicate paths across tenants
-    # Users must manually clean up data before downgrading
-    op.create_unique_constraint(
-        "uq_tenant_virtual_path", "file_paths", ["tenant_id", "virtual_path"]
-    )
+    # Re-create old unique constraint
+    with op.batch_alter_table("file_paths") as batch_op:
+        batch_op.create_unique_constraint("uq_tenant_virtual_path", ["tenant_id", "virtual_path"])
+
+    # Recreate SQL views if zone_id exists on file_paths (views reference fp.zone_id).
+    # In migration-only databases, zone_id was never added via migration, so views
+    # would be invalid. Only production databases using create_all() have zone_id.
+    inspector = sa.inspect(op.get_bind())
+    columns = {c["name"] for c in inspector.get_columns("file_paths")}
+    if "zone_id" in columns:
+        from nexus.storage import views
+
+        connection = op.get_bind()
+        db_type = (
+            "postgresql" if connection.dialect.name in ("postgresql", "postgres") else "sqlite"
+        )
+        for _name, view_sql in views.get_all_views(db_type):
+            connection.execute(view_sql)
+            connection.commit()

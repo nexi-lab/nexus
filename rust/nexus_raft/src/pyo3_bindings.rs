@@ -602,13 +602,15 @@ impl PyRaftConsensus {
     ///     node_id: Unique node ID within the cluster (1-indexed).
     ///     db_path: Path to the redb database directory.
     ///     bind_addr: gRPC bind address (e.g., "0.0.0.0:2126").
+    ///     advertise_addr: Address other nodes use to reach this node (e.g., "http://10.0.0.2:2126").
+    ///         Defaults to "http://{bind_addr}" if not provided.
     ///     peers: List of peer addresses in "id@host:port" format.
     ///
     /// Raises:
     ///     RuntimeError: If the node cannot be created or the server cannot start.
     #[new]
-    #[pyo3(signature = (node_id, db_path, bind_addr="0.0.0.0:2126", peers=vec![]))]
-    pub fn new(node_id: u64, db_path: &str, bind_addr: &str, peers: Vec<String>) -> PyResult<Self> {
+    #[pyo3(signature = (node_id, db_path, bind_addr="0.0.0.0:2126", advertise_addr=None, peers=vec![]))]
+    pub fn new(node_id: u64, db_path: &str, bind_addr: &str, advertise_addr: Option<&str>, peers: Vec<String>) -> PyResult<Self> {
         use crate::raft::ZoneRaftRegistry;
         use crate::transport::{NodeAddress, RaftGrpcServer, ServerConfig};
         use std::sync::Arc;
@@ -654,7 +656,10 @@ impl PyRaftConsensus {
             bind_address: bind_socket,
             ..Default::default()
         };
-        let server = RaftGrpcServer::new(registry.clone(), config);
+        let self_addr = advertise_addr
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("http://{}", bind_addr));
+        let server = RaftGrpcServer::new(registry.clone(), config, self_addr);
         let shutdown_rx_server = shutdown_rx.clone();
         runtime.spawn(async move {
             let shutdown = async move {
@@ -1017,9 +1022,11 @@ impl PyZoneManager {
     ///     node_id: This node's ID (shared across all zones).
     ///     base_path: Base directory for zone sled databases.
     ///     bind_addr: gRPC bind address (e.g., "0.0.0.0:2126").
+    ///     advertise_addr: Address other nodes use to reach this node (e.g., "http://10.0.0.2:2126").
+    ///         Defaults to "http://{bind_addr}" if not provided.
     #[new]
-    #[pyo3(signature = (node_id, base_path, bind_addr="0.0.0.0:2126"))]
-    pub fn new(node_id: u64, base_path: &str, bind_addr: &str) -> PyResult<Self> {
+    #[pyo3(signature = (node_id, base_path, bind_addr="0.0.0.0:2126", advertise_addr=None))]
+    pub fn new(node_id: u64, base_path: &str, bind_addr: &str, advertise_addr: Option<&str>) -> PyResult<Self> {
         use crate::raft::ZoneRaftRegistry;
         use crate::transport::{RaftGrpcServer, ServerConfig};
         use std::sync::Arc;
@@ -1046,7 +1053,10 @@ impl PyZoneManager {
             bind_address: bind_socket,
             ..Default::default()
         };
-        let server = RaftGrpcServer::new(registry.clone(), config);
+        let self_addr = advertise_addr
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("http://{}", bind_addr));
+        let server = RaftGrpcServer::new(registry.clone(), config, self_addr);
         let shutdown_rx_server = shutdown_rx.clone();
         runtime.spawn(async move {
             let shutdown = async move {

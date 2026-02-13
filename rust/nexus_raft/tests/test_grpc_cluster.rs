@@ -161,7 +161,8 @@ mod grpc_cluster {
 
             // Start gRPC server in background
             let shutdown_rx_clone = shutdown_rx.clone();
-            let server = RaftGrpcServer::new(registry, config);
+            let self_address = format!("http://{}", bind_addr);
+            let server = RaftGrpcServer::new(registry, config, self_address);
             let handle = tokio::spawn(async move {
                 let shutdown = async move {
                     let mut rx = shutdown_rx_clone;

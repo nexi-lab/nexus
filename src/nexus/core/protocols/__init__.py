@@ -1,6 +1,6 @@
 """Kernel protocol interfaces for the Nexus Lego Architecture (Issue #1383).
 
-This package defines the 6 foundational contracts that all future brick
+This package defines the foundational contracts that all future brick
 implementations program against.  Each protocol uses ``@runtime_checkable``
 and async methods.
 
@@ -8,17 +8,19 @@ Protocols:
     - ``AgentRegistryProtocol`` — agent identity and lifecycle management
     - ``NamespaceManagerProtocol`` — per-subject namespace visibility
     - ``VFSRouterProtocol`` — virtual path routing to storage backends
-    - ``EventLogProtocol`` — persistent audit-trail event storage
     - ``HookEngineProtocol`` — lifecycle hook registration and execution
     - ``SchedulerProtocol`` — agent work-request scheduling
 
+Note:
+    ``EventLogProtocol`` lives in ``nexus.services.event_log`` (not kernel).
+    EventLog is a service-layer concern, like journald vs. syscalls.
+
 References:
     - docs/design/NEXUS-LEGO-ARCHITECTURE.md Part 2
-    - Issue #1383: Define 6 kernel protocol interfaces
+    - Issue #1383: Define kernel protocol interfaces
 """
 
 from nexus.core.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
-from nexus.core.protocols.event_log import EventId, EventLogProtocol, KernelEvent
 from nexus.core.protocols.hook_engine import (
     POST_COPY,
     POST_DELETE,
@@ -44,14 +46,11 @@ __all__ = [
     "AgentInfo",
     "AgentRegistryProtocol",
     "AgentRequest",
-    "EventId",
-    "EventLogProtocol",
     "HookContext",
     "HookEngineProtocol",
     "HookId",
     "HookResult",
     "HookSpec",
-    "KernelEvent",
     "NamespaceManagerProtocol",
     "MountInfo",
     "NamespaceMount",

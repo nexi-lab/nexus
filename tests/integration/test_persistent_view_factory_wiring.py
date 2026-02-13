@@ -19,7 +19,7 @@ import pytest
 from sqlalchemy import create_engine
 
 from nexus.cache.persistent_view_postgres import PostgresPersistentViewStore
-from nexus.core.namespace_factory import create_namespace_manager
+from nexus.services.namespace_factory import create_namespace_manager
 from nexus.core.namespace_manager import MountEntry
 from nexus.core.rebac_manager_enhanced import EnhancedReBACManager
 from nexus.storage.models import Base

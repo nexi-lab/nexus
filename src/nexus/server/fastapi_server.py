@@ -375,7 +375,7 @@ async def lifespan(_app: FastAPI) -> Any:
                 if enforce_permissions and hasattr(_app_state, "nexus_fs"):
                     sync_rebac = getattr(_app_state.nexus_fs, "_rebac_manager", None)
                     if sync_rebac:
-                        from nexus.core.namespace_factory import create_namespace_manager
+                        from nexus.services.namespace_factory import create_namespace_manager
 
                         rebac_engine = getattr(sync_rebac, "engine", None)
                         namespace_manager = create_namespace_manager(
@@ -803,7 +803,7 @@ async def lifespan(_app: FastAPI) -> Any:
                 sync_rebac = getattr(_app_state.nexus_fs, "_rebac_manager", None)
                 if sync_rebac:
                     try:
-                        from nexus.core.namespace_factory import create_namespace_manager
+                        from nexus.services.namespace_factory import create_namespace_manager
 
                         rebac_engine = getattr(sync_rebac, "engine", None)
                         namespace_manager = create_namespace_manager(

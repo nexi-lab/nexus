@@ -583,7 +583,7 @@ class RedisEventBus(EventBusBase):
 
         finally:
             await pubsub.unsubscribe(channel)
-            await pubsub.aclose()
+            await pubsub.close()
 
     async def subscribe(
         self,
@@ -647,7 +647,7 @@ class RedisEventBus(EventBusBase):
 
         finally:
             await pubsub.unsubscribe(channel)
-            await pubsub.aclose()
+            await pubsub.close()
 
     async def health_check(self) -> bool:
         """Check if the event bus is healthy."""

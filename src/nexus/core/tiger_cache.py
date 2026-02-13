@@ -520,7 +520,8 @@ class TigerCache:
         Returns:
             Result from the operation, or None on error
         """
-        if not self._dragonfly or not self._dragonfly_url or not self._l2_executor:
+        dragonfly_url = self._dragonfly_url
+        if not self._dragonfly or not dragonfly_url or not self._l2_executor:
             return None
 
         import concurrent.futures
@@ -534,7 +535,7 @@ class TigerCache:
 
             # Thread-local connection with connection pooling
             client = redis.from_url(
-                self._dragonfly_url,
+                dragonfly_url,
                 decode_responses=False,
                 socket_timeout=3.0,
                 socket_connect_timeout=2.0,

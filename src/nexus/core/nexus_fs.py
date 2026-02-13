@@ -169,6 +169,11 @@ class NexusFS(  # type: ignore[misc]
         # Store config for OAuth factory and other components that need it
         self._config: Any | None = None
 
+        # Service extras: services created by factory.py that NexusFS carries
+        # but does not use directly (e.g., manifest_resolver, chunked_upload).
+        # Avoids monkey-patching arbitrary attributes onto the kernel.
+        self._service_extras: dict[str, Any] = {}
+
         # Store memory paging config (Issue #1258)
         self._enable_memory_paging = enable_memory_paging
         self._memory_main_capacity = memory_main_capacity

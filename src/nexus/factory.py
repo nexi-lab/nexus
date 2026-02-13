@@ -496,17 +496,13 @@ def create_nexus_fs(
             enable_write_buffer=enable_write_buffer,
         )
 
-    # ObservabilitySubsystem is not a NexusFS constructor param — pop it
-    # and attach after construction for lifecycle access (health_check, cleanup).
-    observability_subsystem = services.pop("observability_subsystem", None)
-
-    # ChunkedUploadService is not a NexusFS constructor param — pop it and
-    # attach after construction. The FastAPI lifespan reads it from NexusFS.
-    chunked_upload_service = services.pop("chunked_upload_service", None)
-
-    # ManifestResolver is not a NexusFS constructor param — pop it
-    # and attach after construction for API access (Issue #1427).
-    manifest_resolver_svc = services.pop("manifest_resolver", None)
+    # Pop services that NexusFS doesn't accept as constructor params.
+    # These are stored in nx._service_extras for server-layer access.
+    service_extras: dict[str, Any] = {}
+    for key in ("observability_subsystem", "chunked_upload_service", "manifest_resolver"):
+        val = services.pop(key, None)
+        if val is not None:
+            service_extras[key] = val
 
     nx = NexusFS(
         backend=backend,
@@ -540,13 +536,6 @@ def create_nexus_fs(
         **services,
     )
 
-    if observability_subsystem is not None:
-        nx._observability_subsystem = observability_subsystem  # type: ignore[attr-defined]
-
-    if chunked_upload_service is not None:
-        nx._chunked_upload_service = chunked_upload_service  # type: ignore[attr-defined]
-
-    if manifest_resolver_svc is not None:
-        nx.manifest_resolver = manifest_resolver_svc  # type: ignore[attr-defined]
+    nx._service_extras = service_extras
 
     return nx

@@ -153,6 +153,27 @@ def _is_federation_syntax(source: str, target: str | None) -> bool:
     show_default=True,
     help="[Federation] gRPC bind address",
 )
+@click.option(
+    "--tls-cert",
+    type=click.Path(exists=True),
+    envvar="NEXUS_TLS_CERT",
+    default=None,
+    help="[Federation] TLS certificate PEM file (mTLS)",
+)
+@click.option(
+    "--tls-key",
+    type=click.Path(exists=True),
+    envvar="NEXUS_TLS_KEY",
+    default=None,
+    help="[Federation] TLS private key PEM file (mTLS)",
+)
+@click.option(
+    "--tls-ca",
+    type=click.Path(exists=True),
+    envvar="NEXUS_TLS_CA",
+    default=None,
+    help="[Federation] TLS CA certificate PEM file (mTLS)",
+)
 @add_backend_options
 def mount(
     source: str,
@@ -165,6 +186,9 @@ def mount(
     node_id: int,
     data_dir: str,
     bind: str,
+    tls_cert: str | None,
+    tls_key: str | None,
+    tls_ca: str | None,
     backend_config: BackendConfig,
 ) -> None:
     """Mount Nexus filesystem (FUSE or federation).
@@ -180,7 +204,7 @@ def mount(
         nexus mount peer:/remote /local       # join peer's shared subtree
     """
     if _is_federation_syntax(source, target):
-        _mount_federation(source, target, node_id, data_dir, bind)
+        _mount_federation(source, target, node_id, data_dir, bind, tls_cert, tls_key, tls_ca)
     else:
         _mount_fuse(source, mode, daemon, allow_other, debug, agent_id, backend_config)
 
@@ -191,6 +215,9 @@ def _mount_federation(
     node_id: int,
     data_dir: str,
     bind: str,
+    tls_cert: str | None = None,
+    tls_key: str | None = None,
+    tls_ca: str | None = None,
 ) -> None:
     """Federation mount — lazy imports nexus.raft to stay decoupled from FUSE."""
     import asyncio
@@ -215,17 +242,20 @@ def _mount_federation(
         sys.exit(1)
 
     try:
-        from nexus.raft.client import RaftClient
         from nexus.raft.federation import NexusFederation
         from nexus.raft.zone_manager import ZoneManager
 
-        mgr = ZoneManager(node_id=node_id, base_path=data_dir, bind_addr=bind)
+        mgr = ZoneManager(
+            node_id=node_id,
+            base_path=data_dir,
+            bind_addr=bind,
+            tls_cert_path=tls_cert,
+            tls_key_path=tls_key,
+            tls_ca_path=tls_ca,
+        )
         mgr.bootstrap()
 
-        fed = NexusFederation(
-            zone_manager=mgr,
-            client_factory=lambda addr: RaftClient(address=addr),
-        )
+        fed = NexusFederation(zone_manager=mgr)
 
         if flow == "share":
             console.print(f"[cyan]Sharing[/cyan] {local_path} → {peer_addr}:{remote_path}")

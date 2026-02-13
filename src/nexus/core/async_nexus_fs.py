@@ -647,7 +647,9 @@ class AsyncNexusFS:
         if meta is None or meta.etag is None:
             raise NexusFileNotFoundError(path=path)
 
-        async for chunk in self.backend.stream_range(meta.etag, start, end, chunk_size=chunk_size):
+        async for chunk in self.backend.stream_range(
+            meta.etag, start, end, chunk_size=chunk_size
+        ):
             yield chunk
 
     async def stream_write(

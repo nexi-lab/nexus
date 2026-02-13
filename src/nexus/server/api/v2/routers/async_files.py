@@ -515,7 +515,9 @@ def create_async_files_router(
                 content_generator=lambda s, e, cs: fs.stream_read_range(
                     path, s, e, cs, context=context
                 ),
-                full_generator=lambda: fs.stream_read(path, chunk_size=chunk_size, context=context),
+                full_generator=lambda: fs.stream_read(
+                    path, chunk_size=chunk_size, context=context
+                ),
                 total_size=meta.size,
                 etag=meta.etag,
                 content_type=meta.mime_type or "application/octet-stream",

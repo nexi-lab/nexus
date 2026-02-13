@@ -1,7 +1,9 @@
-"""Integration tests for context manifest full pipeline (Issue #1341).
+"""Integration tests for context manifest full pipeline (Issue #1341, #1427).
 
 Tests the complete flow: create sources → resolve with stub executors →
 verify files on disk → validate _index.json schema.
+
+Issue #1427 adds FileGlobExecutor e2e and full pipeline with file_glob tests.
 
 Uses tmp_path for filesystem and in-memory stubs for executors.
 """
@@ -262,3 +264,85 @@ class TestAgentRecordManifestRoundTrip:
             updated_at=datetime.now(),
         )
         assert record.context_manifest == ()
+
+
+# ===========================================================================
+# Test 6: FileGlobExecutor e2e (Issue #1427)
+# ===========================================================================
+
+
+class TestFileGlobExecutorE2E:
+    @pytest.mark.asyncio
+    async def test_file_glob_executor_e2e(self, tmp_path: Path) -> None:
+        """Create temp files → FileGlobExecutor → verify file contents in result."""
+        from nexus.core.context_manifest.executors.file_glob import FileGlobExecutor
+
+        # Create workspace with files
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "main.py").write_text("print('main')")
+        (workspace / "utils.py").write_text("def helper(): pass")
+        (workspace / "readme.md").write_text("# Readme")
+
+        executor = FileGlobExecutor(workspace_root=workspace)
+        source = FileGlobSource(pattern="*.py", max_files=50)
+        result = await executor.execute(source, {})
+
+        assert result.status == "ok"
+        assert result.data["total_matched"] == 2
+        assert result.data["returned"] == 2
+        assert "main.py" in result.data["files"]
+        assert "utils.py" in result.data["files"]
+        assert "readme.md" not in result.data["files"]  # .md excluded by *.py pattern
+        assert result.data["files"]["main.py"] == "print('main')"
+
+
+# ===========================================================================
+# Test 7: Full pipeline with real FileGlobExecutor (Issue #1427)
+# ===========================================================================
+
+
+class TestFullPipelineWithFileGlob:
+    @pytest.mark.asyncio
+    async def test_full_pipeline_with_file_glob(self, tmp_path: Path) -> None:
+        """Set manifest on agent → resolve with real FileGlobExecutor → verify."""
+        from nexus.core.context_manifest.executors.file_glob import FileGlobExecutor
+
+        # Create workspace with files
+        workspace = tmp_path / "workspace"
+        workspace.mkdir()
+        (workspace / "app.py").write_text("import os")
+        (workspace / "test.py").write_text("def test(): pass")
+
+        output_dir = tmp_path / "output"
+
+        # Build resolver with real FileGlobExecutor + stub for other types
+        executors: dict[str, Any] = {
+            "file_glob": FileGlobExecutor(workspace_root=workspace),
+            "memory_query": IntegrationOkExecutor(
+                data_factory=lambda s, v: {"query": s.query, "chunks": ["c1"]}
+            ),
+        }
+        resolver = ManifestResolver(executors=executors, max_resolve_seconds=10.0)
+
+        sources = [
+            FileGlobSource(pattern="*.py"),
+            MemoryQuerySource(query="test context", required=False),
+        ]
+
+        result = await resolver.resolve(sources, {}, output_dir)
+
+        assert isinstance(result, ManifestResult)
+        assert len(result.sources) == 2
+        assert all(r.status == "ok" for r in result.sources)
+
+        # Verify file_glob result contains actual file contents
+        glob_result = result.sources[0]
+        assert glob_result.source_type == "file_glob"
+        assert glob_result.data["returned"] == 2
+        assert "app.py" in glob_result.data["files"]
+
+        # Verify _index.json written
+        assert (output_dir / "_index.json").exists()
+        index = json.loads((output_dir / "_index.json").read_text())
+        assert index["source_count"] == 2

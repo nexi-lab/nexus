@@ -118,7 +118,9 @@ def _create_wallet_provisioner() -> Any:
             flags=tb.AccountFlags.DEBITS_MUST_NOT_EXCEED_CREDITS,
         )
 
-        errors = _state["client"].create_accounts([account])
+        client = _state["client"]
+        assert client is not None
+        errors = client.create_accounts([account])
         # Ignore EXISTS (21) — idempotent operation
         if errors and errors[0].result not in (0, 21):
             raise RuntimeError(f"TigerBeetle account creation failed: {errors[0].result}")

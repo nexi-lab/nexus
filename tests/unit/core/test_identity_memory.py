@@ -10,10 +10,10 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from nexus.services.permissions.entity_registry import EntityRegistry
-from nexus.services.permissions.memory_permission_enforcer import MemoryPermissionEnforcer
 from nexus.core.memory_router import MemoryViewRouter
 from nexus.core.permissions import OperationContext, Permission
+from nexus.services.permissions.entity_registry import EntityRegistry
+from nexus.services.permissions.memory_permission_enforcer import MemoryPermissionEnforcer
 from nexus.storage.models import Base
 
 

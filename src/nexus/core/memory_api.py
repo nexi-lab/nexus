@@ -16,11 +16,11 @@ from typing import Any, Literal
 
 from sqlalchemy.orm import Session
 
-from nexus.services.permissions.entity_registry import EntityRegistry
-from nexus.services.permissions.memory_permission_enforcer import MemoryPermissionEnforcer
 from nexus.core.memory_router import MemoryViewRouter
 from nexus.core.permissions import OperationContext, Permission
 from nexus.core.temporal import parse_datetime, validate_temporal_params
+from nexus.services.permissions.entity_registry import EntityRegistry
+from nexus.services.permissions.memory_permission_enforcer import MemoryPermissionEnforcer
 
 # Importance decay configuration (Issue #1030)
 DEFAULT_DECAY_FACTOR = 0.95  # 5% decay per day

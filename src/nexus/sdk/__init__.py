@@ -131,6 +131,8 @@ from nexus.core.filesystem import NexusFilesystem as Filesystem
 from nexus.core.nexus_fs import NexusFS
 from nexus.core.permissions import OperationContext, PermissionEnforcer
 from nexus.core.rebac import WILDCARD_SUBJECT, Entity, ReBACTuple
+from nexus.core.router import NamespaceConfig
+from nexus.remote import RemoteNexusFS
 from nexus.services.permissions.rebac_manager_enhanced import (
     CheckResult,
     ConsistencyLevel,
@@ -139,8 +141,6 @@ from nexus.services.permissions.rebac_manager_enhanced import (
 from nexus.services.permissions.rebac_manager_enhanced import (
     EnhancedReBACManager as ReBACManager,
 )
-from nexus.core.router import NamespaceConfig
-from nexus.remote import RemoteNexusFS
 from nexus.skills import (
     Skill,
     SkillDependencyError,

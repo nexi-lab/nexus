@@ -25,8 +25,8 @@ from unittest.mock import MagicMock
 import pytest
 from sqlalchemy import create_engine
 
-from nexus.services.permissions.namespace_manager import MountEntry, NamespaceManager
 from nexus.core.persistent_view_store import PersistentView
+from nexus.services.permissions.namespace_manager import MountEntry, NamespaceManager
 from nexus.storage.models import Base
 
 # ---------------------------------------------------------------------------

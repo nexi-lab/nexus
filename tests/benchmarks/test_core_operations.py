@@ -475,7 +475,10 @@ class TestPermissionBenchmarks:
 
     def test_permission_check_bulk_rust(self, benchmark, benchmark_nexus):
         """Benchmark bulk permission checking in Rust (if available)."""
-        from nexus.services.permissions.rebac_fast import RUST_AVAILABLE, check_permissions_bulk_with_fallback
+        from nexus.services.permissions.rebac_fast import (
+            RUST_AVAILABLE,
+            check_permissions_bulk_with_fallback,
+        )
 
         # Create test data
         checks = [(("user", f"user_{i}"), "read", ("file", f"/file_{i}.txt")) for i in range(100)]

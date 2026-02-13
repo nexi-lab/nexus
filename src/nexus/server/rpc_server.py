@@ -511,8 +511,8 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         import uuid
         from datetime import timedelta
 
-        from nexus.services.permissions.entity_registry import EntityRegistry
         from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+        from nexus.services.permissions.entity_registry import EntityRegistry
 
         if not self.auth_provider or not hasattr(self.auth_provider, "session_factory"):
             raise RuntimeError("Database auth provider not configured")

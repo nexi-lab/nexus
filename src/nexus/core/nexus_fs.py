@@ -16,17 +16,17 @@ from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 
 if TYPE_CHECKING:
+    from nexus.core.memory_api import Memory
+    from nexus.core.mount_manager import MountManager
+    from nexus.core.permissions import PermissionEnforcer
+    from nexus.core.workspace_manager import WorkspaceManager
+    from nexus.core.workspace_registry import WorkspaceRegistry
     from nexus.services.permissions.deferred_permission_buffer import DeferredPermissionBuffer
     from nexus.services.permissions.dir_visibility_cache import DirectoryVisibilityCache
     from nexus.services.permissions.entity_registry import EntityRegistry
     from nexus.services.permissions.hierarchy_manager import HierarchyManager
-    from nexus.core.memory_api import Memory
-    from nexus.core.mount_manager import MountManager
-    from nexus.core.permissions import PermissionEnforcer
     from nexus.services.permissions.permissions_enhanced import AuditStore
     from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
-    from nexus.core.workspace_manager import WorkspaceManager
-    from nexus.core.workspace_registry import WorkspaceRegistry
 from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol
 from nexus.core.cache_store import CacheStoreABC, NullCacheStore
 from nexus.core.export_import import (
@@ -43,7 +43,6 @@ from nexus.core.nexus_fs_events import NexusFSEventsMixin
 from nexus.core.nexus_fs_mcp import NexusFSMCPMixin
 from nexus.core.nexus_fs_mounts import NexusFSMountsMixin
 from nexus.core.nexus_fs_oauth import NexusFSOAuthMixin
-from nexus.services.permissions.nexus_fs_rebac import NexusFSReBACMixin
 from nexus.core.nexus_fs_search import NexusFSSearchMixin
 from nexus.core.nexus_fs_share_links import NexusFSShareLinksMixin
 from nexus.core.nexus_fs_skills import NexusFSSkillsMixin
@@ -61,6 +60,7 @@ from nexus.services.llm_service import LLMService
 from nexus.services.mcp_service import MCPService
 from nexus.services.mount_service import MountService
 from nexus.services.oauth_service import OAuthService
+from nexus.services.permissions.nexus_fs_rebac import NexusFSReBACMixin
 from nexus.services.rebac_service import ReBACService
 from nexus.services.search_service import SearchService
 from nexus.storage.content_cache import ContentCache
@@ -1043,8 +1043,8 @@ class NexusFS(  # type: ignore[misc]
         Returns:
             Memory API instance
         """
-        from nexus.services.permissions.entity_registry import EntityRegistry
         from nexus.core.memory_api import Memory
+        from nexus.services.permissions.entity_registry import EntityRegistry
 
         # Get or create entity registry
         if self._entity_registry is None:

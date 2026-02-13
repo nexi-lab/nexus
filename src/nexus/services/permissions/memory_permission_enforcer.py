@@ -13,13 +13,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from nexus.services.permissions.entity_registry import EntityRegistry
 from nexus.core.memory_router import MemoryViewRouter
 from nexus.core.permissions import (
     OperationContext,
     Permission,
     PermissionEnforcer,
 )
+from nexus.services.permissions.entity_registry import EntityRegistry
 from nexus.storage.models import MemoryModel
 
 if TYPE_CHECKING:

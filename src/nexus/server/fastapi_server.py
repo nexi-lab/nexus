@@ -5340,8 +5340,8 @@ def _handle_admin_create_key(params: Any, context: Any) -> dict[str, Any]:
     import uuid
     from datetime import UTC, datetime, timedelta
 
-    from nexus.services.permissions.entity_registry import EntityRegistry
     from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+    from nexus.services.permissions.entity_registry import EntityRegistry
 
     _require_admin(context)
 

@@ -5,8 +5,8 @@ These tests verify async permission enforcement functionality.
 
 import pytest
 
-from nexus.services.permissions.async_permissions import AsyncPermissionEnforcer
 from nexus.core.permissions import OperationContext, Permission
+from nexus.services.permissions.async_permissions import AsyncPermissionEnforcer
 
 
 class TestAsyncPermissionEnforcer:

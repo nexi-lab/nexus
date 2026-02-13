@@ -26,8 +26,8 @@ use super::proto::nexus::raft::{
 };
 use super::{NodeAddress, Result, TransportError};
 use crate::raft::{
-    Command, CommandResult, FullStateMachine, RaftError, RaftNode, RaftNodeDriver,
-    WitnessStateMachine, ZoneRaftRegistry,
+    Command, CommandResult, FullStateMachine, RaftError, WitnessStateMachine, ZoneConsensus,
+    ZoneConsensusDriver, ZoneRaftRegistry,
 };
 use crate::storage::RedbStore;
 use prost::Message;
@@ -177,11 +177,11 @@ fn proto_command_to_internal(proto: RaftCommand) -> Option<Command> {
     }
 }
 
-/// Look up a zone's RaftNode from the registry, or return a gRPC error.
+/// Look up a zone's ZoneConsensus from the registry, or return a gRPC error.
 fn get_zone_node(
     registry: &ZoneRaftRegistry,
     zone_id: &str,
-) -> std::result::Result<RaftNode<FullStateMachine>, Status> {
+) -> std::result::Result<ZoneConsensus<FullStateMachine>, Status> {
     registry.get_node(zone_id).ok_or_else(|| {
         Status::not_found(format!(
             "zone '{}' not found on this node",
@@ -284,7 +284,7 @@ impl RaftService for RaftServiceImpl {
 
     /// Handle a raw raft-rs message forwarded from another node.
     ///
-    /// Routes by zone_id to the correct Raft group's RaftNode.
+    /// Routes by zone_id to the correct Raft group's ZoneConsensus.
     async fn step_message(
         &self,
         request: Request<StepMessageRequest>,
@@ -703,10 +703,10 @@ impl RaftClientService for RaftClientServiceImpl {
 // Witness Server (lightweight, vote-only — separate StateMachine type)
 // =============================================================================
 
-/// Shared state for the Witness server, backed by `RaftNode<WitnessStateMachine>` handle.
+/// Shared state for the Witness server, backed by `ZoneConsensus<WitnessStateMachine>` handle.
 pub struct WitnessServerState {
-    /// The RaftNode handle (Clone + Send + Sync).
-    pub node: RaftNode<WitnessStateMachine>,
+    /// The ZoneConsensus handle (Clone + Send + Sync).
+    pub node: ZoneConsensus<WitnessStateMachine>,
     /// This node's ID.
     pub node_id: u64,
     /// Known peers.
@@ -721,7 +721,7 @@ impl WitnessServerState {
         node_id: u64,
         db_path: &str,
         peers: Vec<NodeAddress>,
-    ) -> Result<(Self, RaftNodeDriver<WitnessStateMachine>)> {
+    ) -> Result<(Self, ZoneConsensusDriver<WitnessStateMachine>)> {
         use crate::raft::{RaftConfig, RaftStorage};
         let sm_path = std::path::Path::new(db_path).join("sm");
         let raft_path = std::path::Path::new(db_path).join("raft");
@@ -740,9 +740,9 @@ impl WitnessServerState {
         let peer_ids: Vec<u64> = peers.iter().map(|p| p.id).collect();
         let config = RaftConfig::witness(node_id, peer_ids);
 
-        let (handle, driver) =
-            RaftNode::new(config, raft_storage, state_machine, None).map_err(|e| {
-                TransportError::Connection(format!("Failed to create witness RaftNode: {}", e))
+        let (handle, driver) = ZoneConsensus::new(config, raft_storage, state_machine, None)
+            .map_err(|e| {
+                TransportError::Connection(format!("Failed to create witness ZoneConsensus: {}", e))
             })?;
 
         let peer_map: HashMap<u64, NodeAddress> = peers.into_iter().map(|p| (p.id, p)).collect();
@@ -763,7 +763,7 @@ pub struct RaftWitnessServer {
     config: ServerConfig,
     state: Arc<WitnessServerState>,
     /// The driver, held temporarily until passed to the transport loop.
-    driver: Option<RaftNodeDriver<WitnessStateMachine>>,
+    driver: Option<ZoneConsensusDriver<WitnessStateMachine>>,
 }
 
 impl RaftWitnessServer {
@@ -792,13 +792,13 @@ impl RaftWitnessServer {
         self.config.bind_address
     }
 
-    /// Get the RaftNode handle.
-    pub fn node(&self) -> RaftNode<WitnessStateMachine> {
+    /// Get the ZoneConsensus handle.
+    pub fn node(&self) -> ZoneConsensus<WitnessStateMachine> {
         self.state.node.clone()
     }
 
     /// Take the driver out (must be passed to the transport loop).
-    pub fn take_driver(&mut self) -> RaftNodeDriver<WitnessStateMachine> {
+    pub fn take_driver(&mut self) -> ZoneConsensusDriver<WitnessStateMachine> {
         self.driver.take().expect("driver already taken")
     }
 

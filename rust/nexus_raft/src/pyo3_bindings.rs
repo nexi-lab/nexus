@@ -578,8 +578,8 @@ impl PyMetastore {
 #[cfg(all(feature = "grpc", has_protos))]
 #[pyclass(name = "RaftConsensus")]
 pub struct PyRaftConsensus {
-    /// RaftNode handle (Clone + Send + Sync). The driver is owned by TransportLoop.
-    node: crate::raft::RaftNode<FullStateMachine>,
+    /// ZoneConsensus handle (Clone + Send + Sync). The driver is owned by TransportLoop.
+    node: crate::raft::ZoneConsensus<FullStateMachine>,
     /// Background Tokio runtime (owns the gRPC server + transport loop threads).
     runtime: tokio::runtime::Runtime,
     /// Shutdown signal sender.
@@ -1102,7 +1102,7 @@ impl PyZoneManager {
 
     /// Join an existing zone as a new Voter.
     ///
-    /// Creates a local RaftNode for this zone without bootstrapping ConfState.
+    /// Creates a local ZoneConsensus for this zone without bootstrapping ConfState.
     /// After calling this, send a JoinZone RPC to the leader — the leader will
     /// propose ConfChange(AddNode) and auto-send a snapshot.
     ///
@@ -1197,7 +1197,7 @@ impl Drop for PyZoneManager {
 #[cfg(all(feature = "grpc", has_protos))]
 #[pyclass(name = "ZoneHandle")]
 pub struct PyZoneHandle {
-    node: crate::raft::RaftNode<FullStateMachine>,
+    node: crate::raft::ZoneConsensus<FullStateMachine>,
     runtime_handle: tokio::runtime::Handle,
     zone_id: String,
 }

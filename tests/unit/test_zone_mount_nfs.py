@@ -366,7 +366,7 @@ class TestShareSubtreeNFSCompliance:
         )
         assert root.get("/project") is None  # implicit dir
 
-        new_store = mgr.add_store("new-zone")
+        mgr.add_store("new-zone")
         mgr.create_zone = lambda zid, peers=None: mgr.get_store(zid)
 
         zone_id = mgr.share_subtree("root", "/project", zone_id="new-zone")

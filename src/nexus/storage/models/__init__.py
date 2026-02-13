@@ -52,6 +52,9 @@ from nexus.storage.models.auth import OAuthCredentialModel as OAuthCredentialMod
 from nexus.storage.models.auth import UserModel as UserModel
 from nexus.storage.models.auth import UserOAuthAccountModel as UserOAuthAccountModel
 from nexus.storage.models.auth import ZoneModel as ZoneModel
+
+# Issue #1356: Reputation & Trust models
+from nexus.storage.models.dispute import DisputeModel as DisputeModel
 from nexus.storage.models.exchange_audit_log import ExchangeAuditLogModel as ExchangeAuditLogModel
 from nexus.storage.models.file_path import FilePathModel as FilePathModel
 
@@ -104,6 +107,8 @@ from nexus.storage.models.permissions import TigerResourceMapModel as TigerResou
 from nexus.storage.models.persistent_namespace_view import (
     PersistentNamespaceViewModel as PersistentNamespaceViewModel,
 )
+from nexus.storage.models.reputation_event import ReputationEventModel as ReputationEventModel
+from nexus.storage.models.reputation_score import ReputationScoreModel as ReputationScoreModel
 
 # Domain: Sharing
 from nexus.storage.models.sharing import ShareLinkAccessLogModel as ShareLinkAccessLogModel

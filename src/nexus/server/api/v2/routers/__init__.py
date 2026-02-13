@@ -11,6 +11,7 @@ from nexus.server.api.v2.routers import (
     pay,
     playbooks,
     reflect,
+    reputation,
     trajectories,
 )
 
@@ -26,4 +27,5 @@ __all__ = [
     "mobile_search",
     "operations",
     "pay",
+    "reputation",
 ]

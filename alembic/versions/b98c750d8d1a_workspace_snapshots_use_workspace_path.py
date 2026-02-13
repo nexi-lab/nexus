@@ -52,7 +52,9 @@ def upgrade() -> None:
     """)
 
     # Make workspace_path NOT NULL now that data is migrated
-    op.alter_column("workspace_snapshots", "workspace_path", nullable=False)
+    # batch_alter_table needed for SQLite (no native ALTER COLUMN support)
+    with op.batch_alter_table("workspace_snapshots") as batch_op:
+        batch_op.alter_column("workspace_path", nullable=False)
 
     # Create index on workspace_path
     op.create_index(
@@ -96,7 +98,8 @@ def downgrade() -> None:
     """)
 
     # Make agent_id NOT NULL (tenant_id stays nullable)
-    op.alter_column("workspace_snapshots", "agent_id", nullable=False)
+    with op.batch_alter_table("workspace_snapshots") as batch_op:
+        batch_op.alter_column("agent_id", nullable=False)
 
     # Recreate indexes
     op.create_index("ix_workspace_snapshots_tenant_id", "workspace_snapshots", ["tenant_id"])

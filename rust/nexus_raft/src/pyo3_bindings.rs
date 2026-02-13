@@ -610,7 +610,13 @@ impl PyRaftConsensus {
     ///     RuntimeError: If the node cannot be created or the server cannot start.
     #[new]
     #[pyo3(signature = (node_id, db_path, bind_addr="0.0.0.0:2126", advertise_addr=None, peers=vec![]))]
-    pub fn new(node_id: u64, db_path: &str, bind_addr: &str, advertise_addr: Option<&str>, peers: Vec<String>) -> PyResult<Self> {
+    pub fn new(
+        node_id: u64,
+        db_path: &str,
+        bind_addr: &str,
+        advertise_addr: Option<&str>,
+        peers: Vec<String>,
+    ) -> PyResult<Self> {
         use crate::raft::ZoneRaftRegistry;
         use crate::transport::{NodeAddress, RaftGrpcServer, ServerConfig};
         use std::sync::Arc;
@@ -1026,7 +1032,12 @@ impl PyZoneManager {
     ///         Defaults to "http://{bind_addr}" if not provided.
     #[new]
     #[pyo3(signature = (node_id, base_path, bind_addr="0.0.0.0:2126", advertise_addr=None))]
-    pub fn new(node_id: u64, base_path: &str, bind_addr: &str, advertise_addr: Option<&str>) -> PyResult<Self> {
+    pub fn new(
+        node_id: u64,
+        base_path: &str,
+        bind_addr: &str,
+        advertise_addr: Option<&str>,
+    ) -> PyResult<Self> {
         use crate::raft::ZoneRaftRegistry;
         use crate::transport::{RaftGrpcServer, ServerConfig};
         use std::sync::Arc;

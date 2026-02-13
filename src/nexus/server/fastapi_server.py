@@ -410,6 +410,9 @@ async def lifespan(_app: FastAPI) -> Any:
                 except Exception as e:
                     logger.warning(f"Failed to start event bus: {e}")
 
+            # Issue #1331: Store main event loop ref for cross-thread event publishing
+            _app.state.nexus_fs._main_event_loop = asyncio.get_running_loop()
+
             # Wire event_log into EventBus for WAL-first durability (Issue #1397).
             # EventBus.publish() handles: WAL append (if available) → Dragonfly fan-out.
             if _app.state.event_log is not None:
@@ -963,6 +966,15 @@ async def lifespan(_app: FastAPI) -> Any:
 
     # Cleanup
     logger.info("Shutting down FastAPI Nexus server...")
+
+    # Issue #1331: Stop event bus
+    _ebus_stop = getattr(_app.state.nexus_fs, "_event_bus", None) if _app.state.nexus_fs else None
+    if _ebus_stop is not None:
+        try:
+            await _ebus_stop.stop()
+            logger.info("Event bus stopped")
+        except Exception as e:
+            logger.warning(f"Error shutting down event bus: {e}")
 
     # Issue #788: Stop upload cleanup task
     if _upload_cleanup_task:

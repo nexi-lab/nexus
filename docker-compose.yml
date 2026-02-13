@@ -145,6 +145,38 @@ services:
         max-file: "3"
 
   # ============================================================================
+  # NATS JetStream - Durable Event Bus (Issue #1331)
+  # Replaces Dragonfly pub/sub for event delivery.
+  # Provides: durable streams, replay, consumer groups, exactly-once semantics.
+  # Dragonfly remains for hot caching only.
+  # ============================================================================
+  nats:
+    image: nats:2.10-alpine
+    container_name: nexus-nats
+    restart: unless-stopped
+    profiles:
+      - events  # Only starts with: docker compose --profile events up
+    command: ["--jetstream", "--store_dir=/data", "-m", "8222"]
+    ports:
+      - "${NATS_PORT:-4222}:4222"    # Client connections
+      - "${NATS_MONITOR_PORT:-8222}:8222"  # HTTP monitoring
+    volumes:
+      - nats-data:/data
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget -q --spider http://localhost:8222/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - nexus-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================================================
   # NOTE: dragonfly-coordination has been REMOVED (Architecture Change)
   #
   # Previous role:
@@ -244,6 +276,8 @@ volumes:
   nexus-data:
     driver: local
   dragonfly-data:
+    driver: local
+  nats-data:
     driver: local
   nexus-test-data:
     driver: local

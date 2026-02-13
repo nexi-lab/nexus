@@ -454,18 +454,18 @@ class X402Client:
         import httpx
 
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(
-                    f"{self.facilitator_url}/settle",
-                    json={
-                        "from": self.wallet_address,
-                        "to": to_address,
-                        "amount": str(usdc_to_micro(amount)),
-                        "currency": currency,
-                        "network": self.caip2_network,
-                    },
-                    timeout=60.0,
-                )
+            client = await self._get_http_client()
+            response = await client.post(
+                f"{self.facilitator_url}/settle",
+                json={
+                    "from": self.wallet_address,
+                    "to": to_address,
+                    "amount": str(usdc_to_micro(amount)),
+                    "currency": currency,
+                    "network": self.caip2_network,
+                },
+                timeout=60.0,
+            )
 
             result = response.json()
 
@@ -515,59 +515,55 @@ class X402Client:
         Returns:
             Tuple of (response, receipt). Receipt is None if no payment needed.
         """
-        import httpx
-
         headers = headers or {}
 
-        async with httpx.AsyncClient() as client:
-            # First request
-            response = await client.request(
-                method=method,
-                url=url,
-                headers=headers,
-                content=body,
-                timeout=30.0,
-            )
+        client = await self._get_http_client()
+        # First request
+        response = await client.request(
+            method=method,
+            url=url,
+            headers=headers,
+            content=body,
+            timeout=30.0,
+        )
 
-            # If not 402, return directly
-            if response.status_code != 402:
-                return response, None
+        # If not 402, return directly
+        if response.status_code != 402:
+            return response, None
 
-            # Parse payment required header
-            payment_required = response.headers.get("X-Payment-Required")
-            if not payment_required:
-                return response, None
+        # Parse payment required header
+        payment_required = response.headers.get("X-Payment-Required")
+        if not payment_required:
+            return response, None
 
-            try:
-                decoded = base64.b64decode(payment_required).decode()
-                payment_details = json.loads(decoded)
-            except (ValueError, json.JSONDecodeError):
-                return response, None
+        try:
+            decoded = base64.b64decode(payment_required).decode()
+            payment_details = json.loads(decoded)
+        except (ValueError, json.JSONDecodeError):
+            return response, None
 
-            # Make payment
-            receipt = await self.pay(
-                to_address=payment_details["address"],
-                amount=Decimal(payment_details["amount"]),
-                currency=payment_details.get("currency", "USDC"),
-            )
+        # Make payment
+        receipt = await self.pay(
+            to_address=payment_details["address"],
+            amount=Decimal(payment_details["amount"]),
+            currency=payment_details.get("currency", "USDC"),
+        )
 
-            # Retry request with payment proof
-            # In real x402, this would include the signed payment in X-Payment header
-            # For now, we assume the facilitator handled settlement
-            retry_response = await client.request(
-                method=method,
-                url=url,
-                headers={
-                    **headers,
-                    "X-Payment": base64.b64encode(
-                        json.dumps({"tx_hash": receipt.tx_hash}).encode()
-                    ).decode(),
-                },
-                content=body,
-                timeout=30.0,
-            )
+        # Retry request with payment proof
+        retry_response = await client.request(
+            method=method,
+            url=url,
+            headers={
+                **headers,
+                "X-Payment": base64.b64encode(
+                    json.dumps({"tx_hash": receipt.tx_hash}).encode()
+                ).decode(),
+            },
+            content=body,
+            timeout=30.0,
+        )
 
-            return retry_response, receipt
+        return retry_response, receipt
 
     # =========================================================================
     # Credit Topup (x402 → TigerBeetle)

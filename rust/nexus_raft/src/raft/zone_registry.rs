@@ -196,9 +196,12 @@ impl ZoneRaftRegistry {
             tls: self.tls.clone(),
             ..Default::default()
         };
-        let transport_loop =
-            TransportLoop::new(driver, shared_peers.clone(), RaftClientPool::with_config(client_config))
-                .with_zone_id(zone_id.to_string());
+        let transport_loop = TransportLoop::new(
+            driver,
+            shared_peers.clone(),
+            RaftClientPool::with_config(client_config),
+        )
+        .with_zone_id(zone_id.to_string());
 
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         let transport_handle = runtime_handle.spawn(transport_loop.run(shutdown_rx));

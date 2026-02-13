@@ -207,6 +207,10 @@ Map **data requiring properties** ↔ **storage providing properties**.
   - Ephemeral KV + Pub/Sub (CacheStore): ✅ pub/sub native, ✅ ephemeral, ✅ high throughput, ✅ EC
   - **Decision**: **CacheStore** — pub/sub is the dominant requirement. Events are fire-and-forget notifications; missed events can be recovered from SSOT (Metastore).
   - ⚠️ **Gap**: EventBusProtocol currently has NO in-memory impl. Need `InMemoryEventBus` for kernel-only/dev mode.
+- **FileEvent dual-storage (Issue #1397 — WAL-first pattern)**:
+  - **CacheStore** (EventBus / Dragonfly): Ephemeral pub/sub for real-time fan-out notifications. Fire-and-forget; subscribers receive events as they happen.
+  - **WAL / RecordStore** (EventLog): Durable persistence for crash recovery and ordered replay. WAL-first: events are persisted *before* fan-out to ensure no event loss on crash.
+  - These are complementary, not redundant: EventBus handles the *delivery* (ephemeral pub/sub), EventLog handles the *record* (durable append-only log). EventLog lives in `nexus.services.event_log/` (not kernel) because it depends on RecordStore (PostgreSQL) or WAL drivers — service-layer concerns per Four Pillars.
 - **Subscription/Delivery** DB models: ❓ STILL MISSING — need RecordStore models (Task #12)
 
 ---

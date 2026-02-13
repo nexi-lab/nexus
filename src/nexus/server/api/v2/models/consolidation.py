@@ -23,9 +23,7 @@ class ConsolidateRequest(ApiModel):
         100,
         ge=1,
         le=200,
-        description=(
-            "Max memories to process. Consolidation is O(n^2) on this value."
-        ),
+        description=("Max memories to process. Consolidation is O(n^2) on this value."),
     )
 
 

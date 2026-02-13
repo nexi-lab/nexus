@@ -613,7 +613,10 @@ impl PyRaftConsensus {
     ///     RuntimeError: If the node cannot be created or the server cannot start.
     #[new]
     #[pyo3(signature = (node_id, db_path, bind_addr="0.0.0.0:2126", advertise_addr=None, peers=vec![], tls_cert_path=None, tls_key_path=None, tls_ca_path=None))]
-    #[expect(clippy::too_many_arguments, reason = "PyO3 constructor needs all params exposed to Python")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "PyO3 constructor needs all params exposed to Python"
+    )]
     pub fn new(
         node_id: u64,
         db_path: &str,
@@ -698,12 +701,10 @@ impl PyRaftConsensus {
             tls: tls_config,
             ..Default::default()
         };
-        let self_addr = advertise_addr
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| {
-                let scheme = if use_tls { "https" } else { "http" };
-                format!("{}://{}", scheme, bind_addr)
-            });
+        let self_addr = advertise_addr.map(|s| s.to_string()).unwrap_or_else(|| {
+            let scheme = if use_tls { "https" } else { "http" };
+            format!("{}://{}", scheme, bind_addr)
+        });
         let server = RaftGrpcServer::new(registry.clone(), config, self_addr);
         let shutdown_rx_server = shutdown_rx.clone();
         runtime.spawn(async move {
@@ -1139,12 +1140,10 @@ impl PyZoneManager {
             ..Default::default()
         };
         let use_tls = tls_config.is_some();
-        let self_addr = advertise_addr
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| {
-                let scheme = if use_tls { "https" } else { "http" };
-                format!("{}://{}", scheme, bind_addr)
-            });
+        let self_addr = advertise_addr.map(|s| s.to_string()).unwrap_or_else(|| {
+            let scheme = if use_tls { "https" } else { "http" };
+            format!("{}://{}", scheme, bind_addr)
+        });
         let server = RaftGrpcServer::new(registry.clone(), config, self_addr);
         let shutdown_rx_server = shutdown_rx.clone();
         runtime.spawn(async move {

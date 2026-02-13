@@ -20,9 +20,9 @@ use super::proto::nexus::raft::{
     raft_service_server::{RaftService, RaftServiceServer},
     AppendEntriesRequest, AppendEntriesResponse, ClusterConfig as ProtoClusterConfig,
     GetClusterInfoRequest, GetClusterInfoResponse, GetMetadataResult, InstallSnapshotResponse,
-    InviteZoneRequest, InviteZoneResponse, JoinZoneRequest, JoinZoneResponse,
-    ListMetadataResult, LockInfoResult, LockResult, NodeInfo as ProtoNodeInfo, ProposeRequest,
-    ProposeResponse, QueryRequest, QueryResponse, RaftCommand, RaftQueryResponse, RaftResponse,
+    InviteZoneRequest, InviteZoneResponse, JoinZoneRequest, JoinZoneResponse, ListMetadataResult,
+    LockInfoResult, LockResult, NodeInfo as ProtoNodeInfo, ProposeRequest, ProposeResponse,
+    QueryRequest, QueryResponse, RaftCommand, RaftQueryResponse, RaftResponse,
     ReplicateEntriesRequest, ReplicateEntriesResponse, SnapshotChunk, StepMessageRequest,
     StepMessageResponse, TransferLeaderRequest, TransferLeaderResponse, VoteRequest, VoteResponse,
 };
@@ -83,7 +83,11 @@ impl RaftGrpcServer {
     /// * `registry` — Zone registry for routing requests.
     /// * `config` — Server configuration.
     /// * `self_address` — This node's gRPC address (e.g., "http://10.0.0.2:2026").
-    pub fn new(registry: Arc<ZoneRaftRegistry>, config: ServerConfig, self_address: String) -> Self {
+    pub fn new(
+        registry: Arc<ZoneRaftRegistry>,
+        config: ServerConfig,
+        self_address: String,
+    ) -> Self {
         Self {
             config,
             registry,
@@ -794,11 +798,10 @@ impl RaftClientService for RaftClientServiceImpl {
             endpoint: req.inviter_address.clone(),
         };
         let runtime_handle = tokio::runtime::Handle::current();
-        if let Err(e) = self.registry.join_zone(
-            &req.zone_id,
-            vec![inviter_peer],
-            &runtime_handle,
-        ) {
+        if let Err(e) = self
+            .registry
+            .join_zone(&req.zone_id, vec![inviter_peer], &runtime_handle)
+        {
             return Ok(Response::new(InviteZoneResponse {
                 success: false,
                 error: Some(format!("Failed to create local zone replica: {}", e)),
@@ -900,10 +903,7 @@ impl RaftClientService for RaftClientServiceImpl {
         let key = mount_metadata.path.clone();
         let value = prost::Message::encode_to_vec(&mount_metadata);
 
-        match root_node
-            .propose(Command::SetMetadata { key, value })
-            .await
-        {
+        match root_node.propose(Command::SetMetadata { key, value }).await {
             Ok(_) => {
                 tracing::info!(
                     zone = req.zone_id,
@@ -921,10 +921,7 @@ impl RaftClientService for RaftClientServiceImpl {
                 // Zone joined but DT_MOUNT failed — partial success.
                 Ok(Response::new(InviteZoneResponse {
                     success: false,
-                    error: Some(format!(
-                        "Zone joined but DT_MOUNT creation failed: {}",
-                        e
-                    )),
+                    error: Some(format!("Zone joined but DT_MOUNT creation failed: {}", e)),
                     node_id,
                     node_address: self.self_address.clone(),
                 }))

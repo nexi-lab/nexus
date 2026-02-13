@@ -27,6 +27,7 @@ References:
     - Issue #1341: Context manifest with deterministic pre-execution
 """
 
+from nexus.core.context_manifest.executors.file_glob import FileGlobExecutor
 from nexus.core.context_manifest.models import (
     ContextSource,
     ContextSourceProtocol,
@@ -58,4 +59,6 @@ __all__ = [
     # Template
     "ALLOWED_VARIABLES",
     "resolve_template",
+    # Executors (Issue #1427)
+    "FileGlobExecutor",
 ]

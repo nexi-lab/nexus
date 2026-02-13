@@ -73,7 +73,7 @@ jobs:
 
       - name: Build Rust extension (nexus_fast)
         run: |
-          cd rust/nexus_fast
+          cd rust/nexus_pyo3
           pip install maturin
           maturin develop --release
         if: matrix.os != 'windows-latest'

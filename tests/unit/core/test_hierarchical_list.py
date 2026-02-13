@@ -6,21 +6,11 @@ when listing the root directory.
 """
 
 import pytest
-from sqlalchemy import create_engine
 
 from nexus.backends.local import LocalBackend
 from nexus.factory import create_nexus_fs
-from nexus.storage.models import Base
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-
-
-@pytest.fixture
-def engine():
-    """Create in-memory SQLite database for testing."""
-    engine = create_engine("sqlite:///:memory:")
-    Base.metadata.create_all(engine)
-    return engine
 
 
 @pytest.fixture
@@ -39,6 +29,8 @@ def nexus_fs(tmp_path):
         record_store=SQLAlchemyRecordStore(db_path=db_path),
         enforce_permissions=True,
         allow_admin_bypass=True,  # Allow admin to create test setup
+        enable_deferred_permissions=False,  # Avoid background thread race on macOS SQLite
+        enable_tiger_cache=False,  # Disable Tiger bitmap cache for deterministic permission checks
     )
     yield fs
     fs.close()

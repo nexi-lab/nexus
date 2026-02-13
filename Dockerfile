@@ -55,7 +55,7 @@ RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
 
 # ---------- Copy project files ----------
 WORKDIR /build
-COPY pyproject.toml uv.lock* README.md Cargo.toml ./
+COPY pyproject.toml uv.lock* README.md Cargo.toml Cargo.lock ./
 COPY src/ ./src/
 COPY alembic/ ./alembic/
 COPY alembic/alembic.ini ./alembic.ini
@@ -81,10 +81,10 @@ RUN if [ "$USE_CHINA_MIRROR" = "true" ]; then \
 COPY proto/ ./proto/
 COPY rust/ ./rust/
 
-# Build nexus_fast
-WORKDIR /build/rust/nexus_fast
-RUN maturin build --release && \
-    pip install --no-cache-dir target/wheels/nexus_fast-*-manylinux*.whl
+# Build nexus_fast (crate renamed to nexus_pyo3, but produces nexus_fast wheel)
+WORKDIR /build/rust/nexus_pyo3
+RUN maturin build --release --out /build/dist && \
+    pip install --no-cache-dir /build/dist/nexus_fast-*.whl
 
 # Build nexus_raft
 WORKDIR /build/rust/nexus_raft

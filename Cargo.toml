@@ -1,24 +1,26 @@
-[package]
-name = "nexus_fast"
-version = "0.1.0"
-edition = "2021"
+[workspace]
+resolver = "2"
+members = [
+    "rust/nexus_core",
+    "rust/nexus_pyo3",
+    "rust/nexus_wal",
+    "rust/nexus_tasks",
+]
+# nexus_raft excluded: uses pyo3 0.22 (links conflict with pyo3 0.27 in nexus_pyo3)
+# It builds independently via `cd rust/nexus_raft && cargo build`
+exclude = ["rust/nexus_raft"]
 
-[lib]
-name = "_nexus_fast"
-crate-type = ["cdylib"]
-path = "src/rust/lib.rs"
-
-[dependencies]
-pyo3 = { version = "0.27", features = ["extension-module", "hashbrown"] }
+[workspace.dependencies]
+nexus_core = { path = "rust/nexus_core" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-ahash = "0.8"  # Fast hashmap for better performance
-regex = "1.10"  # Fast regex matching
-encoding_rs = "0.8"  # Encoding detection for text files
-memchr = "2.7"  # Fast byte searching for newlines
-blake3 = "1.5"  # Fast cryptographic hashing for CAS
-rayon = "1.10"  # Parallel iterators for batch operations
-simsimd = "6"  # SIMD-accelerated vector similarity (Issue #952)
+ahash = "0.8"
+regex = "1.10"
+memchr = "2.7"
+roaring = "0.10"
+globset = "0.4"
+blake3 = "1.5"
+string-interner = "0.17"
 
 [profile.release]
 lto = true

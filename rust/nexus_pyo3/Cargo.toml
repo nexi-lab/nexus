@@ -1,0 +1,29 @@
+[package]
+name = "nexus_pyo3"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "nexus_fast"
+crate-type = ["cdylib"]
+
+[dependencies]
+nexus_core = { workspace = true }
+pyo3 = { version = "0.27.2", features = ["extension-module", "hashbrown"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+ahash = { workspace = true }
+regex = { workspace = true }
+memchr = { workspace = true }
+globset = { workspace = true }
+blake3 = { workspace = true }
+string-interner = { workspace = true }
+roaring = { workspace = true }
+encoding_rs = "0.8.35"
+rayon = "1.11"
+bloomfilter = "3.0"
+memmap2 = "0.9.9"
+dashmap = "6.1"
+lru = "0.16"
+simdutf8 = "0.1"
+simsimd = "6"

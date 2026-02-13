@@ -418,6 +418,103 @@ class ZoneManager:
             return 0
         return root.i_links_count
 
+    def share_subtree(
+        self,
+        parent_zone_id: str,
+        path: str,
+        peers: list[str] | None = None,
+        zone_id: str | None = None,
+    ) -> str:
+        """Share a subtree by creating a new zone and copying metadata into it.
+
+        Steps:
+        1. Create a new zone (auto UUID if zone_id not provided)
+        2. List all entries under path in parent zone
+        3. Copy each entry to new zone (rebase paths: /a/b/foo → /foo)
+        4. Replace path with DT_MOUNT in parent zone (shadows old entries)
+        NO deletion — old entries are harmless, shadowed by DT_MOUNT.
+
+        Args:
+            parent_zone_id: Zone containing the subtree to share.
+            path: Path prefix to share (e.g., "/usr/alice/projectA").
+            peers: Peer addresses for the new zone.
+            zone_id: Explicit zone ID (auto-generated UUID if None).
+
+        Returns:
+            The new zone's ID.
+
+        Raises:
+            RuntimeError: If parent zone not found.
+            ValueError: If path is already a DT_MOUNT.
+        """
+        import uuid
+
+        parent_store = self.get_store(parent_zone_id)
+        if parent_store is None:
+            raise RuntimeError(f"Parent zone '{parent_zone_id}' not found")
+
+        # Check path isn't already a mount
+        existing = parent_store.get(path)
+        if existing is not None and existing.is_mount:
+            raise ValueError(f"'{path}' is already a DT_MOUNT in zone '{parent_zone_id}'")
+
+        # Generate zone ID
+        new_zone_id = zone_id or str(uuid.uuid4())
+
+        # Step 1: Create new zone
+        new_store = self.create_zone(new_zone_id, peers=peers)
+
+        # Step 2: List all entries under path (including path itself if it's a dir)
+        # Normalize: ensure path ends without trailing slash for prefix matching
+        prefix = path.rstrip("/")
+        entries = list(parent_store.list_iter(prefix=prefix, recursive=True))
+
+        # Step 3: Copy entries to new zone with path rebasing
+        from dataclasses import replace
+
+        for entry in entries:
+            if entry.path == prefix:
+                # The root dir becomes "/" in the new zone
+                rebased = replace(
+                    entry,
+                    path="/",
+                    zone_id=new_zone_id,
+                    entry_type=DT_DIR,
+                    i_links_count=1,
+                )
+            else:
+                # Rebase: /usr/alice/projectA/foo → /foo
+                relative = entry.path[len(prefix) :]
+                if not relative.startswith("/"):
+                    relative = "/" + relative
+                rebased = replace(entry, path=relative, zone_id=new_zone_id)
+            new_store.put(rebased)
+
+        # Ensure new zone has a root "/" even if no entries existed
+        if new_store.get("/") is None:
+            root_entry = FileMetadata(
+                path="/",
+                backend_name="virtual",
+                physical_path="",
+                size=0,
+                entry_type=DT_DIR,
+                zone_id=new_zone_id,
+                i_links_count=1,
+            )
+            new_store.put(root_entry)
+
+        # Step 4: Create DT_MOUNT at path in parent zone (shadows old entries)
+        self.mount(parent_zone_id, path, new_zone_id)
+
+        logger.info(
+            "Shared subtree '%s' from zone '%s' → new zone '%s' (%d entries copied)",
+            path,
+            parent_zone_id,
+            new_zone_id,
+            len(entries),
+        )
+        return new_zone_id
+
     def shutdown(self) -> None:
         """Shut down all zones and the gRPC server."""
         self._py_mgr.shutdown()

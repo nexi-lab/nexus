@@ -22,8 +22,8 @@ sys.path.insert(0, str(src_dir))
 from sqlalchemy import create_engine, select  # noqa: E402
 from sqlalchemy.orm import sessionmaker  # noqa: E402
 
-from nexus.services.permissions.entity_registry import EntityRegistry  # noqa: E402
 from nexus.server.auth.database_key import DatabaseAPIKeyAuth  # noqa: E402
+from nexus.services.permissions.entity_registry import EntityRegistry  # noqa: E402
 from nexus.storage.models import APIKeyModel  # noqa: E402
 
 

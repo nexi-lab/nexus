@@ -5,6 +5,7 @@ Quarantined tests are skipped by default; pass --run-quarantine to include them.
 """
 
 import pytest
+import structlog
 
 
 def pytest_addoption(parser):
@@ -27,6 +28,14 @@ def pytest_collection_modifyitems(config, items):
 # ---------------------------------------------------------------------------
 # Autouse fixtures for test isolation (reset module-level singletons)
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _reset_structlog_context():
+    """Reset structlog contextvars between tests for isolation."""
+    structlog.contextvars.clear_contextvars()
+    yield
+    structlog.contextvars.clear_contextvars()
 
 
 @pytest.fixture(autouse=True)

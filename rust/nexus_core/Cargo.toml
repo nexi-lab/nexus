@@ -1,0 +1,25 @@
+[package]
+name = "nexus_core"
+version = "0.1.0"
+edition = "2021"
+description = "Portable Rust kernel for Nexus — WASM/edge compatible"
+
+[lib]
+name = "nexus_core"
+crate-type = ["rlib"]
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+ahash = { workspace = true }
+regex = { workspace = true }
+memchr = { workspace = true }
+roaring = { workspace = true }
+globset = { workspace = true }
+blake3 = { workspace = true }
+string-interner = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "0.3", features = ["wasm_js"] }
+
+[dev-dependencies]

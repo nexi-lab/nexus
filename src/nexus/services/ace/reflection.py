@@ -9,9 +9,9 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from nexus.services.ace.trajectory import TrajectoryManager
 from nexus.llm.message import Message, MessageRole
 from nexus.llm.provider import LLMProvider
+from nexus.services.ace.trajectory import TrajectoryManager
 from nexus.storage.models import MemoryModel
 
 

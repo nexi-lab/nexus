@@ -24,10 +24,10 @@ from typing import TYPE_CHECKING, Any
 from nexus.search.fusion import normalize_scores_minmax
 
 if TYPE_CHECKING:
-    from nexus.services.ace.memory_hierarchy import HierarchicalMemoryManager
     from nexus.search.embeddings import EmbeddingProvider
     from nexus.search.graph_store import Entity, GraphStore, Relationship
     from nexus.search.semantic import SemanticSearch, SemanticSearchResult
+    from nexus.services.ace.memory_hierarchy import HierarchicalMemoryManager
 
 logger = logging.getLogger(__name__)
 

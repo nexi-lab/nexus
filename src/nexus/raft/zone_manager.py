@@ -54,6 +54,10 @@ class ZoneManager:
         node_id: int,
         base_path: str,
         bind_addr: str = "0.0.0.0:2126",
+        *,
+        tls_cert_path: str | None = None,
+        tls_key_path: str | None = None,
+        tls_ca_path: str | None = None,
     ):
         PyZoneManager = _get_py_zone_manager()
         if PyZoneManager is None:
@@ -62,11 +66,21 @@ class ZoneManager:
                 "Build with: maturin develop -m rust/nexus_raft/Cargo.toml --features full"
             )
 
-        self._py_mgr = PyZoneManager(node_id, base_path, bind_addr)
+        self._py_mgr = PyZoneManager(
+            node_id,
+            base_path,
+            bind_addr,
+            tls_cert_path=tls_cert_path,
+            tls_key_path=tls_key_path,
+            tls_ca_path=tls_ca_path,
+        )
         self._stores: dict[str, RaftMetadataStore] = {}
         self._node_id = node_id
         self._base_path = base_path
         self._root_zone_id: str | None = None
+        self._tls_cert_path = tls_cert_path
+        self._tls_key_path = tls_key_path
+        self._tls_ca_path = tls_ca_path
 
     def bootstrap(
         self,

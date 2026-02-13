@@ -28,6 +28,8 @@ pub struct ClientConfig {
     pub keep_alive_interval: Duration,
     /// Keep-alive timeout.
     pub keep_alive_timeout: Duration,
+    /// Optional TLS configuration for mTLS. None = plain HTTP/2.
+    pub tls: Option<super::TlsConfig>,
 }
 
 impl Default for ClientConfig {
@@ -37,6 +39,7 @@ impl Default for ClientConfig {
             request_timeout: Duration::from_secs(10),
             keep_alive_interval: Duration::from_secs(10),
             keep_alive_timeout: Duration::from_secs(20),
+            tls: None,
         }
     }
 }
@@ -116,17 +119,31 @@ pub struct RaftClient {
 impl RaftClient {
     /// Connect to a Raft node.
     pub async fn connect(endpoint: &str, config: ClientConfig) -> Result<Self> {
-        tracing::info!("Connecting to Raft node at {}", endpoint);
+        tracing::info!(
+            "Connecting to Raft node at {} (tls={})",
+            endpoint,
+            config.tls.is_some()
+        );
 
-        let channel = Endpoint::from_shared(endpoint.to_string())
+        let mut ep = Endpoint::from_shared(endpoint.to_string())
             .map_err(|e| TransportError::InvalidAddress(e.to_string()))?
             .connect_timeout(config.connect_timeout)
             .timeout(config.request_timeout)
             .http2_keep_alive_interval(config.keep_alive_interval)
-            .keep_alive_timeout(config.keep_alive_timeout)
-            .connect()
-            .await?;
+            .keep_alive_timeout(config.keep_alive_timeout);
 
+        if let Some(ref tls) = config.tls {
+            let identity = tonic::transport::Identity::from_pem(&tls.cert_pem, &tls.key_pem);
+            let ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
+            let tls_config = tonic::transport::ClientTlsConfig::new()
+                .identity(identity)
+                .ca_certificate(ca);
+            ep = ep
+                .tls_config(tls_config)
+                .map_err(|e| TransportError::Connection(format!("TLS config error: {}", e)))?;
+        }
+
+        let channel = ep.connect().await?;
         let inner = RaftServiceClient::new(channel);
 
         tracing::info!("Connected to Raft node at {}", endpoint);
@@ -328,17 +345,31 @@ pub struct RaftApiClient {
 impl RaftApiClient {
     /// Connect to a Raft cluster node.
     pub async fn connect(endpoint: &str, config: ClientConfig) -> Result<Self> {
-        tracing::info!("Connecting to Raft API at {}", endpoint);
+        tracing::info!(
+            "Connecting to Raft API at {} (tls={})",
+            endpoint,
+            config.tls.is_some()
+        );
 
-        let channel = Endpoint::from_shared(endpoint.to_string())
+        let mut ep = Endpoint::from_shared(endpoint.to_string())
             .map_err(|e| TransportError::InvalidAddress(e.to_string()))?
             .connect_timeout(config.connect_timeout)
             .timeout(config.request_timeout)
             .http2_keep_alive_interval(config.keep_alive_interval)
-            .keep_alive_timeout(config.keep_alive_timeout)
-            .connect()
-            .await?;
+            .keep_alive_timeout(config.keep_alive_timeout);
 
+        if let Some(ref tls) = config.tls {
+            let identity = tonic::transport::Identity::from_pem(&tls.cert_pem, &tls.key_pem);
+            let ca = tonic::transport::Certificate::from_pem(&tls.ca_pem);
+            let tls_config = tonic::transport::ClientTlsConfig::new()
+                .identity(identity)
+                .ca_certificate(ca);
+            ep = ep
+                .tls_config(tls_config)
+                .map_err(|e| TransportError::Connection(format!("TLS config error: {}", e)))?;
+        }
+
+        let channel = ep.connect().await?;
         let inner = RaftClientServiceClient::new(channel);
 
         tracing::info!("Connected to Raft API at {}", endpoint);

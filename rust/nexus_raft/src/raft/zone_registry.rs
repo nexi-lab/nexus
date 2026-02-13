@@ -18,7 +18,10 @@
 
 use crate::raft::{FullStateMachine, RaftConfig, RaftStorage, ReplicationLog, ZoneConsensus};
 use crate::storage::RedbStore;
-use crate::transport::{NodeAddress, RaftClientPool, SharedPeerMap, TransportError, TransportLoop};
+use crate::transport::{
+    ClientConfig, NodeAddress, RaftClientPool, SharedPeerMap, TlsConfig, TransportError,
+    TransportLoop,
+};
 use dashmap::DashMap;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -54,6 +57,8 @@ pub struct ZoneRaftRegistry {
     base_path: PathBuf,
     /// This node's global ID (same across all zones on this node).
     node_id: u64,
+    /// Optional TLS config for outbound client connections (shared across all zones).
+    tls: Option<TlsConfig>,
 }
 
 impl ZoneRaftRegistry {
@@ -67,6 +72,17 @@ impl ZoneRaftRegistry {
             zones: DashMap::new(),
             base_path,
             node_id,
+            tls: None,
+        }
+    }
+
+    /// Create a new empty registry with TLS configuration.
+    pub fn with_tls(base_path: PathBuf, node_id: u64, tls: Option<TlsConfig>) -> Self {
+        Self {
+            zones: DashMap::new(),
+            base_path,
+            node_id,
+            tls,
         }
     }
 
@@ -176,8 +192,12 @@ impl ZoneRaftRegistry {
 
         driver.set_peer_map(shared_peers.clone());
 
+        let client_config = ClientConfig {
+            tls: self.tls.clone(),
+            ..Default::default()
+        };
         let transport_loop =
-            TransportLoop::new(driver, shared_peers.clone(), RaftClientPool::new())
+            TransportLoop::new(driver, shared_peers.clone(), RaftClientPool::with_config(client_config))
                 .with_zone_id(zone_id.to_string());
 
         let (shutdown_tx, shutdown_rx) = watch::channel(false);

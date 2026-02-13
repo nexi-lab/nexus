@@ -46,7 +46,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "macros", "signal"], optional = true }
 
 # gRPC (general-purpose, reusable for Raft and webhooks)
-tonic = { version = "0.12", optional = true }
+# tls feature enables rustls for mTLS (mutual TLS) transport encryption.
+tonic = { version = "0.12", features = ["tls"], optional = true }
 prost = { version = "0.13", optional = true }
 
 # Utilities

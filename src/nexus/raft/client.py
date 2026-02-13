@@ -84,6 +84,11 @@ class RaftClientConfig:
     keepalive_time_ms: int = 10000
     keepalive_timeout_ms: int = 5000
 
+    # TLS settings (mTLS)
+    tls_cert_path: str | None = None
+    tls_key_path: str | None = None
+    tls_ca_path: str | None = None
+
 
 class RaftClient:
     """Async gRPC client for Raft cluster (client-facing API).
@@ -149,7 +154,20 @@ class RaftClient:
             ("grpc.http2.max_pings_without_data", 0),
         ]
 
-        self._channel = grpc_aio.insecure_channel(self.address, options=options)
+        if self.config.tls_cert_path:
+            from pathlib import Path
+
+            cert = Path(self.config.tls_cert_path).read_bytes()
+            key = Path(self.config.tls_key_path).read_bytes()
+            ca = Path(self.config.tls_ca_path).read_bytes()
+            creds = grpc.ssl_channel_credentials(
+                root_certificates=ca,
+                private_key=key,
+                certificate_chain=cert,
+            )
+            self._channel = grpc_aio.secure_channel(self.address, creds, options=options)
+        else:
+            self._channel = grpc_aio.insecure_channel(self.address, options=options)
         # Use RaftClientService (client-facing API), NOT RaftService (internal)
         self._stub = transport_pb2_grpc.RaftClientServiceStub(self._channel)
 

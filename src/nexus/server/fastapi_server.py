@@ -32,6 +32,7 @@ import time
 from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from anyio import to_thread
@@ -75,6 +76,7 @@ from nexus.server.error_handlers import (  # noqa: E402
 from nexus.server.path_utils import (
     unscope_internal_dict,
     unscope_internal_path,
+    unscope_result,
 )
 from nexus.server.protocol import (
     RPCErrorCode,
@@ -306,6 +308,8 @@ class AppState:
         self.write_back_service: Any = None
         # Task Queue Runner (Issue #574)
         self.task_runner: Any = None
+        # Event Log WAL for durable event persistence (Issue #1397)
+        self.event_log: Any = None
         # Issue #1355: Agent identity KeyService
         self.key_service: Any = None
 
@@ -379,15 +383,15 @@ async def lifespan(_app: FastAPI) -> Any:
                     if sync_rebac:
                         from nexus.core.namespace_factory import create_namespace_manager
 
-                        rebac_engine = getattr(sync_rebac, "engine", None)
+                        ns_record_store = getattr(_app_state.nexus_fs, "_record_store", None)
                         namespace_manager = create_namespace_manager(
                             rebac_manager=sync_rebac,
-                            engine=rebac_engine,
+                            record_store=ns_record_store,
                         )
                         logger.info(
                             "[NAMESPACE] NamespaceManager initialized for AsyncPermissionEnforcer "
                             "(using sync rebac_manager, L3=%s)",
-                            "enabled" if rebac_engine else "disabled",
+                            "enabled" if ns_record_store else "disabled",
                         )
 
                 # Create permission enforcer with async ReBAC
@@ -454,15 +458,56 @@ async def lifespan(_app: FastAPI) -> Any:
     except Exception as e:
         logger.warning(f"Failed to initialize cache factory: {e}")
 
-    # Reactive Subscription Manager for O(1) event matching (Issue #1167)
-    # Composes ReadSetRegistry for read-set subscriptions + legacy pattern fallback
+    # Event Log WAL for durable event persistence (Issue #1397)
+    # Service-layer concern: WAL-first durability for EventBus, not a kernel pillar.
+    # Rust WAL preferred; falls back to PG; None if neither available (graceful degrade).
+    _app_state.event_log = None
     try:
-        from nexus.core.reactive_subscriptions import ReactiveSubscriptionManager
+        from nexus.services.event_log import EventLogConfig, create_event_log
 
-        _app_state.reactive_subscription_manager = ReactiveSubscriptionManager()
-        logger.info("Reactive subscription manager initialized")
+        wal_dir = os.getenv("NEXUS_WAL_DIR", ".nexus-data/wal")
+        sync_mode = os.getenv("NEXUS_WAL_SYNC_MODE", "every")
+        segment_size = int(os.getenv("NEXUS_WAL_SEGMENT_SIZE", str(4 * 1024 * 1024)))
+
+        event_log_config = EventLogConfig(
+            wal_dir=Path(wal_dir),
+            segment_size_bytes=segment_size,
+            sync_mode=sync_mode,  # type: ignore[arg-type]
+        )
+        _app_state.event_log = create_event_log(
+            event_log_config,
+            session_factory=getattr(_app_state, "session_factory", None),
+        )
+        if _app_state.event_log:
+            logger.info(f"Event log initialized (wal_dir={wal_dir}, sync_mode={sync_mode})")
     except Exception as e:
-        logger.warning(f"Failed to initialize reactive subscription manager: {e}")
+        logger.warning(f"Failed to initialize event log: {e}")
+
+    # Issue #1397: Start event bus and wire event log for WAL-first persistence
+    if _app_state.nexus_fs:
+        event_bus_ref = getattr(_app_state.nexus_fs, "_event_bus", None)
+        if event_bus_ref is not None:
+            # Connect the underlying DragonflyClient (async init required)
+            redis_client = getattr(event_bus_ref, "_redis", None)
+            if redis_client and hasattr(redis_client, "connect"):
+                try:
+                    await redis_client.connect()
+                except Exception as e:
+                    logger.warning(f"Failed to connect event bus Redis client: {e}")
+
+            # Start the event bus (sets _started=True, enables publish())
+            if hasattr(event_bus_ref, "start") and not getattr(event_bus_ref, "_started", True):
+                try:
+                    await event_bus_ref.start()
+                    logger.info("Event bus started for event publishing")
+                except Exception as e:
+                    logger.warning(f"Failed to start event bus: {e}")
+
+            # Wire event_log into EventBus for WAL-first durability (Issue #1397).
+            # EventBus.publish() handles: WAL append (if available) → Dragonfly fan-out.
+            if _app_state.event_log is not None:
+                event_bus_ref._event_log = _app_state.event_log
+                logger.info("Event log wired into EventBus (WAL-first before pub/sub)")
 
     # WebSocket Manager for real-time events (Issue #1116)
     # Bridges Redis Pub/Sub to WebSocket clients for push notifications
@@ -840,10 +885,10 @@ async def lifespan(_app: FastAPI) -> Any:
                     try:
                         from nexus.core.namespace_factory import create_namespace_manager
 
-                        rebac_engine = getattr(sync_rebac, "engine", None)
+                        ns_record_store = getattr(_app_state.nexus_fs, "_record_store", None)
                         namespace_manager = create_namespace_manager(
                             rebac_manager=sync_rebac,
-                            engine=rebac_engine,
+                            record_store=ns_record_store,
                         )
                     except Exception as e:
                         logger.info(
@@ -1010,6 +1055,14 @@ async def lifespan(_app: FastAPI) -> Any:
             logger.info("[AGENT-REG] Final heartbeat flush completed")
         except Exception:
             logger.warning("[AGENT-REG] Final heartbeat flush failed", exc_info=True)
+
+    # Issue #1397: Close Event Log WAL
+    if _app_state.event_log:
+        try:
+            await _app_state.event_log.close()
+            logger.info("Event log closed")
+        except Exception as e:
+            logger.warning(f"Error closing event log: {e}")
 
     # SandboxManager now uses session-per-operation — no persistent session to close
     if _app_state.sandbox_auth_service:
@@ -4112,7 +4165,7 @@ def _get_cache_headers(method: str, result: Any) -> dict[str, str]:
         headers["Cache-Control"] = "private, max-age=60"
 
     # Write/delete operations - no cache
-    elif method in ("write", "delete", "rename", "copy", "mkdir", "rmdir", "delta_write"):
+    elif method in ("write", "delete", "rename", "copy", "mkdir", "rmdir", "delta_write", "edit"):
         headers["Cache-Control"] = "no-store"
 
     # Delta read - cache like regular read
@@ -4936,14 +4989,7 @@ def _handle_grep(params: Any, context: Any) -> dict[str, Any]:
 
     results = nexus_fs.grep(params.pattern, **kwargs)
     # Issue #1202: Strip internal zone/tenant/user prefixes from paths
-    results = [
-        unscope_internal_dict(r, ["path", "file"])
-        if isinstance(r, dict)
-        else unscope_internal_path(r)
-        if isinstance(r, str)
-        else r
-        for r in results
-    ]
+    results = [unscope_result(r) for r in results]
     # Return "results" key to match RemoteNexusFS.grep() expectations
     return {"results": results}
 

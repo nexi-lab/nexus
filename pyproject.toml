@@ -619,5 +619,7 @@ line-ending = "auto"
 dev = [
     "freezegun>=1.5.5",
     "grpcio-tools>=1.76.0",
+    "pytest-cov>=7.0.0",
     "types-protobuf>=6.32.1.20251210",
+    "types-redis>=4.6.0.20241004",
 ]

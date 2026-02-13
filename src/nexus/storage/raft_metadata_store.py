@@ -163,24 +163,19 @@ class RaftMetadataStore(FileMetadataProtocol):
             return None
         return _deserialize_metadata(data)
 
-    @property
-    def _supports_consistency(self) -> bool:
-        """True if the engine accepts a 'consistency' parameter (RaftConsensus only)."""
-        return hasattr(self._engine, "propose_command")
-
-    def _put_engine(self, metadata: FileMetadata, *, consistency: str = "sc") -> None:
+    def _put_engine(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
         """Store metadata in the embedded sled engine.
 
         Args:
             metadata: File metadata to store
-            consistency: "sc" (wait for commit) or "ec" (fire-and-forget).
-                         Only used when the engine is RaftConsensus.
+            consistency: "sc" (wait for commit) or "ec" (fire-and-forget)
+
+        Returns:
+            EC mode: write token (int) for polling via is_committed().
+            SC mode: None (write is already committed).
         """
         data = _serialize_metadata(metadata)
-        if self._supports_consistency:
-            self._engine.set_metadata(metadata.path, data, consistency=consistency)
-        else:
-            self._engine.set_metadata(metadata.path, data)
+        return self._engine.set_metadata(metadata.path, data, consistency=consistency)
 
     def _delete_engine(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         """Delete metadata from the embedded sled engine.
@@ -194,10 +189,7 @@ class RaftMetadataStore(FileMetadataProtocol):
             Dictionary with deleted file info or None
         """
         existing = self._get_engine(path)
-        if self._supports_consistency:
-            self._engine.delete_metadata(path, consistency=consistency)
-        else:
-            self._engine.delete_metadata(path)
+        self._engine.delete_metadata(path, consistency=consistency)
         if existing:
             return {
                 "path": existing.path,
@@ -343,17 +335,36 @@ class RaftMetadataStore(FileMetadataProtocol):
         else:
             raise NotImplementedError("Remote mode requires async. Use get_async() instead.")
 
-    def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> None:
+    def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
         """Store or update file metadata.
 
         Args:
             metadata: File metadata to store
             consistency: "sc" (wait for commit) or "ec" (fire-and-forget)
+
+        Returns:
+            EC mode: write token (int) for polling via is_committed().
+            SC mode: None (write is already committed when this returns).
         """
         if self._has_engine:
-            self._put_engine(metadata, consistency=consistency)
+            return self._put_engine(metadata, consistency=consistency)
         else:
             raise NotImplementedError("Remote mode requires async. Use put_async() instead.")
+
+    def is_committed(self, token: int) -> str | None:
+        """Check if an EC write token has been replicated to a majority.
+
+        Args:
+            token: Write token returned by put() with consistency="ec".
+
+        Returns:
+            "committed" — replicated to majority.
+            "pending" — local only, awaiting replication.
+            None — invalid token or no replication log.
+        """
+        if self._has_engine:
+            return self._engine.is_committed(token)
+        return None
 
     def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         """Delete file metadata.

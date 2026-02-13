@@ -190,8 +190,11 @@ def _instrument_libraries() -> None:
     try:
         from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
 
-        SQLAlchemyInstrumentor().instrument()
-        logger.debug("Instrumented: sqlalchemy")
+        SQLAlchemyInstrumentor().instrument(
+            enable_commenter=True,
+            commenter_options={},
+        )
+        logger.debug("Instrumented: sqlalchemy (with commenter)")
     except ImportError:
         logger.debug("sqlalchemy instrumentation not available")
     except Exception as e:

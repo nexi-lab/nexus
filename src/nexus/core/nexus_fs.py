@@ -161,6 +161,10 @@ class NexusFS(  # type: ignore[misc]
         version_service: Any | None = None,
         # Issue #1264: OverlayResolver for ComposeFS-style workspace overlays
         overlay_resolver: Any | None = None,
+        # Issue #1210: Wallet provisioner for auto-creating TigerBeetle accounts
+        # on agent registration. Duck-typed callable: (agent_id: str, zone_id: str) -> None.
+        # Injected by factory.py when NEXUS_PAY is available.
+        wallet_provisioner: Any | None = None,
     ):
         # Store config for OAuth factory and other components that need it
         self._config: Any | None = None
@@ -361,6 +365,7 @@ class NexusFS(  # type: ignore[misc]
         self._workspace_manager = workspace_manager
         self._write_observer = write_observer  # Task #45: RecordStore sync
         self._overlay_resolver = overlay_resolver  # Issue #1264: workspace overlays
+        self._wallet_provisioner = wallet_provisioner  # Issue #1210: auto-wallet on registration
 
         # Permission enforcement is opt-in for backward compatibility
         # Set enforce_permissions=True in init to enable permission checks
@@ -467,7 +472,8 @@ class NexusFS(  # type: ignore[misc]
 
                     # Reuse coordination client if same URL, otherwise create new
                     if (
-                        coordination_url_resolved
+                        self._coordination_client is not None
+                        and coordination_url_resolved
                         and event_url_resolved == coordination_url_resolved
                     ):
                         self._event_client = self._coordination_client
@@ -3881,6 +3887,7 @@ class NexusFS(  # type: ignore[misc]
         description: str | None = None,
         generate_api_key: bool = False,
         metadata: dict | None = None,  # v0.5.1: Optional metadata (platform, endpoint_url, etc.)
+        capabilities: list[str] | None = None,  # Issue #1210: Agent capabilities for discovery
         context: dict | None = None,
     ) -> dict:
         """Register an AI agent (v0.5.0).
@@ -3898,6 +3905,7 @@ class NexusFS(  # type: ignore[misc]
             generate_api_key: If True, create API key for agent (not recommended)
             metadata: Optional metadata dict (platform, endpoint_url, agent_id, etc.)
                      Stored in agent's config.yaml for agent configuration
+            capabilities: Optional list of capabilities for discovery (e.g. ["search", "analyze"])
             context: Operation context (user_id extracted from here)
 
         Returns:
@@ -3968,6 +3976,7 @@ class NexusFS(  # type: ignore[misc]
                     zone_id=zone_id,
                     name=name,
                     metadata=metadata,
+                    capabilities=capabilities,
                 )
             except Exception as reg_err:
                 logger.debug(f"[AGENT-REGISTRY] Dual-write register: {reg_err}")
@@ -3991,6 +4000,19 @@ class NexusFS(  # type: ignore[misc]
                     kya_err,
                 )
 
+        # Issue #1210: Auto-provision wallet (sync, non-blocking on failure)
+        if self._wallet_provisioner is not None:
+            try:
+                self._wallet_provisioner(agent_id, zone_id)
+                logger.info(f"[WALLET] Provisioned wallet for agent {agent_id}")
+            except Exception as wallet_err:
+                logger.warning(
+                    f"[WALLET] Failed to provision wallet for agent {agent_id}: {wallet_err}"
+                )
+
+        # Store capabilities in agent return dict for caller convenience
+        if capabilities:
+            agent["capabilities"] = list(capabilities)
         # Create initial config data
         config_data = self._create_agent_config_data(
             agent_id=agent_id,
@@ -4617,6 +4639,25 @@ class NexusFS(  # type: ignore[misc]
                         )
         except Exception as e:
             logger.warning(f"Failed to cleanup agent resources: {e}")
+
+        # Issue #1210: Wallet cleanup warning on agent deletion
+        if self._wallet_provisioner is not None:
+            zone_id_for_wallet = self._extract_zone_id(_context) or "default"
+            try:
+                # Check if wallet provisioner supports cleanup (duck-typed)
+                cleanup_fn = getattr(self._wallet_provisioner, "cleanup", None)
+                if cleanup_fn is not None:
+                    cleanup_fn(agent_id, zone_id_for_wallet)
+                    logger.info(f"[WALLET] Cleaned up wallet for agent {agent_id}")
+                else:
+                    logger.debug(
+                        f"[WALLET] No cleanup handler for agent {agent_id} wallet "
+                        f"(TigerBeetle accounts are immutable)"
+                    )
+            except Exception as wallet_err:
+                logger.warning(
+                    f"[WALLET] Failed to cleanup wallet for agent {agent_id}: {wallet_err}"
+                )
 
         # Issue #1240: Dual-write to AgentRegistry for lifecycle tracking
         if hasattr(self, "_agent_registry") and self._agent_registry:

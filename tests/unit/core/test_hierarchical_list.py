@@ -30,6 +30,7 @@ def nexus_fs(tmp_path):
         enforce_permissions=True,
         allow_admin_bypass=True,  # Allow admin to create test setup
         enable_deferred_permissions=False,  # Avoid background thread race on macOS SQLite
+        enable_tiger_cache=False,  # Disable Tiger bitmap cache for deterministic permission checks
     )
     yield fs
     fs.close()

@@ -1,6 +1,6 @@
 //! Transport loop — background task that drives the Raft actor event loop.
 //!
-//! This task owns the [`RaftNodeDriver`] exclusively and calls
+//! This task owns the [`ZoneConsensusDriver`] exclusively and calls
 //! [`process_messages()`] + [`advance()`] sequentially to maintain the
 //! raft-rs single-owner invariant.
 //!
@@ -8,7 +8,7 @@
 //!
 //! ```text
 //! ┌──────────────────────┐  process_messages()  ┌──────────────┐
-//! │  mpsc channel msgs   │ ───────────────────> │ RaftNodeDriver│
+//! │  mpsc channel msgs   │ ───────────────────> │ ZoneConsensusDriver│
 //! │  (step/propose/etc.) │                      │ (owns RawNode)│
 //! └──────────────────────┘                      └──────┬───────┘
 //!                                                      │ advance()
@@ -21,18 +21,18 @@
 
 use super::client::RaftClientPool;
 use super::{NodeAddress, SharedPeerMap};
-use crate::raft::{RaftNodeDriver, StateMachine};
+use crate::raft::{StateMachine, ZoneConsensusDriver};
 use protobuf::Message as ProtobufV2Message;
 use std::time::Duration;
 use tokio::sync::watch;
 
 /// Background task that drives the Raft event loop and sends messages to peers.
 ///
-/// Owns the [`RaftNodeDriver`] exclusively — this is the single task that
+/// Owns the [`ZoneConsensusDriver`] exclusively — this is the single task that
 /// touches `RawNode`.
 pub struct TransportLoop<S: StateMachine + 'static> {
-    /// The RaftNodeDriver to drive (exclusive ownership).
-    driver: RaftNodeDriver<S>,
+    /// The ZoneConsensusDriver to drive (exclusive ownership).
+    driver: ZoneConsensusDriver<S>,
     /// Known peers (node_id → address). Shared so ConfChange can add peers at runtime.
     peers: SharedPeerMap,
     /// Connection pool for sending messages to peers.
@@ -46,10 +46,10 @@ pub struct TransportLoop<S: StateMachine + 'static> {
 impl<S: StateMachine + Send + Sync + 'static> TransportLoop<S> {
     /// Create a new transport loop.
     ///
-    /// `peers` is a `SharedPeerMap` shared with the `RaftNodeDriver` and `ZoneRaftRegistry`,
+    /// `peers` is a `SharedPeerMap` shared with the `ZoneConsensusDriver` and `ZoneRaftRegistry`,
     /// so ConfChange can insert new peers visible to the transport loop at runtime.
     pub fn new(
-        driver: RaftNodeDriver<S>,
+        driver: ZoneConsensusDriver<S>,
         peers: SharedPeerMap,
         client_pool: RaftClientPool,
     ) -> Self {

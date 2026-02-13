@@ -59,6 +59,9 @@ class RaftConsensus:
         db_path: str,
         bind_addr: str = "0.0.0.0:2126",
         peers: list[str] | None = None,
+        tls_cert_path: str | None = None,
+        tls_key_path: str | None = None,
+        tls_ca_path: str | None = None,
     ) -> None: ...
     def set_metadata(self, path: str, value: bytes, consistency: str = "sc") -> int | None: ...
     def get_metadata(self, path: str) -> bytes | None: ...
@@ -89,6 +92,9 @@ class ZoneManager:
         node_id: int,
         base_path: str,
         bind_addr: str = "0.0.0.0:2126",
+        tls_cert_path: str | None = None,
+        tls_key_path: str | None = None,
+        tls_ca_path: str | None = None,
     ) -> None: ...
     def create_zone(self, zone_id: str, peers: list[str] | None = None) -> ZoneHandle: ...
     def join_zone(self, zone_id: str, peers: list[str] | None = None) -> ZoneHandle: ...

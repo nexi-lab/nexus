@@ -600,8 +600,10 @@ fn hash_content_smart(content: &[u8]) -> String {
         // Last 64KB
         hasher.update(&content[content.len() - SAMPLE_SIZE..]);
 
-        // Also include file size to differentiate files with same samples
-        hasher.update(&content.len().to_le_bytes());
+        // Also include file size to differentiate files with same samples.
+        // Cast to u64 for cross-platform consistency with Python's
+        // len(content).to_bytes(8, byteorder="little").
+        hasher.update(&(content.len() as u64).to_le_bytes());
 
         hasher.finalize().to_hex().to_string()
     }

@@ -12,7 +12,7 @@ Usage:
     # Smart hash with sampling for large files (>256KB)
     content_hash = hash_content_smart(large_content)
 
-Fallback chain (Issue #582):
+Fallback chain (Issue #582, #1395):
     1. Rust BLAKE3 (fastest, ~3x faster than SHA-256)
     2. Python blake3 package (consistent hashes with Rust)
     3. SHA-256 (last resort, WARNING: incompatible hashes!)
@@ -22,30 +22,47 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from collections.abc import Callable
 from typing import Any
-
-import blake3 as _python_blake3
 
 logger = logging.getLogger(__name__)
 
-# Try to import Rust-accelerated BLAKE3
+# --- Backend availability detection ---
+
 _RUST_AVAILABLE = False
 _PYTHON_BLAKE3_AVAILABLE = False
+_python_blake3: Any = None
 
+# Priority 1: Rust-accelerated BLAKE3
+_rust_hash_content: Callable[[bytes], str] | None = None
+_rust_hash_content_smart: Callable[[bytes], str] | None = None
 try:
-    from nexus._nexus_fast import hash_content as _rust_hash_content
-    from nexus._nexus_fast import hash_content_smart as _rust_hash_content_smart
+    from nexus._nexus_fast import hash_content as _rust_hash_content  # type: ignore[no-redef]
+    from nexus._nexus_fast import (  # type: ignore[no-redef]
+        hash_content_smart as _rust_hash_content_smart,
+    )
 
     _RUST_AVAILABLE = True
     logger.debug("Using Rust BLAKE3 acceleration")
 except ImportError:
-    _rust_hash_content = None
-    _rust_hash_content_smart = None
+    logger.warning(
+        "Rust BLAKE3 extension not available — falling back to Python blake3. "
+        "Install with: pip install nexus-ai-fs[rust] or maturin develop --release"
+    )
 
-# blake3 is now a required dependency (Issue #582, #833)
-_PYTHON_BLAKE3_AVAILABLE = True
-if not _RUST_AVAILABLE:
-    logger.debug("Using Python blake3 package (consistent with Rust)")
+# Priority 2: Python blake3 package (Issue #582, #833)
+try:
+    import blake3 as _python_blake3
+
+    _PYTHON_BLAKE3_AVAILABLE = True
+    if not _RUST_AVAILABLE:
+        logger.debug("Using Python blake3 package (consistent with Rust)")
+except ImportError:
+    if not _RUST_AVAILABLE:
+        logger.warning(
+            "Neither Rust BLAKE3 nor Python blake3 available — "
+            "falling back to SHA-256 (WARNING: incompatible hashes!)"
+        )
 
 
 def hash_content(content: bytes) -> str:
@@ -62,16 +79,13 @@ def hash_content(content: bytes) -> str:
     Returns:
         64-character hex string (256-bit hash)
     """
-    # Priority 1: Rust BLAKE3 (fastest)
     if _RUST_AVAILABLE and _rust_hash_content is not None:
-        return _rust_hash_content(content)  # type: ignore[no-any-return]
+        return _rust_hash_content(content)
 
-    # Priority 2: Python blake3 (consistent with Rust)
     if _PYTHON_BLAKE3_AVAILABLE:
         result: str = _python_blake3.blake3(content).hexdigest()
         return result
 
-    # Priority 3: SHA-256 fallback (WARNING: incompatible hashes!)
     return hashlib.sha256(content).hexdigest()
 
 
@@ -98,41 +112,36 @@ def hash_content_smart(content: bytes) -> str:
     Returns:
         64-character hex string (256-bit hash)
     """
-    # Priority 1: Rust BLAKE3 with smart sampling
     if _RUST_AVAILABLE and _rust_hash_content_smart is not None:
-        return _rust_hash_content_smart(content)  # type: ignore[no-any-return]
+        return _rust_hash_content_smart(content)
 
-    # Fallback to Python implementation with same sampling strategy
     threshold = 256 * 1024  # 256KB
     sample_size = 64 * 1024  # 64KB per sample
 
-    # Priority 2: Python blake3 (consistent with Rust)
     if _PYTHON_BLAKE3_AVAILABLE:
         if len(content) < threshold:
             result: str = _python_blake3.blake3(content).hexdigest()
             return result
 
-        # Strategic sampling with blake3
         blake3_hasher = _python_blake3.blake3()
-        blake3_hasher.update(content[:sample_size])  # First 64KB
+        blake3_hasher.update(content[:sample_size])
         mid_start = len(content) // 2 - sample_size // 2
-        blake3_hasher.update(content[mid_start : mid_start + sample_size])  # Middle 64KB
-        blake3_hasher.update(content[-sample_size:])  # Last 64KB
-        blake3_hasher.update(len(content).to_bytes(8, byteorder="little"))  # File size
+        blake3_hasher.update(content[mid_start : mid_start + sample_size])
+        blake3_hasher.update(content[-sample_size:])
+        blake3_hasher.update(len(content).to_bytes(8, byteorder="little"))
         result = blake3_hasher.hexdigest()
         return result
 
-    # Priority 3: SHA-256 fallback (WARNING: incompatible hashes!)
+    # SHA-256 fallback (WARNING: incompatible hashes!)
     if len(content) < threshold:
         return hashlib.sha256(content).hexdigest()
 
-    # Strategic sampling with SHA-256
     sha_hasher = hashlib.sha256()
-    sha_hasher.update(content[:sample_size])  # First 64KB
+    sha_hasher.update(content[:sample_size])
     mid_start = len(content) // 2 - sample_size // 2
-    sha_hasher.update(content[mid_start : mid_start + sample_size])  # Middle 64KB
-    sha_hasher.update(content[-sample_size:])  # Last 64KB
-    sha_hasher.update(len(content).to_bytes(8, byteorder="little"))  # File size
+    sha_hasher.update(content[mid_start : mid_start + sample_size])
+    sha_hasher.update(content[-sample_size:])
+    sha_hasher.update(len(content).to_bytes(8, byteorder="little"))
     return sha_hasher.hexdigest()
 
 
@@ -164,7 +173,11 @@ def create_hasher() -> Any:
     """Create an incremental hasher for streaming content.
 
     Returns a hasher object with .update(chunk) and .hexdigest() methods.
-    Uses BLAKE3 if available, otherwise SHA-256.
+    Uses Python blake3 if available, otherwise SHA-256.
+
+    NOTE: This always uses the Python blake3 or SHA-256 backend.
+    The Rust backend is only available for one-shot hashing via
+    hash_content() and hash_content_smart().
 
     Example:
         >>> hasher = create_hasher()

@@ -5,7 +5,7 @@ delivery guarantees, and pluggable storage drivers on top of existing
 Nexus kernel primitives (VFS Router, EventBus, Agent Registry, ReBAC).
 
 Issues: #1411, #1243
-Architecture: NEXUS-LEGO-ARCHITECTURE.md Part 17, sections 17.3-17.5
+Architecture: KERNEL-ARCHITECTURE.md
 
 Usage:
     from nexus.ipc import MessageEnvelope, MessageSender, MessageProcessor

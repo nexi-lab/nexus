@@ -1,7 +1,7 @@
 """Message envelope model for filesystem-as-IPC.
 
 The envelope wraps every message written to an agent's inbox.
-Designed per NEXUS-LEGO-ARCHITECTURE.md section 17.4.2.
+Designed per KERNEL-ARCHITECTURE.md.
 
 Wire format uses ``"from"`` and ``"to"`` field names (matching the design
 doc), while Python code uses ``sender`` and ``recipient`` to avoid

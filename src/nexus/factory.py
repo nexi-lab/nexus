@@ -323,6 +323,12 @@ def create_nexus_services(
         engines=[engine],
     )
 
+    # --- Sentry Subsystem (Issue #759) ---
+    from nexus.server.sentry import is_sentry_enabled
+    from nexus.services.subsystems.sentry_subsystem import SentrySubsystem
+
+    sentry_subsystem = SentrySubsystem(enabled=is_sentry_enabled())
+
     # --- Chunked Upload Service (Issue #788) ---
     # Build upload config from environment variables (match NexusConfig field names)
     import os as _os
@@ -441,6 +447,7 @@ def create_nexus_services(
         "write_observer": write_observer,
         "version_service": version_service,
         "observability_subsystem": observability_subsystem,
+        "sentry_subsystem": sentry_subsystem,
         "wallet_provisioner": wallet_provisioner,
         "chunked_upload_service": chunked_upload_service,
         "manifest_resolver": manifest_resolver,
@@ -543,6 +550,7 @@ def create_nexus_fs(
     service_extras: dict[str, Any] = {}
     for key in (
         "observability_subsystem",
+        "sentry_subsystem",
         "chunked_upload_service",
         "manifest_resolver",
         "manifest_metrics",

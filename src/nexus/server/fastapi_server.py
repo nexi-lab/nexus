@@ -249,6 +249,15 @@ async def lifespan(_app: FastAPI) -> Any:
     except ImportError:
         logger.debug("OpenTelemetry not available")
 
+    # Initialize Sentry error tracking (Issue #759)
+    try:
+        from nexus.server.sentry import setup_sentry
+
+        if setup_sentry():
+            logger.info("Sentry error tracking initialized")
+    except ImportError:
+        logger.debug("Sentry SDK not available")
+
     # Configure thread pool size (Issue #932)
     # Increase from default 40 to prevent thread pool exhaustion under load
     limiter = to_thread.current_default_thread_limiter()
@@ -1113,6 +1122,14 @@ async def lifespan(_app: FastAPI) -> Any:
             logger.info("Cache factory stopped")
         except Exception as e:
             logger.warning(f"Error shutting down cache factory: {e}")
+
+    # Shutdown Sentry (Issue #759) — flush before OTel shutdown
+    try:
+        from nexus.server.sentry import shutdown_sentry
+
+        shutdown_sentry()
+    except ImportError:
+        pass
 
     # Shutdown OpenTelemetry (Issue #764)
     try:

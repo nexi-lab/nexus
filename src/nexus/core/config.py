@@ -55,6 +55,26 @@ class FeatureFlags:
 
 
 @dataclass(frozen=True)
+class SentryConfig:
+    """Sentry error tracking configuration (Issue #759).
+
+    All fields have sensible defaults. When ``dsn`` is empty (default),
+    Sentry is completely disabled — zero overhead.
+    """
+
+    dsn: str = ""
+    environment: str = "development"
+    traces_sample_rate: float = 0.1
+    profiles_sample_rate: float = 0.0
+    send_default_pii: bool = False
+    max_breadcrumbs: int = 50
+    attach_stacktrace: bool = True
+    ignored_status_codes: tuple[int, ...] = (400, 401, 403, 404, 409, 422)
+    enable_tracing: bool = True
+    debug: bool = False
+
+
+@dataclass(frozen=True)
 class ObservabilityConfig:
     """Query observability configuration (Issue #1301)."""
 

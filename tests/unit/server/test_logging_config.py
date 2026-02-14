@@ -343,6 +343,22 @@ class TestOrjsonSerializer:
 # ---------------------------------------------------------------------------
 
 
+class TestSentryProcessorRegression:
+    """Issue #759: Sentry processor in pipeline doesn't break output."""
+
+    def test_sentry_processor_in_json_pipeline(self) -> None:
+        """Adding sentry processor to shared_processors doesn't alter JSON output."""
+        entry = _capture_json_log("nexus.test", "sentry regression check")
+        assert entry["event"] == "sentry regression check"
+        assert "level" in entry
+        assert "timestamp" in entry
+
+    def test_sentry_processor_in_dev_pipeline(self) -> None:
+        """Adding sentry processor to shared_processors doesn't break dev output."""
+        raw = _capture_dev_log("nexus.test", "sentry dev check")
+        assert "sentry dev check" in raw
+
+
 class TestFullPipelineIntegration:
     """End-to-end: configure_logging + CorrelationMiddleware → JSON output."""
 

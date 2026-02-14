@@ -43,6 +43,7 @@ from nexus.server.logging_processors import (
     error_classification_processor,
     otel_trace_processor,
 )
+from nexus.server.sentry_processor import create_sentry_processor
 
 
 def _orjson_serializer(data: dict[str, Any], **_kw: Any) -> str:
@@ -97,6 +98,7 @@ def configure_logging(
         add_service_name,  # type: ignore[list-item]
         otel_trace_processor,  # type: ignore[list-item]
         error_classification_processor,  # type: ignore[list-item]
+        create_sentry_processor(),  # Issue #759: route errors to Sentry
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
         structlog.processors.UnicodeDecoder(),

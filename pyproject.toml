@@ -125,6 +125,9 @@ dependencies = [
     "structlog>=24.4.0",
     # Governance graphs: collusion detection, ring detection (Issue #1359)
     "networkx>=3.2",
+    # Error tracking and performance monitoring (Issue #759)
+    "sentry-sdk[fastapi]>=2.0.0",
+    "structlog-sentry>=2.1.0",
 ]
 
 [project.optional-dependencies]

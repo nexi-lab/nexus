@@ -22,10 +22,12 @@ from nexus.core.lock_fast import (
 # Identical-behaviour verification
 # ---------------------------------------------------------------------------
 
+
 def _implementations() -> list[type]:
     impls: list[type] = [PythonVFSLockManager]
     try:
         from nexus.core.lock_fast import RustVFSLockManager
+
         impls.append(RustVFSLockManager)
     except (ImportError, Exception):
         pass
@@ -123,6 +125,7 @@ class TestNexusFSIntegration:
             # without a full backend. Instead, verify the import and class exist.
             assert NexusFS is not None
             from nexus.core.lock_fast import RustVFSLockManager
+
             mgr = RustVFSLockManager()
             assert isinstance(mgr, VFSLockManagerProtocol)
         except ImportError:

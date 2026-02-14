@@ -57,7 +57,7 @@ class CorrelationMiddleware:
     Non-HTTP scopes (websocket, lifespan) are passed through without modification.
     """
 
-    def __init__(self, app: ASGIApp) -> None:  # type: ignore[override]
+    def __init__(self, app: ASGIApp) -> None:
         self._app = app
 
     async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
@@ -85,7 +85,7 @@ class CorrelationMiddleware:
         status_code = 0
 
         # Intercept response start to capture status code and inject header
-        async def send_wrapper(message: dict) -> None:
+        async def send_wrapper(message: MutableMapping[str, Any]) -> None:
             nonlocal status_code
 
             if message["type"] == "http.response.start":

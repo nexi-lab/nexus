@@ -1046,6 +1046,30 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.warning(f"Failed to initialize Scheduler service: {e}")
 
+    # Issue #1358: Initialize SpendingPolicyService if PostgreSQL available
+    if _app_state.database_url and "postgresql" in _app_state.database_url:
+        try:
+            from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+            from nexus.pay.spending_policy_service import SpendingPolicyService
+
+            _sp_db_url = _app_state.database_url
+            if "+asyncpg" not in _sp_db_url and "postgresql://" in _sp_db_url:
+                _sp_db_url = _sp_db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+            _sp_engine = create_async_engine(_sp_db_url, pool_size=3, max_overflow=2)
+            _sp_session_factory = async_sessionmaker(
+                _sp_engine, class_=AsyncSession, expire_on_commit=False
+            )
+            _app.state.spending_policy_service = SpendingPolicyService(
+                session_factory=_sp_session_factory
+            )
+            logger.info("SpendingPolicyService initialized (PostgreSQL)")
+        except ImportError as e:
+            logger.debug(f"SpendingPolicyService not available: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to initialize SpendingPolicyService: {e}")
+
     # Issue #574: Task Queue Engine - Start background worker
     task_runner_task: asyncio.Task[Any] | None = None
     if _app_state.nexus_fs:
@@ -4333,6 +4357,11 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
     if nexus_fs is None:
         raise RuntimeError("NexusFS not initialized")
 
+    # Issue #1457: Enforce admin_only for ALL dispatch paths (auto + manual)
+    func = _app_state.exposed_methods.get(method)
+    if func and getattr(func, "_rpc_admin_only", False):
+        _require_admin(context)
+
     # Methods that need special handling
     MANUAL_METHODS = {
         "read",
@@ -4451,6 +4480,8 @@ async def _auto_dispatch(method: str, params: Any, context: Any) -> Any:
     import inspect
 
     func = _app_state.exposed_methods[method]
+
+    # Note: admin_only guard is enforced in _dispatch_method (Issue #1457)
 
     # Build kwargs
     kwargs: dict[str, Any] = {}

@@ -1389,6 +1389,17 @@ class AdminGcVersionsStatsParams:
 
 
 @dataclass
+class BackfillDirectoryIndexParams:
+    """Parameters for backfill_directory_index() method (Issue #1457).
+
+    Admin-only API to backfill sparse directory index from existing files.
+    """
+
+    prefix: str = "/"
+    zone_id: str | None = None
+
+
+@dataclass
 class ProvisionUserParams:
     """Parameters for provision_user() method (Issue #820).
 
@@ -2178,6 +2189,7 @@ METHOD_PARAMS = {
     "admin_update_key": AdminUpdateKeyParams,
     "admin_gc_versions": AdminGcVersionsParams,  # Issue #974
     "admin_gc_versions_stats": AdminGcVersionsStatsParams,  # Issue #974
+    "backfill_directory_index": BackfillDirectoryIndexParams,  # Issue #1457
     "provision_user": ProvisionUserParams,  # Issue #820
     "deprovision_user": DeprovisionUserParams,
     # Sandbox management methods (v0.8.0 - Issue #372)

@@ -443,7 +443,7 @@ Client → NexusFS.write() → RaftMetadataStore (remote mode)
                          → Backend.write() → local/S3/GCS/...
 ```
 
-**Key insight**: raft-rs only handles the consensus algorithm (log replication, leader election, state transitions). Transport (gRPC) is our responsibility — raft-rs outputs `Message` structs that we must deliver via our gRPC `RaftService`.
+**Key insight**: raft-rs only handles the consensus algorithm (log replication, leader election, state transitions). Transport (gRPC) is our responsibility — raft-rs outputs `Message` structs that we must deliver via our gRPC `ZoneTransportService`.
 
 ---
 

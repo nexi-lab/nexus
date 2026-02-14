@@ -503,15 +503,16 @@ class NexusFSSearchMixin:
                             file_paths, filter_ctx
                         )
 
-                        # Filter directories by has_accessible_descendants
-                        # This matches the behavior in regular FS listing (line 538)
-                        filtered_dirs = [
-                            d
-                            for d in dir_paths
-                            if self._permission_enforcer.has_accessible_descendants(
-                                d.rstrip("/"), filter_ctx
+                        # Issue #1298: Batch filter directories by accessible descendants
+                        if dir_paths:
+                            accessible = self._permission_enforcer.has_accessible_descendants_batch(
+                                [d.rstrip("/") for d in dir_paths], filter_ctx
                             )
-                        ]
+                            filtered_dirs = [
+                                d for d in dir_paths if accessible.get(d.rstrip("/"), True)
+                            ]
+                        else:
+                            filtered_dirs = []
 
                         all_paths = filtered_dirs + filtered_files
 
@@ -521,10 +522,20 @@ class NexusFSSearchMixin:
                     # - "type" - "directory" or "file" (was missing)
                     # - "updated_at" (not "modified_at") - matches FUSE FileEntry struct
                     if details:
+                        # Issue #1298: Batch fetch metadata for all paths at once
+                        import time as _time_conn
+
+                        _batch_start = _time_conn.time()
+                        batch_meta = self.metadata.get_batch(all_paths)
+                        logger.debug(
+                            f"[BATCH-OPT] connector details get_batch: "
+                            f"{len(all_paths)} paths in "
+                            f"{(_time_conn.time() - _batch_start) * 1000:.1f}ms"
+                        )
+
                         results_with_details = []
                         for entry_path in all_paths:
-                            # Try to get metadata from file_paths table
-                            file_meta = self.metadata.get(entry_path)
+                            file_meta = batch_meta.get(entry_path)
                             # Check if directory by looking at metadata mime_type
                             is_dir = (
                                 file_meta
@@ -682,21 +693,31 @@ class NexusFSSearchMixin:
                         f"[LIST-TIMING] list_directory_entries(): {_idx_elapsed:.1f}ms, {len(dir_entries)} entries (sparse index HIT)"
                     )
 
-                    # Use Tiger bitmap to check which directories have accessible descendants
+                    # Issue #1298: Batch check which directories have accessible descendants
                     from nexus.core._metadata_generated import FileMetadata
 
                     all_files = []
                     _perm_start = _time.time()
 
+                    # Separate directories and files, build dir paths for batch check
+                    dir_entries_list = []
+                    file_entries_list = []
                     for entry in dir_entries:
                         entry_path = f"{path.rstrip('/')}/{entry['name']}"
-
                         if entry["type"] == "directory":
-                            # Check if user has accessible descendants (uses Tiger bitmap)
-                            if self._permission_enforcer.has_accessible_descendants(
-                                entry_path, context
-                            ):
-                                _preapproved_dirs.add(entry_path)  # Track for allowed_set later
+                            dir_entries_list.append((entry_path, entry))
+                        else:
+                            file_entries_list.append((entry_path, entry))
+
+                    # Batch check all directories at once (single Tiger bitmap scan)
+                    if dir_entries_list:
+                        dir_paths_to_check = [ep for ep, _ in dir_entries_list]
+                        accessible = self._permission_enforcer.has_accessible_descendants_batch(
+                            dir_paths_to_check, context
+                        )
+                        for entry_path, entry in dir_entries_list:
+                            if accessible.get(entry_path, True):
+                                _preapproved_dirs.add(entry_path)
                                 all_files.append(
                                     FileMetadata(
                                         path=entry_path,
@@ -708,23 +729,26 @@ class NexusFSSearchMixin:
                                         mime_type="inode/directory",
                                     )
                                 )
-                        else:
-                            # File entry - will be permission filtered normally
-                            all_files.append(
-                                FileMetadata(
-                                    path=entry_path,
-                                    backend_name="",
-                                    physical_path="",
-                                    size=0,
-                                    created_at=entry.get("created_at"),
-                                    etag=None,
-                                    mime_type=None,
-                                )
+
+                    # Add all file entries (will be permission filtered later)
+                    for entry_path, entry in file_entries_list:
+                        all_files.append(
+                            FileMetadata(
+                                path=entry_path,
+                                backend_name="",
+                                physical_path="",
+                                size=0,
+                                created_at=entry.get("created_at"),
+                                etag=None,
+                                mime_type=None,
                             )
+                        )
 
                     _perm_elapsed = (_time.time() - _perm_start) * 1000
                     logger.info(
-                        f"[LIST-TIMING] has_accessible_descendants(): {_perm_elapsed:.1f}ms for {len(dir_entries)} entries"
+                        f"[LIST-TIMING] has_accessible_descendants_batch(): "
+                        f"{_perm_elapsed:.1f}ms for {len(dir_entries)} entries "
+                        f"({len(dir_entries_list)} dirs, {len(file_entries_list)} files)"
                     )
                     logger.info(
                         "[LIST-TIMING] metadata.list(): SKIPPED (using sparse index + Tiger bitmap)"
@@ -883,18 +907,23 @@ class NexusFSSearchMixin:
                 f"[LIST-TIMING] cross_zone_lookup: {(_time.time() - _ct_start) * 1000:.1f}ms, {len(cross_zone_paths) if cross_zone_paths else 0} paths"
             )
             if cross_zone_paths:
-                # Fetch metadata for cross-zone shared paths
-                # Use get_batch if available, otherwise fetch individually
+                # Issue #1298: Batch fetch metadata for cross-zone shared paths
                 existing_paths = {meta.path for meta in all_files}
-                for ct_path in cross_zone_paths:
-                    if ct_path not in existing_paths:
-                        try:
-                            ct_meta = self.metadata.get(ct_path)
-                            if ct_meta:
+                fetch_paths = [p for p in cross_zone_paths if p not in existing_paths]
+                if fetch_paths:
+                    _batch_start = _time.time()
+                    try:
+                        batch_results = self.metadata.get_batch(fetch_paths)
+                        for _path, ct_meta in batch_results.items():
+                            if ct_meta is not None:
                                 all_files.append(ct_meta)
-                        except Exception:
-                            # Path may have been deleted, skip it
-                            pass
+                    except Exception:
+                        # Fallback: paths may have been deleted, skip failures
+                        pass
+                    logger.debug(
+                        f"[BATCH-OPT] cross_zone get_batch: {len(fetch_paths)} paths "
+                        f"in {(_time.time() - _batch_start) * 1000:.1f}ms"
+                    )
 
         # Filter out internal system entries from user-visible results
         from nexus.core.nexus_fs_core import SYSTEM_PATH_PREFIX

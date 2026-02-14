@@ -6568,7 +6568,7 @@ class NexusFS(  # type: ignore[misc]
         if hasattr(self, "_dir_visibility_cache") and self._dir_visibility_cache is not None:
             self._dir_visibility_cache.clear()
 
-    @rpc_expose(description="Backfill sparse directory index for fast listings")
+    @rpc_expose(description="Backfill sparse directory index for fast listings", admin_only=True)
     def backfill_directory_index(
         self,
         prefix: str = "/",
@@ -6584,12 +6584,11 @@ class NexusFS(  # type: ignore[misc]
         Args:
             prefix: Path prefix to backfill (default: "/" for all)
             zone_id: Zone ID to backfill (None for all zones)
-            context: Operation context (admin required)
+            _context: Operation context (admin required, enforced by @rpc_expose)
 
         Returns:
             Dict with entries_created count
         """
-        # TODO: Add admin check when context is provided
         created = self.metadata.backfill_directory_index(prefix=prefix, zone_id=zone_id)
         return {"entries_created": created, "prefix": prefix}
 

@@ -25,7 +25,7 @@ _sym_db = _symbol_database.Default()
 from nexus.core import metadata_pb2 as nexus_dot_core_dot_metadata__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x19nexus/raft/commands.proto\x12\nnexus.raft\x1a\x19nexus/core/metadata.proto\"\xc6\x02\n\x0bRaftCommand\x12/\n\x0cput_metadata\x18\x01 \x01(\x0b\x32\x17.nexus.raft.PutMetadataH\x00\x12\x35\n\x0f\x64\x65lete_metadata\x18\x02 \x01(\x0b\x32\x1a.nexus.raft.DeleteMetadataH\x00\x12/\n\x0c\x61\x63quire_lock\x18\x03 \x01(\x0b\x32\x17.nexus.raft.AcquireLockH\x00\x12/\n\x0crelease_lock\x18\x04 \x01(\x0b\x32\x17.nexus.raft.ReleaseLockH\x00\x12\x33\n\x0eupdate_routing\x18\x05 \x01(\x0b\x32\x19.nexus.raft.UpdateRoutingH\x00\x12-\n\x0b\x65xtend_lock\x18\x06 \x01(\x0b\x32\x16.nexus.raft.ExtendLockH\x00\x42\t\n\x07\x63ommand\"9\n\x0bPutMetadata\x12*\n\x08metadata\x18\x01 \x01(\x0b\x32\x18.nexus.core.FileMetadata\"/\n\x0e\x44\x65leteMetadata\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x0f\n\x07zone_id\x18\x02 \x01(\t\"R\n\x0b\x41\x63quireLock\x12\x0f\n\x07lock_id\x18\x01 \x01(\t\x12\x11\n\tholder_id\x18\x02 \x01(\t\x12\x0e\n\x06ttl_ms\x18\x03 \x01(\x03\x12\x0f\n\x07zone_id\x18\x04 \x01(\t\"B\n\x0bReleaseLock\x12\x0f\n\x07lock_id\x18\x01 \x01(\t\x12\x11\n\tholder_id\x18\x02 \x01(\t\x12\x0f\n\x07zone_id\x18\x03 \x01(\t\"Q\n\nExtendLock\x12\x0f\n\x07lock_id\x18\x01 \x01(\t\x12\x11\n\tholder_id\x18\x02 \x01(\t\x12\x0e\n\x06ttl_ms\x18\x03 \x01(\x03\x12\x0f\n\x07zone_id\x18\x04 \x01(\t\"M\n\rUpdateRouting\x12\x13\n\x0bpath_prefix\x18\x01 \x01(\t\x12\x0f\n\x07zone_id\x18\x02 \x01(\t\x12\x16\n\x0epeer_addresses\x18\x03 \x03(\t\"\xad\x01\n\x0cRaftResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x12\n\x05\x65rror\x18\x02 \x01(\tH\x01\x88\x01\x01\x12-\n\x0block_result\x18\x03 \x01(\x0b\x32\x16.nexus.raft.LockResultH\x00\x12\x35\n\x0fmetadata_result\x18\x04 \x01(\x0b\x32\x1a.nexus.raft.MetadataResultH\x00\x42\x08\n\x06resultB\x08\n\x06_error\"e\n\nLockResult\x12\x10\n\x08\x61\x63quired\x18\x01 \x01(\x08\x12\x1b\n\x0e\x63urrent_holder\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x15\n\rexpires_at_ms\x18\x03 \x01(\x03\x42\x11\n\x0f_current_holder\"N\n\x0eMetadataResult\x12/\n\x08metadata\x18\x01 \x01(\x0b\x32\x18.nexus.core.FileMetadataH\x00\x88\x01\x01\x42\x0b\n\t_metadata\"\xaa\x01\n\tRaftQuery\x12/\n\x0cget_metadata\x18\x01 \x01(\x0b\x32\x17.nexus.raft.GetMetadataH\x00\x12\x31\n\rlist_metadata\x18\x02 \x01(\x0b\x32\x18.nexus.raft.ListMetadataH\x00\x12\x30\n\rget_lock_info\x18\x03 \x01(\x0b\x32\x17.nexus.raft.GetLockInfoH\x00\x42\x07\n\x05query\",\n\x0bGetMetadata\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x0f\n\x07zone_id\x18\x02 \x01(\t\"a\n\x0cListMetadata\x12\x0e\n\x06prefix\x18\x01 \x01(\t\x12\x0f\n\x07zone_id\x18\x02 \x01(\t\x12\x11\n\trecursive\x18\x03 \x01(\x08\x12\r\n\x05limit\x18\x04 \x01(\x05\x12\x0e\n\x06\x63ursor\x18\x05 \x01(\t\"/\n\x0bGetLockInfo\x12\x0f\n\x07lock_id\x18\x01 \x01(\t\x12\x0f\n\x07zone_id\x18\x02 \x01(\t\"\x82\x02\n\x11RaftQueryResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x12\n\x05\x65rror\x18\x02 \x01(\tH\x01\x88\x01\x01\x12<\n\x13get_metadata_result\x18\x03 \x01(\x0b\x32\x1d.nexus.raft.GetMetadataResultH\x00\x12>\n\x14list_metadata_result\x18\x04 \x01(\x0b\x32\x1e.nexus.raft.ListMetadataResultH\x00\x12\x36\n\x10lock_info_result\x18\x05 \x01(\x0b\x32\x1a.nexus.raft.LockInfoResultH\x00\x42\x08\n\x06resultB\x08\n\x06_error\"Q\n\x11GetMetadataResult\x12/\n\x08metadata\x18\x01 \x01(\x0b\x32\x18.nexus.core.FileMetadataH\x00\x88\x01\x01\x42\x0b\n\t_metadata\"y\n\x12ListMetadataResult\x12\'\n\x05items\x18\x01 \x03(\x0b\x32\x18.nexus.core.FileMetadata\x12\x18\n\x0bnext_cursor\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x10\n\x08has_more\x18\x03 \x01(\x08\x42\x0e\n\x0c_next_cursor\"\x8b\x01\n\x0eLockInfoResult\x12\x0e\n\x06\x65xists\x18\x01 \x01(\x08\x12\x16\n\tholder_id\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x15\n\rexpires_at_ms\x18\x03 \x01(\x03\x12\x13\n\x0bmax_holders\x18\x04 \x01(\x05\x12\x17\n\x0f\x63urrent_holders\x18\x05 \x01(\x05\x42\x0c\n\n_holder_idb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x19nexus/raft/commands.proto\x12\nnexus.raft\x1a\x19nexus/core/metadata.proto\"\x91\x02\n\x0bRaftCommand\x12/\n\x0cput_metadata\x18\x01 \x01(\x0b\x32\x17.nexus.raft.PutMetadataH\x00\x12\x35\n\x0f\x64\x65lete_metadata\x18\x02 \x01(\x0b\x32\x1a.nexus.raft.DeleteMetadataH\x00\x12/\n\x0c\x61\x63quire_lock\x18\x03 \x01(\x0b\x32\x17.nexus.raft.AcquireLockH\x00\x12/\n\x0crelease_lock\x18\x04 \x01(\x0b\x32\x17.nexus.raft.ReleaseLockH\x00\x12-\n\x0b\x65xtend_lock\x18\x06 \x01(\x0b\x32\x16.nexus.raft.ExtendLockH\x00\x42\t\n\x07\x63ommand\"9\n\x0bPutMetadata\x12*\n\x08metadata\x18\x01 \x01(\x0b\x32\x18.nexus.core.FileMetadata\"/\n\x0e\x44\x65leteMetadata\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x0f\n\x07zone_id\x18\x02 \x01(\t\"R\n\x0b\x41\x63quireLock\x12\x0f\n\x07lock_id\x18\x01 \x01(\t\x12\x11\n\tholder_id\x18\x02 \x01(\t\x12\x0e\n\x06ttl_ms\x18\x03 \x01(\x03\x12\x0f\n\x07zone_id\x18\x04 \x01(\t\"B\n\x0bReleaseLock\x12\x0f\n\x07lock_id\x18\x01 \x01(\t\x12\x11\n\tholder_id\x18\x02 \x01(\t\x12\x0f\n\x07zone_id\x18\x03 \x01(\t\"Q\n\nExtendLock\x12\x0f\n\x07lock_id\x18\x01 \x01(\t\x12\x11\n\tholder_id\x18\x02 \x01(\t\x12\x0e\n\x06ttl_ms\x18\x03 \x01(\x03\x12\x0f\n\x07zone_id\x18\x04 \x01(\t\"\xad\x01\n\x0cRaftResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x12\n\x05\x65rror\x18\x02 \x01(\tH\x01\x88\x01\x01\x12-\n\x0block_result\x18\x03 \x01(\x0b\x32\x16.nexus.raft.LockResultH\x00\x12\x35\n\x0fmetadata_result\x18\x04 \x01(\x0b\x32\x1a.nexus.raft.MetadataResultH\x00\x42\x08\n\x06resultB\x08\n\x06_error\"e\n\nLockResult\x12\x10\n\x08\x61\x63quired\x18\x01 \x01(\x08\x12\x1b\n\x0e\x63urrent_holder\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x15\n\rexpires_at_ms\x18\x03 \x01(\x03\x42\x11\n\x0f_current_holder\"N\n\x0eMetadataResult\x12/\n\x08metadata\x18\x01 \x01(\x0b\x32\x18.nexus.core.FileMetadataH\x00\x88\x01\x01\x42\x0b\n\t_metadata\"\xaa\x01\n\tRaftQuery\x12/\n\x0cget_metadata\x18\x01 \x01(\x0b\x32\x17.nexus.raft.GetMetadataH\x00\x12\x31\n\rlist_metadata\x18\x02 \x01(\x0b\x32\x18.nexus.raft.ListMetadataH\x00\x12\x30\n\rget_lock_info\x18\x03 \x01(\x0b\x32\x17.nexus.raft.GetLockInfoH\x00\x42\x07\n\x05query\",\n\x0bGetMetadata\x12\x0c\n\x04path\x18\x01 \x01(\t\x12\x0f\n\x07zone_id\x18\x02 \x01(\t\"a\n\x0cListMetadata\x12\x0e\n\x06prefix\x18\x01 \x01(\t\x12\x0f\n\x07zone_id\x18\x02 \x01(\t\x12\x11\n\trecursive\x18\x03 \x01(\x08\x12\r\n\x05limit\x18\x04 \x01(\x05\x12\x0e\n\x06\x63ursor\x18\x05 \x01(\t\"/\n\x0bGetLockInfo\x12\x0f\n\x07lock_id\x18\x01 \x01(\t\x12\x0f\n\x07zone_id\x18\x02 \x01(\t\"\x82\x02\n\x11RaftQueryResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x12\n\x05\x65rror\x18\x02 \x01(\tH\x01\x88\x01\x01\x12<\n\x13get_metadata_result\x18\x03 \x01(\x0b\x32\x1d.nexus.raft.GetMetadataResultH\x00\x12>\n\x14list_metadata_result\x18\x04 \x01(\x0b\x32\x1e.nexus.raft.ListMetadataResultH\x00\x12\x36\n\x10lock_info_result\x18\x05 \x01(\x0b\x32\x1a.nexus.raft.LockInfoResultH\x00\x42\x08\n\x06resultB\x08\n\x06_error\"Q\n\x11GetMetadataResult\x12/\n\x08metadata\x18\x01 \x01(\x0b\x32\x18.nexus.core.FileMetadataH\x00\x88\x01\x01\x42\x0b\n\t_metadata\"y\n\x12ListMetadataResult\x12\'\n\x05items\x18\x01 \x03(\x0b\x32\x18.nexus.core.FileMetadata\x12\x18\n\x0bnext_cursor\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x10\n\x08has_more\x18\x03 \x01(\x08\x42\x0e\n\x0c_next_cursor\"\x8b\x01\n\x0eLockInfoResult\x12\x0e\n\x06\x65xists\x18\x01 \x01(\x08\x12\x16\n\tholder_id\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x15\n\rexpires_at_ms\x18\x03 \x01(\x03\x12\x13\n\x0bmax_holders\x18\x04 \x01(\x05\x12\x17\n\x0f\x63urrent_holders\x18\x05 \x01(\x05\x42\x0c\n\n_holder_idb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -33,39 +33,37 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'nexus.raft.commands_pb2', _
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
   _globals['_RAFTCOMMAND']._serialized_start=69
-  _globals['_RAFTCOMMAND']._serialized_end=395
-  _globals['_PUTMETADATA']._serialized_start=397
-  _globals['_PUTMETADATA']._serialized_end=454
-  _globals['_DELETEMETADATA']._serialized_start=456
-  _globals['_DELETEMETADATA']._serialized_end=503
-  _globals['_ACQUIRELOCK']._serialized_start=505
-  _globals['_ACQUIRELOCK']._serialized_end=587
-  _globals['_RELEASELOCK']._serialized_start=589
-  _globals['_RELEASELOCK']._serialized_end=655
-  _globals['_EXTENDLOCK']._serialized_start=657
-  _globals['_EXTENDLOCK']._serialized_end=738
-  _globals['_UPDATEROUTING']._serialized_start=740
-  _globals['_UPDATEROUTING']._serialized_end=817
-  _globals['_RAFTRESPONSE']._serialized_start=820
-  _globals['_RAFTRESPONSE']._serialized_end=993
-  _globals['_LOCKRESULT']._serialized_start=995
-  _globals['_LOCKRESULT']._serialized_end=1096
-  _globals['_METADATARESULT']._serialized_start=1098
-  _globals['_METADATARESULT']._serialized_end=1176
-  _globals['_RAFTQUERY']._serialized_start=1179
-  _globals['_RAFTQUERY']._serialized_end=1349
-  _globals['_GETMETADATA']._serialized_start=1351
-  _globals['_GETMETADATA']._serialized_end=1395
-  _globals['_LISTMETADATA']._serialized_start=1397
-  _globals['_LISTMETADATA']._serialized_end=1494
-  _globals['_GETLOCKINFO']._serialized_start=1496
-  _globals['_GETLOCKINFO']._serialized_end=1543
-  _globals['_RAFTQUERYRESPONSE']._serialized_start=1546
-  _globals['_RAFTQUERYRESPONSE']._serialized_end=1804
-  _globals['_GETMETADATARESULT']._serialized_start=1806
-  _globals['_GETMETADATARESULT']._serialized_end=1887
-  _globals['_LISTMETADATARESULT']._serialized_start=1889
-  _globals['_LISTMETADATARESULT']._serialized_end=2010
-  _globals['_LOCKINFORESULT']._serialized_start=2013
-  _globals['_LOCKINFORESULT']._serialized_end=2152
+  _globals['_RAFTCOMMAND']._serialized_end=342
+  _globals['_PUTMETADATA']._serialized_start=344
+  _globals['_PUTMETADATA']._serialized_end=401
+  _globals['_DELETEMETADATA']._serialized_start=403
+  _globals['_DELETEMETADATA']._serialized_end=450
+  _globals['_ACQUIRELOCK']._serialized_start=452
+  _globals['_ACQUIRELOCK']._serialized_end=534
+  _globals['_RELEASELOCK']._serialized_start=536
+  _globals['_RELEASELOCK']._serialized_end=602
+  _globals['_EXTENDLOCK']._serialized_start=604
+  _globals['_EXTENDLOCK']._serialized_end=685
+  _globals['_RAFTRESPONSE']._serialized_start=688
+  _globals['_RAFTRESPONSE']._serialized_end=861
+  _globals['_LOCKRESULT']._serialized_start=863
+  _globals['_LOCKRESULT']._serialized_end=964
+  _globals['_METADATARESULT']._serialized_start=966
+  _globals['_METADATARESULT']._serialized_end=1044
+  _globals['_RAFTQUERY']._serialized_start=1047
+  _globals['_RAFTQUERY']._serialized_end=1217
+  _globals['_GETMETADATA']._serialized_start=1219
+  _globals['_GETMETADATA']._serialized_end=1263
+  _globals['_LISTMETADATA']._serialized_start=1265
+  _globals['_LISTMETADATA']._serialized_end=1362
+  _globals['_GETLOCKINFO']._serialized_start=1364
+  _globals['_GETLOCKINFO']._serialized_end=1411
+  _globals['_RAFTQUERYRESPONSE']._serialized_start=1414
+  _globals['_RAFTQUERYRESPONSE']._serialized_end=1672
+  _globals['_GETMETADATARESULT']._serialized_start=1674
+  _globals['_GETMETADATARESULT']._serialized_end=1755
+  _globals['_LISTMETADATARESULT']._serialized_start=1757
+  _globals['_LISTMETADATARESULT']._serialized_end=1878
+  _globals['_LOCKINFORESULT']._serialized_start=1881
+  _globals['_LOCKINFORESULT']._serialized_end=2020
 # @@protoc_insertion_point(module_scope)

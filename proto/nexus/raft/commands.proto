@@ -19,7 +19,6 @@ message RaftCommand {
     DeleteMetadata delete_metadata = 2;
     AcquireLock acquire_lock = 3;
     ReleaseLock release_lock = 4;
-    UpdateRouting update_routing = 5;
     ExtendLock extend_lock = 6;
   }
 }
@@ -56,13 +55,6 @@ message ExtendLock {
   string holder_id = 2;
   int64 ttl_ms = 3;
   string zone_id = 4;
-}
-
-// UpdateRouting updates the routing table for a path prefix.
-message UpdateRouting {
-  string path_prefix = 1;
-  string zone_id = 2;
-  repeated string peer_addresses = 3;
 }
 
 // === Command Response ===

@@ -11,42 +11,23 @@
 //! - **Code generation**: Less boilerplate than manual HTTP
 //! - **Compatibility**: Works with tikv/raft-rs message patterns
 //!
-//! # Reusability
+//! # Architecture
 //!
-//! The gRPC transport is designed to be reusable beyond Raft:
-//!
-//! - **Raft Messages**: Leader election, log replication
-//! - **Webhook Streaming**: Server Streaming pattern replaces HTTP POST webhooks
-//! - **Real-time Events**: Bidirectional streams for live updates
-//!
-//! # Streaming Patterns
-//!
-//! | Pattern | Use Case | Example |
-//! |---------|----------|---------|
-//! | Unary | Single request/response | VoteRequest/VoteResponse |
-//! | Server Streaming | Push events to client | Webhook events |
-//! | Client Streaming | Bulk upload | Snapshot installation |
-//! | Bidirectional | Real-time sync | Heartbeats, live updates |
+//! All raft-rs message types (~15 types including votes, heartbeats, appends)
+//! are multiplexed through a single `StepMessage` RPC as opaque protobuf v2
+//! bytes (etcd/tikv pattern). EC replication uses a separate `ReplicateEntries`
+//! RPC for async peer sync.
 //!
 //! # Example
 //!
 //! ```rust,ignore
-//! use nexus_raft::transport::{RaftClient, RaftServer};
+//! use nexus_raft::transport::{RaftClient, ClientConfig};
 //!
 //! // Create a client to talk to another node
-//! let client = RaftClient::connect("http://10.0.0.2:2026").await?;
+//! let mut client = RaftClient::connect("http://10.0.0.2:2026", ClientConfig::default()).await?;
 //!
-//! // Send a vote request
-//! let response = client.request_vote(VoteRequest {
-//!     term: 1,
-//!     candidate_id: 1,
-//!     last_log_index: 10,
-//!     last_log_term: 1,
-//! }).await?;
-//!
-//! // Start a server
-//! let server = RaftServer::new(my_raft_handler);
-//! server.serve("0.0.0.0:2026").await?;
+//! // Send a raw raft-rs message via step_message
+//! client.step_message(message_bytes, "my-zone".to_string()).await?;
 //! ```
 //!
 //! # Feature Flag
@@ -67,8 +48,8 @@ mod transport_loop;
 
 #[cfg(all(feature = "grpc", has_protos))]
 pub use client::{
-    AppendEntriesResponseLocal, ClientConfig, ClusterInfoResult, LogEntry, ProposeResult,
-    QueryResult, RaftApiClient, RaftClient, RaftClientPool, VoteResponseLocal,
+    ClientConfig, ClusterInfoResult, ProposeResult, QueryResult, RaftApiClient, RaftClient,
+    RaftClientPool,
 };
 #[cfg(all(feature = "grpc", has_protos))]
 pub use server::{RaftGrpcServer, RaftWitnessServer, ServerConfig, WitnessServerState};
@@ -100,7 +81,7 @@ pub mod proto {
     //! This module contains the Rust types generated from proto files.
     //! Structure mirrors the proto package hierarchy:
     //!   - nexus::core - FileMetadata, PaginatedResult
-    //!   - nexus::raft - RaftService, commands, transport messages
+    //!   - nexus::raft - ZoneTransportService, ZoneApiService, commands, transport messages
 
     /// Core types (FileMetadata, etc.)
     pub mod nexus {

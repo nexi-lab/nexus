@@ -1,8 +1,8 @@
-// Raft transport layer - gRPC services and messages.
+// Zone transport layer - gRPC services and messages.
 //
 // This proto file defines the gRPC services and messages for:
-// 1. RaftService - Internal node-to-node Raft consensus
-// 2. RaftClientService - Client-facing API for Raft operations
+// 1. ZoneTransportService - Internal node-to-node Raft consensus
+// 2. ZoneApiService - Client-facing API for zone operations
 
 syntax = "proto3";
 
@@ -12,10 +12,10 @@ import "nexus/raft/commands.proto";
 
 // === Services ===
 
-// RaftService handles Raft consensus protocol messages.
+// ZoneTransportService handles Raft consensus protocol messages.
 //
 // This service is used for communication between Raft nodes (leaders, followers, witnesses).
-service RaftService {
+service ZoneTransportService {
   // StepMessage forwards a raw raft-rs eraftpb::Message between nodes.
   // The bytes are opaque to the transport layer — serialized using protobuf v2
   // (raft-rs's native format). This is the standard pattern (etcd, tikv) for
@@ -29,10 +29,10 @@ service RaftService {
   rpc ReplicateEntries(ReplicateEntriesRequest) returns (ReplicateEntriesResponse);
 }
 
-// RaftClientService provides the client-facing API for Raft operations.
+// ZoneApiService provides the client-facing API for zone operations.
 //
 // This service is used by clients (Python, CLI, etc.) to interact with the Raft cluster.
-// It differs from RaftService which is for internal node-to-node communication.
+// It differs from ZoneTransportService which is for internal node-to-node communication.
 //
 // Architecture:
 // - Propose: Write operations -> goes through Raft log -> applied to state machine
@@ -41,7 +41,7 @@ service RaftService {
 // Leader handling:
 // - Propose: If not leader, returns leader address for client to redirect
 // - Query: Can be served by any node (eventual consistency) or redirected to leader (strong consistency)
-service RaftClientService {
+service ZoneApiService {
   // Propose submits a command to be replicated through Raft.
   // Only the leader can accept proposals; followers return a redirect.
   rpc Propose(ProposeRequest) returns (ProposeResponse);

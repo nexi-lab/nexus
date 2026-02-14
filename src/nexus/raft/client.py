@@ -4,8 +4,8 @@ This module provides async Python clients to communicate with Rust Raft nodes
 over gRPC for metadata and lock operations.
 
 Architecture:
-    - RaftClientService (client-facing): Used by RemoteNexusFS for Propose/Query
-    - RaftService (internal): Used for node-to-node Raft protocol (not exposed here)
+    - ZoneApiService (client-facing): Used by RemoteNexusFS for Propose/Query
+    - ZoneTransportService (internal): Used for node-to-node Raft protocol (not exposed here)
 
 For local same-box scenarios, use Metastore (PyO3 FFI) instead for better
 performance (~5μs vs ~200μs latency).
@@ -93,7 +93,7 @@ class RaftClientConfig:
 class RaftClient:
     """Async gRPC client for Raft cluster (client-facing API).
 
-    This client uses RaftClientService to communicate with Rust Raft nodes for:
+    This client uses ZoneApiService to communicate with Rust Raft nodes for:
     - Metadata operations (put, get, list, delete) via Propose/Query RPCs
     - Lock operations (acquire, release, extend) via Propose RPC
 
@@ -139,7 +139,7 @@ class RaftClient:
         self.zone_id = zone_id
 
         self._channel: grpc_aio.Channel | None = None
-        self._stub: transport_pb2_grpc.RaftClientServiceStub | None = None
+        self._stub: transport_pb2_grpc.ZoneApiServiceStub | None = None
 
     async def connect(self) -> None:
         """Establish connection to Raft node."""
@@ -168,8 +168,8 @@ class RaftClient:
             self._channel = grpc_aio.secure_channel(self.address, creds, options=options)
         else:
             self._channel = grpc_aio.insecure_channel(self.address, options=options)
-        # Use RaftClientService (client-facing API), NOT RaftService (internal)
-        self._stub = transport_pb2_grpc.RaftClientServiceStub(self._channel)
+        # Use ZoneApiService (client-facing API), NOT ZoneTransportService (internal)
+        self._stub = transport_pb2_grpc.ZoneApiServiceStub(self._channel)
 
         logger.debug(f"Connected to Raft cluster at {self.address}")
 
@@ -188,7 +188,7 @@ class RaftClient:
     async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
         await self.close()
 
-    def _ensure_connected(self) -> transport_pb2_grpc.RaftClientServiceStub:
+    def _ensure_connected(self) -> transport_pb2_grpc.ZoneApiServiceStub:
         """Ensure client is connected and return stub."""
         if self._stub is None:
             raise RuntimeError("RaftClient not connected. Use 'async with' or call connect()")

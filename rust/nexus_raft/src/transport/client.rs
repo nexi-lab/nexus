@@ -3,9 +3,9 @@
 //! Provides a client to communicate with other Raft nodes using tonic gRPC.
 
 use super::proto::nexus::raft::{
-    raft_client_service_client::RaftClientServiceClient,
+    zone_api_service_client::ZoneApiServiceClient,
     raft_command::Command as ProtoCommandVariant, raft_query::Query as ProtoQueryVariant,
-    raft_service_client::RaftServiceClient, AcquireLock, DeleteMetadata, EcReplicationEntry,
+    zone_transport_service_client::ZoneTransportServiceClient, AcquireLock, DeleteMetadata, EcReplicationEntry,
     ExtendLock, GetClusterInfoRequest, GetLockInfo, GetMetadata, ListMetadata, ProposeRequest,
     PutMetadata, QueryRequest, RaftCommand, RaftQuery, ReleaseLock, ReplicateEntriesRequest,
     StepMessageRequest,
@@ -113,7 +113,7 @@ pub struct RaftClient {
     endpoint: String,
     #[allow(dead_code)]
     config: ClientConfig,
-    inner: RaftServiceClient<Channel>,
+    inner: ZoneTransportServiceClient<Channel>,
 }
 
 impl RaftClient {
@@ -144,7 +144,7 @@ impl RaftClient {
         }
 
         let channel = ep.connect().await?;
-        let inner = RaftServiceClient::new(channel);
+        let inner = ZoneTransportServiceClient::new(channel);
 
         tracing::info!("Connected to Raft node at {}", endpoint);
 
@@ -220,14 +220,14 @@ impl RaftClient {
 /// A client for the Raft cluster's client-facing API.
 ///
 /// This client is used by Python, CLI, and other external clients to
-/// interact with the Raft cluster. It uses the RaftClientService which
+/// interact with the Raft cluster. It uses the ZoneApiService which
 /// provides Propose (writes) and Query (reads) operations.
 #[derive(Clone)]
 pub struct RaftApiClient {
     endpoint: String,
     #[allow(dead_code)]
     config: ClientConfig,
-    inner: RaftClientServiceClient<Channel>,
+    inner: ZoneApiServiceClient<Channel>,
     /// Zone ID for multi-zone routing (included in all requests).
     zone_id: String,
 }
@@ -260,7 +260,7 @@ impl RaftApiClient {
         }
 
         let channel = ep.connect().await?;
-        let inner = RaftClientServiceClient::new(channel);
+        let inner = ZoneApiServiceClient::new(channel);
 
         tracing::info!("Connected to Raft API at {}", endpoint);
 

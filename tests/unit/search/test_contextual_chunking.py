@@ -328,7 +328,10 @@ class TestContextualChunkerFailureModes:
         for cc in result.chunks:
             assert cc.context is not None
             assert cc.context.situating_context  # Non-empty heuristic context
-            assert "A test document" in cc.context.situating_context or "Section" in cc.context.situating_context
+            assert (
+                "A test document" in cc.context.situating_context
+                or "Section" in cc.context.situating_context
+            )
 
     @pytest.mark.asyncio
     async def test_partial_failure(self):
@@ -341,7 +344,9 @@ class TestContextualChunkerFailureModes:
                 _ok_context(),
             ]
         )
-        config = ContextualChunkingConfig(enabled=True, batch_concurrency=1, use_heuristic_fallback=False)
+        config = ContextualChunkingConfig(
+            enabled=True, batch_concurrency=1, use_heuristic_fallback=False
+        )
         base_chunker = DocumentChunker(chunk_size=50, strategy=ChunkStrategy.FIXED)
         chunker = ContextualChunker(
             context_generator=gen,
@@ -388,7 +393,9 @@ class TestContextualChunkerFailureModes:
         )
         chunker = ContextualChunker(
             context_generator=gen,
-            config=ContextualChunkingConfig(enabled=True, batch_concurrency=1, use_heuristic_fallback=False),
+            config=ContextualChunkingConfig(
+                enabled=True, batch_concurrency=1, use_heuristic_fallback=False
+            ),
         )
 
         result = await chunker.chunk_with_context("Text.", doc_summary="S")
@@ -653,7 +660,9 @@ class TestCreateHeuristicGenerator:
         config = ContextualChunkingConfig(enabled=True, batch_concurrency=2)
         base_chunker = DocumentChunker(chunk_size=30, strategy=ChunkStrategy.FIXED)
         chunker = ContextualChunker(
-            context_generator=gen, config=config, base_chunker=base_chunker,
+            context_generator=gen,
+            config=config,
+            base_chunker=base_chunker,
         )
 
         doc = "Acme Corp reported strong results.\n\nRevenue grew 15% this quarter."

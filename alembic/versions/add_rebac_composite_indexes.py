@@ -34,7 +34,7 @@ def upgrade() -> None:
     op.create_index(
         "idx_rebac_permission_check",
         "rebac_tuples",
-        ["subject_type", "subject_id", "relation", "object_type", "object_id", "tenant_id"],
+        ["subject_type", "subject_id", "relation", "object_type", "object_id", "zone_id"],
     )
 
     # 2. Userset/group membership lookups
@@ -43,16 +43,16 @@ def upgrade() -> None:
     op.create_index(
         "idx_rebac_userset_lookup",
         "rebac_tuples",
-        ["relation", "object_type", "object_id", "subject_relation", "tenant_id"],
+        ["relation", "object_type", "object_id", "subject_relation", "zone_id"],
     )
 
     # 3. Object permission expansion (find all subjects with access to an object)
     # Used in: rebac_expand, _get_direct_subjects
-    # Query: WHERE object_type=? AND object_id=? AND relation=? AND tenant_id=?
+    # Query: WHERE object_type=? AND object_id=? AND relation=? AND zone_id=?
     op.create_index(
         "idx_rebac_object_expand",
         "rebac_tuples",
-        ["object_type", "object_id", "relation", "tenant_id"],
+        ["object_type", "object_id", "relation", "zone_id"],
     )
 
 

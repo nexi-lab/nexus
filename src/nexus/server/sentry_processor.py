@@ -33,9 +33,7 @@ except ImportError:
     _HAS_STRUCTLOG_SENTRY = False
 
 
-def _noop_processor(
-    _logger: Any, _method_name: Any, event_dict: dict[str, Any]
-) -> dict[str, Any]:
+def _noop_processor(_logger: Any, _method_name: Any, event_dict: dict[str, Any]) -> dict[str, Any]:
     """Identity processor — passes through unchanged."""
     return event_dict
 

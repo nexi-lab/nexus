@@ -61,7 +61,8 @@ def _build_config_from_env() -> SentryConfig:
         environment=os.environ.get("SENTRY_ENVIRONMENT", "development"),
         traces_sample_rate=float(os.environ.get("SENTRY_TRACES_SAMPLE_RATE", "0.1")),
         profiles_sample_rate=float(os.environ.get("SENTRY_PROFILES_SAMPLE_RATE", "0.0")),
-        send_default_pii=os.environ.get("SENTRY_SEND_PII", "false").lower() in (
+        send_default_pii=os.environ.get("SENTRY_SEND_PII", "false").lower()
+        in (
             "true",
             "1",
             "yes",

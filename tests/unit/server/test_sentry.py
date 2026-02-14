@@ -143,18 +143,21 @@ class TestSetupSentry:
         mock_fastapi_integration = MagicMock()
         mock_starlette_integration = MagicMock()
 
-        with patch.dict("sys.modules", {
-            "sentry_sdk": mock_sdk,
-            "sentry_sdk.integrations.fastapi": MagicMock(
-                FastApiIntegration=mock_fastapi_integration,
-            ),
-            "sentry_sdk.integrations.logging": MagicMock(
-                LoggingIntegration=mock_logging_integration,
-            ),
-            "sentry_sdk.integrations.starlette": MagicMock(
-                StarletteIntegration=mock_starlette_integration,
-            ),
-        }):
+        with patch.dict(
+            "sys.modules",
+            {
+                "sentry_sdk": mock_sdk,
+                "sentry_sdk.integrations.fastapi": MagicMock(
+                    FastApiIntegration=mock_fastapi_integration,
+                ),
+                "sentry_sdk.integrations.logging": MagicMock(
+                    LoggingIntegration=mock_logging_integration,
+                ),
+                "sentry_sdk.integrations.starlette": MagicMock(
+                    StarletteIntegration=mock_starlette_integration,
+                ),
+            },
+        ):
             mock_sdk.init = mock_init
             result = mod.setup_sentry(config=config)
 

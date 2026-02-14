@@ -81,7 +81,7 @@ def configure_logging(
         raise ValueError(f"Invalid env: {env!r}. Must be 'dev' or 'prod'.")
 
     # Resolve and validate log level
-    resolved_level = log_level if log_level is not None else os.environ.get("LOG_LEVEL", "INFO")
+    resolved_level = log_level if log_level else os.environ.get("LOG_LEVEL", "INFO")
     level_name = resolved_level.upper()
     level = getattr(logging, level_name, None)
     if level is None:

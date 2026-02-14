@@ -288,7 +288,7 @@ async def client(
     mock_nexus_fs._coordination_client = None
 
     # Create real app via create_app with PostgreSQL URL
-    from nexus.server.fastapi_server import _app_state, create_app, get_auth_result
+    from nexus.server.fastapi_server import _fastapi_app, create_app, get_auth_result
 
     app = create_app(
         nexus_fs=mock_nexus_fs,
@@ -296,7 +296,7 @@ async def client(
     )
 
     # Inject AsyncNexusFS (simulating lifespan)
-    _app_state.async_nexus_fs = async_fs
+    _fastapi_app.state.async_nexus_fs = async_fs
 
     # Wire NexusPay into the server
     nexuspay = NexusPay(
@@ -350,7 +350,7 @@ async def client(
 
     await async_fs.close()
     metadata_store.close()
-    _app_state.async_nexus_fs = None
+    _fastapi_app.state.async_nexus_fs = None
     app.dependency_overrides.clear()
 
 
@@ -525,10 +525,10 @@ async def test_file_write_denied_when_no_permission(
     mock_nexus_fs._event_bus = None
     mock_nexus_fs._coordination_client = None
 
-    from nexus.server.fastapi_server import _app_state, create_app, get_auth_result
+    from nexus.server.fastapi_server import _fastapi_app, create_app, get_auth_result
 
     app = create_app(nexus_fs=mock_nexus_fs, database_url=TEST_SYNC_DB_URL)
-    _app_state.async_nexus_fs = async_fs
+    _fastapi_app.state.async_nexus_fs = async_fs
     app.state.credits_service = mock_credits_service
     app.state.x402_client = x402_client
 
@@ -560,7 +560,7 @@ async def test_file_write_denied_when_no_permission(
 
     await async_fs.close()
     metadata_store.close()
-    _app_state.async_nexus_fs = None
+    _fastapi_app.state.async_nexus_fs = None
     app.dependency_overrides.clear()
 
 
@@ -681,14 +681,14 @@ async def auth_enforced_client(
     mock_nexus_fs._event_bus = None
     mock_nexus_fs._coordination_client = None
 
-    from nexus.server.fastapi_server import _app_state, create_app
+    from nexus.server.fastapi_server import _fastapi_app, create_app
 
     app = create_app(
         nexus_fs=mock_nexus_fs,
         database_url=TEST_SYNC_DB_URL,
         api_key="test-secret-api-key-12345",
     )
-    _app_state.async_nexus_fs = async_fs
+    _fastapi_app.state.async_nexus_fs = async_fs
     app.state.credits_service = mock_credits_service
     app.state.x402_client = x402_client
 
@@ -702,7 +702,7 @@ async def auth_enforced_client(
 
     await async_fs.close()
     metadata_store.close()
-    _app_state.async_nexus_fs = None
+    _fastapi_app.state.async_nexus_fs = None
 
 
 @pytest.mark.asyncio
@@ -800,10 +800,10 @@ async def test_file_permission_denied_does_not_affect_pay(
     mock_nexus_fs._event_bus = None
     mock_nexus_fs._coordination_client = None
 
-    from nexus.server.fastapi_server import _app_state, create_app, get_auth_result
+    from nexus.server.fastapi_server import _fastapi_app, create_app, get_auth_result
 
     app = create_app(nexus_fs=mock_nexus_fs, database_url=TEST_SYNC_DB_URL)
-    _app_state.async_nexus_fs = async_fs
+    _fastapi_app.state.async_nexus_fs = async_fs
     app.state.credits_service = mock_credits_service
     app.state.x402_client = x402_client
 
@@ -848,7 +848,7 @@ async def test_file_permission_denied_does_not_affect_pay(
 
     await async_fs.close()
     metadata_store.close()
-    _app_state.async_nexus_fs = None
+    _fastapi_app.state.async_nexus_fs = None
     app.dependency_overrides.clear()
 
 
@@ -920,14 +920,14 @@ async def db_auth_client(
     mock_nexus_fs._event_bus = None
     mock_nexus_fs._coordination_client = None
 
-    from nexus.server.fastapi_server import _app_state, create_app
+    from nexus.server.fastapi_server import _fastapi_app, create_app
 
     app = create_app(
         nexus_fs=mock_nexus_fs,
         database_url=TEST_SYNC_DB_URL,
         auth_provider=db_auth,
     )
-    _app_state.async_nexus_fs = async_fs
+    _fastapi_app.state.async_nexus_fs = async_fs
     app.state.credits_service = mock_credits_service
     app.state.x402_client = x402_client
 
@@ -941,7 +941,7 @@ async def db_auth_client(
 
     await async_fs.close()
     metadata_store.close()
-    _app_state.async_nexus_fs = None
+    _fastapi_app.state.async_nexus_fs = None
 
     # Cleanup: remove test key from PostgreSQL
     with SessionFactory() as session:

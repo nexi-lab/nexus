@@ -458,7 +458,9 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
                 finally:
                     await self._close_client()
 
-            content = asyncio.run(_fetch())
+            from nexus.core.sync_bridge import run_sync
+
+            content = run_sync(_fetch())
 
             # Cache the result
             if self._has_caching():
@@ -788,5 +790,7 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
 
             await self._close_client()
 
-        asyncio.run(_sync_feeds())
+        from nexus.core.sync_bridge import run_sync
+
+        run_sync(_sync_feeds())
         return result

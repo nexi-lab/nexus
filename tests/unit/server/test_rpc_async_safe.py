@@ -1,14 +1,11 @@
-"""Tests for _run_async_safe performance fix.
+"""Tests for _run_async_safe using sync_bridge (Issue #1300).
 
-This module tests the shared ThreadPoolExecutor optimization in the RPC server.
-The fix addresses the issue where a new ThreadPoolExecutor was created per call,
-causing significant overhead under load.
+This module tests that _run_async_safe correctly delegates to sync_bridge.run_sync()
+instead of the old ThreadPoolExecutor + asyncio.run() anti-pattern.
 """
 
 import asyncio
-import concurrent.futures
 import threading
-import time
 from unittest.mock import AsyncMock, Mock
 
 import pytest
@@ -22,10 +19,6 @@ class TestRunAsyncSafe:
     @pytest.fixture
     def handler(self):
         """Create a handler with necessary attributes."""
-        # Reset class-level state before each test
-        RPCRequestHandler._async_executor = None
-        RPCRequestHandler._async_executor_lock = None
-
         handler = Mock(spec=RPCRequestHandler)
         handler.nexus_fs = Mock()
         handler.api_key = None
@@ -37,11 +30,6 @@ class TestRunAsyncSafe:
         handler._run_async_safe = lambda coro: RPCRequestHandler._run_async_safe(handler, coro)
 
         yield handler
-
-        # Cleanup after test
-        if RPCRequestHandler._async_executor is not None:
-            RPCRequestHandler._async_executor.shutdown(wait=True)
-            RPCRequestHandler._async_executor = None
 
     def test_run_async_safe_basic(self, handler):
         """Test basic async coroutine execution."""
@@ -62,29 +50,19 @@ class TestRunAsyncSafe:
         result = handler._run_async_safe(async_coro())
         assert result == 42
 
-    def test_shared_executor_created_once(self, handler):
-        """Test that shared executor is created only once."""
+    def test_delegates_to_run_sync(self, handler):
+        """Test that _run_async_safe delegates to sync_bridge.run_sync."""
 
-        # First call should create executor
-        async def coro1():
-            return 1
+        async def async_coro():
+            return "delegated"
 
-        handler._run_async_safe(coro1())
+        # run_sync handles context detection internally, so just verify
+        # that the result is returned correctly
+        result = handler._run_async_safe(async_coro())
+        assert result == "delegated"
 
-        executor1 = RPCRequestHandler._async_executor
-        assert executor1 is not None
-
-        # Second call should reuse same executor
-        async def coro2():
-            return 2
-
-        handler._run_async_safe(coro2())
-
-        executor2 = RPCRequestHandler._async_executor
-        assert executor1 is executor2
-
-    def test_shared_executor_thread_safe(self, handler):
-        """Test that executor creation is thread-safe."""
+    def test_concurrent_calls_safe(self, handler):
+        """Test that concurrent calls from multiple threads are safe."""
         results = []
         errors = []
 
@@ -110,29 +88,14 @@ class TestRunAsyncSafe:
         assert len(results) == 10
         assert set(results) == set(range(10))
 
-        # Should still be only one executor
-        assert RPCRequestHandler._async_executor is not None
+    def test_error_propagation(self, handler):
+        """Test that errors from coroutines propagate correctly."""
 
-    def test_executor_max_workers(self, handler):
-        """Test that executor has correct number of workers."""
+        async def failing_coro():
+            raise ValueError("test error")
 
-        async def coro():
-            return 1
-
-        handler._run_async_safe(coro())
-
-        executor = RPCRequestHandler._async_executor
-        assert executor is not None
-        assert executor._max_workers == 16  # Optimized for concurrent load
-
-    def test_executor_thread_name_prefix(self, handler):
-        """Test that executor uses correct thread name prefix."""
-
-        async def coro():
-            return threading.current_thread().name
-
-        thread_name = handler._run_async_safe(coro())
-        assert "rpc-async" in thread_name
+        with pytest.raises(ValueError, match="test error"):
+            handler._run_async_safe(failing_coro())
 
 
 class TestRunAsyncSafeWithAuthProvider:
@@ -141,10 +104,6 @@ class TestRunAsyncSafeWithAuthProvider:
     @pytest.fixture
     def handler_with_auth(self):
         """Create a handler with auth_provider configured."""
-        # Reset class-level state
-        RPCRequestHandler._async_executor = None
-        RPCRequestHandler._async_executor_lock = None
-
         handler = Mock(spec=RPCRequestHandler)
         handler.nexus_fs = Mock()
         handler.api_key = None
@@ -171,27 +130,12 @@ class TestRunAsyncSafeWithAuthProvider:
 
         # Cleanup
         handler.event_loop.close()
-        if RPCRequestHandler._async_executor is not None:
-            RPCRequestHandler._async_executor.shutdown(wait=True)
-            RPCRequestHandler._async_executor = None
 
     def test_validate_auth_with_async_provider(self, handler_with_auth):
         """Test _validate_auth uses _run_async_safe correctly."""
         result = handler_with_auth._validate_auth()
         assert result is True
         handler_with_auth.auth_provider.authenticate.assert_called_once_with("test-token")
-
-    def test_multiple_auth_calls_reuse_executor(self, handler_with_auth):
-        """Test that multiple auth calls reuse the same executor."""
-        # First auth call
-        handler_with_auth._validate_auth()
-        executor1 = RPCRequestHandler._async_executor
-
-        # Second auth call
-        handler_with_auth._validate_auth()
-        executor2 = RPCRequestHandler._async_executor
-
-        assert executor1 is executor2
 
     def test_concurrent_auth_calls(self, handler_with_auth):
         """Test concurrent authentication calls."""
@@ -218,31 +162,18 @@ class TestRunAsyncSafeWithAuthProvider:
 
 
 class TestRunAsyncSafePerformance:
-    """Performance tests for _run_async_safe optimization."""
+    """Performance tests for _run_async_safe using sync_bridge."""
 
     @pytest.fixture
     def handler(self):
         """Create a handler."""
-        RPCRequestHandler._async_executor = None
-        RPCRequestHandler._async_executor_lock = None
-
         handler = Mock(spec=RPCRequestHandler)
         handler._run_async_safe = lambda coro: RPCRequestHandler._run_async_safe(handler, coro)
 
         yield handler
 
-        if RPCRequestHandler._async_executor is not None:
-            RPCRequestHandler._async_executor.shutdown(wait=True)
-            RPCRequestHandler._async_executor = None
-
-    def test_concurrent_performance_shared_executor(self, handler):
-        """Test shared executor performance under concurrent load.
-
-        The benefit of shared executor is primarily under concurrent load:
-        - Avoids thread creation/destruction overhead per call
-        - Reduces GC pressure from thread cleanup
-        - Better thread reuse under sustained load
-        """
+    def test_concurrent_performance(self, handler):
+        """Test sync_bridge-based implementation under concurrent load."""
         import queue
 
         async def simple_coro():
@@ -258,46 +189,11 @@ class TestRunAsyncSafePerformance:
                 result = handler._run_async_safe(simple_coro())
                 results_queue.put(result)
 
-        # Time with shared executor (new implementation) under concurrent load
-        start = time.perf_counter()
         threads = [threading.Thread(target=worker) for _ in range(num_threads)]
         for t in threads:
             t.start()
         for t in threads:
             t.join()
-        shared_time = time.perf_counter() - start
 
-        # Verify all results
-        assert results_queue.qsize() == num_threads * calls_per_thread
-
-        # Time with per-call executor (old implementation) under concurrent load
-        def old_run_async_safe(coro):
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(asyncio.run, coro)
-                return future.result()
-
-        results_queue_old: queue.Queue = queue.Queue()
-
-        def worker_old():
-            for _ in range(calls_per_thread):
-                result = old_run_async_safe(simple_coro())
-                results_queue_old.put(result)
-
-        start = time.perf_counter()
-        threads = [threading.Thread(target=worker_old) for _ in range(num_threads)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join()
-        per_call_time = time.perf_counter() - start
-
-        # Verify all results
-        assert results_queue_old.qsize() == num_threads * calls_per_thread
-
-        # Log performance comparison (not a strict assertion due to system variability)
-        print(f"Concurrent: Shared executor: {shared_time:.3f}s, Per-call: {per_call_time:.3f}s")
-        print(f"Speedup: {per_call_time / shared_time:.2f}x")
-
-        # The key functional benefit is avoiding thread creation overhead
-        # Both should complete all work correctly - that's the main test
+        # Verify all results completed correctly
         assert results_queue.qsize() == num_threads * calls_per_thread

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -11,30 +12,45 @@ from nexus.core.permissions import OperationContext
 from nexus.server import fastapi_server as fas
 
 
+def _make_mock_request():
+    """Create a mock Request whose app.state is fas._fastapi_app.state."""
+    request = MagicMock()
+    request.app.state = fas._fastapi_app.state
+    return request
+
+
 @pytest.fixture(autouse=True)
 def _restore_app_state():
-    """Restore global AppState to avoid cross-test leakage."""
+    """Restore global app state to avoid cross-test leakage."""
+    if fas._fastapi_app is None:
+        fas._fastapi_app = MagicMock()
+    # Ensure operation_timeout is a real number so asyncio.wait_for works
+    if not isinstance(getattr(fas._fastapi_app.state, "operation_timeout", None), (int, float)):
+        fas._fastapi_app.state.operation_timeout = 30.0
     saved = {
-        "api_key": getattr(fas._app_state, "api_key", None),
-        "auth_provider": getattr(fas._app_state, "auth_provider", None),
-        "nexus_fs": getattr(fas._app_state, "nexus_fs", None),
+        "api_key": getattr(fas._fastapi_app.state, "api_key", None),
+        "auth_provider": getattr(fas._fastapi_app.state, "auth_provider", None),
+        "nexus_fs": getattr(fas._fastapi_app.state, "nexus_fs", None),
+        "operation_timeout": fas._fastapi_app.state.operation_timeout,
     }
     try:
         yield
     finally:
-        fas._app_state.api_key = saved["api_key"]
-        fas._app_state.auth_provider = saved["auth_provider"]
-        fas._app_state.nexus_fs = saved["nexus_fs"]
+        fas._fastapi_app.state.api_key = saved["api_key"]
+        fas._fastapi_app.state.auth_provider = saved["auth_provider"]
+        fas._fastapi_app.state.nexus_fs = saved["nexus_fs"]
+        fas._fastapi_app.state.operation_timeout = saved["operation_timeout"]
 
 
 @pytest.mark.asyncio
 async def test_get_auth_result_open_access_infers_subject_from_sk_token():
-    fas._app_state.api_key = None
-    fas._app_state.auth_provider = None
+    fas._fastapi_app.state.api_key = None
+    fas._fastapi_app.state.auth_provider = None
 
     # Best-effort inference format: sk-<zone>_<user>_<...>
     token = "sk-default_admin_deadbeef_0123456789abcdef0123456789abcdef"
     auth = await fas.get_auth_result(
+        request=_make_mock_request(),
         authorization=f"Bearer {token}",
         x_agent_id=None,
         x_nexus_subject=None,
@@ -51,11 +67,12 @@ async def test_get_auth_result_open_access_infers_subject_from_sk_token():
 
 @pytest.mark.asyncio
 async def test_get_auth_result_open_access_prefers_x_nexus_subject_over_token():
-    fas._app_state.api_key = None
-    fas._app_state.auth_provider = None
+    fas._fastapi_app.state.api_key = None
+    fas._fastapi_app.state.auth_provider = None
 
     token = "sk-default_admin_deadbeef_0123456789abcdef0123456789abcdef"
     auth = await fas.get_auth_result(
+        request=_make_mock_request(),
         authorization=f"Bearer {token}",
         x_agent_id=None,
         x_nexus_subject="user:alice",
@@ -79,7 +96,7 @@ def test_handle_delete_passes_context_to_filesystem():
             self.calls.append((path, context))
 
     fs = FS()
-    fas._app_state.nexus_fs = fs
+    fas._fastapi_app.state.nexus_fs = fs
 
     ctx = OperationContext(
         user="admin",
@@ -106,7 +123,7 @@ def test_handle_delete_falls_back_if_filesystem_delete_has_no_context_param():
             self.calls.append(path)
 
     fs = FS()
-    fas._app_state.nexus_fs = fs
+    fas._fastapi_app.state.nexus_fs = fs
 
     ctx = OperationContext(
         user="admin",
@@ -138,7 +155,7 @@ def test_handle_rename_passes_context_to_filesystem():
             self.calls.append((old_path, new_path, context))
 
     fs = FS()
-    fas._app_state.nexus_fs = fs
+    fas._fastapi_app.state.nexus_fs = fs
 
     ctx = OperationContext(
         user="admin",
@@ -167,7 +184,7 @@ async def test_auto_dispatch_injects__context_param():
         assert _context is not None
         return {"subject_id": _context.subject_id, "zone_id": _context.zone_id}
 
-    fas._app_state.exposed_methods = {"dummy": fn}
+    fas._fastapi_app.state.exposed_methods = {"dummy": fn}
 
     ctx = OperationContext(
         user="admin",
@@ -204,9 +221,10 @@ class TestFastAPIServerAuth:
         )
         mock_auth_provider.authenticate = AsyncMock(return_value=auth_result)
 
-        fas._app_state.auth_provider = mock_auth_provider
+        fas._fastapi_app.state.auth_provider = mock_auth_provider
 
         auth = await fas.get_auth_result(
+            request=_make_mock_request(),
             authorization="Bearer sk-test-key",
             x_agent_id=None,
             x_nexus_subject=None,
@@ -220,11 +238,12 @@ class TestFastAPIServerAuth:
     @pytest.mark.asyncio
     async def test_get_auth_result_with_x_agent_id(self):
         """Test auth with X-Agent-ID header."""
-        fas._app_state.api_key = None
-        fas._app_state.auth_provider = None
+        fas._fastapi_app.state.api_key = None
+        fas._fastapi_app.state.auth_provider = None
 
         token = "sk-default_admin_deadbeef_0123456789abcdef0123456789abcdef"
         auth = await fas.get_auth_result(
+            request=_make_mock_request(),
             authorization=f"Bearer {token}",
             x_agent_id="agent-123",
             x_nexus_subject=None,
@@ -238,10 +257,11 @@ class TestFastAPIServerAuth:
     @pytest.mark.asyncio
     async def test_get_auth_result_no_authorization(self):
         """Test auth without authorization header."""
-        fas._app_state.api_key = None
-        fas._app_state.auth_provider = None
+        fas._fastapi_app.state.api_key = None
+        fas._fastapi_app.state.auth_provider = None
 
         auth = await fas.get_auth_result(
+            request=_make_mock_request(),
             authorization=None,
             x_agent_id=None,
             x_nexus_subject=None,
@@ -257,10 +277,11 @@ class TestFastAPIServerAuth:
     @pytest.mark.asyncio
     async def test_get_auth_result_invalid_token_format(self):
         """Test auth with invalid token format."""
-        fas._app_state.api_key = None
-        fas._app_state.auth_provider = None
+        fas._fastapi_app.state.api_key = None
+        fas._fastapi_app.state.auth_provider = None
 
         auth = await fas.get_auth_result(
+            request=_make_mock_request(),
             authorization="Bearer invalid-token-format",
             x_agent_id=None,
             x_nexus_subject=None,
@@ -283,7 +304,7 @@ class TestFastAPIServerHandlers:
                 return b"data"
 
         fs = FS()
-        fas._app_state.nexus_fs = fs
+        fas._fastapi_app.state.nexus_fs = fs
 
         ctx = OperationContext(
             user="admin",
@@ -308,7 +329,7 @@ class TestFastAPIServerHandlers:
                 return {"content": b"data", "size": 4, "etag": "etag123"}
 
         fs = FS()
-        fas._app_state.nexus_fs = fs
+        fas._fastapi_app.state.nexus_fs = fs
 
         ctx = OperationContext(
             user="admin",
@@ -342,7 +363,7 @@ class TestFastAPIServerHandlers:
                 return {"etag": "etag123", "size": len(content)}
 
         fs = FS()
-        fas._app_state.nexus_fs = fs
+        fas._fastapi_app.state.nexus_fs = fs
 
         ctx = OperationContext(
             user="admin",
@@ -385,7 +406,7 @@ class TestFastAPIServerHandlers:
                 return {"etag": "new-etag", "size": len(content)}
 
         fs = FS()
-        fas._app_state.nexus_fs = fs
+        fas._fastapi_app.state.nexus_fs = fs
 
         ctx = OperationContext(
             user="admin",
@@ -415,7 +436,7 @@ class TestFastAPIServerHandlers:
                 calls.append(kwargs)
                 return {"etag": "etag123", "size": len(content)}
 
-        fas._app_state.nexus_fs = FS()
+        fas._fastapi_app.state.nexus_fs = FS()
 
         ctx = OperationContext(
             user="admin",
@@ -450,7 +471,7 @@ class TestFastAPIServerHandlers:
                 calls.append(kwargs)
                 return {"etag": "etag123", "size": len(content)}
 
-        fas._app_state.nexus_fs = FS()
+        fas._fastapi_app.state.nexus_fs = FS()
 
         ctx = OperationContext(
             user="admin",
@@ -492,7 +513,7 @@ class TestFastAPIServerHandlers:
                 return ["/file1.txt", "/file2.txt"]
 
         fs = FS()
-        fas._app_state.nexus_fs = fs
+        fas._fastapi_app.state.nexus_fs = fs
 
         ctx = OperationContext(
             user="admin",
@@ -525,8 +546,8 @@ class TestFastAPIServerHandlers:
                 return {"size": 1024, "is_directory": False, "etag": "etag123"}
 
         fs = FS()
-        fas._app_state.nexus_fs = fs
-        fas._app_state.exposed_methods = {"stat": fs.stat}
+        fas._fastapi_app.state.nexus_fs = fs
+        fas._fastapi_app.state.exposed_methods = {"stat": fs.stat}
 
         ctx = OperationContext(
             user="admin",
@@ -551,7 +572,7 @@ class TestFastAPIServerHandlers:
                 return True
 
         fs = FS()
-        fas._app_state.nexus_fs = fs
+        fas._fastapi_app.state.nexus_fs = fs
 
         ctx = OperationContext(
             user="admin",
@@ -575,7 +596,7 @@ class TestFastAPIServerHandlers:
                 pass
 
         fs = FS()
-        fas._app_state.nexus_fs = fs
+        fas._fastapi_app.state.nexus_fs = fs
 
         ctx = OperationContext(
             user="admin",
@@ -599,7 +620,7 @@ class TestFastAPIServerHandlers:
                 pass
 
         fs = FS()
-        fas._app_state.nexus_fs = fs
+        fas._fastapi_app.state.nexus_fs = fs
 
         ctx = OperationContext(
             user="admin",
@@ -623,7 +644,7 @@ class TestFastAPIServerHandlers:
                 return ["/file1.py", "/file2.py"]
 
         fs = FS()
-        fas._app_state.nexus_fs = fs
+        fas._fastapi_app.state.nexus_fs = fs
 
         ctx = OperationContext(
             user="admin",
@@ -656,7 +677,7 @@ class TestFastAPIServerHandlers:
                 return [{"file": "/test.py", "line": 10, "content": "def test():"}]
 
         fs = FS()
-        fas._app_state.nexus_fs = fs
+        fas._fastapi_app.state.nexus_fs = fs
 
         ctx = OperationContext(
             user="admin",

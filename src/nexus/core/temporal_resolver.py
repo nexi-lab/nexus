@@ -159,20 +159,9 @@ Resolved:"""
         Returns:
             TemporalResult with resolved text.
         """
-        import asyncio
+        from nexus.core.sync_bridge import run_sync
 
-        try:
-            _loop = asyncio.get_running_loop()  # noqa: F841
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                future = pool.submit(
-                    asyncio.run,
-                    self.resolve_async(text, reference_time, context),
-                )
-                return future.result()
-        except RuntimeError:
-            return asyncio.run(self.resolve_async(text, reference_time, context))
+        return run_sync(self.resolve_async(text, reference_time, context))
 
     async def resolve_async(
         self,

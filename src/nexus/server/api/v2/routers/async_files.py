@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import base64
 import logging
-from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -489,36 +488,38 @@ def create_async_files_router(
     # Stream Endpoint
     # =============================================================================
 
-    @router.get("/stream")
+    @router.get("/stream", response_model=None)
     async def stream_file(
+        request: Request,
         path: str = Query(..., description="Path to stream"),
         chunk_size: int = Query(65536, description="Chunk size in bytes"),
         context: Any = Depends(get_context),
-    ) -> StreamingResponse:
+    ) -> Response | StreamingResponse:
         """
-        Stream file content in chunks.
+        Stream file content in chunks with HTTP Range support (RFC 9110).
 
-        Useful for large files to avoid loading entire content into memory.
-        Returns application/octet-stream content type.
+        Supports partial content (206), full content (200), and range
+        not satisfiable (416) responses. Useful for large files, download
+        resumption, and media seeking.
         """
+        from nexus.server.range_utils import build_range_response
+
         try:
             fs = await _get_fs()
-            # Verify file exists first
             meta = await fs.get_metadata(path, context=context)
             if meta is None:
                 raise NexusFileNotFoundError(path=path)
 
-            async def generate() -> AsyncIterator[bytes]:
-                async for chunk in fs.stream_read(path, chunk_size=chunk_size, context=context):
-                    yield chunk
-
-            return StreamingResponse(
-                generate(),
-                media_type="application/octet-stream",
-                headers={
-                    "Content-Disposition": f'attachment; filename="{path.split("/")[-1]}"',
-                    "ETag": f'"{meta.etag}"' if meta.etag else "",
-                },
+            return build_range_response(
+                request_headers=request.headers,
+                content_generator=lambda s, e, cs: fs.stream_read_range(
+                    path, s, e, cs, context=context
+                ),
+                full_generator=lambda: fs.stream_read(path, chunk_size=chunk_size, context=context),
+                total_size=meta.size,
+                etag=meta.etag,
+                content_type=meta.mime_type or "application/octet-stream",
+                filename=path.split("/")[-1],
             )
 
         except NexusPermissionError as e:

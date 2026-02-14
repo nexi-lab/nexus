@@ -729,6 +729,52 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
                 f"Failed to stream content: {e}", backend="local", path=content_hash
             ) from e
 
+    def stream_range(
+        self,
+        content_hash: str,
+        start: int,
+        end: int,
+        chunk_size: int = 8192,
+        context: "OperationContext | None" = None,
+    ) -> "Iterator[bytes]":
+        """Efficient seek-based range streaming for local CAS.
+
+        Uses file seek to jump directly to the requested offset, avoiding
+        reading unnecessary bytes. Much faster than the default read+slice
+        for large files.
+
+        Args:
+            content_hash: Content hash (BLAKE3 hex)
+            start: First byte position (inclusive, 0-based)
+            end: Last byte position (inclusive, 0-based)
+            chunk_size: Size of each yielded chunk in bytes
+            context: Operation context (ignored for local backend)
+
+        Yields:
+            bytes: Chunks covering the requested range
+        """
+        content_path = self._hash_to_path(content_hash)
+        if not content_path.exists():
+            raise NexusFileNotFoundError(
+                path=content_hash,
+                message=f"CAS content not found: {content_hash}",
+            )
+
+        bytes_remaining = end - start + 1
+        try:
+            with open(content_path, "rb") as f:
+                f.seek(start)
+                while bytes_remaining > 0:
+                    chunk = f.read(min(chunk_size, bytes_remaining))
+                    if not chunk:
+                        break
+                    bytes_remaining -= len(chunk)
+                    yield chunk
+        except OSError as e:
+            raise BackendError(
+                f"Failed to stream range: {e}", backend="local", path=content_hash
+            ) from e
+
     def write_stream(
         self,
         chunks: "Iterator[bytes]",

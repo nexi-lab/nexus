@@ -457,6 +457,35 @@ class Backend(ABC):
         for i in range(0, len(content), chunk_size):
             yield content[i : i + chunk_size]
 
+    def stream_range(
+        self,
+        content_hash: str,
+        start: int,
+        end: int,
+        chunk_size: int = 8192,
+        context: "OperationContext | None" = None,
+    ) -> "Iterator[bytes]":
+        """Stream a byte range [start, end] inclusive from stored content.
+
+        Default implementation reads full content and slices. Backends with
+        seekable storage should override for efficiency.
+
+        Args:
+            content_hash: Content identifier (hash)
+            start: First byte position (inclusive, 0-based)
+            end: Last byte position (inclusive, 0-based)
+            chunk_size: Size of each yielded chunk in bytes
+            context: Operation context (optional)
+
+        Yields:
+            bytes: Chunks covering the requested range
+        """
+        response = self.read_content(content_hash, context=context)
+        content = response.unwrap()
+        sliced = content[start : end + 1]
+        for i in range(0, len(sliced), chunk_size):
+            yield sliced[i : i + chunk_size]
+
     def write_stream(
         self,
         chunks: Iterator[bytes],

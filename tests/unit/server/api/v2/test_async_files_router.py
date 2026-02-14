@@ -62,6 +62,7 @@ class FakeMetadata:
     is_dir: bool = False
     created_at: datetime | None = None
     modified_at: datetime | None = None
+    mime_type: str | None = "application/octet-stream"
 
     def __post_init__(self):
         if self.created_at is None:
@@ -102,6 +103,7 @@ def mock_async_fs():
         yield b"chunk2"
 
     fs.stream_read = _stream_chunks
+    fs.stream_read_range = _stream_chunks
 
     return fs
 

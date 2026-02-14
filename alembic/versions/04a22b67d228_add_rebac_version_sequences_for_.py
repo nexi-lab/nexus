@@ -23,25 +23,23 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     """Upgrade schema.
 
-    Add per-tenant version sequence table for ReBAC consistency tokens.
+    Add per-zone version sequence table for ReBAC consistency tokens.
     This replaces the in-memory counter with a monotonic DB-backed sequence.
     """
-    # Create table to store per-tenant version counters
+    # Create table to store per-zone version counters
     op.create_table(
         "rebac_version_sequences",
-        sa.Column("tenant_id", sa.String(), nullable=False),
+        sa.Column("zone_id", sa.String(), nullable=False),
         sa.Column("current_version", sa.BigInteger(), nullable=False, server_default="0"),
         sa.Column("updated_at", sa.DateTime(), nullable=False),
-        sa.PrimaryKeyConstraint("tenant_id"),
+        sa.PrimaryKeyConstraint("zone_id"),
     )
 
     # Create index for fast lookups
-    op.create_index(
-        "ix_rebac_version_sequences_tenant_id", "rebac_version_sequences", ["tenant_id"]
-    )
+    op.create_index("ix_rebac_version_sequences_zone_id", "rebac_version_sequences", ["zone_id"])
 
 
 def downgrade() -> None:
     """Downgrade schema."""
-    op.drop_index("ix_rebac_version_sequences_tenant_id", table_name="rebac_version_sequences")
+    op.drop_index("ix_rebac_version_sequences_zone_id", table_name="rebac_version_sequences")
     op.drop_table("rebac_version_sequences")

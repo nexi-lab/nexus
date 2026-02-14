@@ -63,6 +63,74 @@ class InMemoryVFS:
             parent = "/" + "/".join(parts[:i])
             self._dirs.add((parent, zone_id))
 
+    async def count_dir(self, path: str, zone_id: str) -> int:
+        if (path, zone_id) not in self._dirs:
+            raise FileNotFoundError(f"No such directory: {path}")
+        entries = await self.list_dir(path, zone_id)
+        return len(entries)
+
+    async def exists(self, path: str, zone_id: str) -> bool:
+        return (path, zone_id) in self._files or (path, zone_id) in self._dirs
+
+
+class InMemoryStorageDriver:
+    """In-memory IPC storage driver for testing.
+
+    Satisfies the ``IPCStorageDriver`` protocol. Identical semantics to
+    ``InMemoryVFS`` but exists as a separate class to verify protocol
+    conformance independently.
+    """
+
+    def __init__(self) -> None:
+        self._files: dict[tuple[str, str], bytes] = {}
+        self._dirs: set[tuple[str, str]] = set()
+
+    async def read(self, path: str, zone_id: str) -> bytes:
+        key = (path, zone_id)
+        if key not in self._files:
+            raise FileNotFoundError(f"No such file: {path}")
+        return self._files[key]
+
+    async def write(self, path: str, data: bytes, zone_id: str) -> None:
+        self._files[(path, zone_id)] = data
+
+    async def list_dir(self, path: str, zone_id: str) -> list[str]:
+        if (path, zone_id) not in self._dirs:
+            raise FileNotFoundError(f"No such directory: {path}")
+        prefix = path.rstrip("/") + "/"
+        results: list[str] = []
+        for (fpath, fzone), _ in self._files.items():
+            if fzone == zone_id and fpath.startswith(prefix):
+                rest = fpath[len(prefix) :]
+                if "/" not in rest:
+                    results.append(rest)
+        for dpath, dzone in self._dirs:
+            if dzone == zone_id and dpath.startswith(prefix):
+                rest = dpath[len(prefix) :]
+                if "/" not in rest and rest:
+                    results.append(rest)
+        return sorted(set(results))
+
+    async def count_dir(self, path: str, zone_id: str) -> int:
+        if (path, zone_id) not in self._dirs:
+            raise FileNotFoundError(f"No such directory: {path}")
+        entries = await self.list_dir(path, zone_id)
+        return len(entries)
+
+    async def rename(self, src: str, dst: str, zone_id: str) -> None:
+        key = (src, zone_id)
+        if key not in self._files:
+            raise FileNotFoundError(f"No such file: {src}")
+        data = self._files.pop(key)
+        self._files[(dst, zone_id)] = data
+
+    async def mkdir(self, path: str, zone_id: str) -> None:
+        self._dirs.add((path, zone_id))
+        parts = path.strip("/").split("/")
+        for i in range(1, len(parts)):
+            parent = "/" + "/".join(parts[:i])
+            self._dirs.add((parent, zone_id))
+
     async def exists(self, path: str, zone_id: str) -> bool:
         return (path, zone_id) in self._files or (path, zone_id) in self._dirs
 

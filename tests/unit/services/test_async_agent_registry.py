@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus.core.agent_record import AgentRecord, AgentState
-from nexus.core.async_agent_registry import AsyncAgentRegistry, _to_agent_info
+from nexus.services.agents.async_agent_registry import AsyncAgentRegistry, _to_agent_info
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from tests.unit.core.protocols.test_conformance import assert_protocol_conformance
 

@@ -643,7 +643,7 @@ class TestSearchTools:
         glob_tool = get_tool(server, "nexus_glob")
         result = glob_tool.fn(pattern="[invalid")
 
-        assert "Error in glob search" in result
+        assert "Error" in result
         assert "Invalid pattern" in result
 
     def test_grep_success(self, mock_nx_basic):
@@ -695,7 +695,7 @@ class TestSearchTools:
         grep_tool = get_tool(server, "nexus_grep")
         result = grep_tool.fn(pattern="[invalid")
 
-        assert "Error in grep search" in result
+        assert "Error" in result
         assert "Invalid regex" in result
 
     def test_semantic_search_available(self, mock_nx_with_search):

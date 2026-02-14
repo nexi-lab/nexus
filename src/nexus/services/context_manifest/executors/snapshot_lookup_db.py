@@ -44,12 +44,8 @@ class DatabaseSnapshotLookup:
     Queries the workspace_snapshots table for snapshot metadata.
     """
 
-    def __init__(self, record_store: Any) -> None:
-        from nexus.storage.record_store import RecordStoreABC
-
-        if not isinstance(record_store, RecordStoreABC):
-            raise TypeError(f"Expected RecordStoreABC, got {type(record_store).__name__}")
-        self._session_factory = record_store.session_factory
+    def __init__(self, session_factory: Any) -> None:
+        self._session_factory = session_factory
 
     def get_snapshot(self, snapshot_id: str) -> dict[str, Any] | None:
         """Get snapshot by ID."""

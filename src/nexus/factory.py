@@ -391,7 +391,7 @@ def create_nexus_services(
                 WorkspaceSnapshotExecutor,
             )
 
-            snapshot_lookup = DatabaseSnapshotLookup(record_store=record_store)
+            snapshot_lookup = DatabaseSnapshotLookup(session_factory=session_factory)
             cas_reader = CASManifestReader(backend=backend)
             executors["workspace_snapshot"] = WorkspaceSnapshotExecutor(
                 snapshot_lookup=snapshot_lookup,

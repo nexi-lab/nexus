@@ -21,6 +21,7 @@ References:
 """
 
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
+from nexus.services.protocols.context_manifest import ContextManifestProtocol
 from nexus.services.protocols.event_log import EventId, EventLogProtocol, KernelEvent
 from nexus.services.protocols.hook_engine import (
     POST_COPY,
@@ -46,6 +47,7 @@ __all__ = [
     "AgentInfo",
     "AgentRegistryProtocol",
     "AgentRequest",
+    "ContextManifestProtocol",
     "EventId",
     "EventLogProtocol",
     "HookContext",

@@ -21,6 +21,7 @@ Domain modules:
     models.operation_log   -- OperationLogModel
     models.audit_checkpoint -- AuditCheckpointModel
     models.exchange_audit_log -- ExchangeAuditLogModel
+    models.ipc_message     -- IPCMessageModel (Issue #1469)
 """
 
 # Base and mixins
@@ -74,6 +75,9 @@ from nexus.storage.models.infrastructure import SubscriptionModel as Subscriptio
 from nexus.storage.models.infrastructure import SystemSettingsModel as SystemSettingsModel
 from nexus.storage.models.infrastructure import UserSessionModel as UserSessionModel
 from nexus.storage.models.infrastructure import WorkspaceConfigModel as WorkspaceConfigModel
+
+# Domain: IPC (Inter-Process Communication messages, Issue #1469)
+from nexus.storage.models.ipc_message import IPCMessageModel as IPCMessageModel
 
 # Domain: Memory and Knowledge Graph
 from nexus.storage.models.memory import EntityMentionModel as EntityMentionModel

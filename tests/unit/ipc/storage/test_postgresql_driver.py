@@ -1,73 +1,97 @@
 """Unit tests for PostgreSQLStorageDriver.
 
-Tests use a lightweight mock asyncpg pool to verify SQL logic and
-error handling without requiring a real PostgreSQL instance.
+Tests use an in-memory SQLite database with a real SQLAlchemy session
+factory, verifying ORM queries and error handling without requiring
+a real PostgreSQL instance.
 
 For true integration testing against PostgreSQL, see
 tests/integration/ipc/storage/ (marked with @pytest.mark.integration).
+
+Rewritten for Issue #1469: driver now uses RecordStoreABC session_factory
+instead of raw asyncpg.
 """
 
 from __future__ import annotations
 
-from typing import Any
-
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from nexus.ipc.storage.postgresql_driver import (
     PostgreSQLStorageDriver,
     _basename,
     _parent_dir,
 )
+from nexus.storage.models._base import Base
+from nexus.storage.models.ipc_message import IPCMessageModel  # noqa: F401 — register model
 
 # ---------------------------------------------------------------------------
-# Mock asyncpg pool + connection
+# Fixtures
 # ---------------------------------------------------------------------------
 
 
-class MockConnection:
-    """Fake asyncpg connection that records SQL executions."""
+@pytest.fixture
+def session_factory():
+    """Create an in-memory SQLite engine + session factory with tables.
 
-    def __init__(self, rows: dict[str, Any] | None = None) -> None:
-        self._rows = rows or {}
-        self.executed: list[tuple[str, tuple[Any, ...]]] = []
-
-    async def execute(self, sql: str, *args: Any) -> str:
-        self.executed.append((sql, args))
-        # Simulate UPDATE result string
-        if sql.strip().upper().startswith("UPDATE"):
-            return self._rows.get("__update_result__", "UPDATE 1")
-        return "OK"
-
-    async def fetch(self, sql: str, *args: Any) -> list[dict[str, Any]]:
-        self.executed.append((sql, args))
-        return self._rows.get("__fetch__", [])
-
-    async def fetchrow(self, sql: str, *args: Any) -> dict[str, Any] | None:
-        self.executed.append((sql, args))
-        return self._rows.get("__fetchrow__", None)
+    Uses StaticPool so that ``asyncio.to_thread()`` in the driver shares
+    the same underlying connection (in-memory SQLite is per-connection).
+    """
+    engine = create_engine(
+        "sqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    Base.metadata.create_all(engine)
+    factory = sessionmaker(bind=engine)
+    return factory
 
 
-class MockPool:
-    """Fake asyncpg pool that yields a MockConnection."""
-
-    def __init__(self, conn: MockConnection | None = None) -> None:
-        self._conn = conn or MockConnection()
-
-    def acquire(self) -> MockPoolContext:
-        return MockPoolContext(self._conn)
+@pytest.fixture
+def driver(session_factory):
+    """Create a PostgreSQLStorageDriver with test session factory."""
+    return PostgreSQLStorageDriver(session_factory=session_factory)
 
 
-class MockPoolContext:
-    """Async context manager for pool.acquire()."""
+# ---------------------------------------------------------------------------
+# Seed helpers
+# ---------------------------------------------------------------------------
 
-    def __init__(self, conn: MockConnection) -> None:
-        self._conn = conn
 
-    async def __aenter__(self) -> MockConnection:
-        return self._conn
+def _seed_file(session_factory, path: str, data: bytes, zone_id: str = "zone1") -> None:
+    """Insert a file row directly for test setup."""
 
-    async def __aexit__(self, *args: Any) -> None:
-        pass
+    with session_factory() as session:
+        session.add(
+            IPCMessageModel(
+                zone_id=zone_id,
+                path=path,
+                dir_path=_parent_dir(path),
+                filename=_basename(path),
+                data=data,
+                is_dir=False,
+            )
+        )
+        session.commit()
+
+
+def _seed_dir(session_factory, path: str, zone_id: str = "zone1") -> None:
+    """Insert a directory marker directly for test setup."""
+
+    normalized = path.rstrip("/")
+    with session_factory() as session:
+        session.add(
+            IPCMessageModel(
+                zone_id=zone_id,
+                path=normalized,
+                dir_path=_parent_dir(normalized),
+                filename=_basename(normalized),
+                data=b"",
+                is_dir=True,
+            )
+        )
+        session.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -98,179 +122,135 @@ class TestHelperFunctions:
 
 
 # ---------------------------------------------------------------------------
-# PostgreSQLStorageDriver tests
+# Read tests
 # ---------------------------------------------------------------------------
-
-
-class TestPostgreSQLStorageDriverInitialize:
-    """Tests for table initialization."""
-
-    @pytest.mark.asyncio
-    async def test_initialize_creates_table_and_indexes(self) -> None:
-        conn = MockConnection()
-        pool = MockPool(conn)
-        driver = PostgreSQLStorageDriver(pool=pool)
-
-        await driver.initialize()
-
-        # Should execute CREATE TABLE + 2 indexes = 3 statements
-        assert len(conn.executed) == 3
-        assert "CREATE TABLE" in conn.executed[0][0]
-        assert "CREATE UNIQUE INDEX" in conn.executed[1][0]
-        assert "CREATE INDEX" in conn.executed[2][0]
-
-    @pytest.mark.asyncio
-    async def test_initialize_is_idempotent(self) -> None:
-        conn = MockConnection()
-        pool = MockPool(conn)
-        driver = PostgreSQLStorageDriver(pool=pool)
-
-        await driver.initialize()
-        count_after_first = len(conn.executed)
-
-        await driver.initialize()  # Second call should be a no-op
-        assert len(conn.executed) == count_after_first
 
 
 class TestPostgreSQLStorageDriverRead:
     """Tests for read operations."""
 
     @pytest.mark.asyncio
-    async def test_read_returns_data(self) -> None:
-        conn = MockConnection(rows={"__fetchrow__": {"data": b'{"msg": "hello"}'}})
-        driver = PostgreSQLStorageDriver(pool=MockPool(conn))
+    async def test_read_returns_data(self, driver, session_factory) -> None:
+        _seed_file(session_factory, "/agents/bob/inbox/msg.json", b'{"msg": "hello"}')
 
         result = await driver.read("/agents/bob/inbox/msg.json", "zone1")
 
         assert result == b'{"msg": "hello"}'
-        assert len(conn.executed) == 1
-        sql, args = conn.executed[0]
-        assert "SELECT data" in sql
-        assert "is_dir = FALSE" in sql
-        assert args == ("zone1", "/agents/bob/inbox/msg.json")
 
     @pytest.mark.asyncio
-    async def test_read_nonexistent_raises_file_not_found(self) -> None:
-        conn = MockConnection(rows={"__fetchrow__": None})
-        driver = PostgreSQLStorageDriver(pool=MockPool(conn))
-
+    async def test_read_nonexistent_raises_file_not_found(self, driver) -> None:
         with pytest.raises(FileNotFoundError, match="No such file"):
             await driver.read("/nonexistent", "zone1")
+
+    @pytest.mark.asyncio
+    async def test_read_does_not_return_directories(self, driver, session_factory) -> None:
+        _seed_dir(session_factory, "/agents/bob/inbox")
+
+        with pytest.raises(FileNotFoundError, match="No such file"):
+            await driver.read("/agents/bob/inbox", "zone1")
+
+
+# ---------------------------------------------------------------------------
+# Write tests
+# ---------------------------------------------------------------------------
 
 
 class TestPostgreSQLStorageDriverWrite:
     """Tests for write operations."""
 
     @pytest.mark.asyncio
-    async def test_write_inserts_with_upsert(self) -> None:
-        conn = MockConnection()
-        driver = PostgreSQLStorageDriver(pool=MockPool(conn))
-
+    async def test_write_creates_file(self, driver) -> None:
         await driver.write("/agents/bob/inbox/msg.json", b"data", "zone1")
 
-        assert len(conn.executed) == 1
-        sql, args = conn.executed[0]
-        assert "INSERT INTO ipc_messages" in sql
-        assert "ON CONFLICT" in sql
-        assert args == (
-            "zone1",
-            "/agents/bob/inbox/msg.json",
-            "/agents/bob/inbox",
-            "msg.json",
-            b"data",
-        )
+        result = await driver.read("/agents/bob/inbox/msg.json", "zone1")
+        assert result == b"data"
+
+    @pytest.mark.asyncio
+    async def test_write_upsert_overwrites(self, driver) -> None:
+        await driver.write("/agents/bob/inbox/msg.json", b"old", "zone1")
+        await driver.write("/agents/bob/inbox/msg.json", b"new", "zone1")
+
+        result = await driver.read("/agents/bob/inbox/msg.json", "zone1")
+        assert result == b"new"
+
+
+# ---------------------------------------------------------------------------
+# List dir tests
+# ---------------------------------------------------------------------------
 
 
 class TestPostgreSQLStorageDriverListDir:
     """Tests for list_dir operations."""
 
     @pytest.mark.asyncio
-    async def test_list_dir_returns_filenames(self) -> None:
-        conn = MockConnection(
-            rows={
-                # _dir_exists check returns True
-                "__fetchrow__": {"1": 1},
-                # list_dir fetch returns filenames
-                "__fetch__": [
-                    {"filename": "msg_001.json"},
-                    {"filename": "msg_002.json"},
-                ],
-            }
-        )
-        driver = PostgreSQLStorageDriver(pool=MockPool(conn))
+    async def test_list_dir_returns_filenames(self, driver, session_factory) -> None:
+        _seed_dir(session_factory, "/agents/bob/inbox")
+        _seed_file(session_factory, "/agents/bob/inbox/msg_001.json", b"a")
+        _seed_file(session_factory, "/agents/bob/inbox/msg_002.json", b"b")
 
         result = await driver.list_dir("/agents/bob/inbox", "zone1")
 
         assert result == ["msg_001.json", "msg_002.json"]
 
     @pytest.mark.asyncio
-    async def test_list_dir_nonexistent_raises(self) -> None:
-        conn = MockConnection(rows={"__fetchrow__": None})
-        driver = PostgreSQLStorageDriver(pool=MockPool(conn))
-
+    async def test_list_dir_nonexistent_raises(self, driver) -> None:
         with pytest.raises(FileNotFoundError, match="No such directory"):
             await driver.list_dir("/nonexistent", "zone1")
 
     @pytest.mark.asyncio
-    async def test_list_dir_strips_trailing_slash(self) -> None:
-        conn = MockConnection(
-            rows={
-                "__fetchrow__": {"1": 1},
-                "__fetch__": [],
-            }
-        )
-        driver = PostgreSQLStorageDriver(pool=MockPool(conn))
+    async def test_list_dir_strips_trailing_slash(self, driver, session_factory) -> None:
+        _seed_dir(session_factory, "/agents/bob/inbox")
 
-        await driver.list_dir("/agents/bob/inbox/", "zone1")
+        result = await driver.list_dir("/agents/bob/inbox/", "zone1")
 
-        # _dir_exists should receive normalized path without trailing slash
-        sql, args = conn.executed[0]
-        assert args[1] == "/agents/bob/inbox"
+        assert result == []  # Empty dir
+
+
+# ---------------------------------------------------------------------------
+# Count dir tests
+# ---------------------------------------------------------------------------
 
 
 class TestPostgreSQLStorageDriverCountDir:
     """Tests for count_dir operations."""
 
     @pytest.mark.asyncio
-    async def test_count_dir_returns_count(self) -> None:
-        # The driver calls _dir_exists first, then COUNT(*)
-        # Both use fetchrow — mock needs to return sequentially
-        # Since our mock returns the same value for all fetchrow calls,
-        # we'll test the SQL structure
-        call_count = 0
-        results = [{"1": 1}, {"cnt": 5}]  # _dir_exists, then COUNT
-
-        class SeqConnection(MockConnection):
-            async def fetchrow(self, sql: str, *args: Any) -> dict[str, Any] | None:
-                nonlocal call_count
-                self.executed.append((sql, args))
-                result = results[call_count] if call_count < len(results) else None
-                call_count += 1
-                return result
-
-        conn = SeqConnection()
-        driver = PostgreSQLStorageDriver(pool=MockPool(conn))
+    async def test_count_dir_returns_count(self, driver, session_factory) -> None:
+        _seed_dir(session_factory, "/agents/bob/inbox")
+        _seed_file(session_factory, "/agents/bob/inbox/msg_001.json", b"a")
+        _seed_file(session_factory, "/agents/bob/inbox/msg_002.json", b"b")
 
         result = await driver.count_dir("/agents/bob/inbox", "zone1")
 
-        assert result == 5
+        assert result == 2
 
     @pytest.mark.asyncio
-    async def test_count_dir_nonexistent_raises(self) -> None:
-        conn = MockConnection(rows={"__fetchrow__": None})
-        driver = PostgreSQLStorageDriver(pool=MockPool(conn))
+    async def test_count_dir_excludes_subdirectories(self, driver, session_factory) -> None:
+        _seed_dir(session_factory, "/agents/bob/inbox")
+        _seed_file(session_factory, "/agents/bob/inbox/msg.json", b"a")
+        _seed_dir(session_factory, "/agents/bob/inbox/subdir")
 
+        result = await driver.count_dir("/agents/bob/inbox", "zone1")
+
+        assert result == 1  # Only files, not subdirs
+
+    @pytest.mark.asyncio
+    async def test_count_dir_nonexistent_raises(self, driver) -> None:
         with pytest.raises(FileNotFoundError, match="No such directory"):
             await driver.count_dir("/nonexistent", "zone1")
+
+
+# ---------------------------------------------------------------------------
+# Rename tests
+# ---------------------------------------------------------------------------
 
 
 class TestPostgreSQLStorageDriverRename:
     """Tests for rename operations."""
 
     @pytest.mark.asyncio
-    async def test_rename_updates_path(self) -> None:
-        conn = MockConnection(rows={"__update_result__": "UPDATE 1"})
-        driver = PostgreSQLStorageDriver(pool=MockPool(conn))
+    async def test_rename_moves_file(self, driver, session_factory) -> None:
+        _seed_file(session_factory, "/agents/bob/inbox/msg.json", b"data")
 
         await driver.rename(
             "/agents/bob/inbox/msg.json",
@@ -278,82 +258,98 @@ class TestPostgreSQLStorageDriverRename:
             "zone1",
         )
 
-        assert len(conn.executed) == 1
-        sql, args = conn.executed[0]
-        assert "UPDATE ipc_messages" in sql
-        assert args == (
-            "zone1",
-            "/agents/bob/inbox/msg.json",
-            "/agents/bob/processed/msg.json",
-            "/agents/bob/processed",
-            "msg.json",
-        )
+        # Old path gone
+        assert await driver.exists("/agents/bob/inbox/msg.json", "zone1") is False
+        # New path exists with same data
+        result = await driver.read("/agents/bob/processed/msg.json", "zone1")
+        assert result == b"data"
 
     @pytest.mark.asyncio
-    async def test_rename_nonexistent_raises(self) -> None:
-        conn = MockConnection(rows={"__update_result__": "UPDATE 0"})
-        driver = PostgreSQLStorageDriver(pool=MockPool(conn))
-
+    async def test_rename_nonexistent_raises(self, driver) -> None:
         with pytest.raises(FileNotFoundError, match="No such file"):
             await driver.rename("/nonexistent", "/dst", "zone1")
+
+
+# ---------------------------------------------------------------------------
+# Mkdir tests
+# ---------------------------------------------------------------------------
 
 
 class TestPostgreSQLStorageDriverMkdir:
     """Tests for mkdir operations."""
 
     @pytest.mark.asyncio
-    async def test_mkdir_inserts_dir_marker(self) -> None:
-        conn = MockConnection()
-        driver = PostgreSQLStorageDriver(pool=MockPool(conn))
-
+    async def test_mkdir_creates_directory(self, driver) -> None:
         await driver.mkdir("/agents/bob/inbox", "zone1")
 
-        assert len(conn.executed) == 1
-        sql, args = conn.executed[0]
-        assert "INSERT INTO ipc_messages" in sql
-        assert "is_dir" in sql
-        assert "ON CONFLICT" in sql
-        assert "DO NOTHING" in sql
-        assert args[2] == "/agents/bob"  # dir_path (parent)
-        assert args[3] == "inbox"  # filename (basename)
+        assert await driver.exists("/agents/bob/inbox", "zone1") is True
 
     @pytest.mark.asyncio
-    async def test_mkdir_idempotent(self) -> None:
-        conn = MockConnection()
-        driver = PostgreSQLStorageDriver(pool=MockPool(conn))
+    async def test_mkdir_idempotent(self, driver) -> None:
+        await driver.mkdir("/agents/bob", "zone1")
+        await driver.mkdir("/agents/bob", "zone1")  # Should not raise
 
-        # Should not raise even if directory already exists (ON CONFLICT DO NOTHING)
-        await driver.mkdir("/agents/bob", "zone1")
-        await driver.mkdir("/agents/bob", "zone1")
+        assert await driver.exists("/agents/bob", "zone1") is True
+
+
+# ---------------------------------------------------------------------------
+# Exists tests
+# ---------------------------------------------------------------------------
 
 
 class TestPostgreSQLStorageDriverExists:
     """Tests for exists operations."""
 
     @pytest.mark.asyncio
-    async def test_exists_returns_true(self) -> None:
-        conn = MockConnection(rows={"__fetchrow__": {"1": 1}})
-        driver = PostgreSQLStorageDriver(pool=MockPool(conn))
+    async def test_exists_returns_true_for_file(self, driver, session_factory) -> None:
+        _seed_file(session_factory, "/agents/bob/inbox/msg.json", b"data")
+
+        result = await driver.exists("/agents/bob/inbox/msg.json", "zone1")
+
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_exists_returns_true_for_directory(self, driver, session_factory) -> None:
+        _seed_dir(session_factory, "/agents/bob/inbox")
 
         result = await driver.exists("/agents/bob/inbox", "zone1")
 
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_exists_returns_false(self) -> None:
-        conn = MockConnection(rows={"__fetchrow__": None})
-        driver = PostgreSQLStorageDriver(pool=MockPool(conn))
-
+    async def test_exists_returns_false(self, driver) -> None:
         result = await driver.exists("/nonexistent", "zone1")
 
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_exists_strips_trailing_slash(self) -> None:
-        conn = MockConnection(rows={"__fetchrow__": {"1": 1}})
-        driver = PostgreSQLStorageDriver(pool=MockPool(conn))
+    async def test_exists_strips_trailing_slash(self, driver, session_factory) -> None:
+        _seed_dir(session_factory, "/agents/bob")
 
-        await driver.exists("/agents/bob/", "zone1")
+        result = await driver.exists("/agents/bob/", "zone1")
 
-        _, args = conn.executed[0]
-        assert args[1] == "/agents/bob"
+        assert result is True
+
+
+# ---------------------------------------------------------------------------
+# Zone isolation tests
+# ---------------------------------------------------------------------------
+
+
+class TestPostgreSQLStorageDriverZoneIsolation:
+    """Tests that zone_id properly isolates data."""
+
+    @pytest.mark.asyncio
+    async def test_read_isolated_by_zone(self, driver, session_factory) -> None:
+        _seed_file(session_factory, "/shared/file.json", b"zone1data", zone_id="zone1")
+        _seed_file(session_factory, "/shared/file.json", b"zone2data", zone_id="zone2")
+
+        assert await driver.read("/shared/file.json", "zone1") == b"zone1data"
+        assert await driver.read("/shared/file.json", "zone2") == b"zone2data"
+
+    @pytest.mark.asyncio
+    async def test_exists_isolated_by_zone(self, driver, session_factory) -> None:
+        _seed_file(session_factory, "/only-in-zone1/file.json", b"data", zone_id="zone1")
+
+        assert await driver.exists("/only-in-zone1/file.json", "zone1") is True
+        assert await driver.exists("/only-in-zone1/file.json", "zone2") is False

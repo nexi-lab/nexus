@@ -13,8 +13,13 @@ try:
 except ImportError:
     collect_ignore_glob = ["mcp/*"]
 
-from nexus.storage.raft_metadata_store import RaftMetadataStore
-from nexus.storage.record_store import SQLAlchemyRecordStore
+try:
+    from nexus.storage.raft_metadata_store import RaftMetadataStore
+    from nexus.storage.record_store import SQLAlchemyRecordStore
+
+    _HAS_NEXUS = True
+except ImportError:
+    _HAS_NEXUS = False
 
 
 @pytest.fixture
@@ -53,39 +58,40 @@ def isolated_db(tmp_path, monkeypatch):
             db_path.unlink()
 
 
-@pytest.fixture
-def metadata_store(tmp_path):
-    """Create Raft metadata store for integration tests (primary production path).
+if _HAS_NEXUS:
 
-    Task #14: Breaking change - NexusFS now requires explicit metadata_store parameter.
-    This fixture uses RaftMetadataStore (Strong Consistency, primary production default).
+    @pytest.fixture
+    def metadata_store(tmp_path):
+        """Create Raft metadata store for integration tests (primary production path).
 
-    Usage:
-        def test_something(backend, metadata_store):
-            nx = NexusFS(backend=backend, metadata_store=metadata_store)
-            # Test code here
-            nx.close()
+        Task #14: Breaking change - NexusFS now requires explicit metadata_store parameter.
+        This fixture uses RaftMetadataStore (Strong Consistency, primary production default).
 
-    Returns:
-        RaftMetadataStore: Raft-backed metadata store (SC mode)
-    """
-    store = RaftMetadataStore.embedded(str(tmp_path / "raft-metadata"))
-    yield store
-    # Cleanup handled by tmp_path
+        Usage:
+            def test_something(backend, metadata_store):
+                nx = NexusFS(backend=backend, metadata_store=metadata_store)
+                # Test code here
+                nx.close()
 
+        Returns:
+            RaftMetadataStore: Raft-backed metadata store (SC mode)
+        """
+        store = RaftMetadataStore.embedded(str(tmp_path / "raft-metadata"))
+        yield store
+        # Cleanup handled by tmp_path
 
-@pytest.fixture
-def record_store():
-    """Create in-memory RecordStore for integration tests.
+    @pytest.fixture
+    def record_store():
+        """Create in-memory RecordStore for integration tests.
 
-    Task #14: Four Pillars — RecordStore provides SQL for Services layer
-    (ReBAC, Auth, Audit, etc.). Uses in-memory SQLite for test isolation.
-    Pass this to NexusFS when tests need Services (permissions, users, etc.).
-    Tests exercising pure file operations can omit record_store.
+        Task #14: Four Pillars — RecordStore provides SQL for Services layer
+        (ReBAC, Auth, Audit, etc.). Uses in-memory SQLite for test isolation.
+        Pass this to NexusFS when tests need Services (permissions, users, etc.).
+        Tests exercising pure file operations can omit record_store.
 
-    Returns:
-        SQLAlchemyRecordStore: In-memory SQLite record store
-    """
-    store = SQLAlchemyRecordStore()  # defaults to sqlite:///:memory:
-    yield store
-    store.close()
+        Returns:
+            SQLAlchemyRecordStore: In-memory SQLite record store
+        """
+        store = SQLAlchemyRecordStore()  # defaults to sqlite:///:memory:
+        yield store
+        store.close()

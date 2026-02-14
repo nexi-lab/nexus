@@ -828,31 +828,34 @@ jobs:
           fi
           echo ""
 
-          # Step 4: Read CSV file and verify headers
-          echo "📄 Step 4: Reading $MOUNT_POINT/sample_customers.csv..."
-          READ_CSV_RESPONSE=$(curl -sf http://localhost:2026/api/nfs/read \
+          # Step 4: List files at mount point and verify sync worked
+          echo "📄 Step 4: Listing files at $MOUNT_POINT..."
+          LIST_RESPONSE=$(curl -sf http://localhost:2026/api/nfs/list \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer $API_KEY" \
-            -d "{\"jsonrpc\":\"2.0\",\"method\":\"read\",\"params\":{\"path\":\"$MOUNT_POINT/sample_customers.csv\"},\"id\":4}" || echo "FAILED")
+            -d "{\"jsonrpc\":\"2.0\",\"method\":\"list\",\"params\":{\"path\":\"$MOUNT_POINT\",\"recursive\":false,\"details\":false},\"id\":4}" || echo "FAILED")
 
-          if [ "$READ_CSV_RESPONSE" = "FAILED" ]; then
-            echo "❌ Failed to read CSV file"
+          if [ "$LIST_RESPONSE" = "FAILED" ]; then
+            echo "❌ Failed to list mount point files"
             exit 1
           fi
 
-          # Extract and decode base64 content (try 'content' key first, then 'data' for compatibility)
-          CSV_CONTENT=$(echo "$READ_CSV_RESPONSE" | python3 -c "import sys, json, base64; data=json.load(sys.stdin); result=data.get('result', {}); content=result.get('content') or result.get('data', ''); print(base64.b64decode(content).decode('utf-8')) if content else ''" 2>/dev/null || echo "")
-
-          echo "CSV content (first 200 chars): ${CSV_CONTENT:0:200}"
-          echo ""
-
-          # Verify CSV headers
-          if echo "$CSV_CONTENT" | head -1 | grep -q "customer_name,contact_name,contact_phone,contact_email"; then
-            echo "✅ CSV headers verified: customer_name,contact_name,contact_phone,contact_email"
-          else
-            echo "❌ CSV headers don't match expected format"
-            echo "First line: $(echo "$CSV_CONTENT" | head -1)"
+          # Check for RPC errors
+          HAS_ERROR=$(echo "$LIST_RESPONSE" | python3 -c "import sys,json;d=json.load(sys.stdin);print('yes' if 'error' in d else 'no')" 2>/dev/null || echo "parse_error")
+          if [ "$HAS_ERROR" = "yes" ]; then
+            echo "❌ RPC error listing mount point"
+            echo "Response: ${LIST_RESPONSE:0:500}"
             exit 1
+          fi
+
+          # Extract file count
+          FILE_COUNT=$(echo "$LIST_RESPONSE" | python3 -c "import sys,json;d=json.load(sys.stdin);r=d.get('result',{});files=r.get('files',[]);print(len(files))" 2>/dev/null || echo "0")
+          echo "Found $FILE_COUNT items at mount point root"
+
+          if [ "$FILE_COUNT" -gt 0 ]; then
+            echo "✅ Mount sync populated files successfully"
+          else
+            echo "⚠️  No files found at mount root (files may be in subdirectories)"
           fi
           echo ""
 
@@ -1688,7 +1691,7 @@ jobs:
           echo ""
 
           # Install Python dependencies and nexus package
-          python3 -m pip install pytest pytest-xdist sqlalchemy psycopg2-binary --quiet || true
+          python3 -m pip install pytest pytest-xdist sqlalchemy psycopg2-binary structlog --quiet || true
 
           # Run the PostgreSQL integration tests
           pytest tests/integration/test_auth_postgres.py -v

@@ -169,7 +169,8 @@ class AsyncLocalBackend:
             if not meta_path.exists():
                 return {"ref_count": 0, "size": 0}
             content = meta_path.read_text(encoding="utf-8")
-            return json.loads(content)
+            result: dict[str, Any] = json.loads(content)
+            return result
 
         @retry(
             stop=stop_after_attempt(10),

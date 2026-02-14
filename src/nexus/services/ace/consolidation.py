@@ -411,9 +411,10 @@ Provide only the consolidated summary, no additional commentary.
         Returns:
             Consolidation results
         """
-        return _run_coroutine(
+        result: dict[str, Any] = _run_coroutine(
             self.consolidate_async(memory_ids, importance_threshold, max_consolidated_memories)
         )
+        return result
 
     # =========================================================================
     # Affinity-based consolidation (Issue #1026 - SimpleMem-inspired)
@@ -804,7 +805,7 @@ Provide only the consolidated summary, no additional commentary.
         Returns:
             Consolidation results (same as consolidate_by_affinity_async).
         """
-        return _run_coroutine(
+        result: dict[str, Any] = _run_coroutine(
             self.consolidate_by_affinity_async(
                 memory_ids=memory_ids,
                 embedding_provider=embedding_provider,
@@ -816,3 +817,4 @@ Provide only the consolidated summary, no additional commentary.
                 importance_max=importance_max,
             )
         )
+        return result

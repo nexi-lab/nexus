@@ -25,10 +25,10 @@ if _version_not_supported:
     )
 
 
-class RaftServiceStub(object):
+class ZoneTransportServiceStub(object):
     """=== Services ===
 
-    RaftService handles Raft consensus protocol messages.
+    ZoneTransportService handles Raft consensus protocol messages.
 
     This service is used for communication between Raft nodes (leaders, followers, witnesses).
     """
@@ -40,21 +40,21 @@ class RaftServiceStub(object):
             channel: A grpc.Channel.
         """
         self.StepMessage = channel.unary_unary(
-                '/nexus.raft.RaftService/StepMessage',
+                '/nexus.raft.ZoneTransportService/StepMessage',
                 request_serializer=nexus_dot_raft_dot_transport__pb2.StepMessageRequest.SerializeToString,
                 response_deserializer=nexus_dot_raft_dot_transport__pb2.StepMessageResponse.FromString,
                 _registered_method=True)
         self.ReplicateEntries = channel.unary_unary(
-                '/nexus.raft.RaftService/ReplicateEntries',
+                '/nexus.raft.ZoneTransportService/ReplicateEntries',
                 request_serializer=nexus_dot_raft_dot_transport__pb2.ReplicateEntriesRequest.SerializeToString,
                 response_deserializer=nexus_dot_raft_dot_transport__pb2.ReplicateEntriesResponse.FromString,
                 _registered_method=True)
 
 
-class RaftServiceServicer(object):
+class ZoneTransportServiceServicer(object):
     """=== Services ===
 
-    RaftService handles Raft consensus protocol messages.
+    ZoneTransportService handles Raft consensus protocol messages.
 
     This service is used for communication between Raft nodes (leaders, followers, witnesses).
     """
@@ -80,7 +80,7 @@ class RaftServiceServicer(object):
         raise NotImplementedError('Method not implemented!')
 
 
-def add_RaftServiceServicer_to_server(servicer, server):
+def add_ZoneTransportServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'StepMessage': grpc.unary_unary_rpc_method_handler(
                     servicer.StepMessage,
@@ -94,16 +94,16 @@ def add_RaftServiceServicer_to_server(servicer, server):
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-            'nexus.raft.RaftService', rpc_method_handlers)
+            'nexus.raft.ZoneTransportService', rpc_method_handlers)
     server.add_generic_rpc_handlers((generic_handler,))
-    server.add_registered_method_handlers('nexus.raft.RaftService', rpc_method_handlers)
+    server.add_registered_method_handlers('nexus.raft.ZoneTransportService', rpc_method_handlers)
 
 
  # This class is part of an EXPERIMENTAL API.
-class RaftService(object):
+class ZoneTransportService(object):
     """=== Services ===
 
-    RaftService handles Raft consensus protocol messages.
+    ZoneTransportService handles Raft consensus protocol messages.
 
     This service is used for communication between Raft nodes (leaders, followers, witnesses).
     """
@@ -122,7 +122,7 @@ class RaftService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/nexus.raft.RaftService/StepMessage',
+            '/nexus.raft.ZoneTransportService/StepMessage',
             nexus_dot_raft_dot_transport__pb2.StepMessageRequest.SerializeToString,
             nexus_dot_raft_dot_transport__pb2.StepMessageResponse.FromString,
             options,
@@ -149,7 +149,7 @@ class RaftService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/nexus.raft.RaftService/ReplicateEntries',
+            '/nexus.raft.ZoneTransportService/ReplicateEntries',
             nexus_dot_raft_dot_transport__pb2.ReplicateEntriesRequest.SerializeToString,
             nexus_dot_raft_dot_transport__pb2.ReplicateEntriesResponse.FromString,
             options,
@@ -163,11 +163,11 @@ class RaftService(object):
             _registered_method=True)
 
 
-class RaftClientServiceStub(object):
-    """RaftClientService provides the client-facing API for Raft operations.
+class ZoneApiServiceStub(object):
+    """ZoneApiService provides the client-facing API for zone operations.
 
     This service is used by clients (Python, CLI, etc.) to interact with the Raft cluster.
-    It differs from RaftService which is for internal node-to-node communication.
+    It differs from ZoneTransportService which is for internal node-to-node communication.
 
     Architecture:
     - Propose: Write operations -> goes through Raft log -> applied to state machine
@@ -185,37 +185,37 @@ class RaftClientServiceStub(object):
             channel: A grpc.Channel.
         """
         self.Propose = channel.unary_unary(
-                '/nexus.raft.RaftClientService/Propose',
+                '/nexus.raft.ZoneApiService/Propose',
                 request_serializer=nexus_dot_raft_dot_transport__pb2.ProposeRequest.SerializeToString,
                 response_deserializer=nexus_dot_raft_dot_transport__pb2.ProposeResponse.FromString,
                 _registered_method=True)
         self.Query = channel.unary_unary(
-                '/nexus.raft.RaftClientService/Query',
+                '/nexus.raft.ZoneApiService/Query',
                 request_serializer=nexus_dot_raft_dot_transport__pb2.QueryRequest.SerializeToString,
                 response_deserializer=nexus_dot_raft_dot_transport__pb2.QueryResponse.FromString,
                 _registered_method=True)
         self.GetClusterInfo = channel.unary_unary(
-                '/nexus.raft.RaftClientService/GetClusterInfo',
+                '/nexus.raft.ZoneApiService/GetClusterInfo',
                 request_serializer=nexus_dot_raft_dot_transport__pb2.GetClusterInfoRequest.SerializeToString,
                 response_deserializer=nexus_dot_raft_dot_transport__pb2.GetClusterInfoResponse.FromString,
                 _registered_method=True)
         self.JoinZone = channel.unary_unary(
-                '/nexus.raft.RaftClientService/JoinZone',
+                '/nexus.raft.ZoneApiService/JoinZone',
                 request_serializer=nexus_dot_raft_dot_transport__pb2.JoinZoneRequest.SerializeToString,
                 response_deserializer=nexus_dot_raft_dot_transport__pb2.JoinZoneResponse.FromString,
                 _registered_method=True)
         self.InviteZone = channel.unary_unary(
-                '/nexus.raft.RaftClientService/InviteZone',
+                '/nexus.raft.ZoneApiService/InviteZone',
                 request_serializer=nexus_dot_raft_dot_transport__pb2.InviteZoneRequest.SerializeToString,
                 response_deserializer=nexus_dot_raft_dot_transport__pb2.InviteZoneResponse.FromString,
                 _registered_method=True)
 
 
-class RaftClientServiceServicer(object):
-    """RaftClientService provides the client-facing API for Raft operations.
+class ZoneApiServiceServicer(object):
+    """ZoneApiService provides the client-facing API for zone operations.
 
     This service is used by clients (Python, CLI, etc.) to interact with the Raft cluster.
-    It differs from RaftService which is for internal node-to-node communication.
+    It differs from ZoneTransportService which is for internal node-to-node communication.
 
     Architecture:
     - Propose: Write operations -> goes through Raft log -> applied to state machine
@@ -271,7 +271,7 @@ class RaftClientServiceServicer(object):
         raise NotImplementedError('Method not implemented!')
 
 
-def add_RaftClientServiceServicer_to_server(servicer, server):
+def add_ZoneApiServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'Propose': grpc.unary_unary_rpc_method_handler(
                     servicer.Propose,
@@ -300,17 +300,17 @@ def add_RaftClientServiceServicer_to_server(servicer, server):
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
-            'nexus.raft.RaftClientService', rpc_method_handlers)
+            'nexus.raft.ZoneApiService', rpc_method_handlers)
     server.add_generic_rpc_handlers((generic_handler,))
-    server.add_registered_method_handlers('nexus.raft.RaftClientService', rpc_method_handlers)
+    server.add_registered_method_handlers('nexus.raft.ZoneApiService', rpc_method_handlers)
 
 
  # This class is part of an EXPERIMENTAL API.
-class RaftClientService(object):
-    """RaftClientService provides the client-facing API for Raft operations.
+class ZoneApiService(object):
+    """ZoneApiService provides the client-facing API for zone operations.
 
     This service is used by clients (Python, CLI, etc.) to interact with the Raft cluster.
-    It differs from RaftService which is for internal node-to-node communication.
+    It differs from ZoneTransportService which is for internal node-to-node communication.
 
     Architecture:
     - Propose: Write operations -> goes through Raft log -> applied to state machine
@@ -335,7 +335,7 @@ class RaftClientService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/nexus.raft.RaftClientService/Propose',
+            '/nexus.raft.ZoneApiService/Propose',
             nexus_dot_raft_dot_transport__pb2.ProposeRequest.SerializeToString,
             nexus_dot_raft_dot_transport__pb2.ProposeResponse.FromString,
             options,
@@ -362,7 +362,7 @@ class RaftClientService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/nexus.raft.RaftClientService/Query',
+            '/nexus.raft.ZoneApiService/Query',
             nexus_dot_raft_dot_transport__pb2.QueryRequest.SerializeToString,
             nexus_dot_raft_dot_transport__pb2.QueryResponse.FromString,
             options,
@@ -389,7 +389,7 @@ class RaftClientService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/nexus.raft.RaftClientService/GetClusterInfo',
+            '/nexus.raft.ZoneApiService/GetClusterInfo',
             nexus_dot_raft_dot_transport__pb2.GetClusterInfoRequest.SerializeToString,
             nexus_dot_raft_dot_transport__pb2.GetClusterInfoResponse.FromString,
             options,
@@ -416,7 +416,7 @@ class RaftClientService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/nexus.raft.RaftClientService/JoinZone',
+            '/nexus.raft.ZoneApiService/JoinZone',
             nexus_dot_raft_dot_transport__pb2.JoinZoneRequest.SerializeToString,
             nexus_dot_raft_dot_transport__pb2.JoinZoneResponse.FromString,
             options,
@@ -443,7 +443,7 @@ class RaftClientService(object):
         return grpc.experimental.unary_unary(
             request,
             target,
-            '/nexus.raft.RaftClientService/InviteZone',
+            '/nexus.raft.ZoneApiService/InviteZone',
             nexus_dot_raft_dot_transport__pb2.InviteZoneRequest.SerializeToString,
             nexus_dot_raft_dot_transport__pb2.InviteZoneResponse.FromString,
             options,

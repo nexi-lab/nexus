@@ -81,7 +81,7 @@ pub mod proto {
     //! This module contains the Rust types generated from proto files.
     //! Structure mirrors the proto package hierarchy:
     //!   - nexus::core - FileMetadata, PaginatedResult
-    //!   - nexus::raft - RaftService, commands, transport messages
+    //!   - nexus::raft - ZoneTransportService, ZoneApiService, commands, transport messages
 
     /// Core types (FileMetadata, etc.)
     pub mod nexus {

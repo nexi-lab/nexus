@@ -204,7 +204,23 @@ See `federation-memo.md` §5–§6 for implementation details.
 
 ---
 
-## 6. Kernel Init (Dependency Injection)
+## 6. API Privilege Levels
+
+Federation operations are **not** agent-facing. Like Linux's `mount(2)` requiring `CAP_SYS_ADMIN`,
+zone lifecycle is an ops/admin concern — agents only see paths.
+
+| Level | Who | API | Examples |
+|-------|-----|-----|----------|
+| **File I/O** | Agents, users | `nx.read/write/list/mkdir/delete` | Transparent — VFS + DT_MOUNT routes automatically |
+| **Federation orchestration** | Ops scripts | `NexusFederation.share/join` | Programmatic zone sharing |
+| **Zone lifecycle** | Admin | `nexus zone create/mount/unmount` (CLI) | Cluster management |
+
+Agents do NOT get mount/unmount APIs. If an agent needs access to a remote path,
+an admin pre-mounts it. This matches the OS model: processes don't mount filesystems.
+
+---
+
+## 7. Kernel Init (Dependency Injection)
 
 ```python
 class NexusFS:
@@ -227,7 +243,19 @@ Tests exercising pure file operations need not provide a RecordStore.
 
 ---
 
-## 7. RecordStoreABC Consumption Pattern
+## 7. gRPC Service Naming
+
+| Proto Service | Purpose | Consumers |
+|---------------|---------|-----------|
+| `ZoneTransportService` | Node-to-node Raft message forwarding (StepMessage, ReplicateEntries) | Internal only (ZoneConsensus) |
+| `ZoneApiService` | Client-facing zone operations (Propose, Query, JoinZone, InviteZone) | RaftClient, RaftMetadataStore |
+
+Previously named `RaftService` / `RaftClientService` — renamed to `Zone*` for consistency
+with `ZoneConsensus` (Rust) and to clarify the internal vs API distinction.
+
+---
+
+## 8. RecordStoreABC Consumption Pattern
 
 Services consume `RecordStoreABC` through its `session_factory` + SQLAlchemy ORM.
 Direct SQL or raw asyncpg access is an abstraction break.

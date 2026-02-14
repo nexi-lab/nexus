@@ -121,6 +121,8 @@ dependencies = [
     "numpy>=1.26.0",
     "scikit-learn>=1.4.0",
     "aiofiles>=25.1.0",
+    # Structured logging with JSON output and context propagation (Issue #1002)
+    "structlog>=24.4.0",
 ]
 
 [project.optional-dependencies]
@@ -273,6 +275,8 @@ addopts = [
 testpaths = ["tests"]
 pythonpath = ["tests"]
 asyncio_mode = "auto"
+log_cli = false
+log_cli_level = "WARNING"
 python_files = ["test_*.py", "*_test.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
@@ -584,6 +588,7 @@ select = [
     "UP",  # pyupgrade
     "ARG", # flake8-unused-arguments
     "SIM", # flake8-simplify
+    "G",   # flake8-logging-format (Issue #1002: prevent f-string in log calls)
 ]
 ignore = [
     "E501",  # line too long, handled by formatter
@@ -593,7 +598,10 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
-"tests/*" = ["ARG", "S101", "B905", "SIM105"]  # Tests: allow unused args, assert, zip, suppress
+"tests/*" = ["ARG", "S101", "B905", "SIM105", "G"]  # Tests: allow unused args, assert, zip, suppress, log format
+"src/nexus/**/*.py" = ["G003", "G004", "G201"]  # Issue #1002: existing string concat + f-string + exc_info log calls — migrate gradually
+"scripts/**/*.py" = ["G"]  # Scripts: allow all log format variants
+"dockerfiles/**/*.py" = ["G"]  # Dockerfiles: allow all log format variants
 "tests/integration/test_raft_client_service.py" = ["ARG", "S101", "E402", "B017", "SIM105"]  # Conditional imports, blind assert
 "tests/integration/test_raft_metadata_store.py" = ["ARG", "S101", "B905", "F841"]  # zip strict, unused vars
 "tests/integration/mcp/test_mcp_server_integration.py" = ["ARG", "S101", "B904"]  # raise from

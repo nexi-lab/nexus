@@ -338,6 +338,16 @@ async def lifespan(_app: FastAPI) -> Any:
 
     Handles startup and shutdown of async resources.
     """
+    # Configure structured logging (Issue #1002).
+    # This is the single canonical call site — reads NEXUS_ENV env var.
+    try:
+        from nexus.server.logging_config import configure_logging
+
+        env = os.environ.get("NEXUS_ENV", "dev")
+        configure_logging(env=env)
+    except ImportError:
+        pass  # structlog not installed — fall back to stdlib
+
     logger.info("Starting FastAPI Nexus server...")
 
     # Initialize OpenTelemetry (Issue #764)
@@ -1853,6 +1863,14 @@ def _register_routes(app: FastAPI) -> None:
     register_v2_routers(app, v2_registry)
     app.add_middleware(VersionHeaderMiddleware)
     app.add_middleware(DeprecationMiddleware, registry=v2_registry)
+
+    # Request correlation middleware (Issue #1002).
+    # MUST be the last add_middleware call — Starlette applies in reverse order,
+    # so last-added = outermost = first to execute on each request.
+    # This ensures ALL other middlewares run with correlation context.
+    from nexus.server.middleware.correlation import CorrelationMiddleware
+
+    app.add_middleware(CorrelationMiddleware)  # type: ignore[arg-type]
 
     # Exchange Protocol error handler (Issue #1361)
     try:

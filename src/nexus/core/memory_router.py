@@ -197,6 +197,7 @@ class MemoryViewRouter:
         event_before: datetime | None = None,  # #1028: Filter by event date <= value
         include_invalid: bool = False,  # #1183: Include invalidated memories
         include_superseded: bool = False,  # #1188: Include superseded memories
+        temporal_stability: str | None = None,  # #1191: Filter by temporal stability
         valid_at_point: datetime | None = None,  # #1183: Point-in-time query (as_of_event)
         system_at_point: datetime | None = None,  # #1185: System-time query (as_of_system)
         limit: int | None = None,
@@ -271,6 +272,10 @@ class MemoryViewRouter:
             stmt = stmt.where(MemoryModel.earliest_date >= event_after)
         if event_before:
             stmt = stmt.where(MemoryModel.latest_date <= event_before)
+
+        # #1191: Temporal stability filtering
+        if temporal_stability:
+            stmt = stmt.where(MemoryModel.temporal_stability == temporal_stability)
 
         # #1183/#1185: Bi-temporal filtering
         if system_at_point is not None:
@@ -399,6 +404,9 @@ class MemoryViewRouter:
         latest_date: Any = None,  # #1028: Latest date mentioned
         relationships_json: str | None = None,  # #1038: Relationship extraction JSON
         relationship_count: int | None = None,  # #1038: Count of relationships
+        temporal_stability: str | None = None,  # #1191: Temporal stability classification
+        stability_confidence: float | None = None,  # #1191: Classification confidence
+        estimated_ttl_days: int | None = None,  # #1191: Estimated TTL in days
         valid_at: Any = None,  # #1183: When fact became valid in real world
         size_bytes: int = 0,  # #1184: Content size for version tracking
         created_by: str | None = None,  # #1184: Who created this version
@@ -497,6 +505,9 @@ class MemoryViewRouter:
                 latest_date=latest_date,
                 relationships_json=relationships_json,
                 relationship_count=relationship_count,
+                temporal_stability=temporal_stability,  # #1191
+                stability_confidence=stability_confidence,  # #1191
+                estimated_ttl_days=estimated_ttl_days,  # #1191
                 valid_at=new_valid_at,
             )
 
@@ -573,6 +584,9 @@ class MemoryViewRouter:
                 latest_date=latest_date,  # #1028
                 relationships_json=relationships_json,  # #1038
                 relationship_count=relationship_count,  # #1038
+                temporal_stability=temporal_stability,  # #1191
+                stability_confidence=stability_confidence,  # #1191
+                estimated_ttl_days=estimated_ttl_days,  # #1191
                 valid_at=valid_at,  # #1183
             )
 

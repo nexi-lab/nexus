@@ -103,6 +103,7 @@ async def store_memory(
             extract_relationships=request.extract_relationships,
             store_to_graph=request.store_to_graph,
             valid_at=request.valid_at,
+            classify_stability=request.classify_stability,
             _metadata=request.metadata,
             context=context,
         )
@@ -342,6 +343,7 @@ async def query_memories(
             event_before=request.event_before,
             include_invalid=request.include_invalid,
             include_superseded=request.include_superseded,
+            temporal_stability=request.temporal_stability,
             as_of_event=request.as_of_event,
             as_of_system=request.as_of_system,
             limit=request.limit,
@@ -407,6 +409,7 @@ async def batch_store_memories(
                     extract_temporal=mem_request.extract_temporal,
                     extract_relationships=mem_request.extract_relationships,
                     store_to_graph=mem_request.store_to_graph,
+                    classify_stability=mem_request.classify_stability,
                     _metadata=mem_request.metadata,
                     context=context,
                 )

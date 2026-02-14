@@ -29,6 +29,7 @@ class MemoryStoreRequest(ApiModel):
     extract_relationships: bool = Field(False, description="Extract relationships")
     store_to_graph: bool = Field(False, description="Store entities to knowledge graph")
     valid_at: str | None = Field(None, description="When fact became valid (ISO-8601)")
+    classify_stability: bool = Field(True, description="Auto-classify temporal stability")
     metadata: dict[str, Any] | None = Field(None, description="Additional metadata")
 
 
@@ -57,6 +58,9 @@ class MemorySearchRequest(ApiModel):
     during: str | None = Field(None, description="Filter by time period (e.g., 'last week')")
     entity_type: str | None = Field(None, description="Filter by entity type")
     person: str | None = Field(None, description="Filter by person name")
+    temporal_stability: str | None = Field(
+        None, description="Filter by temporal stability (static, semi_dynamic, dynamic)"
+    )
 
 
 class MemoryQueryRequest(ApiModel):
@@ -84,6 +88,9 @@ class MemoryQueryRequest(ApiModel):
         None, description="What did SYSTEM KNOW at time X? (ISO-8601, filters by created_at)"
     )
     include_superseded: bool = Field(False, description="Include superseded (old version) memories")
+    temporal_stability: str | None = Field(
+        None, description="Filter by temporal stability (static, semi_dynamic, dynamic)"
+    )
 
 
 class MemoryBatchStoreRequest(ApiModel):
@@ -108,6 +115,9 @@ class MemoryResponse(ApiModel):
     access_count: int = 0
     entities: list[dict[str, Any]] | None = None
     temporal_refs: list[dict[str, Any]] | None = None
+    temporal_stability: str | None = None
+    stability_confidence: float | None = None
+    estimated_ttl_days: int | None = None
     created_at: str | None = None
     updated_at: str | None = None
 

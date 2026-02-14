@@ -479,3 +479,108 @@ class TestBitemporalMemory:
 
         result = memory_api.get(memory_id)
         assert result["valid_at"] is None  # NULL = use created_at semantically
+
+
+class TestMemoryStabilityClassification:
+    """Test memory auto-classification (#1191)."""
+
+    def test_store_auto_classifies_static_memory(self, memory_api):
+        """Test that storing a static-sounding memory gets classified as static."""
+        memory_id = memory_api.store(
+            content="Paris is the capital of France",
+            scope="user",
+        )
+
+        result = memory_api.get(memory_id)
+        assert result is not None
+        assert result["temporal_stability"] == "static"
+        assert result["stability_confidence"] is not None
+        assert result["stability_confidence"] >= 0.5
+        assert result["estimated_ttl_days"] is None  # Static = infinite
+
+    def test_store_auto_classifies_dynamic_memory(self, memory_api):
+        """Test that storing a dynamic-sounding memory gets classified as dynamic."""
+        memory_id = memory_api.store(
+            content="John is currently working on the Q4 report",
+            scope="user",
+        )
+
+        result = memory_api.get(memory_id)
+        assert result is not None
+        assert result["temporal_stability"] == "dynamic"
+        assert result["stability_confidence"] is not None
+        assert result["estimated_ttl_days"] is not None
+
+    def test_store_auto_classifies_semi_dynamic_memory(self, memory_api):
+        """Test that storing a semi-dynamic memory gets classified correctly."""
+        memory_id = memory_api.store(
+            content="Sarah works at Microsoft as a senior engineer",
+            scope="user",
+        )
+
+        result = memory_api.get(memory_id)
+        assert result is not None
+        assert result["temporal_stability"] == "semi_dynamic"
+        assert result["stability_confidence"] is not None
+
+    def test_store_classification_disabled(self, memory_api):
+        """Test that classify_stability=False skips classification."""
+        memory_id = memory_api.store(
+            content="Paris is the capital of France",
+            scope="user",
+            classify_stability=False,
+        )
+
+        result = memory_api.get(memory_id)
+        assert result is not None
+        assert result["temporal_stability"] is None
+        assert result["stability_confidence"] is None
+        assert result["estimated_ttl_days"] is None
+
+    def test_store_classification_failure_non_fatal(self, memory_api):
+        """Test that classification failure doesn't break store()."""
+        from unittest.mock import patch
+
+        with patch(
+            "nexus.services.memory.stability_classifier.TemporalStabilityClassifier.classify",
+            side_effect=RuntimeError("Classification engine exploded"),
+        ):
+            # Should still store successfully despite classification failure
+            memory_id = memory_api.store(
+                content="Some content that would normally be classified",
+                scope="user",
+            )
+
+            result = memory_api.get(memory_id)
+            assert result is not None
+            assert result["memory_id"] == memory_id
+            # Classification fields should be None due to failure
+            assert result["temporal_stability"] is None
+
+    def test_query_filter_by_temporal_stability(self, memory_api):
+        """Test querying memories filtered by temporal_stability."""
+        # Store memories with different stability levels
+        memory_api.store(content="Paris is the capital of France", scope="user")
+        memory_api.store(content="John is currently at the office", scope="user")
+
+        # Query only static memories
+        static_results = memory_api.query(temporal_stability="static")
+        for r in static_results:
+            assert r["temporal_stability"] == "static"
+
+        # Query only dynamic memories
+        dynamic_results = memory_api.query(temporal_stability="dynamic")
+        for r in dynamic_results:
+            assert r["temporal_stability"] == "dynamic"
+
+    def test_classification_fields_in_response(self, memory_api):
+        """Test that classification fields appear in get() response."""
+        memory_id = memory_api.store(
+            content="The Pythagorean theorem states a^2 + b^2 = c^2",
+            scope="user",
+        )
+
+        result = memory_api.get(memory_id)
+        assert "temporal_stability" in result
+        assert "stability_confidence" in result
+        assert "estimated_ttl_days" in result

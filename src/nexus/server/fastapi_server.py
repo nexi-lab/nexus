@@ -25,6 +25,7 @@ Example:
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import hashlib
 import logging
 import os
@@ -4311,126 +4312,141 @@ async def _fire_rpc_event(
         logger.warning(f"[RPC] Failed to fire event {event_type} for {path}: {e}")
 
 
+@dataclasses.dataclass(frozen=True, slots=True)
+class _DispatchEntry:
+    """Dispatch table entry for an RPC method.
+
+    Attributes:
+        handler: The handler callable (sync or async).
+        is_async: If True, handler is awaited directly; otherwise wrapped
+            with ``to_thread_with_timeout``.
+        event_type: If set, fire this event type after handler completes.
+        event_path_attr: Attribute name on ``params`` for the event path.
+        event_old_path_attr: Attribute name on ``params`` for old_path (rename).
+        event_size_key: Key in the result dict to extract size (write).
+    """
+
+    handler: Any  # Callable[[params, context], result]
+    is_async: bool = False
+    event_type: str | None = None
+    event_path_attr: str = "path"
+    event_old_path_attr: str | None = None
+    event_size_key: str | None = None
+
+
+# Lazily initialized — handler functions are defined later in this module.
+_DISPATCH_TABLE: dict[str, _DispatchEntry] = {}
+
+
+def _build_dispatch_table() -> dict[str, _DispatchEntry]:
+    """Build the RPC dispatch table (Issue #1288).
+
+    Called once on first RPC request. Entries with ``event_type`` fire
+    subscription events after the handler completes.
+    """
+    return {
+        # Core filesystem operations
+        "read": _DispatchEntry(_handle_read_async, is_async=True),
+        "write": _DispatchEntry(
+            _handle_write, event_type="file_write", event_size_key="bytes_written"
+        ),
+        "exists": _DispatchEntry(_handle_exists),
+        "list": _DispatchEntry(_handle_list),
+        "delete": _DispatchEntry(_handle_delete, event_type="file_delete"),
+        "rename": _DispatchEntry(
+            _handle_rename,
+            event_type="file_rename",
+            event_path_attr="new_path",
+            event_old_path_attr="old_path",
+        ),
+        "copy": _DispatchEntry(_handle_copy),
+        "mkdir": _DispatchEntry(_handle_mkdir, event_type="dir_create"),
+        "rmdir": _DispatchEntry(_handle_rmdir, event_type="dir_delete"),
+        "get_metadata": _DispatchEntry(_handle_get_metadata),
+        "glob": _DispatchEntry(_handle_glob),
+        "grep": _DispatchEntry(_handle_grep),
+        "search": _DispatchEntry(_handle_search),
+        "is_directory": _DispatchEntry(_handle_is_directory),
+        # Delta sync (Issue #869)
+        "delta_read": _DispatchEntry(_handle_delta_read),
+        "delta_write": _DispatchEntry(_handle_delta_write),
+        # Semantic search (Issue #947)
+        "semantic_search_index": _DispatchEntry(
+            _handle_semantic_search_index, is_async=True
+        ),
+        # Memory API (Issue #4)
+        "store_memory": _DispatchEntry(_handle_store_memory),
+        "list_memories": _DispatchEntry(_handle_list_memories),
+        "query_memories": _DispatchEntry(_handle_query_memories),
+        "retrieve_memory": _DispatchEntry(_handle_retrieve_memory),
+        "delete_memory": _DispatchEntry(_handle_delete_memory),
+        "approve_memory": _DispatchEntry(_handle_approve_memory),
+        "deactivate_memory": _DispatchEntry(_handle_deactivate_memory),
+        "approve_memory_batch": _DispatchEntry(_handle_approve_memory_batch),
+        "deactivate_memory_batch": _DispatchEntry(_handle_deactivate_memory_batch),
+        "delete_memory_batch": _DispatchEntry(_handle_delete_memory_batch),
+        # Admin API (v0.5.1)
+        "admin_create_key": _DispatchEntry(_handle_admin_create_key),
+        "admin_list_keys": _DispatchEntry(_handle_admin_list_keys),
+        "admin_get_key": _DispatchEntry(_handle_admin_get_key),
+        "admin_revoke_key": _DispatchEntry(_handle_admin_revoke_key),
+        "admin_update_key": _DispatchEntry(_handle_admin_update_key),
+    }
+
+
 async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
     """Dispatch RPC method call.
 
-    Handles both sync and async methods.
+    Looks up the method in ``_DISPATCH_TABLE`` first, then falls back to
+    ``_auto_dispatch`` for dynamically exposed methods.
     """
+    global _DISPATCH_TABLE  # noqa: PLW0603
+
     nexus_fs = _fastapi_app.state.nexus_fs
     if nexus_fs is None:
         raise RuntimeError("NexusFS not initialized")
 
-    # Methods that need special handling
-    MANUAL_METHODS = {
-        "read",
-        "write",
-        "exists",
-        "list",
-        "delete",
-        "rename",
-        "copy",
-        "mkdir",
-        "rmdir",
-        "get_metadata",
-        "search",
-        "glob",
-        "grep",
-        "is_directory",
-        "delta_read",  # Issue #869: Delta sync
-        "delta_write",  # Issue #869: Delta sync
-        "semantic_search_index",  # Issue #947: HNSW tuning
-    }
+    # Lazy-init on first call (handler functions defined later in module)
+    if not _DISPATCH_TABLE:
+        _DISPATCH_TABLE = _build_dispatch_table()
 
-    # Try auto-dispatch first for exposed methods
-    if method in _fastapi_app.state.exposed_methods and method not in MANUAL_METHODS:
+    # Auto-dispatch takes priority for dynamically exposed methods
+    # that are NOT in the static dispatch table
+    if method in _fastapi_app.state.exposed_methods and method not in _DISPATCH_TABLE:
         return await _auto_dispatch(method, params, context)
 
-    # Manual dispatch for core filesystem operations
-    # Use to_thread_with_timeout to run sync handlers with timeout (Issue #932)
-    # Issue #1115: Fire events after mutation operations
-    if method == "read":
-        # Use async handler for read to support async parsing
-        return await _handle_read_async(params, context)
-    elif method == "write":
-        result = await to_thread_with_timeout(_handle_write, params, context)
-        await _fire_rpc_event("file_write", params.path, context, size=result.get("bytes_written"))
+    entry = _DISPATCH_TABLE.get(method)
+    if entry is not None:
+        # Execute handler
+        if entry.is_async:
+            result = await entry.handler(params, context)
+        else:
+            result = await to_thread_with_timeout(entry.handler, params, context)
+
+        # Fire subscription event for mutations (Issue #1115)
+        if entry.event_type is not None:
+            path = getattr(params, entry.event_path_attr, None)
+            old_path = (
+                getattr(params, entry.event_old_path_attr, None)
+                if entry.event_old_path_attr
+                else None
+            )
+            size = (
+                result.get(entry.event_size_key)
+                if entry.event_size_key and isinstance(result, dict)
+                else None
+            )
+            await _fire_rpc_event(
+                entry.event_type, path, context, old_path=old_path, size=size
+            )
+
         return result
-    elif method == "exists":
-        return await to_thread_with_timeout(_handle_exists, params, context)
-    elif method == "list":
-        return await to_thread_with_timeout(_handle_list, params, context)
-    elif method == "delete":
-        result = await to_thread_with_timeout(_handle_delete, params, context)
-        await _fire_rpc_event("file_delete", params.path, context)
-        return result
-    elif method == "rename":
-        result = await to_thread_with_timeout(_handle_rename, params, context)
-        await _fire_rpc_event("file_rename", params.new_path, context, old_path=params.old_path)
-        return result
-    elif method == "copy":
-        return await to_thread_with_timeout(_handle_copy, params, context)
-    elif method == "mkdir":
-        result = await to_thread_with_timeout(_handle_mkdir, params, context)
-        await _fire_rpc_event("dir_create", params.path, context)
-        return result
-    elif method == "rmdir":
-        result = await to_thread_with_timeout(_handle_rmdir, params, context)
-        await _fire_rpc_event("dir_delete", params.path, context)
-        return result
-    elif method == "get_metadata":
-        return await to_thread_with_timeout(_handle_get_metadata, params, context)
-    elif method == "glob":
-        return await to_thread_with_timeout(_handle_glob, params, context)
-    elif method == "grep":
-        return await to_thread_with_timeout(_handle_grep, params, context)
-    elif method == "search":
-        return await to_thread_with_timeout(_handle_search, params, context)
-    elif method == "is_directory":
-        return await to_thread_with_timeout(_handle_is_directory, params, context)
-    # Delta sync methods (Issue #869)
-    elif method == "delta_read":
-        return await to_thread_with_timeout(_handle_delta_read, params, context)
-    elif method == "delta_write":
-        return await to_thread_with_timeout(_handle_delta_write, params, context)
-    # Semantic search methods (Issue #947)
-    elif method == "semantic_search_index":
-        return await _handle_semantic_search_index(params, context)
-    # Memory API methods (Issue #4)
-    elif method == "store_memory":
-        return await to_thread_with_timeout(_handle_store_memory, params, context)
-    elif method == "list_memories":
-        return await to_thread_with_timeout(_handle_list_memories, params, context)
-    elif method == "query_memories":
-        return await to_thread_with_timeout(_handle_query_memories, params, context)
-    elif method == "retrieve_memory":
-        return await to_thread_with_timeout(_handle_retrieve_memory, params, context)
-    elif method == "delete_memory":
-        return await to_thread_with_timeout(_handle_delete_memory, params, context)
-    elif method == "approve_memory":
-        return await to_thread_with_timeout(_handle_approve_memory, params, context)
-    elif method == "deactivate_memory":
-        return await to_thread_with_timeout(_handle_deactivate_memory, params, context)
-    elif method == "approve_memory_batch":
-        return await to_thread_with_timeout(_handle_approve_memory_batch, params, context)
-    elif method == "deactivate_memory_batch":
-        return await to_thread_with_timeout(_handle_deactivate_memory_batch, params, context)
-    elif method == "delete_memory_batch":
-        return await to_thread_with_timeout(_handle_delete_memory_batch, params, context)
-    # Admin API methods (v0.5.1)
-    elif method == "admin_create_key":
-        return await to_thread_with_timeout(_handle_admin_create_key, params, context)
-    elif method == "admin_list_keys":
-        return await to_thread_with_timeout(_handle_admin_list_keys, params, context)
-    elif method == "admin_get_key":
-        return await to_thread_with_timeout(_handle_admin_get_key, params, context)
-    elif method == "admin_revoke_key":
-        return await to_thread_with_timeout(_handle_admin_revoke_key, params, context)
-    elif method == "admin_update_key":
-        return await to_thread_with_timeout(_handle_admin_update_key, params, context)
-    elif method in _fastapi_app.state.exposed_methods:
+
+    # Fallback: try auto-dispatch for exposed methods
+    if method in _fastapi_app.state.exposed_methods:
         return await _auto_dispatch(method, params, context)
-    else:
-        raise ValueError(f"Unknown method: {method}")
+
+    raise ValueError(f"Unknown method: {method}")
 
 
 async def _auto_dispatch(method: str, params: Any, context: Any) -> Any:

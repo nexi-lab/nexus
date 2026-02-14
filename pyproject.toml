@@ -123,6 +123,8 @@ dependencies = [
     "aiofiles>=25.1.0",
     # Structured logging with JSON output and context propagation (Issue #1002)
     "structlog>=24.4.0",
+    # Governance graphs: collusion detection, ring detection (Issue #1359)
+    "networkx>=3.2",
 ]
 
 [project.optional-dependencies]

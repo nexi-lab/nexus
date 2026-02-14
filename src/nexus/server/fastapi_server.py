@@ -2202,6 +2202,11 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
     if not _DISPATCH_TABLE:
         _DISPATCH_TABLE = _build_dispatch_table()
 
+    # Issue #1457: Enforce admin_only for ALL dispatch paths (auto + manual)
+    func = _fastapi_app.state.exposed_methods.get(method)
+    if func and getattr(func, "_rpc_admin_only", False):
+        _require_admin(context)
+
     # Auto-dispatch takes priority for dynamically exposed methods
     # that are NOT in the static dispatch table
     if method in _fastapi_app.state.exposed_methods and method not in _DISPATCH_TABLE:
@@ -2228,7 +2233,9 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
                 if entry.event_size_key and isinstance(result, dict)
                 else None
             )
-            await _fire_rpc_event(entry.event_type, path or "", context, old_path=old_path, size=size)
+            await _fire_rpc_event(
+                entry.event_type, path or "", context, old_path=old_path, size=size
+            )
 
         return result
 

@@ -27,10 +27,10 @@ from nexus.server.dependencies import (
     require_auth,
 )
 
-# The _app_state object lives in nexus.server.fastapi_server and is imported
-# lazily inside get_auth_result / get_operation_context.  We must patch it at
-# its canonical location so the lazy import picks up the mock.
-_APP_STATE_PATH = "nexus.server.fastapi_server._app_state"
+# The _fastapi_app object lives in nexus.server.fastapi_server and is imported
+# lazily inside get_operation_context.  We must patch it at its canonical
+# location so the lazy import picks up the mock.
+_FASTAPI_APP_PATH = "nexus.server.fastapi_server._fastapi_app"
 
 
 # ---------------------------------------------------------------------------
@@ -38,8 +38,49 @@ _APP_STATE_PATH = "nexus.server.fastapi_server._app_state"
 # ---------------------------------------------------------------------------
 
 
+def _make_app_state(
+    *,
+    api_key: str | None = None,
+    auth_provider: Any = None,
+    agent_registry: Any = None,
+) -> MagicMock:
+    """Build a minimal mock _app_state."""
+    state = MagicMock()
+    state.api_key = api_key
+    state.auth_provider = auth_provider
+    state.agent_registry = agent_registry
+    return state
+
+
+def _make_mock_request(
+    *,
+    api_key: str | None = None,
+    auth_provider: Any = None,
+) -> MagicMock:
+    """Create a mock Request with app.state configured."""
+    state = _make_app_state(api_key=api_key, auth_provider=auth_provider)
+    request = MagicMock()
+    request.app.state = state
+    return request
+
+
+def _make_mock_request_from_state(state: MagicMock) -> MagicMock:
+    """Create a mock Request wrapping an existing state mock."""
+    request = MagicMock()
+    request.app.state = state
+    return request
+
+
+def _make_mock_app(*, agent_registry: Any = None) -> MagicMock:
+    """Create a mock FastAPI app with state."""
+    app = MagicMock()
+    app.state.agent_registry = agent_registry
+    return app
+
+
 async def _call_get_auth_result(
     *,
+    request: MagicMock | None = None,
     authorization: str | None = None,
     x_agent_id: str | None = None,
     x_nexus_subject: str | None = None,
@@ -51,7 +92,10 @@ async def _call_get_auth_result(
     default parameters are not resolved to None automatically, so we must
     always pass all four arguments explicitly.
     """
+    if request is None:
+        request = _make_mock_request()
     return await get_auth_result(
+        request=request,
         authorization=authorization,
         x_agent_id=x_agent_id,
         x_nexus_subject=x_nexus_subject,
@@ -70,20 +114,6 @@ def clean_auth_cache():
     _reset_auth_cache()
     yield
     _reset_auth_cache()
-
-
-def _make_app_state(
-    *,
-    api_key: str | None = None,
-    auth_provider: Any = None,
-    agent_registry: Any = None,
-) -> MagicMock:
-    """Build a minimal mock _app_state."""
-    state = MagicMock()
-    state.api_key = api_key
-    state.auth_provider = auth_provider
-    state.agent_registry = agent_registry
-    return state
 
 
 # ===========================================================================
@@ -151,65 +181,68 @@ class TestAuthCacheOperations:
 class TestGetAuthResultOpenAccess:
     """Tests for open-access mode (no api_key, no auth_provider)."""
 
-    @patch(_APP_STATE_PATH, _make_app_state())
     async def test_open_access_returns_authenticated(self):
         """Open access should always return authenticated=True."""
-        result = await _call_get_auth_result()
+        result = await _call_get_auth_result(request=_make_mock_request())
         assert result is not None
         assert result["authenticated"] is True
         assert result["metadata"]["open_access"] is True
         assert result["inherit_permissions"] is True
 
-    @patch(_APP_STATE_PATH, _make_app_state())
     async def test_open_access_with_subject_header(self):
         """X-Nexus-Subject header should populate subject_type/subject_id."""
-        result = await _call_get_auth_result(x_nexus_subject="user:alice")
+        result = await _call_get_auth_result(
+            request=_make_mock_request(), x_nexus_subject="user:alice"
+        )
         assert result["subject_type"] == "user"
         assert result["subject_id"] == "alice"
 
-    @patch(_APP_STATE_PATH, _make_app_state())
     async def test_open_access_bad_subject_header(self):
         """Malformed subject header should result in None values."""
-        result = await _call_get_auth_result(x_nexus_subject="no-colon")
+        result = await _call_get_auth_result(
+            request=_make_mock_request(), x_nexus_subject="no-colon"
+        )
         assert result["subject_type"] is None
         assert result["subject_id"] is None
 
-    @patch(_APP_STATE_PATH, _make_app_state())
     async def test_open_access_empty_parts_subject_header(self):
         """Subject header with empty parts should result in None values."""
-        result = await _call_get_auth_result(x_nexus_subject=":missing_type")
+        result = await _call_get_auth_result(
+            request=_make_mock_request(), x_nexus_subject=":missing_type"
+        )
         assert result["subject_type"] is None
         assert result["subject_id"] is None
 
-    @patch(_APP_STATE_PATH, _make_app_state())
     async def test_open_access_sk_token_infers_identity(self):
         """sk- token in open access infers zone and user from token fields."""
         result = await _call_get_auth_result(
+            request=_make_mock_request(),
             authorization="Bearer sk-myzone_alice_k1_random",
         )
         assert result["subject_type"] == "user"
         assert result["subject_id"] == "alice"
         assert result["zone_id"] == "myzone"
 
-    @patch(_APP_STATE_PATH, _make_app_state())
     async def test_open_access_zone_header_takes_precedence(self):
         """X-Nexus-Zone-ID header should override token-parsed zone."""
         result = await _call_get_auth_result(
+            request=_make_mock_request(),
             authorization="Bearer sk-myzone_alice_k1_random",
             x_nexus_zone_id="explicit-zone",
         )
         assert result["zone_id"] == "explicit-zone"
 
-    @patch(_APP_STATE_PATH, _make_app_state())
     async def test_open_access_agent_id_header(self):
         """X-Agent-ID should be passed through."""
-        result = await _call_get_auth_result(x_agent_id="agent-42")
+        result = await _call_get_auth_result(
+            request=_make_mock_request(), x_agent_id="agent-42"
+        )
         assert result["x_agent_id"] == "agent-42"
 
-    @patch(_APP_STATE_PATH, _make_app_state())
     async def test_open_access_non_sk_bearer_token(self):
         """Non-sk- bearer token in open access should not infer identity."""
         result = await _call_get_auth_result(
+            request=_make_mock_request(),
             authorization="Bearer random-jwt-token",
         )
         assert result["subject_type"] is None
@@ -219,44 +252,55 @@ class TestGetAuthResultOpenAccess:
 class TestGetAuthResultStaticKey:
     """Tests for static API key authentication."""
 
-    @patch(_APP_STATE_PATH, _make_app_state(api_key="secret-key-123"))
     async def test_no_authorization_returns_none(self):
         """Missing Authorization header should return None."""
-        result = await _call_get_auth_result()
+        result = await _call_get_auth_result(
+            request=_make_mock_request(api_key="secret-key-123")
+        )
         assert result is None
 
-    @patch(_APP_STATE_PATH, _make_app_state(api_key="secret-key-123"))
     async def test_valid_bearer_key(self):
         """Valid Bearer key should authenticate as admin."""
-        result = await _call_get_auth_result(authorization="Bearer secret-key-123")
+        result = await _call_get_auth_result(
+            request=_make_mock_request(api_key="secret-key-123"),
+            authorization="Bearer secret-key-123",
+        )
         assert result is not None
         assert result["authenticated"] is True
         assert result["is_admin"] is True
         assert result["subject_id"] == "admin"
 
-    @patch(_APP_STATE_PATH, _make_app_state(api_key="sk-mykey"))
     async def test_raw_sk_token_without_bearer(self):
         """Raw sk- token without 'Bearer' prefix should still authenticate."""
-        result = await _call_get_auth_result(authorization="sk-mykey")
+        result = await _call_get_auth_result(
+            request=_make_mock_request(api_key="sk-mykey"),
+            authorization="sk-mykey",
+        )
         assert result is not None
         assert result["authenticated"] is True
 
-    @patch(_APP_STATE_PATH, _make_app_state(api_key="secret-key-123"))
     async def test_wrong_key_returns_none(self):
         """Incorrect API key should return None."""
-        result = await _call_get_auth_result(authorization="Bearer wrong-key")
+        result = await _call_get_auth_result(
+            request=_make_mock_request(api_key="secret-key-123"),
+            authorization="Bearer wrong-key",
+        )
         assert result is None
 
-    @patch(_APP_STATE_PATH, _make_app_state(api_key="secret-key-123"))
     async def test_garbage_authorization_returns_none(self):
         """Non-Bearer, non-sk- authorization should return None."""
-        result = await _call_get_auth_result(authorization="Basic dXNlcjpwYXNz")
+        result = await _call_get_auth_result(
+            request=_make_mock_request(api_key="secret-key-123"),
+            authorization="Basic dXNlcjpwYXNz",
+        )
         assert result is None
 
-    @patch(_APP_STATE_PATH, _make_app_state(api_key="secret-key-123"))
     async def test_static_key_has_inherit_permissions(self):
         """Static API key auth should set inherit_permissions=True."""
-        result = await _call_get_auth_result(authorization="Bearer secret-key-123")
+        result = await _call_get_auth_result(
+            request=_make_mock_request(api_key="secret-key-123"),
+            authorization="Bearer secret-key-123",
+        )
         assert result["inherit_permissions"] is True
 
 
@@ -279,10 +323,11 @@ class TestGetAuthResultAuthProvider:
         """Successful provider auth should return structured result."""
         provider = AsyncMock()
         provider.authenticate = AsyncMock(return_value=self._make_auth_result_obj())
-        state = _make_app_state(auth_provider=provider)
+        request = _make_mock_request(auth_provider=provider)
 
-        with patch(_APP_STATE_PATH, state):
-            result = await _call_get_auth_result(authorization="Bearer valid-token")
+        result = await _call_get_auth_result(
+            request=request, authorization="Bearer valid-token"
+        )
         assert result is not None
         assert result["authenticated"] is True
         assert result["subject_id"] == "alice"
@@ -292,18 +337,21 @@ class TestGetAuthResultAuthProvider:
         """Second call with same token should hit cache."""
         provider = AsyncMock()
         provider.authenticate = AsyncMock(return_value=self._make_auth_result_obj())
-        state = _make_app_state(auth_provider=provider)
+        request = _make_mock_request(auth_provider=provider)
 
-        with patch(_APP_STATE_PATH, state):
-            # First call: cache miss
-            result1 = await _call_get_auth_result(authorization="Bearer cache-test-token")
-            assert result1["_auth_cached"] is False
+        # First call: cache miss
+        result1 = await _call_get_auth_result(
+            request=request, authorization="Bearer cache-test-token"
+        )
+        assert result1["_auth_cached"] is False
 
-            # Second call: cache hit
-            result2 = await _call_get_auth_result(authorization="Bearer cache-test-token")
-            assert result2 is not None
-            assert result2["_auth_cached"] is True
-            assert result2["_auth_time_ms"] == 0.0
+        # Second call: cache hit
+        result2 = await _call_get_auth_result(
+            request=request, authorization="Bearer cache-test-token"
+        )
+        assert result2 is not None
+        assert result2["_auth_cached"] is True
+        assert result2["_auth_time_ms"] == 0.0
 
         # Provider should only have been called once
         assert provider.authenticate.call_count == 1
@@ -312,35 +360,38 @@ class TestGetAuthResultAuthProvider:
         """Provider returning None means auth failed."""
         provider = AsyncMock()
         provider.authenticate = AsyncMock(return_value=None)
-        state = _make_app_state(auth_provider=provider)
+        request = _make_mock_request(auth_provider=provider)
 
-        with patch(_APP_STATE_PATH, state):
-            result = await _call_get_auth_result(authorization="Bearer bad-token")
+        result = await _call_get_auth_result(
+            request=request, authorization="Bearer bad-token"
+        )
         assert result is None
 
     async def test_cached_result_gets_fresh_agent_id(self):
         """Cached result should have per-request x_agent_id updated."""
         provider = AsyncMock()
         provider.authenticate = AsyncMock(return_value=self._make_auth_result_obj())
-        state = _make_app_state(auth_provider=provider)
+        request = _make_mock_request(auth_provider=provider)
 
-        with patch(_APP_STATE_PATH, state):
-            await _call_get_auth_result(authorization="Bearer agent-test", x_agent_id="agent-1")
-            result = await _call_get_auth_result(
-                authorization="Bearer agent-test", x_agent_id="agent-2"
-            )
+        await _call_get_auth_result(
+            request=request, authorization="Bearer agent-test", x_agent_id="agent-1"
+        )
+        result = await _call_get_auth_result(
+            request=request, authorization="Bearer agent-test", x_agent_id="agent-2"
+        )
         assert result["x_agent_id"] == "agent-2"
 
     async def test_cache_entry_excludes_per_request_fields(self):
         """Cache should not store x_agent_id or timing fields."""
         provider = AsyncMock()
         provider.authenticate = AsyncMock(return_value=self._make_auth_result_obj())
-        state = _make_app_state(auth_provider=provider)
+        request = _make_mock_request(auth_provider=provider)
 
-        with patch(_APP_STATE_PATH, state):
-            await _call_get_auth_result(
-                authorization="Bearer exclusion-test", x_agent_id="should-not-cache"
-            )
+        await _call_get_auth_result(
+            request=request,
+            authorization="Bearer exclusion-test",
+            x_agent_id="should-not-cache",
+        )
 
         # Read raw cache entry
         cached = _get_cached_auth("exclusion-test")
@@ -392,7 +443,7 @@ class TestRequireAuth:
 class TestGetOperationContext:
     """Tests for get_operation_context."""
 
-    @patch(_APP_STATE_PATH, _make_app_state())
+    @patch(_FASTAPI_APP_PATH, _make_mock_app())
     def test_basic_user_context(self):
         """Basic user auth result should produce a user context."""
         ctx = get_operation_context(
@@ -409,7 +460,7 @@ class TestGetOperationContext:
         assert ctx.zone_id == "z1"
         assert ctx.is_admin is False
 
-    @patch(_APP_STATE_PATH, _make_app_state())
+    @patch(_FASTAPI_APP_PATH, _make_mock_app())
     def test_admin_capabilities(self):
         """Admin should get full admin capabilities set."""
         ctx = get_operation_context(
@@ -423,7 +474,7 @@ class TestGetOperationContext:
         assert ctx.is_admin is True
         assert len(ctx.admin_capabilities) == 4
 
-    @patch(_APP_STATE_PATH, _make_app_state())
+    @patch(_FASTAPI_APP_PATH, _make_mock_app())
     def test_agent_subject_type(self):
         """Agent subject_type should set agent_id from subject_id."""
         ctx = get_operation_context(
@@ -438,7 +489,7 @@ class TestGetOperationContext:
         assert ctx.agent_id == "agent-001"
         assert ctx.user == "alice"  # From legacy_user_id
 
-    @patch(_APP_STATE_PATH, _make_app_state())
+    @patch(_FASTAPI_APP_PATH, _make_mock_app())
     def test_x_agent_id_upgrades_user_to_agent(self):
         """X-Agent-ID header should upgrade user subject to agent."""
         ctx = get_operation_context(
@@ -454,7 +505,7 @@ class TestGetOperationContext:
         assert ctx.subject_id == "my-agent"
         assert ctx.agent_id == "my-agent"
 
-    @patch(_APP_STATE_PATH, _make_app_state())
+    @patch(_FASTAPI_APP_PATH, _make_mock_app())
     def test_defaults_for_missing_fields(self):
         """Missing fields should get sensible defaults."""
         ctx = get_operation_context({})
@@ -469,9 +520,8 @@ class TestGetOperationContext:
         record = MagicMock()
         record.generation = 42
         registry.get.return_value = record
-        state = _make_app_state(agent_registry=registry)
 
-        with patch(_APP_STATE_PATH, state):
+        with patch(_FASTAPI_APP_PATH, _make_mock_app(agent_registry=registry)):
             ctx = get_operation_context(
                 {
                     "subject_type": "agent",
@@ -487,9 +537,8 @@ class TestGetOperationContext:
         """Missing agent record should result in None generation."""
         registry = MagicMock()
         registry.get.return_value = None
-        state = _make_app_state(agent_registry=registry)
 
-        with patch(_APP_STATE_PATH, state):
+        with patch(_FASTAPI_APP_PATH, _make_mock_app(agent_registry=registry)):
             ctx = get_operation_context(
                 {
                     "subject_type": "agent",
@@ -505,9 +554,8 @@ class TestGetOperationContext:
         """Registry exception should be caught and generation set to None."""
         registry = MagicMock()
         registry.get.side_effect = RuntimeError("DB down")
-        state = _make_app_state(agent_registry=registry)
 
-        with patch(_APP_STATE_PATH, state):
+        with patch(_FASTAPI_APP_PATH, _make_mock_app(agent_registry=registry)):
             ctx = get_operation_context(
                 {
                     "subject_type": "agent",

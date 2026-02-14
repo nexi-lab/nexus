@@ -98,7 +98,6 @@ from nexus.server.streaming import (  # noqa: E402
 )
 
 if TYPE_CHECKING:
-    from nexus.core.async_nexus_fs import AsyncNexusFS
     from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
@@ -248,7 +247,8 @@ async def to_thread_with_timeout(
     Args:
         func: Sync function to run in thread
         *args: Positional arguments for func
-        timeout: Timeout in seconds (uses _app_state.operation_timeout if None)
+        timeout: Timeout in seconds. Falls back to app.state.operation_timeout
+            if None and _fastapi_app is initialized, otherwise defaults to 30.0.
         **kwargs: Keyword arguments for func
 
     Returns:
@@ -257,7 +257,12 @@ async def to_thread_with_timeout(
     Raises:
         TimeoutError: If operation exceeds timeout
     """
-    effective_timeout = timeout if timeout is not None else _app_state.operation_timeout
+    if timeout is not None:
+        effective_timeout = timeout
+    elif _fastapi_app is not None:
+        effective_timeout = getattr(_fastapi_app.state, "operation_timeout", 30.0)
+    else:
+        effective_timeout = 30.0
     try:
         return await asyncio.wait_for(
             asyncio.to_thread(func, *args, **kwargs),
@@ -268,58 +273,18 @@ async def to_thread_with_timeout(
 
 
 # ============================================================================
-# Application State
+# Application State (Issue #1288: Eliminated AppState class)
 # ============================================================================
-
-
-class AppState:
-    """Application state container."""
-
-    def __init__(self) -> None:
-        self.nexus_fs: NexusFS | None = None
-        self.async_nexus_fs: AsyncNexusFS | None = None  # Issue #940: Native async fs
-        self.auth_provider: Any = None
-        self.api_key: str | None = None
-        self.exposed_methods: dict[str, Any] = {}
-        self.async_rebac_manager: Any = None
-        self.database_url: str | None = None
-        self.subscription_manager: Any = None  # SubscriptionManager for webhooks
-        # Thread pool and timeout settings (Issue #932)
-        self.thread_pool_size: int = 200
-        self.operation_timeout: float = 30.0
-        # Hot Search Daemon (Issue #951)
-        self.search_daemon: Any = None
-        self.search_daemon_enabled: bool = False
-        # Directory Grant Expander for large folder grants (Leopard-style)
-        self.directory_grant_expander: Any = None
-        # Cache factory for Dragonfly/Redis (Issue #1075)
-        self.cache_factory: Any = None
-        # WebSocket Manager for real-time events (Issue #1116)
-        self.websocket_manager: Any = None
-        # Reactive Subscription Manager for O(1) event matching (Issue #1167)
-        self.reactive_subscription_manager: Any = None
-        # Agent Registry for agent lifecycle (Issue #1240)
-        self.agent_registry: Any = None
-        # Async Agent Registry wrapper (Issue #1440)
-        self.async_agent_registry: Any = None
-        # Agent Event Log for sandbox lifecycle events (Issue #1307)
-        self.agent_event_log: Any = None
-        # SandboxAuthService for authenticated sandbox creation (Issue #1307)
-        self.sandbox_auth_service: Any = None
-        # WriteBack Service for bidirectional sync (Issue #1129)
-        self.write_back_service: Any = None
-        # Task Queue Runner (Issue #574)
-        self.task_runner: Any = None
-        # Event Log WAL for durable event persistence (Issue #1397)
-        self.event_log: Any = None
-        # Issue #1355: Agent identity KeyService
-        self.key_service: Any = None
-        # Issue #788: Chunked upload service
-        self.chunked_upload_service: Any = None
-
-
-# Global state (set during app creation)
-_app_state = AppState()
+#
+# All application state is stored on FastAPI's ``app.state`` namespace,
+# populated during ``create_app()``.  Kernel code (route handlers, RPC
+# dispatch, lifespan) accesses state via ``_fastapi_app.state``.
+# Extracted domain routers in ``api/v1/routers/`` use typed ``Depends()``
+# functions from ``api/v1/dependencies.py`` instead.
+#
+# Module-level reference to the FastAPI app instance.
+# Set once during ``create_app()``.
+_fastapi_app: FastAPI | None = None
 
 
 # Stream token signing/verification is now in streaming.py.
@@ -361,19 +326,19 @@ async def lifespan(_app: FastAPI) -> Any:
     # Configure thread pool size (Issue #932)
     # Increase from default 40 to prevent thread pool exhaustion under load
     limiter = to_thread.current_default_thread_limiter()
-    limiter.total_tokens = _app_state.thread_pool_size
+    limiter.total_tokens = _app.state.thread_pool_size
     logger.info(f"Thread pool size set to {limiter.total_tokens}")
 
     # Initialize async ReBAC manager if database URL provided
-    if _app_state.database_url:
+    if _app.state.database_url:
         try:
             from nexus.services.permissions.async_rebac_manager import (
                 AsyncReBACManager,
                 create_async_engine_from_url,
             )
 
-            engine = create_async_engine_from_url(_app_state.database_url)
-            _app_state.async_rebac_manager = AsyncReBACManager(engine)
+            engine = create_async_engine_from_url(_app.state.database_url)
+            _app.state.async_rebac_manager = AsyncReBACManager(engine)
             logger.info("Async ReBAC manager initialized")
 
             # Issue #940: Initialize AsyncNexusFS with permission enforcement
@@ -392,14 +357,14 @@ async def lifespan(_app: FastAPI) -> Any:
                 # Issue #1239: Create namespace manager for per-subject visibility
                 # Issue #1265: Factory function handles L3 persistent store wiring
                 namespace_manager = None
-                if enforce_permissions and hasattr(_app_state, "nexus_fs"):
-                    sync_rebac = getattr(_app_state.nexus_fs, "_rebac_manager", None)
+                if enforce_permissions and hasattr(_app.state, "nexus_fs"):
+                    sync_rebac = getattr(_app.state.nexus_fs, "_rebac_manager", None)
                     if sync_rebac:
                         from nexus.services.permissions.namespace_factory import (
                             create_namespace_manager,
                         )
 
-                        ns_record_store = getattr(_app_state.nexus_fs, "_record_store", None)
+                        ns_record_store = getattr(_app.state.nexus_fs, "_record_store", None)
                         namespace_manager = create_namespace_manager(
                             rebac_manager=sync_rebac,
                             record_store=ns_record_store,
@@ -414,20 +379,20 @@ async def lifespan(_app: FastAPI) -> Any:
                 # Note: agent_registry may not be initialized yet (it's set later
                 # in the lifespan), so use getattr with None default.
                 permission_enforcer = AsyncPermissionEnforcer(
-                    rebac_manager=_app_state.async_rebac_manager,
+                    rebac_manager=_app.state.async_rebac_manager,
                     namespace_manager=namespace_manager,
-                    agent_registry=getattr(_app_state, "agent_registry", None),
+                    agent_registry=getattr(_app.state, "agent_registry", None),
                 )
 
                 # Create AsyncNexusFS using the same RaftMetadataStore as sync NexusFS
-                _app_state.async_nexus_fs = AsyncNexusFS(
+                _app.state.async_nexus_fs = AsyncNexusFS(
                     backend_root=backend_root,
-                    metadata_store=_app_state.nexus_fs.metadata,
+                    metadata_store=_app.state.nexus_fs.metadata,
                     tenant_id=tenant_id,
                     enforce_permissions=enforce_permissions,
                     permission_enforcer=permission_enforcer,
                 )
-                await _app_state.async_nexus_fs.initialize()
+                await _app.state.async_nexus_fs.initialize()
                 logger.info(
                     f"AsyncNexusFS initialized (backend={backend_root}, "
                     f"tenant={tenant_id}, enforce_permissions={enforce_permissions})"
@@ -447,25 +412,25 @@ async def lifespan(_app: FastAPI) -> Any:
         cache_settings = CacheSettings.from_env()
 
         # Pass RecordStore for SQL-backed cache fallback when CacheStoreABC is not available
-        record_store = getattr(_app_state.nexus_fs, "_record_store", None)
+        record_store = getattr(_app.state.nexus_fs, "_record_store", None)
 
-        _app_state.cache_factory = await init_cache_factory(
+        _app.state.cache_factory = await init_cache_factory(
             cache_settings, record_store=record_store
         )
         logger.info(
-            f"Cache factory initialized with {_app_state.cache_factory.backend_name} backend"
+            f"Cache factory initialized with {_app.state.cache_factory.backend_name} backend"
         )
 
         # Wire up CacheStoreABC L2 cache to TigerCache (Issue #1106)
         # This enables L1 (memory) -> L2 (CacheStore) -> L3 (RecordStore) caching
-        if _app_state.cache_factory.has_cache_store:
+        if _app.state.cache_factory.has_cache_store:
             tiger_cache = getattr(
-                getattr(_app_state.nexus_fs, "_rebac_manager", None),
+                getattr(_app.state.nexus_fs, "_rebac_manager", None),
                 "_tiger_cache",
                 None,
             )
             if tiger_cache:
-                dragonfly_tiger = _app_state.cache_factory.get_tiger_cache()
+                dragonfly_tiger = _app.state.cache_factory.get_tiger_cache()
                 tiger_cache.set_dragonfly_cache(dragonfly_tiger)
                 logger.info(
                     "[TIGER] Dragonfly L2 cache wired up - "
@@ -477,7 +442,7 @@ async def lifespan(_app: FastAPI) -> Any:
     # Event Log WAL for durable event persistence (Issue #1397)
     # Service-layer concern: WAL-first durability for EventBus, not a kernel pillar.
     # Rust WAL preferred; falls back to PG; None if neither available (graceful degrade).
-    _app_state.event_log = None
+    _app.state.event_log = None
     try:
         from nexus.services.event_log import EventLogConfig, create_event_log
 
@@ -490,18 +455,18 @@ async def lifespan(_app: FastAPI) -> Any:
             segment_size_bytes=segment_size,
             sync_mode=sync_mode,  # type: ignore[arg-type]
         )
-        _app_state.event_log = create_event_log(
+        _app.state.event_log = create_event_log(
             event_log_config,
-            session_factory=getattr(_app_state, "session_factory", None),
+            session_factory=getattr(_app.state, "session_factory", None),
         )
-        if _app_state.event_log:
+        if _app.state.event_log:
             logger.info(f"Event log initialized (wal_dir={wal_dir}, sync_mode={sync_mode})")
     except Exception as e:
         logger.warning(f"Failed to initialize event log: {e}")
 
     # Issue #1397: Start event bus and wire event log for WAL-first persistence
-    if _app_state.nexus_fs:
-        event_bus_ref = getattr(_app_state.nexus_fs, "_event_bus", None)
+    if _app.state.nexus_fs:
+        event_bus_ref = getattr(_app.state.nexus_fs, "_event_bus", None)
         if event_bus_ref is not None:
             # Connect the underlying DragonflyClient (async init required)
             redis_client = getattr(event_bus_ref, "_redis", None)
@@ -521,8 +486,8 @@ async def lifespan(_app: FastAPI) -> Any:
 
             # Wire event_log into EventBus for WAL-first durability (Issue #1397).
             # EventBus.publish() handles: WAL append (if available) → Dragonfly fan-out.
-            if _app_state.event_log is not None:
-                event_bus_ref._event_log = _app_state.event_log
+            if _app.state.event_log is not None:
+                event_bus_ref._event_log = _app.state.event_log
                 logger.info("Event log wired into EventBus (WAL-first before pub/sub)")
 
     # WebSocket Manager for real-time events (Issue #1116)
@@ -532,14 +497,14 @@ async def lifespan(_app: FastAPI) -> Any:
 
         # Get event bus from NexusFS if available
         event_bus = None
-        if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "_event_bus"):
-            event_bus = _app_state.nexus_fs._event_bus
+        if _app.state.nexus_fs and hasattr(_app.state.nexus_fs, "_event_bus"):
+            event_bus = _app.state.nexus_fs._event_bus
 
-        _app_state.websocket_manager = WebSocketManager(
+        _app.state.websocket_manager = WebSocketManager(
             event_bus=event_bus,
-            reactive_manager=_app_state.reactive_subscription_manager,
+            reactive_manager=_app.state.reactive_subscription_manager,
         )
-        await _app_state.websocket_manager.start()
+        await _app.state.websocket_manager.start()
         logger.info("WebSocket manager started for real-time events")
     except Exception as e:
         logger.warning(f"Failed to start WebSocket manager: {e}")
@@ -547,7 +512,7 @@ async def lifespan(_app: FastAPI) -> Any:
     # Issue #1129/#1130: WriteBack Service for bidirectional sync (Nexus -> Backend)
     # Enable with NEXUS_WRITE_BACK=true (default: disabled)
     write_back_enabled = os.getenv("NEXUS_WRITE_BACK", "").lower() in ("true", "1", "yes")
-    if write_back_enabled and _app_state.nexus_fs:
+    if write_back_enabled and _app.state.nexus_fs:
         try:
             from nexus.services.change_log_store import ChangeLogStore
             from nexus.services.conflict_log_store import ConflictLogStore
@@ -556,16 +521,16 @@ async def lifespan(_app: FastAPI) -> Any:
             from nexus.services.sync_backlog_store import SyncBacklogStore
             from nexus.services.write_back_service import WriteBackService
 
-            gw = NexusFSGateway(_app_state.nexus_fs)
+            gw = NexusFSGateway(_app.state.nexus_fs)
 
             # ConflictLogStore is always available for the REST API,
             # even if the full write-back pipeline can't start (no event bus).
             conflict_log_store = ConflictLogStore(gw)
-            _app_state.conflict_log_store = conflict_log_store
+            _app.state.conflict_log_store = conflict_log_store
 
             wb_event_bus = None
-            if hasattr(_app_state.nexus_fs, "_event_bus"):
-                wb_event_bus = _app_state.nexus_fs._event_bus
+            if hasattr(_app.state.nexus_fs, "_event_bus"):
+                wb_event_bus = _app.state.nexus_fs._event_bus
             if wb_event_bus:
                 backlog_store = SyncBacklogStore(gw)
                 change_log_store = ChangeLogStore(gw)
@@ -581,7 +546,7 @@ async def lifespan(_app: FastAPI) -> Any:
                 except ValueError:
                     default_strategy = _policy_map.get(raw_policy, ConflictStrategy.KEEP_NEWER)
 
-                _app_state.write_back_service = WriteBackService(
+                _app.state.write_back_service = WriteBackService(
                     gateway=gw,
                     event_bus=wb_event_bus,
                     backlog_store=backlog_store,
@@ -589,7 +554,7 @@ async def lifespan(_app: FastAPI) -> Any:
                     default_strategy=default_strategy,
                     conflict_log_store=conflict_log_store,
                 )
-                await _app_state.write_back_service.start()
+                await _app.state.write_back_service.start()
                 logger.info("WriteBack service started for bidirectional sync")
             else:
                 logger.debug("WriteBack service skipped: no event bus available")
@@ -598,8 +563,8 @@ async def lifespan(_app: FastAPI) -> Any:
 
     # Connect Lock Manager coordination client (Issue #1186)
     # Required for distributed lock REST API endpoints
-    if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "_coordination_client"):
-        coord_client = _app_state.nexus_fs._coordination_client
+    if _app.state.nexus_fs and hasattr(_app.state.nexus_fs, "_coordination_client"):
+        coord_client = _app.state.nexus_fs._coordination_client
         if coord_client is not None:
             try:
                 await coord_client.connect()
@@ -617,7 +582,7 @@ async def lifespan(_app: FastAPI) -> Any:
     ) or (
         # Auto-enable if not explicitly disabled and database URL is set
         os.getenv("NEXUS_SEARCH_DAEMON", "").lower() not in ("false", "0", "no")
-        and _app_state.database_url
+        and _app.state.database_url
     )
 
     if search_daemon_enabled:
@@ -625,7 +590,7 @@ async def lifespan(_app: FastAPI) -> Any:
             from nexus.search.daemon import DaemonConfig, SearchDaemon, set_search_daemon
 
             config = DaemonConfig(
-                database_url=_app_state.database_url,
+                database_url=_app.state.database_url,
                 bm25s_index_dir=os.getenv("NEXUS_BM25S_INDEX_DIR", ".nexus-data/bm25s"),
                 db_pool_min_size=int(os.getenv("NEXUS_SEARCH_POOL_MIN", "10")),
                 db_pool_max_size=int(os.getenv("NEXUS_SEARCH_POOL_MAX", "50")),
@@ -642,22 +607,22 @@ async def lifespan(_app: FastAPI) -> Any:
                 entropy_alpha=float(os.getenv("NEXUS_ENTROPY_ALPHA", "0.5")),
             )
 
-            _app_state.search_daemon = SearchDaemon(config)
-            await _app_state.search_daemon.startup()
-            _app_state.search_daemon_enabled = True
-            set_search_daemon(_app_state.search_daemon)
+            _app.state.search_daemon = SearchDaemon(config)
+            await _app.state.search_daemon.startup()
+            _app.state.search_daemon_enabled = True
+            set_search_daemon(_app.state.search_daemon)
 
             # Set NexusFS reference for index refresh (Issue #1024)
-            _app_state.search_daemon._nexus_fs = _app_state.nexus_fs
+            _app.state.search_daemon._nexus_fs = _app.state.nexus_fs
 
-            stats = _app_state.search_daemon.get_stats()
+            stats = _app.state.search_daemon.get_stats()
             logger.info(
                 f"Search Daemon started: {stats['bm25_documents']} docs indexed, "
                 f"startup={stats['startup_time_ms']:.1f}ms"
             )
         except Exception as e:
             logger.warning(f"Failed to start Search Daemon: {e}")
-            _app_state.search_daemon_enabled = False
+            _app.state.search_daemon_enabled = False
     else:
         logger.debug("Search Daemon disabled (set NEXUS_SEARCH_DAEMON=true to enable)")
 
@@ -668,7 +633,7 @@ async def lifespan(_app: FastAPI) -> Any:
     # Issue #913: Track startup tasks to prevent memory leaks on shutdown
     warm_task: asyncio.Task[Any] | None = None
     backfill_task: asyncio.Task[Any] | None = None
-    if _app_state.nexus_fs and os.getenv("NEXUS_ENABLE_TIGER_WORKER", "false").lower() in (
+    if _app.state.nexus_fs and os.getenv("NEXUS_ENABLE_TIGER_WORKER", "false").lower() in (
         "true",
         "1",
         "yes",
@@ -677,7 +642,7 @@ async def lifespan(_app: FastAPI) -> Any:
             from nexus.server.background_tasks import tiger_cache_queue_task
 
             tiger_task = asyncio.create_task(
-                tiger_cache_queue_task(_app_state.nexus_fs, interval_seconds=60, batch_size=1)
+                tiger_cache_queue_task(_app.state.nexus_fs, interval_seconds=60, batch_size=1)
             )
             logger.info("Tiger Cache queue processor started (explicit enable)")
         except Exception as e:
@@ -688,9 +653,9 @@ async def lifespan(_app: FastAPI) -> Any:
     # Tiger Cache warm-up on startup (Issue #979)
     # Pre-load recently used permission bitmaps to avoid cold-start penalties
     # Non-blocking: runs in background thread, server starts immediately
-    if _app_state.nexus_fs:
+    if _app.state.nexus_fs:
         try:
-            tiger_cache = getattr(_app_state.nexus_fs._rebac_manager, "_tiger_cache", None)
+            tiger_cache = getattr(_app.state.nexus_fs._rebac_manager, "_tiger_cache", None)
             if tiger_cache:
                 warm_limit = int(os.getenv("NEXUS_TIGER_CACHE_WARM_LIMIT", "500"))
 
@@ -710,11 +675,11 @@ async def lifespan(_app: FastAPI) -> Any:
                     from nexus.services.permissions.tiger_cache import DirectoryGrantExpander
 
                     expander = DirectoryGrantExpander(
-                        engine=_app_state.nexus_fs._rebac_manager.engine,
+                        engine=_app.state.nexus_fs._rebac_manager.engine,
                         tiger_cache=tiger_cache,
-                        metadata_store=_app_state.nexus_fs.metadata,
+                        metadata_store=_app.state.nexus_fs.metadata,
                     )
-                    _app_state.directory_grant_expander = expander
+                    _app.state.directory_grant_expander = expander
 
                     async def _run_grant_expander() -> None:
                         await expander.run_worker()
@@ -729,9 +694,9 @@ async def lifespan(_app: FastAPI) -> Any:
 
     # Auto-backfill sparse directory index for system paths (Issue #perf19)
     # This ensures /skills and other shared paths have index entries for O(1) lookups
-    if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "metadata"):
+    if _app.state.nexus_fs and hasattr(_app.state.nexus_fs, "metadata"):
         try:
-            _nexus_fs = _app_state.nexus_fs  # Capture for closure
+            _nexus_fs = _app.state.nexus_fs  # Capture for closure
 
             async def _backfill_system_paths() -> None:
                 import asyncio
@@ -758,11 +723,11 @@ async def lifespan(_app: FastAPI) -> Any:
     # Issue #1076: File cache warmup on server startup
     # Pre-load metadata for commonly accessed paths to reduce cold-start latency
     # Always enabled - runs in background, lightweight (metadata only), no downside
-    if _app_state.nexus_fs:
+    if _app.state.nexus_fs:
         try:
             warmup_max_files = int(os.getenv("NEXUS_CACHE_WARMUP_MAX_FILES", "1000"))
             warmup_depth = int(os.getenv("NEXUS_CACHE_WARMUP_DEPTH", "2"))
-            _nexus_fs_warmup = _app_state.nexus_fs  # Capture for closure
+            _nexus_fs_warmup = _app.state.nexus_fs  # Capture for closure
 
             async def _warmup_file_cache() -> None:
                 from nexus.cache.warmer import CacheWarmer, WarmupConfig
@@ -792,39 +757,39 @@ async def lifespan(_app: FastAPI) -> Any:
             logger.debug(f"[WARMUP] Server startup warmup skipped: {e}")
 
     # Issue #1240: Initialize AgentRegistry for agent lifecycle tracking
-    if _app_state.nexus_fs and getattr(_app_state.nexus_fs, "SessionLocal", None):
+    if _app.state.nexus_fs and getattr(_app.state.nexus_fs, "SessionLocal", None):
         try:
             from nexus.core.agent_registry import AgentRegistry
 
-            _app_state.agent_registry = AgentRegistry(
-                session_factory=_app_state.nexus_fs.SessionLocal,
-                entity_registry=getattr(_app_state.nexus_fs, "_entity_registry", None),
+            _app.state.agent_registry = AgentRegistry(
+                session_factory=_app.state.nexus_fs.SessionLocal,
+                entity_registry=getattr(_app.state.nexus_fs, "_entity_registry", None),
                 flush_interval=60,
             )
             # Inject into NexusFS for RPC methods
-            _app_state.nexus_fs._agent_registry = _app_state.agent_registry
+            _app.state.nexus_fs._agent_registry = _app.state.agent_registry
 
             # Wire into sync PermissionEnforcer
-            perm_enforcer = getattr(_app_state.nexus_fs, "_permission_enforcer", None)
+            perm_enforcer = getattr(_app.state.nexus_fs, "_permission_enforcer", None)
             if perm_enforcer is not None:
-                perm_enforcer.agent_registry = _app_state.agent_registry
+                perm_enforcer.agent_registry = _app.state.agent_registry
 
             # Issue #1440: Create async wrapper for protocol conformance
             from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
 
-            _app_state.async_agent_registry = AsyncAgentRegistry(_app_state.agent_registry)
+            _app.state.async_agent_registry = AsyncAgentRegistry(_app.state.agent_registry)
 
             logger.info("[AGENT-REG] AgentRegistry initialized and wired")
         except Exception as e:
             logger.warning(f"[AGENT-REG] Failed to initialize AgentRegistry: {e}")
-            _app_state.agent_registry = None
-            _app_state.async_agent_registry = None
+            _app.state.agent_registry = None
+            _app.state.async_agent_registry = None
     else:
-        _app_state.agent_registry = None
-        _app_state.async_agent_registry = None
+        _app.state.agent_registry = None
+        _app.state.async_agent_registry = None
 
     # Issue #1355: Initialize KeyService for agent identity
-    if _app_state.nexus_fs and getattr(_app_state.nexus_fs, "SessionLocal", None):
+    if _app.state.nexus_fs and getattr(_app.state.nexus_fs, "SessionLocal", None):
         try:
             from nexus.identity.crypto import IdentityCrypto
             from nexus.identity.key_service import KeyService
@@ -833,53 +798,53 @@ async def lifespan(_app: FastAPI) -> Any:
 
             # Ensure agent_keys table exists (AgentKeyModel is imported lazily,
             # after SQLAlchemyRecordStore.create_all already ran)
-            _nx_engine = getattr(_app_state.nexus_fs, "_sql_engine", None)
+            _nx_engine = getattr(_app.state.nexus_fs, "_sql_engine", None)
             if _nx_engine is not None:
                 AgentKeyModel.__table__.create(_nx_engine, checkfirst=True)
 
             # Reuse OAuthCrypto for Fernet encryption of private keys
-            _db_url = _app_state.database_url or "sqlite:///nexus.db"
+            _db_url = _app.state.database_url or "sqlite:///nexus.db"
             _identity_oauth_crypto = OAuthCrypto(db_url=_db_url)
             _identity_crypto = IdentityCrypto(oauth_crypto=_identity_oauth_crypto)
 
-            _app_state.key_service = KeyService(
-                session_factory=_app_state.nexus_fs.SessionLocal,
+            _app.state.key_service = KeyService(
+                session_factory=_app.state.nexus_fs.SessionLocal,
                 crypto=_identity_crypto,
             )
             # Inject into NexusFS for register_agent integration
-            _app_state.nexus_fs._key_service = _app_state.key_service
+            _app.state.nexus_fs._key_service = _app.state.key_service
 
             logger.info("[KYA] KeyService initialized and wired")
         except Exception as e:
             logger.warning(f"[KYA] Failed to initialize KeyService: {e}")
-            _app_state.key_service = None
+            _app.state.key_service = None
     else:
-        _app_state.key_service = None
+        _app.state.key_service = None
 
     # Issue #788: Initialize ChunkedUploadService for tus.io resumable uploads
     # Prefer the pre-configured service from factory (reads NEXUS_UPLOAD_* env vars).
     # Fall back to creating one here if the factory didn't provide it.
     _upload_cleanup_task = None
     _factory_upload_svc = (
-        _app_state.nexus_fs._service_extras.get("chunked_upload_service")
-        if _app_state.nexus_fs
+        _app.state.nexus_fs._service_extras.get("chunked_upload_service")
+        if _app.state.nexus_fs
         else None
     )
     if _factory_upload_svc is not None:
-        _app_state.chunked_upload_service = _factory_upload_svc
+        _app.state.chunked_upload_service = _factory_upload_svc
         _upload_cleanup_task = asyncio.create_task(
-            _app_state.chunked_upload_service.start_cleanup_loop()
+            _app.state.chunked_upload_service.start_cleanup_loop()
         )
         logger.info("[TUS] ChunkedUploadService initialized from factory with background cleanup")
-    elif _app_state.nexus_fs and getattr(_app_state.nexus_fs, "SessionLocal", None):
+    elif _app.state.nexus_fs and getattr(_app.state.nexus_fs, "SessionLocal", None):
         try:
             from nexus.services.chunked_upload_service import (
                 ChunkedUploadConfig,
                 ChunkedUploadService,
             )
 
-            _backend = getattr(_app_state.nexus_fs, "backend", None)
-            _session_factory = _app_state.nexus_fs.SessionLocal
+            _backend = getattr(_app.state.nexus_fs, "backend", None)
+            _session_factory = _app.state.nexus_fs.SessionLocal
             if _backend and _session_factory:
                 # Build config from env vars for fallback path
                 import os as _os
@@ -897,58 +862,58 @@ async def lifespan(_app: FastAPI) -> Any:
                     if _v is not None:
                         _upload_kwargs[_key] = int(_v)
 
-                _app_state.chunked_upload_service = ChunkedUploadService(
+                _app.state.chunked_upload_service = ChunkedUploadService(
                     session_factory=_session_factory,
                     backend=_backend,
-                    metadata_store=getattr(_app_state.nexus_fs, "metadata", None),
+                    metadata_store=getattr(_app.state.nexus_fs, "metadata", None),
                     config=ChunkedUploadConfig(**_upload_kwargs),
                 )
                 _upload_cleanup_task = asyncio.create_task(
-                    _app_state.chunked_upload_service.start_cleanup_loop()
+                    _app.state.chunked_upload_service.start_cleanup_loop()
                 )
                 logger.info("[TUS] ChunkedUploadService initialized with background cleanup")
         except Exception as e:
             logger.warning(f"[TUS] Failed to initialize ChunkedUploadService: {e}")
-            _app_state.chunked_upload_service = None
+            _app.state.chunked_upload_service = None
     else:
-        _app_state.chunked_upload_service = None
+        _app.state.chunked_upload_service = None
 
     # Issue #1240: Start agent heartbeat and stale detection background tasks
     _heartbeat_task = None
     _stale_detection_task = None
-    if _app_state.agent_registry:
+    if _app.state.agent_registry:
         from nexus.server.background_tasks import (
             heartbeat_flush_task,
             stale_agent_detection_task,
         )
 
         _heartbeat_task = asyncio.create_task(
-            heartbeat_flush_task(_app_state.agent_registry, interval_seconds=60)
+            heartbeat_flush_task(_app.state.agent_registry, interval_seconds=60)
         )
         _stale_detection_task = asyncio.create_task(
-            stale_agent_detection_task(_app_state.agent_registry, interval_seconds=300)
+            stale_agent_detection_task(_app.state.agent_registry, interval_seconds=300)
         )
         logger.info("[AGENT-REG] Background heartbeat flush and stale detection tasks started")
 
     # Issue #1307: Initialize SandboxAuthService for authenticated sandbox creation
-    if _app_state.nexus_fs and not _app_state.agent_registry:
+    if _app.state.nexus_fs and not _app.state.agent_registry:
         logger.info(
             "[SANDBOX-AUTH] AgentRegistry not available, SandboxAuthService will not be initialized"
         )
-    if _app_state.nexus_fs and _app_state.agent_registry:
+    if _app.state.nexus_fs and _app.state.agent_registry:
         try:
             from nexus.sandbox.auth_service import SandboxAuthService
             from nexus.sandbox.events import AgentEventLog
             from nexus.sandbox.sandbox_manager import SandboxManager
 
-            session_factory = getattr(_app_state.nexus_fs, "SessionLocal", None)
+            session_factory = getattr(_app.state.nexus_fs, "SessionLocal", None)
             if session_factory and callable(session_factory):
                 # Create AgentEventLog for sandbox lifecycle audit
-                _app_state.agent_event_log = AgentEventLog(session_factory=session_factory)
+                _app.state.agent_event_log = AgentEventLog(session_factory=session_factory)
 
                 # Create SandboxManager for SandboxAuthService
                 # (separate from NexusFS's lazy sandbox manager — different layers)
-                sandbox_config = getattr(_app_state.nexus_fs, "_config", None)
+                sandbox_config = getattr(_app.state.nexus_fs, "_config", None)
                 sandbox_mgr = SandboxManager(
                     session_factory=session_factory,
                     e2b_api_key=os.getenv("E2B_API_KEY"),
@@ -960,14 +925,14 @@ async def lifespan(_app: FastAPI) -> Any:
                 # Get NamespaceManager if available (best-effort)
                 # Issue #1265: Factory function handles L3 persistent store wiring
                 namespace_manager = None
-                sync_rebac = getattr(_app_state.nexus_fs, "_rebac_manager", None)
+                sync_rebac = getattr(_app.state.nexus_fs, "_rebac_manager", None)
                 if sync_rebac:
                     try:
                         from nexus.services.permissions.namespace_factory import (
                             create_namespace_manager,
                         )
 
-                        ns_record_store = getattr(_app_state.nexus_fs, "_record_store", None)
+                        ns_record_store = getattr(_app.state.nexus_fs, "_record_store", None)
                         namespace_manager = create_namespace_manager(
                             rebac_manager=sync_rebac,
                             record_store=ns_record_store,
@@ -979,11 +944,11 @@ async def lifespan(_app: FastAPI) -> Any:
                             e,
                         )
 
-                _app_state.sandbox_auth_service = SandboxAuthService(
-                    agent_registry=_app_state.agent_registry,
+                _app.state.sandbox_auth_service = SandboxAuthService(
+                    agent_registry=_app.state.agent_registry,
                     sandbox_manager=sandbox_mgr,
                     namespace_manager=namespace_manager,
-                    event_log=_app_state.agent_event_log,
+                    event_log=_app.state.agent_event_log,
                     budget_enforcement=False,
                 )
                 logger.info("[SANDBOX-AUTH] SandboxAuthService initialized")
@@ -992,7 +957,7 @@ async def lifespan(_app: FastAPI) -> Any:
 
     # Issue #1212: Initialize SchedulerService if PostgreSQL database is available
     _scheduler_pool = None
-    if _app_state.database_url and "postgresql" in _app_state.database_url:
+    if _app.state.database_url and "postgresql" in _app.state.database_url:
         try:
             import asyncpg
 
@@ -1001,7 +966,7 @@ async def lifespan(_app: FastAPI) -> Any:
             from nexus.scheduler.service import SchedulerService
 
             # Convert SQLAlchemy URL to asyncpg DSN
-            pg_dsn = _app_state.database_url.replace("+asyncpg", "").replace("+psycopg2", "")
+            pg_dsn = _app.state.database_url.replace("+asyncpg", "").replace("+psycopg2", "")
             _scheduler_pool = await asyncpg.create_pool(pg_dsn, min_size=2, max_size=5)
 
             # Create scheduled_tasks table if it doesn't exist
@@ -1046,45 +1011,21 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.warning(f"Failed to initialize Scheduler service: {e}")
 
-    # Issue #1358: Initialize SpendingPolicyService if PostgreSQL available
-    if _app_state.database_url and "postgresql" in _app_state.database_url:
-        try:
-            from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
-            from nexus.pay.spending_policy_service import SpendingPolicyService
-
-            _sp_db_url = _app_state.database_url
-            if "+asyncpg" not in _sp_db_url and "postgresql://" in _sp_db_url:
-                _sp_db_url = _sp_db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
-
-            _sp_engine = create_async_engine(_sp_db_url, pool_size=3, max_overflow=2)
-            _sp_session_factory = async_sessionmaker(
-                _sp_engine, class_=AsyncSession, expire_on_commit=False
-            )
-            _app.state.spending_policy_service = SpendingPolicyService(
-                session_factory=_sp_session_factory
-            )
-            logger.info("SpendingPolicyService initialized (PostgreSQL)")
-        except ImportError as e:
-            logger.debug(f"SpendingPolicyService not available: {e}")
-        except Exception as e:
-            logger.warning(f"Failed to initialize SpendingPolicyService: {e}")
-
     # Issue #574: Task Queue Engine - Start background worker
     task_runner_task: asyncio.Task[Any] | None = None
-    if _app_state.nexus_fs:
+    if _app.state.nexus_fs:
         try:
             from nexus.tasks import is_available
 
             if is_available():
-                service = _app_state.nexus_fs.task_queue_service
+                service = _app.state.nexus_fs.task_queue_service
                 engine = service.get_engine()
 
                 from nexus.tasks.runner import AsyncTaskRunner
 
                 runner = AsyncTaskRunner(engine=engine, max_workers=4)
                 service.set_runner(runner)
-                _app_state.task_runner = runner
+                _app.state.task_runner = runner
                 task_runner_task = asyncio.create_task(runner.run())
                 logger.info("Task Queue runner started (4 workers)")
             else:
@@ -1107,8 +1048,8 @@ async def lifespan(_app: FastAPI) -> Any:
     # Issue #574: Stop Task Queue runner
     if task_runner_task:
         try:
-            if _app_state.task_runner:
-                await _app_state.task_runner.shutdown()
+            if _app.state.task_runner:
+                await _app.state.task_runner.shutdown()
             task_runner_task.cancel()
             with suppress(asyncio.CancelledError):
                 await task_runner_task
@@ -1125,33 +1066,33 @@ async def lifespan(_app: FastAPI) -> Any:
             logger.warning(f"Error closing scheduler pool: {e}")
 
     # Issue #940: Shutdown AsyncNexusFS
-    if _app_state.async_nexus_fs:
+    if _app.state.async_nexus_fs:
         try:
-            await _app_state.async_nexus_fs.close()
+            await _app.state.async_nexus_fs.close()
             logger.info("AsyncNexusFS stopped")
         except Exception as e:
             logger.warning(f"Error shutting down AsyncNexusFS: {e}")
 
     # Shutdown Search Daemon (Issue #951)
-    if _app_state.search_daemon:
+    if _app.state.search_daemon:
         try:
-            await _app_state.search_daemon.shutdown()
+            await _app.state.search_daemon.shutdown()
             logger.info("Search Daemon stopped")
         except Exception as e:
             logger.warning(f"Error shutting down Search Daemon: {e}")
 
     # Issue #1129: Stop WriteBack Service
-    if _app_state.write_back_service:
+    if _app.state.write_back_service:
         try:
-            await _app_state.write_back_service.stop()
+            await _app.state.write_back_service.stop()
             logger.info("WriteBack service stopped")
         except Exception as e:
             logger.warning(f"Error shutting down WriteBack service: {e}")
 
     # Stop DirectoryGrantExpander worker
-    if hasattr(_app_state, "directory_grant_expander") and _app_state.directory_grant_expander:
+    if hasattr(_app.state, "directory_grant_expander") and _app.state.directory_grant_expander:
         try:
-            _app_state.directory_grant_expander.stop()
+            _app.state.directory_grant_expander.stop()
             logger.info("DirectoryGrantExpander worker stopped")
         except Exception as e:
             logger.debug(f"Error stopping DirectoryGrantExpander: {e}")
@@ -1162,23 +1103,23 @@ async def lifespan(_app: FastAPI) -> Any:
             task_ref.cancel()
             with suppress(asyncio.CancelledError):
                 await task_ref
-    if _app_state.agent_registry:
+    if _app.state.agent_registry:
         try:
-            _app_state.agent_registry.flush_heartbeats()
+            _app.state.agent_registry.flush_heartbeats()
             logger.info("[AGENT-REG] Final heartbeat flush completed")
         except Exception:
             logger.warning("[AGENT-REG] Final heartbeat flush failed", exc_info=True)
 
     # Issue #1397: Close Event Log WAL
-    if _app_state.event_log:
+    if _app.state.event_log:
         try:
-            await _app_state.event_log.close()
+            await _app.state.event_log.close()
             logger.info("Event log closed")
         except Exception as e:
             logger.warning(f"Error closing event log: {e}")
 
     # SandboxManager now uses session-per-operation — no persistent session to close
-    if _app_state.sandbox_auth_service:
+    if _app.state.sandbox_auth_service:
         logger.info(
             "[SANDBOX-AUTH] SandboxAuthService cleaned up (session-per-op, no persistent session)"
         )
@@ -1203,8 +1144,8 @@ async def lifespan(_app: FastAPI) -> Any:
         logger.debug("Sparse index backfill task cancelled")
 
     # Issue #913: Cancel any pending event tasks in NexusFS
-    if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "_event_tasks"):
-        event_tasks = _app_state.nexus_fs._event_tasks.copy()
+    if _app.state.nexus_fs and hasattr(_app.state.nexus_fs, "_event_tasks"):
+        event_tasks = _app.state.nexus_fs._event_tasks.copy()
         for task in event_tasks:
             task.cancel()
         if event_tasks:
@@ -1213,16 +1154,16 @@ async def lifespan(_app: FastAPI) -> Any:
             logger.info(f"Cancelled {len(event_tasks)} pending event tasks")
 
     # Shutdown WebSocket manager (Issue #1116)
-    if _app_state.websocket_manager:
+    if _app.state.websocket_manager:
         try:
-            await _app_state.websocket_manager.stop()
+            await _app.state.websocket_manager.stop()
             logger.info("WebSocket manager stopped")
         except Exception as e:
             logger.warning(f"Error shutting down WebSocket manager: {e}")
 
     # Disconnect Lock Manager coordination client (Issue #1186)
-    if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "_coordination_client"):
-        coord_client = _app_state.nexus_fs._coordination_client
+    if _app.state.nexus_fs and hasattr(_app.state.nexus_fs, "_coordination_client"):
+        coord_client = _app.state.nexus_fs._coordination_client
         if coord_client is not None:
             try:
                 await coord_client.disconnect()
@@ -1230,19 +1171,19 @@ async def lifespan(_app: FastAPI) -> Any:
             except Exception as e:
                 logger.debug(f"Error disconnecting coordination client: {e}")
 
-    if _app_state.subscription_manager:
-        await _app_state.subscription_manager.close()
+    if _app.state.subscription_manager:
+        await _app.state.subscription_manager.close()
         # Clear global singleton (Issue #1115)
         from nexus.server.subscriptions import set_subscription_manager
 
         set_subscription_manager(None)
-    if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "close"):
-        _app_state.nexus_fs.close()
+    if _app.state.nexus_fs and hasattr(_app.state.nexus_fs, "close"):
+        _app.state.nexus_fs.close()
 
     # Shutdown cache factory (Issue #1075)
-    if hasattr(_app_state, "cache_factory") and _app_state.cache_factory:
+    if hasattr(_app.state, "cache_factory") and _app.state.cache_factory:
         try:
-            await _app_state.cache_factory.shutdown()
+            await _app.state.cache_factory.shutdown()
             logger.info("Cache factory stopped")
         except Exception as e:
             logger.warning(f"Error shutting down cache factory: {e}")
@@ -1282,23 +1223,55 @@ def create_app(
     Returns:
         Configured FastAPI application
     """
-    # Store in global state
-    _app_state.nexus_fs = nexus_fs
-    _app_state.api_key = api_key
-    _app_state.auth_provider = auth_provider
-    _app_state.database_url = database_url
+    global _fastapi_app
+
+    # Create app first so we can store state on it
+    app = FastAPI(
+        title="Nexus RPC Server",
+        description="AI-Native Distributed Filesystem API",
+        version="1.0.0",
+        lifespan=lifespan,
+    )
+
+    # Set module-level reference for kernel code access
+    _fastapi_app = app
+
+    # Store application state on app.state (replaces AppState class)
+    app.state.nexus_fs = nexus_fs
+    app.state.api_key = api_key
+    app.state.auth_provider = auth_provider
+    app.state.database_url = database_url
 
     # Thread pool and timeout settings (Issue #932)
-    # Read from parameter, environment variable, or use default
-    _app_state.thread_pool_size = thread_pool_size or int(
+    app.state.thread_pool_size = thread_pool_size or int(
         os.environ.get("NEXUS_THREAD_POOL_SIZE", "200")
     )
-    _app_state.operation_timeout = operation_timeout or float(
+    app.state.operation_timeout = operation_timeout or float(
         os.environ.get("NEXUS_OPERATION_TIMEOUT", "30.0")
     )
 
     # Discover exposed methods
-    _app_state.exposed_methods = _discover_exposed_methods(nexus_fs)
+    app.state.exposed_methods = _discover_exposed_methods(nexus_fs)
+
+    # Initialize defaults for optional services (set during lifespan)
+    app.state.async_nexus_fs = None
+    app.state.async_rebac_manager = None
+    app.state.subscription_manager = None
+    app.state.search_daemon = None
+    app.state.search_daemon_enabled = False
+    app.state.directory_grant_expander = None
+    app.state.cache_factory = None
+    app.state.websocket_manager = None
+    app.state.reactive_subscription_manager = None
+    app.state.agent_registry = None
+    app.state.async_agent_registry = None
+    app.state.agent_event_log = None
+    app.state.sandbox_auth_service = None
+    app.state.write_back_service = None
+    app.state.task_runner = None
+    app.state.event_log = None
+    app.state.key_service = None
+    app.state.chunked_upload_service = None
 
     # Initialize subscription manager if we have a metadata store
     try:
@@ -1308,22 +1281,12 @@ def create_app(
                 set_subscription_manager,
             )
 
-            _app_state.subscription_manager = SubscriptionManager(nexus_fs.SessionLocal)
-            # Inject into NexusFS for automatic event broadcasting
-            nexus_fs.subscription_manager = _app_state.subscription_manager
-            # Set global singleton for FUSE event firing (Issue #1115)
-            set_subscription_manager(_app_state.subscription_manager)
+            app.state.subscription_manager = SubscriptionManager(nexus_fs.SessionLocal)
+            nexus_fs.subscription_manager = app.state.subscription_manager
+            set_subscription_manager(app.state.subscription_manager)
             logger.info("Subscription manager initialized and injected into NexusFS")
     except Exception as e:
         logger.warning(f"Failed to initialize subscription manager: {e}")
-
-    # Create app
-    app = FastAPI(
-        title="Nexus RPC Server",
-        description="AI-Native Distributed Filesystem API",
-        version="1.0.0",
-        lifespan=lifespan,
-    )
 
     # Add CORS middleware
     app.add_middleware(
@@ -1561,15 +1524,15 @@ async def _graph_enhanced_search(
     from nexus.search.graph_store import GraphStore
     from nexus.search.semantic import SemanticSearchResult
 
-    if not _app_state.nexus_fs:
+    if not _fastapi_app.state.nexus_fs:
         raise RuntimeError("NexusFS not initialized")
 
     # Get database URL
-    db_url = _app_state.database_url
+    db_url = _fastapi_app.state.database_url
     if not db_url:
         db_url = (
-            _app_state.nexus_fs._record_store.database_url
-            if _app_state.nexus_fs._record_store
+            _fastapi_app.state.nexus_fs._record_store.database_url
+            if _fastapi_app.state.nexus_fs._record_store
             else None
         )
 
@@ -1633,8 +1596,8 @@ async def _graph_enhanced_search(
                     ]
 
             # Create wrapper and retriever
-            semantic_wrapper = DaemonSemanticSearchWrapper(_app_state.search_daemon)
-            embedding_provider = getattr(_app_state.search_daemon, "_embedding_provider", None)
+            semantic_wrapper = DaemonSemanticSearchWrapper(_fastapi_app.state.search_daemon)
+            embedding_provider = getattr(_fastapi_app.state.search_daemon, "_embedding_provider", None)
 
             config = GraphRetrievalConfig(
                 graph_mode=graph_mode,
@@ -1677,12 +1640,12 @@ def _register_routes(app: FastAPI) -> None:
         enforce_zone_isolation = None
         has_auth = None
 
-        if _app_state.nexus_fs:
-            enforce_permissions = getattr(_app_state.nexus_fs, "_enforce_permissions", None)
-            enforce_zone_isolation = getattr(_app_state.nexus_fs, "_enforce_zone_isolation", None)
+        if _fastapi_app.state.nexus_fs:
+            enforce_permissions = getattr(_fastapi_app.state.nexus_fs, "_enforce_permissions", None)
+            enforce_zone_isolation = getattr(_fastapi_app.state.nexus_fs, "_enforce_zone_isolation", None)
 
         # Check if authentication is configured
-        has_auth = bool(_app_state.api_key or _app_state.auth_provider)
+        has_auth = bool(_fastapi_app.state.api_key or _fastapi_app.state.auth_provider)
 
         return HealthResponse(
             status="healthy",
@@ -1712,8 +1675,8 @@ def _register_routes(app: FastAPI) -> None:
         }
 
         # Check search daemon (Issue #951)
-        if _app_state.search_daemon:
-            daemon_health = _app_state.search_daemon.get_health()
+        if _fastapi_app.state.search_daemon:
+            daemon_health = _fastapi_app.state.search_daemon.get_health()
             health["components"]["search_daemon"] = daemon_health
         else:
             health["components"]["search_daemon"] = {
@@ -1723,17 +1686,17 @@ def _register_routes(app: FastAPI) -> None:
 
         # Check async ReBAC manager
         health["components"]["rebac"] = {
-            "status": "healthy" if _app_state.async_rebac_manager else "disabled",
+            "status": "healthy" if _fastapi_app.state.async_rebac_manager else "disabled",
         }
 
         # Check subscription manager
         health["components"]["subscriptions"] = {
-            "status": "healthy" if _app_state.subscription_manager else "disabled",
+            "status": "healthy" if _fastapi_app.state.subscription_manager else "disabled",
         }
 
         # Check WebSocket manager (Issue #1116)
-        if _app_state.websocket_manager:
-            ws_stats = _app_state.websocket_manager.get_stats()
+        if _fastapi_app.state.websocket_manager:
+            ws_stats = _fastapi_app.state.websocket_manager.get_stats()
             health["components"]["websocket"] = {
                 "status": "healthy",
                 "current_connections": ws_stats["current_connections"],
@@ -1745,9 +1708,9 @@ def _register_routes(app: FastAPI) -> None:
             health["components"]["websocket"] = {"status": "disabled"}
 
         # Check Reactive Subscription Manager (Issue #1167)
-        if _app_state.reactive_subscription_manager:
+        if _fastapi_app.state.reactive_subscription_manager:
             try:
-                reactive_stats = _app_state.reactive_subscription_manager.get_stats()
+                reactive_stats = _fastapi_app.state.reactive_subscription_manager.get_stats()
                 health["components"]["reactive_subscriptions"] = {
                     "status": "healthy",
                     "total_subscriptions": reactive_stats["total_subscriptions"],
@@ -1766,8 +1729,8 @@ def _register_routes(app: FastAPI) -> None:
 
         # Check mounted backends (Issue #708)
         backends_health: dict[str, Any] = {}
-        if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "path_router"):
-            mounts = _app_state.nexus_fs.path_router.list_mounts()
+        if _fastapi_app.state.nexus_fs and hasattr(_fastapi_app.state.nexus_fs, "path_router"):
+            mounts = _fastapi_app.state.nexus_fs.path_router.list_mounts()
             for mount in mounts:
                 backend = mount.backend
                 mount_point = mount.mount_point
@@ -1823,9 +1786,9 @@ def _register_routes(app: FastAPI) -> None:
         metrics: dict[str, Any] = {}
 
         # PostgreSQL pool stats from metadata store
-        if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "metadata"):
+        if _fastapi_app.state.nexus_fs and hasattr(_fastapi_app.state.nexus_fs, "metadata"):
             try:
-                pg_stats = _app_state.nexus_fs.metadata.get_pool_stats()
+                pg_stats = _fastapi_app.state.nexus_fs.metadata.get_pool_stats()
                 metrics["postgres"] = pg_stats
             except Exception as e:
                 metrics["postgres"] = {"error": str(e)}
@@ -1881,8 +1844,8 @@ def _register_routes(app: FastAPI) -> None:
     )
 
     v2_registry = build_v2_registry(
-        async_nexus_fs_getter=lambda: _app_state.async_nexus_fs,
-        chunked_upload_service_getter=lambda: _app_state.chunked_upload_service,
+        async_nexus_fs_getter=lambda: _fastapi_app.state.async_nexus_fs,
+        chunked_upload_service_getter=lambda: _fastapi_app.state.chunked_upload_service,
     )
     register_v2_routers(app, v2_registry)
     app.add_middleware(VersionHeaderMiddleware)
@@ -1911,7 +1874,7 @@ def _register_routes(app: FastAPI) -> None:
 
         a2a_base_url = os.environ.get("NEXUS_A2A_BASE_URL", "http://localhost:2026")
         a2a_router = create_a2a_router(
-            nexus_fs=_app_state.nexus_fs,
+            nexus_fs=_fastapi_app.state.nexus_fs,
             config=None,  # Will use defaults; config can be passed when available
             base_url=a2a_base_url,
         )
@@ -1994,7 +1957,7 @@ def _register_routes(app: FastAPI) -> None:
             "service": "nexus-rpc",
             "version": "1.0",
             "async": True,
-            "methods": list(_app_state.exposed_methods.keys()),
+            "methods": list(_fastapi_app.state.exposed_methods.keys()),
         }
 
     # =========================================================================
@@ -2007,14 +1970,14 @@ def _register_routes(app: FastAPI) -> None:
 
         Returns daemon initialization status and component availability.
         """
-        if not _app_state.search_daemon:
+        if not _fastapi_app.state.search_daemon:
             return {
                 "status": "disabled",
                 "daemon_enabled": False,
                 "message": "Search daemon not enabled (set NEXUS_SEARCH_DAEMON=true)",
             }
 
-        health: dict[str, Any] = _app_state.search_daemon.get_health()
+        health: dict[str, Any] = _fastapi_app.state.search_daemon.get_health()
         return health
 
     @app.get("/api/search/stats", tags=["search"])
@@ -2023,13 +1986,13 @@ def _register_routes(app: FastAPI) -> None:
 
         Returns performance metrics including latency, document counts, and component status.
         """
-        if not _app_state.search_daemon:
+        if not _fastapi_app.state.search_daemon:
             raise HTTPException(
                 status_code=503,
                 detail="Search daemon not enabled (set NEXUS_SEARCH_DAEMON=true)",
             )
 
-        stats: dict[str, Any] = _app_state.search_daemon.get_stats()
+        stats: dict[str, Any] = _fastapi_app.state.search_daemon.get_stats()
         return stats
 
     @app.get("/api/search/query", tags=["search"])
@@ -2077,13 +2040,13 @@ def _register_routes(app: FastAPI) -> None:
 
         start_time = time.perf_counter()
 
-        if not _app_state.search_daemon:
+        if not _fastapi_app.state.search_daemon:
             raise HTTPException(
                 status_code=503,
                 detail="Search daemon not enabled (set NEXUS_SEARCH_DAEMON=true)",
             )
 
-        if not _app_state.search_daemon.is_initialized:
+        if not _fastapi_app.state.search_daemon.is_initialized:
             raise HTTPException(
                 status_code=503,
                 detail="Search daemon is still initializing",
@@ -2170,7 +2133,7 @@ def _register_routes(app: FastAPI) -> None:
                 return response
 
             # Standard search (effective_graph_mode="none")
-            results = await _app_state.search_daemon.search(
+            results = await _fastapi_app.state.search_daemon.search(
                 query=q,
                 search_type=type,
                 limit=effective_limit,
@@ -2228,13 +2191,13 @@ def _register_routes(app: FastAPI) -> None:
         Returns:
             Acknowledgment of the notification
         """
-        if not _app_state.search_daemon:
+        if not _fastapi_app.state.search_daemon:
             raise HTTPException(
                 status_code=503,
                 detail="Search daemon not enabled",
             )
 
-        await _app_state.search_daemon.notify_file_change(path, change_type)
+        await _fastapi_app.state.search_daemon.notify_file_change(path, change_type)
 
         return {
             "status": "accepted",
@@ -2387,13 +2350,13 @@ def _register_routes(app: FastAPI) -> None:
         Returns:
             List of memories matching the filters
         """
-        if not _app_state.nexus_fs:
+        if not _fastapi_app.state.nexus_fs:
             raise HTTPException(status_code=503, detail="NexusFS not initialized")
 
         try:
             context = get_operation_context(_auth_result)
 
-            results = _app_state.nexus_fs.memory.query(
+            results = _fastapi_app.state.nexus_fs.memory.query(
                 scope=scope,
                 memory_type=memory_type,
                 state=state,
@@ -2469,13 +2432,13 @@ def _register_routes(app: FastAPI) -> None:
         Returns:
             List of memories matching the filters
         """
-        if not _app_state.nexus_fs:
+        if not _fastapi_app.state.nexus_fs:
             raise HTTPException(status_code=503, detail="NexusFS not initialized")
 
         try:
             context = get_operation_context(_auth_result)
 
-            results = _app_state.nexus_fs.memory.list(
+            results = _fastapi_app.state.nexus_fs.memory.list(
                 scope=scope,
                 memory_type=memory_type,
                 namespace=namespace,
@@ -2527,14 +2490,14 @@ def _register_routes(app: FastAPI) -> None:
         Returns:
             The created memory ID
         """
-        if not _app_state.nexus_fs:
+        if not _fastapi_app.state.nexus_fs:
             raise HTTPException(status_code=503, detail="NexusFS not initialized")
 
         try:
             body = await request.json()
             context = get_operation_context(_auth_result)
 
-            memory_id = _app_state.nexus_fs.memory.store(
+            memory_id = _fastapi_app.state.nexus_fs.memory.store(
                 content=body.get("content", ""),
                 scope=body.get("scope", "user"),
                 memory_type=body.get("memory_type"),
@@ -2581,12 +2544,12 @@ def _register_routes(app: FastAPI) -> None:
             - access_count: Number of times this memory has been accessed
             - last_accessed_at: Last access timestamp
         """
-        if not _app_state.nexus_fs:
+        if not _fastapi_app.state.nexus_fs:
             raise HTTPException(status_code=503, detail="NexusFS not initialized")
 
         try:
             context = get_operation_context(_auth_result)
-            result = _app_state.nexus_fs.memory.get(
+            result = _fastapi_app.state.nexus_fs.memory.get(
                 memory_id, track_access=track_access, context=context
             )
             if result is None:
@@ -2619,11 +2582,11 @@ def _register_routes(app: FastAPI) -> None:
 
         from nexus.search.graph_store import GraphStore
 
-        if not _app_state.nexus_fs:
+        if not _fastapi_app.state.nexus_fs:
             raise HTTPException(status_code=503, detail="NexusFS not initialized")
 
         try:
-            sync_url = _app_state.database_url or ""
+            sync_url = _fastapi_app.state.database_url or ""
             if sync_url.startswith("postgresql://"):
                 async_url = sync_url.replace("postgresql://", "postgresql+asyncpg://")
             elif sync_url.startswith("sqlite:///"):
@@ -2631,7 +2594,7 @@ def _register_routes(app: FastAPI) -> None:
             else:
                 async_url = sync_url
 
-            zone_id = getattr(_app_state.nexus_fs, "zone_id", None) or "default"
+            zone_id = getattr(_fastapi_app.state.nexus_fs, "zone_id", None) or "default"
 
             async def _get_entity() -> dict[str, Any] | None:
                 engine = create_async_engine(async_url)
@@ -2673,11 +2636,11 @@ def _register_routes(app: FastAPI) -> None:
 
         from nexus.search.graph_store import GraphStore
 
-        if not _app_state.nexus_fs:
+        if not _fastapi_app.state.nexus_fs:
             raise HTTPException(status_code=503, detail="NexusFS not initialized")
 
         try:
-            sync_url = _app_state.database_url or ""
+            sync_url = _fastapi_app.state.database_url or ""
             if sync_url.startswith("postgresql://"):
                 async_url = sync_url.replace("postgresql://", "postgresql+asyncpg://")
             elif sync_url.startswith("sqlite:///"):
@@ -2685,7 +2648,7 @@ def _register_routes(app: FastAPI) -> None:
             else:
                 async_url = sync_url
 
-            zone_id = getattr(_app_state.nexus_fs, "zone_id", None) or "default"
+            zone_id = getattr(_fastapi_app.state.nexus_fs, "zone_id", None) or "default"
 
             async def _get_neighbors() -> list[dict[str, Any]]:
                 engine = create_async_engine(async_url)
@@ -2735,7 +2698,7 @@ def _register_routes(app: FastAPI) -> None:
 
         from nexus.search.graph_store import GraphStore
 
-        if not _app_state.nexus_fs:
+        if not _fastapi_app.state.nexus_fs:
             raise HTTPException(status_code=503, detail="NexusFS not initialized")
 
         try:
@@ -2743,7 +2706,7 @@ def _register_routes(app: FastAPI) -> None:
             entity_ids = body.get("entity_ids", [])
             max_hops = body.get("max_hops", 2)
 
-            sync_url = _app_state.database_url or ""
+            sync_url = _fastapi_app.state.database_url or ""
             if sync_url.startswith("postgresql://"):
                 async_url = sync_url.replace("postgresql://", "postgresql+asyncpg://")
             elif sync_url.startswith("sqlite:///"):
@@ -2751,7 +2714,7 @@ def _register_routes(app: FastAPI) -> None:
             else:
                 async_url = sync_url
 
-            zone_id = getattr(_app_state.nexus_fs, "zone_id", None) or "default"
+            zone_id = getattr(_fastapi_app.state.nexus_fs, "zone_id", None) or "default"
 
             async def _get_subgraph() -> dict[str, Any]:
                 engine = create_async_engine(async_url)
@@ -2793,11 +2756,11 @@ def _register_routes(app: FastAPI) -> None:
 
         from nexus.search.graph_store import GraphStore
 
-        if not _app_state.nexus_fs:
+        if not _fastapi_app.state.nexus_fs:
             raise HTTPException(status_code=503, detail="NexusFS not initialized")
 
         try:
-            sync_url = _app_state.database_url or ""
+            sync_url = _fastapi_app.state.database_url or ""
             if sync_url.startswith("postgresql://"):
                 async_url = sync_url.replace("postgresql://", "postgresql+asyncpg://")
             elif sync_url.startswith("sqlite:///"):
@@ -2805,7 +2768,7 @@ def _register_routes(app: FastAPI) -> None:
             else:
                 async_url = sync_url
 
-            zone_id = getattr(_app_state.nexus_fs, "zone_id", None) or "default"
+            zone_id = getattr(_fastapi_app.state.nexus_fs, "zone_id", None) or "default"
 
             async def _find_entity() -> dict[str, Any] | None:
                 engine = create_async_engine(async_url)
@@ -2846,7 +2809,7 @@ def _register_routes(app: FastAPI) -> None:
 
         Requires admin authentication.
         """
-        permission_enforcer = getattr(_app_state.nexus_fs, "_permission_enforcer", None)
+        permission_enforcer = getattr(_fastapi_app.state.nexus_fs, "_permission_enforcer", None)
         if not permission_enforcer:
             raise HTTPException(status_code=503, detail="Permission enforcer not available")
 
@@ -2875,7 +2838,7 @@ def _register_routes(app: FastAPI) -> None:
 
         Requires admin authentication.
         """
-        permission_enforcer = getattr(_app_state.nexus_fs, "_permission_enforcer", None)
+        permission_enforcer = getattr(_fastapi_app.state.nexus_fs, "_permission_enforcer", None)
         if not permission_enforcer:
             raise HTTPException(status_code=503, detail="Permission enforcer not available")
 
@@ -2946,11 +2909,11 @@ def _register_routes(app: FastAPI) -> None:
 
         file_tracker = get_file_access_tracker() if user else None
 
-        if not _app_state.nexus_fs:
+        if not _fastapi_app.state.nexus_fs:
             raise HTTPException(status_code=503, detail="NexusFS not available")
 
         warmer = CacheWarmer(
-            nexus_fs=_app_state.nexus_fs,
+            nexus_fs=_fastapi_app.state.nexus_fs,
             config=config,
             file_tracker=file_tracker,
         )
@@ -2992,7 +2955,7 @@ def _register_routes(app: FastAPI) -> None:
         """
         from nexus.cache.warmer import get_file_access_tracker
 
-        nx = _app_state.nexus_fs
+        nx = _fastapi_app.state.nexus_fs
         if not nx:
             raise HTTPException(status_code=503, detail="NexusFS not available")
 
@@ -3078,7 +3041,7 @@ def _register_routes(app: FastAPI) -> None:
 
         Subscribe to file events (write, delete, rename) with optional path filters.
         """
-        if not _app_state.subscription_manager:
+        if not _fastapi_app.state.subscription_manager:
             raise HTTPException(status_code=503, detail="Subscription manager not available")
 
         from nexus.server.subscriptions import SubscriptionCreate
@@ -3088,7 +3051,7 @@ def _register_routes(app: FastAPI) -> None:
         zone_id = auth_result.get("zone_id") or "default"
         created_by = auth_result.get("subject_id")
 
-        subscription = _app_state.subscription_manager.create(
+        subscription = _fastapi_app.state.subscription_manager.create(
             zone_id=zone_id,
             data=data,
             created_by=created_by,
@@ -3103,11 +3066,11 @@ def _register_routes(app: FastAPI) -> None:
         auth_result: dict[str, Any] = Depends(require_auth),
     ) -> JSONResponse:
         """List webhook subscriptions for the current zone."""
-        if not _app_state.subscription_manager:
+        if not _fastapi_app.state.subscription_manager:
             raise HTTPException(status_code=503, detail="Subscription manager not available")
 
         zone_id = auth_result.get("zone_id") or "default"
-        subscriptions = _app_state.subscription_manager.list_subscriptions(
+        subscriptions = _fastapi_app.state.subscription_manager.list_subscriptions(
             zone_id=zone_id,
             enabled_only=enabled_only,
             limit=limit,
@@ -3123,11 +3086,11 @@ def _register_routes(app: FastAPI) -> None:
         auth_result: dict[str, Any] = Depends(require_auth),
     ) -> JSONResponse:
         """Get a webhook subscription by ID."""
-        if not _app_state.subscription_manager:
+        if not _fastapi_app.state.subscription_manager:
             raise HTTPException(status_code=503, detail="Subscription manager not available")
 
         zone_id = auth_result.get("zone_id") or "default"
-        subscription = _app_state.subscription_manager.get(subscription_id, zone_id)
+        subscription = _fastapi_app.state.subscription_manager.get(subscription_id, zone_id)
         if subscription is None:
             raise HTTPException(status_code=404, detail="Subscription not found")
         return JSONResponse(content=subscription.model_dump(mode="json"))
@@ -3139,7 +3102,7 @@ def _register_routes(app: FastAPI) -> None:
         auth_result: dict[str, Any] = Depends(require_auth),
     ) -> JSONResponse:
         """Update a webhook subscription."""
-        if not _app_state.subscription_manager:
+        if not _fastapi_app.state.subscription_manager:
             raise HTTPException(status_code=503, detail="Subscription manager not available")
 
         from nexus.server.subscriptions import SubscriptionUpdate
@@ -3148,7 +3111,7 @@ def _register_routes(app: FastAPI) -> None:
         data = SubscriptionUpdate(**body)
         zone_id = auth_result.get("zone_id") or "default"
 
-        subscription = _app_state.subscription_manager.update(
+        subscription = _fastapi_app.state.subscription_manager.update(
             subscription_id=subscription_id,
             zone_id=zone_id,
             data=data,
@@ -3163,11 +3126,11 @@ def _register_routes(app: FastAPI) -> None:
         auth_result: dict[str, Any] = Depends(require_auth),
     ) -> JSONResponse:
         """Delete a webhook subscription."""
-        if not _app_state.subscription_manager:
+        if not _fastapi_app.state.subscription_manager:
             raise HTTPException(status_code=503, detail="Subscription manager not available")
 
         zone_id = auth_result.get("zone_id") or "default"
-        deleted = _app_state.subscription_manager.delete(subscription_id, zone_id)
+        deleted = _fastapi_app.state.subscription_manager.delete(subscription_id, zone_id)
         if not deleted:
             raise HTTPException(status_code=404, detail="Subscription not found")
         return JSONResponse(content={"deleted": True})
@@ -3178,11 +3141,11 @@ def _register_routes(app: FastAPI) -> None:
         auth_result: dict[str, Any] = Depends(require_auth),
     ) -> JSONResponse:
         """Send a test event to a webhook subscription."""
-        if not _app_state.subscription_manager:
+        if not _fastapi_app.state.subscription_manager:
             raise HTTPException(status_code=503, detail="Subscription manager not available")
 
         zone_id = auth_result.get("zone_id") or "default"
-        result = await _app_state.subscription_manager.test(subscription_id, zone_id)
+        result = await _fastapi_app.state.subscription_manager.test(subscription_id, zone_id)
         return JSONResponse(content=result)
 
     # =========================================================================
@@ -3191,15 +3154,15 @@ def _register_routes(app: FastAPI) -> None:
 
     def _get_lock_manager() -> Any:
         """Get the lock manager from NexusFS or raise 503."""
-        if not _app_state.nexus_fs:
+        if not _fastapi_app.state.nexus_fs:
             raise HTTPException(status_code=503, detail="NexusFS not available")
-        if not _app_state.nexus_fs._has_distributed_locks():
+        if not _fastapi_app.state.nexus_fs._has_distributed_locks():
             raise HTTPException(
                 status_code=503,
                 detail="Distributed lock manager not configured. "
                 "Enable Redis/Dragonfly for distributed locking.",
             )
-        return _app_state.nexus_fs._lock_manager
+        return _fastapi_app.state.nexus_fs._lock_manager
 
     @app.post("/api/locks", tags=["locks"], status_code=201, response_model=LockResponse)
     async def acquire_lock(
@@ -3486,10 +3449,10 @@ def _register_routes(app: FastAPI) -> None:
 
         Returns the agent's active signing key information for verification.
         """
-        if not _app_state.key_service:
+        if not _fastapi_app.state.key_service:
             raise HTTPException(status_code=503, detail="Identity service not available")
 
-        keys = await asyncio.to_thread(_app_state.key_service.get_active_keys, agent_id)
+        keys = await asyncio.to_thread(_fastapi_app.state.key_service.get_active_keys, agent_id)
         if not keys:
             raise HTTPException(status_code=404, detail=f"No active keys for agent '{agent_id}'")
 
@@ -3521,7 +3484,7 @@ def _register_routes(app: FastAPI) -> None:
         """
         import base64
 
-        if not _app_state.key_service:
+        if not _fastapi_app.state.key_service:
             raise HTTPException(status_code=503, detail="Identity service not available")
 
         body = await request.json()
@@ -3543,7 +3506,7 @@ def _register_routes(app: FastAPI) -> None:
         # Resolve public key
         resolved_key_id = key_id
         if key_id:
-            record = await asyncio.to_thread(_app_state.key_service.get_public_key, key_id)
+            record = await asyncio.to_thread(_fastapi_app.state.key_service.get_public_key, key_id)
             if record is None:
                 raise HTTPException(status_code=404, detail="Key not found or not active")
             if record.agent_id != agent_id:
@@ -3552,7 +3515,7 @@ def _register_routes(app: FastAPI) -> None:
 
             public_key = IdentityCrypto.public_key_from_bytes(record.public_key_bytes)
         else:
-            keys = await asyncio.to_thread(_app_state.key_service.get_active_keys, agent_id)
+            keys = await asyncio.to_thread(_fastapi_app.state.key_service.get_active_keys, agent_id)
             if not keys:
                 raise HTTPException(
                     status_code=404, detail=f"No active keys for agent '{agent_id}'"
@@ -3562,7 +3525,7 @@ def _register_routes(app: FastAPI) -> None:
 
             public_key = IdentityCrypto.public_key_from_bytes(keys[0].public_key_bytes)
 
-        valid = _app_state.key_service._crypto.verify(message, signature, public_key)
+        valid = _fastapi_app.state.key_service._crypto.verify(message, signature, public_key)
 
         return {"valid": valid, "agent_id": agent_id, "key_id": resolved_key_id}
 
@@ -3599,7 +3562,7 @@ def _register_routes(app: FastAPI) -> None:
         """
         import uuid
 
-        if not _app_state.websocket_manager:
+        if not _fastapi_app.state.websocket_manager:
             await websocket.close(
                 code=http_status.WS_1011_INTERNAL_ERROR, reason="WebSocket manager not available"
             )
@@ -3609,10 +3572,10 @@ def _register_routes(app: FastAPI) -> None:
         auth_result = None
         if token:
             # Reuse existing auth validation
-            auth_result = await get_auth_result(authorization=f"Bearer {token}")
+            auth_result = await get_auth_result(request=websocket, authorization=f"Bearer {token}")  # type: ignore[arg-type]  # WebSocket shares .app via HTTPConnection
 
         # Allow unauthenticated if no auth configured (open access mode)
-        if not auth_result and (_app_state.api_key or _app_state.auth_provider):
+        if not auth_result and (_fastapi_app.state.api_key or _fastapi_app.state.auth_provider):
             await websocket.close(
                 code=http_status.WS_1008_POLICY_VIOLATION, reason="Authentication required"
             )
@@ -3625,8 +3588,8 @@ def _register_routes(app: FastAPI) -> None:
         patterns: list[str] = []
         event_types: list[str] = []
 
-        if _app_state.subscription_manager and subscription_id != "all":
-            subscription = _app_state.subscription_manager.get(subscription_id, zone_id)
+        if _fastapi_app.state.subscription_manager and subscription_id != "all":
+            subscription = _fastapi_app.state.subscription_manager.get(subscription_id, zone_id)
             if subscription:
                 patterns = subscription.patterns or []
                 event_types = subscription.event_types or []
@@ -3640,7 +3603,7 @@ def _register_routes(app: FastAPI) -> None:
         connection_id = f"{subscription_id}:{uuid.uuid4().hex[:8]}"
 
         # Connect
-        _conn_info = await _app_state.websocket_manager.connect(
+        _conn_info = await _fastapi_app.state.websocket_manager.connect(
             websocket=websocket,
             zone_id=zone_id,
             connection_id=connection_id,
@@ -3663,13 +3626,13 @@ def _register_routes(app: FastAPI) -> None:
 
         try:
             # Handle client messages (ping/pong, subscribe, etc.)
-            await _app_state.websocket_manager.handle_client(websocket, connection_id)
+            await _fastapi_app.state.websocket_manager.handle_client(websocket, connection_id)
         except WebSocketDisconnect:
             pass
         except Exception as e:
             logger.warning(f"WebSocket error for {connection_id}: {e}")
         finally:
-            await _app_state.websocket_manager.disconnect(connection_id)
+            await _fastapi_app.state.websocket_manager.disconnect(connection_id)
 
     @app.websocket("/ws/events")
     async def websocket_events_all(
@@ -3743,7 +3706,7 @@ def _register_routes(app: FastAPI) -> None:
             curl "http://localhost:2026/api/watch?path=/inbox/&timeout=60"
             ```
         """
-        if not _app_state.nexus_fs:
+        if not _fastapi_app.state.nexus_fs:
             raise HTTPException(status_code=503, detail="NexusFS not initialized")
 
         # Create operation context for permission checks
@@ -3753,7 +3716,7 @@ def _register_routes(app: FastAPI) -> None:
 
         try:
             # Use the existing wait_for_changes method
-            change = await _app_state.nexus_fs.wait_for_changes(
+            change = await _fastapi_app.state.nexus_fs.wait_for_changes(
                 path=path,
                 timeout=timeout,
                 _context=context,
@@ -3810,7 +3773,7 @@ def _register_routes(app: FastAPI) -> None:
         if not _verify_stream_token(token, f"/{path}", zone_id):
             raise HTTPException(status_code=403, detail="Invalid or expired stream token")
 
-        nexus_fs = _app_state.nexus_fs
+        nexus_fs = _fastapi_app.state.nexus_fs
         if nexus_fs is None:
             raise HTTPException(status_code=503, detail="NexusFS not available")
 
@@ -3875,7 +3838,7 @@ def _register_routes(app: FastAPI) -> None:
         Anonymous users get minimal info. Authenticated owners get full details.
         This endpoint does NOT count as an access - use POST /access for that.
         """
-        nexus_fs = _app_state.nexus_fs
+        nexus_fs = _fastapi_app.state.nexus_fs
         if nexus_fs is None:
             raise HTTPException(status_code=503, detail="NexusFS not available")
 
@@ -3907,7 +3870,7 @@ def _register_routes(app: FastAPI) -> None:
         Request body (optional):
             - password: Password if the link is password-protected
         """
-        nexus_fs = _app_state.nexus_fs
+        nexus_fs = _fastapi_app.state.nexus_fs
         if nexus_fs is None:
             raise HTTPException(status_code=503, detail="NexusFS not available")
 
@@ -3968,7 +3931,7 @@ def _register_routes(app: FastAPI) -> None:
         Validates the link and streams the file content. Supports partial
         content (206) for download resumption and media seeking.
         """
-        nexus_fs = _app_state.nexus_fs
+        nexus_fs = _fastapi_app.state.nexus_fs
         if nexus_fs is None:
             raise HTTPException(status_code=503, detail="NexusFS not available")
 
@@ -4129,11 +4092,11 @@ def _register_routes(app: FastAPI) -> None:
                 method == "read"
                 and if_none_match
                 and hasattr(params, "path")
-                and _app_state.nexus_fs
+                and _fastapi_app.state.nexus_fs
             ):
                 try:
                     # Get ETag from metadata without reading content (fast!)
-                    cached_etag = _app_state.nexus_fs.get_etag(params.path, context=context)
+                    cached_etag = _fastapi_app.state.nexus_fs.get_etag(params.path, context=context)
                     if cached_etag:
                         client_etag = if_none_match.strip('"')
                         if client_etag == cached_etag:
@@ -4330,7 +4293,7 @@ async def _fire_rpc_event(
         old_path: Old path for rename operations
         size: File size for write operations
     """
-    if not _app_state.subscription_manager:
+    if not _fastapi_app.state.subscription_manager:
         return
 
     try:
@@ -4343,7 +4306,7 @@ async def _fire_rpc_event(
 
         # Await broadcast to ensure webhook delivery before response
         # This adds slight latency but ensures reliable event delivery
-        await _app_state.subscription_manager.broadcast(event_type, data, zone_id)
+        await _fastapi_app.state.subscription_manager.broadcast(event_type, data, zone_id)
     except Exception as e:
         logger.warning(f"[RPC] Failed to fire event {event_type} for {path}: {e}")
 
@@ -4353,14 +4316,9 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
 
     Handles both sync and async methods.
     """
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     if nexus_fs is None:
         raise RuntimeError("NexusFS not initialized")
-
-    # Issue #1457: Enforce admin_only for ALL dispatch paths (auto + manual)
-    func = _app_state.exposed_methods.get(method)
-    if func and getattr(func, "_rpc_admin_only", False):
-        _require_admin(context)
 
     # Methods that need special handling
     MANUAL_METHODS = {
@@ -4384,7 +4342,7 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
     }
 
     # Try auto-dispatch first for exposed methods
-    if method in _app_state.exposed_methods and method not in MANUAL_METHODS:
+    if method in _fastapi_app.state.exposed_methods and method not in MANUAL_METHODS:
         return await _auto_dispatch(method, params, context)
 
     # Manual dispatch for core filesystem operations
@@ -4469,7 +4427,7 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
         return await to_thread_with_timeout(_handle_admin_revoke_key, params, context)
     elif method == "admin_update_key":
         return await to_thread_with_timeout(_handle_admin_update_key, params, context)
-    elif method in _app_state.exposed_methods:
+    elif method in _fastapi_app.state.exposed_methods:
         return await _auto_dispatch(method, params, context)
     else:
         raise ValueError(f"Unknown method: {method}")
@@ -4479,9 +4437,7 @@ async def _auto_dispatch(method: str, params: Any, context: Any) -> Any:
     """Auto-dispatch to exposed method."""
     import inspect
 
-    func = _app_state.exposed_methods[method]
-
-    # Note: admin_only guard is enforced in _dispatch_method (Issue #1457)
+    func = _fastapi_app.state.exposed_methods[method]
 
     # Build kwargs
     kwargs: dict[str, Any] = {}
@@ -4521,7 +4477,7 @@ def _get_memory_api_with_context(context: Any) -> Any:
     Returns:
         Memory API instance with user/agent/zone from context
     """
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     if nexus_fs is None:
         raise RuntimeError("NexusFS not initialized")
 
@@ -4695,7 +4651,7 @@ def _generate_download_url(
     Returns:
         Dict with download_url, expires_in, method, backend if supported, None otherwise
     """
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     if nexus_fs is None:
         return None
 
@@ -4777,7 +4733,7 @@ async def _handle_read_async(params: Any, context: Any) -> bytes | dict[str, Any
     If return_url=True and the backend supports it (S3/GCS connectors),
     returns a presigned URL instead of file content for direct download.
     """
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
 
     # Handle optional parameters
@@ -4853,7 +4809,7 @@ def _handle_read(params: Any, context: Any) -> bytes | dict[str, Any]:
     Returns raw bytes which will be encoded by encode_rpc_message using
     the standard {__type__: 'bytes', data: ...} format.
     """
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
 
     # Handle optional parameters
@@ -4876,7 +4832,7 @@ def _handle_read(params: Any, context: Any) -> bytes | dict[str, Any]:
 
 def _handle_write(params: Any, context: Any) -> dict[str, Any]:
     """Handle write method."""
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
 
     # Content should already be bytes after decode_rpc_message
@@ -4906,7 +4862,7 @@ def _handle_write(params: Any, context: Any) -> dict[str, Any]:
 
 def _handle_exists(params: Any, context: Any) -> dict[str, Any]:
     """Handle exists method."""
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
     return {"exists": nexus_fs.exists(params.path, context=context)}
 
@@ -4922,7 +4878,7 @@ def _handle_list(params: Any, context: Any) -> dict[str, Any]:
 
     _handle_start = _time.time()
 
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
 
     kwargs: dict[str, Any] = {"context": context}
@@ -4995,7 +4951,7 @@ def _handle_list(params: Any, context: Any) -> dict[str, Any]:
 
 def _handle_delete(params: Any, context: Any) -> dict[str, Any]:
     """Handle delete method."""
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
     # IMPORTANT: NexusFS.delete supports context and permissions depend on it.
     # Some older NexusFilesystem implementations may not accept context, so fall back safely.
@@ -5010,7 +4966,7 @@ def _handle_delete(params: Any, context: Any) -> dict[str, Any]:
 
 def _handle_rename(params: Any, context: Any) -> dict[str, Any]:
     """Handle rename method."""
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
     # IMPORTANT: NexusFS.rename supports context and permissions depend on it.
     # Some older NexusFilesystem implementations may not accept context, so fall back safely.
@@ -5025,7 +4981,7 @@ def _handle_rename(params: Any, context: Any) -> dict[str, Any]:
 
 def _handle_copy(params: Any, context: Any) -> dict[str, Any]:
     """Handle copy method."""
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
     nexus_fs.copy(params.src_path, params.dst_path, context=context)  # type: ignore[attr-defined]
     return {"copied": True}
@@ -5033,7 +4989,7 @@ def _handle_copy(params: Any, context: Any) -> dict[str, Any]:
 
 def _handle_mkdir(params: Any, context: Any) -> dict[str, Any]:
     """Handle mkdir method."""
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
 
     kwargs: dict[str, Any] = {"context": context}
@@ -5048,7 +5004,7 @@ def _handle_mkdir(params: Any, context: Any) -> dict[str, Any]:
 
 def _handle_rmdir(params: Any, context: Any) -> dict[str, Any]:
     """Handle rmdir method."""
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
 
     kwargs: dict[str, Any] = {"context": context}
@@ -5063,7 +5019,7 @@ def _handle_rmdir(params: Any, context: Any) -> dict[str, Any]:
 
 def _handle_get_metadata(params: Any, context: Any) -> dict[str, Any]:
     """Handle get_metadata method."""
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
     metadata = nexus_fs.get_metadata(params.path, context=context)
     # Issue #1202: Strip internal zone/tenant/user prefixes from metadata path
@@ -5074,7 +5030,7 @@ def _handle_get_metadata(params: Any, context: Any) -> dict[str, Any]:
 
 def _handle_glob(params: Any, context: Any) -> dict[str, Any]:
     """Handle glob method."""
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
 
     kwargs: dict[str, Any] = {"context": context}
@@ -5089,7 +5045,7 @@ def _handle_glob(params: Any, context: Any) -> dict[str, Any]:
 
 def _handle_grep(params: Any, context: Any) -> dict[str, Any]:
     """Handle grep method."""
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
 
     kwargs: dict[str, Any] = {"context": context}
@@ -5113,7 +5069,7 @@ def _handle_grep(params: Any, context: Any) -> dict[str, Any]:
 
 def _handle_search(params: Any, context: Any) -> dict[str, Any]:
     """Handle search method."""
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
 
     kwargs: dict[str, Any] = {"context": context}
@@ -5141,7 +5097,7 @@ async def _handle_semantic_search_index(params: Any, _context: Any) -> dict[str,
     Returns:
         Dictionary mapping file paths to number of chunks indexed
     """
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
 
     path = getattr(params, "path", "/")
@@ -5173,7 +5129,7 @@ async def _handle_semantic_search_index(params: Any, _context: Any) -> dict[str,
 
 def _handle_is_directory(params: Any, context: Any) -> dict[str, Any]:
     """Handle is_directory method."""
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
     return {"is_directory": nexus_fs.is_directory(params.path, context=context)}
 
@@ -5204,7 +5160,7 @@ def _handle_delta_read(params: Any, context: Any) -> dict[str, Any]:
 
     from nexus.core.hash_fast import hash_content
 
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
 
     # Read current file content
@@ -5316,7 +5272,7 @@ def _handle_delta_write(params: Any, context: Any) -> dict[str, Any]:
 
     from nexus.core.hash_fast import hash_content
 
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
 
     # Get the delta and base hash
@@ -5391,7 +5347,7 @@ def _handle_admin_create_key(params: Any, context: Any) -> dict[str, Any]:
 
     _require_admin(context)
 
-    auth_provider = _app_state.auth_provider
+    auth_provider = _fastapi_app.state.auth_provider
     if not auth_provider or not hasattr(auth_provider, "session_factory"):
         raise RuntimeError("Database auth provider not configured")
 
@@ -5455,7 +5411,7 @@ def _handle_admin_list_keys(params: Any, context: Any) -> dict[str, Any]:
 
     _require_admin(context)
 
-    auth_provider = _app_state.auth_provider
+    auth_provider = _fastapi_app.state.auth_provider
     if not auth_provider or not hasattr(auth_provider, "session_factory"):
         raise RuntimeError("Database auth provider not configured")
 
@@ -5522,7 +5478,7 @@ def _handle_admin_get_key(params: Any, context: Any) -> dict[str, Any]:
 
     _require_admin(context)
 
-    auth_provider = _app_state.auth_provider
+    auth_provider = _fastapi_app.state.auth_provider
     if not auth_provider or not hasattr(auth_provider, "session_factory"):
         raise RuntimeError("Database auth provider not configured")
 
@@ -5556,7 +5512,7 @@ def _handle_admin_revoke_key(params: Any, context: Any) -> dict[str, Any]:
 
     _require_admin(context)
 
-    auth_provider = _app_state.auth_provider
+    auth_provider = _fastapi_app.state.auth_provider
     if not auth_provider or not hasattr(auth_provider, "session_factory"):
         raise RuntimeError("Database auth provider not configured")
 
@@ -5580,7 +5536,7 @@ def _handle_admin_update_key(params: Any, context: Any) -> dict[str, Any]:
 
     _require_admin(context)
 
-    auth_provider = _app_state.auth_provider
+    auth_provider = _fastapi_app.state.auth_provider
     if not auth_provider or not hasattr(auth_provider, "session_factory"):
         raise RuntimeError("Database auth provider not configured")
 

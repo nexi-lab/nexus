@@ -62,13 +62,13 @@ async def client(
     mock_nexus_fs._event_bus = None
     mock_nexus_fs._coordination_client = None
 
-    from nexus.server.fastapi_server import _app_state, create_app
+    from nexus.server.fastapi_server import _fastapi_app, create_app
 
     app = create_app(
         nexus_fs=mock_nexus_fs,
         database_url="sqlite:///:memory:",
     )
-    _app_state.async_nexus_fs = async_fs
+    _fastapi_app.state.async_nexus_fs = async_fs
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -77,7 +77,7 @@ async def client(
         yield c
 
     await async_fs.close()
-    _app_state.async_nexus_fs = None
+    _fastapi_app.state.async_nexus_fs = None
     metadata_store.close()
 
 

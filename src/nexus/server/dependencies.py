@@ -13,7 +13,7 @@ import logging
 from typing import Any
 
 from cachetools import TTLCache
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Request
 
 from nexus.server.token_utils import parse_sk_token
 
@@ -51,6 +51,7 @@ def _reset_auth_cache() -> None:
 
 
 async def get_auth_result(
+    request: Request,
     authorization: str | None = Header(None, alias="Authorization"),
     x_agent_id: str | None = Header(None, alias="X-Agent-ID"),
     x_nexus_subject: str | None = Header(None, alias="X-Nexus-Subject"),
@@ -61,6 +62,7 @@ async def get_auth_result(
     Note: Timing added for performance debugging (Issue #perf19).
 
     Args:
+        request: FastAPI request (used to access app.state)
         authorization: Bearer token from Authorization header
         x_agent_id: Optional agent ID header
         x_nexus_subject: Optional identity hint header (e.g., "user:alice")
@@ -69,8 +71,7 @@ async def get_auth_result(
     Returns:
         Auth result dict or None if not authenticated
     """
-    # Import _app_state lazily to avoid circular imports
-    from nexus.server.fastapi_server import _app_state
+    _state = request.app.state
 
     def _parse_subject_header(value: str) -> tuple[str | None, str | None]:
         parts = value.split(":", 1)
@@ -82,7 +83,7 @@ async def get_auth_result(
         return (subject_type, subject_id)
 
     # No auth configured = open access
-    if not _app_state.api_key and not _app_state.auth_provider:
+    if not getattr(_state, "api_key", None) and not getattr(_state, "auth_provider", None):
         # In open access mode, we still want a stable identity for permission checks.
         # Prefer explicit identity headers; otherwise, best-effort infer from sk- style keys.
         subject_type: str | None = None
@@ -124,7 +125,7 @@ async def get_auth_result(
         return None
 
     # Try auth provider first
-    if _app_state.auth_provider:
+    if _state.auth_provider:
         import time as _time
 
         # Check cache first (15 min TTL)
@@ -139,7 +140,7 @@ async def get_auth_result(
 
         # Cache miss - call provider
         _auth_start = _time.time()
-        result = await _app_state.auth_provider.authenticate(token)
+        result = await _state.auth_provider.authenticate(token)
         _auth_elapsed = (_time.time() - _auth_start) * 1000
         if _auth_elapsed > 10:  # Log if auth takes >10ms
             logger.info(f"[AUTH-TIMING] provider auth took {_auth_elapsed:.1f}ms (cache miss)")
@@ -169,8 +170,8 @@ async def get_auth_result(
         return auth_result
 
     # Fall back to static API key (constant-time comparison to prevent timing attacks)
-    if _app_state.api_key:
-        if hmac.compare_digest(token, _app_state.api_key):
+    if _state.api_key:
+        if hmac.compare_digest(token, _state.api_key):
             return {
                 "authenticated": True,
                 "is_admin": True,
@@ -205,9 +206,8 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
     Returns:
         OperationContext for filesystem operations
     """
-    # Import _app_state lazily to avoid circular imports
     from nexus.core.permissions import OperationContext
-    from nexus.server.fastapi_server import _app_state
+    from nexus.server.fastapi_server import _fastapi_app
 
     subject_type = auth_result.get("subject_type") or "user"
     subject_id = auth_result.get("subject_id") or "anonymous"
@@ -240,14 +240,11 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
         }
 
     # Issue #1240: Populate agent_generation from AgentRegistry
-    # TODO: In production, agent_generation should come from client JWT token,
-    # not a server-side DB lookup (which makes stale-session detection a no-op
-    # since both sides read the same DB). This is a temporary bridge until
-    # JWT token integration is implemented.
     agent_generation = None
-    if subject_type == "agent" and _app_state.agent_registry:
+    _agent_registry = getattr(_fastapi_app.state, "agent_registry", None) if _fastapi_app else None
+    if subject_type == "agent" and _agent_registry:
         try:
-            agent_record = _app_state.agent_registry.get(subject_id)
+            agent_record = _agent_registry.get(subject_id)
             if agent_record:
                 agent_generation = agent_record.generation
         except Exception:

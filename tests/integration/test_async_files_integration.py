@@ -35,7 +35,7 @@ async def client(
 
     This tests the real server initialization path:
     1. create_app() creates the app with routes (including lazy getter)
-    2. We initialize AsyncNexusFS with SQLite and inject into _app_state
+    2. We initialize AsyncNexusFS with SQLite and inject into _fastapi_app.state
        (simulating what lifespan does with a real database)
     3. The lazy getter connects the router to the fs at request time
     4. All requests go through the full FastAPI stack (middleware, auth, etc.)
@@ -63,16 +63,16 @@ async def client(
     mock_nexus_fs._coordination_client = None
 
     # Import and create the real app via create_app
-    from nexus.server.fastapi_server import _app_state, create_app
+    from nexus.server.fastapi_server import _fastapi_app, create_app
 
     app = create_app(
         nexus_fs=mock_nexus_fs,
         database_url="sqlite:///:memory:",
     )
 
-    # Inject real AsyncNexusFS into _app_state
+    # Inject real AsyncNexusFS into _fastapi_app.state
     # (this is what lifespan() does during server startup)
-    _app_state.async_nexus_fs = async_fs
+    _fastapi_app.state.async_nexus_fs = async_fs
 
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -82,7 +82,7 @@ async def client(
 
     # Cleanup
     await async_fs.close()
-    _app_state.async_nexus_fs = None
+    _fastapi_app.state.async_nexus_fs = None
     metadata_store.close()
 
 

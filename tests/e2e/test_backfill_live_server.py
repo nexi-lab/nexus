@@ -21,8 +21,16 @@ from fastapi.testclient import TestClient
 logger = logging.getLogger(__name__)
 
 
+def _save_app_state(monkeypatch):
+    """Record _app_state attributes so monkeypatch auto-restores them at teardown."""
+    from nexus.server import fastapi_server as fas
+
+    for attr in ("nexus_fs", "api_key", "auth_provider"):
+        monkeypatch.setattr(fas._app_state, attr, getattr(fas._app_state, attr))
+
+
 @pytest.fixture
-def live_server(tmp_path):
+def live_server(tmp_path, monkeypatch):
     """Start a real Nexus server with database auth and permissions enabled.
 
     Creates:
@@ -40,75 +48,64 @@ def live_server(tmp_path):
     from nexus.server.auth.database_key import DatabaseAPIKeyAuth
     from nexus.storage.models import Base
 
-    # Save original state
-    original_nexus_fs = fas._app_state.nexus_fs
-    original_api_key = fas._app_state.api_key
-    original_auth_provider = fas._app_state.auth_provider
+    _save_app_state(monkeypatch)
 
-    try:
-        # --- Setup real database ---
-        db_path = tmp_path / "nexus.db"
-        engine = create_engine(f"sqlite:///{db_path}")
-        Base.metadata.create_all(engine)
-        session_factory = sessionmaker(bind=engine)
+    # --- Setup real database ---
+    db_path = tmp_path / "nexus.db"
+    engine = create_engine(f"sqlite:///{db_path}")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine)
 
-        # --- Create API keys ---
-        with session_factory() as session:
-            # Admin key
-            _admin_id, admin_key = DatabaseAPIKeyAuth.create_key(
-                session,
-                user_id="admin-user",
-                name="Admin Key",
-                is_admin=True,
-            )
-            # Non-admin user key
-            _user_id, user_key = DatabaseAPIKeyAuth.create_key(
-                session,
-                user_id="regular-user",
-                name="User Key",
-                is_admin=False,
-            )
-            session.commit()
-
-        logger.info("Created admin key: %s...", admin_key[:12])
-        logger.info("Created user key: %s...", user_key[:12])
-
-        # --- Create auth provider ---
-        auth_provider = DatabaseAPIKeyAuth(session_factory)
-
-        # --- Create real NexusFS via embedded connect ---
-        import nexus
-
-        data_dir = str(tmp_path / "nexus-data")
-        os.makedirs(data_dir, exist_ok=True)
-        nexus_fs = nexus.connect(
-            config={
-                "data_dir": data_dir,
-                "enforce_permissions": True,
-            }
+    # --- Create API keys ---
+    with session_factory() as session:
+        _admin_id, admin_key = DatabaseAPIKeyAuth.create_key(
+            session,
+            user_id="admin-user",
+            name="Admin Key",
+            is_admin=True,
         )
-
-        # --- Create FastAPI app ---
-        app = fas.create_app(
-            nexus_fs,
-            auth_provider=auth_provider,
-            database_url=f"sqlite:///{db_path}",
+        _user_id, user_key = DatabaseAPIKeyAuth.create_key(
+            session,
+            user_id="regular-user",
+            name="User Key",
+            is_admin=False,
         )
+        session.commit()
 
-        # Reset auth cache for clean test
-        from nexus.server.dependencies import _reset_auth_cache
+    logger.info("Created admin key: %s...", admin_key[:12])
+    logger.info("Created user key: %s...", user_key[:12])
 
-        _reset_auth_cache()
+    # --- Create auth provider ---
+    auth_provider = DatabaseAPIKeyAuth(session_factory)
 
-        client = TestClient(app)
-        logger.info("Live server started with permissions enabled")
+    # --- Create real NexusFS via embedded connect ---
+    import nexus
 
-        yield client, admin_key, user_key
+    data_dir = str(tmp_path / "nexus-data")
+    os.makedirs(data_dir, exist_ok=True)
+    nexus_fs = nexus.connect(
+        config={
+            "data_dir": data_dir,
+            "enforce_permissions": True,
+        }
+    )
 
-    finally:
-        fas._app_state.nexus_fs = original_nexus_fs
-        fas._app_state.api_key = original_api_key
-        fas._app_state.auth_provider = original_auth_provider
+    # --- Create FastAPI app ---
+    app = fas.create_app(
+        nexus_fs,
+        auth_provider=auth_provider,
+        database_url=f"sqlite:///{db_path}",
+    )
+
+    # Reset auth cache for clean test
+    from nexus.server.dependencies import _reset_auth_cache
+
+    _reset_auth_cache()
+
+    client = TestClient(app)
+    logger.info("Live server started with permissions enabled")
+
+    yield client, admin_key, user_key
 
 
 class TestBackfillLiveServer:

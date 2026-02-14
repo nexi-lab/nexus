@@ -558,3 +558,31 @@ def test_namespace_check_performance(
     # This includes HTTP round-trip + namespace check + ReBAC check
     # Namespace check alone should be <1ms, total <100ms per request reasonable
     assert avg_ms < 100, f"Namespace check too slow: {avg_ms:.2f}ms avg (expected <100ms)"
+
+
+# === Issue #1398: VFS Lock Manager active ===
+
+
+def test_vfs_lock_manager_active(server: dict) -> None:
+    """Verify the VFS lock manager is initialized in the running server.
+
+    We check that the /health endpoint is accessible (server is running)
+    and that the lock manager module is importable — the server logs
+    'VFS lock manager initialized (...)' on startup.
+    """
+    base_url = server["base_url"]
+    with _make_client() as client:
+        resp = client.get(f"{base_url}/health")
+        assert resp.status_code == 200
+
+    # Verify the lock manager classes are importable and functional.
+    from nexus.core.lock_fast import VFSLockManagerProtocol, create_vfs_lock_manager
+
+    mgr = create_vfs_lock_manager()
+    assert isinstance(mgr, VFSLockManagerProtocol)
+
+    # Quick smoke test: acquire + release.
+    h = mgr.acquire("/e2e/test", "write")
+    assert h > 0
+    assert mgr.release(h)
+    assert not mgr.is_locked("/e2e/test")

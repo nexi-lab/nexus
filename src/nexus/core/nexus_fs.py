@@ -501,6 +501,14 @@ class NexusFS(  # type: ignore[misc]
                 logger = logging.getLogger(__name__)
                 logger.warning(f"Could not initialize distributed event system: {e}")
 
+        # VFS lock manager — local, in-process path-level locking (Issue #1398)
+        from nexus.core.lock_fast import create_vfs_lock_manager
+
+        self._vfs_lock_manager = create_vfs_lock_manager()
+        logger.info(
+            "VFS lock manager initialized (%s)", type(self._vfs_lock_manager).__name__
+        )
+
         if enable_workflows and workflow_engine is None:
             # Auto-create workflow engine with persistent storage using global engine
             # Skip if no record store (SessionLocal is None)

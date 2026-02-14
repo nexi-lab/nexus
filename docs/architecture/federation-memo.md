@@ -483,7 +483,7 @@ No `cache_redb` or Dragonfly needed for metadata caching.
 
 Federation is **NOT kernel**. It is an optional, DI-injected subsystem at the same
 level as CacheStore and RecordStore. NexusFS without federation gracefully degrades
-to client-server mode (via RemoteNexusFS) or single-node embedded mode.
+to remote mode (via RemoteNexusFS) or single-node standalone mode.
 
 **Degradation path:**
 ```
@@ -491,7 +491,7 @@ Full (Federation + Remote + RecordStore + CacheStore)
   ↓ remove Federation
 Client-Server (RemoteNexusFS ↔ NexusFS server)
   ↓ remove RemoteNexusFS
-Single-node embedded (NexusFS kernel: Metastore + ObjectStore only)
+Single-node standalone (NexusFS kernel: Metastore + ObjectStore only)
 ```
 
 **Layering:**

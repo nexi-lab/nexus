@@ -329,7 +329,7 @@ class GmailConnectorBackend(
             )
 
         # Get valid access token from TokenManager (auto-refreshes if expired)
-        import asyncio
+        from nexus.core.sync_bridge import run_sync
 
         try:
             # Default to 'default' zone if not specified to match mount configurations
@@ -339,26 +339,13 @@ class GmailConnectorBackend(
                 else "default"
             )
 
-            # Handle both sync and async contexts
-            try:
-                # Try to get the current event loop
-                asyncio.get_running_loop()
-                # If we're in an async context, we can't use asyncio.run()
-                # This shouldn't happen in normal usage, but handle it gracefully
-                raise BackendError(
-                    "Gmail connector cannot be used in async context. "
-                    "Use sync methods or ensure you're not in an async event loop.",
-                    backend="gmail",
+            access_token = run_sync(
+                self.token_manager.get_valid_token(
+                    provider=self.provider,
+                    user_email=user_email,
+                    zone_id=zone_id,
                 )
-            except RuntimeError:
-                # No running event loop, safe to use asyncio.run()
-                access_token = asyncio.run(
-                    self.token_manager.get_valid_token(
-                        provider=self.provider,
-                        user_email=user_email,
-                        zone_id=zone_id,
-                    )
-                )
+            )
         except Exception as e:
             raise BackendError(
                 f"Failed to get valid OAuth token for user {user_email}: {e}",

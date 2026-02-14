@@ -25,17 +25,15 @@ _sym_db = _symbol_database.Default()
 from nexus.raft import commands_pb2 as nexus_dot_raft_dot_commands__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1anexus/raft/transport.proto\x12\nnexus.raft\x1a\x19nexus/raft/commands.proto\"_\n\x0eProposeRequest\x12(\n\x07\x63ommand\x18\x01 \x01(\x0b\x32\x17.nexus.raft.RaftCommand\x12\x12\n\nrequest_id\x18\x02 \x01(\t\x12\x0f\n\x07zone_id\x18\x03 \x01(\t\"\xc1\x01\n\x0fProposeResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x12\n\x05\x65rror\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x1b\n\x0eleader_address\x18\x03 \x01(\tH\x01\x88\x01\x01\x12-\n\x06result\x18\x04 \x01(\x0b\x32\x18.nexus.raft.RaftResponseH\x02\x88\x01\x01\x12\x15\n\rapplied_index\x18\x05 \x01(\x04\x42\x08\n\x06_errorB\x11\n\x0f_leader_addressB\t\n\x07_result\"_\n\x0cQueryRequest\x12$\n\x05query\x18\x01 \x01(\x0b\x32\x15.nexus.raft.RaftQuery\x12\x18\n\x10read_from_leader\x18\x02 \x01(\x08\x12\x0f\n\x07zone_id\x18\x03 \x01(\t\"\xad\x01\n\rQueryResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x12\n\x05\x65rror\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x1b\n\x0eleader_address\x18\x03 \x01(\tH\x01\x88\x01\x01\x12\x32\n\x06result\x18\x04 \x01(\x0b\x32\x1d.nexus.raft.RaftQueryResponseH\x02\x88\x01\x01\x42\x08\n\x06_errorB\x11\n\x0f_leader_addressB\t\n\x07_result\"(\n\x15GetClusterInfoRequest\x12\x0f\n\x07zone_id\x18\x01 \x01(\t\"\xb8\x01\n\x16GetClusterInfoResponse\x12\x0f\n\x07node_id\x18\x01 \x01(\x04\x12\x11\n\tleader_id\x18\x02 \x01(\x04\x12\x0c\n\x04term\x18\x03 \x01(\x04\x12)\n\x06\x63onfig\x18\x04 \x01(\x0b\x32\x19.nexus.raft.ClusterConfig\x12\x11\n\tis_leader\x18\x05 \x01(\x08\x12\x1b\n\x0eleader_address\x18\x06 \x01(\tH\x00\x88\x01\x01\x42\x11\n\x0f_leader_address\"I\n\x0fJoinZoneRequest\x12\x0f\n\x07zone_id\x18\x01 \x01(\t\x12\x0f\n\x07node_id\x18\x02 \x01(\x04\x12\x14\n\x0cnode_address\x18\x03 \x01(\t\"\xac\x01\n\x10JoinZoneResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x12\n\x05\x65rror\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x1b\n\x0eleader_address\x18\x03 \x01(\tH\x01\x88\x01\x01\x12.\n\x06\x63onfig\x18\x04 \x01(\x0b\x32\x19.nexus.raft.ClusterConfigH\x02\x88\x01\x01\x42\x08\n\x06_errorB\x11\n\x0f_leader_addressB\t\n\x07_config\"j\n\x11InviteZoneRequest\x12\x0f\n\x07zone_id\x18\x01 \x01(\t\x12\x12\n\nmount_path\x18\x02 \x01(\t\x12\x17\n\x0finviter_node_id\x18\x03 \x01(\x04\x12\x17\n\x0finviter_address\x18\x04 \x01(\t\"j\n\x12InviteZoneResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x12\n\x05\x65rror\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x0f\n\x07node_id\x18\x03 \x01(\x04\x12\x14\n\x0cnode_address\x18\x04 \x01(\tB\x08\n\x06_error\"`\n\x0bVoteRequest\x12\x0c\n\x04term\x18\x01 \x01(\x04\x12\x14\n\x0c\x63\x61ndidate_id\x18\x02 \x01(\x04\x12\x16\n\x0elast_log_index\x18\x03 \x01(\x04\x12\x15\n\rlast_log_term\x18\x04 \x01(\x04\"2\n\x0cVoteResponse\x12\x0c\n\x04term\x18\x01 \x01(\x04\x12\x14\n\x0cvote_granted\x18\x02 \x01(\x08\"\xa4\x01\n\x14\x41ppendEntriesRequest\x12\x0c\n\x04term\x18\x01 \x01(\x04\x12\x11\n\tleader_id\x18\x02 \x01(\x04\x12\x16\n\x0eprev_log_index\x18\x03 \x01(\x04\x12\x15\n\rprev_log_term\x18\x04 \x01(\x04\x12%\n\x07\x65ntries\x18\x05 \x03(\x0b\x32\x14.nexus.raft.LogEntry\x12\x15\n\rleader_commit\x18\x06 \x01(\x04\"K\n\x15\x41ppendEntriesResponse\x12\x0c\n\x04term\x18\x01 \x01(\x04\x12\x0f\n\x07success\x18\x02 \x01(\x08\x12\x13\n\x0bmatch_index\x18\x03 \x01(\x04\"`\n\x08LogEntry\x12\x0c\n\x04term\x18\x01 \x01(\x04\x12\r\n\x05index\x18\x02 \x01(\x04\x12)\n\nentry_type\x18\x03 \x01(\x0e\x32\x15.nexus.raft.EntryType\x12\x0c\n\x04\x64\x61ta\x18\x04 \x01(\x0c\"k\n\rSnapshotChunk\x12.\n\x08metadata\x18\x01 \x01(\x0b\x32\x1c.nexus.raft.SnapshotMetadata\x12\x0e\n\x06offset\x18\x02 \x01(\x04\x12\x0c\n\x04\x64\x61ta\x18\x03 \x01(\x0c\x12\x0c\n\x04\x64one\x18\x04 \x01(\x08\"h\n\x10SnapshotMetadata\x12\r\n\x05index\x18\x01 \x01(\x04\x12\x0c\n\x04term\x18\x02 \x01(\x04\x12\x0c\n\x04size\x18\x03 \x01(\x04\x12)\n\x06\x63onfig\x18\x04 \x01(\x0b\x32\x19.nexus.raft.ClusterConfig\"8\n\x17InstallSnapshotResponse\x12\x0c\n\x04term\x18\x01 \x01(\x04\x12\x0f\n\x07success\x18\x02 \x01(\x08\"\x86\x01\n\rClusterConfig\x12$\n\x06voters\x18\x01 \x03(\x0b\x32\x14.nexus.raft.NodeInfo\x12&\n\x08learners\x18\x02 \x03(\x0b\x32\x14.nexus.raft.NodeInfo\x12\'\n\twitnesses\x18\x03 \x03(\x0b\x32\x14.nexus.raft.NodeInfo\"K\n\x08NodeInfo\x12\n\n\x02id\x18\x01 \x01(\x04\x12\x0f\n\x07\x61\x64\x64ress\x18\x02 \x01(\t\x12\"\n\x04role\x18\x03 \x01(\x0e\x32\x14.nexus.raft.NodeRole\"*\n\x15TransferLeaderRequest\x12\x11\n\ttarget_id\x18\x01 \x01(\x04\"8\n\x16TransferLeaderResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\r\n\x05\x65rror\x18\x02 \x01(\t\"6\n\x12StepMessageRequest\x12\x0f\n\x07message\x18\x01 \x01(\x0c\x12\x0f\n\x07zone_id\x18\x02 \x01(\t\"D\n\x13StepMessageResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x12\n\x05\x65rror\x18\x02 \x01(\tH\x00\x88\x01\x01\x42\x08\n\x06_error\"V\n\x12\x45\x43ReplicationEntry\x12\x0b\n\x03seq\x18\x01 \x01(\x04\x12\x0f\n\x07\x63ommand\x18\x02 \x01(\x0c\x12\x11\n\ttimestamp\x18\x03 \x01(\x04\x12\x0f\n\x07node_id\x18\x04 \x01(\x04\"s\n\x17ReplicateEntriesRequest\x12\x0f\n\x07zone_id\x18\x01 \x01(\t\x12/\n\x07\x65ntries\x18\x02 \x03(\x0b\x32\x1e.nexus.raft.ECReplicationEntry\x12\x16\n\x0esender_node_id\x18\x03 \x01(\x04\"`\n\x18ReplicateEntriesResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x12\n\x05\x65rror\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x15\n\rapplied_up_to\x18\x03 \x01(\x04\x42\x08\n\x06_error\"I\n\x10SubscribeRequest\x12\x0e\n\x06topics\x18\x01 \x03(\t\x12\x0e\n\x06\x66ilter\x18\x02 \x01(\t\x12\x15\n\rfrom_sequence\x18\x03 \x01(\x04\"c\n\x05\x45vent\x12\x10\n\x08sequence\x18\x01 \x01(\x04\x12\r\n\x05topic\x18\x02 \x01(\t\x12\x12\n\nevent_type\x18\x03 \x01(\t\x12\x0f\n\x07payload\x18\x04 \x01(\x0c\x12\x14\n\x0ctimestamp_ms\x18\x05 \x01(\x03*4\n\tEntryType\x12\x10\n\x0c\x45NTRY_NORMAL\x10\x00\x12\x15\n\x11\x45NTRY_CONF_CHANGE\x10\x01*>\n\x08NodeRole\x12\x0e\n\nROLE_VOTER\x10\x00\x12\x10\n\x0cROLE_LEARNER\x10\x01\x12\x10\n\x0cROLE_WITNESS\x10\x02\x32\x82\x04\n\x0bRaftService\x12@\n\x0bRequestVote\x12\x17.nexus.raft.VoteRequest\x1a\x18.nexus.raft.VoteResponse\x12T\n\rAppendEntries\x12 .nexus.raft.AppendEntriesRequest\x1a!.nexus.raft.AppendEntriesResponse\x12S\n\x0fInstallSnapshot\x12\x19.nexus.raft.SnapshotChunk\x1a#.nexus.raft.InstallSnapshotResponse(\x01\x12W\n\x0eTransferLeader\x12!.nexus.raft.TransferLeaderRequest\x1a\".nexus.raft.TransferLeaderResponse\x12N\n\x0bStepMessage\x12\x1e.nexus.raft.StepMessageRequest\x1a\x1f.nexus.raft.StepMessageResponse\x12]\n\x10ReplicateEntries\x12#.nexus.raft.ReplicateEntriesRequest\x1a$.nexus.raft.ReplicateEntriesResponse2T\n\x12\x45ventStreamService\x12>\n\tSubscribe\x12\x1c.nexus.raft.SubscribeRequest\x1a\x11.nexus.raft.Event0\x01\x32\x82\x03\n\x11RaftClientService\x12\x42\n\x07Propose\x12\x1a.nexus.raft.ProposeRequest\x1a\x1b.nexus.raft.ProposeResponse\x12<\n\x05Query\x12\x18.nexus.raft.QueryRequest\x1a\x19.nexus.raft.QueryResponse\x12W\n\x0eGetClusterInfo\x12!.nexus.raft.GetClusterInfoRequest\x1a\".nexus.raft.GetClusterInfoResponse\x12\x45\n\x08JoinZone\x12\x1b.nexus.raft.JoinZoneRequest\x1a\x1c.nexus.raft.JoinZoneResponse\x12K\n\nInviteZone\x12\x1d.nexus.raft.InviteZoneRequest\x1a\x1e.nexus.raft.InviteZoneResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1anexus/raft/transport.proto\x12\nnexus.raft\x1a\x19nexus/raft/commands.proto\"_\n\x0eProposeRequest\x12(\n\x07\x63ommand\x18\x01 \x01(\x0b\x32\x17.nexus.raft.RaftCommand\x12\x12\n\nrequest_id\x18\x02 \x01(\t\x12\x0f\n\x07zone_id\x18\x03 \x01(\t\"\xc1\x01\n\x0fProposeResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x12\n\x05\x65rror\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x1b\n\x0eleader_address\x18\x03 \x01(\tH\x01\x88\x01\x01\x12-\n\x06result\x18\x04 \x01(\x0b\x32\x18.nexus.raft.RaftResponseH\x02\x88\x01\x01\x12\x15\n\rapplied_index\x18\x05 \x01(\x04\x42\x08\n\x06_errorB\x11\n\x0f_leader_addressB\t\n\x07_result\"_\n\x0cQueryRequest\x12$\n\x05query\x18\x01 \x01(\x0b\x32\x15.nexus.raft.RaftQuery\x12\x18\n\x10read_from_leader\x18\x02 \x01(\x08\x12\x0f\n\x07zone_id\x18\x03 \x01(\t\"\xad\x01\n\rQueryResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x12\n\x05\x65rror\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x1b\n\x0eleader_address\x18\x03 \x01(\tH\x01\x88\x01\x01\x12\x32\n\x06result\x18\x04 \x01(\x0b\x32\x1d.nexus.raft.RaftQueryResponseH\x02\x88\x01\x01\x42\x08\n\x06_errorB\x11\n\x0f_leader_addressB\t\n\x07_result\"(\n\x15GetClusterInfoRequest\x12\x0f\n\x07zone_id\x18\x01 \x01(\t\"\xb8\x01\n\x16GetClusterInfoResponse\x12\x0f\n\x07node_id\x18\x01 \x01(\x04\x12\x11\n\tleader_id\x18\x02 \x01(\x04\x12\x0c\n\x04term\x18\x03 \x01(\x04\x12)\n\x06\x63onfig\x18\x04 \x01(\x0b\x32\x19.nexus.raft.ClusterConfig\x12\x11\n\tis_leader\x18\x05 \x01(\x08\x12\x1b\n\x0eleader_address\x18\x06 \x01(\tH\x00\x88\x01\x01\x42\x11\n\x0f_leader_address\"I\n\x0fJoinZoneRequest\x12\x0f\n\x07zone_id\x18\x01 \x01(\t\x12\x0f\n\x07node_id\x18\x02 \x01(\x04\x12\x14\n\x0cnode_address\x18\x03 \x01(\t\"\xac\x01\n\x10JoinZoneResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x12\n\x05\x65rror\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x1b\n\x0eleader_address\x18\x03 \x01(\tH\x01\x88\x01\x01\x12.\n\x06\x63onfig\x18\x04 \x01(\x0b\x32\x19.nexus.raft.ClusterConfigH\x02\x88\x01\x01\x42\x08\n\x06_errorB\x11\n\x0f_leader_addressB\t\n\x07_config\"j\n\x11InviteZoneRequest\x12\x0f\n\x07zone_id\x18\x01 \x01(\t\x12\x12\n\nmount_path\x18\x02 \x01(\t\x12\x17\n\x0finviter_node_id\x18\x03 \x01(\x04\x12\x17\n\x0finviter_address\x18\x04 \x01(\t\"j\n\x12InviteZoneResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x12\n\x05\x65rror\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x0f\n\x07node_id\x18\x03 \x01(\x04\x12\x14\n\x0cnode_address\x18\x04 \x01(\tB\x08\n\x06_error\"\x86\x01\n\rClusterConfig\x12$\n\x06voters\x18\x01 \x03(\x0b\x32\x14.nexus.raft.NodeInfo\x12&\n\x08learners\x18\x02 \x03(\x0b\x32\x14.nexus.raft.NodeInfo\x12\'\n\twitnesses\x18\x03 \x03(\x0b\x32\x14.nexus.raft.NodeInfo\"K\n\x08NodeInfo\x12\n\n\x02id\x18\x01 \x01(\x04\x12\x0f\n\x07\x61\x64\x64ress\x18\x02 \x01(\t\x12\"\n\x04role\x18\x03 \x01(\x0e\x32\x14.nexus.raft.NodeRole\"6\n\x12StepMessageRequest\x12\x0f\n\x07message\x18\x01 \x01(\x0c\x12\x0f\n\x07zone_id\x18\x02 \x01(\t\"D\n\x13StepMessageResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x12\n\x05\x65rror\x18\x02 \x01(\tH\x00\x88\x01\x01\x42\x08\n\x06_error\"V\n\x12\x45\x43ReplicationEntry\x12\x0b\n\x03seq\x18\x01 \x01(\x04\x12\x0f\n\x07\x63ommand\x18\x02 \x01(\x0c\x12\x11\n\ttimestamp\x18\x03 \x01(\x04\x12\x0f\n\x07node_id\x18\x04 \x01(\x04\"s\n\x17ReplicateEntriesRequest\x12\x0f\n\x07zone_id\x18\x01 \x01(\t\x12/\n\x07\x65ntries\x18\x02 \x03(\x0b\x32\x1e.nexus.raft.ECReplicationEntry\x12\x16\n\x0esender_node_id\x18\x03 \x01(\x04\"`\n\x18ReplicateEntriesResponse\x12\x0f\n\x07success\x18\x01 \x01(\x08\x12\x12\n\x05\x65rror\x18\x02 \x01(\tH\x00\x88\x01\x01\x12\x15\n\rapplied_up_to\x18\x03 \x01(\x04\x42\x08\n\x06_error*>\n\x08NodeRole\x12\x0e\n\nROLE_VOTER\x10\x00\x12\x10\n\x0cROLE_LEARNER\x10\x01\x12\x10\n\x0cROLE_WITNESS\x10\x02\x32\xbc\x01\n\x0bRaftService\x12N\n\x0bStepMessage\x12\x1e.nexus.raft.StepMessageRequest\x1a\x1f.nexus.raft.StepMessageResponse\x12]\n\x10ReplicateEntries\x12#.nexus.raft.ReplicateEntriesRequest\x1a$.nexus.raft.ReplicateEntriesResponse2\x82\x03\n\x11RaftClientService\x12\x42\n\x07Propose\x12\x1a.nexus.raft.ProposeRequest\x1a\x1b.nexus.raft.ProposeResponse\x12<\n\x05Query\x12\x18.nexus.raft.QueryRequest\x1a\x19.nexus.raft.QueryResponse\x12W\n\x0eGetClusterInfo\x12!.nexus.raft.GetClusterInfoRequest\x1a\".nexus.raft.GetClusterInfoResponse\x12\x45\n\x08JoinZone\x12\x1b.nexus.raft.JoinZoneRequest\x1a\x1c.nexus.raft.JoinZoneResponse\x12K\n\nInviteZone\x12\x1d.nexus.raft.InviteZoneRequest\x1a\x1e.nexus.raft.InviteZoneResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'nexus.raft.transport_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_ENTRYTYPE']._serialized_start=3016
-  _globals['_ENTRYTYPE']._serialized_end=3068
-  _globals['_NODEROLE']._serialized_start=3070
-  _globals['_NODEROLE']._serialized_end=3132
+  _globals['_NODEROLE']._serialized_start=1973
+  _globals['_NODEROLE']._serialized_end=2035
   _globals['_PROPOSEREQUEST']._serialized_start=69
   _globals['_PROPOSEREQUEST']._serialized_end=164
   _globals['_PROPOSERESPONSE']._serialized_start=167
@@ -56,48 +54,22 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_INVITEZONEREQUEST']._serialized_end=1220
   _globals['_INVITEZONERESPONSE']._serialized_start=1222
   _globals['_INVITEZONERESPONSE']._serialized_end=1328
-  _globals['_VOTEREQUEST']._serialized_start=1330
-  _globals['_VOTEREQUEST']._serialized_end=1426
-  _globals['_VOTERESPONSE']._serialized_start=1428
-  _globals['_VOTERESPONSE']._serialized_end=1478
-  _globals['_APPENDENTRIESREQUEST']._serialized_start=1481
-  _globals['_APPENDENTRIESREQUEST']._serialized_end=1645
-  _globals['_APPENDENTRIESRESPONSE']._serialized_start=1647
-  _globals['_APPENDENTRIESRESPONSE']._serialized_end=1722
-  _globals['_LOGENTRY']._serialized_start=1724
-  _globals['_LOGENTRY']._serialized_end=1820
-  _globals['_SNAPSHOTCHUNK']._serialized_start=1822
-  _globals['_SNAPSHOTCHUNK']._serialized_end=1929
-  _globals['_SNAPSHOTMETADATA']._serialized_start=1931
-  _globals['_SNAPSHOTMETADATA']._serialized_end=2035
-  _globals['_INSTALLSNAPSHOTRESPONSE']._serialized_start=2037
-  _globals['_INSTALLSNAPSHOTRESPONSE']._serialized_end=2093
-  _globals['_CLUSTERCONFIG']._serialized_start=2096
-  _globals['_CLUSTERCONFIG']._serialized_end=2230
-  _globals['_NODEINFO']._serialized_start=2232
-  _globals['_NODEINFO']._serialized_end=2307
-  _globals['_TRANSFERLEADERREQUEST']._serialized_start=2309
-  _globals['_TRANSFERLEADERREQUEST']._serialized_end=2351
-  _globals['_TRANSFERLEADERRESPONSE']._serialized_start=2353
-  _globals['_TRANSFERLEADERRESPONSE']._serialized_end=2409
-  _globals['_STEPMESSAGEREQUEST']._serialized_start=2411
-  _globals['_STEPMESSAGEREQUEST']._serialized_end=2465
-  _globals['_STEPMESSAGERESPONSE']._serialized_start=2467
-  _globals['_STEPMESSAGERESPONSE']._serialized_end=2535
-  _globals['_ECREPLICATIONENTRY']._serialized_start=2537
-  _globals['_ECREPLICATIONENTRY']._serialized_end=2623
-  _globals['_REPLICATEENTRIESREQUEST']._serialized_start=2625
-  _globals['_REPLICATEENTRIESREQUEST']._serialized_end=2740
-  _globals['_REPLICATEENTRIESRESPONSE']._serialized_start=2742
-  _globals['_REPLICATEENTRIESRESPONSE']._serialized_end=2838
-  _globals['_SUBSCRIBEREQUEST']._serialized_start=2840
-  _globals['_SUBSCRIBEREQUEST']._serialized_end=2913
-  _globals['_EVENT']._serialized_start=2915
-  _globals['_EVENT']._serialized_end=3014
-  _globals['_RAFTSERVICE']._serialized_start=3135
-  _globals['_RAFTSERVICE']._serialized_end=3649
-  _globals['_EVENTSTREAMSERVICE']._serialized_start=3651
-  _globals['_EVENTSTREAMSERVICE']._serialized_end=3735
-  _globals['_RAFTCLIENTSERVICE']._serialized_start=3738
-  _globals['_RAFTCLIENTSERVICE']._serialized_end=4124
+  _globals['_CLUSTERCONFIG']._serialized_start=1331
+  _globals['_CLUSTERCONFIG']._serialized_end=1465
+  _globals['_NODEINFO']._serialized_start=1467
+  _globals['_NODEINFO']._serialized_end=1542
+  _globals['_STEPMESSAGEREQUEST']._serialized_start=1544
+  _globals['_STEPMESSAGEREQUEST']._serialized_end=1598
+  _globals['_STEPMESSAGERESPONSE']._serialized_start=1600
+  _globals['_STEPMESSAGERESPONSE']._serialized_end=1668
+  _globals['_ECREPLICATIONENTRY']._serialized_start=1670
+  _globals['_ECREPLICATIONENTRY']._serialized_end=1756
+  _globals['_REPLICATEENTRIESREQUEST']._serialized_start=1758
+  _globals['_REPLICATEENTRIESREQUEST']._serialized_end=1873
+  _globals['_REPLICATEENTRIESRESPONSE']._serialized_start=1875
+  _globals['_REPLICATEENTRIESRESPONSE']._serialized_end=1971
+  _globals['_RAFTSERVICE']._serialized_start=2038
+  _globals['_RAFTSERVICE']._serialized_end=2226
+  _globals['_RAFTCLIENTSERVICE']._serialized_start=2229
+  _globals['_RAFTCLIENTSERVICE']._serialized_end=2615
 # @@protoc_insertion_point(module_scope)

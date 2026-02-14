@@ -44,10 +44,12 @@ def _dialect_insert(session: Any) -> Any:
     """
     dialect = session.bind.dialect.name
     if dialect == "postgresql":
-        from sqlalchemy.dialects.postgresql import insert
-    else:
-        from sqlalchemy.dialects.sqlite import insert
-    return insert
+        from sqlalchemy.dialects import postgresql
+
+        return postgresql.insert
+    from sqlalchemy.dialects import sqlite
+
+    return sqlite.insert
 
 
 class PostgreSQLStorageDriver:

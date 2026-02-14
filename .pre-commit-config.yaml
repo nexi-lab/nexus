@@ -41,14 +41,14 @@ repos:
       - id: check-file-size
         name: Check File Size Limit
         entry: python .pre-commit-hooks/check_file_size.py
-        language: system
+        language: python
         files: \.py$
         exclude: ^tests/
 
       - id: check-type-ignore
         name: Block New Type Ignores
         entry: python .pre-commit-hooks/check_type_ignore.py
-        language: system
+        language: python
         files: \.py$
         exclude: ^\.pre-commit-hooks/
 

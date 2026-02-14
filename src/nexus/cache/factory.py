@@ -53,6 +53,8 @@ from nexus.cache.settings import CacheSettings
 from nexus.core.cache_store import CacheStoreABC, NullCacheStore
 
 if TYPE_CHECKING:
+    from nexus.backends.backend import Backend
+    from nexus.cache.backend_wrapper import CacheWrapperConfig, CachingBackendWrapper
     from nexus.cache.dragonfly import DragonflyClient
     from nexus.storage.record_store import RecordStoreABC
 
@@ -279,6 +281,39 @@ class CacheFactory:
             result["dragonfly_info"] = await self._cache_client.get_info()
 
         return result
+
+    def create_caching_wrapper(
+        self,
+        inner: Backend,
+        config: CacheWrapperConfig | None = None,
+    ) -> CachingBackendWrapper:
+        """Create a CachingBackendWrapper for the given backend.
+
+        Wires the wrapper with this factory's CacheStoreABC for L2 distributed
+        caching. If no CacheStoreABC is available, L2 is disabled automatically.
+
+        Args:
+            inner: The backend to wrap with caching.
+            config: Optional wrapper configuration. If None, uses defaults.
+
+        Returns:
+            CachingBackendWrapper wrapping the inner backend.
+        """
+        if not self._initialized:
+            raise RuntimeError("CacheFactory not initialized. Call initialize() first.")
+
+        from nexus.cache.backend_wrapper import CacheWrapperConfig, CachingBackendWrapper
+
+        effective_config = config or CacheWrapperConfig()
+
+        # Use the factory's CacheStoreABC for L2 if available
+        cache_store = self._cache_store if self._has_cache_store else None
+
+        return CachingBackendWrapper(
+            inner=inner,
+            config=effective_config,
+            cache_store=cache_store,
+        )
 
     async def __aenter__(self) -> CacheFactory:
         """Async context manager entry."""

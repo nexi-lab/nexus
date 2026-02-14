@@ -20,6 +20,11 @@ Usage:
     embeddings = await embedding_cache.get_or_embed_batch(texts, model, embed_fn)
 """
 
+from nexus.cache.backend_wrapper import (
+    CacheStrategy,
+    CacheWrapperConfig,
+    CachingBackendWrapper,
+)
 from nexus.cache.base import (
     EmbeddingCacheProtocol,
     PermissionCacheProtocol,
@@ -35,6 +40,10 @@ __all__ = [
     # Factory + config
     "CacheFactory",
     "CacheSettings",
+    # CachingBackendWrapper — transparent caching decorator for any Backend (#1392)
+    "CachingBackendWrapper",
+    "CacheStrategy",
+    "CacheWrapperConfig",
     # Consumer-facing protocols (what you program against)
     "EmbeddingCacheProtocol",
     "PermissionCacheProtocol",

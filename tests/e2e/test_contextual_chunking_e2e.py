@@ -35,9 +35,7 @@ from nexus.search.contextual_chunking import (
 SMALL_CHUNKER = DocumentChunker(chunk_size=40, strategy=ChunkStrategy.FIXED)
 
 
-async def _create_tables_and_path(
-    db_url: str, async_session_factory, virtual_path: str, size: int
-) -> str:
+async def _create_tables_and_path(db_url: str, async_session_factory, virtual_path: str, size: int) -> str:
     """Create DB tables and insert a file_paths row via ORM. Returns the path_id."""
     from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -131,15 +129,12 @@ class TestContextualChunkerDirectE2E:
     @pytest.mark.asyncio
     async def test_ambiguous_document_gets_context(self):
         """Full document with pronouns/ambiguous refs → all chunks get context."""
-
         async def mock_gen(doc_summary, chunk_text, prev_chunks, next_chunks):
             return _mock_context_for_chunk(chunk_text)
 
         config = ContextualChunkingConfig(enabled=True, batch_concurrency=3)
         chunker = ContextualChunker(
-            context_generator=mock_gen,
-            config=config,
-            base_chunker=SMALL_CHUNKER,
+            context_generator=mock_gen, config=config, base_chunker=SMALL_CHUNKER,
         )
 
         result = await chunker.chunk_with_context(
@@ -162,22 +157,22 @@ class TestContextualChunkerDirectE2E:
     @pytest.mark.asyncio
     async def test_reference_resolution_preserved(self):
         """Resolved references are correctly stored in chunk context."""
-
         async def mock_gen(doc_summary, chunk_text, prev_chunks, next_chunks):
             return _mock_context_for_chunk(chunk_text)
 
         config = ContextualChunkingConfig(enabled=True, batch_concurrency=2)
         chunker = ContextualChunker(
-            context_generator=mock_gen,
-            config=config,
-            base_chunker=SMALL_CHUNKER,
+            context_generator=mock_gen, config=config, base_chunker=SMALL_CHUNKER,
         )
 
-        result = await chunker.chunk_with_context(AMBIGUOUS_DOC, doc_summary=AMBIGUOUS_DOC_SUMMARY)
+        result = await chunker.chunk_with_context(
+            AMBIGUOUS_DOC, doc_summary=AMBIGUOUS_DOC_SUMMARY
+        )
 
         # At least some chunks should have resolved references
         resolved_chunks = [
-            cc for cc in result.chunks if cc.context and cc.context.resolved_references
+            cc for cc in result.chunks
+            if cc.context and cc.context.resolved_references
         ]
         assert len(resolved_chunks) >= 1, "Expected at least 1 chunk with resolved references"
 
@@ -190,18 +185,17 @@ class TestContextualChunkerDirectE2E:
     @pytest.mark.asyncio
     async def test_key_entities_extracted(self):
         """Key entities are extracted from each chunk."""
-
         async def mock_gen(doc_summary, chunk_text, prev_chunks, next_chunks):
             return _mock_context_for_chunk(chunk_text)
 
         config = ContextualChunkingConfig(enabled=True)
         chunker = ContextualChunker(
-            context_generator=mock_gen,
-            config=config,
-            base_chunker=SMALL_CHUNKER,
+            context_generator=mock_gen, config=config, base_chunker=SMALL_CHUNKER,
         )
 
-        result = await chunker.chunk_with_context(AMBIGUOUS_DOC, doc_summary=AMBIGUOUS_DOC_SUMMARY)
+        result = await chunker.chunk_with_context(
+            AMBIGUOUS_DOC, doc_summary=AMBIGUOUS_DOC_SUMMARY
+        )
 
         all_entities = set()
         for cc in result.chunks:
@@ -252,16 +246,11 @@ class TestAsyncSearchWithContextualChunking:
 
         # Verify DB state: all chunks should have contextual metadata
         from sqlalchemy import text
-
         async with search.async_session() as session:
-            rows = (
-                await session.execute(
-                    text(
-                        "SELECT chunk_id, chunk_text, chunk_context, chunk_position, source_document_id FROM document_chunks WHERE path_id = :pid ORDER BY chunk_position"
-                    ),
-                    {"pid": path_id},
-                )
-            ).fetchall()
+            rows = (await session.execute(
+                text("SELECT chunk_id, chunk_text, chunk_context, chunk_position, source_document_id FROM document_chunks WHERE path_id = :pid ORDER BY chunk_position"),
+                {"pid": path_id},
+            )).fetchall()
 
         assert len(rows) == n_chunks
 
@@ -314,16 +303,11 @@ class TestAsyncSearchWithContextualChunking:
 
         # Verify NO contextual metadata
         from sqlalchemy import text
-
         async with search.async_session() as session:
-            rows = (
-                await session.execute(
-                    text(
-                        "SELECT chunk_context, chunk_position, source_document_id FROM document_chunks WHERE path_id = :pid"
-                    ),
-                    {"pid": path_id},
-                )
-            ).fetchall()
+            rows = (await session.execute(
+                text("SELECT chunk_context, chunk_position, source_document_id FROM document_chunks WHERE path_id = :pid"),
+                {"pid": path_id},
+            )).fetchall()
 
         for row in rows:
             assert row[0] is None, "chunk_context should be NULL when contextual chunking disabled"
@@ -411,7 +395,6 @@ class TestContextualChunkingPerformance:
 
         config = ContextualChunkingConfig(enabled=True, batch_concurrency=3)
         from nexus.search.chunking import DocumentChunker
-
         base_chunker = DocumentChunker(chunk_size=30, strategy=ChunkStrategy.FIXED)
         chunker = ContextualChunker(
             context_generator=tracking_gen,
@@ -420,9 +403,7 @@ class TestContextualChunkingPerformance:
         )
 
         # Large doc to produce many chunks
-        doc = "\n\n".join(
-            [f"Paragraph {i} with enough words to form a complete chunk." for i in range(50)]
-        )
+        doc = "\n\n".join([f"Paragraph {i} with enough words to form a complete chunk." for i in range(50)])
         result = await chunker.chunk_with_context(doc, doc_summary="Large doc")
 
         assert result.total_chunks > 5
@@ -452,7 +433,9 @@ class TestContextualChunkingPerformance:
         )
         await search.initialize()
 
-        path_id = await _create_tables_and_path(db_url, search.async_session, "/perf/doc.md", 5000)
+        path_id = await _create_tables_and_path(
+            db_url, search.async_session, "/perf/doc.md", 5000
+        )
 
         # Generate a large-ish document
         large_doc = "\n\n".join([f"Section {i}: " + " ".join(["word"] * 40) for i in range(20)])
@@ -471,7 +454,6 @@ class TestContextualChunkingPerformance:
     @pytest.mark.asyncio
     async def test_graceful_degradation_performance(self):
         """When LLM fails, heuristic fallback doesn't add significant overhead."""
-
         async def failing_gen(doc_summary, chunk_text, prev_chunks, next_chunks):
             raise RuntimeError("LLM unavailable")
 
@@ -480,7 +462,9 @@ class TestContextualChunkingPerformance:
         chunker = ContextualChunker(context_generator=failing_gen, config=config)
 
         start = time.monotonic()
-        result = await chunker.chunk_with_context(AMBIGUOUS_DOC, doc_summary=AMBIGUOUS_DOC_SUMMARY)
+        result = await chunker.chunk_with_context(
+            AMBIGUOUS_DOC, doc_summary=AMBIGUOUS_DOC_SUMMARY
+        )
         elapsed = time.monotonic() - start
 
         assert result.total_chunks >= 1
@@ -501,15 +485,11 @@ class TestContextGeneratorFactoryE2E:
     @pytest.mark.asyncio
     async def test_factory_produces_valid_context(self):
         """Factory-created generator parses JSON correctly."""
-        mock_llm = AsyncMock(
-            return_value=json.dumps(
-                {
-                    "situating_context": "Acme Corp Q3 earnings discussion",
-                    "resolved_references": [{"original": "He", "resolved": "CEO John Smith"}],
-                    "key_entities": ["Acme Corp", "Q3", "John Smith"],
-                }
-            )
-        )
+        mock_llm = AsyncMock(return_value=json.dumps({
+            "situating_context": "Acme Corp Q3 earnings discussion",
+            "resolved_references": [{"original": "He", "resolved": "CEO John Smith"}],
+            "key_entities": ["Acme Corp", "Q3", "John Smith"],
+        }))
 
         gen = await create_context_generator(mock_llm)
         ctx = await gen(
@@ -533,13 +513,11 @@ class TestContextGeneratorFactoryE2E:
         async def capture_llm(prompt: str) -> str:
             nonlocal captured_prompt
             captured_prompt = prompt
-            return json.dumps(
-                {
-                    "situating_context": "test",
-                    "resolved_references": [],
-                    "key_entities": [],
-                }
-            )
+            return json.dumps({
+                "situating_context": "test",
+                "resolved_references": [],
+                "key_entities": [],
+            })
 
         gen = await create_context_generator(capture_llm)
         await gen(

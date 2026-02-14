@@ -250,9 +250,7 @@ class SemanticSearch:
         entropy_result: EntropyFilterResult | None = None
 
         if self.contextual_chunking and self._contextual_chunker is not None:
-            doc_summary = (
-                content[:500].rsplit(". ", 1)[0] + "." if ". " in content[:500] else content[:500]
-            )
+            doc_summary = content[:500].rsplit(". ", 1)[0] + "." if ". " in content[:500] else content[:500]
             contextual_result = await self._contextual_chunker.chunk_with_context(
                 document=content,
                 doc_summary=doc_summary,

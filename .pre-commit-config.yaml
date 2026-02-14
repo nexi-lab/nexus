@@ -40,14 +40,14 @@ repos:
       # Code quality standards (Phase 1)
       - id: check-file-size
         name: Check File Size Limit
-        entry: python3 .pre-commit-hooks/check_file_size.py
+        entry: python .pre-commit-hooks/check_file_size.py
         language: system
         files: \.py$
         exclude: ^tests/
 
       - id: check-type-ignore
         name: Block New Type Ignores
-        entry: python3 .pre-commit-hooks/check_type_ignore.py
+        entry: python .pre-commit-hooks/check_type_ignore.py
         language: system
         files: \.py$
         exclude: ^\.pre-commit-hooks/

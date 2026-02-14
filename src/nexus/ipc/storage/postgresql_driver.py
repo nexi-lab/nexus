@@ -16,6 +16,10 @@ import asyncio
 import logging
 from typing import Any
 
+from sqlalchemy import func, select, update
+
+from nexus.storage.models.ipc_message import IPCMessageModel
+
 logger = logging.getLogger(__name__)
 
 
@@ -38,14 +42,12 @@ def _dialect_insert(session: Any) -> Any:
     Both PostgreSQL and SQLite support ``on_conflict_do_update`` /
     ``on_conflict_do_nothing`` via their respective dialect insert.
     """
-    import importlib
-
     dialect = session.bind.dialect.name
     if dialect == "postgresql":
-        mod = importlib.import_module("sqlalchemy.dialects.postgresql")
+        from sqlalchemy.dialects.postgresql import insert
     else:
-        mod = importlib.import_module("sqlalchemy.dialects.sqlite")
-    return mod.insert
+        from sqlalchemy.dialects.sqlite import insert
+    return insert
 
 
 class PostgreSQLStorageDriver:
@@ -65,10 +67,6 @@ class PostgreSQLStorageDriver:
 
     async def read(self, path: str, zone_id: str) -> bytes:
         def _read() -> bytes:
-            from sqlalchemy import select
-
-            from nexus.storage.models.ipc_message import IPCMessageModel
-
             with self._session_factory() as session:
                 stmt = select(IPCMessageModel.data).where(
                     IPCMessageModel.zone_id == zone_id,
@@ -88,8 +86,6 @@ class PostgreSQLStorageDriver:
         filename = _basename(path)
 
         def _write() -> None:
-            from nexus.storage.models.ipc_message import IPCMessageModel
-
             with self._session_factory() as session:
                 insert = _dialect_insert(session)
                 stmt = insert(IPCMessageModel).values(
@@ -116,10 +112,6 @@ class PostgreSQLStorageDriver:
             raise FileNotFoundError(f"No such directory: {path}")
 
         def _list() -> list[str]:
-            from sqlalchemy import select
-
-            from nexus.storage.models.ipc_message import IPCMessageModel
-
             with self._session_factory() as session:
                 stmt = (
                     select(IPCMessageModel.filename)
@@ -141,10 +133,6 @@ class PostgreSQLStorageDriver:
             raise FileNotFoundError(f"No such directory: {path}")
 
         def _count() -> int:
-            from sqlalchemy import func, select
-
-            from nexus.storage.models.ipc_message import IPCMessageModel
-
             with self._session_factory() as session:
                 stmt = (
                     select(func.count())
@@ -165,10 +153,6 @@ class PostgreSQLStorageDriver:
         dst_name = _basename(dst)
 
         def _rename() -> int:
-            from sqlalchemy import update
-
-            from nexus.storage.models.ipc_message import IPCMessageModel
-
             with self._session_factory() as session:
                 stmt = (
                     update(IPCMessageModel)
@@ -192,8 +176,6 @@ class PostgreSQLStorageDriver:
         filename = _basename(normalized)
 
         def _mkdir() -> None:
-            from nexus.storage.models.ipc_message import IPCMessageModel
-
             with self._session_factory() as session:
                 insert = _dialect_insert(session)
                 stmt = insert(IPCMessageModel).values(
@@ -216,10 +198,6 @@ class PostgreSQLStorageDriver:
         normalized = path.rstrip("/")
 
         def _exists() -> bool:
-            from sqlalchemy import select
-
-            from nexus.storage.models.ipc_message import IPCMessageModel
-
             with self._session_factory() as session:
                 stmt = (
                     select(IPCMessageModel.id)
@@ -238,10 +216,6 @@ class PostgreSQLStorageDriver:
         """Check if a directory marker exists."""
 
         def _check() -> bool:
-            from sqlalchemy import select
-
-            from nexus.storage.models.ipc_message import IPCMessageModel
-
             with self._session_factory() as session:
                 stmt = (
                     select(IPCMessageModel.id)

@@ -14,7 +14,6 @@ import pytest
 
 from nexus.core.rpc_decorator import rpc_expose
 
-
 # ============================================================================
 # Test 1: Decorator sets _rpc_admin_only flag
 # ============================================================================

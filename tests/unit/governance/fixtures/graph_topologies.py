@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from nexus.governance.models import EdgeType, GovernanceEdge
+from nexus.services.governance.models import EdgeType, GovernanceEdge
 
 
 def _edge(

@@ -1168,6 +1168,18 @@ def create_app(
     app.state.auth_provider = auth_provider
     app.state.database_url = database_url
 
+    # Expose async_session_factory from RecordStoreABC (if available).
+    # This is the canonical way for async endpoints to get database sessions
+    # without bypassing the RecordStore abstraction with raw URLs.
+    _record_store = getattr(nexus_fs, "_record_store", None)
+    if _record_store is not None:
+        try:
+            app.state.async_session_factory = _record_store.async_session_factory
+        except NotImplementedError:
+            app.state.async_session_factory = None
+    else:
+        app.state.async_session_factory = None
+
     # Thread pool and timeout settings (Issue #932)
     app.state.thread_pool_size = thread_pool_size or int(
         os.environ.get("NEXUS_THREAD_POOL_SIZE", "200")
@@ -1809,20 +1821,16 @@ def _register_routes(app: FastAPI) -> None:
             if not content_hash:
                 raise HTTPException(status_code=500, detail="File has no content hash")
 
-            route = nexus_fs.router.route(full_path)
-            backend = route.backend
-
-            if not hasattr(backend, "stream_content"):
-                raise HTTPException(status_code=501, detail="Backend does not support streaming")
-
             total_size = meta.get("size", 0)
 
+            # Use kernel stream methods — never reach through to the backend
+            # directly (ObjectStoreABC abstraction boundary).
             return build_range_response(
                 request_headers=request.headers,
-                content_generator=lambda s, e, cs: backend.stream_range(
-                    content_hash, s, e, chunk_size=cs, context=context
+                content_generator=lambda s, e, cs: nexus_fs.stream_range(
+                    full_path, s, e, chunk_size=cs, context=context
                 ),
-                full_generator=lambda: backend.stream_content(content_hash, context=context),
+                full_generator=lambda: nexus_fs.stream(full_path, context=context),
                 total_size=total_size,
                 etag=content_hash,
                 content_type="application/octet-stream",

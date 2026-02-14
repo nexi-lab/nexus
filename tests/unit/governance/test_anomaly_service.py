@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.governance.anomaly_service import AnomalyService, StatisticalAnomalyDetector
-from nexus.governance.models import (
+from nexus.services.governance.anomaly_service import AnomalyService, StatisticalAnomalyDetector
+from nexus.services.governance.models import (
     AgentBaseline,
     AnomalyAlert,
     TransactionSummary,

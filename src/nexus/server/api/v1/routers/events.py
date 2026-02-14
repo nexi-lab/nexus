@@ -53,7 +53,7 @@ async def websocket_events(
     # Authenticate via token query parameter
     auth_result: dict[str, Any] | None = None
     if token:
-        auth_result = await get_auth_result(request=websocket, authorization=f"Bearer {token}")  # type: ignore[arg-type]
+        auth_result = await get_auth_result(request=websocket, authorization=f"Bearer {token}")
 
     # Allow unauthenticated if no auth configured (open access mode)
     if not auth_result and (

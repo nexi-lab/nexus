@@ -182,7 +182,8 @@ class AsyncLocalBackend:
             return await asyncio.to_thread(_single_read)
 
         try:
-            return await _read_with_retry()
+            result: dict[str, Any] = await _read_with_retry()
+            return result
         except (json.JSONDecodeError, OSError) as e:
             raise BackendError(
                 f"Failed to read metadata: {e}: {content_hash}",

@@ -78,7 +78,7 @@ def live_server(tmp_path, monkeypatch):
     # --- Create auth provider ---
     auth_provider = DatabaseAPIKeyAuth(session_factory)
 
-    # --- Create real NexusFS via embedded connect ---
+    # --- Create real NexusFS via standalone connect ---
     import nexus
 
     data_dir = str(tmp_path / "nexus-data")
@@ -116,7 +116,7 @@ class TestBackfillLiveServer:
 
         Note: The method may fail with an internal error if the metadata
         backend doesn't support backfill_directory_index (e.g., RaftMetadataStore
-        in embedded mode). The key assertion is that it does NOT get a
+        in standalone mode). The key assertion is that it does NOT get a
         permission error — the auth guard lets it through.
         """
         client, admin_key, _ = live_server

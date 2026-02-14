@@ -14,21 +14,25 @@ Public API:
 from __future__ import annotations
 
 # Services (lazy imports to avoid heavy deps at package level)
-from nexus.governance.anomaly_service import AnomalyService
+from nexus.services.governance.anomaly_service import AnomalyService
 
 # Phase 0: Shared approval workflow
-from nexus.governance.approval.state_machine import InvalidTransitionError, StateMachine
-from nexus.governance.approval.types import ApprovalStatus, ApprovalTimestamps, ExpiryPolicy
-from nexus.governance.collusion_service import CollusionService
-from nexus.governance.governance_graph_service import GovernanceGraphService
-from nexus.governance.governance_wrapper import (
+from nexus.services.governance.approval.state_machine import InvalidTransitionError, StateMachine
+from nexus.services.governance.approval.types import (
+    ApprovalStatus,
+    ApprovalTimestamps,
+    ExpiryPolicy,
+)
+from nexus.services.governance.collusion_service import CollusionService
+from nexus.services.governance.governance_graph_service import GovernanceGraphService
+from nexus.services.governance.governance_wrapper import (
     GovernanceApprovalRequired,
     GovernanceBlockedError,
     GovernanceEnforcedPayment,
 )
 
 # Phase 1: Anomaly detection
-from nexus.governance.models import (
+from nexus.services.governance.models import (
     AgentBaseline,
     AnomalyAlert,
     AnomalyDetectionConfig,
@@ -44,8 +48,8 @@ from nexus.governance.models import (
     ThrottleConfig,
     TransactionSummary,
 )
-from nexus.governance.protocols import AnomalyDetectorProtocol
-from nexus.governance.response_service import ResponseService
+from nexus.services.governance.protocols import AnomalyDetectorProtocol
+from nexus.services.governance.response_service import ResponseService
 
 __all__ = [
     # Approval

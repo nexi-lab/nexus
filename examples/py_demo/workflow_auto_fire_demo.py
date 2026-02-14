@@ -54,13 +54,13 @@ async def main():
     api_key = os.getenv("NEXUS_API_KEY")
 
     if not api_key:
-        print("⚠️  Warning: NEXUS_API_KEY not set. Using embedded mode instead.")
+        print("⚠️  Warning: NEXUS_API_KEY not set. Using standalone mode instead.")
         print("   For remote mode, run: source .nexus-admin-env")
-        print("   Falling back to embedded mode for this demo...\n")
+        print("   Falling back to standalone mode for this demo...\n")
 
-        # Use embedded mode
+        # Use standalone mode
         nx = nexus.connect(config={"data_dir": "./workflow-demo-data"})
-        mode = "embedded"
+        mode = "standalone"
     else:
         # Use remote mode
         from nexus.remote import RemoteNexusFS

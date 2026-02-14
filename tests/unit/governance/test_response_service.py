@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.governance.models import AnomalySeverity, FraudScore
-from nexus.governance.response_service import ResponseService
+from nexus.services.governance.models import AnomalySeverity, FraudScore
+from nexus.services.governance.response_service import ResponseService
 
 
 def _make_mock_session_factory() -> MagicMock:

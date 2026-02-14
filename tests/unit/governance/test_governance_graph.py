@@ -10,8 +10,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.governance.governance_graph_service import GovernanceGraphService
-from nexus.governance.models import ConstraintCheckResult, ConstraintType, EdgeType
+from nexus.services.governance.governance_graph_service import GovernanceGraphService
+from nexus.services.governance.models import ConstraintCheckResult, ConstraintType, EdgeType
 
 
 def _make_mock_session_factory() -> MagicMock:

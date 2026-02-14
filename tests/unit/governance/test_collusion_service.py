@@ -9,8 +9,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.governance.collusion_service import CollusionService
-from nexus.governance.models import GovernanceEdge
+from nexus.services.governance.collusion_service import CollusionService
+from nexus.services.governance.models import GovernanceEdge
 from tests.unit.governance.fixtures.graph_topologies import (
     clean_chain,
     complex_ring,

@@ -113,10 +113,10 @@ def main():
         print("   Get a key at: https://console.anthropic.com")
         sys.exit(1)
 
-    # Connect to Nexus (embedded mode)
+    # Connect to Nexus (standalone mode)
     print("📁 Connecting to Nexus...")
     nx = nexus.connect()
-    print("✓ Connected to Nexus (embedded mode)")
+    print("✓ Connected to Nexus (standalone mode)")
     print()
 
     # Create workspace

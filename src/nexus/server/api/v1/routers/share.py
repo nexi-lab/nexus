@@ -163,33 +163,16 @@ async def download_via_share_link(
         if not content_hash:
             raise HTTPException(status_code=500, detail="File has no content hash")
 
-        route = nexus_fs.router.route(file_path)
-        backend = route.backend
         total_size = meta.get("size", 0)
 
-        # Fall back to non-streaming if backend lacks stream_content
-        if not hasattr(backend, "stream_content"):
-            content = await to_thread_with_timeout(nexus_fs.read, file_path, context=stream_context)
-            if isinstance(content, str):
-                content_bytes = content.encode()
-            elif isinstance(content, bytes):
-                content_bytes = content
-            else:
-                content_bytes = b""
-            return StreamingResponse(
-                iter([content_bytes]),
-                media_type="application/octet-stream",
-                headers={
-                    "Content-Disposition": f'attachment; filename="{file_path.split("/")[-1]}"',
-                },
-            )
-
+        # Use kernel stream methods — never reach through to the backend
+        # directly (ObjectStoreABC abstraction boundary).
         return build_range_response(
             request_headers=request.headers,
-            content_generator=lambda s, e, cs: backend.stream_range(
-                content_hash, s, e, chunk_size=cs, context=stream_context
+            content_generator=lambda s, e, cs: nexus_fs.stream_range(
+                file_path, s, e, chunk_size=cs, context=stream_context
             ),
-            full_generator=lambda: backend.stream_content(content_hash, context=stream_context),
+            full_generator=lambda: nexus_fs.stream(file_path, context=stream_context),
             total_size=total_size,
             etag=content_hash,
             content_type="application/octet-stream",

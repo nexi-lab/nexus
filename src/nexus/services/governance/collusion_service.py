@@ -16,14 +16,18 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from nexus.governance.models import (
+from nexus.services.governance.models import (
     EdgeType,
     FraudRing,
     FraudScore,
     GovernanceEdge,
     RingType,
 )
-from nexus.governance.trust_math import build_local_trust_matrix, detect_sybil_cluster, eigentrust
+from nexus.services.governance.trust_math import (
+    build_local_trust_matrix,
+    detect_sybil_cluster,
+    eigentrust,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -241,7 +245,7 @@ class CollusionService:
         """Get cached fraud score for an agent."""
         from sqlalchemy import select
 
-        from nexus.governance.db_models import FraudScoreModel
+        from nexus.services.governance.db_models import FraudScoreModel
 
         async with self._session_factory() as session:
             stmt = select(FraudScoreModel).where(
@@ -275,7 +279,7 @@ class CollusionService:
         """Load governance edges from DB."""
         from sqlalchemy import select
 
-        from nexus.governance.db_models import GovernanceEdgeModel
+        from nexus.services.governance.db_models import GovernanceEdgeModel
 
         async with self._session_factory() as session:
             stmt = (

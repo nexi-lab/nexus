@@ -535,6 +535,40 @@ will be renamed to `FileMetadataProtocol` to avoid confusion with `MetastoreABC`
 
 ---
 
+## PART 7: GOVERNANCE DATA (Issue #1359)
+
+### 7.1 Anomaly Detection
+
+| Data Type | Read | Write | Consistency | Query | Size | Card | Dur | Scope | Why Exists | Storage |
+|-----------|------|-------|-------------|-------|------|------|-----|-------|------------|---------|
+| **AnomalyAlert** | Med | Med | SC | Relational (zone+time range, severity filter) | Small | High | Persistent | Zone | Detect and record agent transaction anomalies (Z-score/IQR) | **RecordStore** ✅ |
+| **AgentBaseline** | High | Low | SC | Relational (zone+agent composite PK) | Tiny | Med | Persistent | Zone | Store per-agent statistical baselines for anomaly detection | **RecordStore** ✅ |
+
+### 7.2 Collusion & Fraud
+
+| Data Type | Read | Write | Consistency | Query | Size | Card | Dur | Scope | Why Exists | Storage |
+|-----------|------|-------|-------------|-------|------|------|-----|-------|------------|---------|
+| **FraudRing** | Low | Low | SC | Relational (zone-scoped, detected_at range) | Med | Low | Persistent | Zone | Record detected fraud ring structures (cycle detection via Johnson's alg) | **RecordStore** ✅ |
+| **FraudScore** | Med | Low | SC | Relational (zone+agent composite PK, score filter) | Tiny | Med | Persistent | Zone | Per-agent EigenTrust-derived fraud scores for Sybil detection | **RecordStore** ✅ |
+
+### 7.3 Governance Graph
+
+| Data Type | Read | Write | Consistency | Query | Size | Card | Dur | Scope | Why Exists | Storage |
+|-----------|------|-------|-------------|-------|------|------|-----|-------|------------|---------|
+| **GovernanceNode** | High | Low | SC | Relational (unique constraint on zone+node_id) | Tiny | Med | Persistent | Zone | Represent agents/resources as graph nodes for constraint checking | **RecordStore** ✅ |
+| **GovernanceEdge** | High | Low | SC | Relational (composite index zone+from+to, constraint type filter) | Tiny | High | Persistent | Zone | Directed edges with constraint types (ALLOW/DENY/RATE_LIMIT) between nodes | **RecordStore** ✅ |
+
+### 7.4 Response Actions
+
+| Data Type | Read | Write | Consistency | Query | Size | Card | Dur | Scope | Why Exists | Storage |
+|-----------|------|-------|-------------|-------|------|------|-----|-------|------------|---------|
+| **SuspensionRecord** | Med | Low | SC | Relational (zone+agent, active filter, appeal status) | Small | Low | Persistent | Zone | Track agent suspensions with appeal workflow (7-day expiry) | **RecordStore** ✅ |
+| **ThrottleConfig** | High | Low | SC | Relational (zone+agent lookup) | Tiny | Low | Persistent | Zone | Per-agent rate limiting configs (requests/window, triggered by anomaly threshold) | **RecordStore** ✅ |
+
+**Affinity rationale:** All governance data types require relational queries (composite PKs, zone-scoped filtering, time-range queries, JOINs between alerts↔baselines). RecordStore (PostgreSQL) is the correct pillar. Process-local TTL caches in `GovernanceGraphService` and `AnomalyService` are optimization caches, not storage-tier — same pattern as `CompactFileMetadata`.
+
+---
+
 ## NEXT STEPS
 
 Completed items removed. See SUMMARY "REMAINING GAPS" for open tasks, REDUNDANCY ANALYSIS for merge decisions.

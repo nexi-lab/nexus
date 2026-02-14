@@ -115,7 +115,7 @@ async def list_alerts(
     """List anomaly alerts with optional filters."""
     service = _get_anomaly_service(request)
 
-    from nexus.governance.models import AnomalySeverity
+    from nexus.services.governance.models import AnomalySeverity
 
     sev = AnomalySeverity(severity) if severity else None
     alerts = await service.get_alerts(zone_id=zone_id, severity=sev, resolved=resolved)
@@ -258,7 +258,7 @@ async def add_constraint(
     """Add a governance constraint between two agents."""
     service = _get_graph_service(request)
 
-    from nexus.governance.models import ConstraintType
+    from nexus.services.governance.models import ConstraintType
 
     try:
         ct = ConstraintType(body.constraint_type)
@@ -368,7 +368,7 @@ async def suspend_agent(
     """Suspend an agent."""
     service = _get_response_service(request)
 
-    from nexus.governance.models import AnomalySeverity
+    from nexus.services.governance.models import AnomalySeverity
 
     try:
         sev = AnomalySeverity(body.severity)

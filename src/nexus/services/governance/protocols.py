@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from nexus.governance.models import AnomalyAlert, TransactionSummary
+from nexus.services.governance.models import AnomalyAlert, TransactionSummary
 
 
 @runtime_checkable

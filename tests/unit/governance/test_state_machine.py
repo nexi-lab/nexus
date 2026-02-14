@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from nexus.governance.approval.state_machine import InvalidTransitionError, StateMachine
+from nexus.services.governance.approval.state_machine import InvalidTransitionError, StateMachine
 
 
 @pytest.fixture

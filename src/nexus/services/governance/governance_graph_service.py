@@ -16,7 +16,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from nexus.governance.models import (
+from nexus.services.governance.models import (
     ConstraintCheckResult,
     ConstraintType,
     EdgeType,
@@ -66,7 +66,7 @@ class GovernanceGraphService:
         Creates a CONSTRAINT edge in the governance graph.
         Invalidates the cache for this agent pair.
         """
-        from nexus.governance.db_models import GovernanceEdgeModel
+        from nexus.services.governance.db_models import GovernanceEdgeModel
 
         edge_id = str(uuid.uuid4())
         now = datetime.now(UTC)
@@ -117,7 +117,7 @@ class GovernanceGraphService:
         """
         from sqlalchemy import delete, select
 
-        from nexus.governance.db_models import GovernanceEdgeModel
+        from nexus.services.governance.db_models import GovernanceEdgeModel
 
         async with self._session_factory() as session, session.begin():
             # Fetch for cache invalidation
@@ -177,7 +177,7 @@ class GovernanceGraphService:
         """List constraint edges, optionally filtered by agent."""
         from sqlalchemy import select
 
-        from nexus.governance.db_models import GovernanceEdgeModel
+        from nexus.services.governance.db_models import GovernanceEdgeModel
 
         async with self._session_factory() as session:
             stmt = select(GovernanceEdgeModel).where(
@@ -210,7 +210,7 @@ class GovernanceGraphService:
         """Update a constraint. Returns updated edge or None if not found."""
         from sqlalchemy import select
 
-        from nexus.governance.db_models import GovernanceEdgeModel
+        from nexus.services.governance.db_models import GovernanceEdgeModel
 
         async with self._session_factory() as session, session.begin():
             stmt = select(GovernanceEdgeModel).where(GovernanceEdgeModel.id == edge_id)
@@ -246,7 +246,7 @@ class GovernanceGraphService:
         """Look up constraint from database."""
         from sqlalchemy import select
 
-        from nexus.governance.db_models import GovernanceEdgeModel
+        from nexus.services.governance.db_models import GovernanceEdgeModel
 
         async with self._session_factory() as session:
             stmt = select(GovernanceEdgeModel).where(

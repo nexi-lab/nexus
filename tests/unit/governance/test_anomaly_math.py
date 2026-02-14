@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from nexus.governance.anomaly_math import (
+from nexus.services.governance.anomaly_math import (
     compute_baseline,
     compute_iqr_bounds,
     compute_z_score,
@@ -18,7 +18,7 @@ from nexus.governance.anomaly_math import (
     detect_counterparty_anomaly,
     detect_frequency_anomaly,
 )
-from nexus.governance.models import (
+from nexus.services.governance.models import (
     AgentBaseline,
     AnomalyDetectionConfig,
     AnomalySeverity,

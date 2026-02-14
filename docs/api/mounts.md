@@ -14,7 +14,7 @@ Static mounts are defined in your `nexus.yaml` configuration file and are loaded
 
 ```yaml
 # nexus.yaml
-mode: embedded
+mode: standalone
 backend: local
 data_dir: ./nexus-local
 

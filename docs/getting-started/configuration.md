@@ -1,6 +1,6 @@
 # Configuration
 
-Nexus v0.1.0 supports embedded mode with simple configuration options.
+Nexus supports three deployment modes: **standalone**, **remote**, and **federation**.
 
 ## Configuration Methods
 
@@ -9,14 +9,11 @@ Nexus v0.1.0 supports embedded mode with simple configuration options.
 Create `nexus.yaml` in your project directory:
 
 ```yaml
-# Deployment mode (only 'embedded' is implemented in v0.1.0)
-mode: embedded
+# Deployment mode: standalone | remote | federation
+mode: standalone
 
 # Data directory for storing files and metadata
 data_dir: ./nexus-data
-
-# Optional: Custom database path (auto-generated in data_dir if not specified)
-# db_path: ./custom-path/metadata.db
 ```
 
 ### 2. Environment Variables
@@ -24,9 +21,8 @@ data_dir: ./nexus-data
 Override configuration with environment variables:
 
 ```bash
-export NEXUS_MODE=embedded
+export NEXUS_MODE=standalone
 export NEXUS_DATA_DIR=./nexus-data
-export NEXUS_DB_PATH=./custom-metadata.db
 ```
 
 ### 3. Programmatic Configuration
@@ -38,7 +34,7 @@ import nexus
 
 # Using dict
 config = {
-    "mode": "embedded",
+    "mode": "standalone",
     "data_dir": "./nexus-data",
 }
 nx = nexus.connect(config=config)
@@ -49,46 +45,60 @@ nx = nexus.connect("./config.yaml")
 
 ## Configuration Reference
 
-### Available Options (v0.1.0)
+### Core Options
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `mode` | string | `embedded` | Deployment mode (only `embedded` supported in v0.1.0) |
-| `data_dir` | string | `./nexus-data` | Directory for storing files and database |
-| `db_path` | string | `{data_dir}/metadata.db` | Path to SQLite metadata database |
+| `mode` | string | `standalone` | Deployment mode (`standalone`, `remote`, `federation`) |
+| `data_dir` | string | `./nexus-data` | Directory for storing files and metadata |
+| `url` | string | — | Server URL (required for `remote` mode) |
+| `api_key` | string | — | Authentication key for remote/server access |
 
-### Planned Options (Future Versions)
+### Additional Options
 
-These config options exist in the code but are not yet implemented:
-
-- `cache_size_mb` - In-memory cache (planned for v0.2.0)
-- `enable_vector_search` - Vector search features (planned for v0.2.0+)
-- `enable_llm_cache` - LLM response caching (planned for v0.3.0+)
-- `url` - Server URL for monolithic/distributed modes (v0.5.0+)
-- `api_key` - Authentication for remote modes (v0.5.0+)
+- `cache_size_mb` — In-memory cache size
+- `enable_vector_search` — Vector search features
+- `enable_llm_cache` — LLM response caching
 
 ## Example Configurations
 
-### Development
+### Development (Standalone)
 
 ```yaml
-mode: embedded
+mode: standalone
 data_dir: ./nexus-dev
 ```
 
-### Production (Embedded)
+### Production (Standalone Server)
 
 ```yaml
-mode: embedded
+mode: standalone
 data_dir: /var/lib/nexus
-db_path: /var/lib/nexus/metadata.db
+```
+
+### Remote Client
+
+```yaml
+mode: remote
+url: https://nexus.example.com:2026
+api_key: sk-your-api-key
+```
+
+### Federation (Multi-Node)
+
+```bash
+# Environment variables for federation nodes
+NEXUS_MODE=federation
+NEXUS_NODE_ID=1
+NEXUS_BIND_ADDR=0.0.0.0:2126
+NEXUS_PEERS=2@peer2:2126,3@peer3:2126
 ```
 
 ### Using Environment Variables
 
 ```bash
 # .env file
-NEXUS_MODE=embedded
+NEXUS_MODE=standalone
 NEXUS_DATA_DIR=/data/nexus
 ```
 
@@ -101,9 +111,9 @@ Nexus searches for configuration in this order:
 3. `./nexus.yaml` in current directory
 4. `./nexus.yml` in current directory
 5. `~/.nexus/config.yaml` in home directory
-6. Default values (embedded mode with `./nexus-data`)
+6. Default values (standalone mode with `./nexus-data`)
 
 ## Next Steps
 
-- [Deployment Modes](deployment-modes.md) - Learn about deployment options (v0.1.0 only supports embedded)
-- [Quick Start](quickstart.md) - Get started with embedded mode
+- [Deployment Modes](deployment-modes.md) - Learn about standalone, remote, and federation modes
+- [Quick Start](quickstart.md) - Get started with standalone mode

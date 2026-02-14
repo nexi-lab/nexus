@@ -138,7 +138,7 @@ Documented the **actual** current state (not aspirational):
 - Storage layer structure
 - Module organization
 - Data flow diagrams
-- Deployment modes (embedded, monolithic, distributed)
+- Deployment modes (standalone, remote, federation)
 - Known issues and technical debt
 - Performance characteristics
 - Security model

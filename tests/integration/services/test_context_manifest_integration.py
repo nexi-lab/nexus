@@ -4,6 +4,7 @@ Tests the complete flow: create sources → resolve with stub executors →
 verify files on disk → validate _index.json schema.
 
 Issue #1427 adds FileGlobExecutor e2e and full pipeline with file_glob tests.
+Issue #1428 adds WorkspaceSnapshot, MemoryQuery, and Metrics integration tests.
 
 Uses tmp_path for filesystem and in-memory stubs for executors.
 """
@@ -346,3 +347,127 @@ class TestFullPipelineWithFileGlob:
         assert (output_dir / "_index.json").exists()
         index = json.loads((output_dir / "_index.json").read_text())
         assert index["source_count"] == 2
+
+
+# ===========================================================================
+# Test 8: WorkspaceSnapshotExecutor with StubSnapshotLookup (Issue #1428)
+# ===========================================================================
+
+
+class StubSnapshotLookup:
+    """Stub SnapshotLookup for integration testing."""
+
+    def __init__(self, snapshots: dict[str, dict[str, Any]] | None = None) -> None:
+        self._snapshots = snapshots or {}
+
+    def get_snapshot(self, snapshot_id: str) -> dict[str, Any] | None:
+        return self._snapshots.get(snapshot_id)
+
+    def get_latest_snapshot(self, workspace_path: str) -> dict[str, Any] | None:
+        return None
+
+
+class TestWorkspaceSnapshotExecutorInPipeline:
+    @pytest.mark.asyncio
+    async def test_workspace_snapshot_in_full_pipeline(self, tmp_path: Path) -> None:
+        """WorkspaceSnapshotExecutor wired into full resolver pipeline."""
+        from nexus.services.context_manifest.executors.workspace_snapshot import (
+            WorkspaceSnapshotExecutor,
+        )
+
+        snapshot_data = {
+            "snapshot_id": "snap-int-001",
+            "workspace_path": "/ws",
+            "snapshot_number": 1,
+            "manifest_hash": "abc",
+            "file_count": 5,
+            "total_size_bytes": 1000,
+            "description": "test",
+            "created_by": "user",
+            "tags": [],
+            "created_at": "2025-01-15T10:00:00",
+        }
+        lookup = StubSnapshotLookup(snapshots={"snap-int-001": snapshot_data})
+        executor = WorkspaceSnapshotExecutor(snapshot_lookup=lookup)
+
+        resolver = ManifestResolver(
+            executors={"workspace_snapshot": executor},
+            max_resolve_seconds=10.0,
+        )
+        sources = [WorkspaceSnapshotSource(snapshot_id="snap-int-001")]
+
+        result = await resolver.resolve(sources, {}, tmp_path)
+
+        assert isinstance(result, ManifestResult)
+        assert len(result.sources) == 1
+        assert result.sources[0].status == "ok"
+        assert result.sources[0].data["snapshot_id"] == "snap-int-001"
+        assert result.sources[0].data["file_count"] == 5
+
+
+# ===========================================================================
+# Test 9: MemoryQueryExecutor with StubMemorySearch (Issue #1428)
+# ===========================================================================
+
+
+class StubMemorySearch:
+    """Stub MemorySearch for integration testing."""
+
+    def search(self, query: str, top_k: int, search_mode: str) -> tuple[list[dict[str, Any]], str]:
+        return [
+            {"content": "test result", "score": 0.9, "memory_type": "fact"},
+        ], search_mode
+
+
+class TestMemoryQueryExecutorInPipeline:
+    @pytest.mark.asyncio
+    async def test_memory_query_in_full_pipeline(self, tmp_path: Path) -> None:
+        """MemoryQueryExecutor wired into full resolver pipeline."""
+        from nexus.services.context_manifest.executors.memory_query import (
+            MemoryQueryExecutor,
+        )
+
+        executor = MemoryQueryExecutor(memory_search=StubMemorySearch())
+        resolver = ManifestResolver(
+            executors={"memory_query": executor},
+            max_resolve_seconds=10.0,
+        )
+        sources = [MemoryQuerySource(query="find auth patterns")]
+
+        result = await resolver.resolve(sources, {}, tmp_path)
+
+        assert isinstance(result, ManifestResult)
+        assert len(result.sources) == 1
+        assert result.sources[0].status == "ok"
+        assert result.sources[0].data["total"] == 1
+        assert result.sources[0].data["search_mode"] == "hybrid"
+
+
+# ===========================================================================
+# Test 10: MetricsObserver wired to resolver (Issue #1428)
+# ===========================================================================
+
+
+class TestMetricsObserverInPipeline:
+    @pytest.mark.asyncio
+    async def test_metrics_observer_wired(self, tmp_path: Path) -> None:
+        """MetricsObserver receives hooks from resolver during resolution."""
+        from nexus.services.context_manifest.metrics import ManifestMetricsObserver
+
+        observer = ManifestMetricsObserver()
+        resolver = ManifestResolver(
+            executors=_make_all_ok_executors(),
+            max_resolve_seconds=10.0,
+            metrics_observer=observer,
+        )
+        sources = [
+            FileGlobSource(pattern="*.py"),
+            MemoryQuerySource(query="test"),
+        ]
+
+        await resolver.resolve(sources, {}, tmp_path)
+
+        snap = observer.snapshot()
+        assert snap["total_resolutions"] == 1
+        assert snap["total_source_executions"] == 2
+        assert snap["active_resolutions"] == 0

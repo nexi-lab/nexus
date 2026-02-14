@@ -220,6 +220,12 @@ async def resolve_manifest(
     if record.zone_id:
         variables["agent.zone_id"] = record.zone_id
 
+    # Populate workspace.root from agent metadata (Issue #1428)
+    agent_metadata = getattr(record, "metadata", None) or {}
+    workspace_root = agent_metadata.get("workspace_path", "")
+    if workspace_root:
+        variables["workspace.root"] = workspace_root
+
     # Create temporary output directory for resolution
     import tempfile
 

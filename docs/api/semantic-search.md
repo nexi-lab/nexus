@@ -288,6 +288,117 @@ print(f"Complexity score: {params['complexity_score']:.3f}")
 
 ---
 
+## Contextual Chunking
+
+Contextual chunking improves retrieval accuracy by prepending LLM-generated "situating context" to each chunk before embedding. Based on [Anthropic's Contextual Retrieval](https://www.anthropic.com/news/contextual-retrieval) pattern.
+
+### Problem
+
+Standard chunking loses context when splitting documents:
+
+```
+Chunk: "He mentioned that revenue exceeded expectations by 15%."
+       ↑ Who is "he"? What revenue? Lost context!
+```
+
+### Solution
+
+Each chunk is enriched with:
+- **Situating context**: Brief description of the chunk's role in the document
+- **Resolved references**: Pronoun and ambiguous reference resolution
+- **Key entities**: Named entities mentioned in the chunk
+
+```
+Contextual chunk:
+  [Context: John Smith, CEO of Acme Corp, presenting Q3 financial results]
+  He mentioned that revenue exceeded expectations by 15%.
+```
+
+### Configuration
+
+Enable contextual chunking when initializing semantic search:
+
+```python
+from nexus.search.contextual_chunking import (
+    ContextualChunkingConfig,
+    create_context_generator,
+    create_heuristic_generator,
+)
+
+# Option 1: LLM-powered context (best quality)
+async def my_llm(prompt: str) -> str:
+    # Call your LLM API here
+    return await anthropic_client.messages.create(...)
+
+llm_gen = await create_context_generator(my_llm)
+
+await nx.initialize_semantic_search(
+    embedding_provider="openai",
+    contextual_chunking=True,
+    context_generator=llm_gen,
+)
+
+# Option 2: Heuristic context (no LLM, zero cost)
+heuristic_gen = create_heuristic_generator()
+
+await nx.initialize_semantic_search(
+    embedding_provider="openai",
+    contextual_chunking=True,
+    context_generator=heuristic_gen,
+)
+```
+
+### ContextualChunkingConfig
+
+Fine-tune contextual chunking behavior:
+
+```python
+config = ContextualChunkingConfig(
+    enabled=True,               # Enable/disable (default: False)
+    max_context_length=200,     # Max chars for situating context (default: 200)
+    batch_concurrency=5,        # Max parallel LLM calls (default: 5)
+    use_heuristic_fallback=True # Use heuristic when LLM fails (default: True)
+)
+```
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `enabled` | `False` | Enable contextual chunking |
+| `max_context_length` | `200` | Maximum characters for the situating context string |
+| `batch_concurrency` | `5` | Maximum parallel LLM calls (semaphore limit) |
+| `use_heuristic_fallback` | `True` | Fall back to rule-based context when LLM fails |
+
+### Database Fields
+
+Contextual chunking adds three nullable columns to `document_chunks`:
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `chunk_context` | Text | JSON-serialized `ChunkContext` (situating context, resolved refs, entities) |
+| `chunk_position` | Integer | 0-based position of chunk within the source document |
+| `source_document_id` | String(36) | UUID linking all chunks from one indexing run |
+
+### Heuristic Fallback
+
+When the LLM is unavailable or fails, the heuristic generator provides basic context using:
+- Document summary (first sentence)
+- Chunk position in document
+- Markdown heading extraction
+- Capitalized-word entity extraction
+
+This ensures chunks always have some context, even without LLM access.
+
+### Trade-offs
+
+| Aspect | Benefit | Cost |
+|--------|---------|------|
+| Retrieval accuracy | Higher (context-aware embeddings) | - |
+| Storage | Self-contained chunks | ~20% more per chunk |
+| Ingestion time | - | LLM call per chunk (bounded by concurrency) |
+| Graceful degradation | Heuristic fallback | Reduced quality vs LLM |
+
+---
+
 ## See Also
 
 - [File Discovery](file-discovery.md) - Text-based search (grep, glob)

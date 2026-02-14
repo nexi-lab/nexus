@@ -52,6 +52,16 @@ from nexus.search.chunking import (
     DocumentChunk,
     DocumentChunker,
 )
+from nexus.search.contextual_chunking import (
+    ChunkContext,
+    ContextGenerator,
+    ContextualChunk,
+    ContextualChunker,
+    ContextualChunkingConfig,
+    ContextualChunkResult,
+    create_context_generator,
+    create_heuristic_generator,
+)
 from nexus.search.daemon import (
     DaemonConfig,
     DaemonStats,
@@ -171,6 +181,15 @@ __all__ = [
     "ChunkStrategy",
     "DocumentChunk",
     "DocumentChunker",
+    # Contextual Chunking (Issue #1192)
+    "ChunkContext",
+    "ContextGenerator",
+    "ContextualChunk",
+    "ContextualChunker",
+    "ContextualChunkingConfig",
+    "ContextualChunkResult",
+    "create_context_generator",
+    "create_heuristic_generator",
     # Embeddings
     "EmbeddingModel",
     "EmbeddingProvider",

@@ -245,6 +245,11 @@ class DocumentChunkModel(Base):
 
     embedding_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
+    # Contextual chunking fields (Issue #1192)
+    chunk_context: Mapped[str | None] = mapped_column(Text, nullable=True)
+    chunk_position: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_document_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=lambda: datetime.now(UTC)
     )
@@ -252,6 +257,7 @@ class DocumentChunkModel(Base):
     __table_args__ = (
         Index("idx_chunks_path", "path_id"),
         Index("idx_chunks_model", "embedding_model"),
+        Index("idx_chunks_source_doc", "source_document_id"),
     )
 
     def __repr__(self) -> str:

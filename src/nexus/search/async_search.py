@@ -42,6 +42,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 
 from nexus.llm.context_builder import ContextBuilder
 from nexus.search.chunking import ChunkStrategy, DocumentChunker, EntropyAwareChunker
+from nexus.search.contextual_chunking import (
+    ContextGenerator,
+    ContextualChunker,
+    ContextualChunkingConfig,
+    ContextualChunkResult,
+)
 from nexus.search.embeddings import EmbeddingProvider
 
 if TYPE_CHECKING:
@@ -127,6 +133,9 @@ class AsyncSemanticSearch:
         entropy_filtering: bool = False,
         entropy_threshold: float = 0.35,
         entropy_alpha: float = 0.5,
+        contextual_chunking: bool = False,
+        contextual_config: ContextualChunkingConfig | None = None,
+        context_generator: ContextGenerator | None = None,
     ):
         """Initialize async semantic search.
 
@@ -139,6 +148,9 @@ class AsyncSemanticSearch:
             entropy_filtering: Enable entropy-aware filtering (Issue #1024)
             entropy_threshold: Redundancy threshold for entropy filtering (default: 0.35)
             entropy_alpha: Balance between entity and semantic novelty (default: 0.5)
+            contextual_chunking: Enable contextual chunking (Issue #1192)
+            contextual_config: Configuration for contextual chunking
+            context_generator: Callable that generates context for each chunk
         """
         self.database_url = database_url
         self.embedding_provider = embedding_provider
@@ -168,6 +180,19 @@ class AsyncSemanticSearch:
                 redundancy_threshold=entropy_threshold,
                 alpha=entropy_alpha,
                 embedding_provider=embedding_provider,
+                base_chunker=self.chunker,
+            )
+
+        # Issue #1192: Contextual chunking
+        self.contextual_chunking = contextual_chunking
+        self._contextual_config = contextual_config or ContextualChunkingConfig(
+            enabled=contextual_chunking
+        )
+        self._contextual_chunker: ContextualChunker | None = None
+        if contextual_chunking and context_generator is not None:
+            self._contextual_chunker = ContextualChunker(
+                context_generator=context_generator,
+                config=self._contextual_config,
                 base_chunker=self.chunker,
             )
 
@@ -285,9 +310,21 @@ class AsyncSemanticSearch:
         Returns:
             Number of chunks indexed
         """
-        # Chunk document with optional entropy filtering (Issue #1024)
-        if self.entropy_filtering and self._entropy_chunker:
-            # Use entropy-aware chunking to filter redundant content
+        # Issue #1192: Contextual chunking takes priority (includes base chunking internally)
+        contextual_result: ContextualChunkResult | None = None
+        if self.contextual_chunking and self._contextual_chunker is not None:
+            doc_summary = (
+                content[:500].rsplit(". ", 1)[0] + "." if ". " in content[:500] else content[:500]
+            )
+            contextual_result = await self._contextual_chunker.chunk_with_context(
+                document=content,
+                doc_summary=doc_summary,
+                file_path=path,
+                compute_lines=True,
+            )
+            chunks = [cc.chunk for cc in contextual_result.chunks]
+        elif self.entropy_filtering and self._entropy_chunker:
+            # Issue #1024: Entropy-aware chunking to filter redundant content
             entropy_result = await self._entropy_chunker.chunk_with_filtering(
                 content, path, compute_lines=True
             )
@@ -307,9 +344,13 @@ class AsyncSemanticSearch:
             return 0
 
         # Generate embeddings (async API call)
+        # When contextual chunking is active, embed composed text (context + original)
         embeddings = None
         if self.embedding_provider:
-            chunk_texts = [chunk.text for chunk in chunks]
+            if contextual_result is not None:
+                chunk_texts = [cc.contextual_text for cc in contextual_result.chunks]
+            else:
+                chunk_texts = [chunk.text for chunk in chunks]
             embeddings = await self.embedding_provider.embed_texts_batched(
                 chunk_texts,
                 batch_size=self.batch_size,
@@ -317,7 +358,7 @@ class AsyncSemanticSearch:
             )
 
         # Bulk insert chunks
-        await self._bulk_insert_chunks(path_id, chunks, embeddings)
+        await self._bulk_insert_chunks(path_id, chunks, embeddings, contextual_result)
 
         # Index in BM25S for fast ranked text search (Issue #796)
         if self._bm25s_enabled and self._bm25s_index:
@@ -371,6 +412,7 @@ class AsyncSemanticSearch:
         path_id: str,
         chunks: list[Any],
         embeddings: list[list[float]] | None,
+        contextual_result: ContextualChunkResult | None = None,
     ) -> None:
         """Bulk insert chunks with embeddings.
 
@@ -378,6 +420,7 @@ class AsyncSemanticSearch:
             path_id: Path ID
             chunks: Document chunks
             embeddings: Optional embeddings
+            contextual_result: Optional contextual chunking result (Issue #1192)
         """
         async with self.async_session() as session:
             # Delete existing chunks first
@@ -391,9 +434,23 @@ class AsyncSemanticSearch:
             embedding_model = (
                 str(self.embedding_provider.__class__.__name__) if self.embedding_provider else None
             )
+            source_document_id = contextual_result.source_document_id if contextual_result else None
+
+            # Issue #1192: Pre-compute contextual metadata outside the insert loop
+            context_jsons: list[str | None] = []
+            context_positions: list[int | None] = []
+            if contextual_result is not None:
+                for cc in contextual_result.chunks:
+                    context_positions.append(cc.position)
+                    context_jsons.append(
+                        cc.context.model_dump_json() if cc.context is not None else None
+                    )
 
             for i, chunk in enumerate(chunks):
                 chunk_id = str(uuid.uuid4())
+
+                chunk_context_json = context_jsons[i] if context_jsons else None
+                chunk_position = context_positions[i] if context_positions else None
 
                 # Insert chunk
                 if self.db_type == "postgresql" and embeddings:
@@ -403,11 +460,15 @@ class AsyncSemanticSearch:
                             INSERT INTO document_chunks
                             (chunk_id, path_id, chunk_index, chunk_text, chunk_tokens,
                              start_offset, end_offset, line_start, line_end,
-                             embedding_model, embedding, created_at)
+                             embedding_model, embedding,
+                             chunk_context, chunk_position, source_document_id,
+                             created_at)
                             VALUES
                             (:chunk_id, :path_id, :chunk_index, :chunk_text, :chunk_tokens,
                              :start_offset, :end_offset, :line_start, :line_end,
-                             :embedding_model, :embedding::halfvec, :created_at)
+                             :embedding_model, :embedding::halfvec,
+                             :chunk_context, :chunk_position, :source_document_id,
+                             :created_at)
                         """),
                         {
                             "chunk_id": chunk_id,
@@ -421,6 +482,9 @@ class AsyncSemanticSearch:
                             "line_end": chunk.line_end,
                             "embedding_model": embedding_model,
                             "embedding": embeddings[i] if embeddings else None,
+                            "chunk_context": chunk_context_json,
+                            "chunk_position": chunk_position,
+                            "source_document_id": source_document_id,
                             "created_at": now,
                         },
                     )
@@ -431,11 +495,15 @@ class AsyncSemanticSearch:
                             INSERT INTO document_chunks
                             (chunk_id, path_id, chunk_index, chunk_text, chunk_tokens,
                              start_offset, end_offset, line_start, line_end,
-                             embedding_model, created_at)
+                             embedding_model,
+                             chunk_context, chunk_position, source_document_id,
+                             created_at)
                             VALUES
                             (:chunk_id, :path_id, :chunk_index, :chunk_text, :chunk_tokens,
                              :start_offset, :end_offset, :line_start, :line_end,
-                             :embedding_model, :created_at)
+                             :embedding_model,
+                             :chunk_context, :chunk_position, :source_document_id,
+                             :created_at)
                         """),
                         {
                             "chunk_id": chunk_id,
@@ -448,6 +516,9 @@ class AsyncSemanticSearch:
                             "line_start": chunk.line_start,
                             "line_end": chunk.line_end,
                             "embedding_model": embedding_model,
+                            "chunk_context": chunk_context_json,
+                            "chunk_position": chunk_position,
+                            "source_document_id": source_document_id,
                             "created_at": now,
                         },
                     )

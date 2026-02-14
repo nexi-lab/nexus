@@ -66,6 +66,38 @@ class SourceExecutor(Protocol):
     ) -> SourceResult: ...
 
 
+@runtime_checkable
+class MetricsObserver(Protocol):
+    """Protocol for observing manifest resolution metrics.
+
+    Implementations receive hooks during resolution lifecycle:
+    - ``on_resolution_start()``: called once at the start of each resolution.
+    - ``on_source_complete()``: called per source after execution and truncation.
+    - ``on_resolution_end()``: called in finally block (always fires, even on error).
+
+    Note: If template pre-resolution fails (``ValueError``), ``on_source_complete``
+    is never called because no sources were executed. ``on_resolution_end`` is still
+    called with ``error=True``.
+    """
+
+    def on_resolution_start(self) -> None: ...
+
+    def on_source_complete(
+        self,
+        source_type: str,
+        source_name: str,
+        status: str,
+        elapsed_ms: float,
+    ) -> None: ...
+
+    def on_resolution_end(
+        self,
+        elapsed_ms: float,
+        source_count: int,
+        error: bool = False,
+    ) -> None: ...
+
+
 # ===========================================================================
 # ManifestResolver
 # ===========================================================================
@@ -101,12 +133,14 @@ class ManifestResolver:
         executors: dict[str, SourceExecutor],
         *,
         max_resolve_seconds: float = 5.0,
+        metrics_observer: MetricsObserver | None = None,
     ) -> None:
         if max_resolve_seconds <= 0:
             msg = f"max_resolve_seconds must be positive, got {max_resolve_seconds}"
             raise ValueError(msg)
         self._executors = dict(executors)  # defensive copy
         self._max_resolve_seconds = max_resolve_seconds
+        self._metrics = metrics_observer
 
     async def resolve(
         self,
@@ -137,46 +171,77 @@ class ManifestResolver:
             self._max_resolve_seconds,
         )
 
-        # Step 1: Pre-resolve templates in all sources (fail-fast, single pass — ARCH-1)
-        resolved_vars = self._pre_resolve_templates(sources, variables)
+        # Metrics: signal resolution start
+        if self._metrics is not None:
+            self._metrics.on_resolution_start()
 
-        # Step 2-4: Execute all sources with per-source + global timeout
-        results = await self._execute_all(sources, resolved_vars)
+        has_error = False
+        try:
+            # Step 1: Pre-resolve templates in all sources (fail-fast, single pass — ARCH-1)
+            resolved_vars = self._pre_resolve_templates(sources, variables)
 
-        # Step 5: Apply truncation
-        results = self._apply_truncation(sources, results)
+            # Step 2-4: Execute all sources with per-source + global timeout
+            results = await self._execute_all(sources, resolved_vars)
 
-        elapsed_ms = (time.monotonic() - start) * 1000
-        resolved_at = datetime.now(UTC).isoformat()
+            # Step 5: Apply truncation
+            results = self._apply_truncation(sources, results)
 
-        manifest_result = ManifestResult(
-            sources=tuple(results),
-            resolved_at=resolved_at,
-            total_ms=elapsed_ms,
-        )
+            # Metrics: record per-source metrics after truncation
+            if self._metrics is not None:
+                for r in results:
+                    self._metrics.on_source_complete(
+                        source_type=r.source_type,
+                        source_name=r.source_name,
+                        status=r.status,
+                        elapsed_ms=r.elapsed_ms,
+                    )
 
-        # Step 6-7: Write result files + _index.json (last)
-        output_dir.mkdir(parents=True, exist_ok=True)
-        await self._write_results(output_dir, sources, results, manifest_result)
+            elapsed_ms = (time.monotonic() - start) * 1000
+            resolved_at = datetime.now(UTC).isoformat()
 
-        # Step 8: Check for required failures
-        failed_required = [
-            r
-            for r, s in zip(results, sources, strict=True)
-            if s.required and r.status in ("error", "timeout", "skipped")
-        ]
-        if failed_required:
-            raise ManifestResolutionError(failed_sources=tuple(failed_required))
+            manifest_result = ManifestResult(
+                sources=tuple(results),
+                resolved_at=resolved_at,
+                total_ms=elapsed_ms,
+            )
 
-        success_count = sum(1 for r in results if r.status in ("ok", "truncated"))
-        logger.info(
-            "Manifest resolved: %d/%d sources succeeded in %.2fms",
-            success_count,
-            len(sources),
-            elapsed_ms,
-        )
+            # Step 6-7: Write result files + _index.json (last)
+            output_dir.mkdir(parents=True, exist_ok=True)
+            await self._write_results(output_dir, sources, results, manifest_result)
 
-        return manifest_result
+            # Step 8: Check for required failures
+            failed_required = [
+                r
+                for r, s in zip(results, sources, strict=True)
+                if s.required and r.status in ("error", "timeout", "skipped")
+            ]
+            if failed_required:
+                has_error = True
+                raise ManifestResolutionError(failed_sources=tuple(failed_required))
+
+            success_count = sum(1 for r in results if r.status in ("ok", "truncated"))
+            logger.info(
+                "Manifest resolved: %d/%d sources succeeded in %.2fms",
+                success_count,
+                len(sources),
+                elapsed_ms,
+            )
+
+            return manifest_result
+        except ManifestResolutionError:
+            raise
+        except Exception:
+            has_error = True
+            raise
+        finally:
+            # Metrics: always signal resolution end
+            if self._metrics is not None:
+                final_ms = (time.monotonic() - start) * 1000
+                self._metrics.on_resolution_end(
+                    elapsed_ms=final_ms,
+                    source_count=len(sources),
+                    error=has_error,
+                )
 
     # -------------------------------------------------------------------
     # Internal helpers

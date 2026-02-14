@@ -40,7 +40,7 @@
 #   │  │  │  (Leader)    │◄─►│  (Follower)  │◄─►│  (Vote-only) │           │ │
 #   │  │  │  HTTP :2026  │   │  HTTP :2027  │   │  gRPC :2128  │           │ │
 #   │  │  │  Raft :2126  │   │  Raft :2127  │   │  (no HTTP)   │           │ │
-#   │  │  │  sled+gRPC   │   │  sled+gRPC   │   │  log only    │           │ │
+#   │  │  │  redb+gRPC   │   │  redb+gRPC   │   │  log only    │           │ │
 #   │  │  └──────┬───────┘   └──────┬───────┘   └──────────────┘           │ │
 #   │  │         │                  │                                       │ │
 #   │  │         ▼                  ▼                                       │ │

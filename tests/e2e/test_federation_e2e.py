@@ -127,6 +127,26 @@ def _list_paths(result: dict) -> list[str]:
     return [f["path"] if isinstance(f, dict) else f for f in files]
 
 
+def _wait_replicated(
+    url: str,
+    parent: str,
+    expected_path: str,
+    api_key: str,
+    *,
+    msg: str = "File not replicated",
+    timeout: float = 10,
+) -> None:
+    """Poll list on a node until expected_path appears (Raft replication lag)."""
+    deadline = time.time() + timeout
+    while True:
+        ls = _jsonrpc(url, "list", {"path": parent}, api_key=api_key, timeout=5)
+        if "error" not in ls and expected_path in _list_paths(ls):
+            return
+        if time.time() >= deadline:
+            pytest.fail(f"{msg}: {expected_path} not in {parent} on {url}")
+        time.sleep(0.5)
+
+
 def _uid() -> str:
     """Short unique ID for test isolation."""
     return uuid.uuid4().hex[:8]
@@ -256,7 +276,7 @@ class TestCrossZoneFileLifecycle:
         # Step 4: List parent directory
         ls = _jsonrpc(node, "list", {"path": "/corp/"}, api_key=api_key)
         assert "error" not in ls, f"List failed: {ls}"
-        assert path in _list_paths(ls), f"File not in listing"
+        assert path in _list_paths(ls), "File not in listing"
 
         # Step 5: Delete
         d = _jsonrpc(node, "delete", {"path": path}, api_key=api_key)
@@ -320,7 +340,7 @@ class TestNestedMountTraversal:
         ls_corp = _jsonrpc(node, "list", {"path": "/corp/"}, api_key=api_key)
         assert "error" not in ls_corp
         corp_paths = _list_paths(ls_corp)
-        assert sales_path in corp_paths, f"Sales file missing from /corp/ listing"
+        assert sales_path in corp_paths, "Sales file missing from /corp/ listing"
 
 
 # ---------------------------------------------------------------------------
@@ -413,28 +433,23 @@ class TestCrossZoneCrossNodeReplication:
         )
         assert "error" not in w2
 
-        # Step 3: Wait for Raft replication
-        time.sleep(1.5)
-
-        # Step 4: Verify on node-2 (corp-eng zone)
-        ls1 = _jsonrpc(
+        # Step 3: Verify on node-2 (corp-eng zone) — retry until replicated
+        _wait_replicated(
             cluster["node2"],
-            "list",
-            {"path": "/corp/engineering/"},
-            api_key=api_key,
+            "/corp/engineering/",
+            eng_path,
+            api_key,
+            msg="corp-eng file not replicated to node-2",
         )
-        assert "error" not in ls1, f"List on node-2 failed: {ls1}"
-        assert eng_path in _list_paths(ls1), "File not replicated to node-2"
 
-        # Step 5: Verify on node-2 (family zone)
-        ls2 = _jsonrpc(
+        # Step 4: Verify on node-2 (family zone)
+        _wait_replicated(
             cluster["node2"],
-            "list",
-            {"path": "/family/"},
-            api_key=api_key,
+            "/family/",
+            family_path,
+            api_key,
+            msg="Family file not replicated to node-2",
         )
-        assert "error" not in ls2
-        assert family_path in _list_paths(ls2), "Family file not replicated"
 
 
 # ---------------------------------------------------------------------------
@@ -747,11 +762,16 @@ class TestMultiZoneAgentWorkflow:
         )
         assert "error" not in w6
 
-        # Step 9: Read all 6 files back from node-2 (cross-node + cross-zone)
-        time.sleep(1.5)
-        for p in [todo, readme, main_py, test_py, proposal, demo]:
-            r = _jsonrpc(node2, "read", {"path": p}, api_key=api_key)
-            assert "error" not in r, f"Cross-node read failed for {p}: {r}"
+        # Step 9: Verify all 6 files on node-2 (cross-node + cross-zone)
+        for p, parent in [
+            (todo, "/workspace/"),
+            (readme, f"{project_dir}/"),
+            (main_py, f"{project_dir}/"),
+            (test_py, f"{project_dir}/"),
+            (proposal, "/corp/sales/"),
+            (demo, "/family/"),
+        ]:
+            _wait_replicated(node2, parent, p, api_key, msg=f"Cross-node read failed for {p}")
 
 
 # ---------------------------------------------------------------------------

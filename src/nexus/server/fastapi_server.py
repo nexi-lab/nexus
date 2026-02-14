@@ -1758,9 +1758,8 @@ def _register_routes(app: FastAPI) -> None:
             "methods": list(_fastapi_app.state.exposed_methods.keys()),
         }
 
-    # Search, Memory, and Graph endpoints moved to api/v1/routers/ (#1288)
-
-    # Admin, Cache, Events, and Share endpoints moved to api/v1/routers/ (#1288)
+    # Domain endpoints extracted to api/v1/routers/ (#1288):
+    # search, memory, graph, admin, cache, events, share, locks, subscriptions, identity
 
     # ========================================================================
     # Streaming Endpoint for Local Backend

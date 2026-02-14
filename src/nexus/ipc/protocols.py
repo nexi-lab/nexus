@@ -43,6 +43,16 @@ class VFSOperations(Protocol):
         """Create a directory (including parents if needed)."""
         ...
 
+    async def count_dir(self, path: str, zone_id: str) -> int:
+        """Count entries in a directory without listing them.
+
+        More efficient than ``len(await self.list_dir(...))``.
+
+        Raises:
+            FileNotFoundError: If the directory does not exist.
+        """
+        ...
+
     async def exists(self, path: str, zone_id: str) -> bool:
         """Check if a path exists."""
         ...

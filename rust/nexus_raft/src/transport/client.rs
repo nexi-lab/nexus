@@ -3,12 +3,12 @@
 //! Provides a client to communicate with other Raft nodes using tonic gRPC.
 
 use super::proto::nexus::raft::{
-    zone_api_service_client::ZoneApiServiceClient,
     raft_command::Command as ProtoCommandVariant, raft_query::Query as ProtoQueryVariant,
-    zone_transport_service_client::ZoneTransportServiceClient, AcquireLock, DeleteMetadata, EcReplicationEntry,
-    ExtendLock, GetClusterInfoRequest, GetLockInfo, GetMetadata, ListMetadata, ProposeRequest,
-    PutMetadata, QueryRequest, RaftCommand, RaftQuery, ReleaseLock, ReplicateEntriesRequest,
-    StepMessageRequest,
+    zone_api_service_client::ZoneApiServiceClient,
+    zone_transport_service_client::ZoneTransportServiceClient, AcquireLock, DeleteMetadata,
+    EcReplicationEntry, ExtendLock, GetClusterInfoRequest, GetLockInfo, GetMetadata, ListMetadata,
+    ProposeRequest, PutMetadata, QueryRequest, RaftCommand, RaftQuery, ReleaseLock,
+    ReplicateEntriesRequest, StepMessageRequest,
 };
 use super::{NodeAddress, Result, TransportError};
 use std::collections::HashMap;

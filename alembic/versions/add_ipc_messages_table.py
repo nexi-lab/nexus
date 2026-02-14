@@ -5,7 +5,7 @@ Replaces the raw DDL previously inlined in
 by Alembic and accessed through SQLAlchemy ORM via RecordStoreABC.
 
 Revision ID: add_ipc_messages_table
-Revises: add_contextual_chunk_fields
+Revises: merge_spending_and_contextual
 Create Date: 2026-02-14
 """
 
@@ -18,7 +18,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "add_ipc_messages_table"
-down_revision: Union[str, Sequence[str], None] = "add_contextual_chunk_fields"
+down_revision: Union[str, Sequence[str], None] = "merge_spending_and_contextual"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

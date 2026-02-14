@@ -11,12 +11,12 @@
 )]
 
 use super::proto::nexus::raft::{
-    zone_api_service_client::ZoneApiServiceClient,
-    zone_api_service_server::{ZoneApiService, ZoneApiServiceServer},
     raft_command::Command as ProtoCommandVariant,
     raft_query::Query as ProtoQueryVariant,
     raft_query_response::Result as ProtoQueryResultVariant,
     raft_response::Result as ProtoResponseResultVariant,
+    zone_api_service_client::ZoneApiServiceClient,
+    zone_api_service_server::{ZoneApiService, ZoneApiServiceServer},
     zone_transport_service_server::{ZoneTransportService, ZoneTransportServiceServer},
     ClusterConfig as ProtoClusterConfig, GetClusterInfoRequest, GetClusterInfoResponse,
     GetMetadataResult, InviteZoneRequest, InviteZoneResponse, JoinZoneRequest, JoinZoneResponse,

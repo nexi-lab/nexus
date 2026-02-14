@@ -146,19 +146,7 @@ Driver selection is config-time: same binary, different `NEXUS_METASTORE`, `NEXU
 
 ---
 
-## 6. API Privilege Levels
-
-| Level | Who | API |
-|-------|-----|-----|
-| **File I/O** | Agents, users | `nx.read/write/list/mkdir/delete` — VFS routes transparently |
-| **Federation** | Ops scripts | `NexusFederation.share/join` |
-| **Zone lifecycle** | Admin | `nexus zone create/mount/unmount` (CLI) |
-
-Agents do NOT get mount/unmount APIs. Like Linux: processes don't mount filesystems.
-
----
-
-## 7. gRPC Services
+## 6. gRPC Services
 
 | Proto Service | Scope | Purpose |
 |---------------|-------|---------|
@@ -169,7 +157,7 @@ Named `Zone*` to match `ZoneConsensus` (Rust). Neither is an external API.
 
 ---
 
-## 8. RecordStoreABC Pattern
+## 7. RecordStoreABC Pattern
 
 Services consume `RecordStoreABC.session_factory` + SQLAlchemy ORM.
 Direct SQL or raw driver access is an abstraction break.
@@ -186,3 +174,4 @@ This ensures driver interchangeability (PostgreSQL ↔ SQLite) without code chan
 | Raft, gRPC, write flows | `federation-memo.md` §2–§5 |
 | Zone model, DT_MOUNT | `federation-memo.md` §5–§6 |
 | SC vs EC consistency | `federation-memo.md` §4.5 |
+| API privilege levels (agents vs ops vs admin) | `federation-memo.md` §6.10 |

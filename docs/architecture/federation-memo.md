@@ -746,6 +746,16 @@ your ZoneManager and call peers via RaftClient. No "remote federation proxy" sce
 - 1 arg → FUSE mount (existing)
 - 2 args with `peer:path` syntax → federation share/join (new)
 
+### 6.10 API Privilege Levels (DECIDED 2026-02-14)
+
+| Level | Who | API |
+|-------|-----|-----|
+| **File I/O** | Agents, users | `nx.read/write/list/mkdir/delete` — VFS routes transparently |
+| **Federation** | Ops scripts | `NexusFederation.share/join` |
+| **Zone lifecycle** | Admin | `nexus zone create/mount/unmount` (CLI) |
+
+Agents do NOT get mount/unmount APIs. Like Linux: processes don't mount filesystems.
+
 ---
 
 ## 7. Open Questions & Future Design Work

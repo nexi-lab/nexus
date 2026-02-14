@@ -840,8 +840,13 @@ jobs:
             exit 1
           fi
 
-          # Extract and decode base64 content (try 'content' key first, then 'data' for compatibility)
-          CSV_CONTENT=$(echo "$READ_CSV_RESPONSE" | python3 -c "import sys, json, base64; data=json.load(sys.stdin); result=data.get('result', {}); content=result.get('content') or result.get('data', ''); print(base64.b64decode(content).decode('utf-8')) if content else ''" 2>/dev/null || echo "")
+          # Debug: show raw response structure (first 500 chars)
+          echo "Raw response (first 500 chars): ${READ_CSV_RESPONSE:0:500}"
+
+          # Extract and decode base64 content
+          # The read RPC returns: {"result": {"__type__": "bytes", "data": "base64..."}}
+          # Handle both __type__/data wrapper and flat content/data formats
+          CSV_CONTENT=$(echo "$READ_CSV_RESPONSE" | python3 -c "import sys,json,base64;d=json.load(sys.stdin);r=d.get('result',{});b64=r.get('data','') if isinstance(r,dict) and (r.get('__type__')=='bytes' or 'content' not in r) else r.get('content','') if isinstance(r,dict) else '';print(base64.b64decode(b64).decode('utf-8') if b64 else '')" 2>&1 || echo "PARSE_ERROR")
 
           echo "CSV content (first 200 chars): ${CSV_CONTENT:0:200}"
           echo ""

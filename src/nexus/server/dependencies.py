@@ -50,28 +50,26 @@ def _reset_auth_cache() -> None:
     _AUTH_CACHE.clear()
 
 
-async def get_auth_result(
-    request: Request,
-    authorization: str | None = Header(None, alias="Authorization"),
-    x_agent_id: str | None = Header(None, alias="X-Agent-ID"),
-    x_nexus_subject: str | None = Header(None, alias="X-Nexus-Subject"),
-    x_nexus_zone_id: str | None = Header(None, alias="X-Nexus-Zone-ID"),
+async def resolve_auth(
+    app_state: Any,
+    authorization: str | None = None,
+    x_agent_id: str | None = None,
+    x_nexus_subject: str | None = None,
+    x_nexus_zone_id: str | None = None,
 ) -> dict[str, Any] | None:
-    """Validate authentication and return auth result.
-
-    Note: Timing added for performance debugging (Issue #perf19).
+    """Core authentication logic — usable from both HTTP and WebSocket contexts.
 
     Args:
-        request: FastAPI request (used to access app.state)
-        authorization: Bearer token from Authorization header
-        x_agent_id: Optional agent ID header
-        x_nexus_subject: Optional identity hint header (e.g., "user:alice")
-        x_nexus_zone_id: Optional zone hint header
+        app_state: Application state (request.app.state or websocket.app.state).
+        authorization: Bearer token or raw sk- token.
+        x_agent_id: Optional agent ID.
+        x_nexus_subject: Optional identity hint (e.g., "user:alice").
+        x_nexus_zone_id: Optional zone hint.
 
     Returns:
-        Auth result dict or None if not authenticated
+        Auth result dict or None if not authenticated.
     """
-    _state = request.app.state
+    _state = app_state
 
     def _parse_subject_header(value: str) -> tuple[str | None, str | None]:
         parts = value.split(":", 1)
@@ -182,6 +180,28 @@ async def get_auth_result(
         return None
 
     return None
+
+
+async def get_auth_result(
+    request: Request,
+    authorization: str | None = Header(None, alias="Authorization"),
+    x_agent_id: str | None = Header(None, alias="X-Agent-ID"),
+    x_nexus_subject: str | None = Header(None, alias="X-Nexus-Subject"),
+    x_nexus_zone_id: str | None = Header(None, alias="X-Nexus-Zone-ID"),
+) -> dict[str, Any] | None:
+    """FastAPI dependency wrapper for :func:`resolve_auth`.
+
+    Extracts headers via FastAPI DI and delegates to the core auth logic.
+    For WebSocket endpoints (where ``Depends()`` is unsupported), call
+    :func:`resolve_auth` directly with ``websocket.app.state``.
+    """
+    return await resolve_auth(
+        app_state=request.app.state,
+        authorization=authorization,
+        x_agent_id=x_agent_id,
+        x_nexus_subject=x_nexus_subject,
+        x_nexus_zone_id=x_nexus_zone_id,
+    )
 
 
 async def require_auth(

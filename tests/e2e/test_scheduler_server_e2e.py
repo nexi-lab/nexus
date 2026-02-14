@@ -155,7 +155,7 @@ async def client(
     mock_nexus_fs._event_bus = None
     mock_nexus_fs._coordination_client = None
 
-    from nexus.server.fastapi_server import _app_state, create_app, get_auth_result
+    from nexus.server.fastapi_server import _fastapi_app, create_app, get_auth_result
 
     app = create_app(
         nexus_fs=mock_nexus_fs,
@@ -189,7 +189,7 @@ async def client(
     ) as http_client:
         yield http_client
 
-    _app_state.async_nexus_fs = None
+    _fastapi_app.state.async_nexus_fs = None
     app.dependency_overrides.clear()
 
 
@@ -235,7 +235,7 @@ async def db_auth_client(
     mock_nexus_fs._event_bus = None
     mock_nexus_fs._coordination_client = None
 
-    from nexus.server.fastapi_server import _app_state, create_app
+    from nexus.server.fastapi_server import _fastapi_app, create_app
 
     app = create_app(
         nexus_fs=mock_nexus_fs,
@@ -250,7 +250,7 @@ async def db_auth_client(
     ) as http_client:
         yield (http_client, raw_key)
 
-    _app_state.async_nexus_fs = None
+    _fastapi_app.state.async_nexus_fs = None
 
     with SessionFactory() as session:
         session.execute(

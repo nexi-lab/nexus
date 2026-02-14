@@ -102,13 +102,13 @@ class TestAdaptiveRetrievalFastAPI:
         mock_daemon.search = mock_search
 
         # Patch app state
-        original_daemon = fastapi_server._app_state.search_daemon
-        fastapi_server._app_state.search_daemon = mock_daemon
+        original_daemon = fastapi_server._fastapi_app.state.search_daemon
+        fastapi_server._fastapi_app.state.search_daemon = mock_daemon
 
         yield {"daemon": mock_daemon, "calls": search_calls}
 
         # Restore
-        fastapi_server._app_state.search_daemon = original_daemon
+        fastapi_server._fastapi_app.state.search_daemon = original_daemon
 
     def test_search_endpoint_accepts_adaptive_k_param(self, test_client, mock_app_state):
         """Test that /api/search/query accepts adaptive_k parameter."""

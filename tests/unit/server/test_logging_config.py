@@ -40,7 +40,10 @@ def _capture_json_log(logger_name: str, message: str, **kwargs: object) -> dict:
 
     raw = buf.getvalue().strip()
     assert raw, "No log output captured"
-    return json.loads(raw)
+    # In parallel CI, stray log lines from other tests may leak into the
+    # buffer.  Parse only the last line which is our message.
+    last_line = raw.split("\n")[-1].strip()
+    return json.loads(last_line)
 
 
 def _capture_dev_log(logger_name: str, message: str, **kwargs: object) -> str:

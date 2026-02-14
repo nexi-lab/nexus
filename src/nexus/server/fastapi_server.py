@@ -25,15 +25,15 @@ Example:
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import hashlib
 import logging
 import os
-import time
 from collections.abc import Callable
 from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from anyio import to_thread
 from fastapi import (
@@ -42,15 +42,10 @@ from fastapi import (
     HTTPException,
     Query,
     Request,
-    WebSocket,
-    WebSocketDisconnect,
-)
-from fastapi import (
-    status as http_status,
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response, StreamingResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.gzip import GZipMiddleware
@@ -98,7 +93,6 @@ from nexus.server.streaming import (  # noqa: E402
 )
 
 if TYPE_CHECKING:
-    from nexus.core.async_nexus_fs import AsyncNexusFS
     from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
@@ -141,87 +135,18 @@ class WhoamiResponse(BaseModel):
 
 
 # ============================================================================
-# Lock API Models (Issue #1110, #1186)
+# Lock API Models — extracted to api/v1/models/locks.py (Issue #1288)
+# Re-exported for backward compatibility with tests/consumers.
 # ============================================================================
-
-# Maximum TTL: 24 hours. Configurable via NEXUS_LOCK_MAX_TTL env var.
-LOCK_MAX_TTL = float(os.environ.get("NEXUS_LOCK_MAX_TTL", "86400"))
-
-
-class LockAcquireRequest(BaseModel):
-    """Request model for acquiring a lock."""
-
-    path: str
-    timeout: float = Field(default=30.0, ge=0, le=3600, description="Max seconds to wait")
-    ttl: float = Field(default=30.0, ge=1, le=LOCK_MAX_TTL, description="Lock TTL in seconds")
-    max_holders: int = Field(default=1, ge=1, le=10000, description="1=mutex, >1=semaphore")
-    blocking: bool = True  # If false, return immediately without waiting
-
-
-class LockHolderResponse(BaseModel):
-    """Information about a single lock holder."""
-
-    lock_id: str
-    holder_info: str = ""
-    acquired_at: float  # Unix timestamp
-    expires_at: float  # Unix timestamp
-
-
-class LockInfoMutex(BaseModel):
-    """Lock info for a mutex (exclusive) lock."""
-
-    mode: Literal["mutex"] = "mutex"
-    max_holders: Literal[1] = 1
-    lock_id: str  # The single holder's lock ID
-    holder_info: str = ""
-    acquired_at: float
-    expires_at: float
-    fence_token: int
-
-
-class LockInfoSemaphore(BaseModel):
-    """Lock info for a semaphore (shared) lock."""
-
-    mode: Literal["semaphore"] = "semaphore"
-    max_holders: int
-    holders: list[LockHolderResponse]
-    current_holders: int
-    fence_token: int
-
-
-class LockResponse(BaseModel):
-    """Response model for lock operations."""
-
-    lock_id: str
-    path: str
-    mode: Literal["mutex", "semaphore"]
-    max_holders: int
-    ttl: int
-    expires_at: str  # ISO 8601 timestamp
-    fence_token: int
-
-
-class LockStatusResponse(BaseModel):
-    """Response model for lock status queries."""
-
-    path: str
-    locked: bool
-    lock_info: LockInfoMutex | LockInfoSemaphore | None = None
-
-
-class LockExtendRequest(BaseModel):
-    """Request model for extending a lock."""
-
-    lock_id: str
-    ttl: float = Field(default=30.0, ge=1, le=LOCK_MAX_TTL, description="New TTL in seconds")
-
-
-class LockListResponse(BaseModel):
-    """Response model for listing locks."""
-
-    locks: list[LockInfoMutex | LockInfoSemaphore]
-    count: int
-
+from nexus.server.api.v1.models.locks import LOCK_MAX_TTL as LOCK_MAX_TTL  # noqa: E402
+from nexus.server.api.v1.models.locks import LockAcquireRequest as LockAcquireRequest  # noqa: E402
+from nexus.server.api.v1.models.locks import LockExtendRequest as LockExtendRequest  # noqa: E402
+from nexus.server.api.v1.models.locks import LockHolderResponse as LockHolderResponse  # noqa: E402
+from nexus.server.api.v1.models.locks import LockInfoMutex as LockInfoMutex  # noqa: E402
+from nexus.server.api.v1.models.locks import LockInfoSemaphore as LockInfoSemaphore  # noqa: E402
+from nexus.server.api.v1.models.locks import LockListResponse as LockListResponse  # noqa: E402
+from nexus.server.api.v1.models.locks import LockResponse as LockResponse  # noqa: E402
+from nexus.server.api.v1.models.locks import LockStatusResponse as LockStatusResponse  # noqa: E402
 
 # Rate limiting and error handlers are now in rate_limiting.py and error_handlers.py.
 # The `limiter` global, rate limit constants, and handler functions are imported above.
@@ -248,7 +173,8 @@ async def to_thread_with_timeout(
     Args:
         func: Sync function to run in thread
         *args: Positional arguments for func
-        timeout: Timeout in seconds (uses _app_state.operation_timeout if None)
+        timeout: Timeout in seconds. Falls back to app.state.operation_timeout
+            if None and _fastapi_app is initialized, otherwise defaults to 30.0.
         **kwargs: Keyword arguments for func
 
     Returns:
@@ -257,7 +183,12 @@ async def to_thread_with_timeout(
     Raises:
         TimeoutError: If operation exceeds timeout
     """
-    effective_timeout = timeout if timeout is not None else _app_state.operation_timeout
+    if timeout is not None:
+        effective_timeout = timeout
+    elif _fastapi_app is not None:
+        effective_timeout = getattr(_fastapi_app.state, "operation_timeout", 30.0)
+    else:
+        effective_timeout = 30.0
     try:
         return await asyncio.wait_for(
             asyncio.to_thread(func, *args, **kwargs),
@@ -268,58 +199,18 @@ async def to_thread_with_timeout(
 
 
 # ============================================================================
-# Application State
+# Application State (Issue #1288: Eliminated AppState class)
 # ============================================================================
-
-
-class AppState:
-    """Application state container."""
-
-    def __init__(self) -> None:
-        self.nexus_fs: NexusFS | None = None
-        self.async_nexus_fs: AsyncNexusFS | None = None  # Issue #940: Native async fs
-        self.auth_provider: Any = None
-        self.api_key: str | None = None
-        self.exposed_methods: dict[str, Any] = {}
-        self.async_rebac_manager: Any = None
-        self.database_url: str | None = None
-        self.subscription_manager: Any = None  # SubscriptionManager for webhooks
-        # Thread pool and timeout settings (Issue #932)
-        self.thread_pool_size: int = 200
-        self.operation_timeout: float = 30.0
-        # Hot Search Daemon (Issue #951)
-        self.search_daemon: Any = None
-        self.search_daemon_enabled: bool = False
-        # Directory Grant Expander for large folder grants (Leopard-style)
-        self.directory_grant_expander: Any = None
-        # Cache factory for Dragonfly/Redis (Issue #1075)
-        self.cache_factory: Any = None
-        # WebSocket Manager for real-time events (Issue #1116)
-        self.websocket_manager: Any = None
-        # Reactive Subscription Manager for O(1) event matching (Issue #1167)
-        self.reactive_subscription_manager: Any = None
-        # Agent Registry for agent lifecycle (Issue #1240)
-        self.agent_registry: Any = None
-        # Async Agent Registry wrapper (Issue #1440)
-        self.async_agent_registry: Any = None
-        # Agent Event Log for sandbox lifecycle events (Issue #1307)
-        self.agent_event_log: Any = None
-        # SandboxAuthService for authenticated sandbox creation (Issue #1307)
-        self.sandbox_auth_service: Any = None
-        # WriteBack Service for bidirectional sync (Issue #1129)
-        self.write_back_service: Any = None
-        # Task Queue Runner (Issue #574)
-        self.task_runner: Any = None
-        # Event Log WAL for durable event persistence (Issue #1397)
-        self.event_log: Any = None
-        # Issue #1355: Agent identity KeyService
-        self.key_service: Any = None
-        # Issue #788: Chunked upload service
-        self.chunked_upload_service: Any = None
-
-
-# Global state (set during app creation)
-_app_state = AppState()
+#
+# All application state is stored on FastAPI's ``app.state`` namespace,
+# populated during ``create_app()``.  Kernel code (route handlers, RPC
+# dispatch, lifespan) accesses state via ``_fastapi_app.state``.
+# Extracted domain routers in ``api/v1/routers/`` use typed ``Depends()``
+# functions from ``api/v1/dependencies.py`` instead.
+#
+# Module-level reference to the FastAPI app instance.
+# Set once during ``create_app()``.
+_fastapi_app: FastAPI | None = None
 
 
 # Stream token signing/verification is now in streaming.py.
@@ -361,19 +252,19 @@ async def lifespan(_app: FastAPI) -> Any:
     # Configure thread pool size (Issue #932)
     # Increase from default 40 to prevent thread pool exhaustion under load
     limiter = to_thread.current_default_thread_limiter()
-    limiter.total_tokens = _app_state.thread_pool_size
+    limiter.total_tokens = _app.state.thread_pool_size
     logger.info(f"Thread pool size set to {limiter.total_tokens}")
 
     # Initialize async ReBAC manager if database URL provided
-    if _app_state.database_url:
+    if _app.state.database_url:
         try:
             from nexus.services.permissions.async_rebac_manager import (
                 AsyncReBACManager,
                 create_async_engine_from_url,
             )
 
-            engine = create_async_engine_from_url(_app_state.database_url)
-            _app_state.async_rebac_manager = AsyncReBACManager(engine)
+            engine = create_async_engine_from_url(_app.state.database_url)
+            _app.state.async_rebac_manager = AsyncReBACManager(engine)
             logger.info("Async ReBAC manager initialized")
 
             # Issue #940: Initialize AsyncNexusFS with permission enforcement
@@ -392,14 +283,14 @@ async def lifespan(_app: FastAPI) -> Any:
                 # Issue #1239: Create namespace manager for per-subject visibility
                 # Issue #1265: Factory function handles L3 persistent store wiring
                 namespace_manager = None
-                if enforce_permissions and hasattr(_app_state, "nexus_fs"):
-                    sync_rebac = getattr(_app_state.nexus_fs, "_rebac_manager", None)
+                if enforce_permissions and hasattr(_app.state, "nexus_fs"):
+                    sync_rebac = getattr(_app.state.nexus_fs, "_rebac_manager", None)
                     if sync_rebac:
                         from nexus.services.permissions.namespace_factory import (
                             create_namespace_manager,
                         )
 
-                        ns_record_store = getattr(_app_state.nexus_fs, "_record_store", None)
+                        ns_record_store = getattr(_app.state.nexus_fs, "_record_store", None)
                         namespace_manager = create_namespace_manager(
                             rebac_manager=sync_rebac,
                             record_store=ns_record_store,
@@ -414,20 +305,20 @@ async def lifespan(_app: FastAPI) -> Any:
                 # Note: agent_registry may not be initialized yet (it's set later
                 # in the lifespan), so use getattr with None default.
                 permission_enforcer = AsyncPermissionEnforcer(
-                    rebac_manager=_app_state.async_rebac_manager,
+                    rebac_manager=_app.state.async_rebac_manager,
                     namespace_manager=namespace_manager,
-                    agent_registry=getattr(_app_state, "agent_registry", None),
+                    agent_registry=getattr(_app.state, "agent_registry", None),
                 )
 
                 # Create AsyncNexusFS using the same RaftMetadataStore as sync NexusFS
-                _app_state.async_nexus_fs = AsyncNexusFS(
+                _app.state.async_nexus_fs = AsyncNexusFS(
                     backend_root=backend_root,
-                    metadata_store=_app_state.nexus_fs.metadata,
+                    metadata_store=_app.state.nexus_fs.metadata,
                     tenant_id=tenant_id,
                     enforce_permissions=enforce_permissions,
                     permission_enforcer=permission_enforcer,
                 )
-                await _app_state.async_nexus_fs.initialize()
+                await _app.state.async_nexus_fs.initialize()
                 logger.info(
                     f"AsyncNexusFS initialized (backend={backend_root}, "
                     f"tenant={tenant_id}, enforce_permissions={enforce_permissions})"
@@ -447,25 +338,25 @@ async def lifespan(_app: FastAPI) -> Any:
         cache_settings = CacheSettings.from_env()
 
         # Pass RecordStore for SQL-backed cache fallback when CacheStoreABC is not available
-        record_store = getattr(_app_state.nexus_fs, "_record_store", None)
+        record_store = getattr(_app.state.nexus_fs, "_record_store", None)
 
-        _app_state.cache_factory = await init_cache_factory(
+        _app.state.cache_factory = await init_cache_factory(
             cache_settings, record_store=record_store
         )
         logger.info(
-            f"Cache factory initialized with {_app_state.cache_factory.backend_name} backend"
+            f"Cache factory initialized with {_app.state.cache_factory.backend_name} backend"
         )
 
         # Wire up CacheStoreABC L2 cache to TigerCache (Issue #1106)
         # This enables L1 (memory) -> L2 (CacheStore) -> L3 (RecordStore) caching
-        if _app_state.cache_factory.has_cache_store:
+        if _app.state.cache_factory.has_cache_store:
             tiger_cache = getattr(
-                getattr(_app_state.nexus_fs, "_rebac_manager", None),
+                getattr(_app.state.nexus_fs, "_rebac_manager", None),
                 "_tiger_cache",
                 None,
             )
             if tiger_cache:
-                dragonfly_tiger = _app_state.cache_factory.get_tiger_cache()
+                dragonfly_tiger = _app.state.cache_factory.get_tiger_cache()
                 tiger_cache.set_dragonfly_cache(dragonfly_tiger)
                 logger.info(
                     "[TIGER] Dragonfly L2 cache wired up - "
@@ -477,7 +368,7 @@ async def lifespan(_app: FastAPI) -> Any:
     # Event Log WAL for durable event persistence (Issue #1397)
     # Service-layer concern: WAL-first durability for EventBus, not a kernel pillar.
     # Rust WAL preferred; falls back to PG; None if neither available (graceful degrade).
-    _app_state.event_log = None
+    _app.state.event_log = None
     try:
         from nexus.services.event_log import EventLogConfig, create_event_log
 
@@ -490,18 +381,18 @@ async def lifespan(_app: FastAPI) -> Any:
             segment_size_bytes=segment_size,
             sync_mode=sync_mode,  # type: ignore[arg-type]
         )
-        _app_state.event_log = create_event_log(
+        _app.state.event_log = create_event_log(
             event_log_config,
-            session_factory=getattr(_app_state, "session_factory", None),
+            session_factory=getattr(_app.state, "session_factory", None),
         )
-        if _app_state.event_log:
+        if _app.state.event_log:
             logger.info(f"Event log initialized (wal_dir={wal_dir}, sync_mode={sync_mode})")
     except Exception as e:
         logger.warning(f"Failed to initialize event log: {e}")
 
     # Issue #1397: Start event bus and wire event log for WAL-first persistence
-    if _app_state.nexus_fs:
-        event_bus_ref = getattr(_app_state.nexus_fs, "_event_bus", None)
+    if _app.state.nexus_fs:
+        event_bus_ref = getattr(_app.state.nexus_fs, "_event_bus", None)
         if event_bus_ref is not None:
             # Connect the underlying DragonflyClient (async init required)
             redis_client = getattr(event_bus_ref, "_redis", None)
@@ -521,8 +412,8 @@ async def lifespan(_app: FastAPI) -> Any:
 
             # Wire event_log into EventBus for WAL-first durability (Issue #1397).
             # EventBus.publish() handles: WAL append (if available) → Dragonfly fan-out.
-            if _app_state.event_log is not None:
-                event_bus_ref._event_log = _app_state.event_log
+            if _app.state.event_log is not None:
+                event_bus_ref._event_log = _app.state.event_log
                 logger.info("Event log wired into EventBus (WAL-first before pub/sub)")
 
     # WebSocket Manager for real-time events (Issue #1116)
@@ -532,14 +423,14 @@ async def lifespan(_app: FastAPI) -> Any:
 
         # Get event bus from NexusFS if available
         event_bus = None
-        if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "_event_bus"):
-            event_bus = _app_state.nexus_fs._event_bus
+        if _app.state.nexus_fs and hasattr(_app.state.nexus_fs, "_event_bus"):
+            event_bus = _app.state.nexus_fs._event_bus
 
-        _app_state.websocket_manager = WebSocketManager(
+        _app.state.websocket_manager = WebSocketManager(
             event_bus=event_bus,
-            reactive_manager=_app_state.reactive_subscription_manager,
+            reactive_manager=_app.state.reactive_subscription_manager,
         )
-        await _app_state.websocket_manager.start()
+        await _app.state.websocket_manager.start()
         logger.info("WebSocket manager started for real-time events")
     except Exception as e:
         logger.warning(f"Failed to start WebSocket manager: {e}")
@@ -547,7 +438,7 @@ async def lifespan(_app: FastAPI) -> Any:
     # Issue #1129/#1130: WriteBack Service for bidirectional sync (Nexus -> Backend)
     # Enable with NEXUS_WRITE_BACK=true (default: disabled)
     write_back_enabled = os.getenv("NEXUS_WRITE_BACK", "").lower() in ("true", "1", "yes")
-    if write_back_enabled and _app_state.nexus_fs:
+    if write_back_enabled and _app.state.nexus_fs:
         try:
             from nexus.services.change_log_store import ChangeLogStore
             from nexus.services.conflict_log_store import ConflictLogStore
@@ -556,16 +447,16 @@ async def lifespan(_app: FastAPI) -> Any:
             from nexus.services.sync_backlog_store import SyncBacklogStore
             from nexus.services.write_back_service import WriteBackService
 
-            gw = NexusFSGateway(_app_state.nexus_fs)
+            gw = NexusFSGateway(_app.state.nexus_fs)
 
             # ConflictLogStore is always available for the REST API,
             # even if the full write-back pipeline can't start (no event bus).
             conflict_log_store = ConflictLogStore(gw)
-            _app_state.conflict_log_store = conflict_log_store
+            _app.state.conflict_log_store = conflict_log_store
 
             wb_event_bus = None
-            if hasattr(_app_state.nexus_fs, "_event_bus"):
-                wb_event_bus = _app_state.nexus_fs._event_bus
+            if hasattr(_app.state.nexus_fs, "_event_bus"):
+                wb_event_bus = _app.state.nexus_fs._event_bus
             if wb_event_bus:
                 backlog_store = SyncBacklogStore(gw)
                 change_log_store = ChangeLogStore(gw)
@@ -581,7 +472,7 @@ async def lifespan(_app: FastAPI) -> Any:
                 except ValueError:
                     default_strategy = _policy_map.get(raw_policy, ConflictStrategy.KEEP_NEWER)
 
-                _app_state.write_back_service = WriteBackService(
+                _app.state.write_back_service = WriteBackService(
                     gateway=gw,
                     event_bus=wb_event_bus,
                     backlog_store=backlog_store,
@@ -589,7 +480,7 @@ async def lifespan(_app: FastAPI) -> Any:
                     default_strategy=default_strategy,
                     conflict_log_store=conflict_log_store,
                 )
-                await _app_state.write_back_service.start()
+                await _app.state.write_back_service.start()
                 logger.info("WriteBack service started for bidirectional sync")
             else:
                 logger.debug("WriteBack service skipped: no event bus available")
@@ -598,8 +489,8 @@ async def lifespan(_app: FastAPI) -> Any:
 
     # Connect Lock Manager coordination client (Issue #1186)
     # Required for distributed lock REST API endpoints
-    if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "_coordination_client"):
-        coord_client = _app_state.nexus_fs._coordination_client
+    if _app.state.nexus_fs and hasattr(_app.state.nexus_fs, "_coordination_client"):
+        coord_client = _app.state.nexus_fs._coordination_client
         if coord_client is not None:
             try:
                 await coord_client.connect()
@@ -617,7 +508,7 @@ async def lifespan(_app: FastAPI) -> Any:
     ) or (
         # Auto-enable if not explicitly disabled and database URL is set
         os.getenv("NEXUS_SEARCH_DAEMON", "").lower() not in ("false", "0", "no")
-        and _app_state.database_url
+        and _app.state.database_url
     )
 
     if search_daemon_enabled:
@@ -625,7 +516,7 @@ async def lifespan(_app: FastAPI) -> Any:
             from nexus.search.daemon import DaemonConfig, SearchDaemon, set_search_daemon
 
             config = DaemonConfig(
-                database_url=_app_state.database_url,
+                database_url=_app.state.database_url,
                 bm25s_index_dir=os.getenv("NEXUS_BM25S_INDEX_DIR", ".nexus-data/bm25s"),
                 db_pool_min_size=int(os.getenv("NEXUS_SEARCH_POOL_MIN", "10")),
                 db_pool_max_size=int(os.getenv("NEXUS_SEARCH_POOL_MAX", "50")),
@@ -642,22 +533,22 @@ async def lifespan(_app: FastAPI) -> Any:
                 entropy_alpha=float(os.getenv("NEXUS_ENTROPY_ALPHA", "0.5")),
             )
 
-            _app_state.search_daemon = SearchDaemon(config)
-            await _app_state.search_daemon.startup()
-            _app_state.search_daemon_enabled = True
-            set_search_daemon(_app_state.search_daemon)
+            _app.state.search_daemon = SearchDaemon(config)
+            await _app.state.search_daemon.startup()
+            _app.state.search_daemon_enabled = True
+            set_search_daemon(_app.state.search_daemon)
 
             # Set NexusFS reference for index refresh (Issue #1024)
-            _app_state.search_daemon._nexus_fs = _app_state.nexus_fs
+            _app.state.search_daemon._nexus_fs = _app.state.nexus_fs
 
-            stats = _app_state.search_daemon.get_stats()
+            stats = _app.state.search_daemon.get_stats()
             logger.info(
                 f"Search Daemon started: {stats['bm25_documents']} docs indexed, "
                 f"startup={stats['startup_time_ms']:.1f}ms"
             )
         except Exception as e:
             logger.warning(f"Failed to start Search Daemon: {e}")
-            _app_state.search_daemon_enabled = False
+            _app.state.search_daemon_enabled = False
     else:
         logger.debug("Search Daemon disabled (set NEXUS_SEARCH_DAEMON=true to enable)")
 
@@ -668,7 +559,7 @@ async def lifespan(_app: FastAPI) -> Any:
     # Issue #913: Track startup tasks to prevent memory leaks on shutdown
     warm_task: asyncio.Task[Any] | None = None
     backfill_task: asyncio.Task[Any] | None = None
-    if _app_state.nexus_fs and os.getenv("NEXUS_ENABLE_TIGER_WORKER", "false").lower() in (
+    if _app.state.nexus_fs and os.getenv("NEXUS_ENABLE_TIGER_WORKER", "false").lower() in (
         "true",
         "1",
         "yes",
@@ -677,7 +568,7 @@ async def lifespan(_app: FastAPI) -> Any:
             from nexus.server.background_tasks import tiger_cache_queue_task
 
             tiger_task = asyncio.create_task(
-                tiger_cache_queue_task(_app_state.nexus_fs, interval_seconds=60, batch_size=1)
+                tiger_cache_queue_task(_app.state.nexus_fs, interval_seconds=60, batch_size=1)
             )
             logger.info("Tiger Cache queue processor started (explicit enable)")
         except Exception as e:
@@ -688,9 +579,9 @@ async def lifespan(_app: FastAPI) -> Any:
     # Tiger Cache warm-up on startup (Issue #979)
     # Pre-load recently used permission bitmaps to avoid cold-start penalties
     # Non-blocking: runs in background thread, server starts immediately
-    if _app_state.nexus_fs:
+    if _app.state.nexus_fs:
         try:
-            tiger_cache = getattr(_app_state.nexus_fs._rebac_manager, "_tiger_cache", None)
+            tiger_cache = getattr(_app.state.nexus_fs._rebac_manager, "_tiger_cache", None)
             if tiger_cache:
                 warm_limit = int(os.getenv("NEXUS_TIGER_CACHE_WARM_LIMIT", "500"))
 
@@ -710,11 +601,11 @@ async def lifespan(_app: FastAPI) -> Any:
                     from nexus.services.permissions.tiger_cache import DirectoryGrantExpander
 
                     expander = DirectoryGrantExpander(
-                        engine=_app_state.nexus_fs._rebac_manager.engine,
+                        engine=_app.state.nexus_fs._rebac_manager.engine,
                         tiger_cache=tiger_cache,
-                        metadata_store=_app_state.nexus_fs.metadata,
+                        metadata_store=_app.state.nexus_fs.metadata,
                     )
-                    _app_state.directory_grant_expander = expander
+                    _app.state.directory_grant_expander = expander
 
                     async def _run_grant_expander() -> None:
                         await expander.run_worker()
@@ -729,9 +620,9 @@ async def lifespan(_app: FastAPI) -> Any:
 
     # Auto-backfill sparse directory index for system paths (Issue #perf19)
     # This ensures /skills and other shared paths have index entries for O(1) lookups
-    if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "metadata"):
+    if _app.state.nexus_fs and hasattr(_app.state.nexus_fs, "metadata"):
         try:
-            _nexus_fs = _app_state.nexus_fs  # Capture for closure
+            _nexus_fs = _app.state.nexus_fs  # Capture for closure
 
             async def _backfill_system_paths() -> None:
                 import asyncio
@@ -758,11 +649,11 @@ async def lifespan(_app: FastAPI) -> Any:
     # Issue #1076: File cache warmup on server startup
     # Pre-load metadata for commonly accessed paths to reduce cold-start latency
     # Always enabled - runs in background, lightweight (metadata only), no downside
-    if _app_state.nexus_fs:
+    if _app.state.nexus_fs:
         try:
             warmup_max_files = int(os.getenv("NEXUS_CACHE_WARMUP_MAX_FILES", "1000"))
             warmup_depth = int(os.getenv("NEXUS_CACHE_WARMUP_DEPTH", "2"))
-            _nexus_fs_warmup = _app_state.nexus_fs  # Capture for closure
+            _nexus_fs_warmup = _app.state.nexus_fs  # Capture for closure
 
             async def _warmup_file_cache() -> None:
                 from nexus.cache.warmer import CacheWarmer, WarmupConfig
@@ -792,39 +683,39 @@ async def lifespan(_app: FastAPI) -> Any:
             logger.debug(f"[WARMUP] Server startup warmup skipped: {e}")
 
     # Issue #1240: Initialize AgentRegistry for agent lifecycle tracking
-    if _app_state.nexus_fs and getattr(_app_state.nexus_fs, "SessionLocal", None):
+    if _app.state.nexus_fs and getattr(_app.state.nexus_fs, "SessionLocal", None):
         try:
             from nexus.core.agent_registry import AgentRegistry
 
-            _app_state.agent_registry = AgentRegistry(
-                session_factory=_app_state.nexus_fs.SessionLocal,
-                entity_registry=getattr(_app_state.nexus_fs, "_entity_registry", None),
+            _app.state.agent_registry = AgentRegistry(
+                session_factory=_app.state.nexus_fs.SessionLocal,
+                entity_registry=getattr(_app.state.nexus_fs, "_entity_registry", None),
                 flush_interval=60,
             )
             # Inject into NexusFS for RPC methods
-            _app_state.nexus_fs._agent_registry = _app_state.agent_registry
+            _app.state.nexus_fs._agent_registry = _app.state.agent_registry
 
             # Wire into sync PermissionEnforcer
-            perm_enforcer = getattr(_app_state.nexus_fs, "_permission_enforcer", None)
+            perm_enforcer = getattr(_app.state.nexus_fs, "_permission_enforcer", None)
             if perm_enforcer is not None:
-                perm_enforcer.agent_registry = _app_state.agent_registry
+                perm_enforcer.agent_registry = _app.state.agent_registry
 
             # Issue #1440: Create async wrapper for protocol conformance
             from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
 
-            _app_state.async_agent_registry = AsyncAgentRegistry(_app_state.agent_registry)
+            _app.state.async_agent_registry = AsyncAgentRegistry(_app.state.agent_registry)
 
             logger.info("[AGENT-REG] AgentRegistry initialized and wired")
         except Exception as e:
             logger.warning(f"[AGENT-REG] Failed to initialize AgentRegistry: {e}")
-            _app_state.agent_registry = None
-            _app_state.async_agent_registry = None
+            _app.state.agent_registry = None
+            _app.state.async_agent_registry = None
     else:
-        _app_state.agent_registry = None
-        _app_state.async_agent_registry = None
+        _app.state.agent_registry = None
+        _app.state.async_agent_registry = None
 
     # Issue #1355: Initialize KeyService for agent identity
-    if _app_state.nexus_fs and getattr(_app_state.nexus_fs, "SessionLocal", None):
+    if _app.state.nexus_fs and getattr(_app.state.nexus_fs, "SessionLocal", None):
         try:
             from nexus.identity.crypto import IdentityCrypto
             from nexus.identity.key_service import KeyService
@@ -833,53 +724,53 @@ async def lifespan(_app: FastAPI) -> Any:
 
             # Ensure agent_keys table exists (AgentKeyModel is imported lazily,
             # after SQLAlchemyRecordStore.create_all already ran)
-            _nx_engine = getattr(_app_state.nexus_fs, "_sql_engine", None)
+            _nx_engine = getattr(_app.state.nexus_fs, "_sql_engine", None)
             if _nx_engine is not None:
                 AgentKeyModel.__table__.create(_nx_engine, checkfirst=True)
 
             # Reuse OAuthCrypto for Fernet encryption of private keys
-            _db_url = _app_state.database_url or "sqlite:///nexus.db"
+            _db_url = _app.state.database_url or "sqlite:///nexus.db"
             _identity_oauth_crypto = OAuthCrypto(db_url=_db_url)
             _identity_crypto = IdentityCrypto(oauth_crypto=_identity_oauth_crypto)
 
-            _app_state.key_service = KeyService(
-                session_factory=_app_state.nexus_fs.SessionLocal,
+            _app.state.key_service = KeyService(
+                session_factory=_app.state.nexus_fs.SessionLocal,
                 crypto=_identity_crypto,
             )
             # Inject into NexusFS for register_agent integration
-            _app_state.nexus_fs._key_service = _app_state.key_service
+            _app.state.nexus_fs._key_service = _app.state.key_service
 
             logger.info("[KYA] KeyService initialized and wired")
         except Exception as e:
             logger.warning(f"[KYA] Failed to initialize KeyService: {e}")
-            _app_state.key_service = None
+            _app.state.key_service = None
     else:
-        _app_state.key_service = None
+        _app.state.key_service = None
 
     # Issue #788: Initialize ChunkedUploadService for tus.io resumable uploads
     # Prefer the pre-configured service from factory (reads NEXUS_UPLOAD_* env vars).
     # Fall back to creating one here if the factory didn't provide it.
     _upload_cleanup_task = None
     _factory_upload_svc = (
-        _app_state.nexus_fs._service_extras.get("chunked_upload_service")
-        if _app_state.nexus_fs
+        _app.state.nexus_fs._service_extras.get("chunked_upload_service")
+        if _app.state.nexus_fs
         else None
     )
     if _factory_upload_svc is not None:
-        _app_state.chunked_upload_service = _factory_upload_svc
+        _app.state.chunked_upload_service = _factory_upload_svc
         _upload_cleanup_task = asyncio.create_task(
-            _app_state.chunked_upload_service.start_cleanup_loop()
+            _app.state.chunked_upload_service.start_cleanup_loop()
         )
         logger.info("[TUS] ChunkedUploadService initialized from factory with background cleanup")
-    elif _app_state.nexus_fs and getattr(_app_state.nexus_fs, "SessionLocal", None):
+    elif _app.state.nexus_fs and getattr(_app.state.nexus_fs, "SessionLocal", None):
         try:
             from nexus.services.chunked_upload_service import (
                 ChunkedUploadConfig,
                 ChunkedUploadService,
             )
 
-            _backend = getattr(_app_state.nexus_fs, "backend", None)
-            _session_factory = _app_state.nexus_fs.SessionLocal
+            _backend = getattr(_app.state.nexus_fs, "backend", None)
+            _session_factory = _app.state.nexus_fs.SessionLocal
             if _backend and _session_factory:
                 # Build config from env vars for fallback path
                 import os as _os
@@ -897,58 +788,58 @@ async def lifespan(_app: FastAPI) -> Any:
                     if _v is not None:
                         _upload_kwargs[_key] = int(_v)
 
-                _app_state.chunked_upload_service = ChunkedUploadService(
+                _app.state.chunked_upload_service = ChunkedUploadService(
                     session_factory=_session_factory,
                     backend=_backend,
-                    metadata_store=getattr(_app_state.nexus_fs, "metadata", None),
+                    metadata_store=getattr(_app.state.nexus_fs, "metadata", None),
                     config=ChunkedUploadConfig(**_upload_kwargs),
                 )
                 _upload_cleanup_task = asyncio.create_task(
-                    _app_state.chunked_upload_service.start_cleanup_loop()
+                    _app.state.chunked_upload_service.start_cleanup_loop()
                 )
                 logger.info("[TUS] ChunkedUploadService initialized with background cleanup")
         except Exception as e:
             logger.warning(f"[TUS] Failed to initialize ChunkedUploadService: {e}")
-            _app_state.chunked_upload_service = None
+            _app.state.chunked_upload_service = None
     else:
-        _app_state.chunked_upload_service = None
+        _app.state.chunked_upload_service = None
 
     # Issue #1240: Start agent heartbeat and stale detection background tasks
     _heartbeat_task = None
     _stale_detection_task = None
-    if _app_state.agent_registry:
+    if _app.state.agent_registry:
         from nexus.server.background_tasks import (
             heartbeat_flush_task,
             stale_agent_detection_task,
         )
 
         _heartbeat_task = asyncio.create_task(
-            heartbeat_flush_task(_app_state.agent_registry, interval_seconds=60)
+            heartbeat_flush_task(_app.state.agent_registry, interval_seconds=60)
         )
         _stale_detection_task = asyncio.create_task(
-            stale_agent_detection_task(_app_state.agent_registry, interval_seconds=300)
+            stale_agent_detection_task(_app.state.agent_registry, interval_seconds=300)
         )
         logger.info("[AGENT-REG] Background heartbeat flush and stale detection tasks started")
 
     # Issue #1307: Initialize SandboxAuthService for authenticated sandbox creation
-    if _app_state.nexus_fs and not _app_state.agent_registry:
+    if _app.state.nexus_fs and not _app.state.agent_registry:
         logger.info(
             "[SANDBOX-AUTH] AgentRegistry not available, SandboxAuthService will not be initialized"
         )
-    if _app_state.nexus_fs and _app_state.agent_registry:
+    if _app.state.nexus_fs and _app.state.agent_registry:
         try:
             from nexus.sandbox.auth_service import SandboxAuthService
             from nexus.sandbox.events import AgentEventLog
             from nexus.sandbox.sandbox_manager import SandboxManager
 
-            session_factory = getattr(_app_state.nexus_fs, "SessionLocal", None)
+            session_factory = getattr(_app.state.nexus_fs, "SessionLocal", None)
             if session_factory and callable(session_factory):
                 # Create AgentEventLog for sandbox lifecycle audit
-                _app_state.agent_event_log = AgentEventLog(session_factory=session_factory)
+                _app.state.agent_event_log = AgentEventLog(session_factory=session_factory)
 
                 # Create SandboxManager for SandboxAuthService
                 # (separate from NexusFS's lazy sandbox manager — different layers)
-                sandbox_config = getattr(_app_state.nexus_fs, "_config", None)
+                sandbox_config = getattr(_app.state.nexus_fs, "_config", None)
                 sandbox_mgr = SandboxManager(
                     session_factory=session_factory,
                     e2b_api_key=os.getenv("E2B_API_KEY"),
@@ -960,14 +851,14 @@ async def lifespan(_app: FastAPI) -> Any:
                 # Get NamespaceManager if available (best-effort)
                 # Issue #1265: Factory function handles L3 persistent store wiring
                 namespace_manager = None
-                sync_rebac = getattr(_app_state.nexus_fs, "_rebac_manager", None)
+                sync_rebac = getattr(_app.state.nexus_fs, "_rebac_manager", None)
                 if sync_rebac:
                     try:
                         from nexus.services.permissions.namespace_factory import (
                             create_namespace_manager,
                         )
 
-                        ns_record_store = getattr(_app_state.nexus_fs, "_record_store", None)
+                        ns_record_store = getattr(_app.state.nexus_fs, "_record_store", None)
                         namespace_manager = create_namespace_manager(
                             rebac_manager=sync_rebac,
                             record_store=ns_record_store,
@@ -979,11 +870,11 @@ async def lifespan(_app: FastAPI) -> Any:
                             e,
                         )
 
-                _app_state.sandbox_auth_service = SandboxAuthService(
-                    agent_registry=_app_state.agent_registry,
+                _app.state.sandbox_auth_service = SandboxAuthService(
+                    agent_registry=_app.state.agent_registry,
                     sandbox_manager=sandbox_mgr,
                     namespace_manager=namespace_manager,
-                    event_log=_app_state.agent_event_log,
+                    event_log=_app.state.agent_event_log,
                     budget_enforcement=False,
                 )
                 logger.info("[SANDBOX-AUTH] SandboxAuthService initialized")
@@ -992,7 +883,7 @@ async def lifespan(_app: FastAPI) -> Any:
 
     # Issue #1212: Initialize SchedulerService if PostgreSQL database is available
     _scheduler_pool = None
-    if _app_state.database_url and "postgresql" in _app_state.database_url:
+    if _app.state.database_url and "postgresql" in _app.state.database_url:
         try:
             import asyncpg
 
@@ -1001,7 +892,7 @@ async def lifespan(_app: FastAPI) -> Any:
             from nexus.scheduler.service import SchedulerService
 
             # Convert SQLAlchemy URL to asyncpg DSN
-            pg_dsn = _app_state.database_url.replace("+asyncpg", "").replace("+psycopg2", "")
+            pg_dsn = _app.state.database_url.replace("+asyncpg", "").replace("+psycopg2", "")
             _scheduler_pool = await asyncpg.create_pool(pg_dsn, min_size=2, max_size=5)
 
             # Create scheduled_tasks table if it doesn't exist
@@ -1046,45 +937,21 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.warning(f"Failed to initialize Scheduler service: {e}")
 
-    # Issue #1358: Initialize SpendingPolicyService if PostgreSQL available
-    if _app_state.database_url and "postgresql" in _app_state.database_url:
-        try:
-            from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
-            from nexus.pay.spending_policy_service import SpendingPolicyService
-
-            _sp_db_url = _app_state.database_url
-            if "+asyncpg" not in _sp_db_url and "postgresql://" in _sp_db_url:
-                _sp_db_url = _sp_db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
-
-            _sp_engine = create_async_engine(_sp_db_url, pool_size=3, max_overflow=2)
-            _sp_session_factory = async_sessionmaker(
-                _sp_engine, class_=AsyncSession, expire_on_commit=False
-            )
-            _app.state.spending_policy_service = SpendingPolicyService(
-                session_factory=_sp_session_factory
-            )
-            logger.info("SpendingPolicyService initialized (PostgreSQL)")
-        except ImportError as e:
-            logger.debug(f"SpendingPolicyService not available: {e}")
-        except Exception as e:
-            logger.warning(f"Failed to initialize SpendingPolicyService: {e}")
-
     # Issue #574: Task Queue Engine - Start background worker
     task_runner_task: asyncio.Task[Any] | None = None
-    if _app_state.nexus_fs:
+    if _app.state.nexus_fs:
         try:
             from nexus.tasks import is_available
 
             if is_available():
-                service = _app_state.nexus_fs.task_queue_service
+                service = _app.state.nexus_fs.task_queue_service
                 engine = service.get_engine()
 
                 from nexus.tasks.runner import AsyncTaskRunner
 
                 runner = AsyncTaskRunner(engine=engine, max_workers=4)
                 service.set_runner(runner)
-                _app_state.task_runner = runner
+                _app.state.task_runner = runner
                 task_runner_task = asyncio.create_task(runner.run())
                 logger.info("Task Queue runner started (4 workers)")
             else:
@@ -1107,8 +974,8 @@ async def lifespan(_app: FastAPI) -> Any:
     # Issue #574: Stop Task Queue runner
     if task_runner_task:
         try:
-            if _app_state.task_runner:
-                await _app_state.task_runner.shutdown()
+            if _app.state.task_runner:
+                await _app.state.task_runner.shutdown()
             task_runner_task.cancel()
             with suppress(asyncio.CancelledError):
                 await task_runner_task
@@ -1125,33 +992,33 @@ async def lifespan(_app: FastAPI) -> Any:
             logger.warning(f"Error closing scheduler pool: {e}")
 
     # Issue #940: Shutdown AsyncNexusFS
-    if _app_state.async_nexus_fs:
+    if _app.state.async_nexus_fs:
         try:
-            await _app_state.async_nexus_fs.close()
+            await _app.state.async_nexus_fs.close()
             logger.info("AsyncNexusFS stopped")
         except Exception as e:
             logger.warning(f"Error shutting down AsyncNexusFS: {e}")
 
     # Shutdown Search Daemon (Issue #951)
-    if _app_state.search_daemon:
+    if _app.state.search_daemon:
         try:
-            await _app_state.search_daemon.shutdown()
+            await _app.state.search_daemon.shutdown()
             logger.info("Search Daemon stopped")
         except Exception as e:
             logger.warning(f"Error shutting down Search Daemon: {e}")
 
     # Issue #1129: Stop WriteBack Service
-    if _app_state.write_back_service:
+    if _app.state.write_back_service:
         try:
-            await _app_state.write_back_service.stop()
+            await _app.state.write_back_service.stop()
             logger.info("WriteBack service stopped")
         except Exception as e:
             logger.warning(f"Error shutting down WriteBack service: {e}")
 
     # Stop DirectoryGrantExpander worker
-    if hasattr(_app_state, "directory_grant_expander") and _app_state.directory_grant_expander:
+    if hasattr(_app.state, "directory_grant_expander") and _app.state.directory_grant_expander:
         try:
-            _app_state.directory_grant_expander.stop()
+            _app.state.directory_grant_expander.stop()
             logger.info("DirectoryGrantExpander worker stopped")
         except Exception as e:
             logger.debug(f"Error stopping DirectoryGrantExpander: {e}")
@@ -1162,23 +1029,23 @@ async def lifespan(_app: FastAPI) -> Any:
             task_ref.cancel()
             with suppress(asyncio.CancelledError):
                 await task_ref
-    if _app_state.agent_registry:
+    if _app.state.agent_registry:
         try:
-            _app_state.agent_registry.flush_heartbeats()
+            _app.state.agent_registry.flush_heartbeats()
             logger.info("[AGENT-REG] Final heartbeat flush completed")
         except Exception:
             logger.warning("[AGENT-REG] Final heartbeat flush failed", exc_info=True)
 
     # Issue #1397: Close Event Log WAL
-    if _app_state.event_log:
+    if _app.state.event_log:
         try:
-            await _app_state.event_log.close()
+            await _app.state.event_log.close()
             logger.info("Event log closed")
         except Exception as e:
             logger.warning(f"Error closing event log: {e}")
 
     # SandboxManager now uses session-per-operation — no persistent session to close
-    if _app_state.sandbox_auth_service:
+    if _app.state.sandbox_auth_service:
         logger.info(
             "[SANDBOX-AUTH] SandboxAuthService cleaned up (session-per-op, no persistent session)"
         )
@@ -1203,8 +1070,8 @@ async def lifespan(_app: FastAPI) -> Any:
         logger.debug("Sparse index backfill task cancelled")
 
     # Issue #913: Cancel any pending event tasks in NexusFS
-    if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "_event_tasks"):
-        event_tasks = _app_state.nexus_fs._event_tasks.copy()
+    if _app.state.nexus_fs and hasattr(_app.state.nexus_fs, "_event_tasks"):
+        event_tasks = _app.state.nexus_fs._event_tasks.copy()
         for task in event_tasks:
             task.cancel()
         if event_tasks:
@@ -1213,16 +1080,16 @@ async def lifespan(_app: FastAPI) -> Any:
             logger.info(f"Cancelled {len(event_tasks)} pending event tasks")
 
     # Shutdown WebSocket manager (Issue #1116)
-    if _app_state.websocket_manager:
+    if _app.state.websocket_manager:
         try:
-            await _app_state.websocket_manager.stop()
+            await _app.state.websocket_manager.stop()
             logger.info("WebSocket manager stopped")
         except Exception as e:
             logger.warning(f"Error shutting down WebSocket manager: {e}")
 
     # Disconnect Lock Manager coordination client (Issue #1186)
-    if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "_coordination_client"):
-        coord_client = _app_state.nexus_fs._coordination_client
+    if _app.state.nexus_fs and hasattr(_app.state.nexus_fs, "_coordination_client"):
+        coord_client = _app.state.nexus_fs._coordination_client
         if coord_client is not None:
             try:
                 await coord_client.disconnect()
@@ -1230,19 +1097,19 @@ async def lifespan(_app: FastAPI) -> Any:
             except Exception as e:
                 logger.debug(f"Error disconnecting coordination client: {e}")
 
-    if _app_state.subscription_manager:
-        await _app_state.subscription_manager.close()
+    if _app.state.subscription_manager:
+        await _app.state.subscription_manager.close()
         # Clear global singleton (Issue #1115)
         from nexus.server.subscriptions import set_subscription_manager
 
         set_subscription_manager(None)
-    if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "close"):
-        _app_state.nexus_fs.close()
+    if _app.state.nexus_fs and hasattr(_app.state.nexus_fs, "close"):
+        _app.state.nexus_fs.close()
 
     # Shutdown cache factory (Issue #1075)
-    if hasattr(_app_state, "cache_factory") and _app_state.cache_factory:
+    if hasattr(_app.state, "cache_factory") and _app.state.cache_factory:
         try:
-            await _app_state.cache_factory.shutdown()
+            await _app.state.cache_factory.shutdown()
             logger.info("Cache factory stopped")
         except Exception as e:
             logger.warning(f"Error shutting down cache factory: {e}")
@@ -1282,23 +1149,55 @@ def create_app(
     Returns:
         Configured FastAPI application
     """
-    # Store in global state
-    _app_state.nexus_fs = nexus_fs
-    _app_state.api_key = api_key
-    _app_state.auth_provider = auth_provider
-    _app_state.database_url = database_url
+    global _fastapi_app
+
+    # Create app first so we can store state on it
+    app = FastAPI(
+        title="Nexus RPC Server",
+        description="AI-Native Distributed Filesystem API",
+        version="1.0.0",
+        lifespan=lifespan,
+    )
+
+    # Set module-level reference for kernel code access
+    _fastapi_app = app
+
+    # Store application state on app.state (replaces AppState class)
+    app.state.nexus_fs = nexus_fs
+    app.state.api_key = api_key
+    app.state.auth_provider = auth_provider
+    app.state.database_url = database_url
 
     # Thread pool and timeout settings (Issue #932)
-    # Read from parameter, environment variable, or use default
-    _app_state.thread_pool_size = thread_pool_size or int(
+    app.state.thread_pool_size = thread_pool_size or int(
         os.environ.get("NEXUS_THREAD_POOL_SIZE", "200")
     )
-    _app_state.operation_timeout = operation_timeout or float(
+    app.state.operation_timeout = operation_timeout or float(
         os.environ.get("NEXUS_OPERATION_TIMEOUT", "30.0")
     )
 
     # Discover exposed methods
-    _app_state.exposed_methods = _discover_exposed_methods(nexus_fs)
+    app.state.exposed_methods = _discover_exposed_methods(nexus_fs)
+
+    # Initialize defaults for optional services (set during lifespan)
+    app.state.async_nexus_fs = None
+    app.state.async_rebac_manager = None
+    app.state.subscription_manager = None
+    app.state.search_daemon = None
+    app.state.search_daemon_enabled = False
+    app.state.directory_grant_expander = None
+    app.state.cache_factory = None
+    app.state.websocket_manager = None
+    app.state.reactive_subscription_manager = None
+    app.state.agent_registry = None
+    app.state.async_agent_registry = None
+    app.state.agent_event_log = None
+    app.state.sandbox_auth_service = None
+    app.state.write_back_service = None
+    app.state.task_runner = None
+    app.state.event_log = None
+    app.state.key_service = None
+    app.state.chunked_upload_service = None
 
     # Initialize subscription manager if we have a metadata store
     try:
@@ -1308,22 +1207,12 @@ def create_app(
                 set_subscription_manager,
             )
 
-            _app_state.subscription_manager = SubscriptionManager(nexus_fs.SessionLocal)
-            # Inject into NexusFS for automatic event broadcasting
-            nexus_fs.subscription_manager = _app_state.subscription_manager
-            # Set global singleton for FUSE event firing (Issue #1115)
-            set_subscription_manager(_app_state.subscription_manager)
+            app.state.subscription_manager = SubscriptionManager(nexus_fs.SessionLocal)
+            nexus_fs.subscription_manager = app.state.subscription_manager
+            set_subscription_manager(app.state.subscription_manager)
             logger.info("Subscription manager initialized and injected into NexusFS")
     except Exception as e:
         logger.warning(f"Failed to initialize subscription manager: {e}")
-
-    # Create app
-    app = FastAPI(
-        title="Nexus RPC Server",
-        description="AI-Native Distributed Filesystem API",
-        version="1.0.0",
-        lifespan=lifespan,
-    )
 
     # Add CORS middleware
     app.add_middleware(
@@ -1414,6 +1303,15 @@ def create_app(
 
     # Register routes
     _register_routes(app)
+
+    # Register extracted v1 domain routers (#1288)
+    try:
+        from nexus.server.api.v1.versioning import build_v1_registry, register_v1_routers
+
+        v1_registry = build_v1_registry()
+        register_v1_routers(app, v1_registry)
+    except Exception as e:
+        logger.warning("Failed to register v1 routers: %s", e)
 
     # Register NexusFS instance for zone routes, migration, and user provisioning.
     # This must happen unconditionally (not only when OAuth is configured).
@@ -1528,143 +1426,6 @@ def _discover_exposed_methods(nexus_fs: NexusFS) -> dict[str, Any]:
     return exposed
 
 
-async def _graph_enhanced_search(
-    query: str,
-    search_type: str,
-    limit: int,
-    path_filter: str | None,
-    alpha: float,
-    graph_mode: str,
-) -> list:
-    """Execute graph-enhanced search using GraphEnhancedRetriever (Issue #1040).
-
-    Creates a GraphEnhancedRetriever on-the-fly and executes the search.
-    This helper is called when graph_mode is not "none".
-
-    Args:
-        query: Search query text
-        search_type: Base search type (keyword, semantic, hybrid)
-        limit: Maximum results
-        path_filter: Optional path prefix filter
-        alpha: Semantic vs keyword weight
-        graph_mode: Graph enhancement mode (low, high, dual)
-
-    Returns:
-        List of GraphEnhancedSearchResult
-    """
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
-    from nexus.search.graph_retrieval import (
-        GraphEnhancedRetriever,
-        GraphRetrievalConfig,
-    )
-    from nexus.search.graph_store import GraphStore
-    from nexus.search.semantic import SemanticSearchResult
-
-    if not _app_state.nexus_fs:
-        raise RuntimeError("NexusFS not initialized")
-
-    # Get database URL
-    db_url = _app_state.database_url
-    if not db_url:
-        db_url = (
-            _app_state.nexus_fs._record_store.database_url
-            if _app_state.nexus_fs._record_store
-            else None
-        )
-
-    # Convert to async URL
-    if not db_url:
-        raise RuntimeError("No database URL available for graph search endpoint")
-    async_url = db_url
-    if async_url.startswith("postgresql://"):
-        async_url = async_url.replace("postgresql://", "postgresql+asyncpg://")
-    elif async_url.startswith("sqlite:///"):
-        async_url = async_url.replace("sqlite:///", "sqlite+aiosqlite:///")
-
-    # Create async engine and session
-    engine = create_async_engine(async_url, echo=False)
-    async_session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
-
-    try:
-        async with async_session_factory() as session:
-            # Initialize components
-            graph_store = GraphStore(session, zone_id="default")
-
-            # Create a wrapper for SemanticSearch that uses the search daemon
-            class DaemonSemanticSearchWrapper:
-                """Wraps search daemon as SemanticSearch interface."""
-
-                def __init__(self, daemon: Any) -> None:
-                    self.daemon = daemon
-                    self.embedding_provider = getattr(daemon, "_embedding_provider", None)
-
-                async def search(
-                    self,
-                    query: str,
-                    path: str = "/",
-                    limit: int = 10,
-                    search_mode: str = "hybrid",
-                    alpha: float = 0.5,
-                ) -> list[SemanticSearchResult]:
-                    # Map search_mode to daemon's search_type
-                    results = await self.daemon.search(
-                        query=query,
-                        search_type=search_mode,
-                        limit=limit,
-                        path_filter=path if path != "/" else None,
-                        alpha=alpha,
-                    )
-                    # Convert daemon results to SemanticSearchResult
-                    return [
-                        SemanticSearchResult(
-                            path=r.path,
-                            chunk_index=r.chunk_index,
-                            chunk_text=r.chunk_text,
-                            score=r.score,
-                            start_offset=r.start_offset,
-                            end_offset=r.end_offset,
-                            line_start=r.line_start,
-                            line_end=r.line_end,
-                            keyword_score=r.keyword_score,
-                            vector_score=r.vector_score,
-                        )
-                        for r in results
-                    ]
-
-            # Create wrapper and retriever
-            semantic_wrapper = DaemonSemanticSearchWrapper(_app_state.search_daemon)
-            embedding_provider = getattr(_app_state.search_daemon, "_embedding_provider", None)
-
-            config = GraphRetrievalConfig(
-                graph_mode=graph_mode,
-                entity_similarity_threshold=0.75,
-                neighbor_hops=2,
-            )
-
-            retriever = GraphEnhancedRetriever(
-                semantic_search=semantic_wrapper,  # type: ignore
-                graph_store=graph_store,
-                embedding_provider=embedding_provider,
-                config=config,
-            )
-
-            # Execute search
-            results = await retriever.search(
-                query=query,
-                path=path_filter or "/",
-                limit=limit,
-                graph_mode=graph_mode,
-                search_mode=search_type,
-                alpha=alpha,
-                include_graph_context=True,
-            )
-
-            return results
-    finally:
-        await engine.dispose()
-
-
 def _register_routes(app: FastAPI) -> None:
     """Register all routes."""
 
@@ -1677,12 +1438,14 @@ def _register_routes(app: FastAPI) -> None:
         enforce_zone_isolation = None
         has_auth = None
 
-        if _app_state.nexus_fs:
-            enforce_permissions = getattr(_app_state.nexus_fs, "_enforce_permissions", None)
-            enforce_zone_isolation = getattr(_app_state.nexus_fs, "_enforce_zone_isolation", None)
+        if _fastapi_app.state.nexus_fs:
+            enforce_permissions = getattr(_fastapi_app.state.nexus_fs, "_enforce_permissions", None)
+            enforce_zone_isolation = getattr(
+                _fastapi_app.state.nexus_fs, "_enforce_zone_isolation", None
+            )
 
         # Check if authentication is configured
-        has_auth = bool(_app_state.api_key or _app_state.auth_provider)
+        has_auth = bool(_fastapi_app.state.api_key or _fastapi_app.state.auth_provider)
 
         return HealthResponse(
             status="healthy",
@@ -1712,8 +1475,8 @@ def _register_routes(app: FastAPI) -> None:
         }
 
         # Check search daemon (Issue #951)
-        if _app_state.search_daemon:
-            daemon_health = _app_state.search_daemon.get_health()
+        if _fastapi_app.state.search_daemon:
+            daemon_health = _fastapi_app.state.search_daemon.get_health()
             health["components"]["search_daemon"] = daemon_health
         else:
             health["components"]["search_daemon"] = {
@@ -1723,17 +1486,17 @@ def _register_routes(app: FastAPI) -> None:
 
         # Check async ReBAC manager
         health["components"]["rebac"] = {
-            "status": "healthy" if _app_state.async_rebac_manager else "disabled",
+            "status": "healthy" if _fastapi_app.state.async_rebac_manager else "disabled",
         }
 
         # Check subscription manager
         health["components"]["subscriptions"] = {
-            "status": "healthy" if _app_state.subscription_manager else "disabled",
+            "status": "healthy" if _fastapi_app.state.subscription_manager else "disabled",
         }
 
         # Check WebSocket manager (Issue #1116)
-        if _app_state.websocket_manager:
-            ws_stats = _app_state.websocket_manager.get_stats()
+        if _fastapi_app.state.websocket_manager:
+            ws_stats = _fastapi_app.state.websocket_manager.get_stats()
             health["components"]["websocket"] = {
                 "status": "healthy",
                 "current_connections": ws_stats["current_connections"],
@@ -1745,9 +1508,9 @@ def _register_routes(app: FastAPI) -> None:
             health["components"]["websocket"] = {"status": "disabled"}
 
         # Check Reactive Subscription Manager (Issue #1167)
-        if _app_state.reactive_subscription_manager:
+        if _fastapi_app.state.reactive_subscription_manager:
             try:
-                reactive_stats = _app_state.reactive_subscription_manager.get_stats()
+                reactive_stats = _fastapi_app.state.reactive_subscription_manager.get_stats()
                 health["components"]["reactive_subscriptions"] = {
                     "status": "healthy",
                     "total_subscriptions": reactive_stats["total_subscriptions"],
@@ -1766,8 +1529,8 @@ def _register_routes(app: FastAPI) -> None:
 
         # Check mounted backends (Issue #708)
         backends_health: dict[str, Any] = {}
-        if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "path_router"):
-            mounts = _app_state.nexus_fs.path_router.list_mounts()
+        if _fastapi_app.state.nexus_fs and hasattr(_fastapi_app.state.nexus_fs, "path_router"):
+            mounts = _fastapi_app.state.nexus_fs.path_router.list_mounts()
             for mount in mounts:
                 backend = mount.backend
                 mount_point = mount.mount_point
@@ -1823,9 +1586,9 @@ def _register_routes(app: FastAPI) -> None:
         metrics: dict[str, Any] = {}
 
         # PostgreSQL pool stats from metadata store
-        if _app_state.nexus_fs and hasattr(_app_state.nexus_fs, "metadata"):
+        if _fastapi_app.state.nexus_fs and hasattr(_fastapi_app.state.nexus_fs, "metadata"):
             try:
-                pg_stats = _app_state.nexus_fs.metadata.get_pool_stats()
+                pg_stats = _fastapi_app.state.nexus_fs.metadata.get_pool_stats()
                 metrics["postgres"] = pg_stats
             except Exception as e:
                 metrics["postgres"] = {"error": str(e)}
@@ -1881,8 +1644,8 @@ def _register_routes(app: FastAPI) -> None:
     )
 
     v2_registry = build_v2_registry(
-        async_nexus_fs_getter=lambda: _app_state.async_nexus_fs,
-        chunked_upload_service_getter=lambda: _app_state.chunked_upload_service,
+        async_nexus_fs_getter=lambda: _fastapi_app.state.async_nexus_fs,
+        chunked_upload_service_getter=lambda: _fastapi_app.state.chunked_upload_service,
     )
     register_v2_routers(app, v2_registry)
     app.add_middleware(VersionHeaderMiddleware)
@@ -1911,7 +1674,7 @@ def _register_routes(app: FastAPI) -> None:
 
         a2a_base_url = os.environ.get("NEXUS_A2A_BASE_URL", "http://localhost:2026")
         a2a_router = create_a2a_router(
-            nexus_fs=_app_state.nexus_fs,
+            nexus_fs=_fastapi_app.state.nexus_fs,
             config=None,  # Will use defaults; config can be passed when available
             base_url=a2a_base_url,
         )
@@ -1994,1797 +1757,11 @@ def _register_routes(app: FastAPI) -> None:
             "service": "nexus-rpc",
             "version": "1.0",
             "async": True,
-            "methods": list(_app_state.exposed_methods.keys()),
+            "methods": list(_fastapi_app.state.exposed_methods.keys()),
         }
 
-    # =========================================================================
-    # Search Daemon API Endpoints (Issue #951)
-    # =========================================================================
-
-    @app.get("/api/search/health", tags=["search"])
-    async def search_daemon_health() -> dict[str, Any]:
-        """Health check for the search daemon.
-
-        Returns daemon initialization status and component availability.
-        """
-        if not _app_state.search_daemon:
-            return {
-                "status": "disabled",
-                "daemon_enabled": False,
-                "message": "Search daemon not enabled (set NEXUS_SEARCH_DAEMON=true)",
-            }
-
-        health: dict[str, Any] = _app_state.search_daemon.get_health()
-        return health
-
-    @app.get("/api/search/stats", tags=["search"])
-    async def search_daemon_stats() -> dict[str, Any]:
-        """Get search daemon statistics.
-
-        Returns performance metrics including latency, document counts, and component status.
-        """
-        if not _app_state.search_daemon:
-            raise HTTPException(
-                status_code=503,
-                detail="Search daemon not enabled (set NEXUS_SEARCH_DAEMON=true)",
-            )
-
-        stats: dict[str, Any] = _app_state.search_daemon.get_stats()
-        return stats
-
-    @app.get("/api/search/query", tags=["search"])
-    async def search_query(
-        q: str = Query(..., description="Search query text", min_length=1),
-        type: str = Query("hybrid", description="Search type: keyword, semantic, or hybrid"),
-        limit: int = Query(10, description="Maximum number of results", ge=1, le=100),
-        path: str | None = Query(None, description="Optional path prefix filter"),
-        alpha: float = Query(
-            0.5, description="Semantic vs keyword weight (0.0-1.0)", ge=0.0, le=1.0
-        ),
-        fusion: str = Query("rrf", description="Fusion method: rrf, weighted, or rrf_weighted"),
-        adaptive_k: bool = Query(
-            False,
-            description="Adaptive retrieval: dynamically adjust limit based on query complexity",
-        ),
-        graph_mode: str = Query(
-            "none",
-            description="Graph enhancement mode (Issue #1040): none, low, high, dual, or auto",
-        ),
-        _auth_result: dict[str, Any] = Depends(require_auth),
-    ) -> dict[str, Any]:
-        """Execute a fast search query using the search daemon.
-
-        This endpoint uses pre-warmed indexes for sub-50ms response times.
-
-        Args:
-            q: Search query text
-            type: Search type ("keyword", "semantic", or "hybrid")
-            limit: Maximum number of results (1-100). Used as k_base when adaptive_k=True.
-            path: Optional path prefix filter (e.g., "/docs/")
-            alpha: Weight for semantic search (0.0 = all keyword, 1.0 = all semantic)
-            fusion: Fusion method for hybrid search
-            adaptive_k: If True, dynamically adjust limit based on query complexity (Issue #1021)
-            graph_mode: Graph enhancement mode (Issue #1040):
-                - "none": Traditional search only (default)
-                - "low": Entity matching + N-hop neighbor expansion
-                - "high": Theme/cluster context from hierarchical memory
-                - "dual": Full LightRAG-style dual-level search
-                - "auto": Automatically select based on query complexity (Issue #1041)
-
-        Returns:
-            Search results with scores and metadata
-        """
-
-        start_time = time.perf_counter()
-
-        if not _app_state.search_daemon:
-            raise HTTPException(
-                status_code=503,
-                detail="Search daemon not enabled (set NEXUS_SEARCH_DAEMON=true)",
-            )
-
-        if not _app_state.search_daemon.is_initialized:
-            raise HTTPException(
-                status_code=503,
-                detail="Search daemon is still initializing",
-            )
-
-        # Validate search type
-        if type not in ("keyword", "semantic", "hybrid"):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid search type: {type}. Must be 'keyword', 'semantic', or 'hybrid'",
-            )
-
-        # Validate fusion method
-        if fusion not in ("rrf", "weighted", "rrf_weighted"):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid fusion method: {fusion}. Must be 'rrf', 'weighted', or 'rrf_weighted'",
-            )
-
-        # Validate graph mode (Issue #1040)
-        if graph_mode not in ("none", "low", "high", "dual", "auto"):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid graph_mode: {graph_mode}. Must be 'none', 'low', 'high', 'dual', or 'auto'",
-            )
-
-        # Query routing for auto mode (Issue #1041)
-        routing_info: dict[str, Any] | None = None
-        effective_graph_mode = graph_mode
-        effective_limit = limit
-
-        if graph_mode == "auto":
-            from nexus.search.query_router import QueryRouter, RoutingConfig
-
-            router = QueryRouter(config=RoutingConfig())
-            routed = router.route(q, base_limit=limit)
-
-            effective_graph_mode = routed.graph_mode
-            effective_limit = routed.adjusted_limit
-            routing_info = routed.to_dict()
-
-            logger.info(
-                f"[QUERY-ROUTER] {routed.reasoning}, "
-                f"graph_mode={effective_graph_mode}, limit={effective_limit}"
-            )
-
-        try:
-            # Use graph-enhanced search if effective_graph_mode is not "none" (Issue #1040)
-            if effective_graph_mode != "none":
-                results = await _graph_enhanced_search(
-                    query=q,
-                    search_type=type,
-                    limit=effective_limit,
-                    path_filter=path,
-                    alpha=alpha,
-                    graph_mode=effective_graph_mode,
-                )
-                latency_ms = (time.perf_counter() - start_time) * 1000
-
-                response: dict[str, Any] = {
-                    "query": q,
-                    "search_type": type,
-                    "graph_mode": effective_graph_mode,
-                    "results": [
-                        {
-                            "path": r.path,
-                            "chunk_text": r.chunk_text,
-                            "score": round(r.score, 4),
-                            "chunk_index": r.chunk_index,
-                            "line_start": r.line_start,
-                            "line_end": r.line_end,
-                            "keyword_score": round(r.keyword_score, 4) if r.keyword_score else None,
-                            "vector_score": round(r.vector_score, 4) if r.vector_score else None,
-                            "graph_score": round(r.graph_score, 4) if r.graph_score else None,
-                            "graph_context": r.graph_context.to_dict() if r.graph_context else None,
-                        }
-                        for r in results
-                    ],
-                    "total": len(results),
-                    "latency_ms": round(latency_ms, 2),
-                }
-                if routing_info:
-                    response["routing"] = routing_info
-                return response
-
-            # Standard search (effective_graph_mode="none")
-            results = await _app_state.search_daemon.search(
-                query=q,
-                search_type=type,
-                limit=effective_limit,
-                path_filter=path,
-                alpha=alpha,
-                fusion_method=fusion,
-                adaptive_k=adaptive_k,
-            )
-
-            latency_ms = (time.perf_counter() - start_time) * 1000
-
-            response = {
-                "query": q,
-                "search_type": type,
-                "graph_mode": "none",
-                "results": [
-                    {
-                        "path": r.path,
-                        "chunk_text": r.chunk_text,
-                        "score": round(r.score, 4),
-                        "chunk_index": r.chunk_index,
-                        "line_start": r.line_start,
-                        "line_end": r.line_end,
-                        "keyword_score": round(r.keyword_score, 4) if r.keyword_score else None,
-                        "vector_score": round(r.vector_score, 4) if r.vector_score else None,
-                    }
-                    for r in results
-                ],
-                "total": len(results),
-                "latency_ms": round(latency_ms, 2),
-            }
-            if routing_info:
-                response["routing"] = routing_info
-            return response
-
-        except Exception as e:
-            logger.error(f"Search error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Search error: {e}") from e
-
-    @app.post("/api/search/refresh", tags=["search"])
-    async def search_refresh_notify(
-        path: str = Query(..., description="Path of the changed file"),
-        change_type: str = Query("update", description="Type of change: create, update, delete"),
-        _auth_result: dict[str, Any] = Depends(require_auth),
-    ) -> dict[str, Any]:
-        """Notify the search daemon of a file change for index refresh.
-
-        This endpoint allows external systems to trigger index updates
-        when files are modified outside of the normal Nexus write flow.
-
-        Args:
-            path: Virtual path of the changed file
-            change_type: Type of change (create, update, delete)
-
-        Returns:
-            Acknowledgment of the notification
-        """
-        if not _app_state.search_daemon:
-            raise HTTPException(
-                status_code=503,
-                detail="Search daemon not enabled",
-            )
-
-        await _app_state.search_daemon.notify_file_change(path, change_type)
-
-        return {
-            "status": "accepted",
-            "path": path,
-            "change_type": change_type,
-        }
-
-    @app.post("/api/search/expand", tags=["search"])
-    async def search_expand(
-        q: str = Query(..., description="Query to expand", min_length=1),
-        context: str | None = Query(None, description="Optional context about the collection"),
-        model: str = Query("deepseek/deepseek-chat", description="LLM model to use"),
-        max_lex: int = Query(2, description="Max lexical variants", ge=0, le=5),
-        max_vec: int = Query(2, description="Max vector variants", ge=0, le=5),
-        max_hyde: int = Query(2, description="Max HyDE passages", ge=0, le=5),
-        _auth_result: dict[str, Any] = Depends(require_auth),
-    ) -> dict[str, Any]:
-        """Expand a search query using LLM-based query expansion (Issue #1174).
-
-        Generates multiple query variants to improve search recall:
-        - lex: Lexical variants (keywords for BM25)
-        - vec: Vector variants (natural language for embeddings)
-        - hyde: Hypothetical document passages
-
-        Requires OPENROUTER_API_KEY environment variable.
-
-        Args:
-            q: The query to expand
-            context: Optional context about the document collection
-            model: LLM model to use (default: deepseek/deepseek-chat)
-            max_lex: Maximum lexical variants (0-5)
-            max_vec: Maximum vector variants (0-5)
-            max_hyde: Maximum HyDE passages (0-5)
-
-        Returns:
-            Query expansions with metadata
-        """
-        import os
-
-        from nexus.search.query_expansion import (
-            OpenRouterQueryExpander,
-            QueryExpansionConfig,
-        )
-
-        api_key = os.environ.get("OPENROUTER_API_KEY")
-        if not api_key:
-            raise HTTPException(
-                status_code=503,
-                detail="OPENROUTER_API_KEY not configured for query expansion",
-            )
-
-        start_time = time.perf_counter()
-
-        try:
-            config = QueryExpansionConfig(
-                model=model,
-                max_lex_variants=max_lex,
-                max_vec_variants=max_vec,
-                max_hyde_passages=max_hyde,
-                timeout=15.0,
-            )
-            expander = OpenRouterQueryExpander(config=config, api_key=api_key)
-
-            expansions = await expander.expand(q, context=context)
-            await expander.close()
-
-            latency_ms = (time.perf_counter() - start_time) * 1000
-
-            return {
-                "query": q,
-                "context": context,
-                "model": model,
-                "expansions": [
-                    {
-                        "type": e.expansion_type.value,
-                        "text": e.text,
-                        "weight": e.weight,
-                    }
-                    for e in expansions
-                ],
-                "total": len(expansions),
-                "latency_ms": round(latency_ms, 2),
-            }
-
-        except Exception as e:
-            logger.error(f"Query expansion error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Query expansion error: {e}") from e
-
-    # =========================================================================
-    # Memory API Endpoints (Issue #1023 - Temporal Query Operators)
-    # =========================================================================
-
-    @app.get("/api/memory/query", tags=["memory"])
-    async def memory_query(
-        scope: str | None = Query(None, description="Filter by scope (agent/user/zone/global)"),
-        memory_type: str | None = Query(None, description="Filter by memory type"),
-        state: str = Query("active", description="Filter by state (inactive/active/all)"),
-        after: str | None = Query(
-            None, description="Filter memories created after this time (ISO-8601). #1023"
-        ),
-        before: str | None = Query(
-            None, description="Filter memories created before this time (ISO-8601). #1023"
-        ),
-        during: str | None = Query(
-            None, description="Filter memories during this period (e.g., '2025', '2025-01'). #1023"
-        ),
-        entity_type: str | None = Query(
-            None, description="Filter by entity type (PERSON, ORG, LOCATION, DATE, etc.). #1025"
-        ),
-        person: str | None = Query(None, description="Filter by person name reference. #1025"),
-        event_after: str | None = Query(
-            None, description="Filter by event date >= value (ISO-8601). #1028"
-        ),
-        event_before: str | None = Query(
-            None, description="Filter by event date <= value (ISO-8601). #1028"
-        ),
-        limit: int = Query(100, description="Maximum number of results", ge=1, le=1000),
-        _auth_result: dict[str, Any] = Depends(require_auth),
-    ) -> dict[str, Any]:
-        """Query memories with optional temporal and entity filters.
-
-        Supports temporal operators (Issue #1023):
-        - after: Return memories created after this datetime
-        - before: Return memories created before this datetime
-        - during: Return memories created during this period (partial date like "2025" or "2025-01")
-
-        Supports entity filters (Issue #1025 - SimpleMem symbolic layer):
-        - entity_type: Filter by extracted entity type (PERSON, ORG, LOCATION, DATE, etc.)
-        - person: Filter by person name reference
-
-        Supports event date filters (Issue #1028 - Temporal anchoring):
-        - event_after: Filter by earliest_date >= value (date mentioned in content)
-        - event_before: Filter by latest_date <= value (date mentioned in content)
-
-        Note: 'during' cannot be used together with 'after' or 'before'.
-
-        Args:
-            scope: Filter by scope
-            memory_type: Filter by memory type
-            state: Filter by state (default: active)
-            after: ISO-8601 datetime or date string
-            before: ISO-8601 datetime or date string
-            during: Partial date string (year, year-month, or full date)
-            entity_type: Entity type to filter by (e.g., PERSON, ORG)
-            person: Person name to filter by
-            event_after: ISO-8601 date to filter by earliest_date >= value. #1028
-            event_before: ISO-8601 date to filter by latest_date <= value. #1028
-            limit: Maximum number of results
-
-        Returns:
-            List of memories matching the filters
-        """
-        if not _app_state.nexus_fs:
-            raise HTTPException(status_code=503, detail="NexusFS not initialized")
-
-        try:
-            context = get_operation_context(_auth_result)
-
-            results = _app_state.nexus_fs.memory.query(
-                scope=scope,
-                memory_type=memory_type,
-                state=state,
-                after=after,
-                before=before,
-                during=during,
-                entity_type=entity_type,
-                person=person,
-                event_after=event_after,
-                event_before=event_before,
-                limit=limit,
-                context=context,
-            )
-
-            return {
-                "memories": results,
-                "total": len(results),
-                "filters": {
-                    "scope": scope,
-                    "memory_type": memory_type,
-                    "state": state,
-                    "after": after,
-                    "before": before,
-                    "during": during,
-                    "entity_type": entity_type,
-                    "person": person,
-                    "event_after": event_after,
-                    "event_before": event_before,
-                },
-            }
-
-        except ValueError as e:
-            # Handle temporal validation errors
-            raise HTTPException(status_code=400, detail=str(e)) from e
-        except Exception as e:
-            logger.error(f"Memory query error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Memory query error: {e}") from e
-
-    @app.get("/api/memory/list", tags=["memory"])
-    async def memory_list(
-        scope: str | None = Query(None, description="Filter by scope"),
-        memory_type: str | None = Query(None, description="Filter by memory type"),
-        namespace: str | None = Query(None, description="Filter by exact namespace"),
-        namespace_prefix: str | None = Query(None, description="Filter by namespace prefix"),
-        state: str = Query("active", description="Filter by state (inactive/active/all)"),
-        after: str | None = Query(
-            None, description="Filter memories created after this time (ISO-8601). #1023"
-        ),
-        before: str | None = Query(
-            None, description="Filter memories created before this time (ISO-8601). #1023"
-        ),
-        during: str | None = Query(
-            None, description="Filter memories during this period (e.g., '2025', '2025-01'). #1023"
-        ),
-        limit: int = Query(100, description="Maximum number of results", ge=1, le=1000),
-        _auth_result: dict[str, Any] = Depends(require_auth),
-    ) -> dict[str, Any]:
-        """List memories with optional temporal filters (Issue #1023).
-
-        Similar to query but also supports namespace filtering.
-
-        Args:
-            scope: Filter by scope
-            memory_type: Filter by memory type
-            namespace: Filter by exact namespace
-            namespace_prefix: Filter by namespace prefix
-            state: Filter by state
-            after: ISO-8601 datetime or date string
-            before: ISO-8601 datetime or date string
-            during: Partial date string
-            limit: Maximum number of results
-
-        Returns:
-            List of memories matching the filters
-        """
-        if not _app_state.nexus_fs:
-            raise HTTPException(status_code=503, detail="NexusFS not initialized")
-
-        try:
-            context = get_operation_context(_auth_result)
-
-            results = _app_state.nexus_fs.memory.list(
-                scope=scope,
-                memory_type=memory_type,
-                namespace=namespace,
-                namespace_prefix=namespace_prefix,
-                state=state,
-                after=after,
-                before=before,
-                during=during,
-                limit=limit,
-                context=context,
-            )
-
-            return {
-                "memories": results,
-                "total": len(results),
-            }
-
-        except ValueError as e:
-            raise HTTPException(status_code=400, detail=str(e)) from e
-        except Exception as e:
-            logger.error(f"Memory list error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Memory list error: {e}") from e
-
-    @app.post("/api/memory/store", tags=["memory"])
-    async def memory_store(
-        request: Request,
-        _auth_result: dict[str, Any] = Depends(require_auth),
-    ) -> dict[str, Any]:
-        """Store a new memory.
-
-        Request body:
-        {
-            "content": "Memory content",
-            "scope": "user",
-            "memory_type": "fact",
-            "importance": 0.8,
-            "namespace": "optional/namespace",
-            "path_key": "optional_key",
-            "state": "active",
-            "resolve_coreferences": false,
-            "coreference_context": "Prior conversation context",
-            "resolve_temporal": false,
-            "temporal_reference_time": "2025-01-10T12:00:00Z",
-            "extract_temporal": true,
-            "extract_relationships": false,
-            "relationship_types": ["MANAGES", "WORKS_WITH", "DEPENDS_ON"]
-        }
-
-        Returns:
-            The created memory ID
-        """
-        if not _app_state.nexus_fs:
-            raise HTTPException(status_code=503, detail="NexusFS not initialized")
-
-        try:
-            body = await request.json()
-            context = get_operation_context(_auth_result)
-
-            memory_id = _app_state.nexus_fs.memory.store(
-                content=body.get("content", ""),
-                scope=body.get("scope", "user"),
-                memory_type=body.get("memory_type"),
-                importance=body.get("importance"),
-                namespace=body.get("namespace"),
-                path_key=body.get("path_key"),
-                state=body.get("state", "active"),
-                resolve_coreferences=body.get("resolve_coreferences", False),
-                coreference_context=body.get("coreference_context"),
-                resolve_temporal=body.get("resolve_temporal", False),
-                temporal_reference_time=body.get("temporal_reference_time"),
-                extract_temporal=body.get("extract_temporal", True),
-                extract_relationships=body.get("extract_relationships", False),
-                relationship_types=body.get("relationship_types"),
-                store_to_graph=body.get("store_to_graph", False),  # #1039
-                context=context,
-            )
-
-            return {"memory_id": memory_id, "status": "created"}
-
-        except Exception as e:
-            logger.error(f"Memory store error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Memory store error: {e}") from e
-
-    @app.get("/api/memory/{memory_id}", tags=["memory"])
-    async def memory_get(
-        memory_id: str,
-        track_access: bool = Query(True, description="Track this access for decay calculation"),
-        _auth_result: dict[str, Any] = Depends(require_auth),
-    ) -> dict[str, Any]:
-        """Get a specific memory by ID.
-
-        Returns memory with effective importance calculated based on time decay (Issue #1030).
-
-        Args:
-            memory_id: The memory UUID
-            track_access: Whether to track this access for decay calculation (default: True)
-
-        Returns:
-            Memory details including:
-            - importance: Current stored importance
-            - importance_original: Original importance (before any decay)
-            - importance_effective: Calculated importance with time decay applied
-            - access_count: Number of times this memory has been accessed
-            - last_accessed_at: Last access timestamp
-        """
-        if not _app_state.nexus_fs:
-            raise HTTPException(status_code=503, detail="NexusFS not initialized")
-
-        try:
-            context = get_operation_context(_auth_result)
-            result = _app_state.nexus_fs.memory.get(
-                memory_id, track_access=track_access, context=context
-            )
-            if result is None:
-                raise HTTPException(status_code=404, detail=f"Memory not found: {memory_id}")
-            return {"memory": result}
-        except HTTPException:
-            raise
-        except Exception as e:
-            logger.error(f"Memory get error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Memory get error: {e}") from e
-
-    # =========================================================================
-    # Graph API Endpoints (Issue #1039)
-    # =========================================================================
-
-    @app.get("/api/graph/entity/{entity_id}", tags=["graph"])
-    async def get_graph_entity(
-        entity_id: str,
-        _auth_result: dict[str, Any] = Depends(require_auth),
-    ) -> dict[str, Any]:
-        """Get an entity by ID from the knowledge graph.
-
-        Args:
-            entity_id: The entity UUID
-
-        Returns:
-            Entity details or null if not found
-        """
-        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
-        from nexus.search.graph_store import GraphStore
-
-        if not _app_state.nexus_fs:
-            raise HTTPException(status_code=503, detail="NexusFS not initialized")
-
-        try:
-            sync_url = _app_state.database_url or ""
-            if sync_url.startswith("postgresql://"):
-                async_url = sync_url.replace("postgresql://", "postgresql+asyncpg://")
-            elif sync_url.startswith("sqlite:///"):
-                async_url = sync_url.replace("sqlite:///", "sqlite+aiosqlite:///")
-            else:
-                async_url = sync_url
-
-            zone_id = getattr(_app_state.nexus_fs, "zone_id", None) or "default"
-
-            async def _get_entity() -> dict[str, Any] | None:
-                engine = create_async_engine(async_url)
-                async_session_factory = async_sessionmaker(
-                    engine, class_=AsyncSession, expire_on_commit=False
-                )
-                try:
-                    async with async_session_factory() as session:
-                        graph_store = GraphStore(session, zone_id=zone_id)
-                        entity = await graph_store.get_entity(entity_id)
-                        return entity.to_dict() if entity else None
-                finally:
-                    await engine.dispose()
-
-            return {"entity": await _get_entity()}
-
-        except Exception as e:
-            logger.error(f"Graph entity error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Graph entity error: {e}") from e
-
-    @app.get("/api/graph/entity/{entity_id}/neighbors", tags=["graph"])
-    async def get_graph_neighbors(
-        entity_id: str,
-        hops: int = Query(1, ge=1, le=5, description="Number of hops (1-5)"),
-        direction: str = Query("both", description="Direction: outgoing, incoming, both"),
-        _auth_result: dict[str, Any] = Depends(require_auth),
-    ) -> dict[str, Any]:
-        """Get N-hop neighbors of an entity.
-
-        Args:
-            entity_id: Starting entity UUID
-            hops: Number of hops (1-5)
-            direction: Relationship direction to follow
-
-        Returns:
-            List of neighbor entities with depth and path info
-        """
-        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
-        from nexus.search.graph_store import GraphStore
-
-        if not _app_state.nexus_fs:
-            raise HTTPException(status_code=503, detail="NexusFS not initialized")
-
-        try:
-            sync_url = _app_state.database_url or ""
-            if sync_url.startswith("postgresql://"):
-                async_url = sync_url.replace("postgresql://", "postgresql+asyncpg://")
-            elif sync_url.startswith("sqlite:///"):
-                async_url = sync_url.replace("sqlite:///", "sqlite+aiosqlite:///")
-            else:
-                async_url = sync_url
-
-            zone_id = getattr(_app_state.nexus_fs, "zone_id", None) or "default"
-
-            async def _get_neighbors() -> list[dict[str, Any]]:
-                engine = create_async_engine(async_url)
-                async_session_factory = async_sessionmaker(
-                    engine, class_=AsyncSession, expire_on_commit=False
-                )
-                try:
-                    async with async_session_factory() as session:
-                        graph_store = GraphStore(session, zone_id=zone_id)
-                        neighbors = await graph_store.get_neighbors(
-                            entity_id, hops=hops, direction=direction
-                        )
-                        return [
-                            {
-                                "entity": n.entity.to_dict(),
-                                "depth": n.depth,
-                                "path": n.path,
-                            }
-                            for n in neighbors
-                        ]
-                finally:
-                    await engine.dispose()
-
-            return {"neighbors": await _get_neighbors()}
-
-        except Exception as e:
-            logger.error(f"Graph neighbors error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Graph neighbors error: {e}") from e
-
-    @app.post("/api/graph/subgraph", tags=["graph"])
-    async def get_graph_subgraph(
-        request: Request,
-        _auth_result: dict[str, Any] = Depends(require_auth),
-    ) -> dict[str, Any]:
-        """Extract a subgraph for GraphRAG context building.
-
-        Request body:
-        {
-            "entity_ids": ["entity-id-1", "entity-id-2"],
-            "max_hops": 2
-        }
-
-        Returns:
-            Subgraph with entities and relationships
-        """
-        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
-        from nexus.search.graph_store import GraphStore
-
-        if not _app_state.nexus_fs:
-            raise HTTPException(status_code=503, detail="NexusFS not initialized")
-
-        try:
-            body = await request.json()
-            entity_ids = body.get("entity_ids", [])
-            max_hops = body.get("max_hops", 2)
-
-            sync_url = _app_state.database_url or ""
-            if sync_url.startswith("postgresql://"):
-                async_url = sync_url.replace("postgresql://", "postgresql+asyncpg://")
-            elif sync_url.startswith("sqlite:///"):
-                async_url = sync_url.replace("sqlite:///", "sqlite+aiosqlite:///")
-            else:
-                async_url = sync_url
-
-            zone_id = getattr(_app_state.nexus_fs, "zone_id", None) or "default"
-
-            async def _get_subgraph() -> dict[str, Any]:
-                engine = create_async_engine(async_url)
-                async_session_factory = async_sessionmaker(
-                    engine, class_=AsyncSession, expire_on_commit=False
-                )
-                try:
-                    async with async_session_factory() as session:
-                        graph_store = GraphStore(session, zone_id=zone_id)
-                        subgraph = await graph_store.get_subgraph(entity_ids, max_hops=max_hops)
-                        return subgraph.to_dict()
-                finally:
-                    await engine.dispose()
-
-            return await _get_subgraph()
-
-        except Exception as e:
-            logger.error(f"Graph subgraph error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Graph subgraph error: {e}") from e
-
-    @app.get("/api/graph/search", tags=["graph"])
-    async def search_graph_entities(
-        name: str = Query(..., description="Entity name to search for"),
-        entity_type: str | None = Query(None, description="Filter by entity type"),
-        fuzzy: bool = Query(False, description="Search in aliases as well"),
-        _auth_result: dict[str, Any] = Depends(require_auth),
-    ) -> dict[str, Any]:
-        """Search for entities by name.
-
-        Args:
-            name: Entity name to search for
-            entity_type: Optional entity type filter (PERSON, ORG, CONCEPT, etc.)
-            fuzzy: If true, search aliases as well
-
-        Returns:
-            Matching entity or null
-        """
-        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
-        from nexus.search.graph_store import GraphStore
-
-        if not _app_state.nexus_fs:
-            raise HTTPException(status_code=503, detail="NexusFS not initialized")
-
-        try:
-            sync_url = _app_state.database_url or ""
-            if sync_url.startswith("postgresql://"):
-                async_url = sync_url.replace("postgresql://", "postgresql+asyncpg://")
-            elif sync_url.startswith("sqlite:///"):
-                async_url = sync_url.replace("sqlite:///", "sqlite+aiosqlite:///")
-            else:
-                async_url = sync_url
-
-            zone_id = getattr(_app_state.nexus_fs, "zone_id", None) or "default"
-
-            async def _find_entity() -> dict[str, Any] | None:
-                engine = create_async_engine(async_url)
-                async_session_factory = async_sessionmaker(
-                    engine, class_=AsyncSession, expire_on_commit=False
-                )
-                try:
-                    async with async_session_factory() as session:
-                        graph_store = GraphStore(session, zone_id=zone_id)
-                        entity = await graph_store.find_entity(
-                            name=name, entity_type=entity_type, fuzzy=fuzzy
-                        )
-                        return entity.to_dict() if entity else None
-                finally:
-                    await engine.dispose()
-
-            return {"entity": await _find_entity()}
-
-        except Exception as e:
-            logger.error(f"Graph search error: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Graph search error: {e}") from e
-
-    # =========================================================================
-    # Hotspot Detection API Endpoints (Issue #921)
-    # =========================================================================
-
-    @app.get("/api/v1/admin/hotspot-stats", tags=["admin"])
-    async def get_hotspot_stats(
-        _auth_result: dict[str, Any] = Depends(require_auth),
-    ) -> dict[str, Any]:
-        """Get hotspot detection statistics (Issue #921).
-
-        Returns access pattern tracking statistics including:
-        - Number of tracked keys
-        - Total accesses recorded
-        - Hot entries detected (above threshold)
-        - Prefetch triggers
-
-        Requires admin authentication.
-        """
-        permission_enforcer = getattr(_app_state.nexus_fs, "_permission_enforcer", None)
-        if not permission_enforcer:
-            raise HTTPException(status_code=503, detail="Permission enforcer not available")
-
-        hotspot_detector = getattr(permission_enforcer, "_hotspot_detector", None)
-        if not hotspot_detector:
-            return {
-                "enabled": False,
-                "message": "Hotspot tracking not enabled",
-            }
-
-        stats: dict[str, Any] = hotspot_detector.get_stats()
-        return stats
-
-    @app.get("/api/v1/admin/hot-entries", tags=["admin"])
-    async def get_hot_entries(
-        limit: int = Query(10, description="Maximum number of entries", ge=1, le=100),
-        _auth_result: dict[str, Any] = Depends(require_auth),
-    ) -> list[dict[str, Any]]:
-        """Get current hot permission entries (Issue #921).
-
-        Returns list of frequently accessed permission paths,
-        sorted by access count (hottest first).
-
-        Args:
-            limit: Maximum number of entries to return
-
-        Requires admin authentication.
-        """
-        permission_enforcer = getattr(_app_state.nexus_fs, "_permission_enforcer", None)
-        if not permission_enforcer:
-            raise HTTPException(status_code=503, detail="Permission enforcer not available")
-
-        hotspot_detector = getattr(permission_enforcer, "_hotspot_detector", None)
-        if not hotspot_detector:
-            return []
-
-        entries = hotspot_detector.get_hot_entries(limit=limit)
-
-        # Convert to dict for JSON serialization
-        return [
-            {
-                "subject_type": e.subject_type,
-                "subject_id": e.subject_id,
-                "resource_type": e.resource_type,
-                "permission": e.permission,
-                "zone_id": e.zone_id,
-                "access_count": e.access_count,
-                "last_access": e.last_access,
-            }
-            for e in entries
-        ]
-
-    # =========================================================================
-    # Cache Warmup API Endpoints (Issue #1076)
-    # =========================================================================
-
-    @app.post("/api/cache/warmup", tags=["cache"])
-    async def warmup_cache(
-        request: Request,
-        auth_result: dict[str, Any] = Depends(require_auth),
-    ) -> dict[str, Any]:
-        """Pre-populate caches for faster access (Issue #1076).
-
-        Reduces cold-start latency by pre-caching frequently accessed files.
-
-        Request body:
-            path: Optional path to warm (directory warmup)
-            user: Optional user for history-based warmup
-            hours: Hours to look back for history warmup (default: 24)
-            depth: Directory depth (default: 2)
-            include_content: Whether to warm content (default: false)
-            max_files: Maximum files to warm (default: 1000)
-
-        Returns:
-            Warmup statistics including files warmed, duration, etc.
-        """
-        from nexus.cache.warmer import (
-            CacheWarmer,
-            WarmupConfig,
-            get_file_access_tracker,
-        )
-
-        body = await request.json()
-        path = body.get("path")
-        user = body.get("user")
-        hours = body.get("hours", 24)
-        depth = body.get("depth", 2)
-        include_content = body.get("include_content", False)
-        max_files = body.get("max_files", 1000)
-        zone_id = auth_result.get("zone_id", "default")
-
-        config = WarmupConfig(
-            max_files=max_files,
-            depth=depth,
-            include_content=include_content,
-        )
-
-        file_tracker = get_file_access_tracker() if user else None
-
-        if not _app_state.nexus_fs:
-            raise HTTPException(status_code=503, detail="NexusFS not available")
-
-        warmer = CacheWarmer(
-            nexus_fs=_app_state.nexus_fs,
-            config=config,
-            file_tracker=file_tracker,
-        )
-
-        if user:
-            stats = await warmer.warmup_from_history(
-                user=user,
-                hours=hours,
-                max_files=max_files,
-                zone_id=zone_id,
-            )
-        elif path:
-            stats = await warmer.warmup_directory(
-                path=path,
-                depth=depth,
-                include_content=include_content,
-                max_files=max_files,
-                zone_id=zone_id,
-            )
-        else:
-            raise HTTPException(
-                status_code=400,
-                detail="Either 'path' or 'user' must be provided",
-            )
-
-        return {
-            "status": "completed",
-            **stats.to_dict(),
-        }
-
-    @app.get("/api/cache/stats", tags=["cache"])
-    async def get_cache_stats(
-        _auth_result: dict[str, Any] = Depends(require_auth),
-    ) -> dict[str, Any]:
-        """Get cache statistics (Issue #1076).
-
-        Returns statistics for all cache layers including hit rates,
-        memory usage, and entry counts.
-        """
-        from nexus.cache.warmer import get_file_access_tracker
-
-        nx = _app_state.nexus_fs
-        if not nx:
-            raise HTTPException(status_code=503, detail="NexusFS not available")
-
-        cache_stats: dict[str, Any] = {}
-
-        # Metadata cache stats
-        if hasattr(nx, "metadata") and hasattr(nx.metadata, "_cache"):
-            cache = nx.metadata._cache
-            if cache:
-                cache_stats["metadata_cache"] = {
-                    "path_cache_size": len(getattr(cache, "_path_cache", {})),
-                    "list_cache_size": len(getattr(cache, "_list_cache", {})),
-                    "exists_cache_size": len(getattr(cache, "_exists_cache", {})),
-                }
-
-        # Content cache stats
-        if hasattr(nx, "backend") and hasattr(nx.backend, "content_cache"):
-            cc = nx.backend.content_cache
-            if cc and hasattr(cc, "get_stats"):
-                cache_stats["content_cache"] = cc.get_stats()
-
-        # Permission cache stats
-        if hasattr(nx, "_rebac_manager"):
-            rm = nx._rebac_manager
-            if hasattr(rm, "_permission_cache") and rm._permission_cache:
-                pc = rm._permission_cache
-                if hasattr(pc, "get_stats"):
-                    cache_stats["permission_cache"] = pc.get_stats()
-
-            if hasattr(rm, "_tiger_cache") and rm._tiger_cache:
-                tc = rm._tiger_cache
-                if hasattr(tc, "get_stats"):
-                    cache_stats["tiger_cache"] = tc.get_stats()
-
-        # Directory visibility cache
-        if hasattr(nx, "_dir_visibility_cache") and nx._dir_visibility_cache:
-            dvc = nx._dir_visibility_cache
-            if hasattr(dvc, "get_metrics"):
-                cache_stats["dir_visibility_cache"] = dvc.get_metrics()
-
-        # File access tracker stats
-        tracker = get_file_access_tracker()
-        cache_stats["file_access_tracker"] = tracker.get_stats()
-
-        return cache_stats
-
-    @app.get("/api/cache/hot-files", tags=["cache"])
-    async def get_hot_files(
-        limit: int = Query(20, description="Maximum number of entries", ge=1, le=100),
-        auth_result: dict[str, Any] = Depends(require_auth),
-    ) -> list[dict[str, Any]]:
-        """Get frequently accessed files (Issue #1076).
-
-        Returns list of hot files based on recent access patterns.
-        """
-        from nexus.cache.warmer import get_file_access_tracker
-
-        zone_id = auth_result.get("zone_id", "default")
-        tracker = get_file_access_tracker()
-        hot_files = tracker.get_hot_files(zone_id=zone_id, limit=limit)
-
-        return [
-            {
-                "path": f.path,
-                "zone_id": f.zone_id,
-                "access_count": f.access_count,
-                "last_access": f.last_access,
-                "total_bytes": f.total_bytes,
-            }
-            for f in hot_files
-        ]
-
-    # =========================================================================
-    # Subscription API Endpoints
-    # =========================================================================
-
-    @app.post("/api/subscriptions", tags=["subscriptions"])
-    async def create_subscription(
-        request: Request,
-        auth_result: dict[str, Any] = Depends(require_auth),
-    ) -> JSONResponse:
-        """Create a new webhook subscription.
-
-        Subscribe to file events (write, delete, rename) with optional path filters.
-        """
-        if not _app_state.subscription_manager:
-            raise HTTPException(status_code=503, detail="Subscription manager not available")
-
-        from nexus.server.subscriptions import SubscriptionCreate
-
-        body = await request.json()
-        data = SubscriptionCreate(**body)
-        zone_id = auth_result.get("zone_id") or "default"
-        created_by = auth_result.get("subject_id")
-
-        subscription = _app_state.subscription_manager.create(
-            zone_id=zone_id,
-            data=data,
-            created_by=created_by,
-        )
-        return JSONResponse(content=subscription.model_dump(mode="json"), status_code=201)
-
-    @app.get("/api/subscriptions", tags=["subscriptions"])
-    async def list_subscriptions(
-        enabled_only: bool = False,
-        limit: int = 100,
-        offset: int = 0,
-        auth_result: dict[str, Any] = Depends(require_auth),
-    ) -> JSONResponse:
-        """List webhook subscriptions for the current zone."""
-        if not _app_state.subscription_manager:
-            raise HTTPException(status_code=503, detail="Subscription manager not available")
-
-        zone_id = auth_result.get("zone_id") or "default"
-        subscriptions = _app_state.subscription_manager.list_subscriptions(
-            zone_id=zone_id,
-            enabled_only=enabled_only,
-            limit=limit,
-            offset=offset,
-        )
-        return JSONResponse(
-            content={"subscriptions": [s.model_dump(mode="json") for s in subscriptions]}
-        )
-
-    @app.get("/api/subscriptions/{subscription_id}", tags=["subscriptions"])
-    async def get_subscription(
-        subscription_id: str,
-        auth_result: dict[str, Any] = Depends(require_auth),
-    ) -> JSONResponse:
-        """Get a webhook subscription by ID."""
-        if not _app_state.subscription_manager:
-            raise HTTPException(status_code=503, detail="Subscription manager not available")
-
-        zone_id = auth_result.get("zone_id") or "default"
-        subscription = _app_state.subscription_manager.get(subscription_id, zone_id)
-        if subscription is None:
-            raise HTTPException(status_code=404, detail="Subscription not found")
-        return JSONResponse(content=subscription.model_dump(mode="json"))
-
-    @app.patch("/api/subscriptions/{subscription_id}", tags=["subscriptions"])
-    async def update_subscription(
-        subscription_id: str,
-        request: Request,
-        auth_result: dict[str, Any] = Depends(require_auth),
-    ) -> JSONResponse:
-        """Update a webhook subscription."""
-        if not _app_state.subscription_manager:
-            raise HTTPException(status_code=503, detail="Subscription manager not available")
-
-        from nexus.server.subscriptions import SubscriptionUpdate
-
-        body = await request.json()
-        data = SubscriptionUpdate(**body)
-        zone_id = auth_result.get("zone_id") or "default"
-
-        subscription = _app_state.subscription_manager.update(
-            subscription_id=subscription_id,
-            zone_id=zone_id,
-            data=data,
-        )
-        if subscription is None:
-            raise HTTPException(status_code=404, detail="Subscription not found")
-        return JSONResponse(content=subscription.model_dump(mode="json"))
-
-    @app.delete("/api/subscriptions/{subscription_id}", tags=["subscriptions"])
-    async def delete_subscription(
-        subscription_id: str,
-        auth_result: dict[str, Any] = Depends(require_auth),
-    ) -> JSONResponse:
-        """Delete a webhook subscription."""
-        if not _app_state.subscription_manager:
-            raise HTTPException(status_code=503, detail="Subscription manager not available")
-
-        zone_id = auth_result.get("zone_id") or "default"
-        deleted = _app_state.subscription_manager.delete(subscription_id, zone_id)
-        if not deleted:
-            raise HTTPException(status_code=404, detail="Subscription not found")
-        return JSONResponse(content={"deleted": True})
-
-    @app.post("/api/subscriptions/{subscription_id}/test", tags=["subscriptions"])
-    async def test_subscription(
-        subscription_id: str,
-        auth_result: dict[str, Any] = Depends(require_auth),
-    ) -> JSONResponse:
-        """Send a test event to a webhook subscription."""
-        if not _app_state.subscription_manager:
-            raise HTTPException(status_code=503, detail="Subscription manager not available")
-
-        zone_id = auth_result.get("zone_id") or "default"
-        result = await _app_state.subscription_manager.test(subscription_id, zone_id)
-        return JSONResponse(content=result)
-
-    # =========================================================================
-    # Lock API Endpoints (Issue #1186)
-    # =========================================================================
-
-    def _get_lock_manager() -> Any:
-        """Get the lock manager from NexusFS or raise 503."""
-        if not _app_state.nexus_fs:
-            raise HTTPException(status_code=503, detail="NexusFS not available")
-        if not _app_state.nexus_fs._has_distributed_locks():
-            raise HTTPException(
-                status_code=503,
-                detail="Distributed lock manager not configured. "
-                "Enable Redis/Dragonfly for distributed locking.",
-            )
-        return _app_state.nexus_fs._lock_manager
-
-    @app.post("/api/locks", tags=["locks"], status_code=201, response_model=LockResponse)
-    async def acquire_lock(
-        request: LockAcquireRequest,
-        auth_result: dict[str, Any] = Depends(require_auth),
-    ) -> LockResponse:
-        """Acquire a distributed lock on a path.
-
-        Supports both mutex (max_holders=1) and semaphore (max_holders>1) modes.
-        Use blocking=false for non-blocking acquisition (returns immediately).
-
-        Performance:
-        - Typical latency: <5ms p99
-        - Uses Redis SET NX EX for atomic acquisition
-        - Exponential backoff with jitter to prevent thundering herd
-        """
-        lock_manager = _get_lock_manager()
-        zone_id = auth_result.get("zone_id") or "default"
-
-        # Normalize path to ensure leading slash
-        path = request.path if request.path.startswith("/") else "/" + request.path
-
-        # Non-blocking mode: use timeout=0
-        timeout = request.timeout if request.blocking else 0.0
-
-        try:
-            lock_id = await lock_manager.acquire(
-                zone_id=zone_id,
-                path=path,
-                timeout=timeout,
-                ttl=request.ttl,
-                max_holders=request.max_holders,
-            )
-        except ValueError as e:
-            # SSOT violation (max_holders mismatch)
-            raise HTTPException(status_code=409, detail=str(e)) from e
-
-        if lock_id is None:
-            # Lock acquisition failed (timeout or non-blocking)
-            if request.blocking:
-                raise HTTPException(
-                    status_code=409,
-                    detail=f"Lock acquisition timeout after {request.timeout}s",
-                )
-            else:
-                raise HTTPException(
-                    status_code=409,
-                    detail="Lock not available (non-blocking mode)",
-                )
-
-        # Calculate expiration time
-        expires_at = datetime.now(UTC).timestamp() + request.ttl
-        expires_at_iso = datetime.fromtimestamp(expires_at, tz=UTC).isoformat()
-
-        # Get lock info to retrieve fence token
-        lock_info = await lock_manager.get_lock_info(zone_id, path)
-        fence_token = lock_info.fence_token if lock_info else 0
-
-        return LockResponse(
-            lock_id=lock_id,
-            path=path,
-            mode="mutex" if request.max_holders == 1 else "semaphore",
-            max_holders=request.max_holders,
-            ttl=int(request.ttl),
-            expires_at=expires_at_iso,
-            fence_token=fence_token,
-        )
-
-    @app.get("/api/locks", tags=["locks"], response_model=LockListResponse)
-    async def list_locks(
-        limit: int = Query(100, ge=1, le=1000, description="Max number of locks to return"),
-        pattern: str = Query("*", description="Path pattern filter (glob-style)"),
-        auth_result: dict[str, Any] = Depends(require_auth),
-    ) -> LockListResponse:
-        """List active locks for the current zone.
-
-        Uses Redis SCAN for efficient iteration (non-blocking).
-
-        Performance:
-        - Uses SCAN instead of KEYS to avoid blocking Redis
-        - Pagination via limit parameter
-        """
-        lock_manager = _get_lock_manager()
-        zone_id = auth_result.get("zone_id") or "default"
-
-        # Use lock manager's list_locks method
-        lock_infos = await lock_manager.list_locks(zone_id, pattern=pattern, limit=limit)
-
-        # Convert LockInfo dataclasses to response models
-        locks: list[LockInfoMutex | LockInfoSemaphore] = []
-        for lock_info in lock_infos:
-            if lock_info.mode == "mutex" and lock_info.holders:
-                h = lock_info.holders[0]
-                locks.append(
-                    LockInfoMutex(
-                        lock_id=h.lock_id,
-                        holder_info=h.holder_info,
-                        acquired_at=h.acquired_at,
-                        expires_at=h.expires_at,
-                        fence_token=lock_info.fence_token,
-                    )
-                )
-            else:
-                locks.append(
-                    LockInfoSemaphore(
-                        max_holders=lock_info.max_holders,
-                        holders=[
-                            LockHolderResponse(
-                                lock_id=h.lock_id,
-                                holder_info=h.holder_info,
-                                acquired_at=h.acquired_at,
-                                expires_at=h.expires_at,
-                            )
-                            for h in lock_info.holders
-                        ],
-                        current_holders=len(lock_info.holders),
-                        fence_token=lock_info.fence_token,
-                    )
-                )
-
-        return LockListResponse(locks=locks, count=len(locks))
-
-    @app.get("/api/locks/{path:path}", tags=["locks"], response_model=LockStatusResponse)
-    async def get_lock_status(
-        path: str,
-        auth_result: dict[str, Any] = Depends(require_auth),
-    ) -> LockStatusResponse:
-        """Get lock status for a specific path.
-
-        Performance:
-        - Single Redis GET operation (~1ms)
-        - Pipeline fetches existence + TTL in one round-trip
-        """
-        lock_manager = _get_lock_manager()
-        zone_id = auth_result.get("zone_id") or "default"
-
-        # Normalize path to ensure leading slash (URL path captures without leading /)
-        if not path.startswith("/"):
-            path = "/" + path
-
-        # Check lock status
-        lock_info = await lock_manager.get_lock_info(zone_id, path)
-        if not lock_info:
-            return LockStatusResponse(path=path, locked=False, lock_info=None)
-
-        # Convert LockInfo dataclass to response model
-        lock_info_response: LockInfoMutex | LockInfoSemaphore
-        if lock_info.mode == "mutex" and lock_info.holders:
-            h = lock_info.holders[0]
-            lock_info_response = LockInfoMutex(
-                lock_id=h.lock_id,
-                holder_info=h.holder_info,
-                acquired_at=h.acquired_at,
-                expires_at=h.expires_at,
-                fence_token=lock_info.fence_token,
-            )
-        else:
-            lock_info_response = LockInfoSemaphore(
-                max_holders=lock_info.max_holders,
-                holders=[
-                    LockHolderResponse(
-                        lock_id=h.lock_id,
-                        holder_info=h.holder_info,
-                        acquired_at=h.acquired_at,
-                        expires_at=h.expires_at,
-                    )
-                    for h in lock_info.holders
-                ],
-                current_holders=len(lock_info.holders),
-                fence_token=lock_info.fence_token,
-            )
-
-        return LockStatusResponse(path=path, locked=True, lock_info=lock_info_response)
-
-    @app.delete("/api/locks/{path:path}", tags=["locks"])
-    async def release_lock(
-        path: str,
-        lock_id: str = Query(..., description="Lock ID from acquire response"),
-        force: bool = Query(False, description="Force release (admin only)"),
-        auth_result: dict[str, Any] = Depends(require_auth),
-    ) -> JSONResponse:
-        """Release a distributed lock.
-
-        The lock_id must match the ID returned during acquisition.
-        Use force=true for admin recovery of stuck locks (requires admin role).
-
-        Performance:
-        - Single Lua script execution (~1ms)
-        - Atomic check-then-delete
-        """
-        lock_manager = _get_lock_manager()
-        zone_id = auth_result.get("zone_id") or "default"
-
-        # Normalize path to ensure leading slash (URL path captures without leading /)
-        if not path.startswith("/"):
-            path = "/" + path
-
-        if force:
-            # Check admin permission
-            if not auth_result.get("is_admin", False):
-                raise HTTPException(
-                    status_code=403, detail="Force release requires admin privileges"
-                )
-            # Force release regardless of owner
-            released = await lock_manager.force_release(zone_id, path)
-            if not released:
-                raise HTTPException(status_code=404, detail=f"No lock found for path: {path}")
-            logger.warning(f"Lock force-released by admin: zone={zone_id}, path={path}")
-            return JSONResponse(content={"released": True, "forced": True})
-
-        # Normal release with ownership check
-        released = await lock_manager.release(lock_id, zone_id, path)
-        if not released:
-            raise HTTPException(
-                status_code=403,
-                detail="Lock release failed: not owned by this lock_id or already expired",
-            )
-        return JSONResponse(content={"released": True})
-
-    @app.patch("/api/locks/{path:path}", tags=["locks"], response_model=LockResponse)
-    async def extend_lock(
-        path: str,
-        request: LockExtendRequest,
-        auth_result: dict[str, Any] = Depends(require_auth),
-    ) -> LockResponse:
-        """Extend a lock's TTL (heartbeat).
-
-        Call this periodically (e.g., every TTL/2) to keep long-running
-        operations alive. The lock must be owned by the caller (lock_id match).
-
-        Performance:
-        - Single Lua script execution (~1ms)
-        - Atomic check-then-expire
-        """
-        lock_manager = _get_lock_manager()
-        zone_id = auth_result.get("zone_id") or "default"
-
-        # Normalize path to ensure leading slash (URL path captures without leading /)
-        if not path.startswith("/"):
-            path = "/" + path
-
-        extended = await lock_manager.extend(request.lock_id, zone_id, path, ttl=request.ttl)
-        if not extended.success:
-            raise HTTPException(
-                status_code=403,
-                detail="Lock extend failed: not owned by this lock_id or already expired",
-            )
-
-        # Calculate new expiration
-        expires_at = datetime.now(UTC).timestamp() + request.ttl
-        expires_at_iso = datetime.fromtimestamp(expires_at, tz=UTC).isoformat()
-
-        # Use lock_info from ExtendResult
-        lock_info = extended.lock_info
-        mode: Literal["mutex", "semaphore"] = "mutex"
-        max_holders = 1
-        fence_token = 0
-
-        if lock_info:
-            mode = lock_info.mode
-            fence_token = lock_info.fence_token
-            max_holders = lock_info.max_holders
-
-        return LockResponse(
-            lock_id=request.lock_id,
-            path=path,
-            mode=mode,
-            max_holders=max_holders,
-            ttl=int(request.ttl),
-            expires_at=expires_at_iso,
-            fence_token=fence_token,
-        )
-
-    # ========================================================================
-    # Agent Identity Endpoints (Issue #1355)
-    # ========================================================================
-
-    @app.get("/api/agents/{agent_id}/identity", tags=["identity"])
-    async def get_agent_identity(
-        agent_id: str,
-        _auth_result: dict[str, Any] = Depends(require_auth),
-    ) -> dict:
-        """Get an agent's public identity (DID, public key, key_id).
-
-        Returns the agent's active signing key information for verification.
-        """
-        if not _app_state.key_service:
-            raise HTTPException(status_code=503, detail="Identity service not available")
-
-        keys = await asyncio.to_thread(_app_state.key_service.get_active_keys, agent_id)
-        if not keys:
-            raise HTTPException(status_code=404, detail=f"No active keys for agent '{agent_id}'")
-
-        newest = keys[0]
-        return {
-            "agent_id": agent_id,
-            "key_id": newest.key_id,
-            "did": newest.did,
-            "algorithm": newest.algorithm,
-            "public_key_hex": newest.public_key_bytes.hex(),
-            "created_at": newest.created_at.isoformat() if newest.created_at else None,
-            "expires_at": newest.expires_at.isoformat() if newest.expires_at else None,
-        }
-
-    @app.post("/api/agents/{agent_id}/verify", tags=["identity"])
-    async def verify_agent_signature(
-        agent_id: str,
-        request: Request,
-        _auth_result: dict[str, Any] = Depends(require_auth),
-    ) -> dict:
-        """Verify a signature produced by an agent's signing key.
-
-        Request body:
-            {
-                "message": "<base64-encoded message>",
-                "signature": "<base64-encoded signature>",
-                "key_id": "<optional key_id, uses newest active key if omitted>"
-            }
-        """
-        import base64
-
-        if not _app_state.key_service:
-            raise HTTPException(status_code=503, detail="Identity service not available")
-
-        body = await request.json()
-        message_b64 = body.get("message")
-        signature_b64 = body.get("signature")
-        key_id = body.get("key_id")
-
-        if not message_b64 or not signature_b64:
-            raise HTTPException(
-                status_code=400, detail="'message' and 'signature' are required (base64)"
-            )
-
-        try:
-            message = base64.b64decode(message_b64)
-            signature = base64.b64decode(signature_b64)
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail="Invalid base64 encoding") from exc
-
-        # Resolve public key
-        resolved_key_id = key_id
-        if key_id:
-            record = await asyncio.to_thread(_app_state.key_service.get_public_key, key_id)
-            if record is None:
-                raise HTTPException(status_code=404, detail="Key not found or not active")
-            if record.agent_id != agent_id:
-                raise HTTPException(status_code=403, detail="Key does not belong to this agent")
-            from nexus.identity.crypto import IdentityCrypto
-
-            public_key = IdentityCrypto.public_key_from_bytes(record.public_key_bytes)
-        else:
-            keys = await asyncio.to_thread(_app_state.key_service.get_active_keys, agent_id)
-            if not keys:
-                raise HTTPException(
-                    status_code=404, detail=f"No active keys for agent '{agent_id}'"
-                )
-            resolved_key_id = keys[0].key_id
-            from nexus.identity.crypto import IdentityCrypto
-
-            public_key = IdentityCrypto.public_key_from_bytes(keys[0].public_key_bytes)
-
-        valid = _app_state.key_service._crypto.verify(message, signature, public_key)
-
-        return {"valid": valid, "agent_id": agent_id, "key_id": resolved_key_id}
-
-    # ========================================================================
-    # WebSocket Endpoint for Real-Time Events (Issue #1116)
-    # ========================================================================
-
-    @app.websocket("/ws/events/{subscription_id}")
-    async def websocket_events(
-        websocket: WebSocket,
-        subscription_id: str,
-        token: str = Query(None, description="Authentication token"),
-    ) -> None:
-        """WebSocket endpoint for real-time file system events.
-
-        Clients connect with a subscription ID to receive filtered events.
-        Authentication is via query parameter token (browser compatible).
-
-        Protocol:
-        - Server sends: {"type": "event", "data": {...}}
-        - Server sends: {"type": "ping"}
-        - Client sends: {"type": "pong"}
-        - Client sends: {"type": "subscribe", "patterns": [...], "event_types": [...]}
-
-        Args:
-            websocket: WebSocket connection
-            subscription_id: Subscription ID for event filtering
-            token: Bearer token for authentication
-
-        Close Codes:
-            1000: Normal closure
-            1008: Policy violation (auth failed)
-            1011: Internal error
-        """
-        import uuid
-
-        if not _app_state.websocket_manager:
-            await websocket.close(
-                code=http_status.WS_1011_INTERNAL_ERROR, reason="WebSocket manager not available"
-            )
-            return
-
-        # Authenticate
-        auth_result = None
-        if token:
-            # Reuse existing auth validation
-            auth_result = await get_auth_result(authorization=f"Bearer {token}")
-
-        # Allow unauthenticated if no auth configured (open access mode)
-        if not auth_result and (_app_state.api_key or _app_state.auth_provider):
-            await websocket.close(
-                code=http_status.WS_1008_POLICY_VIOLATION, reason="Authentication required"
-            )
-            return
-
-        zone_id = (auth_result or {}).get("zone_id") or "default"
-        user_id = (auth_result or {}).get("subject_id")
-
-        # Lookup subscription to get patterns and event types
-        patterns: list[str] = []
-        event_types: list[str] = []
-
-        if _app_state.subscription_manager and subscription_id != "all":
-            subscription = _app_state.subscription_manager.get(subscription_id, zone_id)
-            if subscription:
-                patterns = subscription.patterns or []
-                event_types = subscription.event_types or []
-            else:
-                # Allow connection even without valid subscription - can subscribe dynamically
-                logger.debug(
-                    f"Subscription {subscription_id} not found, allowing dynamic subscription"
-                )
-
-        # Generate unique connection ID
-        connection_id = f"{subscription_id}:{uuid.uuid4().hex[:8]}"
-
-        # Connect
-        _conn_info = await _app_state.websocket_manager.connect(
-            websocket=websocket,
-            zone_id=zone_id,
-            connection_id=connection_id,
-            user_id=user_id,
-            subscription_id=subscription_id if subscription_id != "all" else None,
-            patterns=patterns,
-            event_types=event_types,
-        )
-
-        # Send welcome message
-        await websocket.send_json(
-            {
-                "type": "connected",
-                "connection_id": connection_id,
-                "zone_id": zone_id,
-                "patterns": patterns,
-                "event_types": event_types,
-            }
-        )
-
-        try:
-            # Handle client messages (ping/pong, subscribe, etc.)
-            await _app_state.websocket_manager.handle_client(websocket, connection_id)
-        except WebSocketDisconnect:
-            pass
-        except Exception as e:
-            logger.warning(f"WebSocket error for {connection_id}: {e}")
-        finally:
-            await _app_state.websocket_manager.disconnect(connection_id)
-
-    @app.websocket("/ws/events")
-    async def websocket_events_all(
-        websocket: WebSocket,
-        token: str = Query(None, description="Authentication token"),
-    ) -> None:
-        """WebSocket endpoint for all zone events (no subscription filter).
-
-        Same as /ws/events/{subscription_id} but receives all events for the zone.
-        """
-        # Redirect to the subscription handler with "all" as subscription_id
-        await websocket_events(websocket, "all", token)
-
-    # ========================================================================
-    # Long-Polling Watch Endpoint (Issue #1117)
-    # ========================================================================
-
-    @app.get("/api/watch", tags=["watch"])
-    async def watch_for_changes(
-        path: str = Query(
-            "/**/*",
-            description="Path or glob pattern to watch (e.g., /inbox/, **/*.py)",
-        ),
-        timeout: float = Query(
-            30.0,
-            ge=0.1,
-            le=300.0,
-            description="Maximum time to wait in seconds (default: 30, max: 300)",
-        ),
-        _auth_result: dict[str, Any] | None = Depends(get_auth_result),
-    ) -> dict[str, Any]:
-        """Long-polling endpoint to wait for file system changes.
-
-        Blocks until a matching change occurs or timeout is reached.
-        This is more efficient than polling for AI agents and automation.
-
-        Args:
-            path: Virtual path or glob pattern to watch
-                - File path (e.g., "/inbox/file.txt"): Watches for content changes
-                - Directory path (e.g., "/inbox/"): Watches for file create/delete/rename
-                - Glob pattern (e.g., "**/*.py"): Watches matching files
-            timeout: Maximum wait time in seconds (0.1-300, default: 30)
-
-        Returns:
-            On change detected:
-            ```json
-            {
-                "changes": [{
-                    "type": "file_write",
-                    "path": "/inbox/new.txt",
-                    "timestamp": "2024-01-15T10:30:00Z"
-                }],
-                "timeout": false
-            }
-            ```
-
-            On timeout:
-            ```json
-            {
-                "changes": [],
-                "timeout": true
-            }
-            ```
-
-        Example:
-            ```bash
-            # Watch for Python file changes (30s timeout)
-            curl "http://localhost:2026/api/watch?path=**/*.py&timeout=30"
-
-            # Watch inbox directory for new files
-            curl "http://localhost:2026/api/watch?path=/inbox/&timeout=60"
-            ```
-        """
-        if not _app_state.nexus_fs:
-            raise HTTPException(status_code=503, detail="NexusFS not initialized")
-
-        # Create operation context for permission checks
-        context = None
-        if _auth_result:
-            context = get_operation_context(_auth_result)
-
-        try:
-            # Use the existing wait_for_changes method
-            change = await _app_state.nexus_fs.wait_for_changes(
-                path=path,
-                timeout=timeout,
-                _context=context,
-            )
-
-            if change is None:
-                # Timeout - no changes detected
-                return {
-                    "changes": [],
-                    "timeout": True,
-                }
-
-            # Change detected
-            return {
-                "changes": [change],
-                "timeout": False,
-            }
-
-        except NotImplementedError as e:
-            # No event source available (no Redis, not same-box)
-            raise HTTPException(
-                status_code=501,
-                detail=f"Watch not available: {e}. Requires Redis event bus or same-box backend.",
-            ) from None
-        except NexusFileNotFoundError:
-            raise HTTPException(status_code=404, detail=f"Path not found: {path}") from None
-        except NexusPermissionError as e:
-            raise HTTPException(status_code=403, detail=str(e)) from None
-        except Exception as e:
-            logger.error(f"Watch error for {path}: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Watch error: {e}") from e
+    # Domain endpoints extracted to api/v1/routers/ (#1288):
+    # search, memory, graph, admin, cache, events, share, locks, subscriptions, identity
 
     # ========================================================================
     # Streaming Endpoint for Local Backend
@@ -3810,7 +1787,7 @@ def _register_routes(app: FastAPI) -> None:
         if not _verify_stream_token(token, f"/{path}", zone_id):
             raise HTTPException(status_code=403, detail="Invalid or expired stream token")
 
-        nexus_fs = _app_state.nexus_fs
+        nexus_fs = _fastapi_app.state.nexus_fs
         if nexus_fs is None:
             raise HTTPException(status_code=503, detail="NexusFS not available")
 
@@ -3861,225 +1838,6 @@ def _register_routes(app: FastAPI) -> None:
             logger.error(f"Stream error for /{path}: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Stream error: {e}") from e
 
-    # ========================================================================
-    # Share Link Endpoints (Issue #227)
-    # ========================================================================
-
-    @app.get("/api/share/{link_id}", tags=["share"])
-    async def get_share_link_info(
-        link_id: str,
-        auth_result: dict[str, Any] | None = Depends(get_auth_result),
-    ) -> JSONResponse:
-        """Get share link information.
-
-        Anonymous users get minimal info. Authenticated owners get full details.
-        This endpoint does NOT count as an access - use POST /access for that.
-        """
-        nexus_fs = _app_state.nexus_fs
-        if nexus_fs is None:
-            raise HTTPException(status_code=503, detail="NexusFS not available")
-
-        # Build context if authenticated
-        context = None
-        if auth_result and auth_result.get("authenticated"):
-            context = get_operation_context(auth_result)
-
-        result = await to_thread_with_timeout(nexus_fs.get_share_link, link_id, context=context)
-
-        if not result.success:
-            error_msg = (result.error_message or "").lower()
-            status_code = 404 if "not found" in error_msg else 400
-            raise HTTPException(status_code=status_code, detail=result.error_message or "Error")
-
-        return JSONResponse(content=result.data)
-
-    @app.post("/api/share/{link_id}/access", tags=["share"])
-    async def access_share_link(
-        link_id: str,
-        request: Request,
-        auth_result: dict[str, Any] | None = Depends(get_auth_result),
-    ) -> JSONResponse:
-        """Access a shared resource via share link.
-
-        This validates the link, checks password if required, logs the access,
-        and returns resource info if valid. This DOES count as an access.
-
-        Request body (optional):
-            - password: Password if the link is password-protected
-        """
-        nexus_fs = _app_state.nexus_fs
-        if nexus_fs is None:
-            raise HTTPException(status_code=503, detail="NexusFS not available")
-
-        # Parse request body
-        password = None
-        try:
-            body = await request.json()
-            password = body.get("password")
-        except Exception:
-            pass  # No body or invalid JSON is fine
-
-        # Get client info for logging
-        ip_address = request.client.host if request.client else None
-        user_agent = request.headers.get("user-agent")
-
-        # Build context if authenticated
-        context = None
-        if auth_result and auth_result.get("authenticated"):
-            context = get_operation_context(auth_result)
-
-        result = await to_thread_with_timeout(
-            nexus_fs.access_share_link,
-            link_id,
-            password=password,
-            ip_address=ip_address,
-            user_agent=user_agent,
-            context=context,
-        )
-
-        if not result.success:
-            # Map error messages to appropriate HTTP status codes
-            error_msg = (result.error_message or "").lower()
-            if "not found" in error_msg:
-                status_code = 404
-            elif "expired" in error_msg or "revoked" in error_msg:
-                status_code = 410  # Gone
-            elif "password" in error_msg:
-                status_code = 401
-            elif "limit" in error_msg:
-                status_code = 429  # Too Many Requests
-            else:
-                status_code = 400
-            raise HTTPException(
-                status_code=status_code, detail=result.error_message or "Access denied"
-            )
-
-        return JSONResponse(content=result.data)
-
-    @app.get("/api/share/{link_id}/download", tags=["share"], response_model=None)
-    async def download_via_share_link(
-        link_id: str,
-        request: Request,
-        password: str | None = Query(None, description="Password if link is protected"),
-        auth_result: dict[str, Any] | None = Depends(get_auth_result),
-    ) -> Response | StreamingResponse:
-        """Download a file via share link with HTTP Range support (RFC 9110).
-
-        Validates the link and streams the file content. Supports partial
-        content (206) for download resumption and media seeking.
-        """
-        nexus_fs = _app_state.nexus_fs
-        if nexus_fs is None:
-            raise HTTPException(status_code=503, detail="NexusFS not available")
-
-        # Get client info for logging
-        ip_address = request.client.host if request.client else None
-        user_agent = request.headers.get("user-agent")
-
-        # Build context if authenticated
-        context = None
-        if auth_result and auth_result.get("authenticated"):
-            context = get_operation_context(auth_result)
-
-        # First validate the share link
-        access_result = await to_thread_with_timeout(
-            nexus_fs.access_share_link,
-            link_id,
-            password=password,
-            ip_address=ip_address,
-            user_agent=user_agent,
-            context=context,
-        )
-
-        if not access_result.success:
-            error_msg = (access_result.error_message or "").lower()
-            if "not found" in error_msg:
-                status_code = 404
-            elif "expired" in error_msg or "revoked" in error_msg:
-                status_code = 410
-            elif "password" in error_msg:
-                status_code = 401
-            elif "limit" in error_msg:
-                status_code = 429
-            else:
-                status_code = 400
-            raise HTTPException(
-                status_code=status_code, detail=access_result.error_message or "Access denied"
-            )
-
-        # Get the file path and read permissions from access result
-        data = access_result.data or {}
-        file_path = data.get("path")
-        zone_id = data.get("zone_id", "default")
-
-        if not file_path:
-            raise HTTPException(status_code=500, detail="Share link missing file path")
-
-        try:
-            # Create context for file access (system context with the link's zone)
-            from nexus.core.permissions import OperationContext
-
-            stream_context = OperationContext(
-                user="share_link",
-                groups=[],
-                zone_id=zone_id,
-                subject_type="share_link",
-                subject_id=link_id,
-                is_admin=True,  # Bypass ReBAC - link already validated
-            )
-
-            # Get file metadata
-            meta = await to_thread_with_timeout(nexus_fs.stat, file_path, context=stream_context)
-            content_hash = meta.get("etag") or meta.get("content_hash")
-            if not content_hash:
-                raise HTTPException(status_code=500, detail="File has no content hash")
-
-            # Get the backend
-            route = nexus_fs.router.route(file_path)
-            backend = route.backend
-
-            total_size = meta.get("size", 0)
-
-            if not hasattr(backend, "stream_content"):
-                # Fall back to read for backends without streaming
-                content = await to_thread_with_timeout(
-                    nexus_fs.read, file_path, context=stream_context
-                )
-                if isinstance(content, str):
-                    content_bytes: bytes = content.encode()
-                elif isinstance(content, bytes):
-                    content_bytes = content
-                else:
-                    content_bytes = b""
-                return StreamingResponse(
-                    iter([content_bytes]),
-                    media_type="application/octet-stream",
-                    headers={
-                        "Content-Disposition": f'attachment; filename="{file_path.split("/")[-1]}"',
-                    },
-                )
-
-            from nexus.server.range_utils import build_range_response
-
-            return build_range_response(
-                request_headers=request.headers,
-                content_generator=lambda s, e, cs: backend.stream_range(
-                    content_hash, s, e, chunk_size=cs, context=stream_context
-                ),
-                full_generator=lambda: backend.stream_content(content_hash, context=stream_context),
-                total_size=total_size,
-                etag=content_hash,
-                content_type="application/octet-stream",
-                filename=file_path.split("/")[-1],
-                extra_headers={"X-Content-Hash": content_hash},
-            )
-
-        except NexusFileNotFoundError:
-            raise HTTPException(status_code=404, detail=f"File not found: {file_path}") from None
-        except Exception as e:
-            logger.error(f"Share link download error for {link_id}: {e}", exc_info=True)
-            raise HTTPException(status_code=500, detail=f"Download error: {e}") from e
-
     # Main RPC endpoint (authenticated users get RATE_LIMIT_AUTHENTICATED)
     # Rate limiting key is extracted from Bearer token to identify users
     @app.post("/api/nfs/{method}")
@@ -4129,11 +1887,11 @@ def _register_routes(app: FastAPI) -> None:
                 method == "read"
                 and if_none_match
                 and hasattr(params, "path")
-                and _app_state.nexus_fs
+                and _fastapi_app.state.nexus_fs
             ):
                 try:
                     # Get ETag from metadata without reading content (fast!)
-                    cached_etag = _app_state.nexus_fs.get_etag(params.path, context=context)
+                    cached_etag = _fastapi_app.state.nexus_fs.get_etag(params.path, context=context)
                     if cached_etag:
                         client_etag = if_none_match.strip('"')
                         if client_etag == cached_etag:
@@ -4330,7 +2088,7 @@ async def _fire_rpc_event(
         old_path: Old path for rename operations
         size: File size for write operations
     """
-    if not _app_state.subscription_manager:
+    if not _fastapi_app.state.subscription_manager:
         return
 
     try:
@@ -4343,145 +2101,156 @@ async def _fire_rpc_event(
 
         # Await broadcast to ensure webhook delivery before response
         # This adds slight latency but ensures reliable event delivery
-        await _app_state.subscription_manager.broadcast(event_type, data, zone_id)
+        await _fastapi_app.state.subscription_manager.broadcast(event_type, data, zone_id)
     except Exception as e:
         logger.warning(f"[RPC] Failed to fire event {event_type} for {path}: {e}")
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class _DispatchEntry:
+    """Dispatch table entry for an RPC method.
+
+    Attributes:
+        handler: The handler callable (sync or async).
+        is_async: If True, handler is awaited directly; otherwise wrapped
+            with ``to_thread_with_timeout``.
+        event_type: If set, fire this event type after handler completes.
+        event_path_attr: Attribute name on ``params`` for the event path.
+        event_old_path_attr: Attribute name on ``params`` for old_path (rename).
+        event_size_key: Key in the result dict to extract size (write).
+    """
+
+    handler: Any  # Callable[[params, context], result]
+    is_async: bool = False
+    event_type: str | None = None
+    event_path_attr: str = "path"
+    event_old_path_attr: str | None = None
+    event_size_key: str | None = None
+
+
+# Lazily initialized — handler functions are defined later in this module.
+_DISPATCH_TABLE: dict[str, _DispatchEntry] = {}
+
+
+def _build_dispatch_table() -> dict[str, _DispatchEntry]:
+    """Build the RPC dispatch table (Issue #1288).
+
+    Called once on first RPC request. Entries with ``event_type`` fire
+    subscription events after the handler completes.
+    """
+    return {
+        # Core filesystem operations
+        "read": _DispatchEntry(_handle_read_async, is_async=True),
+        "write": _DispatchEntry(
+            _handle_write, event_type="file_write", event_size_key="bytes_written"
+        ),
+        "exists": _DispatchEntry(_handle_exists),
+        "list": _DispatchEntry(_handle_list),
+        "delete": _DispatchEntry(_handle_delete, event_type="file_delete"),
+        "rename": _DispatchEntry(
+            _handle_rename,
+            event_type="file_rename",
+            event_path_attr="new_path",
+            event_old_path_attr="old_path",
+        ),
+        "copy": _DispatchEntry(_handle_copy),
+        "mkdir": _DispatchEntry(_handle_mkdir, event_type="dir_create"),
+        "rmdir": _DispatchEntry(_handle_rmdir, event_type="dir_delete"),
+        "get_metadata": _DispatchEntry(_handle_get_metadata),
+        "glob": _DispatchEntry(_handle_glob),
+        "grep": _DispatchEntry(_handle_grep),
+        "search": _DispatchEntry(_handle_search),
+        "is_directory": _DispatchEntry(_handle_is_directory),
+        # Delta sync (Issue #869)
+        "delta_read": _DispatchEntry(_handle_delta_read),
+        "delta_write": _DispatchEntry(_handle_delta_write),
+        # Semantic search (Issue #947)
+        "semantic_search_index": _DispatchEntry(_handle_semantic_search_index, is_async=True),
+        # Memory API (Issue #4)
+        "store_memory": _DispatchEntry(_handle_store_memory),
+        "list_memories": _DispatchEntry(_handle_list_memories),
+        "query_memories": _DispatchEntry(_handle_query_memories),
+        "retrieve_memory": _DispatchEntry(_handle_retrieve_memory),
+        "delete_memory": _DispatchEntry(_handle_delete_memory),
+        "approve_memory": _DispatchEntry(_handle_approve_memory),
+        "deactivate_memory": _DispatchEntry(_handle_deactivate_memory),
+        "approve_memory_batch": _DispatchEntry(_handle_approve_memory_batch),
+        "deactivate_memory_batch": _DispatchEntry(_handle_deactivate_memory_batch),
+        "delete_memory_batch": _DispatchEntry(_handle_delete_memory_batch),
+        # Admin API (v0.5.1)
+        "admin_create_key": _DispatchEntry(_handle_admin_create_key),
+        "admin_list_keys": _DispatchEntry(_handle_admin_list_keys),
+        "admin_get_key": _DispatchEntry(_handle_admin_get_key),
+        "admin_revoke_key": _DispatchEntry(_handle_admin_revoke_key),
+        "admin_update_key": _DispatchEntry(_handle_admin_update_key),
+    }
 
 
 async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
     """Dispatch RPC method call.
 
-    Handles both sync and async methods.
+    Looks up the method in ``_DISPATCH_TABLE`` first, then falls back to
+    ``_auto_dispatch`` for dynamically exposed methods.
     """
-    nexus_fs = _app_state.nexus_fs
+    global _DISPATCH_TABLE  # noqa: PLW0603
+
+    nexus_fs = _fastapi_app.state.nexus_fs
     if nexus_fs is None:
         raise RuntimeError("NexusFS not initialized")
 
+    # Lazy-init on first call (handler functions defined later in module)
+    if not _DISPATCH_TABLE:
+        _DISPATCH_TABLE = _build_dispatch_table()
+
     # Issue #1457: Enforce admin_only for ALL dispatch paths (auto + manual)
-    func = _app_state.exposed_methods.get(method)
+    func = _fastapi_app.state.exposed_methods.get(method)
     if func and getattr(func, "_rpc_admin_only", False):
         _require_admin(context)
 
-    # Methods that need special handling
-    MANUAL_METHODS = {
-        "read",
-        "write",
-        "exists",
-        "list",
-        "delete",
-        "rename",
-        "copy",
-        "mkdir",
-        "rmdir",
-        "get_metadata",
-        "search",
-        "glob",
-        "grep",
-        "is_directory",
-        "delta_read",  # Issue #869: Delta sync
-        "delta_write",  # Issue #869: Delta sync
-        "semantic_search_index",  # Issue #947: HNSW tuning
-    }
-
-    # Try auto-dispatch first for exposed methods
-    if method in _app_state.exposed_methods and method not in MANUAL_METHODS:
+    # Auto-dispatch takes priority for dynamically exposed methods
+    # that are NOT in the static dispatch table
+    if method in _fastapi_app.state.exposed_methods and method not in _DISPATCH_TABLE:
         return await _auto_dispatch(method, params, context)
 
-    # Manual dispatch for core filesystem operations
-    # Use to_thread_with_timeout to run sync handlers with timeout (Issue #932)
-    # Issue #1115: Fire events after mutation operations
-    if method == "read":
-        # Use async handler for read to support async parsing
-        return await _handle_read_async(params, context)
-    elif method == "write":
-        result = await to_thread_with_timeout(_handle_write, params, context)
-        await _fire_rpc_event("file_write", params.path, context, size=result.get("bytes_written"))
+    entry = _DISPATCH_TABLE.get(method)
+    if entry is not None:
+        # Execute handler
+        if entry.is_async:
+            result = await entry.handler(params, context)
+        else:
+            result = await to_thread_with_timeout(entry.handler, params, context)
+
+        # Fire subscription event for mutations (Issue #1115)
+        if entry.event_type is not None:
+            path = getattr(params, entry.event_path_attr, None)
+            old_path = (
+                getattr(params, entry.event_old_path_attr, None)
+                if entry.event_old_path_attr
+                else None
+            )
+            size = (
+                result.get(entry.event_size_key)
+                if entry.event_size_key and isinstance(result, dict)
+                else None
+            )
+            await _fire_rpc_event(
+                entry.event_type, path or "", context, old_path=old_path, size=size
+            )
+
         return result
-    elif method == "exists":
-        return await to_thread_with_timeout(_handle_exists, params, context)
-    elif method == "list":
-        return await to_thread_with_timeout(_handle_list, params, context)
-    elif method == "delete":
-        result = await to_thread_with_timeout(_handle_delete, params, context)
-        await _fire_rpc_event("file_delete", params.path, context)
-        return result
-    elif method == "rename":
-        result = await to_thread_with_timeout(_handle_rename, params, context)
-        await _fire_rpc_event("file_rename", params.new_path, context, old_path=params.old_path)
-        return result
-    elif method == "copy":
-        return await to_thread_with_timeout(_handle_copy, params, context)
-    elif method == "mkdir":
-        result = await to_thread_with_timeout(_handle_mkdir, params, context)
-        await _fire_rpc_event("dir_create", params.path, context)
-        return result
-    elif method == "rmdir":
-        result = await to_thread_with_timeout(_handle_rmdir, params, context)
-        await _fire_rpc_event("dir_delete", params.path, context)
-        return result
-    elif method == "get_metadata":
-        return await to_thread_with_timeout(_handle_get_metadata, params, context)
-    elif method == "glob":
-        return await to_thread_with_timeout(_handle_glob, params, context)
-    elif method == "grep":
-        return await to_thread_with_timeout(_handle_grep, params, context)
-    elif method == "search":
-        return await to_thread_with_timeout(_handle_search, params, context)
-    elif method == "is_directory":
-        return await to_thread_with_timeout(_handle_is_directory, params, context)
-    # Delta sync methods (Issue #869)
-    elif method == "delta_read":
-        return await to_thread_with_timeout(_handle_delta_read, params, context)
-    elif method == "delta_write":
-        return await to_thread_with_timeout(_handle_delta_write, params, context)
-    # Semantic search methods (Issue #947)
-    elif method == "semantic_search_index":
-        return await _handle_semantic_search_index(params, context)
-    # Memory API methods (Issue #4)
-    elif method == "store_memory":
-        return await to_thread_with_timeout(_handle_store_memory, params, context)
-    elif method == "list_memories":
-        return await to_thread_with_timeout(_handle_list_memories, params, context)
-    elif method == "query_memories":
-        return await to_thread_with_timeout(_handle_query_memories, params, context)
-    elif method == "retrieve_memory":
-        return await to_thread_with_timeout(_handle_retrieve_memory, params, context)
-    elif method == "delete_memory":
-        return await to_thread_with_timeout(_handle_delete_memory, params, context)
-    elif method == "approve_memory":
-        return await to_thread_with_timeout(_handle_approve_memory, params, context)
-    elif method == "deactivate_memory":
-        return await to_thread_with_timeout(_handle_deactivate_memory, params, context)
-    elif method == "approve_memory_batch":
-        return await to_thread_with_timeout(_handle_approve_memory_batch, params, context)
-    elif method == "deactivate_memory_batch":
-        return await to_thread_with_timeout(_handle_deactivate_memory_batch, params, context)
-    elif method == "delete_memory_batch":
-        return await to_thread_with_timeout(_handle_delete_memory_batch, params, context)
-    # Admin API methods (v0.5.1)
-    elif method == "admin_create_key":
-        return await to_thread_with_timeout(_handle_admin_create_key, params, context)
-    elif method == "admin_list_keys":
-        return await to_thread_with_timeout(_handle_admin_list_keys, params, context)
-    elif method == "admin_get_key":
-        return await to_thread_with_timeout(_handle_admin_get_key, params, context)
-    elif method == "admin_revoke_key":
-        return await to_thread_with_timeout(_handle_admin_revoke_key, params, context)
-    elif method == "admin_update_key":
-        return await to_thread_with_timeout(_handle_admin_update_key, params, context)
-    elif method in _app_state.exposed_methods:
+
+    # Fallback: try auto-dispatch for exposed methods
+    if method in _fastapi_app.state.exposed_methods:
         return await _auto_dispatch(method, params, context)
-    else:
-        raise ValueError(f"Unknown method: {method}")
+
+    raise ValueError(f"Unknown method: {method}")
 
 
 async def _auto_dispatch(method: str, params: Any, context: Any) -> Any:
     """Auto-dispatch to exposed method."""
     import inspect
 
-    func = _app_state.exposed_methods[method]
-
-    # Note: admin_only guard is enforced in _dispatch_method (Issue #1457)
+    func = _fastapi_app.state.exposed_methods[method]
 
     # Build kwargs
     kwargs: dict[str, Any] = {}
@@ -4521,7 +2290,7 @@ def _get_memory_api_with_context(context: Any) -> Any:
     Returns:
         Memory API instance with user/agent/zone from context
     """
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     if nexus_fs is None:
         raise RuntimeError("NexusFS not initialized")
 
@@ -4695,7 +2464,7 @@ def _generate_download_url(
     Returns:
         Dict with download_url, expires_in, method, backend if supported, None otherwise
     """
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     if nexus_fs is None:
         return None
 
@@ -4777,7 +2546,7 @@ async def _handle_read_async(params: Any, context: Any) -> bytes | dict[str, Any
     If return_url=True and the backend supports it (S3/GCS connectors),
     returns a presigned URL instead of file content for direct download.
     """
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
 
     # Handle optional parameters
@@ -4853,7 +2622,7 @@ def _handle_read(params: Any, context: Any) -> bytes | dict[str, Any]:
     Returns raw bytes which will be encoded by encode_rpc_message using
     the standard {__type__: 'bytes', data: ...} format.
     """
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
 
     # Handle optional parameters
@@ -4876,7 +2645,7 @@ def _handle_read(params: Any, context: Any) -> bytes | dict[str, Any]:
 
 def _handle_write(params: Any, context: Any) -> dict[str, Any]:
     """Handle write method."""
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
 
     # Content should already be bytes after decode_rpc_message
@@ -4906,7 +2675,7 @@ def _handle_write(params: Any, context: Any) -> dict[str, Any]:
 
 def _handle_exists(params: Any, context: Any) -> dict[str, Any]:
     """Handle exists method."""
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
     return {"exists": nexus_fs.exists(params.path, context=context)}
 
@@ -4922,7 +2691,7 @@ def _handle_list(params: Any, context: Any) -> dict[str, Any]:
 
     _handle_start = _time.time()
 
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
 
     kwargs: dict[str, Any] = {"context": context}
@@ -4995,7 +2764,7 @@ def _handle_list(params: Any, context: Any) -> dict[str, Any]:
 
 def _handle_delete(params: Any, context: Any) -> dict[str, Any]:
     """Handle delete method."""
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
     # IMPORTANT: NexusFS.delete supports context and permissions depend on it.
     # Some older NexusFilesystem implementations may not accept context, so fall back safely.
@@ -5010,7 +2779,7 @@ def _handle_delete(params: Any, context: Any) -> dict[str, Any]:
 
 def _handle_rename(params: Any, context: Any) -> dict[str, Any]:
     """Handle rename method."""
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
     # IMPORTANT: NexusFS.rename supports context and permissions depend on it.
     # Some older NexusFilesystem implementations may not accept context, so fall back safely.
@@ -5025,7 +2794,7 @@ def _handle_rename(params: Any, context: Any) -> dict[str, Any]:
 
 def _handle_copy(params: Any, context: Any) -> dict[str, Any]:
     """Handle copy method."""
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
     nexus_fs.copy(params.src_path, params.dst_path, context=context)  # type: ignore[attr-defined]
     return {"copied": True}
@@ -5033,7 +2802,7 @@ def _handle_copy(params: Any, context: Any) -> dict[str, Any]:
 
 def _handle_mkdir(params: Any, context: Any) -> dict[str, Any]:
     """Handle mkdir method."""
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
 
     kwargs: dict[str, Any] = {"context": context}
@@ -5048,7 +2817,7 @@ def _handle_mkdir(params: Any, context: Any) -> dict[str, Any]:
 
 def _handle_rmdir(params: Any, context: Any) -> dict[str, Any]:
     """Handle rmdir method."""
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
 
     kwargs: dict[str, Any] = {"context": context}
@@ -5063,7 +2832,7 @@ def _handle_rmdir(params: Any, context: Any) -> dict[str, Any]:
 
 def _handle_get_metadata(params: Any, context: Any) -> dict[str, Any]:
     """Handle get_metadata method."""
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
     metadata = nexus_fs.get_metadata(params.path, context=context)
     # Issue #1202: Strip internal zone/tenant/user prefixes from metadata path
@@ -5074,7 +2843,7 @@ def _handle_get_metadata(params: Any, context: Any) -> dict[str, Any]:
 
 def _handle_glob(params: Any, context: Any) -> dict[str, Any]:
     """Handle glob method."""
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
 
     kwargs: dict[str, Any] = {"context": context}
@@ -5089,7 +2858,7 @@ def _handle_glob(params: Any, context: Any) -> dict[str, Any]:
 
 def _handle_grep(params: Any, context: Any) -> dict[str, Any]:
     """Handle grep method."""
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
 
     kwargs: dict[str, Any] = {"context": context}
@@ -5113,7 +2882,7 @@ def _handle_grep(params: Any, context: Any) -> dict[str, Any]:
 
 def _handle_search(params: Any, context: Any) -> dict[str, Any]:
     """Handle search method."""
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
 
     kwargs: dict[str, Any] = {"context": context}
@@ -5141,7 +2910,7 @@ async def _handle_semantic_search_index(params: Any, _context: Any) -> dict[str,
     Returns:
         Dictionary mapping file paths to number of chunks indexed
     """
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
 
     path = getattr(params, "path", "/")
@@ -5173,7 +2942,7 @@ async def _handle_semantic_search_index(params: Any, _context: Any) -> dict[str,
 
 def _handle_is_directory(params: Any, context: Any) -> dict[str, Any]:
     """Handle is_directory method."""
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
     return {"is_directory": nexus_fs.is_directory(params.path, context=context)}
 
@@ -5204,7 +2973,7 @@ def _handle_delta_read(params: Any, context: Any) -> dict[str, Any]:
 
     from nexus.core.hash_fast import hash_content
 
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
 
     # Read current file content
@@ -5316,7 +3085,7 @@ def _handle_delta_write(params: Any, context: Any) -> dict[str, Any]:
 
     from nexus.core.hash_fast import hash_content
 
-    nexus_fs = _app_state.nexus_fs
+    nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
 
     # Get the delta and base hash
@@ -5384,14 +3153,14 @@ def _require_admin(context: Any) -> None:
 def _handle_admin_create_key(params: Any, context: Any) -> dict[str, Any]:
     """Handle admin_create_key method."""
     import uuid
-    from datetime import UTC, datetime, timedelta
+    from datetime import timedelta
 
     from nexus.server.auth.database_key import DatabaseAPIKeyAuth
     from nexus.services.permissions.entity_registry import EntityRegistry
 
     _require_admin(context)
 
-    auth_provider = _app_state.auth_provider
+    auth_provider = _fastapi_app.state.auth_provider
     if not auth_provider or not hasattr(auth_provider, "session_factory"):
         raise RuntimeError("Database auth provider not configured")
 
@@ -5447,7 +3216,6 @@ def _handle_admin_list_keys(params: Any, context: Any) -> dict[str, Any]:
 
     Performance optimized: All filtering happens in SQL instead of Python.
     """
-    from datetime import UTC, datetime
 
     from sqlalchemy import func, or_, select
 
@@ -5455,7 +3223,7 @@ def _handle_admin_list_keys(params: Any, context: Any) -> dict[str, Any]:
 
     _require_admin(context)
 
-    auth_provider = _app_state.auth_provider
+    auth_provider = _fastapi_app.state.auth_provider
     if not auth_provider or not hasattr(auth_provider, "session_factory"):
         raise RuntimeError("Database auth provider not configured")
 
@@ -5522,7 +3290,7 @@ def _handle_admin_get_key(params: Any, context: Any) -> dict[str, Any]:
 
     _require_admin(context)
 
-    auth_provider = _app_state.auth_provider
+    auth_provider = _fastapi_app.state.auth_provider
     if not auth_provider or not hasattr(auth_provider, "session_factory"):
         raise RuntimeError("Database auth provider not configured")
 
@@ -5556,7 +3324,7 @@ def _handle_admin_revoke_key(params: Any, context: Any) -> dict[str, Any]:
 
     _require_admin(context)
 
-    auth_provider = _app_state.auth_provider
+    auth_provider = _fastapi_app.state.auth_provider
     if not auth_provider or not hasattr(auth_provider, "session_factory"):
         raise RuntimeError("Database auth provider not configured")
 
@@ -5571,7 +3339,7 @@ def _handle_admin_revoke_key(params: Any, context: Any) -> dict[str, Any]:
 
 def _handle_admin_update_key(params: Any, context: Any) -> dict[str, Any]:
     """Handle admin_update_key method."""
-    from datetime import UTC, datetime, timedelta
+    from datetime import timedelta
 
     from sqlalchemy import select
 
@@ -5580,7 +3348,7 @@ def _handle_admin_update_key(params: Any, context: Any) -> dict[str, Any]:
 
     _require_admin(context)
 
-    auth_provider = _app_state.auth_provider
+    auth_provider = _fastapi_app.state.auth_provider
     if not auth_provider or not hasattr(auth_provider, "session_factory"):
         raise RuntimeError("Database auth provider not configured")
 

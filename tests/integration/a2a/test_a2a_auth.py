@@ -29,22 +29,22 @@ def app_with_auth() -> FastAPI:
     router = build_router(base_url="http://testserver")
     app.include_router(router)
 
-    # Mock _app_state to simulate auth being enabled
+    # Mock _fastapi_app.state to simulate auth being enabled
     from nexus.server import fastapi_server
 
     # Store original values
-    original_api_key = getattr(fastapi_server._app_state, "api_key", None)
-    original_auth_provider = getattr(fastapi_server._app_state, "auth_provider", None)
+    original_api_key = getattr(fastapi_server._fastapi_app.state, "api_key", None)
+    original_auth_provider = getattr(fastapi_server._fastapi_app.state, "auth_provider", None)
 
     # Set mock auth provider to enable auth enforcement
     mock_auth_provider = AsyncMock()
-    fastapi_server._app_state.auth_provider = mock_auth_provider
+    fastapi_server._fastapi_app.state.auth_provider = mock_auth_provider
 
     yield app
 
     # Restore original values
-    fastapi_server._app_state.api_key = original_api_key
-    fastapi_server._app_state.auth_provider = original_auth_provider
+    fastapi_server._fastapi_app.state.api_key = original_api_key
+    fastapi_server._fastapi_app.state.auth_provider = original_auth_provider
 
 
 @pytest.fixture
@@ -54,20 +54,20 @@ def app_no_auth() -> FastAPI:
     router = build_router(base_url="http://testserver")
     app.include_router(router)
 
-    # Ensure _app_state has no auth
+    # Ensure _fastapi_app.state has no auth
     from nexus.server import fastapi_server
 
-    original_api_key = getattr(fastapi_server._app_state, "api_key", None)
-    original_auth_provider = getattr(fastapi_server._app_state, "auth_provider", None)
+    original_api_key = getattr(fastapi_server._fastapi_app.state, "api_key", None)
+    original_auth_provider = getattr(fastapi_server._fastapi_app.state, "auth_provider", None)
 
-    fastapi_server._app_state.api_key = None
-    fastapi_server._app_state.auth_provider = None
+    fastapi_server._fastapi_app.state.api_key = None
+    fastapi_server._fastapi_app.state.auth_provider = None
 
     yield app
 
     # Restore
-    fastapi_server._app_state.api_key = original_api_key
-    fastapi_server._app_state.auth_provider = original_auth_provider
+    fastapi_server._fastapi_app.state.api_key = original_api_key
+    fastapi_server._fastapi_app.state.auth_provider = original_auth_provider
 
 
 # ======================================================================

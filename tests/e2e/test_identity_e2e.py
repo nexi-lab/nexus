@@ -296,7 +296,7 @@ class TestIdentityE2EServerLevel:
 
     def test_verify_signature_round_trip(self, client: Any, admin_headers: Any, app: Any) -> None:
         """POST /api/agents/{id}/verify correctly validates a signature."""
-        from nexus.server.fastapi_server import _app_state
+        from nexus.server.fastapi_server import _fastapi_app
 
         agent_id = f"e2e-admin,verify-agent-{uuid.uuid4().hex[:8]}"
         rpc_call(
@@ -311,7 +311,7 @@ class TestIdentityE2EServerLevel:
         )
 
         # Sign a message using KeyService directly (simulates agent-side signing)
-        key_service = _app_state.key_service
+        key_service = _fastapi_app.state.key_service
         assert key_service is not None, "KeyService not initialized"
 
         keys = key_service.get_active_keys(agent_id)
@@ -339,7 +339,7 @@ class TestIdentityE2EServerLevel:
         self, client: Any, admin_headers: Any, app: Any
     ) -> None:
         """Tampered signature is rejected."""
-        from nexus.server.fastapi_server import _app_state
+        from nexus.server.fastapi_server import _fastapi_app
 
         agent_id = f"e2e-admin,tamper-agent-{uuid.uuid4().hex[:8]}"
         rpc_call(
@@ -353,7 +353,7 @@ class TestIdentityE2EServerLevel:
             admin_headers,
         )
 
-        key_service = _app_state.key_service
+        key_service = _fastapi_app.state.key_service
         keys = key_service.get_active_keys(agent_id)
         private_key = key_service.decrypt_private_key(keys[0].key_id)
         message = b"Original message"
@@ -374,7 +374,7 @@ class TestIdentityE2EServerLevel:
 
     def test_cross_agent_key_id_rejected(self, client: Any, admin_headers: Any, app: Any) -> None:
         """Using agent_a's key_id for agent_b's verify endpoint returns 403."""
-        from nexus.server.fastapi_server import _app_state
+        from nexus.server.fastapi_server import _fastapi_app
 
         agent_a = f"e2e-admin,cross-a-{uuid.uuid4().hex[:8]}"
         agent_b = f"e2e-admin,cross-b-{uuid.uuid4().hex[:8]}"
@@ -400,7 +400,7 @@ class TestIdentityE2EServerLevel:
             admin_headers,
         )
 
-        key_service = _app_state.key_service
+        key_service = _fastapi_app.state.key_service
         keys_a = key_service.get_active_keys(agent_a)
 
         # Try to verify agent_b's endpoint with agent_a's key_id
@@ -491,7 +491,7 @@ class TestNormalUserIdentityFlow:
 
     def test_normal_user_sign_and_verify(self, client: Any, normal_headers: Any) -> None:
         """Normal user registers agent, signs message, verifies via REST endpoint."""
-        from nexus.server.fastapi_server import _app_state
+        from nexus.server.fastapi_server import _fastapi_app
 
         agent_id = f"e2e-user,signverify-{uuid.uuid4().hex[:8]}"
         rpc_call(
@@ -502,7 +502,7 @@ class TestNormalUserIdentityFlow:
         )
 
         # Sign with the agent's key
-        key_service = _app_state.key_service
+        key_service = _fastapi_app.state.key_service
         assert key_service is not None
 
         keys = key_service.get_active_keys(agent_id)
@@ -529,7 +529,7 @@ class TestNormalUserIdentityFlow:
         self, client: Any, normal_headers: Any
     ) -> None:
         """Normal user's tampered signature is rejected."""
-        from nexus.server.fastapi_server import _app_state
+        from nexus.server.fastapi_server import _fastapi_app
 
         agent_id = f"e2e-user,tamper-{uuid.uuid4().hex[:8]}"
         rpc_call(
@@ -539,7 +539,7 @@ class TestNormalUserIdentityFlow:
             normal_headers,
         )
 
-        key_service = _app_state.key_service
+        key_service = _fastapi_app.state.key_service
         keys = key_service.get_active_keys(agent_id)
         private_key = key_service.decrypt_private_key(keys[0].key_id)
         signature = key_service._crypto.sign(b"original", private_key)
@@ -560,7 +560,7 @@ class TestNormalUserIdentityFlow:
         self, client: Any, normal_headers: Any, admin_headers: Any
     ) -> None:
         """Normal user cannot verify with another agent's key_id."""
-        from nexus.server.fastapi_server import _app_state
+        from nexus.server.fastapi_server import _fastapi_app
 
         # Admin creates an agent
         admin_agent = f"e2e-admin,admin-agent-{uuid.uuid4().hex[:8]}"
@@ -570,7 +570,7 @@ class TestNormalUserIdentityFlow:
             {"agent_id": admin_agent, "name": "Admin Agent"},
             admin_headers,
         )
-        admin_keys = _app_state.key_service.get_active_keys(admin_agent)
+        admin_keys = _fastapi_app.state.key_service.get_active_keys(admin_agent)
 
         # Normal user creates their own agent
         user_agent = f"e2e-user,user-agent-{uuid.uuid4().hex[:8]}"

@@ -161,11 +161,7 @@ impl VFSLockManager {
     }
 
     /// Check whether any *descendant* path is locked in a way that conflicts.
-    fn descendant_conflict(
-        locks: &HashMap<String, LockEntry>,
-        path: &str,
-        mode: LockMode,
-    ) -> bool {
+    fn descendant_conflict(locks: &HashMap<String, LockEntry>, path: &str, mode: LockMode) -> bool {
         let prefix = if path.ends_with('/') {
             path.to_string()
         } else {
@@ -398,10 +394,7 @@ impl VFSLockManager {
     fn is_locked(&self, path: &str) -> bool {
         let norm = normalize_path(path);
         let state = self.state.lock();
-        state
-            .locks
-            .get(&norm)
-            .is_some_and(|entry| !entry.is_idle())
+        state.locks.get(&norm).is_some_and(|entry| !entry.is_idle())
     }
 
     /// Return lock-holder information for `path`, or `None` if unlocked.
@@ -424,11 +417,7 @@ impl VFSLockManager {
     fn stats(&self, py: Python<'_>) -> PyResult<Py<PyAny>> {
         let acquires = self.acquire_count.load(Ordering::Relaxed);
         let total_ns = self.total_acquire_ns.load(Ordering::Relaxed);
-        let avg_ns = if acquires > 0 {
-            total_ns / acquires
-        } else {
-            0
-        };
+        let avg_ns = if acquires > 0 { total_ns / acquires } else { 0 };
 
         let state = self.state.lock();
         let active_locks = state.locks.len();
@@ -438,7 +427,10 @@ impl VFSLockManager {
         let dict = PyDict::new(py);
         dict.set_item("acquire_count", acquires)?;
         dict.set_item("release_count", self.release_count.load(Ordering::Relaxed))?;
-        dict.set_item("contention_count", self.contention_count.load(Ordering::Relaxed))?;
+        dict.set_item(
+            "contention_count",
+            self.contention_count.load(Ordering::Relaxed),
+        )?;
         dict.set_item("timeout_count", self.timeout_count.load(Ordering::Relaxed))?;
         dict.set_item("active_locks", active_locks)?;
         dict.set_item("active_handles", active_handles)?;

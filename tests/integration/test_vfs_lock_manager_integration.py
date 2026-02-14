@@ -18,7 +18,6 @@ from nexus.core.lock_fast import (
     create_vfs_lock_manager,
 )
 
-
 # ---------------------------------------------------------------------------
 # Identical-behaviour verification
 # ---------------------------------------------------------------------------
@@ -120,9 +119,9 @@ class TestNexusFSIntegration:
         try:
             from nexus.core.nexus_fs import NexusFS
 
-            fs = NexusFS.__new__(NexusFS)
             # Normally __init__ sets it, but we can't easily instantiate NexusFS
             # without a full backend. Instead, verify the import and class exist.
+            assert NexusFS is not None
             from nexus.core.lock_fast import RustVFSLockManager
             mgr = RustVFSLockManager()
             assert isinstance(mgr, VFSLockManagerProtocol)

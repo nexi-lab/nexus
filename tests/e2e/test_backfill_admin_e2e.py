@@ -51,6 +51,14 @@ class _FakeNexusFS:
         self.backfill_directory_index = backfill_directory_index
 
 
+def _save_app_state(monkeypatch):
+    """Record _app_state attributes so monkeypatch auto-restores them at teardown."""
+    from nexus.server import fastapi_server as fas
+
+    for attr in ("nexus_fs", "api_key", "auth_provider"):
+        monkeypatch.setattr(fas._app_state, attr, getattr(fas._app_state, attr))
+
+
 @pytest.fixture
 def mock_nexus_fs():
     """Create a fake NexusFS with backfill_directory_index exposed."""
@@ -58,21 +66,13 @@ def mock_nexus_fs():
 
 
 @pytest.fixture
-def admin_client(mock_nexus_fs):
+def admin_client(mock_nexus_fs, monkeypatch):
     """Create FastAPI TestClient with API key auth (admin)."""
     from nexus.server import fastapi_server as fas
 
-    original_nexus_fs = fas._app_state.nexus_fs
-    original_api_key = fas._app_state.api_key
-    original_auth_provider = fas._app_state.auth_provider
-
-    try:
-        app = fas.create_app(mock_nexus_fs, api_key="admin-secret-key")
-        yield TestClient(app)
-    finally:
-        fas._app_state.nexus_fs = original_nexus_fs
-        fas._app_state.api_key = original_api_key
-        fas._app_state.auth_provider = original_auth_provider
+    _save_app_state(monkeypatch)
+    app = fas.create_app(mock_nexus_fs, api_key="admin-secret-key")
+    yield TestClient(app)
 
 
 class TestBackfillAdminE2E:
@@ -95,55 +95,47 @@ class TestBackfillAdminE2E:
         assert body.get("result", {}).get("prefix") == "/skills"
         logger.info("Admin caller succeeded: %s", body)
 
-    def test_non_admin_caller_rejected(self, mock_nexus_fs):
+    def test_non_admin_caller_rejected(self, mock_nexus_fs, monkeypatch):
         """Non-admin authenticated caller gets permission denied on backfill_directory_index."""
         from nexus.server import fastapi_server as fas
 
-        original_nexus_fs = fas._app_state.nexus_fs
-        original_api_key = fas._app_state.api_key
-        original_auth_provider = fas._app_state.auth_provider
+        _save_app_state(monkeypatch)
 
-        try:
-            # Create a mock auth provider that returns non-admin result
-            mock_auth = MagicMock()
+        # Create a mock auth provider that returns non-admin result
+        mock_auth = MagicMock()
 
-            async def mock_authenticate(token):
-                if token == "user-token":
-                    result = MagicMock()
-                    result.authenticated = True
-                    result.is_admin = False  # NOT admin
-                    result.subject_type = "user"
-                    result.subject_id = "regular-user"
-                    result.zone_id = "default"
-                    result.inherit_permissions = True
-                    result.metadata = {}
-                    return result
-                return None
+        async def mock_authenticate(token):
+            if token == "user-token":
+                result = MagicMock()
+                result.authenticated = True
+                result.is_admin = False  # NOT admin
+                result.subject_type = "user"
+                result.subject_id = "regular-user"
+                result.zone_id = "default"
+                result.inherit_permissions = True
+                result.metadata = {}
+                return result
+            return None
 
-            mock_auth.authenticate = mock_authenticate
+        mock_auth.authenticate = mock_authenticate
 
-            app = fas.create_app(mock_nexus_fs, auth_provider=mock_auth)
-            client = TestClient(app)
+        app = fas.create_app(mock_nexus_fs, auth_provider=mock_auth)
+        client = TestClient(app)
 
-            response = client.post(
-                "/api/nfs/backfill_directory_index",
-                headers={"Authorization": "Bearer user-token"},
-                json={"params": {"prefix": "/"}},
-            )
+        response = client.post(
+            "/api/nfs/backfill_directory_index",
+            headers={"Authorization": "Bearer user-token"},
+            json={"params": {"prefix": "/"}},
+        )
 
-            # RPC protocol returns HTTP 200 with error in JSON body
-            body = response.json()
-            assert "error" in body, f"Expected RPC error, got: {body}"
-            assert "Permission denied" in body["error"]["message"]
-            assert "Admin privileges required" in body["error"]["message"]
-            # No result should be returned
-            assert body.get("result") is None
-            logger.info("Non-admin caller correctly rejected: %s", body)
-
-        finally:
-            fas._app_state.nexus_fs = original_nexus_fs
-            fas._app_state.api_key = original_api_key
-            fas._app_state.auth_provider = original_auth_provider
+        # RPC protocol returns HTTP 200 with error in JSON body
+        body = response.json()
+        assert "error" in body, f"Expected RPC error, got: {body}"
+        assert "Permission denied" in body["error"]["message"]
+        assert "Admin privileges required" in body["error"]["message"]
+        # No result should be returned
+        assert body.get("result") is None
+        logger.info("Non-admin caller correctly rejected: %s", body)
 
     def test_unauthenticated_caller_rejected(self, admin_client):
         """Unauthenticated caller (no token) gets 401."""

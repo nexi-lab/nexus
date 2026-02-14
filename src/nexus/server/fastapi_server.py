@@ -1861,7 +1861,7 @@ def _register_routes(app: FastAPI) -> None:
     # This ensures ALL other middlewares run with correlation context.
     from nexus.server.middleware.correlation import CorrelationMiddleware
 
-    app.add_middleware(CorrelationMiddleware)
+    app.add_middleware(CorrelationMiddleware)  # type: ignore[arg-type]
 
     # Exchange Protocol error handler (Issue #1361)
     try:

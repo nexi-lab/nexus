@@ -20,10 +20,21 @@ from __future__ import annotations
 import re
 import time
 import uuid
+from collections.abc import Awaitable, Callable, MutableMapping
 from contextvars import ContextVar
 from typing import Any
 
 import structlog
+
+# ASGI type aliases for mypy compatibility with Starlette's _MiddlewareFactory
+ASGIApp = Callable[
+    [
+        MutableMapping[str, Any],
+        Callable[[], Awaitable[MutableMapping[str, Any]]],
+        Callable[[MutableMapping[str, Any]], Awaitable[None]],
+    ],
+    Awaitable[None],
+]
 
 # Strict validation: alphanumeric + hyphens, max 128 chars.
 # Prevents log injection (newlines, control chars, fake JSON fields).
@@ -46,7 +57,7 @@ class CorrelationMiddleware:
     Non-HTTP scopes (websocket, lifespan) are passed through without modification.
     """
 
-    def __init__(self, app: Any) -> None:
+    def __init__(self, app: ASGIApp) -> None:  # type: ignore[override]
         self._app = app
 
     async def __call__(self, scope: dict, receive: Any, send: Any) -> None:

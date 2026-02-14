@@ -94,9 +94,9 @@ def configure_logging(
         structlog.stdlib.add_log_level,
         structlog.stdlib.add_logger_name,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
-        add_service_name,
-        otel_trace_processor,
-        error_classification_processor,
+        add_service_name,  # type: ignore[list-item]
+        otel_trace_processor,  # type: ignore[list-item]
+        error_classification_processor,  # type: ignore[list-item]
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
         structlog.processors.UnicodeDecoder(),

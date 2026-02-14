@@ -14,7 +14,7 @@ The driver itself is intentionally thin — delivery logic (backpressure,
 dedup, TTL, EventBus) lives in ``MessageSender`` and ``MessageProcessor``.
 
 Issue: #1243
-Architecture: NEXUS-LEGO-ARCHITECTURE.md §17.3
+Architecture: KERNEL-ARCHITECTURE.md
 """
 
 from __future__ import annotations

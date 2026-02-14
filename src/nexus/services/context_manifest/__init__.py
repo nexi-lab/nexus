@@ -23,7 +23,7 @@ Public API:
         - ``ALLOWED_VARIABLES`` — whitelist of allowed template variables
 
 References:
-    - docs/design/NEXUS-LEGO-ARCHITECTURE.md
+    - docs/design/KERNEL-ARCHITECTURE.md
     - Issue #1341: Context manifest with deterministic pre-execution
 """
 

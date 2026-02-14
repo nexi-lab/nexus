@@ -1,4 +1,4 @@
-"""Hook engine service protocol (Nexus Lego Architecture, Issue #1383).
+"""Hook engine service protocol (Issue #1383).
 
 Defines the contract for lifecycle hook registration and execution.
 Existing implementation: ``nexus.plugins.hooks.PluginHooks`` (partially async).
@@ -6,7 +6,7 @@ Existing implementation: ``nexus.plugins.hooks.PluginHooks`` (partially async).
 Storage Affinity: **CacheStore** — ephemeral hook registrations (in-memory / Dragonfly).
 
 References:
-    - docs/design/NEXUS-LEGO-ARCHITECTURE.md Part 2
+    - docs/design/KERNEL-ARCHITECTURE.md §3
     - docs/architecture/data-storage-matrix.md (Four Pillars)
     - Issue #1383: Define 6 kernel protocol interfaces
 """

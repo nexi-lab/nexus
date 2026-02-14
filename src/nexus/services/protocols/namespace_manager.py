@@ -1,4 +1,4 @@
-"""Namespace manager service protocol (Nexus Lego Architecture, Issue #1383).
+"""Namespace manager service protocol (Issue #1383).
 
 Defines the contract for per-subject namespace visibility.
 Existing implementation: ``nexus.services.permissions.namespace_manager.NamespaceManager`` (sync).
@@ -10,7 +10,7 @@ Storage Affinity: **RecordStore + CacheStore** — ReBAC views from RecordStore,
     mount-table cache in CacheStore for fast lookups.
 
 References:
-    - docs/design/NEXUS-LEGO-ARCHITECTURE.md Part 2
+    - docs/design/KERNEL-ARCHITECTURE.md §3
     - docs/architecture/data-storage-matrix.md (Four Pillars)
     - Issue #1383: Define 6 kernel protocol interfaces
 """

@@ -303,14 +303,13 @@ class NexusFSMountsMixin:
                 )
             else:
                 try:
-                    import asyncio
-
                     from nexus.core.context_utils import get_zone_id
+                    from nexus.core.sync_bridge import run_sync
 
                     zone_id = get_zone_id(context)
                     # Available via NexusFSOAuthMixin in multiple inheritance
                     token_manager = self._get_token_manager()  # type: ignore[attr-defined]  # allowed
-                    revoked = asyncio.run(
+                    revoked = run_sync(
                         token_manager.revoke_credential(
                             provider=provider,
                             user_email=user_email,

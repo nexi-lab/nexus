@@ -155,113 +155,93 @@ class AsyncLocalBackend:
     # === Metadata Operations ===
 
     async def _read_metadata(self, content_hash: str) -> dict[str, Any]:
-        """Read metadata for content asynchronously."""
+        """Read metadata for content asynchronously.
+
+        Uses tenacity for async retry with exponential backoff + jitter.
+        Each attempt runs blocking I/O in a thread; the backoff sleep
+        uses asyncio.sleep so the thread pool slot is freed between retries.
+        """
+        from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+
         meta_path = self._get_meta_path(content_hash)
 
-        def _read() -> dict[str, Any]:
+        def _single_read() -> dict[str, Any]:
             if not meta_path.exists():
                 return {"ref_count": 0, "size": 0}
+            content = meta_path.read_text(encoding="utf-8")
+            result: dict[str, Any] = json.loads(content)
+            return result
 
-            # Retry logic for file locking and race conditions
-            max_retries = 10
-            base_delay = 0.001  # 1ms base delay
+        @retry(
+            stop=stop_after_attempt(10),
+            wait=wait_exponential(multiplier=0.001, max=1.0),
+            retry=retry_if_exception_type((json.JSONDecodeError, OSError)),
+            reraise=True,
+        )
+        async def _read_with_retry() -> dict[str, Any]:
+            return await asyncio.to_thread(_single_read)
 
-            for attempt in range(max_retries):
-                try:
-                    content = meta_path.read_text(encoding="utf-8")
-                    result: dict[str, Any] = json.loads(content)
-                    return result
-                except json.JSONDecodeError as e:
-                    if attempt < max_retries - 1:
-                        import random
-
-                        delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
-                        time.sleep(delay)
-                        continue
-                    raise BackendError(
-                        f"Failed to read metadata: {e}: {content_hash}",
-                        backend="local",
-                        path=content_hash,
-                    ) from e
-                except OSError as e:
-                    if attempt < max_retries - 1:
-                        import random
-
-                        delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
-                        time.sleep(delay)
-                        continue
-                    raise BackendError(
-                        f"Failed to read metadata: {e}",
-                        backend="local",
-                        path=content_hash,
-                    ) from e
-
+        try:
+            return await _read_with_retry()
+        except (json.JSONDecodeError, OSError) as e:
             raise BackendError(
-                f"Failed to read metadata after {max_retries} retries",
+                f"Failed to read metadata: {e}: {content_hash}",
                 backend="local",
                 path=content_hash,
-            )
-
-        return await asyncio.to_thread(_read)
+            ) from e
 
     async def _write_metadata(self, content_hash: str, metadata: dict[str, Any]) -> None:
-        """Write metadata for content asynchronously."""
+        """Write metadata for content asynchronously.
+
+        Uses tenacity for async retry with exponential backoff.
+        Only PermissionError is retried (Windows antivirus / lock contention);
+        other OSErrors fail immediately.
+        """
+        from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+
         meta_path = self._get_meta_path(content_hash)
 
-        def _write() -> None:
+        def _single_write() -> None:
             meta_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    dir=meta_path.parent,
+                    delete=False,
+                    suffix=".tmp",
+                ) as tmp_file:
+                    tmp_path = Path(tmp_file.name)
+                    tmp_file.write(json.dumps(metadata))
+                    tmp_file.flush()
+                    os.fsync(tmp_file.fileno())
 
-            max_retries = 10
-            base_delay = 0.001
-
-            for attempt in range(max_retries):
+                os.replace(str(tmp_path), str(meta_path))
                 tmp_path = None
-                try:
-                    with tempfile.NamedTemporaryFile(
-                        mode="w",
-                        encoding="utf-8",
-                        dir=meta_path.parent,
-                        delete=False,
-                        suffix=".tmp",
-                    ) as tmp_file:
-                        tmp_path = Path(tmp_file.name)
-                        tmp_file.write(json.dumps(metadata))
-                        tmp_file.flush()
-                        os.fsync(tmp_file.fileno())
+            except BaseException:
+                if tmp_path is not None and tmp_path.exists():
+                    with contextlib.suppress(OSError):
+                        tmp_path.unlink()
+                raise
 
-                    os.replace(str(tmp_path), str(meta_path))
-                    tmp_path = None
-                    return
+        @retry(
+            stop=stop_after_attempt(10),
+            wait=wait_exponential(multiplier=0.001, max=1.0),
+            retry=retry_if_exception_type(PermissionError),
+            reraise=True,
+        )
+        async def _write_with_retry() -> None:
+            await asyncio.to_thread(_single_write)
 
-                except PermissionError as e:
-                    if tmp_path is not None and tmp_path.exists():
-                        with contextlib.suppress(OSError):
-                            tmp_path.unlink()
-
-                    if attempt < max_retries - 1:
-                        import random
-
-                        delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
-                        time.sleep(delay)
-                        continue
-                    else:
-                        raise BackendError(
-                            f"Failed to write metadata: {e}: {content_hash}",
-                            backend="local",
-                            path=content_hash,
-                        ) from e
-
-                except OSError as e:
-                    if tmp_path is not None and tmp_path.exists():
-                        with contextlib.suppress(OSError):
-                            tmp_path.unlink()
-                    raise BackendError(
-                        f"Failed to write metadata: {e}: {content_hash}",
-                        backend="local",
-                        path=content_hash,
-                    ) from e
-
-        await asyncio.to_thread(_write)
+        try:
+            await _write_with_retry()
+        except OSError as e:
+            raise BackendError(
+                f"Failed to write metadata: {e}: {content_hash}",
+                backend="local",
+                path=content_hash,
+            ) from e
 
     # === Content Write Operations ===
 

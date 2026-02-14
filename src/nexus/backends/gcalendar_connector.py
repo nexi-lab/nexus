@@ -303,7 +303,7 @@ send_notifications: true
             )
 
         # Get valid access token from TokenManager
-        import asyncio
+        from nexus.core.sync_bridge import run_sync
 
         try:
             zone_id = (
@@ -312,20 +312,13 @@ send_notifications: true
                 else "default"
             )
 
-            try:
-                asyncio.get_running_loop()
-                raise BackendError(
-                    "Calendar connector cannot be used in async context.",
-                    backend="gcalendar",
+            access_token = run_sync(
+                self.token_manager.get_valid_token(
+                    provider=self.provider,
+                    user_email=user_email,
+                    zone_id=zone_id,
                 )
-            except RuntimeError:
-                access_token = asyncio.run(
-                    self.token_manager.get_valid_token(
-                        provider=self.provider,
-                        user_email=user_email,
-                        zone_id=zone_id,
-                    )
-                )
+            )
         except Exception as e:
             raise BackendError(
                 f"Failed to get valid OAuth token for user {user_email}: {e}",

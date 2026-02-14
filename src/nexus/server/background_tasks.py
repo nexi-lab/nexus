@@ -138,8 +138,6 @@ async def tiger_cache_queue_task(
         >>> # Start Tiger Cache queue processor
         >>> asyncio.create_task(tiger_cache_queue_task(nexus_fs, 60, 1))
     """
-    import concurrent.futures
-
     logger.info(
         f"Starting Tiger Cache queue task (interval: {interval_seconds}s, batch: {batch_size})"
     )
@@ -147,25 +145,15 @@ async def tiger_cache_queue_task(
     # Wait for server to fully start
     await asyncio.sleep(5)
 
-    # Create a thread pool for blocking queue processing
-    executor = concurrent.futures.ThreadPoolExecutor(
-        max_workers=1, thread_name_prefix="tiger_queue"
-    )
-
     while True:
         try:
             # Access the rebac_manager from nexus_fs
             rebac_manager = getattr(nexus_fs, "_rebac_manager", None)
             if rebac_manager and hasattr(rebac_manager, "tiger_process_queue"):
-                # Run blocking queue processing in thread pool to avoid blocking event loop
-                loop = asyncio.get_running_loop()
-
-                # Bind rebac_manager to avoid B023 late-binding closure issue
-                def process_queue(mgr: Any = rebac_manager) -> int:
-                    result: int = mgr.tiger_process_queue(batch_size=batch_size)
-                    return result
-
-                processed = await loop.run_in_executor(executor, process_queue)
+                # Run blocking queue processing in thread to avoid blocking event loop
+                processed = await asyncio.to_thread(
+                    rebac_manager.tiger_process_queue, batch_size=batch_size
+                )
                 if processed > 0:
                     logger.info(f"Tiger Cache: processed {processed} queue entries (background)")
             elif rebac_manager:

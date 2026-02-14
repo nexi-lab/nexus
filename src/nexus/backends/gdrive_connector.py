@@ -274,7 +274,7 @@ class GoogleDriveConnectorBackend(Backend):
 
         try:
             # Check if we have a valid token
-            import asyncio
+            from nexus.core.sync_bridge import run_sync
 
             zone_id = (
                 context.zone_id
@@ -283,7 +283,7 @@ class GoogleDriveConnectorBackend(Backend):
             )
 
             # Try to get a valid token (will refresh if needed)
-            access_token = asyncio.run(
+            access_token = run_sync(
                 self.token_manager.get_valid_token(
                     provider=self.provider,
                     user_email=user_email,
@@ -395,7 +395,7 @@ class GoogleDriveConnectorBackend(Backend):
             )
 
         # Get valid access token from TokenManager (auto-refreshes if expired)
-        import asyncio
+        from nexus.core.sync_bridge import run_sync
 
         try:
             # Default to 'default' zone if not specified to match mount configurations
@@ -404,7 +404,7 @@ class GoogleDriveConnectorBackend(Backend):
                 if context and hasattr(context, "zone_id") and context.zone_id
                 else "default"
             )
-            access_token = asyncio.run(
+            access_token = run_sync(
                 self.token_manager.get_valid_token(
                     provider=self.provider,
                     user_email=user_email,

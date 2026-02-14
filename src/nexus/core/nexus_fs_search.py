@@ -2043,7 +2043,6 @@ class NexusFSSearchMixin:
         Returns:
             List of match dicts if Zoekt succeeded, None to fall back to standard grep
         """
-        import asyncio
         import logging
 
         logger = logging.getLogger(__name__)
@@ -2057,16 +2056,9 @@ class NexusFSSearchMixin:
         client = get_zoekt_client()
 
         # Check if Zoekt is available (sync wrapper for async check)
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # We're in an async context, can't use run_until_complete
-                # Fall back to standard grep
-                return None
-            is_available = loop.run_until_complete(client.is_available())
-        except RuntimeError:
-            # No event loop, create one
-            is_available = asyncio.run(client.is_available())
+        from nexus.core.sync_bridge import run_sync
+
+        is_available = run_sync(client.is_available())
 
         if not is_available:
             return None
@@ -2083,13 +2075,7 @@ class NexusFSSearchMixin:
                 zoekt_query = f"file:{path.lstrip('/')}/ {zoekt_query}"
 
             # Run Zoekt search
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    return None  # Can't run async in sync context
-                matches = loop.run_until_complete(client.search(zoekt_query, num=max_results * 3))
-            except RuntimeError:
-                matches = asyncio.run(client.search(zoekt_query, num=max_results * 3))
+            matches = run_sync(client.search(zoekt_query, num=max_results * 3))
 
             if not matches:
                 # Zoekt returned no results - let standard grep try
@@ -2143,16 +2129,11 @@ class NexusFSSearchMixin:
     def _is_zoekt_available(self) -> bool:
         """Check if Zoekt indexing service is available (cached check)."""
         try:
+            from nexus.core.sync_bridge import run_sync
             from nexus.search.zoekt_client import get_zoekt_client
 
             client = get_zoekt_client()
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    return False
-                return loop.run_until_complete(client.is_available())
-            except RuntimeError:
-                return asyncio.run(client.is_available())
+            return run_sync(client.is_available())
         except ImportError:
             return False
         except Exception:

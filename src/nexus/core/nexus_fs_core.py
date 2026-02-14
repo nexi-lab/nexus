@@ -208,28 +208,10 @@ class NexusFSCoreMixin:
                 revision=revision,
             )
 
-            # Determine task name for debugging
-            if old_path:
-                task_name = f"event_bus:{event_type}:{old_path}->{path}"
-            else:
-                task_name = f"event_bus:{event_type}:{path}"
+            # Fire event asynchronously (fire-and-forget via sync bridge)
+            from nexus.core.sync_bridge import fire_and_forget
 
-            # Fire event asynchronously
-            try:
-                asyncio.get_running_loop()
-                self._create_tracked_event_task(
-                    self._event_bus.publish(event),
-                    name=task_name,
-                )
-            except RuntimeError:
-                # No event loop - run in background thread
-                def publish_in_thread() -> None:
-                    try:
-                        asyncio.run(self._event_bus.publish(event))
-                    except Exception as e:
-                        logger.warning(f"Failed to publish {event_type} event: {e}")
-
-                threading.Thread(target=publish_in_thread, daemon=True).start()
+            fire_and_forget(self._event_bus.publish(event))
         except Exception as e:
             logger.warning(f"Failed to create {event_type} event: {e}")
 
@@ -252,46 +234,20 @@ class NexusFSCoreMixin:
         if not (self.enable_workflows and self.workflow_engine):  # type: ignore[attr-defined]
             return
 
-        import asyncio
+        from nexus.core.sync_bridge import fire_and_forget
 
-        try:
-            asyncio.get_running_loop()
-            self._create_tracked_event_task(
-                self.workflow_engine.fire_event(trigger_type, event_context),  # type: ignore[attr-defined]
-                name=f"workflow:{label}",
-            )
-            if self.subscription_manager:  # type: ignore[attr-defined]
-                event_type = label.split(":")[0] if ":" in label else label
-                self._create_tracked_event_task(
-                    self.subscription_manager.broadcast(  # type: ignore[attr-defined]
-                        event_type,
-                        event_context,
-                        event_context.get("zone_id", "default"),
-                    ),
-                    name=f"webhook:{label}",
+        fire_and_forget(
+            self.workflow_engine.fire_event(trigger_type, event_context)  # type: ignore[attr-defined]
+        )
+        if self.subscription_manager:  # type: ignore[attr-defined]
+            event_type = label.split(":")[0] if ":" in label else label
+            fire_and_forget(
+                self.subscription_manager.broadcast(  # type: ignore[attr-defined]
+                    event_type,
+                    event_context,
+                    event_context.get("zone_id", "default"),
                 )
-        except RuntimeError:
-            # No event loop running — run in background thread
-            import threading
-
-            def _run_in_thread() -> None:
-                try:
-                    asyncio.run(
-                        self.workflow_engine.fire_event(trigger_type, event_context)  # type: ignore[attr-defined]
-                    )
-                    if self.subscription_manager:  # type: ignore[attr-defined]
-                        event_type = label.split(":")[0] if ":" in label else label
-                        asyncio.run(
-                            self.subscription_manager.broadcast(  # type: ignore[attr-defined]
-                                event_type,
-                                event_context,
-                                event_context.get("zone_id", "default"),
-                            )
-                        )
-                except Exception as e:
-                    logger.error(f"Workflow event error for {label}: {e}")
-
-            threading.Thread(target=_run_in_thread, daemon=True).start()
+            )
 
     # =========================================================================
     # Zookie Consistency Token Support - Issue #1187
@@ -556,7 +512,9 @@ class NexusFSCoreMixin:
                 timeout=timeout,
             )
 
-        lock_id = asyncio.run(acquire_lock())
+        from nexus.core.sync_bridge import run_sync
+
+        lock_id = run_sync(acquire_lock())
 
         if lock_id is None:
             raise LockTimeout(path=path, timeout=timeout)
@@ -582,30 +540,15 @@ class NexusFSCoreMixin:
         if not hasattr(self, "_lock_manager") or self._lock_manager is None:
             return
 
-        try:
-            asyncio.get_running_loop()
-            # There's a running event loop - shouldn't reach here if acquire worked
-            logger.error(f"_release_lock_sync called from async context for {path}")
-            return
-        except RuntimeError:
-            pass  # No running loop - safe to proceed
-
         zone_id = self._get_zone_id(context)  # type: ignore[attr-defined]  # allowed
 
-        # Use the existing Raft-based lock manager
-        # Note: lock_id is the holder_id (owner ID) from acquire()
         async def release_lock() -> None:
             await self._lock_manager.release(lock_id, zone_id, path)
 
+        from nexus.core.sync_bridge import run_sync
+
         try:
-            asyncio.run(release_lock())
-        except RuntimeError as e:
-            if "cannot be called from a running event loop" in str(e):
-                logger.error(
-                    f"Failed to release lock {lock_id} for {path}: called from async context"
-                )
-            else:
-                logger.error(f"Failed to release lock {lock_id} for {path}: {e}")
+            run_sync(release_lock())
         except Exception as e:
             logger.error(f"Failed to release lock {lock_id} for {path}: {e}")
 
@@ -790,8 +733,10 @@ class NexusFSCoreMixin:
                 future = executor.submit(asyncio.run, self._get_parsed_content_async(path, content))
                 return future.result()
         except RuntimeError:
-            # No running loop - we can create one
-            return asyncio.run(self._get_parsed_content_async(path, content))
+            # No running loop - use sync bridge
+            from nexus.core.sync_bridge import run_sync
+
+            return run_sync(self._get_parsed_content_async(path, content))
 
     @rpc_expose(description="Read file content")
     def read(
@@ -2778,8 +2723,10 @@ class NexusFSCoreMixin:
             path: Virtual path to the file
         """
         try:
-            # Run async parse in a new event loop (thread-safe)
-            asyncio.run(self.parse(path, store_result=True))
+            # Run async parse via sync bridge (thread-safe)
+            from nexus.core.sync_bridge import run_sync
+
+            run_sync(self.parse(path, store_result=True))
         except Exception as e:
             # Log parsing errors for visibility but don't crash
             # IMPORTANT: Log with enough detail to debug issues

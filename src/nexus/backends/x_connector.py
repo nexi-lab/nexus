@@ -34,7 +34,6 @@ Example:
     >>> nx.write("/x/posts/new.json", json.dumps({"text": "Hello!")).encode())
 """
 
-import asyncio
 import hashlib
 import json
 import logging
@@ -251,7 +250,9 @@ class XConnectorBackend(Backend):
         Raises:
             BackendError: If authentication fails
         """
-        return asyncio.run(self._get_api_client_async(context))
+        from nexus.core.sync_bridge import run_sync
+
+        return run_sync(self._get_api_client_async(context))
 
     async def _get_user_id(self, context: "OperationContext | None") -> str:
         """Get X user ID for authenticated user.
@@ -274,7 +275,7 @@ class XConnectorBackend(Backend):
         if user_email in self._user_id_cache:
             return self._user_id_cache[user_email]
 
-        # Fetch from API (use async version to avoid nested asyncio.run)
+        # Fetch from API
         client = await self._get_api_client_async(context)
         try:
             user_data = await client.get_me()
@@ -673,8 +674,10 @@ class XConnectorBackend(Backend):
         if cached:
             return cached
 
-        # Fetch from API using single asyncio.run
-        return asyncio.run(self._read_content_async(context, endpoint_type, params))
+        # Fetch from API
+        from nexus.core.sync_bridge import run_sync
+
+        return run_sync(self._read_content_async(context, endpoint_type, params))
 
     def write_content(
         self,
@@ -725,7 +728,7 @@ class XConnectorBackend(Backend):
             draft_file.write_bytes(content)
             return draft_id
 
-        # Post tweet using single asyncio.run
+        # Post tweet
         async def _post_tweet() -> str:
             client = await self._get_api_client_async(context)
             try:
@@ -749,7 +752,9 @@ class XConnectorBackend(Backend):
             finally:
                 await client.close()
 
-        return asyncio.run(_post_tweet())
+        from nexus.core.sync_bridge import run_sync
+
+        return run_sync(_post_tweet())
 
     def delete_content(
         self,
@@ -795,7 +800,7 @@ class XConnectorBackend(Backend):
                     draft_file.unlink()
                 return
 
-            # Delete tweet via API using single asyncio.run
+            # Delete tweet via API
             async def _delete_tweet() -> None:
                 client = await self._get_api_client_async(context)
                 try:
@@ -809,7 +814,9 @@ class XConnectorBackend(Backend):
                     await client.close()
 
             try:
-                asyncio.run(_delete_tweet())
+                from nexus.core.sync_bridge import run_sync
+
+                run_sync(_delete_tweet())
             except BackendError as e:
                 if "403" in str(e) or "Forbidden" in str(e):
                     raise PermissionError(
@@ -1266,7 +1273,9 @@ class XConnectorBackend(Backend):
             return results
 
         try:
-            return asyncio.run(_search_user_tweets())
+            from nexus.core.sync_bridge import run_sync
+
+            return run_sync(_search_user_tweets())
         except Exception as e:
             logger.warning(f"grep_user_tweets failed: {e}")
             return []
@@ -1314,7 +1323,9 @@ class XConnectorBackend(Backend):
             return results
 
         try:
-            return asyncio.run(_search_global())
+            from nexus.core.sync_bridge import run_sync
+
+            return run_sync(_search_global())
         except Exception as e:
             logger.warning(f"grep_global failed: {e}")
             return []

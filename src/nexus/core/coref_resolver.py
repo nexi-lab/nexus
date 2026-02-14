@@ -150,22 +150,9 @@ Resolved text:"""
         Returns:
             CorefResult with resolved text.
         """
-        import asyncio
+        from nexus.core.sync_bridge import run_sync
 
-        try:
-            _loop = asyncio.get_running_loop()  # noqa: F841 - used to check if in async context
-            # We're in an async context
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                future = pool.submit(
-                    asyncio.run,
-                    self.resolve_async(text, context, entity_hints),
-                )
-                return future.result()
-        except RuntimeError:
-            # No running loop
-            return asyncio.run(self.resolve_async(text, context, entity_hints))
+        return run_sync(self.resolve_async(text, context, entity_hints))
 
     async def resolve_async(
         self,

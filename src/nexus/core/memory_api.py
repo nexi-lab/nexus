@@ -305,10 +305,10 @@ class Memory:
 
                 # Generate embedding
                 if embedding_provider:
-                    import asyncio
+                    from nexus.core.sync_bridge import run_sync
 
                     try:
-                        embedding_vec = asyncio.run(embedding_provider.embed_text(text_content))
+                        embedding_vec = run_sync(embedding_provider.embed_text(text_content))
                         embedding_json = json.dumps(embedding_vec)
                         embedding_model_name = getattr(embedding_provider, "model", "unknown")
                         embedding_dim = len(embedding_vec)
@@ -483,12 +483,12 @@ class Memory:
             entities_json: JSON string of extracted entities
             relationships_json: JSON string of extracted relationships
         """
-        import asyncio
         import json
         import os
 
         from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+        from nexus.core.sync_bridge import run_sync
         from nexus.search.graph_store import GraphStore
 
         # Get database URL from session's engine
@@ -586,7 +586,7 @@ class Memory:
             finally:
                 await engine.dispose()
 
-        asyncio.run(_do_store())
+        run_sync(_do_store())
 
     def query(
         self,
@@ -905,8 +905,9 @@ class Memory:
             Semantic search requires vector embeddings. If not available,
             falls back to simple text matching.
         """
-        import asyncio
         import json
+
+        from nexus.core.sync_bridge import run_sync
 
         # #1023: Validate and normalize temporal parameters
         after_dt, before_dt = validate_temporal_params(after, before, during)
@@ -943,7 +944,7 @@ class Memory:
                 return self._keyword_search(query, scope, memory_type, limit, after_dt, before_dt)
 
         # Generate query embedding
-        query_embedding = asyncio.run(embedding_provider.embed_text(query))
+        query_embedding = run_sync(embedding_provider.embed_text(query))
 
         # Query memories from database
         from sqlalchemy import select
@@ -2327,9 +2328,9 @@ class Memory:
             >>> reflection = memory.reflect(traj_id)
             >>> print(reflection['helpful_strategies'])
         """
-        import asyncio
+        from nexus.core.sync_bridge import run_sync
 
-        return asyncio.run(self.reflect_async(trajectory_id, context))
+        return run_sync(self.reflect_async(trajectory_id, context))
 
     async def batch_reflect_async(
         self,
@@ -2488,9 +2489,9 @@ class Memory:
         Returns:
             Batch reflection results
         """
-        import asyncio
+        from nexus.core.sync_bridge import run_sync
 
-        return asyncio.run(self.batch_reflect_async(agent_id, since, min_trajectories, task_type))
+        return run_sync(self.batch_reflect_async(agent_id, since, min_trajectories, task_type))
 
     def get_playbook(self, playbook_name: str = "default") -> dict[str, Any] | None:
         """Get agent's playbook.
@@ -2744,9 +2745,9 @@ class Memory:
         Returns:
             Consolidation report
         """
-        import asyncio
+        from nexus.core.sync_bridge import run_sync
 
-        return asyncio.run(
+        return run_sync(
             self.consolidate_async(
                 memory_type,
                 scope,
@@ -2849,9 +2850,9 @@ class Memory:
         Returns:
             Tuple of (task_result, trajectory_id)
         """
-        import asyncio
+        from nexus.core.sync_bridge import run_sync
 
-        return asyncio.run(
+        return run_sync(
             self.execute_with_learning_async(
                 task_fn,
                 task_description,
@@ -3112,9 +3113,9 @@ class Memory:
             >>> result = memory.index_memories()
             >>> print(f"Indexed {result['success_count']} memories")
         """
-        import asyncio
+        from nexus.core.sync_bridge import run_sync
 
-        return asyncio.run(
+        return run_sync(
             self.index_memories_async(embedding_provider, batch_size, memory_type, scope)
         )
 

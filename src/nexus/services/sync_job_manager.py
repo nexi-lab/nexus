@@ -355,22 +355,19 @@ class SyncJobManager:
             progress_state = ProgressState(last_update_time=time.time())
             progress_callback = self._create_progress_callback(job_id, progress_state)
 
-            # Run sync in executor to not block event loop
+            # Run sync in thread to not block event loop
             # (sync_mount is synchronous)
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None,
-                lambda: nexus_fs.sync_mount(
-                    mount_point=mount_point,
-                    path=sync_params.get("path"),
-                    recursive=sync_params.get("recursive", True),
-                    dry_run=sync_params.get("dry_run", False),
-                    sync_content=sync_params.get("sync_content", True),
-                    include_patterns=sync_params.get("include_patterns"),
-                    exclude_patterns=sync_params.get("exclude_patterns"),
-                    generate_embeddings=sync_params.get("generate_embeddings", False),
-                    progress_callback=progress_callback,
-                ),
+            result = await asyncio.to_thread(
+                nexus_fs.sync_mount,
+                mount_point=mount_point,
+                path=sync_params.get("path"),
+                recursive=sync_params.get("recursive", True),
+                dry_run=sync_params.get("dry_run", False),
+                sync_content=sync_params.get("sync_content", True),
+                include_patterns=sync_params.get("include_patterns"),
+                exclude_patterns=sync_params.get("exclude_patterns"),
+                generate_embeddings=sync_params.get("generate_embeddings", False),
+                progress_callback=progress_callback,
             )
 
             # Mark completed

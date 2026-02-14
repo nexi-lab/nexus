@@ -439,6 +439,6 @@ Provide your analysis as valid JSON only, no additional commentary.
         Returns:
             Reflection results
         """
-        import asyncio
+        from nexus.core.sync_bridge import run_sync
 
-        return asyncio.run(self.reflect_async(trajectory_id, context, reflection_prompt))
+        return run_sync(self.reflect_async(trajectory_id, context, reflection_prompt))

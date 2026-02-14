@@ -263,20 +263,9 @@ Output:"""
         Returns:
             RelationshipExtractionResult with extracted relationships.
         """
-        import asyncio
+        from nexus.core.sync_bridge import run_sync
 
-        try:
-            asyncio.get_running_loop()
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor() as pool:
-                future = pool.submit(
-                    asyncio.run,
-                    self.extract_async(text, entities, relationship_types),
-                )
-                return future.result()
-        except RuntimeError:
-            return asyncio.run(self.extract_async(text, entities, relationship_types))
+        return run_sync(self.extract_async(text, entities, relationship_types))
 
     async def extract_async(
         self,

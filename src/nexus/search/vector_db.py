@@ -16,7 +16,6 @@ Zoekt integration:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import struct
 from typing import TYPE_CHECKING, Any
@@ -562,14 +561,9 @@ class VectorDatabase:
         client = get_zoekt_client()
 
         # Check if Zoekt is available (sync wrapper)
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # In async context, can't use run_until_complete
-                return None
-            is_available = loop.run_until_complete(client.is_available())
-        except RuntimeError:
-            is_available = asyncio.run(client.is_available())
+        from nexus.core.sync_bridge import run_sync
+
+        is_available = run_sync(client.is_available())
 
         if not is_available:
             return None
@@ -583,13 +577,7 @@ class VectorDatabase:
                 zoekt_query = f"file:{path_filter.lstrip('/')} {zoekt_query}"
 
             # Run search
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    return None
-                matches = loop.run_until_complete(client.search(zoekt_query, num=limit * 2))
-            except RuntimeError:
-                matches = asyncio.run(client.search(zoekt_query, num=limit * 2))
+            matches = run_sync(client.search(zoekt_query, num=limit * 2))
 
             if not matches:
                 # No results - let FTS try
@@ -649,44 +637,22 @@ class VectorDatabase:
         index = get_bm25s_index()
 
         # Check if index is initialized and has documents
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # In async context, can't use run_until_complete
-                return None
+        from nexus.core.sync_bridge import run_sync
 
-            # Initialize if needed
-            if not loop.run_until_complete(index.initialize()):
-                return None
+        if not run_sync(index.initialize()):
+            return None
 
-            # Get stats to check if index has documents
-            stats = loop.run_until_complete(index.get_stats())
-            if stats.get("total_documents", 0) == 0:
-                return None
-
-        except RuntimeError:
-            # No event loop - create new one
-            if not asyncio.run(index.initialize()):
-                return None
-            stats = asyncio.run(index.get_stats())
-            if stats.get("total_documents", 0) == 0:
-                return None
+        stats = run_sync(index.get_stats())
+        if stats.get("total_documents", 0) == 0:
+            return None
 
         logger.debug("[KEYWORD] Using BM25S for fast ranked text search")
 
         try:
             # Run search
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    return None
-                bm25s_results = loop.run_until_complete(
-                    index.search(query=query, limit=limit, path_filter=path_filter)
-                )
-            except RuntimeError:
-                bm25s_results = asyncio.run(
-                    index.search(query=query, limit=limit, path_filter=path_filter)
-                )
+            bm25s_results = run_sync(
+                index.search(query=query, limit=limit, path_filter=path_filter)
+            )
 
             if not bm25s_results:
                 return None

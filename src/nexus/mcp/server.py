@@ -786,13 +786,13 @@ def create_mcp_server(
             nx_instance = _get_nexus_instance(ctx)
             # Check if nx has semantic_search method (only available in NexusFS)
             if hasattr(nx_instance, "semantic_search"):
-                import asyncio
+                from nexus.core.sync_bridge import run_sync
 
                 # Get results with high limit to support pagination
                 # Note: We fetch offset+limit*2 to efficiently check if there are more results
                 fetch_limit = offset + limit * 2
                 # Call async semantic_search method
-                all_results = asyncio.run(
+                all_results = run_sync(
                     nx_instance.semantic_search(query, path="/", limit=fetch_limit)
                 )
                 total = len(all_results)

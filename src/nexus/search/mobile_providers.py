@@ -35,7 +35,9 @@ GGUF Model Download:
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import logging
+import threading
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -51,6 +53,28 @@ logger = logging.getLogger(__name__)
 
 # Default cache directory for downloaded models
 DEFAULT_CACHE_DIR = Path.home() / ".cache" / "nexus" / "models"
+
+# Dedicated thread pool for ML model loading and inference.
+# Isolates CPU-bound ML work from the default asyncio thread pool,
+# preventing starvation of general I/O operations.
+_ML_EXECUTOR: concurrent.futures.ThreadPoolExecutor | None = None
+_ML_EXECUTOR_LOCK: threading.Lock = threading.Lock()
+
+
+def _get_ml_executor() -> concurrent.futures.ThreadPoolExecutor:
+    """Get or create the dedicated ML inference thread pool."""
+    global _ML_EXECUTOR
+    if _ML_EXECUTOR is not None:
+        return _ML_EXECUTOR
+    with _ML_EXECUTOR_LOCK:
+        if _ML_EXECUTOR is None:
+            import os
+
+            _ML_EXECUTOR = concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(4, (os.cpu_count() or 2)),
+                thread_name_prefix="ml-inference",
+            )
+        return _ML_EXECUTOR
 
 
 # =============================================================================
@@ -175,8 +199,10 @@ class FastEmbedMobileProvider(MobileEmbeddingProvider):
         model_name = self.MODEL_MAP.get(self.config.name, self.config.name)
         logger.info(f"Loading FastEmbed model: {model_name}")
 
-        loop = asyncio.get_event_loop()
-        self._model = await loop.run_in_executor(None, lambda: TextEmbedding(model_name=model_name))
+        loop = asyncio.get_running_loop()
+        self._model = await loop.run_in_executor(
+            _get_ml_executor(), lambda: TextEmbedding(model_name=model_name)
+        )
         self._loaded = True
         logger.info(f"FastEmbed model loaded: {model_name}")
 
@@ -193,8 +219,10 @@ class FastEmbedMobileProvider(MobileEmbeddingProvider):
         if not self._loaded:
             await self.load()
 
-        loop = asyncio.get_event_loop()
-        embeddings = await loop.run_in_executor(None, lambda: list(self._model.embed([text])))
+        loop = asyncio.get_running_loop()
+        embeddings = await loop.run_in_executor(
+            _get_ml_executor(), lambda: list(self._model.embed([text]))
+        )
         return embeddings[0].tolist()  # type: ignore[no-any-return]
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
@@ -202,8 +230,10 @@ class FastEmbedMobileProvider(MobileEmbeddingProvider):
         if not self._loaded:
             await self.load()
 
-        loop = asyncio.get_event_loop()
-        embeddings = await loop.run_in_executor(None, lambda: list(self._model.embed(texts)))
+        loop = asyncio.get_running_loop()
+        embeddings = await loop.run_in_executor(
+            _get_ml_executor(), lambda: list(self._model.embed(texts))
+        )
         return [e.tolist() for e in embeddings]
 
 
@@ -235,7 +265,7 @@ class Model2VecProvider(MobileEmbeddingProvider):
 
         logger.info(f"Loading Model2Vec model: {self.config.name}")
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         self._model = await loop.run_in_executor(
             None, lambda: StaticModel.from_pretrained(self.config.name)
         )
@@ -255,8 +285,8 @@ class Model2VecProvider(MobileEmbeddingProvider):
         if not self._loaded:
             await self.load()
 
-        loop = asyncio.get_event_loop()
-        embedding = await loop.run_in_executor(None, lambda: self._model.encode(text))
+        loop = asyncio.get_running_loop()
+        embedding = await loop.run_in_executor(_get_ml_executor(), lambda: self._model.encode(text))
         return embedding.tolist()  # type: ignore[no-any-return]
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
@@ -264,8 +294,10 @@ class Model2VecProvider(MobileEmbeddingProvider):
         if not self._loaded:
             await self.load()
 
-        loop = asyncio.get_event_loop()
-        embeddings = await loop.run_in_executor(None, lambda: self._model.encode(texts))
+        loop = asyncio.get_running_loop()
+        embeddings = await loop.run_in_executor(
+            _get_ml_executor(), lambda: self._model.encode(texts)
+        )
         return embeddings.tolist()  # type: ignore[no-any-return]
 
 
@@ -301,7 +333,7 @@ class SentenceTransformersProvider(MobileEmbeddingProvider):
         # Some models need trust_remote_code
         trust_remote = "gemma" in self.config.name.lower()
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         self._model = await loop.run_in_executor(
             None,
             lambda: SentenceTransformer(
@@ -325,8 +357,8 @@ class SentenceTransformersProvider(MobileEmbeddingProvider):
         if not self._loaded:
             await self.load()
 
-        loop = asyncio.get_event_loop()
-        embedding = await loop.run_in_executor(None, lambda: self._model.encode(text))
+        loop = asyncio.get_running_loop()
+        embedding = await loop.run_in_executor(_get_ml_executor(), lambda: self._model.encode(text))
         return embedding.tolist()  # type: ignore[no-any-return]
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
@@ -334,8 +366,10 @@ class SentenceTransformersProvider(MobileEmbeddingProvider):
         if not self._loaded:
             await self.load()
 
-        loop = asyncio.get_event_loop()
-        embeddings = await loop.run_in_executor(None, lambda: self._model.encode(texts))
+        loop = asyncio.get_running_loop()
+        embeddings = await loop.run_in_executor(
+            _get_ml_executor(), lambda: self._model.encode(texts)
+        )
         return embeddings.tolist()  # type: ignore[no-any-return]
 
 
@@ -426,7 +460,7 @@ class GGUFEmbeddingProvider(MobileEmbeddingProvider):
         # Get model path from metadata or use name as path
         model_path = self.config.metadata.get("model_path", self.config.name)
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         self._model = await loop.run_in_executor(
             None,
             lambda: Llama(
@@ -460,8 +494,8 @@ class GGUFEmbeddingProvider(MobileEmbeddingProvider):
         if not self._loaded:
             await self.load()
 
-        loop = asyncio.get_event_loop()
-        embedding = await loop.run_in_executor(None, lambda: self._model.embed(text))
+        loop = asyncio.get_running_loop()
+        embedding = await loop.run_in_executor(_get_ml_executor(), lambda: self._model.embed(text))
 
         # Handle numpy arrays - convert to list[float]
         if hasattr(embedding, "tolist"):
@@ -484,7 +518,7 @@ class GGUFEmbeddingProvider(MobileEmbeddingProvider):
         if not self._loaded:
             await self.load()
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
 
         def _embed_batch() -> list[list[float]]:
             results = []
@@ -496,7 +530,7 @@ class GGUFEmbeddingProvider(MobileEmbeddingProvider):
                     results.append(list(embedding))
             return results
 
-        return await loop.run_in_executor(None, _embed_batch)
+        return await loop.run_in_executor(_get_ml_executor(), _embed_batch)
 
 
 # =============================================================================
@@ -534,7 +568,7 @@ async def download_gguf_model(
             "huggingface_hub not installed. Install with: pip install huggingface_hub"
         ) from e
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     def _download() -> str:
         result: str = hf_hub_download(
@@ -544,7 +578,7 @@ async def download_gguf_model(
         )
         return result
 
-    return await loop.run_in_executor(None, _download)
+    return await loop.run_in_executor(_get_ml_executor(), _download)
 
 
 # =============================================================================
@@ -576,7 +610,7 @@ class CrossEncoderRerankerProvider(MobileRerankerProvider):
 
         logger.info(f"Loading CrossEncoder model: {self.config.name}")
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         self._model = await loop.run_in_executor(
             None,
             lambda: CrossEncoder(
@@ -611,8 +645,8 @@ class CrossEncoderRerankerProvider(MobileRerankerProvider):
         # Create query-document pairs
         pairs = [(query, doc) for doc in documents]
 
-        loop = asyncio.get_event_loop()
-        scores = await loop.run_in_executor(None, lambda: self._model.predict(pairs))
+        loop = asyncio.get_running_loop()
+        scores = await loop.run_in_executor(_get_ml_executor(), lambda: self._model.predict(pairs))
 
         # Create (index, score) tuples and sort by score descending
         indexed_scores = list(enumerate(scores.tolist()))
@@ -985,14 +1019,16 @@ async def download_model(model_name: str, provider: str) -> bool:
     Returns:
         True if download successful
     """
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     try:
         if provider == "fastembed":
             from fastembed import TextEmbedding
 
             logger.info(f"Downloading FastEmbed model: {model_name}")
-            await loop.run_in_executor(None, lambda: TextEmbedding(model_name=model_name))
+            await loop.run_in_executor(
+                _get_ml_executor(), lambda: TextEmbedding(model_name=model_name)
+            )
             logger.info(f"FastEmbed model downloaded: {model_name}")
             return True
 
@@ -1000,7 +1036,9 @@ async def download_model(model_name: str, provider: str) -> bool:
             from model2vec import StaticModel
 
             logger.info(f"Downloading Model2Vec model: {model_name}")
-            await loop.run_in_executor(None, lambda: StaticModel.from_pretrained(model_name))
+            await loop.run_in_executor(
+                _get_ml_executor(), lambda: StaticModel.from_pretrained(model_name)
+            )
             logger.info(f"Model2Vec model downloaded: {model_name}")
             return True
 
@@ -1008,7 +1046,7 @@ async def download_model(model_name: str, provider: str) -> bool:
             from sentence_transformers import SentenceTransformer
 
             logger.info(f"Downloading SentenceTransformers model: {model_name}")
-            await loop.run_in_executor(None, lambda: SentenceTransformer(model_name))
+            await loop.run_in_executor(_get_ml_executor(), lambda: SentenceTransformer(model_name))
             logger.info(f"SentenceTransformers model downloaded: {model_name}")
             return True
 

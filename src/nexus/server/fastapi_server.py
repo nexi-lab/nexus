@@ -800,7 +800,7 @@ async def lifespan(_app: FastAPI) -> Any:
                 perm_enforcer.agent_registry = _app_state.agent_registry
 
             # Issue #1440: Create async wrapper for protocol conformance
-            from nexus.core.async_agent_registry import AsyncAgentRegistry
+            from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
 
             _app_state.async_agent_registry = AsyncAgentRegistry(_app_state.agent_registry)
 

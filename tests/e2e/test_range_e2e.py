@@ -40,9 +40,7 @@ class TestBasicRange:
     """Basic range request: first 5KB of a 10KB file."""
 
     def test_range_first_half(self, nexus_server: dict) -> None:
-        with httpx.Client(
-            base_url=nexus_server["base_url"], timeout=30, trust_env=False
-        ) as c:
+        with httpx.Client(base_url=nexus_server["base_url"], timeout=30, trust_env=False) as c:
             _write_file(c, "/range-e2e/test1.bin", TEST_CONTENT)
 
             resp = c.get(
@@ -60,9 +58,7 @@ class TestResumeDownload:
     """Simulate download resumption: request bytes from offset to end."""
 
     def test_range_from_offset(self, nexus_server: dict) -> None:
-        with httpx.Client(
-            base_url=nexus_server["base_url"], timeout=30, trust_env=False
-        ) as c:
+        with httpx.Client(base_url=nexus_server["base_url"], timeout=30, trust_env=False) as c:
             _write_file(c, "/range-e2e/test2.bin", TEST_CONTENT)
 
             resp = c.get(
@@ -79,9 +75,7 @@ class TestSuffixRange:
     """Suffix range: last N bytes of file."""
 
     def test_suffix_range(self, nexus_server: dict) -> None:
-        with httpx.Client(
-            base_url=nexus_server["base_url"], timeout=30, trust_env=False
-        ) as c:
+        with httpx.Client(base_url=nexus_server["base_url"], timeout=30, trust_env=False) as c:
             _write_file(c, "/range-e2e/suffix.bin", TEST_CONTENT)
 
             resp = c.get(
@@ -98,9 +92,7 @@ class TestNoRange:
     """Without Range header, get full content with Accept-Ranges."""
 
     def test_full_download_has_accept_ranges(self, nexus_server: dict) -> None:
-        with httpx.Client(
-            base_url=nexus_server["base_url"], timeout=30, trust_env=False
-        ) as c:
+        with httpx.Client(base_url=nexus_server["base_url"], timeout=30, trust_env=False) as c:
             _write_file(c, "/range-e2e/test3.bin", TEST_CONTENT)
 
             resp = c.get(
@@ -119,9 +111,7 @@ class TestUnsatisfiableRange:
     def test_range_past_eof(self, nexus_server: dict) -> None:
         small_content = b"X" * 100
 
-        with httpx.Client(
-            base_url=nexus_server["base_url"], timeout=30, trust_env=False
-        ) as c:
+        with httpx.Client(base_url=nexus_server["base_url"], timeout=30, trust_env=False) as c:
             _write_file(c, "/range-e2e/small.bin", small_content)
 
             resp = c.get(
@@ -138,9 +128,7 @@ class TestUnauthenticatedDenied:
 
     def test_stream_without_auth_denied(self, nexus_server: dict) -> None:
         """Streaming without API key should be denied by permissions."""
-        with httpx.Client(
-            base_url=nexus_server["base_url"], timeout=30, trust_env=False
-        ) as c:
+        with httpx.Client(base_url=nexus_server["base_url"], timeout=30, trust_env=False) as c:
             _write_file(c, "/range-e2e/denied.bin", b"secret data")
 
             resp = c.get(
@@ -153,9 +141,7 @@ class TestUnauthenticatedDenied:
 
     def test_nfs_write_without_auth_returns_401(self, nexus_server: dict) -> None:
         """NFS RPC write without API key returns 401 (enforced at dependency)."""
-        with httpx.Client(
-            base_url=nexus_server["base_url"], timeout=30, trust_env=False
-        ) as c:
+        with httpx.Client(base_url=nexus_server["base_url"], timeout=30, trust_env=False) as c:
             resp = c.post(
                 "/api/nfs/write",
                 json={"params": {"path": "/range-e2e/nope.bin", "content": "nope"}},

@@ -234,9 +234,7 @@ class TestGetAuthResultOpenAccess:
 
     async def test_open_access_agent_id_header(self):
         """X-Agent-ID should be passed through."""
-        result = await _call_get_auth_result(
-            request=_make_mock_request(), x_agent_id="agent-42"
-        )
+        result = await _call_get_auth_result(request=_make_mock_request(), x_agent_id="agent-42")
         assert result["x_agent_id"] == "agent-42"
 
     async def test_open_access_non_sk_bearer_token(self):
@@ -254,9 +252,7 @@ class TestGetAuthResultStaticKey:
 
     async def test_no_authorization_returns_none(self):
         """Missing Authorization header should return None."""
-        result = await _call_get_auth_result(
-            request=_make_mock_request(api_key="secret-key-123")
-        )
+        result = await _call_get_auth_result(request=_make_mock_request(api_key="secret-key-123"))
         assert result is None
 
     async def test_valid_bearer_key(self):
@@ -325,9 +321,7 @@ class TestGetAuthResultAuthProvider:
         provider.authenticate = AsyncMock(return_value=self._make_auth_result_obj())
         request = _make_mock_request(auth_provider=provider)
 
-        result = await _call_get_auth_result(
-            request=request, authorization="Bearer valid-token"
-        )
+        result = await _call_get_auth_result(request=request, authorization="Bearer valid-token")
         assert result is not None
         assert result["authenticated"] is True
         assert result["subject_id"] == "alice"
@@ -362,9 +356,7 @@ class TestGetAuthResultAuthProvider:
         provider.authenticate = AsyncMock(return_value=None)
         request = _make_mock_request(auth_provider=provider)
 
-        result = await _call_get_auth_result(
-            request=request, authorization="Bearer bad-token"
-        )
+        result = await _call_get_auth_result(request=request, authorization="Bearer bad-token")
         assert result is None
 
     async def test_cached_result_gets_fresh_agent_id(self):

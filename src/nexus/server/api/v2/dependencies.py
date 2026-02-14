@@ -24,9 +24,11 @@ logger = logging.getLogger(__name__)
 
 def _get_app_state() -> Any:
     """Get the global app state (lazy import)."""
-    from nexus.server.fastapi_server import _app_state
+    from nexus.server.fastapi_server import _fastapi_app
 
-    return _app_state
+    if _fastapi_app is None:
+        return None
+    return _fastapi_app.state
 
 
 def _get_require_auth() -> Any:

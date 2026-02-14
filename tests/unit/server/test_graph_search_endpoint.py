@@ -75,11 +75,11 @@ class TestGraphSearchEndpoint:
             assert config.graph_mode == mode
 
     def test_graph_enhanced_search_function_exists(self):
-        """Test that _graph_enhanced_search function exists."""
-        from nexus.server import fastapi_server
+        """Test that _graph_enhanced_search function exists in search router."""
+        from nexus.server.api.v1.routers import search
 
-        assert hasattr(fastapi_server, "_graph_enhanced_search")
-        assert callable(fastapi_server._graph_enhanced_search)
+        assert hasattr(search, "_graph_enhanced_search")
+        assert callable(search._graph_enhanced_search)
 
     @pytest.mark.asyncio
     async def test_graph_enhanced_search_returns_results(self):

@@ -80,16 +80,14 @@ def client(mock_nexus_fs):
     """Create a FastAPI TestClient with mocked lock manager."""
     from nexus.server import fastapi_server as fas
 
-    original_nexus_fs = fas._app_state.nexus_fs
-    original_api_key = fas._app_state.api_key
+    original_app = fas._fastapi_app
 
     try:
         app = fas.create_app(mock_nexus_fs, api_key="test-api-key")
         yield TestClient(app), mock_nexus_fs._lock_manager
 
     finally:
-        fas._app_state.nexus_fs = original_nexus_fs
-        fas._app_state.api_key = original_api_key
+        fas._fastapi_app = original_app
 
 
 # =============================================================================
@@ -514,12 +512,10 @@ class TestLockManagerAvailability:
         """Test that POST /api/locks returns 503 when lock manager unavailable."""
         from nexus.server import fastapi_server as fas
 
-        original = fas._app_state.nexus_fs
+        original_app = fas._fastapi_app
         try:
             mock_fs = MagicMock()
             mock_fs._has_distributed_locks = MagicMock(return_value=False)
-            fas._app_state.nexus_fs = mock_fs
-            fas._app_state.api_key = "test-api-key"
 
             app = fas.create_app(mock_fs, api_key="test-api-key")
 
@@ -531,7 +527,7 @@ class TestLockManagerAvailability:
             )
             assert response.status_code == 503
         finally:
-            fas._app_state.nexus_fs = original
+            fas._fastapi_app = original_app
 
 
 # =============================================================================

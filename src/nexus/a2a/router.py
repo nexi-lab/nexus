@@ -108,9 +108,15 @@ def build_router(
         # Per A2A spec: "All A2A requests must include a valid Authorization header"
         # Reference: https://a2a-protocol.org/latest/topics/enterprise-ready/
         try:
-            from nexus.server.fastapi_server import _app_state
+            from nexus.server.fastapi_server import _fastapi_app
 
-            has_auth = bool(_app_state.api_key or _app_state.auth_provider)
+            has_auth = bool(
+                _fastapi_app
+                and (
+                    getattr(_fastapi_app.state, "api_key", None)
+                    or getattr(_fastapi_app.state, "auth_provider", None)
+                )
+            )
             if has_auth and not auth_result:
                 # Return 401 Unauthorized per OAuth 2.0 / A2A best practices
                 return JSONResponse(
@@ -519,6 +525,7 @@ async def _get_auth_result_safe(request: Request) -> dict[str, Any] | None:
         from nexus.server.fastapi_server import get_auth_result
 
         return await get_auth_result(
+            request=request,
             authorization=request.headers.get("Authorization"),
             x_agent_id=request.headers.get("X-Agent-ID"),
             x_nexus_subject=request.headers.get("X-Nexus-Subject"),

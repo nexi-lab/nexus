@@ -95,24 +95,34 @@ class TestDispatchAdminEnforcement:
     cover both auto-dispatch and manual dispatch paths (Issue #1457).
     """
 
+    @pytest.fixture(autouse=True)
+    def _mock_app_state(self):
+        """Patch _fastapi_app.state to provide exposed_methods."""
+        from nexus.server.fastapi_server import _fastapi_app
+
+        if _fastapi_app is None:
+            # Create a minimal mock app for testing
+            mock_app = MagicMock()
+            with patch("nexus.server.fastapi_server._fastapi_app", mock_app):
+                yield mock_app
+        else:
+            yield _fastapi_app
+
     @pytest.mark.asyncio
-    async def test_admin_caller_allowed(self):
+    async def test_admin_caller_allowed(self, _mock_app_state):
         """Admin callers can invoke admin_only methods."""
         from nexus.server.fastapi_server import _dispatch_method
 
         admin_context = FakeContext(is_admin=True)
         params = type("Params", (), {})()  # Empty params object
 
-        with patch("nexus.server.fastapi_server._app_state") as mock_state:
-            mock_state.nexus_fs = MagicMock()
-            mock_state.exposed_methods = {"admin_op": _fake_admin_method}
+        _mock_app_state.state.exposed_methods = {"admin_op": _fake_admin_method}
 
-            result = await _dispatch_method("admin_op", params, admin_context)
-
+        result = await _dispatch_method("admin_op", params, admin_context)
         assert result == {"result": "admin_ok"}
 
     @pytest.mark.asyncio
-    async def test_non_admin_caller_rejected(self):
+    async def test_non_admin_caller_rejected(self, _mock_app_state):
         """Non-admin callers get NexusPermissionError for admin_only methods."""
         from nexus.core.exceptions import NexusPermissionError
         from nexus.server.fastapi_server import _dispatch_method
@@ -120,42 +130,35 @@ class TestDispatchAdminEnforcement:
         non_admin_context = FakeContext(is_admin=False)
         params = type("Params", (), {})()
 
-        with patch("nexus.server.fastapi_server._app_state") as mock_state:
-            mock_state.nexus_fs = MagicMock()
-            mock_state.exposed_methods = {"admin_op": _fake_admin_method}
+        _mock_app_state.state.exposed_methods = {"admin_op": _fake_admin_method}
 
-            with pytest.raises(NexusPermissionError, match="Admin privileges required"):
-                await _dispatch_method("admin_op", params, non_admin_context)
+        with pytest.raises(NexusPermissionError, match="Admin privileges required"):
+            await _dispatch_method("admin_op", params, non_admin_context)
 
     @pytest.mark.asyncio
-    async def test_none_context_rejected(self):
+    async def test_none_context_rejected(self, _mock_app_state):
         """None context is rejected for admin_only methods."""
         from nexus.core.exceptions import NexusPermissionError
         from nexus.server.fastapi_server import _dispatch_method
 
         params = type("Params", (), {})()
 
-        with patch("nexus.server.fastapi_server._app_state") as mock_state:
-            mock_state.nexus_fs = MagicMock()
-            mock_state.exposed_methods = {"admin_op": _fake_admin_method}
+        _mock_app_state.state.exposed_methods = {"admin_op": _fake_admin_method}
 
-            with pytest.raises(NexusPermissionError, match="Admin privileges required"):
-                await _dispatch_method("admin_op", params, None)
+        with pytest.raises(NexusPermissionError, match="Admin privileges required"):
+            await _dispatch_method("admin_op", params, None)
 
     @pytest.mark.asyncio
-    async def test_normal_method_not_affected(self):
+    async def test_normal_method_not_affected(self, _mock_app_state):
         """Non-admin_only methods work fine for non-admin callers."""
         from nexus.server.fastapi_server import _dispatch_method
 
         non_admin_context = FakeContext(is_admin=False)
         params = type("Params", (), {})()
 
-        with patch("nexus.server.fastapi_server._app_state") as mock_state:
-            mock_state.nexus_fs = MagicMock()
-            mock_state.exposed_methods = {"normal_op": _fake_normal_method}
+        _mock_app_state.state.exposed_methods = {"normal_op": _fake_normal_method}
 
-            result = await _dispatch_method("normal_op", params, non_admin_context)
-
+        result = await _dispatch_method("normal_op", params, non_admin_context)
         assert result == {"result": "normal_ok"}
 
 

@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING
 from nexus.services.protocols.namespace_manager import NamespaceMount
 
 if TYPE_CHECKING:
-    from nexus.core.namespace_manager import MountEntry, NamespaceManager
+    from nexus.services.permissions.namespace_manager import MountEntry, NamespaceManager
 
 
 def _to_namespace_mount(

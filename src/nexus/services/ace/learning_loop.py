@@ -215,7 +215,9 @@ class LearningLoop:
         Returns:
             Execution results
         """
-        return asyncio.run(
+        from nexus.core.sync_bridge import run_sync
+
+        return run_sync(
             self.execute_with_learning_async(
                 task_description,
                 task_fn,
@@ -285,7 +287,9 @@ class LearningLoop:
         Returns:
             List of re-learning results
         """
-        return asyncio.run(self.process_relearning_queue_async(limit))
+        from nexus.core.sync_bridge import run_sync
+
+        return run_sync(self.process_relearning_queue_async(limit))
 
     def get_playbook_strategies(
         self,

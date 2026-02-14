@@ -6089,31 +6089,11 @@ class NexusFS(  # type: ignore[misc]
             )
 
     @staticmethod
-    def _get_event_loop() -> asyncio.AbstractEventLoop:
-        """Get or create event loop (thread-safe for ThreadingHTTPServer).
-
-        This handles the case where async code needs to run in a thread that
-        doesn't have an event loop (e.g., worker threads in ThreadingHTTPServer).
-        """
-        try:
-            # Try to get existing event loop for this thread
-            loop = asyncio.get_event_loop()
-            # Check if it's closed and create new one if needed
-            if loop.is_closed():
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-        except RuntimeError:
-            # No event loop in this thread, create one
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        return loop
-
-    @staticmethod
     def _run_async(coro: Any) -> Any:
         """Run async coroutine safely, handling both running and non-running event loops.
 
-        This method handles the case where we're already in a running event loop
-        (e.g., from background tasks) and need to run async code.
+        Uses the unified sync_bridge to avoid the ThreadPoolExecutor + asyncio.run()
+        anti-pattern (Issue #1300).
 
         Args:
             coro: Coroutine to run
@@ -6121,20 +6101,9 @@ class NexusFS(  # type: ignore[misc]
         Returns:
             Result of the coroutine
         """
-        try:
-            # Check if we're already in a running event loop
-            asyncio.get_running_loop()
-            # We're in a running loop - can't use run_until_complete
-            # Run in a thread pool to avoid "loop is already running" error
-            import concurrent.futures
+        from nexus.core.sync_bridge import run_sync
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(asyncio.run, coro)
-                return future.result()
-        except RuntimeError:
-            # No running loop - safe to use run_until_complete
-            loop = NexusFS._get_event_loop()
-            return loop.run_until_complete(coro)
+        return run_sync(coro)
 
     @rpc_expose(description="Create a new sandbox")
     async def sandbox_create(  # type: ignore[override]

@@ -594,9 +594,9 @@ def build_hierarchy(
     Returns:
         HierarchyResult with hierarchy data
     """
-    import asyncio
+    from nexus.core.sync_bridge import run_sync
 
     manager = HierarchicalMemoryManager(consolidation_engine, session, zone_id)
-    return asyncio.run(
+    return run_sync(
         manager.build_hierarchy_async(memories=memories, memory_ids=memory_ids, **kwargs)
     )

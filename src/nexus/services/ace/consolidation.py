@@ -40,9 +40,8 @@ logger = logging.getLogger(__name__)
 def _run_coroutine(coro: Any) -> Any:
     """Run a coroutine from synchronous code.
 
-    Uses asyncio.run() directly. Callers that need running-event-loop
-    support (e.g. FastAPI, Jupyter) should use the thread-safe path in
-    ``sync_consolidate`` / ``sync_consolidate_by_affinity`` instead.
+    Uses run_sync() which handles both sync and async contexts
+    (no running loop -> asyncio.run, running loop -> background thread).
 
     Args:
         coro: Coroutine to execute.
@@ -50,9 +49,9 @@ def _run_coroutine(coro: Any) -> Any:
     Returns:
         The coroutine's return value.
     """
-    import asyncio
+    from nexus.core.sync_bridge import run_sync
 
-    return asyncio.run(coro)
+    return run_sync(coro)
 
 
 class ConsolidationEngine:
@@ -412,44 +411,9 @@ Provide only the consolidated summary, no additional commentary.
         Returns:
             Consolidation results
         """
-        import asyncio
-
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            # No event loop — safe to use asyncio.run directly
-            result: dict[str, Any] = _run_coroutine(
-                self.consolidate_async(memory_ids, importance_threshold, max_consolidated_memories)
-            )
-            return result
-
-        # Running event loop detected — create a fresh engine + session in a
-        # new thread so the SQLAlchemy session is never shared across threads.
-        import concurrent.futures
-
-        def _thread_target() -> dict[str, Any]:
-            thread_session = self._session_factory()
-            try:
-                engine = ConsolidationEngine(
-                    session=thread_session,
-                    backend=self.backend,
-                    llm_provider=self.llm_provider,
-                    user_id=self.user_id,
-                    agent_id=self.agent_id,
-                    zone_id=self.zone_id,
-                    session_factory=self._session_factory,
-                )
-                return asyncio.run(
-                    engine.consolidate_async(
-                        memory_ids, importance_threshold, max_consolidated_memories
-                    )
-                )
-            finally:
-                thread_session.close()
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(_thread_target)
-            return future.result()
+        return _run_coroutine(
+            self.consolidate_async(memory_ids, importance_threshold, max_consolidated_memories)
+        )
 
     # =========================================================================
     # Affinity-based consolidation (Issue #1026 - SimpleMem-inspired)
@@ -840,46 +804,15 @@ Provide only the consolidated summary, no additional commentary.
         Returns:
             Consolidation results (same as consolidate_by_affinity_async).
         """
-        import asyncio
-
-        coro_kwargs: dict[str, Any] = {
-            "memory_ids": memory_ids,
-            "embedding_provider": embedding_provider,
-            "beta": beta,
-            "lambda_decay": lambda_decay,
-            "affinity_threshold": affinity_threshold,
-            "time_unit_hours": time_unit_hours,
-            "max_cluster_size": max_cluster_size,
-            "importance_max": importance_max,
-        }
-
-        try:
-            asyncio.get_running_loop()
-        except RuntimeError:
-            result: dict[str, Any] = _run_coroutine(
-                self.consolidate_by_affinity_async(**coro_kwargs)
+        return _run_coroutine(
+            self.consolidate_by_affinity_async(
+                memory_ids=memory_ids,
+                embedding_provider=embedding_provider,
+                beta=beta,
+                lambda_decay=lambda_decay,
+                affinity_threshold=affinity_threshold,
+                time_unit_hours=time_unit_hours,
+                max_cluster_size=max_cluster_size,
+                importance_max=importance_max,
             )
-            return result
-
-        # Running event loop — thread-safe path with fresh session
-        import concurrent.futures
-
-        def _thread_target() -> dict[str, Any]:
-            thread_session = self._session_factory()
-            try:
-                engine = ConsolidationEngine(
-                    session=thread_session,
-                    backend=self.backend,
-                    llm_provider=self.llm_provider,
-                    user_id=self.user_id,
-                    agent_id=self.agent_id,
-                    zone_id=self.zone_id,
-                    session_factory=self._session_factory,
-                )
-                return asyncio.run(engine.consolidate_by_affinity_async(**coro_kwargs))
-            finally:
-                thread_session.close()
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(_thread_target)
-            return future.result()
+        )

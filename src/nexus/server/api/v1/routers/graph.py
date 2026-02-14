@@ -54,9 +54,7 @@ async def _graph_session(database_url: str, zone_id: str) -> AsyncIterator[Any]:
     async_url = _to_async_url(database_url)
     engine = create_async_engine(async_url)
     try:
-        session_factory = async_sessionmaker(
-            engine, class_=AsyncSession, expire_on_commit=False
-        )
+        session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with session_factory() as session:
             yield GraphStore(session, zone_id=zone_id)
     finally:
@@ -120,9 +118,7 @@ async def get_graph_neighbors(
     try:
         zone_id = _zone_id_from(nexus_fs)
         async with _graph_session(database_url, zone_id) as graph_store:
-            neighbors = await graph_store.get_neighbors(
-                entity_id, hops=hops, direction=direction
-            )
+            neighbors = await graph_store.get_neighbors(entity_id, hops=hops, direction=direction)
             return {
                 "neighbors": [
                     {
@@ -135,9 +131,7 @@ async def get_graph_neighbors(
             }
     except Exception as e:
         logger.error(f"Graph neighbors error: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500, detail=f"Graph neighbors error: {e}"
-        ) from e
+        raise HTTPException(status_code=500, detail=f"Graph neighbors error: {e}") from e
 
 
 @router.post("/api/graph/subgraph")
@@ -166,12 +160,11 @@ async def get_graph_subgraph(
         zone_id = _zone_id_from(nexus_fs)
         async with _graph_session(database_url, zone_id) as graph_store:
             subgraph = await graph_store.get_subgraph(entity_ids, max_hops=max_hops)
-            return subgraph.to_dict()
+            result: dict[str, Any] = subgraph.to_dict()
+            return result
     except Exception as e:
         logger.error(f"Graph subgraph error: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500, detail=f"Graph subgraph error: {e}"
-        ) from e
+        raise HTTPException(status_code=500, detail=f"Graph subgraph error: {e}") from e
 
 
 @router.get("/api/graph/search")
@@ -196,12 +189,8 @@ async def search_graph_entities(
     try:
         zone_id = _zone_id_from(nexus_fs)
         async with _graph_session(database_url, zone_id) as graph_store:
-            entity = await graph_store.find_entity(
-                name=name, entity_type=entity_type, fuzzy=fuzzy
-            )
+            entity = await graph_store.find_entity(name=name, entity_type=entity_type, fuzzy=fuzzy)
             return {"entity": entity.to_dict() if entity else None}
     except Exception as e:
         logger.error(f"Graph search error: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=500, detail=f"Graph search error: {e}"
-        ) from e
+        raise HTTPException(status_code=500, detail=f"Graph search error: {e}") from e

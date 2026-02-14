@@ -96,9 +96,7 @@ async def verify_agent_signature(
     else:
         keys = await asyncio.to_thread(key_service.get_active_keys, agent_id)
         if not keys:
-            raise HTTPException(
-                status_code=404, detail=f"No active keys for agent '{agent_id}'"
-            )
+            raise HTTPException(status_code=404, detail=f"No active keys for agent '{agent_id}'")
         resolved_key_id = keys[0].key_id
         from nexus.identity.crypto import IdentityCrypto
 

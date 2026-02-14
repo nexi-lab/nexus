@@ -1440,7 +1440,9 @@ def _register_routes(app: FastAPI) -> None:
 
         if _fastapi_app.state.nexus_fs:
             enforce_permissions = getattr(_fastapi_app.state.nexus_fs, "_enforce_permissions", None)
-            enforce_zone_isolation = getattr(_fastapi_app.state.nexus_fs, "_enforce_zone_isolation", None)
+            enforce_zone_isolation = getattr(
+                _fastapi_app.state.nexus_fs, "_enforce_zone_isolation", None
+            )
 
         # Check if authentication is configured
         has_auth = bool(_fastapi_app.state.api_key or _fastapi_app.state.auth_provider)
@@ -2163,9 +2165,7 @@ def _build_dispatch_table() -> dict[str, _DispatchEntry]:
         "delta_read": _DispatchEntry(_handle_delta_read),
         "delta_write": _DispatchEntry(_handle_delta_write),
         # Semantic search (Issue #947)
-        "semantic_search_index": _DispatchEntry(
-            _handle_semantic_search_index, is_async=True
-        ),
+        "semantic_search_index": _DispatchEntry(_handle_semantic_search_index, is_async=True),
         # Memory API (Issue #4)
         "store_memory": _DispatchEntry(_handle_store_memory),
         "list_memories": _DispatchEntry(_handle_list_memories),
@@ -2228,9 +2228,7 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
                 if entry.event_size_key and isinstance(result, dict)
                 else None
             )
-            await _fire_rpc_event(
-                entry.event_type, path, context, old_path=old_path, size=size
-            )
+            await _fire_rpc_event(entry.event_type, path or "", context, old_path=old_path, size=size)
 
         return result
 

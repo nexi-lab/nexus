@@ -214,9 +214,7 @@ async def release_lock(
 
     if force:
         if not auth_result.get("is_admin", False):
-            raise HTTPException(
-                status_code=403, detail="Force release requires admin privileges"
-            )
+            raise HTTPException(status_code=403, detail="Force release requires admin privileges")
         released = await lock_manager.force_release(zone_id, path)
         if not released:
             raise HTTPException(status_code=404, detail=f"No lock found for path: {path}")

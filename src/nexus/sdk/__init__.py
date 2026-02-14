@@ -30,9 +30,9 @@ Quick Start (Server Mode - Recommended):
     >>> python_files = nx.glob("**/*.py")
     >>> todos = nx.grep("TODO", file_pattern="**/*.py")
 
-Quick Start (Embedded Mode - Development Only):
+Quick Start (Standalone Mode - Development Only):
     >>> # No server required, but less suitable for production
-    >>> nx = connect(config={"mode": "embedded", "data_dir": "./nexus-data"})
+    >>> nx = connect(config={"mode": "standalone", "data_dir": "./nexus-data"})
     >>> nx.write("/workspace/file.txt", b"Hello World")
 
 Configuration:
@@ -46,9 +46,9 @@ Configuration:
     ...     "api_key": "your-api-key"
     ... })
     >>>
-    >>> # Embedded mode (development/testing only)
+    >>> # Standalone mode (development/testing only)
     >>> nx = connect(config={
-    ...     "mode": "embedded",
+    ...     "mode": "standalone",
     ...     "data_dir": "./nexus-data"
     ... })
     >>>

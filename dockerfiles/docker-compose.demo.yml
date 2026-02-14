@@ -108,6 +108,7 @@ services:
       NEXUS_HOST: 0.0.0.0
       NEXUS_PORT: 2026
       NEXUS_DATA_DIR: /app/data
+      NEXUS_MODE: standalone
 
       # Database configuration (PostgreSQL)
       # IMPORTANT: Always use the Docker service name for container-to-container DB access.

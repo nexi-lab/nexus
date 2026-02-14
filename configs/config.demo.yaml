@@ -1,8 +1,8 @@
 # Nexus Demo Configuration
 # Configuration for docker-compose demo environment with GCS connector
 
-# Deployment mode (embedded = single-process server with local backends)
-mode: embedded
+# Deployment mode (standalone = single-node redb, no Raft)
+mode: standalone
 
 # Database path (for TokenManager and other components that need DB access)
 # Uses NEXUS_DATABASE_URL env var if set, falls back to postgres:5432 for Docker

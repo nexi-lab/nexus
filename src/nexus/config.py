@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 # Import OAuthConfig - required for OAuth configuration
 from nexus.server.auth.oauth_config import OAuthConfig
@@ -87,13 +87,13 @@ class NexusConfig(BaseModel):
     1. Explicitly provided config dict/object
     2. Environment variables (NEXUS_*)
     3. Config file (./nexus.yaml, ~/.nexus/config.yaml)
-    4. Defaults (embedded mode with ./nexus-data)
+    4. Defaults (standalone mode with ./nexus-data)
     """
 
     # Deployment mode
     mode: str = Field(
-        default="embedded",
-        description="Deployment mode: embedded, monolithic, or distributed",
+        default="standalone",
+        description="Deployment mode: standalone (single-node redb), remote (thin HTTP client), or federation (ZoneManager + Raft)",
     )
 
     # Backend selection
@@ -233,8 +233,10 @@ class NexusConfig(BaseModel):
         description="Feature flags for optional functionality (semantic search, LLM read, etc.)",
     )
 
-    # Remote mode settings (monolithic/distributed)
-    url: str | None = Field(default=None, description="Nexus server URL for remote modes")
+    # Remote mode settings
+    url: str | None = Field(
+        default=None, description="Nexus server URL (required for mode='remote')"
+    )
     api_key: str | None = Field(default=None, description="API key for authentication")
     timeout: float = Field(default=30.0, description="Request timeout in seconds")
 
@@ -298,10 +300,13 @@ class NexusConfig(BaseModel):
     @field_validator("mode")
     @classmethod
     def validate_mode(cls, v: str) -> str:
-        """Validate deployment mode."""
-        allowed = ["embedded", "monolithic", "distributed"]
+        """Validate deployment mode.
+
+        Valid modes: standalone, remote, federation
+        """
+        allowed = ["standalone", "remote", "federation"]
         if v not in allowed:
-            raise ValueError(f"mode must be one of {allowed}, got {v}")
+            raise ValueError(f"mode must be one of {allowed}, got '{v}'")
         return v
 
     @field_validator("backend")
@@ -326,18 +331,16 @@ class NexusConfig(BaseModel):
             raise ValueError("gcs_bucket_name is required when backend='gcs'")
         return v
 
-    @field_validator("url")
-    @classmethod
-    def validate_url(cls, v: str | None, info: Any) -> str | None:
-        """Validate URL is required for remote modes."""
-        mode = info.data.get("mode")
-        if mode in ["monolithic", "distributed"] and not v:
-            # Check if we can get from environment
+    @model_validator(mode="after")
+    def validate_url_for_remote(self) -> "NexusConfig":
+        """Validate URL is required for remote mode."""
+        if self.mode == "remote" and not self.url:
             env_url = os.getenv("NEXUS_URL")
             if env_url:
-                return env_url
-            raise ValueError(f"url is required for {mode} mode")
-        return v
+                self.url = env_url
+            else:
+                raise ValueError("url is required for mode='remote'")
+        return self
 
     model_config = ConfigDict(
         frozen=False,  # Allow modifications after creation

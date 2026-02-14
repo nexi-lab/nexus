@@ -177,7 +177,10 @@ services:
       NEXUS_PORT: 2026
       NEXUS_DATA_DIR: /app/data
 
-      # --- Raft consensus (auto-detected by _create_metadata_store) ---
+      # --- Deployment mode (explicit federation for Raft cluster) ---
+      NEXUS_MODE: federation
+
+      # --- Raft consensus ---
       NEXUS_NODE_ID: 1
       NEXUS_BIND_ADDR: 0.0.0.0:2126
       NEXUS_PEERS: "2@http://nexus-2:2126,3@http://witness:2126"
@@ -270,6 +273,9 @@ services:
       NEXUS_HOST: 0.0.0.0
       NEXUS_PORT: 2026
       NEXUS_DATA_DIR: /app/data
+
+      # --- Deployment mode (explicit federation for Raft cluster) ---
+      NEXUS_MODE: federation
 
       NEXUS_NODE_ID: 2
       NEXUS_BIND_ADDR: 0.0.0.0:2126

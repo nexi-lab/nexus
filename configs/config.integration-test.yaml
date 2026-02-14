@@ -2,8 +2,8 @@
 # Minimal configuration for CI integration tests
 # No external backends (gcs_connector, gdrive_connector) - those are tested separately via API
 
-# Deployment mode (embedded = single-process server with local backends)
-mode: embedded
+# Deployment mode (standalone = single-process server with local backends)
+mode: standalone
 
 # Database path (for TokenManager and other components that need DB access)
 db_path: postgresql://postgres:nexus@postgres:5432/nexus

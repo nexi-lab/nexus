@@ -54,9 +54,9 @@ def work(
     try:
         nx = get_filesystem(backend_config)
 
-        # Only Embedded mode has metadata store with work views
+        # Only standalone mode has metadata store with work views
         if not isinstance(nx, NexusFS):
-            console.print("[red]Error:[/red] Work views are only available in embedded mode")
+            console.print("[red]Error:[/red] Work views are only available in standalone mode")
             nx.close()
             sys.exit(1)
 

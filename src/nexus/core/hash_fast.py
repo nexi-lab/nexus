@@ -42,7 +42,7 @@ try:
     _rust_hash_content_smart = _nexus_fast_mod.hash_content_smart
     _RUST_AVAILABLE = True
     logger.debug("Using Rust BLAKE3 acceleration")
-except ImportError:
+except (ImportError, AttributeError):
     logger.warning(
         "Rust BLAKE3 extension not available — falling back to Python blake3. "
         "Install with: pip install nexus-ai-fs[rust] or maturin develop --release"

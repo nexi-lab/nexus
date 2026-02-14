@@ -24,7 +24,7 @@ try:
 
     _HAS_OTEL = True
 except ImportError:
-    _otel_trace = None  # type: ignore[assignment]
+    _otel_trace = None
     _HAS_OTEL = False
 
 # Configurable service name (Issue #1002 / Issue 8).

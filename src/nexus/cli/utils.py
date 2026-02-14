@@ -183,7 +183,7 @@ def add_backend_options(func: Any) -> Any:
 def get_filesystem(
     backend_config: BackendConfig,
     enforce_permissions: bool | None = None,
-    force_local: bool = False,
+    server_mode: str | None = None,
     allow_admin_bypass: bool | None = None,
     enforce_zone_isolation: bool | None = None,
     enable_memory_paging: bool = True,
@@ -195,7 +195,9 @@ def get_filesystem(
     Args:
         backend_config: Backend configuration
         enforce_permissions: Whether to enforce permissions (None = use environment/config default)
-        force_local: If True, always use local NexusFS even if NEXUS_URL is set (for server mode)
+        server_mode: Explicit mode for server use ("standalone" or "federation").
+            When set, forces a local NexusFS (never RemoteNexusFS) to prevent
+            circular dependency when the server itself has NEXUS_URL set.
         allow_admin_bypass: Whether admin keys can bypass permission checks (None = use default False)
         enforce_zone_isolation: Whether to enforce zone isolation (None = use default True)
 
@@ -203,9 +205,9 @@ def get_filesystem(
         NexusFilesystem instance
     """
     try:
-        # If force_local is True, skip remote mode check (used by server to prevent circular dependency)
-        if not force_local and backend_config.remote_url:
-            # Use remote server connection
+        # If server_mode is set, the caller is a server — always use local NexusFS
+        if not server_mode and backend_config.remote_url:
+            # Client mode: use remote server connection
             from nexus.remote import RemoteNexusFS
 
             return RemoteNexusFS(
@@ -214,11 +216,11 @@ def get_filesystem(
             )
         elif backend_config.config_path:
             # Use explicit config file
-            if force_local:
-                # Force embedded mode to prevent RemoteNexusFS
+            if server_mode:
+                # Server mode: override mode to prevent RemoteNexusFS
                 config_obj = load_config(Path(backend_config.config_path))
                 config_dict: dict[str, Any] = {
-                    "mode": "embedded",  # Force embedded mode
+                    "mode": server_mode,
                     "data_dir": config_obj.data_dir,
                     "backend": config_obj.backend,
                 }
@@ -228,7 +230,6 @@ def get_filesystem(
                     config_dict["allow_admin_bypass"] = allow_admin_bypass
                 if enforce_zone_isolation is not None:
                     config_dict["enforce_zone_isolation"] = enforce_zone_isolation
-                # Issue #1258: Add memory paging config
                 config_dict["enable_memory_paging"] = enable_memory_paging
                 config_dict["memory_main_capacity"] = memory_main_capacity
                 config_dict["memory_recall_max_age_hours"] = memory_recall_max_age_hours
@@ -240,17 +241,15 @@ def get_filesystem(
             else:
                 config_obj = load_config(Path(backend_config.config_path))
                 nx_fs = nexus.connect(config=config_obj)
-                # Store config object for OAuth factory access
                 if hasattr(nx_fs, "_config") or hasattr(nx_fs, "__dict__"):
                     nx_fs._config = config_obj
                 return nx_fs
         elif backend_config.backend == "gcs":
-            # Use GCS backend
             if not backend_config.gcs_bucket:
                 console.print("[red]Error:[/red] --gcs-bucket is required when using --backend=gcs")
                 sys.exit(1)
             config: dict[str, Any] = {
-                "mode": "embedded",  # Explicitly set embedded mode
+                "mode": server_mode or "standalone",
                 "backend": "gcs",
                 "gcs_bucket_name": backend_config.gcs_bucket,
                 "gcs_project_id": backend_config.gcs_project,
@@ -263,17 +262,15 @@ def get_filesystem(
                 config["allow_admin_bypass"] = allow_admin_bypass
             if enforce_zone_isolation is not None:
                 config["enforce_zone_isolation"] = enforce_zone_isolation
-            # Issue #1258: Add memory paging config
             config["enable_memory_paging"] = enable_memory_paging
             config["memory_main_capacity"] = memory_main_capacity
             config["memory_recall_max_age_hours"] = memory_recall_max_age_hours
             nx_fs = nexus.connect(config=config)
-            # Note: For dict configs, _config is already set in nexus.connect()
             return nx_fs
         else:
             # Use local backend (default)
             config = {
-                "mode": "embedded",  # Explicitly set embedded mode
+                "mode": server_mode or "standalone",
                 "data_dir": backend_config.data_dir,
             }
             if enforce_permissions is not None:
@@ -282,12 +279,10 @@ def get_filesystem(
                 config["allow_admin_bypass"] = allow_admin_bypass
             if enforce_zone_isolation is not None:
                 config["enforce_zone_isolation"] = enforce_zone_isolation
-            # Issue #1258: Add memory paging config
             config["enable_memory_paging"] = enable_memory_paging
             config["memory_main_capacity"] = memory_main_capacity
             config["memory_recall_max_age_hours"] = memory_recall_max_age_hours
             nx_fs = nexus.connect(config=config)
-            # Note: For dict configs, _config is already set in nexus.connect()
             return nx_fs
     except Exception as e:
         console.print(f"[red]Error connecting to Nexus:[/red] {e}")

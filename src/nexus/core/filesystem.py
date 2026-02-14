@@ -1,7 +1,7 @@
 """Abstract base class for Nexus filesystem implementations.
 
 This module defines the common interface that all Nexus filesystem modes
-(Embedded, Monolith, Distributed) must implement.
+(Standalone, Remote, Federation) must implement.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ class NexusFilesystem(ABC):
     """
     Abstract base class for Nexus filesystem implementations.
 
-    All filesystem modes (Embedded, Monolith, Distributed) must implement
+    All filesystem modes (Standalone, Remote, Federation) must implement
     this interface to ensure consistent behavior across modes.
 
     This interface provides:

@@ -313,7 +313,9 @@ class AsyncSemanticSearch:
         # Issue #1192: Contextual chunking takes priority (includes base chunking internally)
         contextual_result: ContextualChunkResult | None = None
         if self.contextual_chunking and self._contextual_chunker is not None:
-            doc_summary = content[:500].rsplit(". ", 1)[0] + "." if ". " in content[:500] else content[:500]
+            doc_summary = (
+                content[:500].rsplit(". ", 1)[0] + "." if ". " in content[:500] else content[:500]
+            )
             contextual_result = await self._contextual_chunker.chunk_with_context(
                 document=content,
                 doc_summary=doc_summary,
@@ -432,9 +434,7 @@ class AsyncSemanticSearch:
             embedding_model = (
                 str(self.embedding_provider.__class__.__name__) if self.embedding_provider else None
             )
-            source_document_id = (
-                contextual_result.source_document_id if contextual_result else None
-            )
+            source_document_id = contextual_result.source_document_id if contextual_result else None
 
             # Issue #1192: Pre-compute contextual metadata outside the insert loop
             context_jsons: list[str | None] = []

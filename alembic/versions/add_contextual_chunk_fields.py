@@ -1,7 +1,7 @@
 """feat(#1192): Add contextual chunking fields to document_chunks
 
 Revision ID: add_contextual_chunk_fields
-Revises: convert_vector_to_halfvec
+Revises: merge_all_heads_for_test_harness
 Create Date: 2026-02-13
 
 Adds three nullable columns for Anthropic's Contextual Retrieval pattern:
@@ -23,7 +23,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "add_contextual_chunk_fields"
-down_revision: Union[str, Sequence[str], None] = "convert_vector_to_halfvec"
+down_revision: Union[str, Sequence[str], None] = "merge_all_heads_for_test_harness"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

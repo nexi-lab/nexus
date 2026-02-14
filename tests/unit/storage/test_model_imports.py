@@ -92,6 +92,8 @@ EXPECTED_MODELS = [
     "SpendingPolicyModel",
     "SpendingLedgerModel",
     "SpendingApprovalModel",
+    # IPC (Issue #1469)
+    "IPCMessageModel",
 ]
 
 

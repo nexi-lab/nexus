@@ -326,6 +326,67 @@ def connect(
                 )
                 zone_mgr = ZoneManager(node_id=node_id, base_path=zones_dir, bind_addr=bind_addr)
                 zone_mgr.bootstrap(root_zone_id="root", peers=peers)
+
+                # Multi-zone startup: create/join additional zones from env vars
+                zone_create_str = os.environ.get("NEXUS_ZONE_CREATE", "")
+                zone_join_str = os.environ.get("NEXUS_ZONE_JOIN", "")
+                mounts_str = os.environ.get("NEXUS_MOUNTS", "")
+
+                if zone_create_str:
+                    for zid in zone_create_str.split(","):
+                        zid = zid.strip()
+                        if zid and zid not in zone_mgr.list_zones():
+                            zone_mgr.create_zone(zid, peers=peers)
+
+                if zone_join_str:
+                    for zid in zone_join_str.split(","):
+                        zid = zid.strip()
+                        if zid and zid not in zone_mgr.list_zones():
+                            zone_mgr.join_zone(zid, peers=peers)
+
+                if mounts_str:
+                    import posixpath
+
+                    from nexus.core._metadata_generated import (
+                        DT_DIR,
+                        DT_MOUNT,
+                        FileMetadata,
+                    )
+                    from nexus.raft.zone_path_resolver import ZonePathResolver
+
+                    resolver = ZonePathResolver(zone_mgr, root_zone_id="root")
+                    for entry in mounts_str.split(","):
+                        entry = entry.strip()
+                        if "=" not in entry:
+                            continue
+                        mpath, tzid = entry.split("=", 1)
+                        mpath, tzid = mpath.strip(), tzid.strip()
+                        if not mpath or not tzid:
+                            continue
+                        parent = posixpath.dirname(mpath)
+                        name = posixpath.basename(mpath)
+                        if not name:
+                            continue
+                        resolved = resolver.resolve(parent)
+                        rel_path = posixpath.join(resolved.path, name)
+                        store = zone_mgr.get_store(resolved.zone_id)
+                        if store is None:
+                            continue
+                        existing = store.get(rel_path)
+                        if existing and existing.entry_type == DT_MOUNT:
+                            continue  # Already mounted (idempotent)
+                        if not existing:
+                            store.put(
+                                FileMetadata(
+                                    path=rel_path,
+                                    backend_name="",
+                                    physical_path="",
+                                    size=0,
+                                    entry_type=DT_DIR,
+                                )
+                            )
+                        zone_mgr.mount(resolved.zone_id, rel_path, tzid)
+
                 return ZoneAwareMetadataStore.from_zone_manager(zone_mgr, root_zone_id="root")
             except (ImportError, RuntimeError):
                 pass

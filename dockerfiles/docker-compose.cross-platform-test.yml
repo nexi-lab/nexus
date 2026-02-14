@@ -229,6 +229,10 @@ services:
       NEXUS_CONFIG_FILE: ${NEXUS_CONFIG_FILE:-}
       NEXUS_SKIP_HEAVY_SKILLS: ${NEXUS_SKIP_HEAVY_SKILLS:-false}
       RUST_LOG: info,nexus_raft=debug
+
+      # --- Multi-zone federation (Task #104) ---
+      NEXUS_ZONE_CREATE: "corp,corp-eng,corp-sales,family"
+      NEXUS_MOUNTS: "/corp=corp,/corp/engineering=corp-eng,/corp/sales=corp-sales,/family=family,/family/work=corp"
     ports:
       - "${NEXUS_PORT:-2026}:2026"   # HTTP API
       - "2126:2126"                   # Raft gRPC
@@ -310,6 +314,9 @@ services:
       NEXUS_CONFIG_FILE: ${NEXUS_CONFIG_FILE:-}
       NEXUS_SKIP_HEAVY_SKILLS: ${NEXUS_SKIP_HEAVY_SKILLS:-false}
       RUST_LOG: info,nexus_raft=debug
+
+      # --- Multi-zone federation (Task #104) ---
+      NEXUS_ZONE_JOIN: "corp,corp-eng,corp-sales,family"
     ports:
       - "2027:2026"   # HTTP API (host:2027 → container:2026)
       - "2127:2126"   # Raft gRPC

@@ -34,6 +34,6 @@ class TestProtocolConformance:
     def test_postgresql_storage_driver_satisfies_protocol(self) -> None:
         from nexus.ipc.storage.postgresql_driver import PostgreSQLStorageDriver
 
-        # Use a mock pool — we only check structural protocol conformance
-        driver = PostgreSQLStorageDriver(pool=None)
+        # Use a mock session_factory — we only check structural protocol conformance
+        driver = PostgreSQLStorageDriver(session_factory=None)
         assert isinstance(driver, IPCStorageDriver)

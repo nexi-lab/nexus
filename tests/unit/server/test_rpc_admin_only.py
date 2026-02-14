@@ -14,7 +14,6 @@ import pytest
 
 from nexus.core.rpc_decorator import rpc_expose
 
-
 # ============================================================================
 # Test 1: Decorator sets _rpc_admin_only flag
 # ============================================================================
@@ -209,10 +208,13 @@ class TestAdminMethodAnnotationSafety:
         violations = []
         for name in dir(NexusFS):
             method = getattr(NexusFS, name, None)
-            if method and getattr(method, "_rpc_exposed", False):
-                if any(name.startswith(prefix) for prefix in self.ADMIN_PREFIXES):
-                    if not getattr(method, "_rpc_admin_only", False):
-                        violations.append(name)
+            if (
+                method
+                and getattr(method, "_rpc_exposed", False)
+                and any(name.startswith(prefix) for prefix in self.ADMIN_PREFIXES)
+                and not getattr(method, "_rpc_admin_only", False)
+            ):
+                violations.append(name)
 
         assert not violations, (
             f"RPC methods with admin-like names missing admin_only=True: {violations}"

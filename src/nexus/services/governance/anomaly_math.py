@@ -13,7 +13,7 @@ import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from nexus.governance.models import (
+from nexus.services.governance.models import (
     AgentBaseline,
     AnomalyAlert,
     AnomalyDetectionConfig,

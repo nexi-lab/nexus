@@ -282,7 +282,7 @@ class NexusFSReBACMixin:
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
-                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+                "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
         # Validate tuples (support 2-tuple and 3-tuple for subject to support userset-as-subject)
@@ -615,7 +615,7 @@ class NexusFSReBACMixin:
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
-                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+                "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
         # Validate tuples
@@ -696,7 +696,7 @@ class NexusFSReBACMixin:
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
-                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+                "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
         # Validate tuple
@@ -762,7 +762,7 @@ class NexusFSReBACMixin:
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
-                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+                "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
         # Validate tuples
@@ -824,7 +824,7 @@ class NexusFSReBACMixin:
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
-                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+                "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
         # Validate all checks
@@ -864,7 +864,7 @@ class NexusFSReBACMixin:
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
-                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+                "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
         # Delete tuple - the enhanced rebac_delete already handles Tiger Cache invalidation
@@ -923,7 +923,7 @@ class NexusFSReBACMixin:
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
-                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+                "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
         # Build query
@@ -1009,7 +1009,7 @@ class NexusFSReBACMixin:
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
-                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+                "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
         if key == "max_depth":
@@ -1044,7 +1044,7 @@ class NexusFSReBACMixin:
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
-                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+                "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
         if key == "max_depth":
@@ -1087,7 +1087,7 @@ class NexusFSReBACMixin:
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
-                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+                "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
         # Validate namespace structure
@@ -1134,7 +1134,7 @@ class NexusFSReBACMixin:
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
-                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+                "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
         ns = self._require_rebac.get_namespace(object_type)
@@ -1177,7 +1177,7 @@ class NexusFSReBACMixin:
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
-                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+                "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
         # Validate config structure
@@ -1218,7 +1218,7 @@ class NexusFSReBACMixin:
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
-                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+                "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
         # Get all namespaces by querying the database
@@ -1270,7 +1270,7 @@ class NexusFSReBACMixin:
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
-                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+                "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
         conn = self._require_rebac._get_connection()
@@ -1356,7 +1356,7 @@ class NexusFSReBACMixin:
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
-                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+                "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
         # Get all subjects with permission
@@ -1418,7 +1418,7 @@ class NexusFSReBACMixin:
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
-                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+                "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
         return self.rebac_create(
@@ -1453,7 +1453,7 @@ class NexusFSReBACMixin:
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
-                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+                "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
         # Find the consent tuple
@@ -1490,7 +1490,7 @@ class NexusFSReBACMixin:
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
-                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+                "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
         return self.rebac_create(
@@ -1520,7 +1520,7 @@ class NexusFSReBACMixin:
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
-                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+                "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
         # Find public tuple
@@ -1588,7 +1588,7 @@ class NexusFSReBACMixin:
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
-                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+                "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
         # SECURITY: Check execute permission before allowing permission management
@@ -1690,7 +1690,7 @@ class NexusFSReBACMixin:
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
-                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+                "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
         # SECURITY: Check execute permission before allowing permission management
@@ -1766,7 +1766,7 @@ class NexusFSReBACMixin:
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
-                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+                "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
         # Find the share tuple - use single query with relation_in (N+1 FIX)
@@ -1799,7 +1799,7 @@ class NexusFSReBACMixin:
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
-                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+                "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
         return self.rebac_delete(share_id)
@@ -1853,7 +1853,7 @@ class NexusFSReBACMixin:
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
-                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+                "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
         from nexus.services.permissions.rebac_iterator_cache import CursorExpiredError
@@ -1982,7 +1982,7 @@ class NexusFSReBACMixin:
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
-                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+                "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
         from nexus.services.permissions.rebac_iterator_cache import CursorExpiredError
@@ -2094,7 +2094,7 @@ class NexusFSReBACMixin:
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
-                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+                "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
         # Find dynamic_viewer tuples for this subject and file
@@ -2316,7 +2316,7 @@ class NexusFSReBACMixin:
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
-                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+                "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
         # Check if this is a CSV file
@@ -2433,7 +2433,7 @@ class NexusFSReBACMixin:
         """
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
-                "ReBAC is not available. Ensure NexusFS is initialized in embedded mode."
+                "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
         # Default subject is authenticated users group

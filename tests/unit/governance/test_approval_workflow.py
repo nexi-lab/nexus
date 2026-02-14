@@ -7,9 +7,9 @@ from __future__ import annotations
 
 import pytest
 
-from nexus.governance.approval.state_machine import InvalidTransitionError
-from nexus.governance.approval.types import ApprovalStatus
-from nexus.governance.approval.workflow import ApprovalWorkflow
+from nexus.services.governance.approval.state_machine import InvalidTransitionError
+from nexus.services.governance.approval.types import ApprovalStatus
+from nexus.services.governance.approval.workflow import ApprovalWorkflow
 
 
 @pytest.fixture

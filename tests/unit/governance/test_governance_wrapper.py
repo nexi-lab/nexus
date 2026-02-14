@@ -10,14 +10,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.governance.governance_wrapper import (
+from nexus.pay.audit_types import TransactionProtocol
+from nexus.pay.protocol import ProtocolTransferRequest, ProtocolTransferResult
+from nexus.services.governance.governance_wrapper import (
     GovernanceApprovalRequired,
     GovernanceBlockedError,
     GovernanceEnforcedPayment,
 )
-from nexus.governance.models import ConstraintCheckResult, ConstraintType
-from nexus.pay.audit_types import TransactionProtocol
-from nexus.pay.protocol import ProtocolTransferRequest, ProtocolTransferResult
+from nexus.services.governance.models import ConstraintCheckResult, ConstraintType
 
 
 @pytest.fixture

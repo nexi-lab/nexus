@@ -11,8 +11,8 @@ import time
 import numpy as np
 import pytest
 
-from nexus.governance.models import EdgeType, GovernanceEdge
-from nexus.governance.trust_math import (
+from nexus.services.governance.models import EdgeType, GovernanceEdge
+from nexus.services.governance.trust_math import (
     build_local_trust_matrix,
     detect_sybil_cluster,
     eigentrust,

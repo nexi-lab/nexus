@@ -9,16 +9,16 @@ Wrapper chain: GovernanceEnforcedPayment → PolicyEnforcedPayment → CreditsPa
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.core.sync_bridge import fire_and_forget
 from nexus.pay.audit_types import TransactionProtocol
 from nexus.pay.protocol import PaymentProtocol, ProtocolTransferRequest, ProtocolTransferResult
 
 if TYPE_CHECKING:
-    from nexus.governance.anomaly_service import AnomalyService
-    from nexus.governance.governance_graph_service import GovernanceGraphService
+    from nexus.services.governance.anomaly_service import AnomalyService
+    from nexus.services.governance.governance_graph_service import GovernanceGraphService
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,7 @@ class GovernanceEnforcedPayment(PaymentProtocol):
         zone_id = request.metadata.get("zone_id", "default") if request.metadata else "default"
 
         # 1. Pre-check: governance constraints
-        from nexus.governance.models import ConstraintType
+        from nexus.services.governance.models import ConstraintType
 
         check = await self._graph_service.check_constraint(
             from_agent=request.from_agent,
@@ -123,15 +123,12 @@ class GovernanceEnforcedPayment(PaymentProtocol):
         amount: float,
         to: str,
     ) -> None:
-        """Schedule anomaly analysis as a background task."""
-        try:
-            loop = asyncio.get_running_loop()
-            loop.create_task(
-                self._safe_analyze(agent_id, zone_id, amount, to),
-            )
-        except RuntimeError:
-            if logger.isEnabledFor(logging.WARNING):
-                logger.warning("Cannot analyze transaction: no running event loop")
+        """Schedule anomaly analysis as a background task.
+
+        Uses ``fire_and_forget`` from ``sync_bridge`` so this works
+        correctly from both async and sync calling contexts.
+        """
+        fire_and_forget(self._safe_analyze(agent_id, zone_id, amount, to))
 
     async def _safe_analyze(
         self,

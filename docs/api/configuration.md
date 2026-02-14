@@ -50,7 +50,7 @@ export NEXUS_GCS_CREDENTIALS_PATH=/path/to/credentials.json
 ```python
 config = {
     # Deployment mode
-    "mode": "embedded",                # "embedded", "monolithic", or "distributed"
+    "mode": "standalone",               # "standalone", "remote", or "federation"
 
     # Backend configuration
     "backend": "local",                # "local" or "gcs"
@@ -105,7 +105,7 @@ nx = nexus.connect(config=config)
 
 ```yaml
 # config.yaml
-mode: embedded
+mode: standalone
 backend: local
 data_dir: ./nexus-data
 
@@ -130,7 +130,7 @@ nx = nexus.connect(config="config.yaml")
 
 ```bash
 # Deployment
-export NEXUS_MODE=embedded
+export NEXUS_MODE=standalone
 export NEXUS_BACKEND=local
 export NEXUS_DATA_DIR=/var/nexus-data
 
@@ -175,7 +175,7 @@ nx = nexus.connect()
 from nexus import NexusConfig
 
 config = NexusConfig(
-    mode="embedded",
+    mode="standalone",
     data_dir="./nexus-data"
 )
 
@@ -194,7 +194,7 @@ Create a `nexus.yaml` file with multiple backend mounts:
 
 ```yaml
 # Primary backend (mounted at root /)
-mode: embedded
+mode: standalone
 backend: local
 data_dir: ./nexus-local
 
@@ -353,7 +353,7 @@ backends:
 
 ### Remote Mode Support
 
-Multi-backend mounting is currently supported in **embedded mode only**. When using Nexus in remote mode, the multi-backend configuration must be set up on the server side—clients will transparently access all configured backends through the server.
+Multi-backend mounting is currently supported in **standalone mode only**. When using Nexus in remote mode, the multi-backend configuration must be set up on the server side—clients will transparently access all configured backends through the server.
 
 ### Examples
 

@@ -15,8 +15,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Generic, TypeVar
 
-from nexus.governance.approval.state_machine import StateMachine
-from nexus.governance.approval.types import ApprovalStatus
+from nexus.services.governance.approval.state_machine import StateMachine
+from nexus.services.governance.approval.types import ApprovalStatus
 
 logger = logging.getLogger(__name__)
 

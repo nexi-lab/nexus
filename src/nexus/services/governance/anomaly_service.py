@@ -15,18 +15,18 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from nexus.governance.anomaly_math import (
+from nexus.services.governance.anomaly_math import (
     detect_amount_anomaly,
     detect_counterparty_anomaly,
 )
-from nexus.governance.models import (
+from nexus.services.governance.models import (
     AgentBaseline,
     AnomalyAlert,
     AnomalyDetectionConfig,
     AnomalySeverity,
     TransactionSummary,
 )
-from nexus.governance.protocols import AnomalyDetectorProtocol
+from nexus.services.governance.protocols import AnomalyDetectorProtocol
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -152,7 +152,7 @@ class AnomalyService:
         """Query alerts with optional filters."""
         from sqlalchemy import select
 
-        from nexus.governance.db_models import AnomalyAlertModel
+        from nexus.services.governance.db_models import AnomalyAlertModel
 
         async with self._session_factory() as session:
             stmt = select(AnomalyAlertModel).where(AnomalyAlertModel.zone_id == zone_id)
@@ -176,7 +176,7 @@ class AnomalyService:
         """Mark an alert as resolved."""
         from sqlalchemy import select
 
-        from nexus.governance.db_models import AnomalyAlertModel
+        from nexus.services.governance.db_models import AnomalyAlertModel
 
         now = datetime.now(UTC)
         async with self._session_factory() as session, session.begin():
@@ -195,7 +195,7 @@ class AnomalyService:
 
     async def _persist_alerts(self, alerts: list[AnomalyAlert]) -> None:
         """Persist anomaly alerts to database."""
-        from nexus.governance.db_models import AnomalyAlertModel
+        from nexus.services.governance.db_models import AnomalyAlertModel
 
         try:
             async with self._session_factory() as session, session.begin():

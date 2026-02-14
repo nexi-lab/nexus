@@ -129,7 +129,7 @@ class SearchService:
             router: Mount router for backend operations
             rebac_manager: ReBAC manager for relationship-based permissions
             enforce_permissions: Whether to enforce permission checks
-            default_context: Default operation context (embedded mode)
+            default_context: Default operation context (standalone mode)
             record_store: RecordStoreABC for SQL engine (needed for semantic search)
         """
         self.metadata = metadata_store
@@ -615,7 +615,7 @@ class SearchService:
         if not self._enforce_permissions or not self._permission_enforcer:
             return
 
-        # Use default context if not provided (embedded mode)
+        # Use default context if not provided (standalone mode)
         ctx = context if context is not None else self._default_context
 
         # Ensure context is OperationContext

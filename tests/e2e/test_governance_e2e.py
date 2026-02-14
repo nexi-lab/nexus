@@ -28,12 +28,12 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.ext.asyncio import async_sessionmaker as AsyncSessionMaker
 
-from nexus.governance.anomaly_service import AnomalyService, StatisticalAnomalyDetector
-from nexus.governance.collusion_service import CollusionService
-from nexus.governance.governance_graph_service import GovernanceGraphService
-from nexus.governance.models import AgentBaseline
-from nexus.governance.response_service import ResponseService
 from nexus.server.api.v2.routers.governance import router
+from nexus.services.governance.anomaly_service import AnomalyService, StatisticalAnomalyDetector
+from nexus.services.governance.collusion_service import CollusionService
+from nexus.services.governance.governance_graph_service import GovernanceGraphService
+from nexus.services.governance.models import AgentBaseline
+from nexus.services.governance.response_service import ResponseService
 from nexus.storage.models._base import Base
 
 # =============================================================================

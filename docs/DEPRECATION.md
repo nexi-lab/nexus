@@ -325,14 +325,14 @@ nx.write(
 - Server mode MUST use per-request context for security
 
 **When Still Safe to Use:**
-- Embedded mode (single-user CLI applications)
+- Standalone mode (single-user CLI applications)
 - Testing environments
 - Development scripts where one NexusFS = one user
 
 **Warning Message:**
 ```
 DeprecationWarning: zone_id and agent_id parameters in NexusFS.__init__() are DEPRECATED.
-They should only be used in embedded/CLI mode where a single NexusFS instance serves one user.
+They should only be used in standalone/CLI mode where a single NexusFS instance serves one user.
 For server mode (shared NexusFS instance serving multiple users), these MUST be None and
 context must be passed to each method call instead.
 Using instance-level zone_id/agent_id in server mode creates SECURITY RISKS!

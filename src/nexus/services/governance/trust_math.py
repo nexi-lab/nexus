@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from nexus.governance.models import GovernanceEdge
+from nexus.services.governance.models import GovernanceEdge
 
 
 def eigentrust(

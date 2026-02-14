@@ -44,7 +44,7 @@ def _create_test_app(tmp_path: Path, enforce_permissions: bool = True):
     storage_dir.mkdir(exist_ok=True)
     backend = LocalBackend(root_path=str(storage_dir))
 
-    # Create metadata store (Raft embedded mode — path must be a file, not directory)
+    # Create metadata store (Raft standalone mode — path must be a file, not directory)
     metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft-metadata"))
 
     # Create record store for services (ReBAC, audit, etc.)

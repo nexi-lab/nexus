@@ -12,8 +12,8 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from nexus.governance.approval.workflow import ApprovalWorkflow
-from nexus.governance.models import (
+from nexus.services.governance.approval.workflow import ApprovalWorkflow
+from nexus.services.governance.models import (
     AnomalySeverity,
     ConstraintType,
     FraudScore,
@@ -26,9 +26,9 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from nexus.governance.anomaly_service import AnomalyService
-    from nexus.governance.collusion_service import CollusionService
-    from nexus.governance.governance_graph_service import GovernanceGraphService
+    from nexus.services.governance.anomaly_service import AnomalyService
+    from nexus.services.governance.collusion_service import CollusionService
+    from nexus.services.governance.governance_graph_service import GovernanceGraphService
 
 logger = logging.getLogger(__name__)
 
@@ -296,7 +296,7 @@ class ResponseService:
         """List suspensions, optionally filtered by agent."""
         from sqlalchemy import select
 
-        from nexus.governance.db_models import SuspensionModel
+        from nexus.services.governance.db_models import SuspensionModel
 
         async with self._session_factory() as session:
             stmt = select(SuspensionModel).where(
@@ -315,7 +315,7 @@ class ResponseService:
         """Get a suspension by ID."""
         from sqlalchemy import select
 
-        from nexus.governance.db_models import SuspensionModel
+        from nexus.services.governance.db_models import SuspensionModel
 
         async with self._session_factory() as session:
             stmt = select(SuspensionModel).where(SuspensionModel.id == suspension_id)
@@ -329,7 +329,7 @@ class ResponseService:
 
     async def _persist_suspension(self, record: SuspensionRecord) -> None:
         """Persist a suspension record to database."""
-        from nexus.governance.db_models import SuspensionModel
+        from nexus.services.governance.db_models import SuspensionModel
 
         model = SuspensionModel(
             id=record.suspension_id,
@@ -349,7 +349,7 @@ class ResponseService:
         """Update a suspension record in database."""
         from sqlalchemy import select
 
-        from nexus.governance.db_models import SuspensionModel
+        from nexus.services.governance.db_models import SuspensionModel
 
         async with self._session_factory() as session, session.begin():
             stmt = select(SuspensionModel).where(
@@ -369,7 +369,7 @@ class ResponseService:
 
     async def _persist_throttle(self, throttle: ThrottleConfig) -> None:
         """Persist a throttle configuration to database."""
-        from nexus.governance.db_models import ThrottleModel
+        from nexus.services.governance.db_models import ThrottleModel
 
         config_data = {
             "max_tx_per_hour": throttle.max_tx_per_hour,

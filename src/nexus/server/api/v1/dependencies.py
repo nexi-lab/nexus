@@ -87,11 +87,32 @@ def get_key_service(request: Request) -> Any:
 
 
 def get_database_url(request: Request) -> str:
-    """Get database URL from app.state, raising 503 if not configured."""
+    """Get database URL from app.state, raising 503 if not configured.
+
+    .. deprecated::
+        Prefer ``get_async_session_factory()`` — services should not construct
+        their own engines from raw URLs (RecordStoreABC bypass).
+    """
     url: str | None = getattr(request.app.state, "database_url", None)
     if not url:
         raise HTTPException(status_code=503, detail="Database URL not configured")
     return url
+
+
+def get_async_session_factory(request: Request) -> Any:
+    """Get async session factory from RecordStoreABC, raising 503 if not available.
+
+    This is the correct way for async endpoints to obtain database sessions.
+    The factory is provided by RecordStoreABC.async_session_factory (the driver),
+    not by constructing engines from raw URLs.
+    """
+    factory = getattr(request.app.state, "async_session_factory", None)
+    if factory is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Async session factory not available (RecordStore not configured)",
+        )
+    return factory
 
 
 def get_operation_timeout(request: Request) -> float:

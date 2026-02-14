@@ -31,13 +31,20 @@ def mock_gateway():
     gw.exists.return_value = False
     gw.list.return_value = []
 
-    # NexusFS reference (gateway._fs)
-    gw._fs = MagicMock()
-    gw._fs._rebac_manager = MagicMock()
-    gw._fs._rebac_manager.rebac_check.return_value = False
-    gw._fs._rebac_manager.rebac_delete.return_value = None
-    gw._fs.rebac_create.return_value = {"tuple_id": "tuple-123"}
-    gw._fs.rebac_list_tuples.return_value = []
+    # Gateway ReBAC operations (Issue #1287: no more _fs reach-through)
+    gw.rebac_create.return_value = {"tuple_id": "tuple-123"}
+    gw.rebac_list_tuples.return_value = []
+    gw.rebac_delete.return_value = True
+    gw.rebac_check.return_value = False
+
+    # ReBAC manager via gateway property
+    mock_rebac = MagicMock()
+    mock_rebac.rebac_check.return_value = False
+    mock_rebac.rebac_delete.return_value = None
+    gw.rebac_manager = mock_rebac
+
+    # Metadata cache invalidation
+    gw.invalidate_metadata_cache.return_value = None
 
     return gw
 
@@ -120,80 +127,86 @@ class TestContextValidation:
 class TestShare:
     """Tests for share and unshare methods."""
 
-    def test_share_public(self, skill_service, mock_gateway, operation_context, skill_path):
+    async def test_share_public(self, skill_service, mock_gateway, operation_context, skill_path):
         """Sharing as public creates a direct_viewer tuple with role:public."""
         # Owner check
-        mock_gateway._fs._rebac_manager.rebac_check.return_value = True
+        mock_gateway.rebac_manager.rebac_check.return_value = True
 
-        result = skill_service.share(skill_path, "public", operation_context)
+        result = await skill_service.share(skill_path, "public", operation_context)
 
         assert result == "tuple-123"
-        mock_gateway._fs.rebac_create.assert_called_once()
-        call_kwargs = mock_gateway._fs.rebac_create.call_args.kwargs
+        mock_gateway.rebac_create.assert_called_once()
+        call_kwargs = mock_gateway.rebac_create.call_args.kwargs
         assert call_kwargs["subject"] == ("role", "public")
         assert call_kwargs["relation"] == "direct_viewer"
 
-    def test_share_with_user(self, skill_service, mock_gateway, operation_context, skill_path):
+    async def test_share_with_user(
+        self, skill_service, mock_gateway, operation_context, skill_path
+    ):
         """Sharing with a specific user creates the correct tuple."""
-        mock_gateway._fs._rebac_manager.rebac_check.return_value = True
+        mock_gateway.rebac_manager.rebac_check.return_value = True
 
-        result = skill_service.share(skill_path, "user:bob", operation_context)
+        result = await skill_service.share(skill_path, "user:bob", operation_context)
 
         assert result == "tuple-123"
-        call_kwargs = mock_gateway._fs.rebac_create.call_args.kwargs
+        call_kwargs = mock_gateway.rebac_create.call_args.kwargs
         assert call_kwargs["subject"] == ("user", "bob")
 
-    def test_share_with_zone(self, skill_service, mock_gateway, operation_context, skill_path):
+    async def test_share_with_zone(
+        self, skill_service, mock_gateway, operation_context, skill_path
+    ):
         """Sharing with zone creates a zone member tuple."""
-        mock_gateway._fs._rebac_manager.rebac_check.return_value = True
+        mock_gateway.rebac_manager.rebac_check.return_value = True
 
-        skill_service.share(skill_path, "zone", operation_context)
+        await skill_service.share(skill_path, "zone", operation_context)
 
-        call_kwargs = mock_gateway._fs.rebac_create.call_args.kwargs
+        call_kwargs = mock_gateway.rebac_create.call_args.kwargs
         assert call_kwargs["subject"] == ("zone", "acme", "member")
 
-    def test_share_requires_ownership(
+    async def test_share_requires_ownership(
         self, skill_service, mock_gateway, operation_context, skill_path
     ):
         """Sharing fails if user does not own the skill."""
-        mock_gateway._fs._rebac_manager.rebac_check.return_value = False
+        mock_gateway.rebac_manager.rebac_check.return_value = False
 
         with pytest.raises(PermissionDeniedError, match="does not own skill"):
-            skill_service.share(skill_path, "public", operation_context)
+            await skill_service.share(skill_path, "public", operation_context)
 
-    def test_share_validates_context(self, skill_service, skill_path):
+    async def test_share_validates_context(self, skill_service, skill_path):
         """Sharing requires a valid context."""
         with pytest.raises(ValidationError):
-            skill_service.share(skill_path, "public", None)
+            await skill_service.share(skill_path, "public", None)
 
-    def test_share_invalid_target(self, skill_service, mock_gateway, operation_context, skill_path):
+    async def test_share_invalid_target(
+        self, skill_service, mock_gateway, operation_context, skill_path
+    ):
         """Invalid share_with format raises ValidationError."""
-        mock_gateway._fs._rebac_manager.rebac_check.return_value = True
+        mock_gateway.rebac_manager.rebac_check.return_value = True
 
         with pytest.raises(ValidationError, match="Invalid share_with format"):
-            skill_service.share(skill_path, "invalid_target", operation_context)
+            await skill_service.share(skill_path, "invalid_target", operation_context)
 
-    def test_unshare_returns_false_when_not_shared(
+    async def test_unshare_returns_false_when_not_shared(
         self, skill_service, mock_gateway, operation_context, skill_path
     ):
         """Unsharing returns False when no matching tuple exists."""
-        mock_gateway._fs._rebac_manager.rebac_check.return_value = True
-        mock_gateway._fs.rebac_list_tuples.return_value = []
+        mock_gateway.rebac_manager.rebac_check.return_value = True
+        mock_gateway.rebac_list_tuples.return_value = []
 
-        result = skill_service.unshare(skill_path, "public", operation_context)
+        result = await skill_service.unshare(skill_path, "public", operation_context)
         assert result is False
 
-    def test_unshare_deletes_tuple(
+    async def test_unshare_deletes_tuple(
         self, skill_service, mock_gateway, operation_context, skill_path
     ):
         """Unsharing deletes the matching permission tuple."""
-        mock_gateway._fs._rebac_manager.rebac_check.return_value = True
-        mock_gateway._fs.rebac_list_tuples.return_value = [{"tuple_id": "tuple-to-delete"}]
+        mock_gateway.rebac_manager.rebac_check.return_value = True
+        mock_gateway.rebac_list_tuples.return_value = [{"tuple_id": "tuple-to-delete"}]
 
-        result = skill_service.unshare(skill_path, "public", operation_context)
+        result = await skill_service.unshare(skill_path, "public", operation_context)
 
         assert result is True
-        mock_gateway._fs._rebac_manager.rebac_delete.assert_called_once_with("tuple-to-delete")
+        mock_gateway.rebac_manager.rebac_delete.assert_called_once_with("tuple-to-delete")
 
 
 # =============================================================================
@@ -204,42 +217,44 @@ class TestShare:
 class TestSubscription:
     """Tests for subscribe and unsubscribe methods."""
 
-    def test_subscribe_adds_skill(self, skill_service, mock_gateway, operation_context, skill_path):
+    async def test_subscribe_adds_skill(
+        self, skill_service, mock_gateway, operation_context, skill_path
+    ):
         """Subscribing adds the skill to the user's subscriptions."""
         # Can read the skill
-        mock_gateway._fs._rebac_manager.rebac_check.return_value = True
+        mock_gateway.rebac_manager.rebac_check.return_value = True
         # No existing subscriptions
         mock_gateway.read.side_effect = FileNotFoundError("not found")
 
-        result = skill_service.subscribe(skill_path, operation_context)
+        result = await skill_service.subscribe(skill_path, operation_context)
 
         assert result is True
         mock_gateway.write.assert_called_once()
 
-    def test_subscribe_returns_false_if_already_subscribed(
+    async def test_subscribe_returns_false_if_already_subscribed(
         self, skill_service, mock_gateway, operation_context, skill_path
     ):
         """Subscribing to an already-subscribed skill returns False."""
-        mock_gateway._fs._rebac_manager.rebac_check.return_value = True
+        mock_gateway.rebac_manager.rebac_check.return_value = True
 
         import yaml
 
         content = yaml.dump({"subscribed_skills": [skill_path]})
         mock_gateway.read.return_value = content.encode("utf-8")
 
-        result = skill_service.subscribe(skill_path, operation_context)
+        result = await skill_service.subscribe(skill_path, operation_context)
         assert result is False
 
-    def test_subscribe_requires_read_permission(
+    async def test_subscribe_requires_read_permission(
         self, skill_service, mock_gateway, operation_context, skill_path
     ):
         """Subscribing to a skill the user cannot read raises PermissionDeniedError."""
-        mock_gateway._fs._rebac_manager.rebac_check.return_value = False
+        mock_gateway.rebac_manager.rebac_check.return_value = False
 
         with pytest.raises(PermissionDeniedError, match="cannot read skill"):
-            skill_service.subscribe(skill_path, operation_context)
+            await skill_service.subscribe(skill_path, operation_context)
 
-    def test_unsubscribe_removes_skill(
+    async def test_unsubscribe_removes_skill(
         self, skill_service, mock_gateway, operation_context, skill_path
     ):
         """Unsubscribing removes the skill from subscriptions."""
@@ -248,18 +263,18 @@ class TestSubscription:
         content = yaml.dump({"subscribed_skills": [skill_path]})
         mock_gateway.read.return_value = content.encode("utf-8")
 
-        result = skill_service.unsubscribe(skill_path, operation_context)
+        result = await skill_service.unsubscribe(skill_path, operation_context)
 
         assert result is True
         mock_gateway.write.assert_called_once()
 
-    def test_unsubscribe_returns_false_if_not_subscribed(
+    async def test_unsubscribe_returns_false_if_not_subscribed(
         self, skill_service, mock_gateway, operation_context, skill_path
     ):
         """Unsubscribing from a skill not in the list returns False."""
         mock_gateway.read.side_effect = FileNotFoundError("not found")
 
-        result = skill_service.unsubscribe(skill_path, operation_context)
+        result = await skill_service.unsubscribe(skill_path, operation_context)
         assert result is False
 
 
@@ -271,11 +286,11 @@ class TestSubscription:
 class TestLoad:
     """Tests for the load method."""
 
-    def test_load_returns_skill_content(
+    async def test_load_returns_skill_content(
         self, skill_service, mock_gateway, operation_context, skill_path
     ):
         """Loading a skill returns SkillContent with parsed metadata."""
-        mock_gateway._fs._rebac_manager.rebac_check.return_value = True
+        mock_gateway.rebac_manager.rebac_check.return_value = True
 
         skill_md = b"""---
 name: Code Review
@@ -288,45 +303,45 @@ Review code for best practices.
 """
         mock_gateway.read.return_value = skill_md
 
-        result = skill_service.load(skill_path, operation_context)
+        result = await skill_service.load(skill_path, operation_context)
 
         assert isinstance(result, SkillContent)
         assert result.name == "Code Review"
         assert result.description == "Automated code review skill"
         assert "Review code" in result.content
 
-    def test_load_without_frontmatter(
+    async def test_load_without_frontmatter(
         self, skill_service, mock_gateway, operation_context, skill_path
     ):
         """Loading a skill without YAML frontmatter extracts name from heading."""
-        mock_gateway._fs._rebac_manager.rebac_check.return_value = True
+        mock_gateway.rebac_manager.rebac_check.return_value = True
 
         skill_md = b"# My Skill\n\nDo something useful."
         mock_gateway.read.return_value = skill_md
 
-        result = skill_service.load(skill_path, operation_context)
+        result = await skill_service.load(skill_path, operation_context)
 
         assert isinstance(result, SkillContent)
         assert result.metadata.get("name") == "My Skill"
 
-    def test_load_requires_read_permission(
+    async def test_load_requires_read_permission(
         self, skill_service, mock_gateway, operation_context, skill_path
     ):
         """Loading a skill requires read permission."""
-        mock_gateway._fs._rebac_manager.rebac_check.return_value = False
+        mock_gateway.rebac_manager.rebac_check.return_value = False
 
         with pytest.raises(PermissionDeniedError, match="cannot read skill"):
-            skill_service.load(skill_path, operation_context)
+            await skill_service.load(skill_path, operation_context)
 
-    def test_load_handles_read_error(
+    async def test_load_handles_read_error(
         self, skill_service, mock_gateway, operation_context, skill_path
     ):
         """Read errors during load raise ValidationError."""
-        mock_gateway._fs._rebac_manager.rebac_check.return_value = True
+        mock_gateway.rebac_manager.rebac_check.return_value = True
         mock_gateway.read.side_effect = OSError("Storage unavailable")
 
         with pytest.raises(ValidationError, match="Failed to read skill content"):
-            skill_service.load(skill_path, operation_context)
+            await skill_service.load(skill_path, operation_context)
 
 
 # =============================================================================
@@ -390,7 +405,7 @@ class TestLoadSubscriptions:
 class TestDiscover:
     """Tests for the discover method."""
 
-    def test_discover_subscribed_filter(self, skill_service, mock_gateway, operation_context):
+    async def test_discover_subscribed_filter(self, skill_service, mock_gateway, operation_context):
         """Discover with 'subscribed' filter returns subscribed skills."""
         import yaml
 
@@ -399,19 +414,19 @@ class TestDiscover:
         mock_gateway.read.return_value = yaml.dump(data).encode("utf-8")
 
         # rebac_check returns False for public check
-        mock_gateway._fs._rebac_manager.rebac_check.return_value = False
+        mock_gateway.rebac_manager.rebac_check.return_value = False
 
-        result = skill_service.discover(operation_context, filter="subscribed")
+        result = await skill_service.discover(operation_context, filter="subscribed")
 
         assert len(result) == 1
         assert isinstance(result[0], SkillInfo)
         assert result[0].path == "/zone/acme/user/alice/skill/testing/"
         assert result[0].is_subscribed is True
 
-    def test_discover_validates_context(self, skill_service):
+    async def test_discover_validates_context(self, skill_service):
         """Discover requires a valid context."""
         with pytest.raises(ValidationError):
-            skill_service.discover(None)
+            await skill_service.discover(None)
 
 
 # =============================================================================
@@ -533,18 +548,18 @@ Instructions go here.
 class TestGetPromptContext:
     """Tests for get_prompt_context method."""
 
-    def test_returns_prompt_context(self, skill_service, mock_gateway, operation_context):
+    async def test_returns_prompt_context(self, skill_service, mock_gateway, operation_context):
         """get_prompt_context returns a PromptContext instance."""
         # No subscriptions
         mock_gateway.read.side_effect = FileNotFoundError("not found")
 
-        result = skill_service.get_prompt_context(operation_context)
+        result = await skill_service.get_prompt_context(operation_context)
 
         assert isinstance(result, PromptContext)
         assert result.count == 0
         assert "<available_skills>" in result.xml
 
-    def test_includes_subscribed_skills(self, skill_service, mock_gateway, operation_context):
+    async def test_includes_subscribed_skills(self, skill_service, mock_gateway, operation_context):
         """get_prompt_context includes metadata from subscribed skills."""
         import yaml
 
@@ -563,14 +578,14 @@ class TestGetPromptContext:
         mock_gateway.read.side_effect = read_side_effect
 
         # User can read the skill
-        mock_gateway._fs._rebac_manager.rebac_check.return_value = True
+        mock_gateway.rebac_manager.rebac_check.return_value = True
 
-        result = skill_service.get_prompt_context(operation_context)
+        result = await skill_service.get_prompt_context(operation_context)
 
         assert result.count == 1
         assert result.skills[0].name == "Testing"
 
-    def test_validates_context(self, skill_service):
+    async def test_validates_context(self, skill_service):
         """get_prompt_context requires a valid context."""
         with pytest.raises(ValidationError):
-            skill_service.get_prompt_context(None)
+            await skill_service.get_prompt_context(None)

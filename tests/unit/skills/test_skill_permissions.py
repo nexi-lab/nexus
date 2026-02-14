@@ -22,8 +22,17 @@ import pytest
 from nexus import LocalBackend, NexusFS
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
+
+try:
+    from nexus.storage.raft_metadata_store import RaftMetadataStore
+
+    RaftMetadataStore.embedded("/tmp/_raft_probe")  # noqa: S108
+    _raft_available = True
+except Exception:
+    _raft_available = False
+
+pytestmark = pytest.mark.skipif(not _raft_available, reason="Raft metastore not available")
 
 
 @pytest.fixture
@@ -88,20 +97,20 @@ def context() -> OperationContext:
 class TestSkillsShare:
     """Tests for skills_share method."""
 
-    def test_skills_share_requires_context(self, nx: NexusFS) -> None:
+    async def test_skills_share_requires_context(self, nx: NexusFS) -> None:
         """Test skills_share requires context."""
         from nexus.core.exceptions import ValidationError
 
         with pytest.raises(ValidationError):
-            nx.skills_share("/zone/acme/user/alice/skill/test/", "public", context=None)
+            await nx.skills_share("/zone/acme/user/alice/skill/test/", "public", context=None)
 
-    def test_skills_share_public(
+    async def test_skills_share_public(
         self, nx: NexusFS, context: OperationContext, mock_rebac: MagicMock
     ) -> None:
         """Test sharing skill publicly."""
         skill_path = "/zone/acme/user/alice/skill/test/"
 
-        result = nx.skills_share(skill_path, "public", context=context)
+        result = await nx.skills_share(skill_path, "public", context=context)
 
         assert result["success"] is True
         assert result["tuple_id"] == "tuple-123"
@@ -113,13 +122,13 @@ class TestSkillsShare:
         assert call_kwargs["subject"] == ("role", "public")
         assert call_kwargs["relation"] == "direct_viewer"
 
-    def test_skills_share_group(
+    async def test_skills_share_group(
         self, nx: NexusFS, context: OperationContext, mock_rebac: MagicMock
     ) -> None:
         """Test sharing skill with a group."""
         skill_path = "/zone/acme/user/alice/skill/test/"
 
-        result = nx.skills_share(skill_path, "group:engineering", context=context)
+        result = await nx.skills_share(skill_path, "group:engineering", context=context)
 
         assert result["success"] is True
         assert result["share_with"] == "group:engineering"
@@ -128,50 +137,52 @@ class TestSkillsShare:
         call_kwargs = mock_rebac.rebac_write.call_args[1]
         assert call_kwargs["subject"] == ("group", "engineering", "member")
 
-    def test_skills_share_user(
+    async def test_skills_share_user(
         self, nx: NexusFS, context: OperationContext, mock_rebac: MagicMock
     ) -> None:
         """Test sharing skill with a specific user."""
         skill_path = "/zone/acme/user/alice/skill/test/"
 
-        result = nx.skills_share(skill_path, "user:bob", context=context)
+        result = await nx.skills_share(skill_path, "user:bob", context=context)
 
         assert result["success"] is True
         call_kwargs = mock_rebac.rebac_write.call_args[1]
         assert call_kwargs["subject"] == ("user", "bob")
 
-    def test_skills_share_zone(
+    async def test_skills_share_zone(
         self, nx: NexusFS, context: OperationContext, mock_rebac: MagicMock
     ) -> None:
         """Test sharing skill with zone."""
         skill_path = "/zone/acme/user/alice/skill/test/"
 
-        result = nx.skills_share(skill_path, "zone", context=context)
+        result = await nx.skills_share(skill_path, "zone", context=context)
 
         assert result["success"] is True
         call_kwargs = mock_rebac.rebac_write.call_args[1]
         assert call_kwargs["subject"] == ("zone", "acme", "member")
 
-    def test_skills_share_agent(
+    async def test_skills_share_agent(
         self, nx: NexusFS, context: OperationContext, mock_rebac: MagicMock
     ) -> None:
         """Test sharing skill with an agent."""
         skill_path = "/zone/acme/user/alice/skill/test/"
 
-        result = nx.skills_share(skill_path, "agent:agent-123", context=context)
+        result = await nx.skills_share(skill_path, "agent:agent-123", context=context)
 
         assert result["success"] is True
         call_kwargs = mock_rebac.rebac_write.call_args[1]
         assert call_kwargs["subject"] == ("agent", "agent-123")
 
-    def test_skills_share_invalid_format(self, nx: NexusFS, context: OperationContext) -> None:
+    async def test_skills_share_invalid_format(
+        self, nx: NexusFS, context: OperationContext
+    ) -> None:
         """Test skills_share rejects invalid share_with format."""
         from nexus.core.exceptions import ValidationError
 
         with pytest.raises(ValidationError, match="Invalid share_with format"):
-            nx.skills_share("/skill/test/", "invalid-format", context=context)
+            await nx.skills_share("/skill/test/", "invalid-format", context=context)
 
-    def test_skills_share_permission_denied(
+    async def test_skills_share_permission_denied(
         self, nx: NexusFS, context: OperationContext, mock_rebac: MagicMock
     ) -> None:
         """Test skills_share fails without ownership."""
@@ -180,38 +191,38 @@ class TestSkillsShare:
         mock_rebac.rebac_check.return_value = False
 
         with pytest.raises(PermissionDeniedError, match="does not own"):
-            nx.skills_share("/skill/other-user/", "public", context=context)
+            await nx.skills_share("/skill/other-user/", "public", context=context)
 
 
 class TestSkillsUnshare:
     """Tests for skills_unshare method."""
 
-    def test_skills_unshare_requires_context(self, nx: NexusFS) -> None:
+    async def test_skills_unshare_requires_context(self, nx: NexusFS) -> None:
         """Test skills_unshare requires context."""
         from nexus.core.exceptions import ValidationError
 
         with pytest.raises(ValidationError):
-            nx.skills_unshare("/skill/test/", "public", context=None)
+            await nx.skills_unshare("/skill/test/", "public", context=None)
 
-    def test_skills_unshare_success(
+    async def test_skills_unshare_success(
         self, nx: NexusFS, context: OperationContext, mock_rebac: MagicMock
     ) -> None:
         """Test unsharing a skill."""
         skill_path = "/zone/acme/user/alice/skill/test/"
         # NexusFS.rebac_list_tuples does direct SQL, so we patch the method on the instance
         with patch.object(nx, "rebac_list_tuples", return_value=[{"tuple_id": "tuple-123"}]):
-            result = nx.skills_unshare(skill_path, "public", context=context)
+            result = await nx.skills_unshare(skill_path, "public", context=context)
 
         assert result["success"] is True
         mock_rebac.rebac_delete.assert_called_once_with("tuple-123")
 
-    def test_skills_unshare_no_matching_share(
+    async def test_skills_unshare_no_matching_share(
         self, nx: NexusFS, context: OperationContext, mock_rebac: MagicMock
     ) -> None:
         """Test unsharing when no matching share exists."""
         # NexusFS.rebac_list_tuples does direct SQL, so we patch the method on the instance
         with patch.object(nx, "rebac_list_tuples", return_value=[]):
-            result = nx.skills_unshare("/skill/test/", "public", context=context)
+            result = await nx.skills_unshare("/skill/test/", "public", context=context)
 
         assert result["success"] is False
 
@@ -219,23 +230,25 @@ class TestSkillsUnshare:
 class TestSkillsDiscover:
     """Tests for skills_discover method."""
 
-    def test_skills_discover_requires_context(self, nx: NexusFS) -> None:
+    async def test_skills_discover_requires_context(self, nx: NexusFS) -> None:
         """Test skills_discover requires context."""
         from nexus.core.exceptions import ValidationError
 
         with pytest.raises(ValidationError):
-            nx.skills_discover(context=None)
+            await nx.skills_discover(context=None)
 
-    def test_skills_discover_returns_empty_when_no_skills(
+    async def test_skills_discover_returns_empty_when_no_skills(
         self, nx: NexusFS, context: OperationContext
     ) -> None:
         """Test discover returns empty list when no skills."""
-        result = nx.skills_discover(context=context)
+        result = await nx.skills_discover(context=context)
 
         assert result["count"] == 0
         assert result["skills"] == []
 
-    def test_skills_discover_with_skills(self, nx: NexusFS, context: OperationContext) -> None:
+    async def test_skills_discover_with_skills(
+        self, nx: NexusFS, context: OperationContext
+    ) -> None:
         """Test discover returns skills with permissions."""
         # Create skill using NexusFS
         skill_path = "/zone/acme/user/alice/skill/test-skill/SKILL.md"
@@ -245,13 +258,13 @@ class TestSkillsDiscover:
             context=context,
         )
 
-        result = nx.skills_discover(context=context)
+        result = await nx.skills_discover(context=context)
 
         assert result["count"] == 1
         assert result["skills"][0]["name"] == "Test Skill"
         assert result["skills"][0]["is_subscribed"] is False
 
-    def test_skills_discover_filter_subscribed(
+    async def test_skills_discover_filter_subscribed(
         self, nx: NexusFS, context: OperationContext
     ) -> None:
         """Test discover filters by subscribed status."""
@@ -263,11 +276,11 @@ class TestSkillsDiscover:
             context=context,
         )
 
-        # Subscribe using the service
-        service = nx._get_skill_service()
-        service.subscribe(skill_path, context)
+        # Subscribe using the service (Issue #1287: _get_skill_service() -> skill_service)
+        service = nx.skill_service
+        await service.subscribe(skill_path, context)
 
-        result = nx.skills_discover(filter="subscribed", context=context)
+        result = await nx.skills_discover(filter="subscribed", context=context)
 
         assert result["count"] == 1
         assert result["skills"][0]["is_subscribed"] is True
@@ -276,39 +289,39 @@ class TestSkillsDiscover:
 class TestSkillsSubscribe:
     """Tests for skills_subscribe method."""
 
-    def test_skills_subscribe_requires_context(self, nx: NexusFS) -> None:
+    async def test_skills_subscribe_requires_context(self, nx: NexusFS) -> None:
         """Test skills_subscribe requires context."""
         from nexus.core.exceptions import ValidationError
 
         with pytest.raises(ValidationError):
-            nx.skills_subscribe("/skill/test/", context=None)
+            await nx.skills_subscribe("/skill/test/", context=None)
 
-    def test_skills_subscribe_success(self, nx: NexusFS, context: OperationContext) -> None:
+    async def test_skills_subscribe_success(self, nx: NexusFS, context: OperationContext) -> None:
         """Test subscribing to a skill."""
         skill_path = "/zone/acme/user/bob/skill/shared/"
 
-        result = nx.skills_subscribe(skill_path, context=context)
+        result = await nx.skills_subscribe(skill_path, context=context)
 
         assert result["success"] is True
         assert result["skill_path"] == skill_path
         assert result["already_subscribed"] is False
 
-    def test_skills_subscribe_already_subscribed(
+    async def test_skills_subscribe_already_subscribed(
         self, nx: NexusFS, context: OperationContext
     ) -> None:
         """Test subscribing when already subscribed."""
         skill_path = "/skill/test/"
 
         # Subscribe first
-        nx.skills_subscribe(skill_path, context=context)
+        await nx.skills_subscribe(skill_path, context=context)
 
         # Try again
-        result = nx.skills_subscribe(skill_path, context=context)
+        result = await nx.skills_subscribe(skill_path, context=context)
 
         assert result["success"] is True
         assert result["already_subscribed"] is True
 
-    def test_skills_subscribe_permission_denied(
+    async def test_skills_subscribe_permission_denied(
         self, nx: NexusFS, context: OperationContext, mock_rebac: MagicMock
     ) -> None:
         """Test subscribe fails without read permission."""
@@ -317,36 +330,36 @@ class TestSkillsSubscribe:
         mock_rebac.rebac_check.return_value = False
 
         with pytest.raises(PermissionDeniedError, match="cannot read"):
-            nx.skills_subscribe("/skill/private/", context=context)
+            await nx.skills_subscribe("/skill/private/", context=context)
 
 
 class TestSkillsUnsubscribe:
     """Tests for skills_unsubscribe method."""
 
-    def test_skills_unsubscribe_requires_context(self, nx: NexusFS) -> None:
+    async def test_skills_unsubscribe_requires_context(self, nx: NexusFS) -> None:
         """Test skills_unsubscribe requires context."""
         from nexus.core.exceptions import ValidationError
 
         with pytest.raises(ValidationError):
-            nx.skills_unsubscribe("/skill/test/", context=None)
+            await nx.skills_unsubscribe("/skill/test/", context=None)
 
-    def test_skills_unsubscribe_success(self, nx: NexusFS, context: OperationContext) -> None:
+    async def test_skills_unsubscribe_success(self, nx: NexusFS, context: OperationContext) -> None:
         """Test unsubscribing from a skill."""
         skill_path = "/skill/test/"
 
         # Subscribe first
-        nx.skills_subscribe(skill_path, context=context)
+        await nx.skills_subscribe(skill_path, context=context)
 
-        result = nx.skills_unsubscribe(skill_path, context=context)
+        result = await nx.skills_unsubscribe(skill_path, context=context)
 
         assert result["success"] is True
         assert result["was_subscribed"] is True
 
-    def test_skills_unsubscribe_not_subscribed(
+    async def test_skills_unsubscribe_not_subscribed(
         self, nx: NexusFS, context: OperationContext
     ) -> None:
         """Test unsubscribing when not subscribed."""
-        result = nx.skills_unsubscribe("/skill/not-subscribed/", context=context)
+        result = await nx.skills_unsubscribe("/skill/not-subscribed/", context=context)
 
         assert result["success"] is True
         assert result["was_subscribed"] is False
@@ -355,22 +368,24 @@ class TestSkillsUnsubscribe:
 class TestSkillsGetPromptContext:
     """Tests for skills_get_prompt_context method."""
 
-    def test_skills_get_prompt_context_requires_context(self, nx: NexusFS) -> None:
+    async def test_skills_get_prompt_context_requires_context(self, nx: NexusFS) -> None:
         """Test skills_get_prompt_context requires context."""
         from nexus.core.exceptions import ValidationError
 
         with pytest.raises(ValidationError):
-            nx.skills_get_prompt_context(context=None)
+            await nx.skills_get_prompt_context(context=None)
 
-    def test_skills_get_prompt_context_empty(self, nx: NexusFS, context: OperationContext) -> None:
+    async def test_skills_get_prompt_context_empty(
+        self, nx: NexusFS, context: OperationContext
+    ) -> None:
         """Test prompt context with no subscriptions."""
-        result = nx.skills_get_prompt_context(context=context)
+        result = await nx.skills_get_prompt_context(context=context)
 
         assert result["count"] == 0
         assert "<available_skills>" in result["xml"]
         assert result["skills"] == []
 
-    def test_skills_get_prompt_context_with_subscriptions(
+    async def test_skills_get_prompt_context_with_subscriptions(
         self, nx: NexusFS, context: OperationContext
     ) -> None:
         """Test prompt context with subscriptions."""
@@ -383,15 +398,15 @@ class TestSkillsGetPromptContext:
         )
 
         # Subscribe
-        nx.skills_subscribe(skill_path, context=context)
+        await nx.skills_subscribe(skill_path, context=context)
 
-        result = nx.skills_get_prompt_context(context=context)
+        result = await nx.skills_get_prompt_context(context=context)
 
         assert result["count"] == 1
         assert "Test Skill" in result["xml"]
         assert result["skills"][0]["name"] == "Test Skill"
 
-    def test_skills_get_prompt_context_respects_max_skills(
+    async def test_skills_get_prompt_context_respects_max_skills(
         self, nx: NexusFS, context: OperationContext
     ) -> None:
         """Test prompt context respects max_skills limit."""
@@ -403,9 +418,9 @@ class TestSkillsGetPromptContext:
                 f"---\nname: Skill {i}\n---\nContent".encode(),
                 context=context,
             )
-            nx.skills_subscribe(skill_path, context=context)
+            await nx.skills_subscribe(skill_path, context=context)
 
-        result = nx.skills_get_prompt_context(max_skills=2, context=context)
+        result = await nx.skills_get_prompt_context(max_skills=2, context=context)
 
         assert result["count"] <= 2
 
@@ -413,14 +428,14 @@ class TestSkillsGetPromptContext:
 class TestSkillsLoad:
     """Tests for skills_load method."""
 
-    def test_skills_load_requires_context(self, nx: NexusFS) -> None:
+    async def test_skills_load_requires_context(self, nx: NexusFS) -> None:
         """Test skills_load requires context."""
         from nexus.core.exceptions import ValidationError
 
         with pytest.raises(ValidationError):
-            nx.skills_load("/skill/test/", context=None)
+            await nx.skills_load("/skill/test/", context=None)
 
-    def test_skills_load_success(self, nx: NexusFS, context: OperationContext) -> None:
+    async def test_skills_load_success(self, nx: NexusFS, context: OperationContext) -> None:
         """Test loading a skill."""
         # Create skill using NexusFS
         skill_path = "/zone/acme/user/alice/skill/test-skill/"
@@ -430,7 +445,7 @@ class TestSkillsLoad:
             context=context,
         )
 
-        result = nx.skills_load(skill_path, context=context)
+        result = await nx.skills_load(skill_path, context=context)
 
         assert result["name"] == "Test Skill"
         assert result["path"] == skill_path
@@ -438,7 +453,7 @@ class TestSkillsLoad:
         assert "Instructions" in result["content"]
         assert result["metadata"]["version"] == "2.0.0"
 
-    def test_skills_load_permission_denied(
+    async def test_skills_load_permission_denied(
         self, nx: NexusFS, context: OperationContext, mock_rebac: MagicMock
     ) -> None:
         """Test load fails without read permission."""
@@ -447,9 +462,11 @@ class TestSkillsLoad:
         mock_rebac.rebac_check.return_value = False
 
         with pytest.raises(PermissionDeniedError, match="cannot read"):
-            nx.skills_load("/skill/private/", context=context)
+            await nx.skills_load("/skill/private/", context=context)
 
-    def test_skills_load_without_frontmatter(self, nx: NexusFS, context: OperationContext) -> None:
+    async def test_skills_load_without_frontmatter(
+        self, nx: NexusFS, context: OperationContext
+    ) -> None:
         """Test loading a skill without YAML frontmatter."""
         # Create skill without frontmatter using NexusFS
         skill_path = "/zone/acme/user/alice/skill/simple/"
@@ -459,7 +476,7 @@ class TestSkillsLoad:
             context=context,
         )
 
-        result = nx.skills_load(skill_path, context=context)
+        result = await nx.skills_load(skill_path, context=context)
 
         # Name should be derived from heading
         assert result["name"] == "Simple Skill"

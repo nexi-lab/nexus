@@ -19,8 +19,17 @@ from nexus.factory import create_nexus_fs
 from nexus.services.gateway import NexusFSGateway
 from nexus.services.skill_service import SkillService
 from nexus.skills.types import PromptContext, SkillContent, SkillInfo
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
+
+try:
+    from nexus.storage.raft_metadata_store import RaftMetadataStore
+
+    RaftMetadataStore.embedded("/tmp/_raft_probe")  # noqa: S108
+    _raft_available = True
+except Exception:
+    _raft_available = False
+
+pytestmark = pytest.mark.skipif(not _raft_available, reason="Raft metastore not available")
 
 
 @pytest.fixture
@@ -104,11 +113,11 @@ class TestSkillServiceInit:
 class TestSkillServiceShare:
     """Tests for SkillService.share()."""
 
-    def test_share_public(
+    async def test_share_public(
         self, service: SkillService, context: OperationContext, mock_rebac: MagicMock
     ) -> None:
         """Test sharing skill publicly."""
-        result = service.share("/zone/acme/user/alice/skill/test/", "public", context)
+        result = await service.share("/zone/acme/user/alice/skill/test/", "public", context)
 
         assert result == "tuple-123"
         # NexusFS.rebac_create internally calls _rebac_manager.rebac_write
@@ -117,60 +126,62 @@ class TestSkillServiceShare:
         assert call_kwargs["subject"] == ("role", "public")
         assert call_kwargs["relation"] == "direct_viewer"
 
-    def test_share_group(
+    async def test_share_group(
         self, service: SkillService, context: OperationContext, mock_rebac: MagicMock
     ) -> None:
         """Test sharing with a group."""
-        service.share("/zone/acme/user/alice/skill/test/", "group:eng", context)
+        await service.share("/zone/acme/user/alice/skill/test/", "group:eng", context)
 
         call_kwargs = mock_rebac.rebac_write.call_args[1]
         assert call_kwargs["subject"] == ("group", "eng", "member")
 
-    def test_share_user(
+    async def test_share_user(
         self, service: SkillService, context: OperationContext, mock_rebac: MagicMock
     ) -> None:
         """Test sharing with a user."""
-        service.share("/zone/acme/user/alice/skill/test/", "user:bob", context)
+        await service.share("/zone/acme/user/alice/skill/test/", "user:bob", context)
 
         call_kwargs = mock_rebac.rebac_write.call_args[1]
         assert call_kwargs["subject"] == ("user", "bob")
 
-    def test_share_invalid_format(self, service: SkillService, context: OperationContext) -> None:
+    async def test_share_invalid_format(
+        self, service: SkillService, context: OperationContext
+    ) -> None:
         """Test sharing with invalid format raises error."""
         with pytest.raises(ValidationError, match="Invalid share_with format"):
-            service.share("/skill/test/", "invalid", context)
+            await service.share("/skill/test/", "invalid", context)
 
-    def test_share_without_ownership(
+    async def test_share_without_ownership(
         self, service: SkillService, context: OperationContext, mock_rebac: MagicMock
     ) -> None:
         """Test sharing fails without ownership."""
         mock_rebac.rebac_check.return_value = False
 
         with pytest.raises(PermissionDeniedError, match="does not own"):
-            service.share("/skill/test/", "public", context)
+            await service.share("/skill/test/", "public", context)
 
 
 class TestSkillServiceUnshare:
     """Tests for SkillService.unshare()."""
 
-    def test_unshare_success(
+    async def test_unshare_success(
         self, service: SkillService, nx: NexusFS, context: OperationContext, mock_rebac: MagicMock
     ) -> None:
         """Test successful unsharing."""
         # NexusFS.rebac_list_tuples does direct SQL, so we patch the method on the instance
         with patch.object(nx, "rebac_list_tuples", return_value=[{"tuple_id": "tuple-456"}]):
-            result = service.unshare("/skill/test/", "public", context)
+            result = await service.unshare("/skill/test/", "public", context)
 
         assert result is True
         mock_rebac.rebac_delete.assert_called_once_with("tuple-456")
 
-    def test_unshare_not_found(
+    async def test_unshare_not_found(
         self, service: SkillService, nx: NexusFS, context: OperationContext, mock_rebac: MagicMock
     ) -> None:
         """Test unsharing when no share exists."""
         # NexusFS.rebac_list_tuples does direct SQL, so we patch the method on the instance
         with patch.object(nx, "rebac_list_tuples", return_value=[]):
-            result = service.unshare("/skill/test/", "public", context)
+            result = await service.unshare("/skill/test/", "public", context)
 
         assert result is False
         mock_rebac.rebac_delete.assert_not_called()
@@ -179,9 +190,9 @@ class TestSkillServiceUnshare:
 class TestSkillServiceSubscribe:
     """Tests for SkillService.subscribe() and unsubscribe()."""
 
-    def test_subscribe_new(self, service: SkillService, context: OperationContext) -> None:
+    async def test_subscribe_new(self, service: SkillService, context: OperationContext) -> None:
         """Test subscribing to a new skill."""
-        result = service.subscribe("/skill/test/", context)
+        result = await service.subscribe("/skill/test/", context)
 
         assert result is True
 
@@ -189,39 +200,41 @@ class TestSkillServiceSubscribe:
         subscriptions = service._load_subscriptions(context)
         assert "/skill/test/" in subscriptions
 
-    def test_subscribe_already_subscribed(
+    async def test_subscribe_already_subscribed(
         self, service: SkillService, context: OperationContext
     ) -> None:
         """Test subscribing when already subscribed."""
-        service.subscribe("/skill/test/", context)
-        result = service.subscribe("/skill/test/", context)
+        await service.subscribe("/skill/test/", context)
+        result = await service.subscribe("/skill/test/", context)
 
         assert result is False
 
-    def test_subscribe_permission_denied(
+    async def test_subscribe_permission_denied(
         self, service: SkillService, context: OperationContext, mock_rebac: MagicMock
     ) -> None:
         """Test subscribe fails without read permission."""
         mock_rebac.rebac_check.return_value = False
 
         with pytest.raises(PermissionDeniedError, match="cannot read"):
-            service.subscribe("/skill/private/", context)
+            await service.subscribe("/skill/private/", context)
 
-    def test_unsubscribe_success(self, service: SkillService, context: OperationContext) -> None:
+    async def test_unsubscribe_success(
+        self, service: SkillService, context: OperationContext
+    ) -> None:
         """Test unsubscribing."""
-        service.subscribe("/skill/test/", context)
-        result = service.unsubscribe("/skill/test/", context)
+        await service.subscribe("/skill/test/", context)
+        result = await service.unsubscribe("/skill/test/", context)
 
         assert result is True
 
         subscriptions = service._load_subscriptions(context)
         assert "/skill/test/" not in subscriptions
 
-    def test_unsubscribe_not_subscribed(
+    async def test_unsubscribe_not_subscribed(
         self, service: SkillService, context: OperationContext
     ) -> None:
         """Test unsubscribing when not subscribed."""
-        result = service.unsubscribe("/skill/not-subscribed/", context)
+        result = await service.unsubscribe("/skill/not-subscribed/", context)
 
         assert result is False
 
@@ -229,13 +242,13 @@ class TestSkillServiceSubscribe:
 class TestSkillServiceDiscover:
     """Tests for SkillService.discover()."""
 
-    def test_discover_empty(self, service: SkillService, context: OperationContext) -> None:
+    async def test_discover_empty(self, service: SkillService, context: OperationContext) -> None:
         """Test discover returns empty when no skills."""
-        result = service.discover(context)
+        result = await service.discover(context)
 
         assert result == []
 
-    def test_discover_returns_skill_info(
+    async def test_discover_returns_skill_info(
         self, service: SkillService, nx: NexusFS, context: OperationContext
     ) -> None:
         """Test discover returns SkillInfo objects."""
@@ -246,14 +259,14 @@ class TestSkillServiceDiscover:
             context=context,
         )
 
-        result = service.discover(context)
+        result = await service.discover(context)
 
         assert len(result) == 1
         assert isinstance(result[0], SkillInfo)
         assert result[0].name == "Test"
         assert result[0].description == "A test"
 
-    def test_discover_filter_subscribed(
+    async def test_discover_filter_subscribed(
         self, service: SkillService, nx: NexusFS, context: OperationContext
     ) -> None:
         """Test discover with subscribed filter."""
@@ -270,9 +283,9 @@ class TestSkillServiceDiscover:
         )
 
         # Subscribe to one
-        service.subscribe("/zone/acme/user/alice/skill/sub/", context)
+        await service.subscribe("/zone/acme/user/alice/skill/sub/", context)
 
-        result = service.discover(context, filter="subscribed")
+        result = await service.discover(context, filter="subscribed")
 
         assert len(result) == 1
         assert result[0].name == "Subscribed"
@@ -281,7 +294,7 @@ class TestSkillServiceDiscover:
 class TestSkillServiceLoad:
     """Tests for SkillService.load()."""
 
-    def test_load_success(
+    async def test_load_success(
         self, service: SkillService, nx: NexusFS, context: OperationContext
     ) -> None:
         """Test loading a skill."""
@@ -292,7 +305,7 @@ class TestSkillServiceLoad:
             context=context,
         )
 
-        result = service.load(skill_path, context)
+        result = await service.load(skill_path, context)
 
         assert isinstance(result, SkillContent)
         assert result.name == "Test"
@@ -301,29 +314,31 @@ class TestSkillServiceLoad:
         assert "# Content" in result.content
         assert result.metadata["version"] == "1.0"
 
-    def test_load_permission_denied(
+    async def test_load_permission_denied(
         self, service: SkillService, context: OperationContext, mock_rebac: MagicMock
     ) -> None:
         """Test load fails without permission."""
         mock_rebac.rebac_check.return_value = False
 
         with pytest.raises(PermissionDeniedError, match="cannot read"):
-            service.load("/skill/private/", context)
+            await service.load("/skill/private/", context)
 
 
 class TestSkillServicePromptContext:
     """Tests for SkillService.get_prompt_context()."""
 
-    def test_prompt_context_empty(self, service: SkillService, context: OperationContext) -> None:
+    async def test_prompt_context_empty(
+        self, service: SkillService, context: OperationContext
+    ) -> None:
         """Test prompt context with no subscriptions."""
-        result = service.get_prompt_context(context)
+        result = await service.get_prompt_context(context)
 
         assert isinstance(result, PromptContext)
         assert result.count == 0
         assert result.skills == []
         assert "<available_skills>" in result.xml
 
-    def test_prompt_context_with_skills(
+    async def test_prompt_context_with_skills(
         self, service: SkillService, nx: NexusFS, context: OperationContext
     ) -> None:
         """Test prompt context with subscribed skills."""
@@ -334,9 +349,9 @@ class TestSkillServicePromptContext:
             context=context,
         )
 
-        service.subscribe(skill_path, context)
+        await service.subscribe(skill_path, context)
 
-        result = service.get_prompt_context(context)
+        result = await service.get_prompt_context(context)
 
         assert result.count == 1
         assert "PromptSkill" in result.xml

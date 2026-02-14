@@ -710,33 +710,69 @@ class AsyncNexusFS:
         """
         Read multiple files in batch.
 
+        Uses batch permission filtering and batch metadata lookup to avoid
+        N+1 query patterns (Issue #1298). Denied paths return None instead
+        of raising, matching list_dir's filter-then-return pattern.
+
         Args:
             paths: List of virtual paths to read
             context: Operation context for permission checking
 
         Returns:
-            Dict mapping path to content (or None if not found)
+            Dict mapping path to content (or None if not found/denied)
         """
+        import time as _time
+
+        _start = _time.perf_counter()
         result: dict[str, bytes | None] = {}
 
-        # Check READ permission for all paths (Phase 4 - Issue #940)
-        for path in paths:
-            validated_path = self._validate_path(path)
-            await self._acheck_permission(validated_path, Permission.READ, context)
+        # Validate all paths upfront
+        validated_paths = [self._validate_path(p) for p in paths]
 
-        # Get metadata for all paths
+        # Batch permission filter (Issue #1298: replaces N individual checks)
+        readable_paths = validated_paths
+        if self._enforce_permissions and self._permission_enforcer:
+            ctx = self._get_context(context)
+            if not ctx.is_system and not ctx.is_admin:
+                _perm_start = _time.perf_counter()
+                allowed = await self._permission_enforcer.filter_paths_by_permission(
+                    validated_paths, ctx
+                )
+                allowed_set = set(allowed)
+                denied_count = 0
+                for vp in validated_paths:
+                    if vp not in allowed_set:
+                        result[vp] = None
+                        denied_count += 1
+                readable_paths = [vp for vp in validated_paths if vp in allowed_set]
+                _perm_elapsed = (_time.perf_counter() - _perm_start) * 1000
+                if denied_count > 0:
+                    logger.debug(
+                        f"[BATCH-OPT] batch_read permission filter: "
+                        f"{len(readable_paths)} allowed, {denied_count} denied "
+                        f"in {_perm_elapsed:.1f}ms"
+                    )
+
+        if not readable_paths:
+            return result
+
+        # Batch metadata lookup (Issue #1298: replaces N individual aget() calls)
+        _meta_start = _time.perf_counter()
+        batch_meta = await self.metadata.aget_batch(readable_paths)
+        _meta_elapsed = (_time.perf_counter() - _meta_start) * 1000
+
+        # Build etag-to-paths map from batch results
         etag_to_paths: dict[str, list[str]] = {}
-        for path in paths:
-            path = self._validate_path(path)
-            meta = await self.metadata.aget(path)
+        for rp in readable_paths:
+            meta = batch_meta.get(rp)
             if meta is None or meta.etag is None:
-                result[path] = None
+                result[rp] = None
             else:
                 if meta.etag not in etag_to_paths:
                     etag_to_paths[meta.etag] = []
-                etag_to_paths[meta.etag].append(path)
+                etag_to_paths[meta.etag].append(rp)
 
-        # Batch read content by etag
+        # Batch read content by etag (already batched)
         if etag_to_paths:
             content_results = await self.backend.batch_read_content(list(etag_to_paths.keys()))
 
@@ -746,4 +782,9 @@ class AsyncNexusFS:
                 for file_path in file_paths:
                     result[file_path] = content
 
+        _total_elapsed = (_time.perf_counter() - _start) * 1000
+        logger.debug(
+            f"[BATCH-OPT] batch_read: {len(paths)} paths, "
+            f"meta={_meta_elapsed:.1f}ms, total={_total_elapsed:.1f}ms"
+        )
         return result

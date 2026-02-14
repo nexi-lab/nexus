@@ -580,3 +580,148 @@ async def test_path_normalization(async_fs: AsyncNexusFS) -> None:
     # Read with clean path
     read_content = await async_fs.read("/test/normalized.txt")
     assert read_content == content
+
+
+# === Batch Read Permission Tests (Issue #1298) ===
+
+
+@pytest.mark.asyncio
+async def test_batch_read_mixed_permissions(tmp_path: Path) -> None:
+    """Test batch_read with permission enforcement: allowed files returned, denied get None."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from nexus.core._metadata_generated import FileMetadata
+    from nexus.core.permissions import OperationContext
+
+    # Mock permission enforcer that allows only /allowed/ paths
+    mock_enforcer = AsyncMock()
+    mock_enforcer.filter_paths_by_permission = AsyncMock(
+        side_effect=lambda paths, ctx: [p for p in paths if "/allowed/" in p]
+    )
+
+    # Mock metadata store
+    mock_metadata = MagicMock()
+
+    async def mock_aget_batch(paths):
+        result = {}
+        for p in paths:
+            if "/allowed/" in p:
+                result[p] = FileMetadata(
+                    path=p,
+                    backend_name="local",
+                    physical_path=p,
+                    size=10,
+                    etag=f"etag_{p.split('/')[-1]}",
+                )
+            else:
+                result[p] = None
+        return result
+
+    mock_metadata.aget_batch = mock_aget_batch
+
+    # Mock backend
+    mock_backend = AsyncMock()
+    mock_backend.batch_read_content = AsyncMock(
+        side_effect=lambda etags: {e: f"content_{e}".encode() for e in etags}
+    )
+
+    fs = AsyncNexusFS(
+        backend_root=tmp_path / "backend",
+        metadata_store=mock_metadata,
+        tenant_id="test-tenant",
+        enforce_permissions=True,
+        permission_enforcer=mock_enforcer,
+    )
+    # Manually set initialized components
+    fs._initialized = True
+    fs._metadata = mock_metadata
+    fs._backend = mock_backend
+
+    ctx_user = OperationContext(user="alice", groups=["dev"])
+    results = await fs.batch_read(
+        ["/allowed/file1.txt", "/denied/file3.txt", "/allowed/file2.txt"],
+        context=ctx_user,
+    )
+
+    # Denied path returns None
+    assert results["/denied/file3.txt"] is None
+    # Allowed paths return content
+    assert results["/allowed/file1.txt"] is not None
+    assert results["/allowed/file2.txt"] is not None
+
+    # Verify filter was called once (batch, not per-path)
+    mock_enforcer.filter_paths_by_permission.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_batch_read_all_denied(tmp_path: Path) -> None:
+    """Test batch_read when all paths are denied returns all None, no exception."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from nexus.core.permissions import OperationContext
+
+    mock_enforcer = AsyncMock()
+    mock_enforcer.filter_paths_by_permission = AsyncMock(return_value=[])
+
+    mock_metadata = MagicMock()
+
+    fs = AsyncNexusFS(
+        backend_root=tmp_path / "backend",
+        metadata_store=mock_metadata,
+        tenant_id="test-tenant",
+        enforce_permissions=True,
+        permission_enforcer=mock_enforcer,
+    )
+    fs._initialized = True
+    fs._metadata = mock_metadata
+
+    ctx_user = OperationContext(user="alice", groups=["dev"])
+    results = await fs.batch_read(["/secret/a.txt", "/secret/b.txt"], context=ctx_user)
+
+    assert results["/secret/a.txt"] is None
+    assert results["/secret/b.txt"] is None
+
+
+@pytest.mark.asyncio
+async def test_batch_read_permissions_disabled(tmp_path: Path) -> None:
+    """Test backward compat: batch_read returns all data when permissions disabled."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from nexus.core._metadata_generated import FileMetadata
+
+    mock_metadata = MagicMock()
+
+    async def mock_aget_batch(paths):
+        return {
+            p: FileMetadata(
+                path=p,
+                backend_name="local",
+                physical_path=p,
+                size=10,
+                etag=f"etag_{i}",
+            )
+            for i, p in enumerate(paths)
+        }
+
+    mock_metadata.aget_batch = mock_aget_batch
+
+    mock_backend = AsyncMock()
+    mock_backend.batch_read_content = AsyncMock(
+        side_effect=lambda etags: {e: f"content_{e}".encode() for e in etags}
+    )
+
+    fs = AsyncNexusFS(
+        backend_root=tmp_path / "backend",
+        metadata_store=mock_metadata,
+        tenant_id="test-tenant",
+        enforce_permissions=False,
+    )
+    fs._initialized = True
+    fs._metadata = mock_metadata
+    fs._backend = mock_backend
+
+    results = await fs.batch_read(["/open/file1.txt", "/open/file2.txt"])
+
+    # Both files returned with content
+    assert results["/open/file1.txt"] is not None
+    assert results["/open/file2.txt"] is not None

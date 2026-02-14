@@ -24,7 +24,7 @@ from nexus.ipc.conventions import (
     message_path_in_processed,
     outbox_path,
 )
-from nexus.ipc.envelope import MessageEnvelope
+from nexus.ipc.envelope import MessageEnvelope, MessageType
 from nexus.ipc.exceptions import (
     EnvelopeValidationError,
     InboxFullError,
@@ -39,6 +39,9 @@ MessageHandler = Callable[[MessageEnvelope], Coroutine[Any, Any, None]]
 
 # Default inbox size limit for backpressure
 DEFAULT_MAX_INBOX_SIZE = 1000
+
+# Default max payload size (1 MB)
+DEFAULT_MAX_PAYLOAD_BYTES = 1_048_576
 
 
 class MessageSender:
@@ -55,7 +58,7 @@ class MessageSender:
     Args:
         vfs: VFS operations for file read/write.
         event_publisher: EventBus publisher for notifications. Optional.
-        zone_id: Zone ID for multi-zone isolation.
+        zone_id: Zone ID for multi-tenant isolation.
         max_inbox_size: Maximum messages per inbox before backpressure.
     """
 
@@ -65,11 +68,13 @@ class MessageSender:
         event_publisher: EventPublisher | None = None,
         zone_id: str = "default",
         max_inbox_size: int = DEFAULT_MAX_INBOX_SIZE,
+        max_payload_bytes: int = DEFAULT_MAX_PAYLOAD_BYTES,
     ) -> None:
         self._vfs = vfs
         self._publisher = event_publisher
         self._zone_id = zone_id
         self._max_inbox_size = max_inbox_size
+        self._max_payload_bytes = max_payload_bytes
 
     async def send(self, envelope: MessageEnvelope) -> str:
         """Send a message to the recipient's inbox.
@@ -85,26 +90,28 @@ class MessageSender:
             InboxFullError: If recipient's inbox exceeds size limit.
             EnvelopeValidationError: If envelope is invalid.
         """
-        # 1. Validate envelope (Pydantic already validates on construction,
-        #    but we check additional constraints here)
-        self._validate_envelope(envelope)
+        # 1. Serialize once (avoid double serialization in validation + write)
+        data = envelope.to_bytes()
 
-        # 2. Check inbox exists
+        # 2. Validate envelope (Pydantic already validates on construction,
+        #    but we check additional constraints here)
+        self._validate_envelope(envelope, serialized_size=len(data))
+
+        # 3. Check inbox exists
         recipient_inbox = inbox_path(envelope.recipient)
         if not await self._vfs.exists(recipient_inbox, self._zone_id):
             raise InboxNotFoundError(envelope.recipient)
 
-        # 3. Check backpressure
-        inbox_contents = await self._vfs.list_dir(recipient_inbox, self._zone_id)
-        if len(inbox_contents) >= self._max_inbox_size:
-            raise InboxFullError(envelope.recipient, len(inbox_contents), self._max_inbox_size)
+        # 4. Check backpressure (count_dir is more efficient than list_dir)
+        inbox_count = await self._vfs.count_dir(recipient_inbox, self._zone_id)
+        if inbox_count >= self._max_inbox_size:
+            raise InboxFullError(envelope.recipient, inbox_count, self._max_inbox_size)
 
-        # 4. Write to recipient's inbox
+        # 5. Write to recipient's inbox
         msg_path = message_path_in_inbox(envelope.recipient, envelope.id, envelope.timestamp)
-        data = envelope.to_bytes()
         await self._vfs.write(msg_path, data, self._zone_id)
 
-        # 5. Copy to sender's outbox (audit trail, best-effort)
+        # 6. Copy to sender's outbox (audit trail, best-effort)
         try:
             outbox_dir = outbox_path(envelope.sender)
             if await self._vfs.exists(outbox_dir, self._zone_id):
@@ -120,7 +127,7 @@ class MessageSender:
                 exc_info=True,
             )
 
-        # 6. Publish EventBus notification (best-effort)
+        # 7. Publish EventBus notification (best-effort)
         if self._publisher is not None:
             try:
                 await self._publisher.publish(
@@ -151,10 +158,46 @@ class MessageSender:
         )
         return msg_path
 
-    def _validate_envelope(self, envelope: MessageEnvelope) -> None:
-        """Additional validation beyond Pydantic field validators."""
+    def _validate_envelope(
+        self, envelope: MessageEnvelope, *, serialized_size: int | None = None
+    ) -> None:
+        """Additional validation beyond Pydantic field validators.
+
+        Checks:
+        - Sender and recipient must be different
+        - Payload size must not exceed max_payload_bytes
+        - CANCEL and RESPONSE types require correlation_id
+        - Sender/recipient must not contain path separators
+
+        Args:
+            envelope: The envelope to validate.
+            serialized_size: Pre-computed serialized size (avoids double serialization).
+        """
         if envelope.sender == envelope.recipient:
             raise EnvelopeValidationError("Sender and recipient must be different")
+
+        # Sender/recipient must not contain path separators (prevents path traversal)
+        for field_name, value in [("sender", envelope.sender), ("recipient", envelope.recipient)]:
+            if "/" in value or "\\" in value:
+                raise EnvelopeValidationError(
+                    f"{field_name} must not contain path separators: '{value}'"
+                )
+
+        # Payload size check
+        payload_size = serialized_size if serialized_size is not None else len(envelope.to_bytes())
+        if payload_size > self._max_payload_bytes:
+            raise EnvelopeValidationError(
+                f"Message size {payload_size} bytes exceeds limit of {self._max_payload_bytes} bytes"
+            )
+
+        # CANCEL and RESPONSE must have correlation_id
+        if (
+            envelope.type in (MessageType.RESPONSE, MessageType.CANCEL)
+            and not envelope.correlation_id
+        ):
+            raise EnvelopeValidationError(
+                f"Messages of type '{envelope.type.value}' require a correlation_id"
+            )
 
 
 class MessageProcessor:
@@ -170,7 +213,7 @@ class MessageProcessor:
         vfs: VFS operations for file read/write/rename.
         agent_id: The agent whose inbox to process.
         handler: Async callback invoked for each valid message.
-        zone_id: Zone ID for multi-zone isolation.
+        zone_id: Zone ID for multi-tenant isolation.
         max_dedup_size: Maximum size of the in-memory dedup set.
     """
 
@@ -227,6 +270,14 @@ class MessageProcessor:
         try:
             data = await self._vfs.read(msg_path, self._zone_id)
             envelope = MessageEnvelope.from_bytes(data)
+        except FileNotFoundError:
+            # File was already moved/processed by another processor (race condition).
+            # This is expected with at-least-once semantics — skip silently.
+            logger.debug(
+                "Message at %s already moved (concurrent processing), skipping",
+                msg_path,
+            )
+            return
         except Exception as exc:
             logger.error(
                 "Failed to read/parse message at %s: %s",

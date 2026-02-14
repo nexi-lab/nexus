@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -47,12 +48,20 @@ class AgentDiscovery:
 
     Args:
         vfs: VFS operations for listing and reading.
-        zone_id: Zone ID for multi-zone isolation.
+        zone_id: Zone ID for multi-tenant isolation.
     """
 
-    def __init__(self, vfs: VFSOperations, zone_id: str = "default") -> None:
+    def __init__(
+        self,
+        vfs: VFSOperations,
+        zone_id: str = "default",
+        cache_ttl_seconds: float = 10.0,
+    ) -> None:
         self._vfs = vfs
         self._zone_id = zone_id
+        self._cache_ttl = cache_ttl_seconds
+        self._cache: list[DiscoveredAgent] | None = None
+        self._cache_expires_at: float = 0.0
 
     async def list_agents(self) -> list[str]:
         """List all registered agent IDs.
@@ -103,19 +112,32 @@ class AgentDiscovery:
             },
         )
 
-    async def discover_all(self) -> list[DiscoveredAgent]:
+    async def discover_all(self, *, bypass_cache: bool = False) -> list[DiscoveredAgent]:
         """Discover all agents with valid agent cards.
+
+        Uses a TTL-based cache to avoid re-scanning the filesystem on
+        every call. Cache can be bypassed for one-off fresh lookups.
+
+        Args:
+            bypass_cache: If True, skip the cache and re-scan.
 
         Returns:
             List of DiscoveredAgent instances for all agents that have
             a valid AGENT.json file.
         """
+        now = time.monotonic()
+        if not bypass_cache and self._cache is not None and now < self._cache_expires_at:
+            return list(self._cache)  # Return copy to prevent mutation
+
         agent_ids = await self.list_agents()
         discovered: list[DiscoveredAgent] = []
         for agent_id in agent_ids:
             agent = await self.get_agent_card(agent_id)
             if agent is not None:
                 discovered.append(agent)
+
+        self._cache = discovered
+        self._cache_expires_at = now + self._cache_ttl
         return discovered
 
     async def find_by_skill(self, skill: str) -> list[DiscoveredAgent]:

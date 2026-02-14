@@ -20,6 +20,7 @@ from nexus.ipc.exceptions import (
     InboxFullError,
     InboxNotFoundError,
 )
+from nexus.ipc.provisioning import AgentProvisioner
 
 from .fakes import InMemoryEventPublisher, InMemoryVFS
 
@@ -27,12 +28,9 @@ ZONE = "test-zone"
 
 
 async def _provision_agent(vfs: InMemoryVFS, agent_id: str) -> None:
-    """Helper to create the standard directory layout for an agent."""
-    await vfs.mkdir(f"/agents/{agent_id}", ZONE)
-    await vfs.mkdir(f"/agents/{agent_id}/inbox", ZONE)
-    await vfs.mkdir(f"/agents/{agent_id}/outbox", ZONE)
-    await vfs.mkdir(f"/agents/{agent_id}/processed", ZONE)
-    await vfs.mkdir(f"/agents/{agent_id}/dead_letter", ZONE)
+    """Provision agent directories using AgentProvisioner (DRY)."""
+    provisioner = AgentProvisioner(vfs, zone_id=ZONE)
+    await provisioner.provision(agent_id)
 
 
 def _make_envelope(
@@ -137,6 +135,61 @@ class TestMessageSender:
         # Should succeed even though EventBus fails
         path = await sender.send(_make_envelope())
         assert path.startswith("/agents/agent:bob/inbox/")
+
+    @pytest.mark.asyncio
+    async def test_send_path_traversal_rejected(self, vfs: InMemoryVFS) -> None:
+        """Sender/recipient with path separators must be rejected."""
+        await _provision_agent(vfs, "agent:bob")
+        sender = MessageSender(vfs, zone_id=ZONE)
+        env = _make_envelope(sender="../../etc/passwd", recipient="agent:bob")
+
+        with pytest.raises(EnvelopeValidationError, match="path separators"):
+            await sender.send(env)
+
+    @pytest.mark.asyncio
+    async def test_send_payload_too_large_rejected(self, vfs: InMemoryVFS) -> None:
+        """Messages exceeding max_payload_bytes must be rejected."""
+        await _provision_agent(vfs, "agent:bob")
+        sender = MessageSender(vfs, zone_id=ZONE, max_payload_bytes=100)
+        env = MessageEnvelope(
+            sender="agent:alice",
+            recipient="agent:bob",
+            type=MessageType.TASK,
+            payload={"data": "x" * 200},
+        )
+
+        with pytest.raises(EnvelopeValidationError, match="exceeds limit"):
+            await sender.send(env)
+
+    @pytest.mark.asyncio
+    async def test_send_cancel_without_correlation_id_rejected(self, vfs: InMemoryVFS) -> None:
+        """CANCEL messages require a correlation_id."""
+        await _provision_agent(vfs, "agent:bob")
+        sender = MessageSender(vfs, zone_id=ZONE)
+        env = MessageEnvelope(
+            sender="agent:alice",
+            recipient="agent:bob",
+            type=MessageType.CANCEL,
+            # No correlation_id
+        )
+
+        with pytest.raises(EnvelopeValidationError, match="correlation_id"):
+            await sender.send(env)
+
+    @pytest.mark.asyncio
+    async def test_send_response_without_correlation_id_rejected(self, vfs: InMemoryVFS) -> None:
+        """RESPONSE messages require a correlation_id."""
+        await _provision_agent(vfs, "agent:bob")
+        sender = MessageSender(vfs, zone_id=ZONE)
+        env = MessageEnvelope(
+            sender="agent:alice",
+            recipient="agent:bob",
+            type=MessageType.RESPONSE,
+            # No correlation_id
+        )
+
+        with pytest.raises(EnvelopeValidationError, match="correlation_id"):
+            await sender.send(env)
 
 
 class TestMessageProcessor:

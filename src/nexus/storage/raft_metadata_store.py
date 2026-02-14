@@ -4,12 +4,12 @@ This is the primary metadata storage for Nexus, using an embedded redb database
 with optional Raft consensus for multi-node deployments.
 
 Architecture:
-    Embedded:   Python -> Metastore (PyO3) -> redb (~5μs)
+    Standalone: Python -> Metastore (PyO3) -> redb (~5μs)
     Consensus:  Python -> ZoneManager -> ZoneHandle (PyO3) -> Raft -> redb (~2-10ms)
     Remote:     Python -> gRPC -> Rust (nexus_raft) -> redb (~200μs)
 
 Usage:
-    # Embedded mode (same box) - DEFAULT
+    # Standalone mode (same box) - DEFAULT
     store = RaftMetadataStore.embedded("/var/lib/nexus/metadata")
 
     # Consensus mode (multi-node with Raft via ZoneManager)
@@ -102,14 +102,14 @@ class RaftMetadataStore(FileMetadataProtocol):
     Raft consensus for multi-node replication.
 
     Two modes of operation:
-    1. Embedded mode (DEFAULT): Direct redb via Metastore PyO3 (~5μs latency)
+    1. Standalone mode (DEFAULT): Direct redb via Metastore PyO3 (~5μs latency)
     2. Remote mode: gRPC client (~200μs latency)
 
     For consensus mode, use ZoneManager to create a ZoneHandle, then pass it
     as the engine parameter:
 
     Example:
-        # Embedded mode (default)
+        # Standalone mode (default)
         store = RaftMetadataStore.embedded("/var/lib/nexus/metadata")
         store.put(metadata)
 
@@ -245,7 +245,7 @@ class RaftMetadataStore(FileMetadataProtocol):
     def embedded(cls, db_path: str, zone_id: str | None = None) -> RaftMetadataStore:
         """Create an embedded metastore using direct sled access.
 
-        This is the fast path (~5μs per operation) for embedded/standalone mode.
+        This is the fast path (~5μs per operation) for standalone mode.
 
         Args:
             db_path: Path to the sled database directory

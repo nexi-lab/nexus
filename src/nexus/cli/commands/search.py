@@ -255,9 +255,9 @@ def find_duplicates(path: str, json_output: bool, backend_config: BackendConfig)
     try:
         nx = get_filesystem(backend_config)
 
-        # Only Embedded mode supports batch_get_content_ids
+        # Only standalone mode supports batch_get_content_ids
         if not isinstance(nx, NexusFS):
-            console.print("[red]Error:[/red] find-duplicates is only available in embedded mode")
+            console.print("[red]Error:[/red] find-duplicates is only available in standalone mode")
             nx.close()
             sys.exit(1)
 
@@ -483,7 +483,7 @@ def search_index(
         with console.status(f"[yellow]Indexing {path}...[/yellow]", spinner="dots"):
 
             async def do_index() -> dict[str, int]:
-                # Auto-initialize semantic search if not already initialized (embedded mode)
+                # Auto-initialize semantic search if not already initialized (standalone mode)
                 if isinstance(nx, NexusFS) and (
                     not hasattr(nx, "_semantic_search") or nx._semantic_search is None
                 ):
@@ -572,7 +572,7 @@ def search_query(
         with console.status(f"[yellow]Searching for: {query}[/yellow]", spinner="dots"):
 
             async def do_search() -> list[dict[str, Any]]:
-                # Auto-initialize semantic search if not already initialized (embedded mode)
+                # Auto-initialize semantic search if not already initialized (standalone mode)
                 if isinstance(nx, NexusFS) and (
                     not hasattr(nx, "_semantic_search") or nx._semantic_search is None
                 ):
@@ -633,7 +633,7 @@ def search_stats(backend_config: BackendConfig) -> None:
         nx = get_filesystem(backend_config)
 
         async def get_stats() -> dict[str, Any]:
-            # Auto-initialize semantic search if not already initialized (embedded mode)
+            # Auto-initialize semantic search if not already initialized (standalone mode)
             if isinstance(nx, NexusFS) and (
                 not hasattr(nx, "_semantic_search") or nx._semantic_search is None
             ):

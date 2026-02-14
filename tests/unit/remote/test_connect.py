@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 import nexus
-from nexus import NexusFS
+from nexus.core.nexus_fs import NexusFS
 
 
 def cleanup_windows_db():
@@ -24,8 +24,8 @@ def cleanup_windows_db():
         time.sleep(0.2)  # 200ms delay for Windows file handle release
 
 
-def test_connect_default_embedded_mode() -> None:
-    """Test that connect() returns Embedded instance by default."""
+def test_connect_default_standalone_mode() -> None:
+    """Test that connect() returns NexusFS in standalone mode by default."""
     with tempfile.TemporaryDirectory() as tmpdir:
         nx = nexus.connect(config={"data_dir": tmpdir})
 
@@ -38,10 +38,10 @@ def test_connect_default_embedded_mode() -> None:
 
 
 def test_connect_with_config_dict() -> None:
-    """Test connect() with config dictionary."""
+    """Test connect() with config dictionary using standalone mode."""
     with tempfile.TemporaryDirectory() as tmpdir:
         config = {
-            "mode": "embedded",
+            "mode": "standalone",
             "data_dir": tmpdir,
         }
 
@@ -57,7 +57,7 @@ def test_connect_with_config_dict() -> None:
 def test_connect_with_config_object() -> None:
     """Test connect() with NexusConfig object."""
     with tempfile.TemporaryDirectory() as tmpdir:
-        config = nexus.NexusConfig(mode="embedded", data_dir=tmpdir)
+        config = nexus.NexusConfig(mode="standalone", data_dir=tmpdir)
 
         nx = nexus.connect(config=config)
 
@@ -68,24 +68,19 @@ def test_connect_with_config_object() -> None:
         cleanup_windows_db()
 
 
-def test_connect_monolithic_mode_not_implemented() -> None:
-    """Test that monolithic mode raises NotImplementedError."""
-    config = {"mode": "monolithic", "url": "http://localhost:8000"}
+def test_connect_old_modes_rejected() -> None:
+    """Test that old mode values (embedded, monolithic, distributed) are rejected."""
+    for old_mode in ["embedded", "monolithic", "distributed"]:
+        with pytest.raises(ValueError):
+            nexus.connect(config={"mode": old_mode})
 
-    with pytest.raises(NotImplementedError) as exc_info:
+
+def test_connect_remote_mode_requires_url() -> None:
+    """Test that remote mode raises ValueError without URL."""
+    config = {"mode": "remote"}
+
+    with pytest.raises(ValueError):
         nexus.connect(config=config)
-
-    assert "monolithic mode is not yet implemented" in str(exc_info.value)
-
-
-def test_connect_distributed_mode_not_implemented() -> None:
-    """Test that distributed mode raises NotImplementedError."""
-    config = {"mode": "distributed", "url": "http://localhost:8000"}
-
-    with pytest.raises(NotImplementedError) as exc_info:
-        nexus.connect(config=config)
-
-    assert "distributed mode is not yet implemented" in str(exc_info.value)
 
 
 def test_connect_invalid_mode() -> None:

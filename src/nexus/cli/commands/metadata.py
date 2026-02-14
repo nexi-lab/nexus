@@ -135,9 +135,9 @@ def export_metadata(
 
         nx = get_filesystem(backend_config)
 
-        # Note: Only Embedded mode supports metadata export
+        # Note: Only standalone mode supports metadata export
         if not isinstance(nx, NexusFS):
-            console.print("[red]Error:[/red] Metadata export is only available in embedded mode")
+            console.print("[red]Error:[/red] Metadata export is only available in standalone mode")
             nx.close()
             sys.exit(1)
 
@@ -246,9 +246,9 @@ def import_metadata(
 
         nx = get_filesystem(backend_config)
 
-        # Note: Only Embedded mode supports metadata import
+        # Note: Only standalone mode supports metadata import
         if not isinstance(nx, NexusFS):
-            console.print("[red]Error:[/red] Metadata import is only available in embedded mode")
+            console.print("[red]Error:[/red] Metadata import is only available in standalone mode")
             nx.close()
             sys.exit(1)
 

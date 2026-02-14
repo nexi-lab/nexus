@@ -114,6 +114,11 @@ from nexus.storage.models.reputation_score import ReputationScoreModel as Reputa
 from nexus.storage.models.sharing import ShareLinkAccessLogModel as ShareLinkAccessLogModel
 from nexus.storage.models.sharing import ShareLinkModel as ShareLinkModel
 
+# Domain: Spending Policy (Issue #1358)
+from nexus.storage.models.spending_policy import SpendingApprovalModel as SpendingApprovalModel
+from nexus.storage.models.spending_policy import SpendingLedgerModel as SpendingLedgerModel
+from nexus.storage.models.spending_policy import SpendingPolicyModel as SpendingPolicyModel
+
 # Domain: Sync and Conflict Resolution
 from nexus.storage.models.sync import BackendChangeLogModel as BackendChangeLogModel
 from nexus.storage.models.sync import ConflictLogModel as ConflictLogModel

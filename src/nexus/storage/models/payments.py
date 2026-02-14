@@ -16,7 +16,10 @@ from nexus.storage.models._base import Base, uuid_pk
 
 
 class AgentWalletMeta(Base):
-    """Wallet metadata for Nexus Pay. Balances in TigerBeetle, settings here."""
+    """Wallet metadata for Nexus Pay. Balances in TigerBeetle, settings here.
+
+    Note: Budget limits moved to spending_policies table (Issue #1358).
+    """
 
     __tablename__ = "agent_wallet_meta"
 
@@ -25,17 +28,6 @@ class AgentWalletMeta(Base):
     tigerbeetle_account_id: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
     x402_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
     x402_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    daily_limit: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    monthly_limit: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    per_tx_limit: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
-    daily_spent: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
-    monthly_spent: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
-    daily_reset_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
-    )
-    monthly_reset_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
-    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=lambda: datetime.now(UTC)
     )
@@ -49,8 +41,6 @@ class AgentWalletMeta(Base):
     __table_args__ = (
         Index("idx_wallet_meta_zone", "zone_id"),
         Index("idx_wallet_meta_tb_id", "tigerbeetle_account_id"),
-        Index("idx_wallet_meta_daily_reset", "daily_reset_at"),
-        Index("idx_wallet_meta_monthly_reset", "monthly_reset_at"),
     )
 
 

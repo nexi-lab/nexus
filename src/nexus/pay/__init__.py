@@ -51,6 +51,8 @@ from nexus.pay.credits import (
     TransferRequest,
     WalletNotFoundError,
 )
+from nexus.pay.policy_rules import RuleContext, RuleResult, evaluate_rules
+from nexus.pay.policy_wrapper import PolicyEnforcedPayment
 from nexus.pay.protocol import (
     CreditsPaymentProtocol,
     PaymentProtocol,
@@ -74,6 +76,17 @@ from nexus.pay.sdk import (
     Receipt,
     Reservation,
 )
+from nexus.pay.spending_policy import (
+    ApprovalRequiredError,
+    PolicyDeniedError,
+    PolicyError,
+    PolicyEvaluation,
+    SpendingApproval,
+    SpendingLedgerEntry,
+    SpendingPolicy,
+    SpendingRateLimitError,
+)
+from nexus.pay.spending_policy_service import SpendingPolicyService
 from nexus.pay.x402 import (
     X402Client,
     X402Error,
@@ -144,4 +157,19 @@ __all__ = [
     "Reservation",
     "Quote",
     "BudgetContext",
+    # Spending Policy Engine (#1358)
+    "PolicyEnforcedPayment",
+    "SpendingPolicyService",
+    "SpendingPolicy",
+    "SpendingLedgerEntry",
+    "PolicyEvaluation",
+    "PolicyError",
+    "PolicyDeniedError",
+    "ApprovalRequiredError",
+    "SpendingRateLimitError",
+    "SpendingApproval",
+    # Policy Rules Engine (Phase 4: #1358)
+    "RuleContext",
+    "RuleResult",
+    "evaluate_rules",
 ]

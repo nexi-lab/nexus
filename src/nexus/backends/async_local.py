@@ -799,6 +799,64 @@ class AsyncLocalBackend:
         for chunk in chunks:
             yield chunk
 
+    async def stream_range(
+        self,
+        content_hash: str,
+        start: int,
+        end: int,
+        chunk_size: int = 8192,
+        context: "OperationContext | None" = None,
+    ) -> AsyncIterator[bytes]:
+        """Stream a byte range [start, end] inclusive from local CAS (async).
+
+        Uses seek-based I/O in a thread for efficiency.
+
+        Args:
+            content_hash: Content hash (BLAKE3 hex)
+            start: First byte position (inclusive, 0-based)
+            end: Last byte position (inclusive, 0-based)
+            chunk_size: Size of each yielded chunk in bytes
+            context: Operation context (ignored for local backend)
+
+        Yields:
+            Byte chunks covering the requested range
+        """
+        content_path = self._hash_to_path(content_hash)
+
+        def _check_exists() -> bool:
+            return content_path.exists()
+
+        if not await asyncio.to_thread(_check_exists):
+            raise NexusFileNotFoundError(
+                path=content_hash,
+                message=f"CAS content not found: {content_hash}",
+            )
+
+        def _read_range_chunks() -> list[bytes]:
+            """Read range chunks from file in a thread."""
+            result: list[bytes] = []
+            bytes_remaining = end - start + 1
+            try:
+                with open(content_path, "rb") as f:
+                    f.seek(start)
+                    while bytes_remaining > 0:
+                        chunk = f.read(min(chunk_size, bytes_remaining))
+                        if not chunk:
+                            break
+                        bytes_remaining -= len(chunk)
+                        result.append(chunk)
+            except OSError as e:
+                raise BackendError(
+                    f"Failed to stream range: {e}",
+                    backend="local",
+                    path=content_hash,
+                ) from e
+            return result
+
+        chunks = await asyncio.to_thread(_read_range_chunks)
+        for chunk in chunks:
+            yield chunk
+
     async def write_stream(
         self,
         chunks: AsyncIterator[bytes],

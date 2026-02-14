@@ -400,22 +400,15 @@ def create_nexus_services(
         except ImportError as _snap_e:
             _factory_logger.debug("WorkspaceSnapshotExecutor unavailable: %s", _snap_e)
 
-        # MemoryQueryExecutor (Issue #1428) — only if memory support is available
-        try:
-            from nexus.services.context_manifest.executors.memory_query import (
-                MemoryQueryExecutor,
-            )
-            from nexus.services.context_manifest.executors.memory_search_adapter import (
-                MemorySearchAdapter,
-            )
+        # MemoryQueryExecutor (Issue #1428) — availability check only.
+        # Memory instance is created per-agent at request time, so the executor
+        # is wired in the resolve endpoint, not here.
+        import importlib.util
 
-            # Memory instance is created per-agent at request time, so we register
-            # the executor type here with a deferred adapter. The actual memory
-            # instance will be injected in the resolve endpoint if available.
-            # For now, skip — memory is agent-scoped, not factory-scoped.
+        if importlib.util.find_spec("nexus.services.context_manifest.executors.memory_query"):
             _factory_logger.debug("MemoryQueryExecutor available for per-agent wiring")
-        except ImportError as _mem_e:
-            _factory_logger.debug("MemoryQueryExecutor unavailable: %s", _mem_e)
+        else:
+            _factory_logger.debug("MemoryQueryExecutor module not found")
 
         # Metrics observer (Issue #1428)
         manifest_metrics = ManifestMetricsObserver(ManifestMetricsConfig())

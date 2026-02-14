@@ -44,7 +44,11 @@ from nexus.services.context_manifest.models import (
     SourceResult,
     WorkspaceSnapshotSource,
 )
-from nexus.services.context_manifest.resolver import ManifestResolver, MetricsObserver, SourceExecutor
+from nexus.services.context_manifest.resolver import (
+    ManifestResolver,
+    MetricsObserver,
+    SourceExecutor,
+)
 from nexus.services.context_manifest.template import ALLOWED_VARIABLES, resolve_template
 
 __all__ = [

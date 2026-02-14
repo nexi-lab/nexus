@@ -27,7 +27,6 @@ from nexus.services.context_manifest.executors.workspace_snapshot import (
 )
 from nexus.services.context_manifest.models import WorkspaceSnapshotSource
 
-
 # ---------------------------------------------------------------------------
 # Stub implementations
 # ---------------------------------------------------------------------------

@@ -19,7 +19,6 @@ import pytest
 from nexus.services.context_manifest.executors.memory_query import MemoryQueryExecutor
 from nexus.services.context_manifest.models import MemoryQuerySource
 
-
 # ---------------------------------------------------------------------------
 # Stub implementations
 # ---------------------------------------------------------------------------

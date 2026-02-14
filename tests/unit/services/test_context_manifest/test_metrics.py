@@ -29,7 +29,6 @@ from nexus.services.context_manifest.metrics import (
     SourceEvent,
 )
 
-
 # ---------------------------------------------------------------------------
 # Test 1: Config defaults and immutability
 # ---------------------------------------------------------------------------

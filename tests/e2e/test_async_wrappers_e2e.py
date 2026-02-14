@@ -25,12 +25,11 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from nexus.core.agent_registry import AgentRegistry, InvalidTransitionError
-from nexus.core.async_agent_registry import AsyncAgentRegistry
-from nexus.core.async_namespace_manager import AsyncNamespaceManager
-from nexus.core.async_router import AsyncVFSRouter
 from nexus.core.router import PathNotMountedError, PathRouter
 from nexus.plugins.async_hooks import AsyncHookEngine
 from nexus.plugins.hooks import PluginHooks
+from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
+from nexus.services.permissions.async_namespace_manager import AsyncNamespaceManager
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from nexus.services.protocols.hook_engine import (
     HookContext,
@@ -39,6 +38,7 @@ from nexus.services.protocols.hook_engine import (
     HookSpec,
 )
 from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
+from nexus.services.routing.async_router import AsyncVFSRouter
 from nexus.storage.models import Base
 
 # ---------------------------------------------------------------------------
@@ -343,17 +343,17 @@ class TestServerWiring:
 
     def test_async_agent_registry_import(self) -> None:
         """AsyncAgentRegistry can be imported from the expected path."""
-        from nexus.core.async_agent_registry import AsyncAgentRegistry
+        from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
 
         assert AsyncAgentRegistry is not None
 
     def test_async_namespace_manager_import(self) -> None:
-        from nexus.core.async_namespace_manager import AsyncNamespaceManager
+        from nexus.services.permissions.async_namespace_manager import AsyncNamespaceManager
 
         assert AsyncNamespaceManager is not None
 
     def test_async_router_import(self) -> None:
-        from nexus.core.async_router import AsyncVFSRouter
+        from nexus.services.routing.async_router import AsyncVFSRouter
 
         assert AsyncVFSRouter is not None
 
@@ -380,8 +380,8 @@ class TestServerLifespanWiring:
     async def test_lifespan_wiring_with_real_db(self, tmp_path: Path) -> None:
         """Simulate server lifespan: AgentRegistry + AsyncAgentRegistry wiring."""
         from nexus.core.agent_registry import AgentRegistry
-        from nexus.core.async_agent_registry import AsyncAgentRegistry
         from nexus.server import fastapi_server
+        from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
 
         # Create real SQLite-backed AgentRegistry (same as server lifespan does)
         db_path = tmp_path / f"lifespan_{uuid.uuid4().hex[:8]}.db"
@@ -438,15 +438,15 @@ class TestServerLifespanWiring:
 
         from nexus.backends.local import LocalBackend
         from nexus.core.agent_registry import AgentRegistry
-        from nexus.core.async_agent_registry import AsyncAgentRegistry
-        from nexus.core.async_namespace_manager import AsyncNamespaceManager
-        from nexus.core.async_router import AsyncVFSRouter
         from nexus.core.protocols.vfs_router import VFSRouterProtocol
         from nexus.core.router import PathRouter
         from nexus.plugins.async_hooks import AsyncHookEngine
         from nexus.plugins.hooks import PluginHooks
+        from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
+        from nexus.services.permissions.async_namespace_manager import AsyncNamespaceManager
         from nexus.services.protocols.hook_engine import HookEngineProtocol
         from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
+        from nexus.services.routing.async_router import AsyncVFSRouter
 
         # 1. AgentRegistry + AsyncAgentRegistry (SQLite)
         db_path = tmp_path / f"all4_{uuid.uuid4().hex[:8]}.db"
@@ -516,7 +516,7 @@ class TestServerLifespanWiring:
         for permission decisions.
         """
         from nexus.core.agent_registry import AgentRegistry
-        from nexus.core.async_agent_registry import AsyncAgentRegistry
+        from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
 
         db_path = tmp_path / f"perm_{uuid.uuid4().hex[:8]}.db"
         engine = create_engine(f"sqlite:///{db_path}", echo=False)

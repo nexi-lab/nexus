@@ -6,7 +6,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core.async_namespace_manager import AsyncNamespaceManager, _to_namespace_mount
+from nexus.services.permissions.async_namespace_manager import (
+    AsyncNamespaceManager,
+    _to_namespace_mount,
+)
 from nexus.services.permissions.namespace_manager import MountEntry
 from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol, NamespaceMount
 from tests.unit.core.protocols.test_conformance import assert_protocol_conformance

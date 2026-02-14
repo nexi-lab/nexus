@@ -379,7 +379,10 @@ def create_nexus_services(
         if root_path is not None:
             from pathlib import Path
 
-            executors["file_glob"] = FileGlobExecutor(workspace_root=Path(root_path))
+            try:
+                executors["file_glob"] = FileGlobExecutor(workspace_root=Path(root_path))
+            except TypeError:
+                _factory_logger.debug("Cannot create FileGlobExecutor: root_path=%r", root_path)
 
         # WorkspaceSnapshotExecutor (Issue #1428)
         try:

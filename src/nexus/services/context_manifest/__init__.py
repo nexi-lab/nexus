@@ -28,6 +28,11 @@ References:
 """
 
 from nexus.services.context_manifest.executors.file_glob import FileGlobExecutor
+from nexus.services.context_manifest.executors.memory_query import MemoryQueryExecutor
+from nexus.services.context_manifest.executors.workspace_snapshot import (
+    WorkspaceSnapshotExecutor,
+)
+from nexus.services.context_manifest.metrics import ManifestMetricsConfig, ManifestMetricsObserver
 from nexus.services.context_manifest.models import (
     ContextSource,
     ContextSourceProtocol,
@@ -39,7 +44,7 @@ from nexus.services.context_manifest.models import (
     SourceResult,
     WorkspaceSnapshotSource,
 )
-from nexus.services.context_manifest.resolver import ManifestResolver, SourceExecutor
+from nexus.services.context_manifest.resolver import ManifestResolver, MetricsObserver, SourceExecutor
 from nexus.services.context_manifest.template import ALLOWED_VARIABLES, resolve_template
 
 __all__ = [
@@ -55,10 +60,16 @@ __all__ = [
     "WorkspaceSnapshotSource",
     # Resolver
     "ManifestResolver",
+    "MetricsObserver",
     "SourceExecutor",
     # Template
     "ALLOWED_VARIABLES",
     "resolve_template",
-    # Executors (Issue #1427)
+    # Executors (Issue #1427, #1428)
     "FileGlobExecutor",
+    "MemoryQueryExecutor",
+    "WorkspaceSnapshotExecutor",
+    # Metrics (Issue #1428)
+    "ManifestMetricsConfig",
+    "ManifestMetricsObserver",
 ]

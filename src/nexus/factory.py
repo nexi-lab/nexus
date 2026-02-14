@@ -357,28 +357,73 @@ def create_nexus_services(
     # Gracefully no-ops if tigerbeetle package is not installed.
     wallet_provisioner = _create_wallet_provisioner()
 
-    # --- Manifest Resolver (Issue #1427) ---
+    # --- Manifest Resolver (Issue #1427, #1428) ---
     # Only create FileGlobExecutor when backend has local storage.
     # For non-local backends (GCS/S3), file_glob sources are skipped.
     import logging as _logging
 
     _factory_logger = _logging.getLogger(__name__)
     manifest_resolver: Any = None
+    manifest_metrics: Any = None
 
     try:
         from nexus.services.context_manifest import ManifestResolver
         from nexus.services.context_manifest.executors.file_glob import FileGlobExecutor
+        from nexus.services.context_manifest.metrics import (
+            ManifestMetricsConfig,
+            ManifestMetricsObserver,
+        )
 
         executors: dict[str, Any] = {}
         root_path = getattr(backend, "root_path", None)
-        if isinstance(root_path, str):
+        if root_path is not None:
             from pathlib import Path
 
             executors["file_glob"] = FileGlobExecutor(workspace_root=Path(root_path))
 
+        # WorkspaceSnapshotExecutor (Issue #1428)
+        try:
+            from nexus.services.context_manifest.executors.snapshot_lookup_db import (
+                CASManifestReader,
+                DatabaseSnapshotLookup,
+            )
+            from nexus.services.context_manifest.executors.workspace_snapshot import (
+                WorkspaceSnapshotExecutor,
+            )
+
+            snapshot_lookup = DatabaseSnapshotLookup(session_factory=session_factory)
+            cas_reader = CASManifestReader(backend=backend)
+            executors["workspace_snapshot"] = WorkspaceSnapshotExecutor(
+                snapshot_lookup=snapshot_lookup,
+                manifest_reader=cas_reader,
+            )
+        except ImportError as _snap_e:
+            _factory_logger.debug("WorkspaceSnapshotExecutor unavailable: %s", _snap_e)
+
+        # MemoryQueryExecutor (Issue #1428) — only if memory support is available
+        try:
+            from nexus.services.context_manifest.executors.memory_query import (
+                MemoryQueryExecutor,
+            )
+            from nexus.services.context_manifest.executors.memory_search_adapter import (
+                MemorySearchAdapter,
+            )
+
+            # Memory instance is created per-agent at request time, so we register
+            # the executor type here with a deferred adapter. The actual memory
+            # instance will be injected in the resolve endpoint if available.
+            # For now, skip — memory is agent-scoped, not factory-scoped.
+            _factory_logger.debug("MemoryQueryExecutor available for per-agent wiring")
+        except ImportError as _mem_e:
+            _factory_logger.debug("MemoryQueryExecutor unavailable: %s", _mem_e)
+
+        # Metrics observer (Issue #1428)
+        manifest_metrics = ManifestMetricsObserver(ManifestMetricsConfig())
+
         manifest_resolver = ManifestResolver(
             executors=executors,
             max_resolve_seconds=5.0,
+            metrics_observer=manifest_metrics,
         )
         _factory_logger.debug(
             "[FACTORY] ManifestResolver created with %d executors", len(executors)
@@ -403,6 +448,7 @@ def create_nexus_services(
         "wallet_provisioner": wallet_provisioner,
         "chunked_upload_service": chunked_upload_service,
         "manifest_resolver": manifest_resolver,
+        "manifest_metrics": manifest_metrics,
     }
 
     return result
@@ -499,7 +545,7 @@ def create_nexus_fs(
     # Pop services that NexusFS doesn't accept as constructor params.
     # These are stored in nx._service_extras for server-layer access.
     service_extras: dict[str, Any] = {}
-    for key in ("observability_subsystem", "chunked_upload_service", "manifest_resolver"):
+    for key in ("observability_subsystem", "chunked_upload_service", "manifest_resolver", "manifest_metrics"):
         val = services.pop(key, None)
         if val is not None:
             service_extras[key] = val

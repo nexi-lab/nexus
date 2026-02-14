@@ -3,12 +3,6 @@
 // This proto file defines the gRPC services and messages for:
 // 1. RaftService - Internal node-to-node Raft consensus
 // 2. RaftClientService - Client-facing API for Raft operations
-// 3. EventStreamService - Streaming events (webhook pattern)
-//
-// The transport layer is general-purpose and can be reused for:
-// - Raft consensus (primary use case)
-// - Webhook streaming (Server Streaming pattern)
-// - Real-time event push
 
 syntax = "proto3";
 
@@ -22,18 +16,6 @@ import "nexus/raft/commands.proto";
 //
 // This service is used for communication between Raft nodes (leaders, followers, witnesses).
 service RaftService {
-  // RequestVote is called by candidates to gather votes during leader election.
-  rpc RequestVote(VoteRequest) returns (VoteResponse);
-
-  // AppendEntries is called by leaders to replicate log entries and send heartbeats.
-  rpc AppendEntries(AppendEntriesRequest) returns (AppendEntriesResponse);
-
-  // InstallSnapshot is called by leaders to send a snapshot to lagging followers.
-  rpc InstallSnapshot(stream SnapshotChunk) returns (InstallSnapshotResponse);
-
-  // TransferLeader requests the current leader to transfer leadership.
-  rpc TransferLeader(TransferLeaderRequest) returns (TransferLeaderResponse);
-
   // StepMessage forwards a raw raft-rs eraftpb::Message between nodes.
   // The bytes are opaque to the transport layer — serialized using protobuf v2
   // (raft-rs's native format). This is the standard pattern (etcd, tikv) for
@@ -45,15 +27,6 @@ service RaftService {
   // Used by the background replication loop (Phase C) for peer data sync.
   // Entries are idempotent — receivers skip already-applied sequence numbers.
   rpc ReplicateEntries(ReplicateEntriesRequest) returns (ReplicateEntriesResponse);
-}
-
-// EventStreamService provides streaming events (reusable for webhooks).
-//
-// This service demonstrates how gRPC Server Streaming can replace
-// HTTP-based webhooks for real-time event delivery.
-service EventStreamService {
-  // Subscribe to a stream of events.
-  rpc Subscribe(SubscribeRequest) returns (stream Event);
 }
 
 // RaftClientService provides the client-facing API for Raft operations.
@@ -195,68 +168,7 @@ message InviteZoneResponse {
   string node_address = 4;
 }
 
-// === Raft Protocol Messages ===
-
-// VoteRequest is sent by candidates to request votes from other nodes.
-message VoteRequest {
-  uint64 term = 1;
-  uint64 candidate_id = 2;
-  uint64 last_log_index = 3;
-  uint64 last_log_term = 4;
-}
-
-// VoteResponse is the response to a VoteRequest.
-message VoteResponse {
-  uint64 term = 1;
-  bool vote_granted = 2;
-}
-
-// AppendEntriesRequest is sent by leaders to replicate log entries.
-message AppendEntriesRequest {
-  uint64 term = 1;
-  uint64 leader_id = 2;
-  uint64 prev_log_index = 3;
-  uint64 prev_log_term = 4;
-  repeated LogEntry entries = 5;
-  uint64 leader_commit = 6;
-}
-
-// AppendEntriesResponse is the response to an AppendEntriesRequest.
-message AppendEntriesResponse {
-  uint64 term = 1;
-  bool success = 2;
-  uint64 match_index = 3;
-}
-
-// LogEntry represents a single entry in the Raft log.
-message LogEntry {
-  uint64 term = 1;
-  uint64 index = 2;
-  EntryType entry_type = 3;
-  bytes data = 4;
-}
-
-// SnapshotChunk is a chunk of snapshot data (for streaming).
-message SnapshotChunk {
-  SnapshotMetadata metadata = 1;
-  uint64 offset = 2;
-  bytes data = 3;
-  bool done = 4;
-}
-
-// SnapshotMetadata describes a snapshot.
-message SnapshotMetadata {
-  uint64 index = 1;
-  uint64 term = 2;
-  uint64 size = 3;
-  ClusterConfig config = 4;
-}
-
-// InstallSnapshotResponse is the response to a snapshot installation.
-message InstallSnapshotResponse {
-  uint64 term = 1;
-  bool success = 2;
-}
+// === Cluster Configuration ===
 
 // ClusterConfig describes the cluster membership.
 message ClusterConfig {
@@ -272,24 +184,7 @@ message NodeInfo {
   NodeRole role = 3;
 }
 
-// TransferLeaderRequest requests leadership transfer.
-message TransferLeaderRequest {
-  uint64 target_id = 1;
-}
-
-// TransferLeaderResponse is the response to a leadership transfer request.
-message TransferLeaderResponse {
-  bool success = 1;
-  string error = 2;
-}
-
 // === Enums ===
-
-// EntryType indicates the type of log entry.
-enum EntryType {
-  ENTRY_NORMAL = 0;
-  ENTRY_CONF_CHANGE = 1;
-}
 
 // NodeRole indicates the role of a node.
 enum NodeRole {
@@ -345,22 +240,4 @@ message ReplicateEntriesResponse {
   optional string error = 2;
   // Highest sequence number successfully applied by the receiver.
   uint64 applied_up_to = 3;
-}
-
-// === Event Streaming Messages (Webhook Pattern) ===
-
-// SubscribeRequest initiates an event stream subscription.
-message SubscribeRequest {
-  repeated string topics = 1;
-  string filter = 2;
-  uint64 from_sequence = 3;
-}
-
-// Event represents a streaming event.
-message Event {
-  uint64 sequence = 1;
-  string topic = 2;
-  string event_type = 3;
-  bytes payload = 4;
-  int64 timestamp_ms = 5;
 }

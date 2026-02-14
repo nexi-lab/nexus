@@ -39,26 +39,6 @@ class RaftServiceStub(object):
         Args:
             channel: A grpc.Channel.
         """
-        self.RequestVote = channel.unary_unary(
-                '/nexus.raft.RaftService/RequestVote',
-                request_serializer=nexus_dot_raft_dot_transport__pb2.VoteRequest.SerializeToString,
-                response_deserializer=nexus_dot_raft_dot_transport__pb2.VoteResponse.FromString,
-                _registered_method=True)
-        self.AppendEntries = channel.unary_unary(
-                '/nexus.raft.RaftService/AppendEntries',
-                request_serializer=nexus_dot_raft_dot_transport__pb2.AppendEntriesRequest.SerializeToString,
-                response_deserializer=nexus_dot_raft_dot_transport__pb2.AppendEntriesResponse.FromString,
-                _registered_method=True)
-        self.InstallSnapshot = channel.stream_unary(
-                '/nexus.raft.RaftService/InstallSnapshot',
-                request_serializer=nexus_dot_raft_dot_transport__pb2.SnapshotChunk.SerializeToString,
-                response_deserializer=nexus_dot_raft_dot_transport__pb2.InstallSnapshotResponse.FromString,
-                _registered_method=True)
-        self.TransferLeader = channel.unary_unary(
-                '/nexus.raft.RaftService/TransferLeader',
-                request_serializer=nexus_dot_raft_dot_transport__pb2.TransferLeaderRequest.SerializeToString,
-                response_deserializer=nexus_dot_raft_dot_transport__pb2.TransferLeaderResponse.FromString,
-                _registered_method=True)
         self.StepMessage = channel.unary_unary(
                 '/nexus.raft.RaftService/StepMessage',
                 request_serializer=nexus_dot_raft_dot_transport__pb2.StepMessageRequest.SerializeToString,
@@ -78,34 +58,6 @@ class RaftServiceServicer(object):
 
     This service is used for communication between Raft nodes (leaders, followers, witnesses).
     """
-
-    def RequestVote(self, request, context):
-        """RequestVote is called by candidates to gather votes during leader election.
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def AppendEntries(self, request, context):
-        """AppendEntries is called by leaders to replicate log entries and send heartbeats.
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def InstallSnapshot(self, request_iterator, context):
-        """InstallSnapshot is called by leaders to send a snapshot to lagging followers.
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-    def TransferLeader(self, request, context):
-        """TransferLeader requests the current leader to transfer leadership.
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
 
     def StepMessage(self, request, context):
         """StepMessage forwards a raw raft-rs eraftpb::Message between nodes.
@@ -130,26 +82,6 @@ class RaftServiceServicer(object):
 
 def add_RaftServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
-            'RequestVote': grpc.unary_unary_rpc_method_handler(
-                    servicer.RequestVote,
-                    request_deserializer=nexus_dot_raft_dot_transport__pb2.VoteRequest.FromString,
-                    response_serializer=nexus_dot_raft_dot_transport__pb2.VoteResponse.SerializeToString,
-            ),
-            'AppendEntries': grpc.unary_unary_rpc_method_handler(
-                    servicer.AppendEntries,
-                    request_deserializer=nexus_dot_raft_dot_transport__pb2.AppendEntriesRequest.FromString,
-                    response_serializer=nexus_dot_raft_dot_transport__pb2.AppendEntriesResponse.SerializeToString,
-            ),
-            'InstallSnapshot': grpc.stream_unary_rpc_method_handler(
-                    servicer.InstallSnapshot,
-                    request_deserializer=nexus_dot_raft_dot_transport__pb2.SnapshotChunk.FromString,
-                    response_serializer=nexus_dot_raft_dot_transport__pb2.InstallSnapshotResponse.SerializeToString,
-            ),
-            'TransferLeader': grpc.unary_unary_rpc_method_handler(
-                    servicer.TransferLeader,
-                    request_deserializer=nexus_dot_raft_dot_transport__pb2.TransferLeaderRequest.FromString,
-                    response_serializer=nexus_dot_raft_dot_transport__pb2.TransferLeaderResponse.SerializeToString,
-            ),
             'StepMessage': grpc.unary_unary_rpc_method_handler(
                     servicer.StepMessage,
                     request_deserializer=nexus_dot_raft_dot_transport__pb2.StepMessageRequest.FromString,
@@ -175,114 +107,6 @@ class RaftService(object):
 
     This service is used for communication between Raft nodes (leaders, followers, witnesses).
     """
-
-    @staticmethod
-    def RequestVote(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/nexus.raft.RaftService/RequestVote',
-            nexus_dot_raft_dot_transport__pb2.VoteRequest.SerializeToString,
-            nexus_dot_raft_dot_transport__pb2.VoteResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def AppendEntries(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/nexus.raft.RaftService/AppendEntries',
-            nexus_dot_raft_dot_transport__pb2.AppendEntriesRequest.SerializeToString,
-            nexus_dot_raft_dot_transport__pb2.AppendEntriesResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def InstallSnapshot(request_iterator,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.stream_unary(
-            request_iterator,
-            target,
-            '/nexus.raft.RaftService/InstallSnapshot',
-            nexus_dot_raft_dot_transport__pb2.SnapshotChunk.SerializeToString,
-            nexus_dot_raft_dot_transport__pb2.InstallSnapshotResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-    @staticmethod
-    def TransferLeader(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_unary(
-            request,
-            target,
-            '/nexus.raft.RaftService/TransferLeader',
-            nexus_dot_raft_dot_transport__pb2.TransferLeaderRequest.SerializeToString,
-            nexus_dot_raft_dot_transport__pb2.TransferLeaderResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
 
     @staticmethod
     def StepMessage(request,
@@ -328,91 +152,6 @@ class RaftService(object):
             '/nexus.raft.RaftService/ReplicateEntries',
             nexus_dot_raft_dot_transport__pb2.ReplicateEntriesRequest.SerializeToString,
             nexus_dot_raft_dot_transport__pb2.ReplicateEntriesResponse.FromString,
-            options,
-            channel_credentials,
-            insecure,
-            call_credentials,
-            compression,
-            wait_for_ready,
-            timeout,
-            metadata,
-            _registered_method=True)
-
-
-class EventStreamServiceStub(object):
-    """EventStreamService provides streaming events (reusable for webhooks).
-
-    This service demonstrates how gRPC Server Streaming can replace
-    HTTP-based webhooks for real-time event delivery.
-    """
-
-    def __init__(self, channel):
-        """Constructor.
-
-        Args:
-            channel: A grpc.Channel.
-        """
-        self.Subscribe = channel.unary_stream(
-                '/nexus.raft.EventStreamService/Subscribe',
-                request_serializer=nexus_dot_raft_dot_transport__pb2.SubscribeRequest.SerializeToString,
-                response_deserializer=nexus_dot_raft_dot_transport__pb2.Event.FromString,
-                _registered_method=True)
-
-
-class EventStreamServiceServicer(object):
-    """EventStreamService provides streaming events (reusable for webhooks).
-
-    This service demonstrates how gRPC Server Streaming can replace
-    HTTP-based webhooks for real-time event delivery.
-    """
-
-    def Subscribe(self, request, context):
-        """Subscribe to a stream of events.
-        """
-        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
-        context.set_details('Method not implemented!')
-        raise NotImplementedError('Method not implemented!')
-
-
-def add_EventStreamServiceServicer_to_server(servicer, server):
-    rpc_method_handlers = {
-            'Subscribe': grpc.unary_stream_rpc_method_handler(
-                    servicer.Subscribe,
-                    request_deserializer=nexus_dot_raft_dot_transport__pb2.SubscribeRequest.FromString,
-                    response_serializer=nexus_dot_raft_dot_transport__pb2.Event.SerializeToString,
-            ),
-    }
-    generic_handler = grpc.method_handlers_generic_handler(
-            'nexus.raft.EventStreamService', rpc_method_handlers)
-    server.add_generic_rpc_handlers((generic_handler,))
-    server.add_registered_method_handlers('nexus.raft.EventStreamService', rpc_method_handlers)
-
-
- # This class is part of an EXPERIMENTAL API.
-class EventStreamService(object):
-    """EventStreamService provides streaming events (reusable for webhooks).
-
-    This service demonstrates how gRPC Server Streaming can replace
-    HTTP-based webhooks for real-time event delivery.
-    """
-
-    @staticmethod
-    def Subscribe(request,
-            target,
-            options=(),
-            channel_credentials=None,
-            call_credentials=None,
-            insecure=False,
-            compression=None,
-            wait_for_ready=None,
-            timeout=None,
-            metadata=None):
-        return grpc.experimental.unary_stream(
-            request,
-            target,
-            '/nexus.raft.EventStreamService/Subscribe',
-            nexus_dot_raft_dot_transport__pb2.SubscribeRequest.SerializeToString,
-            nexus_dot_raft_dot_transport__pb2.Event.FromString,
             options,
             channel_credentials,
             insecure,

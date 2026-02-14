@@ -18,13 +18,11 @@ use super::proto::nexus::raft::{
     raft_query_response::Result as ProtoQueryResultVariant,
     raft_response::Result as ProtoResponseResultVariant,
     raft_service_server::{RaftService, RaftServiceServer},
-    AppendEntriesRequest, AppendEntriesResponse, ClusterConfig as ProtoClusterConfig,
-    GetClusterInfoRequest, GetClusterInfoResponse, GetMetadataResult, InstallSnapshotResponse,
-    InviteZoneRequest, InviteZoneResponse, JoinZoneRequest, JoinZoneResponse, ListMetadataResult,
-    LockInfoResult, LockResult, NodeInfo as ProtoNodeInfo, ProposeRequest, ProposeResponse,
-    QueryRequest, QueryResponse, RaftCommand, RaftQueryResponse, RaftResponse,
-    ReplicateEntriesRequest, ReplicateEntriesResponse, SnapshotChunk, StepMessageRequest,
-    StepMessageResponse, TransferLeaderRequest, TransferLeaderResponse, VoteRequest, VoteResponse,
+    ClusterConfig as ProtoClusterConfig, GetClusterInfoRequest, GetClusterInfoResponse,
+    GetMetadataResult, InviteZoneRequest, InviteZoneResponse, JoinZoneRequest, JoinZoneResponse,
+    ListMetadataResult, LockInfoResult, LockResult, NodeInfo as ProtoNodeInfo, ProposeRequest,
+    ProposeResponse, QueryRequest, QueryResponse, RaftCommand, RaftQueryResponse, RaftResponse,
+    ReplicateEntriesRequest, ReplicateEntriesResponse, StepMessageRequest, StepMessageResponse,
 };
 use super::{NodeAddress, Result, TransportError};
 use crate::raft::{
@@ -38,7 +36,7 @@ use protobuf::Message as ProtobufV2Message;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tonic::{Request, Response, Status, Streaming};
+use tonic::{Request, Response, Status};
 
 /// Configuration for Raft transport server.
 #[derive(Debug, Clone)]
@@ -223,10 +221,6 @@ fn proto_command_to_internal(proto: RaftCommand) -> Option<Command> {
             lock_id: el.holder_id,
             new_ttl_secs: (el.ttl_ms / 1000) as u32,
         }),
-        ProtoCommandVariant::UpdateRouting(_) => {
-            tracing::warn!("UpdateRouting command not supported");
-            None
-        }
     }
 }
 
@@ -288,53 +282,15 @@ fn command_result_to_proto(result: &CommandResult) -> RaftResponse {
 
 /// Zone-routed implementation of the RaftService gRPC trait.
 ///
-/// Only `step_message` is used in production — all raft-rs message types
-/// (~15 types including votes, heartbeats, appends) are multiplexed through
-/// this single RPC as opaque protobuf v2 bytes (etcd/tikv pattern).
-///
-/// Legacy RPCs (request_vote, append_entries, etc.) return UNIMPLEMENTED.
+/// All raft-rs message types (~15 types including votes, heartbeats, appends)
+/// are multiplexed through `step_message` as opaque protobuf v2 bytes
+/// (etcd/tikv pattern).
 struct RaftServiceImpl {
     registry: Arc<ZoneRaftRegistry>,
 }
 
 #[tonic::async_trait]
 impl RaftService for RaftServiceImpl {
-    async fn request_vote(
-        &self,
-        _request: Request<VoteRequest>,
-    ) -> std::result::Result<Response<VoteResponse>, Status> {
-        Err(Status::unimplemented(
-            "Use step_message — legacy RPCs are not supported",
-        ))
-    }
-
-    async fn append_entries(
-        &self,
-        _request: Request<AppendEntriesRequest>,
-    ) -> std::result::Result<Response<AppendEntriesResponse>, Status> {
-        Err(Status::unimplemented(
-            "Use step_message — legacy RPCs are not supported",
-        ))
-    }
-
-    async fn install_snapshot(
-        &self,
-        _request: Request<Streaming<SnapshotChunk>>,
-    ) -> std::result::Result<Response<InstallSnapshotResponse>, Status> {
-        Err(Status::unimplemented(
-            "Use step_message — legacy RPCs are not supported",
-        ))
-    }
-
-    async fn transfer_leader(
-        &self,
-        _request: Request<TransferLeaderRequest>,
-    ) -> std::result::Result<Response<TransferLeaderResponse>, Status> {
-        Err(Status::unimplemented(
-            "Use step_message — legacy RPCs are not supported",
-        ))
-    }
-
     /// Handle a raw raft-rs message forwarded from another node.
     ///
     /// Routes by zone_id to the correct Raft group's ZoneConsensus.
@@ -1133,40 +1089,6 @@ struct WitnessServiceImpl {
 
 #[tonic::async_trait]
 impl RaftService for WitnessServiceImpl {
-    async fn request_vote(
-        &self,
-        _request: Request<VoteRequest>,
-    ) -> std::result::Result<Response<VoteResponse>, Status> {
-        Err(Status::unimplemented(
-            "Use step_message — legacy RPCs are not supported",
-        ))
-    }
-
-    async fn append_entries(
-        &self,
-        _request: Request<AppendEntriesRequest>,
-    ) -> std::result::Result<Response<AppendEntriesResponse>, Status> {
-        Err(Status::unimplemented(
-            "Use step_message — legacy RPCs are not supported",
-        ))
-    }
-
-    async fn install_snapshot(
-        &self,
-        _request: Request<Streaming<SnapshotChunk>>,
-    ) -> std::result::Result<Response<InstallSnapshotResponse>, Status> {
-        Err(Status::unimplemented(
-            "Use step_message — legacy RPCs are not supported",
-        ))
-    }
-
-    async fn transfer_leader(
-        &self,
-        _request: Request<TransferLeaderRequest>,
-    ) -> std::result::Result<Response<TransferLeaderResponse>, Status> {
-        Err(Status::unimplemented("Witness nodes cannot become leaders"))
-    }
-
     /// Handle a raw raft-rs message forwarded from another node.
     async fn step_message(
         &self,

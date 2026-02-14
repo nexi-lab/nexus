@@ -154,231 +154,14 @@ All data architecture decisions completed:
 
 ---
 
-## 4. Decoupling Strategy: OS-Inspired Layered Architecture
+## 4. Kernel Architecture
 
-### 4.1 Design Philosophy
+For the full OS-inspired layered architecture (design philosophy, Four Storage Pillars,
+kernel vs services boundary, deployment modes), see **`docs/design/KERNEL-ARCHITECTURE.md`** (SSOT).
 
-**Mega-Decoupling**: Nexus architecture follows operating system design with strict separation:
+This section covers federation-specific consistency semantics not in that document.
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      USER SPACE                              │  ← Application Logic
-│  (NexusFS API, FastAPI Routes, CLI Commands, Client SDKs)   │
-└─────────────────────────────────────────────────────────────┘
-                           ↓ syscall-like interface
-┌─────────────────────────────────────────────────────────────┐
-│                      KERNEL SPACE                            │  ← Interface Contracts
-│  (ABCs: MetastoreABC, RecordStoreABC, ObjectStoreABC,       │
-│   CacheStoreABC, TransportProtocol, TimerScheduler, etc.)   │
-└─────────────────────────────────────────────────────────────┘
-                           ↓ driver registration
-┌─────────────────────────────────────────────────────────────┐
-│                    DRIVER / HAL LAYER                        │  ← Hot-Pluggable Implementations
-│  (SQLAlchemyMetadataStore, RaftMetadataStore, gRPCTransport,│
-│   S3StorageDriver, LocalStorageDriver, DragonflyCache, etc.)│
-└─────────────────────────────────────────────────────────────┘
-```
-
-**Key Principle**: User space NEVER directly imports driver implementations. All access goes through kernel ABCs.
-
-**Hot-Pluggable Modules**: Like Linux kernel modules, drivers are interchangeable at runtime/config time without recompiling user space.
-
-### 4.2 Subsystem Layering
-
-#### 4.2.1 Filesystem Layer
-
-```
-┌─────────────────────────────────────────────────────────┐
-│ USER SPACE                                              │
-│                                                         │
-│  NexusFS.write(path, data)                             │
-│  NexusFS.read(path) → bytes                            │
-│  NexusFS.list(dir) → Iterator[FileMetadata]           │
-│  NexusFS.stat(path) → FileMetadata                     │
-└─────────────────────────────────────────────────────────┘
-                        ↓
-┌─────────────────────────────────────────────────────────┐
-│ KERNEL SPACE                                            │
-│                                                         │
-│  class MetadataStore(ABC):                             │
-│    @abstractmethod                                      │
-│    async def get_metadata(path) → FileMetadata         │
-│    async def set_metadata(path, metadata)              │
-│    async def delete_metadata(path)                     │
-│    async def list_metadata(prefix, limit) → Iterator   │
-└─────────────────────────────────────────────────────────┘
-                        ↓
-┌─────────────────────────────────────────────────────────┐
-│ DRIVER LAYER                                            │
-│                                                         │
-│  RaftMetadataStore (redb + Raft)    [MetastoreABC]     │
-│    - Local mode: PyO3 FFI (~5μs latency)               │
-│    - Remote mode: gRPC to leader                       │
-│    - Linearizable reads/writes                         │
-└─────────────────────────────────────────────────────────┘
-```
-
-**Config-Based Selection**:
-```bash
-NEXUS_METASTORE=raft             # Use Raft (SC mode, multi-node)
-NEXUS_METASTORE=local            # Use redb (local PyO3, single-node)
-```
-
-#### 4.2.2 Network Layer (Transport)
-
-```
-┌─────────────────────────────────────────────────────────┐
-│ USER SPACE                                              │
-│                                                         │
-│  ZoneConsensus.send_message(peer_id, msg)                   │
-│  EventBus.publish(event)                               │
-│  RPC.call_remote_method(method, args)                  │
-└─────────────────────────────────────────────────────────┘
-                        ↓
-┌─────────────────────────────────────────────────────────┐
-│ KERNEL SPACE                                            │
-│                                                         │
-│  class TransportProtocol(ABC):                         │
-│    @abstractmethod                                      │
-│    async def send(peer, message) → Response            │
-│    async def receive() → AsyncIterator[Message]        │
-│    async def connect(address) → Connection             │
-│                                                         │
-│  class PubSubProtocol(ABC):                            │
-│    @abstractmethod                                      │
-│    async def publish(channel, data)                    │
-│    async def subscribe(channel) → AsyncIterator        │
-└─────────────────────────────────────────────────────────┘
-                        ↓
-┌─────────────────────────────────────────────────────────┐
-│ DRIVER LAYER                                            │
-│                                                         │
-│  gRPCTransport (inter-node Raft replication)           │
-│    - Tonic-based, Protobuf serialization               │
-│    - Streaming for log transfer                        │
-│                                                         │
-│  HTTPTransport (client RPC)                            │
-│    - JSON-RPC over HTTP/2                              │
-│    - FastAPI backend                                   │
-│                                                         │
-│  DragonflyPubSub (event bus)                           │
-│    - Redis protocol compatible                         │
-│    - Channel-based broadcast                           │
-└─────────────────────────────────────────────────────────┘
-```
-
-#### 4.2.3–4.2.9: Other Subsystems (Same User→Kernel→Driver Pattern)
-
-All subsystems follow the same 3-layer pattern shown in 4.2.1–4.2.2. Summary:
-
-| Subsystem | Kernel ABC | Drivers |
-|-----------|-----------|---------|
-| **4.2.3 Blob Storage** | `StorageDriver(ABC)` | Local, S3, GCS, Azure |
-| **4.2.4 RPC Service** | `RPCServiceProtocol(ABC)` | FastAPI (HTTP), gRPC |
-| **4.2.5 Timer/Scheduler** | `TimerScheduler(ABC)` | AsyncIO, APScheduler |
-| **4.2.6 Memory** | `MemoryAllocator(ABC)` | System, HugePage, NUMA, SharedMem |
-| **4.2.7 Cache** | `CacheProtocol(ABC)` | Dragonfly, L1Cache (DashMap), PostgreSQL |
-| **4.2.8 Consensus** | `ConsensusProtocol(ABC)` + `DistributedLock(ABC)` | Raft, RedisLock |
-| **4.2.9 Security** | `AuthenticationProtocol(ABC)` + `AuthorizationProtocol(ABC)` | ZanzibarReBAC, OAuth |
-
-**Key distinctions**: Memory (4.2.6) = RAM allocation; Cache (4.2.7) = computed result storage.
-Consensus (4.2.8) RedisLockManager potentially deprecated post-Raft.
-
-### 4.3 The Nexus Quartet: Four Storage Pillars (Task #14)
-
-**Design Philosophy**: Abstraction by **Capability** (Access Pattern & Consistency Guarantee),
-not by business domain (`UserStore`) or implementation (`PostgresStore`).
-Linux Kernel defines `BlockDevice`, `CharDevice`, `FileSystem` — Nexus defines four orthogonal storage primitives.
-Names explain the **"What"** and **"Why"**, not the **"How"**.
-
-**The Four Pillars**:
-
-| Pillar | Role | Capability | Backing Driver | Kernel Status |
-|--------|------|------------|----------------|---------------|
-| **MetastoreABC** | "The Structure" (Brain/Skeleton) | Ordered KV, SC (Raft), CAS, Range Scan | redb (local PyO3 / gRPC Raft) | **Required** init param |
-| **RecordStoreABC** | "The Truth" (Memory/Library) | Relational (JOINs), ACID, Vector Search | PostgreSQL (prod) / SQLite (dev) | **Optional** — injected for Services (ReBAC, Auth, Audit, etc.) |
-| **ObjectStoreABC** | "The Content" (Flesh/Warehouse) | Streaming I/O, Immutable Objects, Petabyte Scale | S3 / GCS / Local Disk | **Mounted** dynamically (= current `Backend` ABC) |
-| **CacheStoreABC** | "The Reflexes" (Nerves/Signals) | Ephemeral KV, Pub/Sub, TTL | Dragonfly (prod) / In-Memory (dev) | ✅ **Implemented** (optional, graceful degrade) |
-
-**Naming Rationale** (see Gemini design review for full analysis):
-- **Metastore**: Industry standard for metadata engines (HDFS NameNode, Colossus Curator). Covers inodes + config + topology — not just FileMetadata.
-- **RecordStore**: "System of Record" (SoR). Covers entities, relationships, logs, vectors — broader than "Registry".
-- **ObjectStore**: Aligns with S3/GCS "Object Storage" terminology. Not a DB "Blob" field — an independent storage entity.
-- **CacheStore**: Honest about ephemerality. Avoids "State" confusion with Raft state machine.
-
-**Naming Clarification**: The existing proto-generated `MetadataStore` (from `metadata.proto`, specific to `FileMetadata` typed operations) will be renamed to `FileMetadataProtocol` to avoid confusion with `MetastoreABC` (the underlying ordered KV primitive).
-
-**Data Type → Pillar Mapping**: See §3.2 for full per-pillar tables with rationale.
-See `data-storage-matrix.md` for the complete 50+ type catalog.
-
-**CacheStore Note**: ✅ **Implemented** (Task #22, #27). `CacheStoreABC` unifies all cache access
-behind a single ABC with drivers (Dragonfly, InMemory, Null). Domain caches (PermissionCache,
-TigerCache, ResourceMapCache, EmbeddingCache) are driver-agnostic implementations in `nexus/cache/domain.py`,
-built on CacheStoreABC primitives. NullCacheStore provides graceful degradation when no cache is available.
-
-**Kernel Init** (dependency injection):
-
-```python
-class NexusFS:
-    def __init__(
-        self,
-        # Required: Kernel core
-        metastore: MetastoreABC,                    # redb: inodes, dentries, config, topology
-
-        # Optional: Services layer (not kernel core)
-        record_store: RecordStoreABC | None = None, # PG/SQLite: users, ReBAC, audit, vectors
-
-        # ObjectStore (= Backend) is NOT an init param — mounted dynamically:
-        #   nx.mount("/", LocalBackend(...))        # like: mount /dev/sda1 /
-        #   nx.mount("/cloud", S3Backend(...))      # like: mount nfs://... /cloud
-
-        # CacheStore: optional, NullCacheStore fallback when omitted (Task #22 done)
-    ):
-        self.vfs = VFS(metastore=metastore)
-        # Services only initialized when record_store is provided
-        if record_store:
-            self.identity = IdentityService(record_store)
-            self.memory = SemanticMemory(record_store)     # Uses vector search
-```
-
-> **Why optional?** Pure kernel only needs Metastore for inode CRUD (read/write/mkdir/ls).
-> RecordStore is consumed by **Services** (ReBAC, Auth, Audit, Search, Workflows) that
-> currently live inside NexusFS but conceptually belong in User Space — like how Linux's
-> `/etc/passwd` is a file managed by user-space tools, not a kernel data structure.
-> Tests exercising pure file operations need not provide a RecordStore.
-
-**Deployment-Time Driver Selection** (config-driven, no recompile):
-```bash
-# Production: redb + PostgreSQL + S3 + Dragonfly
-NEXUS_METASTORE=raft
-NEXUS_RECORD_STORE=postgresql://...
-NEXUS_OBJECT_STORE=s3://my-bucket
-
-# Development: redb + SQLite + Local Disk (no Dragonfly)
-NEXUS_METASTORE=local
-NEXUS_RECORD_STORE=sqlite:///dev.db
-NEXUS_OBJECT_STORE=local:./nexus-data
-```
-
-Same binary, different drivers loaded at **startup**.
-
-**Limitations**:
-- ❌ **Not true runtime hot-swapping**: Drivers selected at startup, cannot change without restart
-- ❌ **Single driver per type**: Only one Metastore active at a time (no zone-specific drivers)
-- ❌ **No graceful driver removal**: Cannot unload a driver while system is running
-
-**Future**: True runtime hot-swapping (see Section 7o) will enable Linux-like `modprobe`/`rmmod` operations.
-
-### 4.4 Deployment Modes
-
-| Mode | Metastore | RecordStore | ObjectStore (mounted) | CacheStore | Use Case |
-|------|-----------|-------------|----------------------|------------|----------|
-| **Single-Node (Dev)** | redb (local PyO3) | SQLite | LocalBackend | In-Memory | Development, testing |
-| **Single-Node (Prod)** | redb (local PyO3) | PostgreSQL | LocalBackend / S3 | Dragonfly | Small-scale production |
-| **Multi-Node (Raft SC)** | redb (gRPC, Raft consensus) | PostgreSQL | S3 | Dragonfly | HA, strong consistency |
-| **Multi-Node (Raft EC)** | redb (async replication) | PostgreSQL | S3 | Dragonfly | High throughput, geo-distributed (#1180) |
-
-### 4.5 Raft Dual Mode: Strong vs Eventual Consistency (Issue #1180)
+### 4.1 Raft Dual Mode: Strong vs Eventual Consistency (Issue #1180)
 
 **Strong Consistency (SC) Mode** (default):
 - All writes go through Raft consensus (majority ACK)
@@ -387,31 +170,20 @@ Same binary, different drivers loaded at **startup**.
 - Use case: Financial, legal, compliance workloads
 
 **Eventual Consistency (EC) Mode** (opt-in):
-- Writes replicate asynchronously (Leader ACK only)
-- Reads may observe stale data (bounded staleness)
-- Latency: ~1-2ms (local redb read)
+- Writes apply locally + replicate asynchronously to peers
+- LWW (Last-Writer-Wins) conflict resolution for concurrent EC writes
+- Latency: ~5μs (local redb write, equivalent to single-node)
 - Use case: Media, content delivery, high-throughput ingestion
 
-**Configuration**: Per-zone setting in `ZoneModel.consistency_mode` (SC/EC).
+**Configuration**: Per-operation parameter (`consistency="sc"` or `"ec"` on each write call).
+Not per-zone — the same zone can mix SC and EC writes depending on the operation.
 
 **Trade-offs**:
 - SC: Lower throughput (~1K writes/sec), stronger guarantees
 - EC: Higher throughput (~30K writes/sec), risk of data loss on leader crash
 
-**Implementation Status**: SC mode complete (Raft core), EC mode planned (P3).
-
-### 4.6 Migration Strategy
-
-**No backward compatibility required** (project in early stage):
-- Breaking schema changes acceptable
-- Existing deployments can stay on SQLAlchemy indefinitely
-- New deployments can choose Raft from day 1
-
-**Gradual rollout**:
-1. P1#7: Re-integrate RaftMetadataStore behind config (`NEXUS_METADATA_STORE=raft|sqlalchemy`)
-2. P1#8-9: Complete data type merges and storage decisions (Tasks #3-#11)
-3. P2: Production deployment guide with both modes documented
-4. P3: Deprecate SQLAlchemy for metadata (keep for relational data)
+**Implementation Status**: Both SC and EC modes complete.
+SC: Raft consensus core. EC: Phase C (async ReplicationLog) + Phase D (LWW conflict resolution).
 
 ---
 

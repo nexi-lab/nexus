@@ -173,5 +173,5 @@ This ensures driver interchangeability (PostgreSQL ↔ SQLite) without code chan
 | Storage orthogonality proof | `data-storage-matrix.md` §ORTHOGONALITY |
 | Raft, gRPC, write flows | `federation-memo.md` §2–§5 |
 | Zone model, DT_MOUNT | `federation-memo.md` §5–§6 |
-| SC vs EC consistency | `federation-memo.md` §4.5 |
+| SC vs EC consistency | `federation-memo.md` §4.1 |
 | API privilege levels (agents vs ops vs admin) | `federation-memo.md` §6.10 |

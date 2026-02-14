@@ -16,8 +16,6 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-import networkx as nx
-
 from nexus.governance.models import (
     EdgeType,
     FraudRing,
@@ -30,6 +28,7 @@ from nexus.governance.trust_math import build_local_trust_matrix, detect_sybil_c
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    import networkx as nx
     from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
@@ -66,6 +65,8 @@ class CollusionService:
 
         Zone-scoped with size limits to prevent OOM.
         """
+        import networkx as nx
+
         edges = await self._load_edges(zone_id, since)
 
         g = nx.DiGraph()
@@ -94,6 +95,8 @@ class CollusionService:
         Uses Johnson's algorithm (nx.simple_cycles) to find all simple cycles
         with length between 3 and max_cycle_length.
         """
+        import networkx as nx
+
         graph = await self.build_interaction_graph(zone_id)
 
         if graph.number_of_nodes() == 0:

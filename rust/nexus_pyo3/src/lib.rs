@@ -6,6 +6,7 @@ mod cache;
 mod glob;
 mod hash;
 mod io;
+mod lock;
 mod rebac;
 mod search;
 mod simd;
@@ -60,5 +61,6 @@ fn nexus_fast(m: &Bound<PyModule>) -> PyResult<()> {
     // Classes
     m.add_class::<bloom::BloomFilter>()?;
     m.add_class::<cache::L1MetadataCache>()?;
+    m.add_class::<lock::VFSLockManager>()?;
     Ok(())
 }

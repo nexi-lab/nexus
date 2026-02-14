@@ -413,9 +413,7 @@ class TestWorkspaceSnapshotExecutorInPipeline:
 class StubMemorySearch:
     """Stub MemorySearch for integration testing."""
 
-    def search(
-        self, query: str, top_k: int, search_mode: str
-    ) -> tuple[list[dict[str, Any]], str]:
+    def search(self, query: str, top_k: int, search_mode: str) -> tuple[list[dict[str, Any]], str]:
         return [
             {"content": "test result", "score": 0.9, "memory_type": "fact"},
         ], search_mode

@@ -19,9 +19,7 @@ logger = logging.getLogger(__name__)
 class MemorySearch(Protocol):
     """Protocol for memory search backends."""
 
-    def search(
-        self, query: str, top_k: int, search_mode: str
-    ) -> tuple[list[dict[str, Any]], str]:
+    def search(self, query: str, top_k: int, search_mode: str) -> tuple[list[dict[str, Any]], str]:
         """Search memory and return (results, actual_search_mode)."""
         ...
 

@@ -40,9 +40,7 @@ class StubMemorySearch:
         self.last_top_k: int | None = None
         self.last_search_mode: str | None = None
 
-    def search(
-        self, query: str, top_k: int, search_mode: str
-    ) -> tuple[list[dict[str, Any]], str]:
+    def search(self, query: str, top_k: int, search_mode: str) -> tuple[list[dict[str, Any]], str]:
         self.last_query = query
         self.last_top_k = top_k
         self.last_search_mode = search_mode
@@ -128,9 +126,7 @@ class TestTemplateVariables:
         executor = MemoryQueryExecutor(memory_search=stub)
 
         variables = {"task.description": "implement auth module"}
-        result = await executor.execute(
-            _make_source("relevant to {{task.description}}"), variables
-        )
+        result = await executor.execute(_make_source("relevant to {{task.description}}"), variables)
 
         assert result.status == "ok"
         assert stub.last_query == "relevant to implement auth module"
@@ -142,9 +138,7 @@ class TestTemplateVariables:
         stub = StubMemorySearch(results=[])
         executor = MemoryQueryExecutor(memory_search=stub)
 
-        result = await executor.execute(
-            _make_source("query about {{task.description}}"), {}
-        )
+        result = await executor.execute(_make_source("query about {{task.description}}"), {})
 
         assert result.status == "error"
         assert "template" in result.error_message.lower()

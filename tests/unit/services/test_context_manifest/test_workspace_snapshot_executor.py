@@ -204,12 +204,8 @@ class TestFileTreeIncluded:
         """File tree is included when manifest_reader is provided."""
         snap = _sample_snapshot(manifest_hash="hash123")
         lookup = StubSnapshotLookup(snapshots={"snap-001": snap})
-        reader = StubManifestReader(
-            paths={"hash123": ["src/main.py", "src/utils.py", "README.md"]}
-        )
-        executor = WorkspaceSnapshotExecutor(
-            snapshot_lookup=lookup, manifest_reader=reader
-        )
+        reader = StubManifestReader(paths={"hash123": ["src/main.py", "src/utils.py", "README.md"]})
+        executor = WorkspaceSnapshotExecutor(snapshot_lookup=lookup, manifest_reader=reader)
 
         result = await executor.execute(_make_source("snap-001"), {})
 
@@ -232,9 +228,7 @@ class TestFileTreeCapped:
         lookup = StubSnapshotLookup(snapshots={"snap-001": snap})
         many_paths = [f"file_{i:04d}.py" for i in range(500)]
         reader = StubManifestReader(paths={"hash-big": many_paths})
-        executor = WorkspaceSnapshotExecutor(
-            snapshot_lookup=lookup, manifest_reader=reader
-        )
+        executor = WorkspaceSnapshotExecutor(snapshot_lookup=lookup, manifest_reader=reader)
 
         result = await executor.execute(_make_source("snap-001"), {})
 
@@ -275,9 +269,7 @@ class TestFileTreeReaderFailure:
         snap = _sample_snapshot(manifest_hash="hash-fail")
         lookup = StubSnapshotLookup(snapshots={"snap-001": snap})
         reader = StubManifestReader(error=RuntimeError("CAS unavailable"))
-        executor = WorkspaceSnapshotExecutor(
-            snapshot_lookup=lookup, manifest_reader=reader
-        )
+        executor = WorkspaceSnapshotExecutor(snapshot_lookup=lookup, manifest_reader=reader)
 
         result = await executor.execute(_make_source("snap-001"), {})
 
@@ -290,9 +282,7 @@ class TestFileTreeReaderFailure:
         snap = _sample_snapshot(manifest_hash="hash-missing")
         lookup = StubSnapshotLookup(snapshots={"snap-001": snap})
         reader = StubManifestReader(paths={})  # hash not found → returns None
-        executor = WorkspaceSnapshotExecutor(
-            snapshot_lookup=lookup, manifest_reader=reader
-        )
+        executor = WorkspaceSnapshotExecutor(snapshot_lookup=lookup, manifest_reader=reader)
 
         result = await executor.execute(_make_source("snap-001"), {})
 
@@ -314,9 +304,7 @@ class TestTemplateVariable:
         executor = WorkspaceSnapshotExecutor(snapshot_lookup=lookup)
 
         variables = {"workspace.id": "ws-123-snap"}
-        result = await executor.execute(
-            _make_source("{{workspace.id}}"), variables
-        )
+        result = await executor.execute(_make_source("{{workspace.id}}"), variables)
 
         assert result.status == "ok"
         assert result.data["snapshot_id"] == "ws-123-snap"
@@ -327,9 +315,7 @@ class TestTemplateVariable:
         lookup = StubSnapshotLookup()
         executor = WorkspaceSnapshotExecutor(snapshot_lookup=lookup)
 
-        result = await executor.execute(
-            _make_source("{{workspace.id}}"), {}
-        )
+        result = await executor.execute(_make_source("{{workspace.id}}"), {})
 
         assert result.status == "error"
         assert "template" in result.error_message.lower()

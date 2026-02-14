@@ -94,9 +94,7 @@ class ManifestMetricsObserver:
         except Exception:
             self._record_error()
 
-    def on_resolution_end(
-        self, elapsed_ms: float, source_count: int, error: bool = False
-    ) -> None:
+    def on_resolution_end(self, elapsed_ms: float, source_count: int, error: bool = False) -> None:
         """Called when a manifest resolution completes.
 
         Args:

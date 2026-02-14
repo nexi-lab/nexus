@@ -140,9 +140,7 @@ class WorkspaceSnapshotExecutor:
             elapsed_ms=elapsed_ms,
         )
 
-    def _resolve_snapshot(
-        self, snapshot_id: str, variables: dict[str, str]
-    ) -> dict[str, Any]:
+    def _resolve_snapshot(self, snapshot_id: str, variables: dict[str, str]) -> dict[str, Any]:
         """Resolve a snapshot by ID or 'latest'.
 
         Raises:
@@ -156,9 +154,7 @@ class WorkspaceSnapshotExecutor:
                 )
             snapshot = self._snapshot_lookup.get_latest_snapshot(workspace_root)
             if snapshot is None:
-                raise _SnapshotError(
-                    f"No snapshots found for workspace '{workspace_root}'"
-                )
+                raise _SnapshotError(f"No snapshots found for workspace '{workspace_root}'")
             return snapshot
 
         snapshot = self._snapshot_lookup.get_snapshot(snapshot_id)

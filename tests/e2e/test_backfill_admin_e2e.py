@@ -86,7 +86,9 @@ class TestBackfillAdminE2E:
             json={"params": {"prefix": "/skills"}},
         )
 
-        assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+        assert response.status_code == 200, (
+            f"Expected 200, got {response.status_code}: {response.text}"
+        )
 
         body = response.json()
         assert body.get("result", {}).get("entries_created") == 5
@@ -194,7 +196,9 @@ class TestBackfillAdminE2E:
 
         avg_ms = sum(times) / len(times) * 1000
         max_ms = max(times) * 1000
-        logger.info(f"Performance: avg={avg_ms:.1f}ms, max={max_ms:.1f}ms over {len(times)} requests")
+        logger.info(
+            f"Performance: avg={avg_ms:.1f}ms, max={max_ms:.1f}ms over {len(times)} requests"
+        )
 
         # Admin check is O(1) getattr — should not add >5ms of overhead
         assert avg_ms < 500, f"Average response time {avg_ms:.1f}ms is too high"

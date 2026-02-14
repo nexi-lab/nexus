@@ -9,12 +9,12 @@ completing the migration to pure ReBAC-based multi-tenancy.
 
 Background:
 - Previous: Used database-level tenant isolation via file_paths.tenant_id
-- Migration: Migrated to ReBAC-based isolation via rebac_tuples.tenant_id
+- Migration: Migrated to ReBAC-based isolation via rebac_tuples.zone_id
 - Current: Completed migration by removing tenant_id from file_paths
 
 Tenant isolation is now handled by:
-1. OperationContext.tenant_id (passed per-operation)
-2. rebac_tuples.tenant_id (permission-level filtering)
+1. OperationContext zone_id (passed per-operation)
+2. rebac_tuples.zone_id (permission-level filtering)
 3. Router validation (runtime tenant checking)
 
 Files are no longer tenant-scoped at the database level.

@@ -509,6 +509,108 @@ class PermissionEnforcer:
             logger.warning(f"[HAS-DESCENDANTS] Error: {e}, returning True (fallback)")
             return True  # Fallback: assume accessible
 
+    def has_accessible_descendants_batch(
+        self,
+        prefixes: list[str],
+        context: OperationContext,
+    ) -> dict[str, bool]:
+        """Check if user has accessible paths under multiple prefixes at once.
+
+        Loads Tiger bitmap ONCE and scans all prefixes in a single pass.
+        This avoids the N+1 pattern of calling has_accessible_descendants()
+        individually per directory (Issue #1298).
+
+        Args:
+            prefixes: List of directory path prefixes (e.g., ["/skills/", "/docs/"])
+            context: Operation context with user information
+
+        Returns:
+            Dict mapping each prefix to True/False
+        """
+        import time
+
+        if not prefixes:
+            return {}
+
+        start = time.time()
+        tiger_cache = getattr(self.rebac_manager, "_tiger_cache", None)
+        if tiger_cache is None:
+            logger.debug("[BATCH-OPT] No Tiger cache, returning all True (fallback)")
+            return dict.fromkeys(prefixes, True)
+
+        try:
+            subject = context.get_subject()
+            subject_type, subject_id = subject
+            zone_id = context.zone_id
+
+            # Get user's bitmap ONCE
+            bitmap_bytes = tiger_cache.get_bitmap_bytes(
+                subject_type=subject_type,
+                subject_id=subject_id,
+                permission="read",
+                resource_type="file",
+                zone_id=zone_id,
+            )
+
+            if bitmap_bytes is None:
+                logger.debug(
+                    f"[BATCH-OPT] No bitmap for {subject_type}:{subject_id}, "
+                    f"returning all True for {len(prefixes)} prefixes"
+                )
+                return dict.fromkeys(prefixes, True)
+
+            # Decode bitmap ONCE
+            try:
+                import nexus_fast
+
+                allowed_ids = nexus_fast.decode_roaring_bitmap(bitmap_bytes)
+            except (ImportError, AttributeError):
+                from pyroaring import BitMap
+
+                bitmap = BitMap.deserialize(bitmap_bytes)
+                allowed_ids = list(bitmap)
+
+            if not allowed_ids:
+                logger.debug(f"[BATCH-OPT] Empty bitmap for {subject_type}:{subject_id}")
+                return dict.fromkeys(prefixes, False)
+
+            # Build set of all accessible file paths from allowed IDs (single scan)
+            resource_map = tiger_cache._resource_map
+            accessible_paths: list[str] = []
+            with resource_map._lock:
+                for int_id in allowed_ids:
+                    resource_info = resource_map._int_to_uuid.get(int_id)
+                    if resource_info and resource_info[0] == "file":
+                        accessible_paths.append(resource_info[1])
+
+            # Check each prefix against the accessible paths set
+            results: dict[str, bool] = {}
+            for prefix in prefixes:
+                prefix_normalized = prefix.rstrip("/") + "/"
+                prefix_exact = prefix.rstrip("/")
+                found = False
+                for path in accessible_paths:
+                    if path.startswith(prefix_normalized) or path == prefix_exact:
+                        found = True
+                        break
+                results[prefix] = found
+
+            elapsed = (time.time() - start) * 1000
+            found_count = sum(1 for v in results.values() if v)
+            logger.debug(
+                f"[BATCH-OPT] has_accessible_descendants_batch: "
+                f"{found_count}/{len(prefixes)} accessible in {elapsed:.1f}ms "
+                f"(bitmap: {len(allowed_ids)} IDs, paths: {len(accessible_paths)})"
+            )
+            return results
+
+        except Exception as e:
+            logger.warning(
+                f"[BATCH-OPT] has_accessible_descendants_batch error: {e}, "
+                f"returning all True for {len(prefixes)} prefixes (fallback)"
+            )
+            return dict.fromkeys(prefixes, True)
+
     def check(
         self,
         path: str,

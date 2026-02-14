@@ -1,16 +1,17 @@
 """Filesystem-as-IPC brick for agent-to-agent communication.
 
 Implements inbox/outbox conventions, message envelopes, agent discovery,
-and delivery guarantees on top of existing Nexus kernel primitives
-(VFS Router, EventBus, Agent Registry, ReBAC).
+delivery guarantees, and pluggable storage drivers on top of existing
+Nexus kernel primitives (VFS Router, EventBus, Agent Registry, ReBAC).
 
-Issue: #1411
-Architecture: NEXUS-LEGO-ARCHITECTURE.md Part 17, sections 17.3-17.5
+Issues: #1411, #1243
+Architecture: KERNEL-ARCHITECTURE.md
 
 Usage:
     from nexus.ipc import MessageEnvelope, MessageSender, MessageProcessor
     from nexus.ipc.conventions import inbox_path, outbox_path
     from nexus.ipc.discovery import AgentDiscovery
+    from nexus.ipc.storage import IPCStorageDriver
 """
 
 from nexus.ipc.conventions import (
@@ -24,6 +25,7 @@ from nexus.ipc.conventions import (
 )
 from nexus.ipc.delivery import MessageProcessor, MessageSender
 from nexus.ipc.discovery import AgentDiscovery
+from nexus.ipc.driver import IPCVFSDriver
 from nexus.ipc.envelope import MessageEnvelope, MessageType
 from nexus.ipc.exceptions import (
     EnvelopeValidationError,
@@ -52,6 +54,8 @@ __all__ = [
     "MessageProcessor",
     # Discovery
     "AgentDiscovery",
+    # VFS Driver
+    "IPCVFSDriver",
     # Provisioning
     "AgentProvisioner",
     # Sweep

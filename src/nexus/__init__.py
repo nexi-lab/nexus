@@ -164,6 +164,69 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module 'nexus' has no attribute {name!r}")
 
 
+def _setup_multi_zone(zone_mgr: Any, peers: list[str] | None) -> None:
+    """Create/join zones and mount DT_MOUNT entries from env vars.
+
+    Env vars:
+        NEXUS_ZONE_CREATE: comma-separated zone IDs to create (leader node)
+        NEXUS_ZONE_JOIN:   comma-separated zone IDs to join (follower nodes)
+        NEXUS_MOUNTS:      comma-separated /path=zone_id mount declarations
+    """
+    import os
+    import posixpath
+
+    zone_create_str = os.environ.get("NEXUS_ZONE_CREATE", "")
+    zone_join_str = os.environ.get("NEXUS_ZONE_JOIN", "")
+    mounts_str = os.environ.get("NEXUS_MOUNTS", "")
+
+    for zid in (z.strip() for z in zone_create_str.split(",") if z.strip()):
+        if zid not in zone_mgr.list_zones():
+            zone_mgr.create_zone(zid, peers=peers)
+
+    for zid in (z.strip() for z in zone_join_str.split(",") if z.strip()):
+        if zid not in zone_mgr.list_zones():
+            zone_mgr.join_zone(zid, peers=peers)
+
+    if not mounts_str:
+        return
+
+    from nexus.core._metadata_generated import DT_DIR, DT_MOUNT, FileMetadata
+    from nexus.raft.zone_path_resolver import ZonePathResolver
+
+    resolver = ZonePathResolver(zone_mgr, root_zone_id="root")
+    for entry in mounts_str.split(","):
+        entry = entry.strip()
+        if "=" not in entry:
+            continue
+        mpath, tzid = entry.split("=", 1)
+        mpath, tzid = mpath.strip(), tzid.strip()
+        if not mpath or not tzid:
+            continue
+        parent = posixpath.dirname(mpath)
+        name = posixpath.basename(mpath)
+        if not name:
+            continue
+        resolved = resolver.resolve(parent)
+        rel_path = posixpath.join(resolved.path, name)
+        store = zone_mgr.get_store(resolved.zone_id)
+        if store is None:
+            continue
+        existing = store.get(rel_path)
+        if existing and existing.entry_type == DT_MOUNT:
+            continue  # Already mounted (idempotent)
+        if not existing:
+            store.put(
+                FileMetadata(
+                    path=rel_path,
+                    backend_name="",
+                    physical_path="",
+                    size=0,
+                    entry_type=DT_DIR,
+                )
+            )
+        zone_mgr.mount(resolved.zone_id, rel_path, tzid)
+
+
 def connect(
     config: str | Path | dict | NexusConfig | None = None,
 ) -> NexusFilesystem:
@@ -326,6 +389,7 @@ def connect(
                 )
                 zone_mgr = ZoneManager(node_id=node_id, base_path=zones_dir, bind_addr=bind_addr)
                 zone_mgr.bootstrap(root_zone_id="root", peers=peers)
+                _setup_multi_zone(zone_mgr, peers)
                 return ZoneAwareMetadataStore.from_zone_manager(zone_mgr, root_zone_id="root")
             except (ImportError, RuntimeError):
                 pass

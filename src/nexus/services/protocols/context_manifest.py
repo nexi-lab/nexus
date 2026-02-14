@@ -1,14 +1,14 @@
-"""Context manifest kernel protocol (Nexus Lego Architecture, Issue #1341).
+"""Context manifest service protocol (Issue #1341).
 
 Defines the contract for resolving context manifests — deterministic
 pre-execution of sources before agent reasoning starts.
 
-The kernel knows *that* manifests get resolved, but not *how*.
+This is a service-layer protocol (not kernel) because it depends on
+service-layer models (ContextSourceProtocol, ManifestResult).
 The ``ManifestResolver`` in ``nexus.services.context_manifest.resolver``
 is the current implementation.
 
 References:
-    - docs/design/NEXUS-LEGO-ARCHITECTURE.md Part 2
     - Issue #1341: Context manifest with deterministic pre-execution
 """
 

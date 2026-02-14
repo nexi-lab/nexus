@@ -1,9 +1,15 @@
 """Logging utilities for Nexus error classification.
 
+.. deprecated::
+    This module's functions still work but are superseded by the
+    ``error_classification_processor`` in ``nexus.server.logging_processors``
+    (Issue #1002). With structlog configured, error classification is automatic
+    via the processor pipeline — no need to call ``log_error()`` manually.
+
 This module provides utilities for logging errors based on their classification
 (expected vs unexpected), enabling cleaner logs and better observability.
 
-Usage:
+Usage (legacy):
     from nexus.core.logging_utils import log_error
 
     try:
@@ -11,6 +17,10 @@ Usage:
     except NexusError as e:
         log_error(logger, e, operation="read_file")
         raise
+
+Usage (preferred — with structlog configured):
+    logger.error("operation failed", exc_info=e, operation="read_file")
+    # error_classification_processor auto-adds error_expected + should_alert
 """
 
 from __future__ import annotations

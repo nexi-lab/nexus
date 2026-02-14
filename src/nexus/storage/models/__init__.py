@@ -21,6 +21,7 @@ Domain modules:
     models.operation_log   -- OperationLogModel
     models.audit_checkpoint -- AuditCheckpointModel
     models.exchange_audit_log -- ExchangeAuditLogModel
+    models.ipc_message     -- IPCMessageModel (Issue #1469)
 """
 
 # Base and mixins
@@ -75,6 +76,9 @@ from nexus.storage.models.infrastructure import SystemSettingsModel as SystemSet
 from nexus.storage.models.infrastructure import UserSessionModel as UserSessionModel
 from nexus.storage.models.infrastructure import WorkspaceConfigModel as WorkspaceConfigModel
 
+# Domain: IPC (Inter-Process Communication messages, Issue #1469)
+from nexus.storage.models.ipc_message import IPCMessageModel as IPCMessageModel
+
 # Domain: Memory and Knowledge Graph
 from nexus.storage.models.memory import EntityMentionModel as EntityMentionModel
 from nexus.storage.models.memory import EntityModel as EntityModel
@@ -113,6 +117,11 @@ from nexus.storage.models.reputation_score import ReputationScoreModel as Reputa
 # Domain: Sharing
 from nexus.storage.models.sharing import ShareLinkAccessLogModel as ShareLinkAccessLogModel
 from nexus.storage.models.sharing import ShareLinkModel as ShareLinkModel
+
+# Domain: Spending Policy (Issue #1358)
+from nexus.storage.models.spending_policy import SpendingApprovalModel as SpendingApprovalModel
+from nexus.storage.models.spending_policy import SpendingLedgerModel as SpendingLedgerModel
+from nexus.storage.models.spending_policy import SpendingPolicyModel as SpendingPolicyModel
 
 # Domain: Sync and Conflict Resolution
 from nexus.storage.models.sync import BackendChangeLogModel as BackendChangeLogModel

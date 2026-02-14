@@ -4664,14 +4664,19 @@ class NexusFS(  # type: ignore[misc]
                     f"[WALLET] Failed to cleanup wallet for agent {agent_id}: {wallet_err}"
                 )
 
+        # Delete from entity registry first (primary source of truth)
+        deleted = self._entity_registry.delete_entity("agent", agent_id)
+
         # Issue #1240: Dual-write to AgentRegistry for lifecycle tracking
+        # Note: AgentRegistry.unregister() has a bridge that also calls
+        # entity_registry.delete_entity(), but the entity is already gone above.
         if hasattr(self, "_agent_registry") and self._agent_registry:
             try:
                 self._agent_registry.unregister(agent_id)
             except Exception as unreg_err:
                 logger.debug(f"[AGENT-REGISTRY] Dual-write unregister: {unreg_err}")
 
-        return self._entity_registry.delete_entity("agent", agent_id)
+        return deleted
 
     # ===== Agent Lifecycle API (Issue #1240) =====
 
@@ -6568,7 +6573,7 @@ class NexusFS(  # type: ignore[misc]
         if hasattr(self, "_dir_visibility_cache") and self._dir_visibility_cache is not None:
             self._dir_visibility_cache.clear()
 
-    @rpc_expose(description="Backfill sparse directory index for fast listings")
+    @rpc_expose(description="Backfill sparse directory index for fast listings", admin_only=True)
     def backfill_directory_index(
         self,
         prefix: str = "/",
@@ -6584,12 +6589,11 @@ class NexusFS(  # type: ignore[misc]
         Args:
             prefix: Path prefix to backfill (default: "/" for all)
             zone_id: Zone ID to backfill (None for all zones)
-            context: Operation context (admin required)
+            _context: Operation context (admin required, enforced by @rpc_expose)
 
         Returns:
             Dict with entries_created count
         """
-        # TODO: Add admin check when context is provided
         created = self.metadata.backfill_directory_index(prefix=prefix, zone_id=zone_id)
         return {"entries_created": created, "prefix": prefix}
 

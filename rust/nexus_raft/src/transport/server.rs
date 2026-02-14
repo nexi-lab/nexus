@@ -11,20 +11,18 @@
 )]
 
 use super::proto::nexus::raft::{
-    raft_client_service_client::RaftClientServiceClient,
-    raft_client_service_server::{RaftClientService, RaftClientServiceServer},
     raft_command::Command as ProtoCommandVariant,
     raft_query::Query as ProtoQueryVariant,
     raft_query_response::Result as ProtoQueryResultVariant,
     raft_response::Result as ProtoResponseResultVariant,
-    raft_service_server::{RaftService, RaftServiceServer},
-    AppendEntriesRequest, AppendEntriesResponse, ClusterConfig as ProtoClusterConfig,
-    GetClusterInfoRequest, GetClusterInfoResponse, GetMetadataResult, InstallSnapshotResponse,
-    InviteZoneRequest, InviteZoneResponse, JoinZoneRequest, JoinZoneResponse, ListMetadataResult,
-    LockInfoResult, LockResult, NodeInfo as ProtoNodeInfo, ProposeRequest, ProposeResponse,
-    QueryRequest, QueryResponse, RaftCommand, RaftQueryResponse, RaftResponse,
-    ReplicateEntriesRequest, ReplicateEntriesResponse, SnapshotChunk, StepMessageRequest,
-    StepMessageResponse, TransferLeaderRequest, TransferLeaderResponse, VoteRequest, VoteResponse,
+    zone_api_service_client::ZoneApiServiceClient,
+    zone_api_service_server::{ZoneApiService, ZoneApiServiceServer},
+    zone_transport_service_server::{ZoneTransportService, ZoneTransportServiceServer},
+    ClusterConfig as ProtoClusterConfig, GetClusterInfoRequest, GetClusterInfoResponse,
+    GetMetadataResult, InviteZoneRequest, InviteZoneResponse, JoinZoneRequest, JoinZoneResponse,
+    ListMetadataResult, LockInfoResult, LockResult, NodeInfo as ProtoNodeInfo, ProposeRequest,
+    ProposeResponse, QueryRequest, QueryResponse, RaftCommand, RaftQueryResponse, RaftResponse,
+    ReplicateEntriesRequest, ReplicateEntriesResponse, StepMessageRequest, StepMessageResponse,
 };
 use super::{NodeAddress, Result, TransportError};
 use crate::raft::{
@@ -38,7 +36,7 @@ use protobuf::Message as ProtobufV2Message;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tonic::{Request, Response, Status, Streaming};
+use tonic::{Request, Response, Status};
 
 /// Configuration for Raft transport server.
 #[derive(Debug, Clone)]
@@ -114,10 +112,10 @@ impl RaftGrpcServer {
             tls_enabled,
         );
 
-        let raft_service = RaftServiceImpl {
+        let raft_service = ZoneTransportServiceImpl {
             registry: self.registry.clone(),
         };
-        let client_service = RaftClientServiceImpl {
+        let client_service = ZoneApiServiceImpl {
             registry: self.registry.clone(),
             self_address: self.self_address.clone(),
             tls: self.config.tls.clone(),
@@ -136,8 +134,8 @@ impl RaftGrpcServer {
         }
 
         builder
-            .add_service(RaftServiceServer::new(raft_service))
-            .add_service(RaftClientServiceServer::new(client_service))
+            .add_service(ZoneTransportServiceServer::new(raft_service))
+            .add_service(ZoneApiServiceServer::new(client_service))
             .serve(addr)
             .await
             .map_err(TransportError::Tonic)?;
@@ -159,10 +157,10 @@ impl RaftGrpcServer {
             tls_enabled,
         );
 
-        let raft_service = RaftServiceImpl {
+        let raft_service = ZoneTransportServiceImpl {
             registry: self.registry.clone(),
         };
-        let client_service = RaftClientServiceImpl {
+        let client_service = ZoneApiServiceImpl {
             registry: self.registry.clone(),
             self_address: self.self_address.clone(),
             tls: self.config.tls.clone(),
@@ -181,8 +179,8 @@ impl RaftGrpcServer {
         }
 
         builder
-            .add_service(RaftServiceServer::new(raft_service))
-            .add_service(RaftClientServiceServer::new(client_service))
+            .add_service(ZoneTransportServiceServer::new(raft_service))
+            .add_service(ZoneApiServiceServer::new(client_service))
             .serve_with_shutdown(addr, shutdown)
             .await
             .map_err(TransportError::Tonic)?;
@@ -223,10 +221,6 @@ fn proto_command_to_internal(proto: RaftCommand) -> Option<Command> {
             lock_id: el.holder_id,
             new_ttl_secs: (el.ttl_ms / 1000) as u32,
         }),
-        ProtoCommandVariant::UpdateRouting(_) => {
-            tracing::warn!("UpdateRouting command not supported");
-            None
-        }
     }
 }
 
@@ -283,58 +277,20 @@ fn command_result_to_proto(result: &CommandResult) -> RaftResponse {
 }
 
 // =============================================================================
-// RaftService (internal node-to-node transport)
+// ZoneTransportService (internal node-to-node transport)
 // =============================================================================
 
-/// Zone-routed implementation of the RaftService gRPC trait.
+/// Zone-routed implementation of the ZoneTransportService gRPC trait.
 ///
-/// Only `step_message` is used in production — all raft-rs message types
-/// (~15 types including votes, heartbeats, appends) are multiplexed through
-/// this single RPC as opaque protobuf v2 bytes (etcd/tikv pattern).
-///
-/// Legacy RPCs (request_vote, append_entries, etc.) return UNIMPLEMENTED.
-struct RaftServiceImpl {
+/// All raft-rs message types (~15 types including votes, heartbeats, appends)
+/// are multiplexed through `step_message` as opaque protobuf v2 bytes
+/// (etcd/tikv pattern).
+struct ZoneTransportServiceImpl {
     registry: Arc<ZoneRaftRegistry>,
 }
 
 #[tonic::async_trait]
-impl RaftService for RaftServiceImpl {
-    async fn request_vote(
-        &self,
-        _request: Request<VoteRequest>,
-    ) -> std::result::Result<Response<VoteResponse>, Status> {
-        Err(Status::unimplemented(
-            "Use step_message — legacy RPCs are not supported",
-        ))
-    }
-
-    async fn append_entries(
-        &self,
-        _request: Request<AppendEntriesRequest>,
-    ) -> std::result::Result<Response<AppendEntriesResponse>, Status> {
-        Err(Status::unimplemented(
-            "Use step_message — legacy RPCs are not supported",
-        ))
-    }
-
-    async fn install_snapshot(
-        &self,
-        _request: Request<Streaming<SnapshotChunk>>,
-    ) -> std::result::Result<Response<InstallSnapshotResponse>, Status> {
-        Err(Status::unimplemented(
-            "Use step_message — legacy RPCs are not supported",
-        ))
-    }
-
-    async fn transfer_leader(
-        &self,
-        _request: Request<TransferLeaderRequest>,
-    ) -> std::result::Result<Response<TransferLeaderResponse>, Status> {
-        Err(Status::unimplemented(
-            "Use step_message — legacy RPCs are not supported",
-        ))
-    }
-
+impl ZoneTransportService for ZoneTransportServiceImpl {
     /// Handle a raw raft-rs message forwarded from another node.
     ///
     /// Routes by zone_id to the correct Raft group's ZoneConsensus.
@@ -430,11 +386,11 @@ impl RaftService for RaftServiceImpl {
 }
 
 // =============================================================================
-// RaftClientService (client-facing: Propose/Query/GetClusterInfo)
+// ZoneApiService (client-facing: Propose/Query/GetClusterInfo)
 // =============================================================================
 
-/// Zone-routed implementation of the RaftClientService gRPC trait.
-struct RaftClientServiceImpl {
+/// Zone-routed implementation of the ZoneApiService gRPC trait.
+struct ZoneApiServiceImpl {
     registry: Arc<ZoneRaftRegistry>,
     /// This node's own gRPC address (e.g., "http://10.0.0.2:2026").
     /// Needed by InviteZone to tell the leader our address when calling JoinZone.
@@ -468,7 +424,7 @@ fn build_endpoint_with_tls(
 }
 
 #[tonic::async_trait]
-impl RaftClientService for RaftClientServiceImpl {
+impl ZoneApiService for ZoneApiServiceImpl {
     /// Handle a client proposal (write operation).
     async fn propose(
         &self,
@@ -895,7 +851,7 @@ impl RaftClientService for RaftClientServiceImpl {
             }
         };
 
-        let mut client = RaftClientServiceClient::new(channel);
+        let mut client = ZoneApiServiceClient::new(channel);
         let join_request = tonic::Request::new(JoinZoneRequest {
             zone_id: req.zone_id.clone(),
             node_id,
@@ -1117,7 +1073,7 @@ impl RaftWitnessServer {
         }
 
         builder
-            .add_service(RaftServiceServer::new(service))
+            .add_service(ZoneTransportServiceServer::new(service))
             .serve_with_shutdown(addr, shutdown)
             .await
             .map_err(TransportError::Tonic)?;
@@ -1126,47 +1082,13 @@ impl RaftWitnessServer {
     }
 }
 
-/// Witness implementation of RaftService — only step_message is active.
+/// Witness implementation of ZoneTransportService — only step_message is active.
 struct WitnessServiceImpl {
     state: Arc<WitnessServerState>,
 }
 
 #[tonic::async_trait]
-impl RaftService for WitnessServiceImpl {
-    async fn request_vote(
-        &self,
-        _request: Request<VoteRequest>,
-    ) -> std::result::Result<Response<VoteResponse>, Status> {
-        Err(Status::unimplemented(
-            "Use step_message — legacy RPCs are not supported",
-        ))
-    }
-
-    async fn append_entries(
-        &self,
-        _request: Request<AppendEntriesRequest>,
-    ) -> std::result::Result<Response<AppendEntriesResponse>, Status> {
-        Err(Status::unimplemented(
-            "Use step_message — legacy RPCs are not supported",
-        ))
-    }
-
-    async fn install_snapshot(
-        &self,
-        _request: Request<Streaming<SnapshotChunk>>,
-    ) -> std::result::Result<Response<InstallSnapshotResponse>, Status> {
-        Err(Status::unimplemented(
-            "Use step_message — legacy RPCs are not supported",
-        ))
-    }
-
-    async fn transfer_leader(
-        &self,
-        _request: Request<TransferLeaderRequest>,
-    ) -> std::result::Result<Response<TransferLeaderResponse>, Status> {
-        Err(Status::unimplemented("Witness nodes cannot become leaders"))
-    }
-
+impl ZoneTransportService for WitnessServiceImpl {
     /// Handle a raw raft-rs message forwarded from another node.
     async fn step_message(
         &self,

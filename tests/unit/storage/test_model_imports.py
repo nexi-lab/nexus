@@ -88,6 +88,12 @@ EXPECTED_MODELS = [
     "ReputationScoreModel",
     # Chunked Uploads (Issue #788)
     "UploadSessionModel",
+    # Spending Policy (Issue #1358)
+    "SpendingPolicyModel",
+    "SpendingLedgerModel",
+    "SpendingApprovalModel",
+    # IPC (Issue #1469)
+    "IPCMessageModel",
 ]
 
 

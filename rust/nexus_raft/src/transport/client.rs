@@ -3,12 +3,12 @@
 //! Provides a client to communicate with other Raft nodes using tonic gRPC.
 
 use super::proto::nexus::raft::{
-    raft_client_service_client::RaftClientServiceClient,
     raft_command::Command as ProtoCommandVariant, raft_query::Query as ProtoQueryVariant,
-    raft_service_client::RaftServiceClient, AcquireLock, AppendEntriesRequest, DeleteMetadata,
+    zone_api_service_client::ZoneApiServiceClient,
+    zone_transport_service_client::ZoneTransportServiceClient, AcquireLock, DeleteMetadata,
     EcReplicationEntry, ExtendLock, GetClusterInfoRequest, GetLockInfo, GetMetadata, ListMetadata,
-    LogEntry as ProtoLogEntry, ProposeRequest, PutMetadata, QueryRequest, RaftCommand, RaftQuery,
-    ReleaseLock, ReplicateEntriesRequest, StepMessageRequest, VoteRequest,
+    ProposeRequest, PutMetadata, QueryRequest, RaftCommand, RaftQuery, ReleaseLock,
+    ReplicateEntriesRequest, StepMessageRequest,
 };
 use super::{NodeAddress, Result, TransportError};
 use std::collections::HashMap;
@@ -113,7 +113,7 @@ pub struct RaftClient {
     endpoint: String,
     #[allow(dead_code)]
     config: ClientConfig,
-    inner: RaftServiceClient<Channel>,
+    inner: ZoneTransportServiceClient<Channel>,
 }
 
 impl RaftClient {
@@ -144,7 +144,7 @@ impl RaftClient {
         }
 
         let channel = ep.connect().await?;
-        let inner = RaftServiceClient::new(channel);
+        let inner = ZoneTransportServiceClient::new(channel);
 
         tracing::info!("Connected to Raft node at {}", endpoint);
 
@@ -158,83 +158,6 @@ impl RaftClient {
     /// Get the endpoint this client is connected to.
     pub fn endpoint(&self) -> &str {
         &self.endpoint
-    }
-
-    /// Send a vote request.
-    pub async fn request_vote(
-        &mut self,
-        term: u64,
-        candidate_id: u64,
-        last_log_index: u64,
-        last_log_term: u64,
-    ) -> Result<VoteResponseLocal> {
-        tracing::debug!(
-            "Sending vote request to {}: term={}, candidate_id={}",
-            self.endpoint,
-            term,
-            candidate_id
-        );
-
-        let request = tonic::Request::new(VoteRequest {
-            term,
-            candidate_id,
-            last_log_index,
-            last_log_term,
-        });
-
-        let response = self.inner.request_vote(request).await?;
-        let resp = response.into_inner();
-
-        Ok(VoteResponseLocal {
-            term: resp.term,
-            vote_granted: resp.vote_granted,
-        })
-    }
-
-    /// Send append entries (log replication or heartbeat).
-    pub async fn append_entries(
-        &mut self,
-        term: u64,
-        leader_id: u64,
-        prev_log_index: u64,
-        prev_log_term: u64,
-        entries: Vec<LogEntry>,
-        leader_commit: u64,
-    ) -> Result<AppendEntriesResponseLocal> {
-        tracing::debug!(
-            "Sending append entries to {}: term={}, entries={}",
-            self.endpoint,
-            term,
-            entries.len()
-        );
-
-        let proto_entries: Vec<ProtoLogEntry> = entries
-            .into_iter()
-            .map(|e| ProtoLogEntry {
-                term: e.term,
-                index: e.index,
-                entry_type: e.entry_type as i32,
-                data: e.data,
-            })
-            .collect();
-
-        let request = tonic::Request::new(AppendEntriesRequest {
-            term,
-            leader_id,
-            prev_log_index,
-            prev_log_term,
-            entries: proto_entries,
-            leader_commit,
-        });
-
-        let response = self.inner.append_entries(request).await?;
-        let resp = response.into_inner();
-
-        Ok(AppendEntriesResponseLocal {
-            term: resp.term,
-            success: resp.success,
-            match_index: resp.match_index,
-        })
     }
 
     /// Send a raw raft-rs message to this node.
@@ -290,39 +213,6 @@ impl RaftClient {
     }
 }
 
-/// Response to a vote request.
-#[derive(Debug, Clone)]
-pub struct VoteResponseLocal {
-    /// Current term of the voter.
-    pub term: u64,
-    /// Whether the vote was granted.
-    pub vote_granted: bool,
-}
-
-/// Response to append entries request.
-#[derive(Debug, Clone)]
-pub struct AppendEntriesResponseLocal {
-    /// Current term of the follower.
-    pub term: u64,
-    /// Whether the append was successful.
-    pub success: bool,
-    /// Hint for the next index to try.
-    pub match_index: u64,
-}
-
-/// A log entry to be replicated.
-#[derive(Debug, Clone)]
-pub struct LogEntry {
-    /// Term when entry was created.
-    pub term: u64,
-    /// Index in the log.
-    pub index: u64,
-    /// Entry type (0 = normal, 1 = conf change).
-    pub entry_type: u32,
-    /// Entry data (serialized command).
-    pub data: Vec<u8>,
-}
-
 // =============================================================================
 // Client-Facing API Client (for Python/CLI)
 // =============================================================================
@@ -330,14 +220,14 @@ pub struct LogEntry {
 /// A client for the Raft cluster's client-facing API.
 ///
 /// This client is used by Python, CLI, and other external clients to
-/// interact with the Raft cluster. It uses the RaftClientService which
+/// interact with the Raft cluster. It uses the ZoneApiService which
 /// provides Propose (writes) and Query (reads) operations.
 #[derive(Clone)]
 pub struct RaftApiClient {
     endpoint: String,
     #[allow(dead_code)]
     config: ClientConfig,
-    inner: RaftClientServiceClient<Channel>,
+    inner: ZoneApiServiceClient<Channel>,
     /// Zone ID for multi-zone routing (included in all requests).
     zone_id: String,
 }
@@ -370,7 +260,7 @@ impl RaftApiClient {
         }
 
         let channel = ep.connect().await?;
-        let inner = RaftClientServiceClient::new(channel);
+        let inner = ZoneApiServiceClient::new(channel);
 
         tracing::info!("Connected to Raft API at {}", endpoint);
 

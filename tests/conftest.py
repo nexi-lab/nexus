@@ -6,6 +6,13 @@ Quarantined tests are skipped by default; pass --run-quarantine to include them.
 
 import pytest
 
+try:
+    import structlog
+
+    _HAS_STRUCTLOG = True
+except ImportError:
+    _HAS_STRUCTLOG = False
+
 
 def pytest_addoption(parser):
     parser.addoption(
@@ -29,19 +36,35 @@ def pytest_collection_modifyitems(config, items):
 # ---------------------------------------------------------------------------
 
 
+if _HAS_STRUCTLOG:
+
+    @pytest.fixture(autouse=True)
+    def _reset_structlog_context():
+        """Reset structlog contextvars between tests for isolation."""
+        structlog.contextvars.clear_contextvars()
+        yield
+        structlog.contextvars.clear_contextvars()
+
+
 @pytest.fixture(autouse=True)
 def _reset_auth_cache_fixture():
     """Reset the TTLCache auth cache between tests for isolation."""
     yield
-    from nexus.server.dependencies import _reset_auth_cache
+    try:
+        from nexus.server.dependencies import _reset_auth_cache
 
-    _reset_auth_cache()
+        _reset_auth_cache()
+    except ImportError:
+        pass
 
 
 @pytest.fixture(autouse=True)
 def _reset_stream_secret_fixture():
     """Reset the HMAC stream signing secret between tests for isolation."""
     yield
-    from nexus.server.streaming import _reset_stream_secret
+    try:
+        from nexus.server.streaming import _reset_stream_secret
 
-    _reset_stream_secret()
+        _reset_stream_secret()
+    except ImportError:
+        pass

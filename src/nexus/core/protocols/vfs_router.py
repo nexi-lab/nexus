@@ -1,17 +1,20 @@
-"""VFS router kernel protocol (Nexus Lego Architecture, Issue #1383).
+"""VFS router kernel protocol (Issue #1383).
 
 Defines the contract for virtual path routing to storage backends.
 Existing implementation: ``nexus.core.router.PathRouter`` (sync).
 
 References:
-    - docs/design/NEXUS-LEGO-ARCHITECTURE.md Part 2
+    - docs/design/KERNEL-ARCHITECTURE.md §3
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from nexus.backends.backend import Backend
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,7 +77,7 @@ class VFSRouterProtocol(Protocol):
     async def add_mount(
         self,
         mount_point: str,
-        backend: Any,
+        backend: Backend,
         *,
         priority: int = 0,
         readonly: bool = False,

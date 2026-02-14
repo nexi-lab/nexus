@@ -36,6 +36,16 @@ def db_session_factory():
     return factory
 
 
+@pytest.fixture
+def mock_record_store(db_session_factory):
+    """Create a mock RecordStoreABC that wraps the in-memory session factory."""
+    from nexus.storage.record_store import SQLAlchemyRecordStore
+
+    store = MagicMock(spec=SQLAlchemyRecordStore)
+    store.session_factory = db_session_factory
+    return store
+
+
 def _insert_snapshot(
     session: Session,
     snapshot_id: str = "snap-001",
@@ -73,7 +83,7 @@ def _insert_snapshot(
 
 
 class TestGetSnapshot:
-    def test_get_snapshot_by_id(self, db_session_factory: Any) -> None:
+    def test_get_snapshot_by_id(self, db_session_factory: Any, mock_record_store: Any) -> None:
         """Insert model, query by ID, verify dict shape."""
         with db_session_factory() as session:
             _insert_snapshot(
@@ -88,7 +98,7 @@ class TestGetSnapshot:
                 tags=json.dumps(["release"]),
             )
 
-        lookup = DatabaseSnapshotLookup(session_factory=db_session_factory)
+        lookup = DatabaseSnapshotLookup(record_store=mock_record_store)
         result = lookup.get_snapshot("snap-100")
 
         assert result is not None
@@ -103,9 +113,9 @@ class TestGetSnapshot:
         assert result["manifest_hash"] == "abc123def"
         assert result["created_at"] is not None
 
-    def test_get_snapshot_not_found(self, db_session_factory: Any) -> None:
+    def test_get_snapshot_not_found(self, mock_record_store: Any) -> None:
         """Query for nonexistent ID returns None."""
-        lookup = DatabaseSnapshotLookup(session_factory=db_session_factory)
+        lookup = DatabaseSnapshotLookup(record_store=mock_record_store)
 
         result = lookup.get_snapshot("nonexistent")
 
@@ -113,7 +123,9 @@ class TestGetSnapshot:
 
 
 class TestGetLatestSnapshot:
-    def test_get_latest_returns_most_recent(self, db_session_factory: Any) -> None:
+    def test_get_latest_returns_most_recent(
+        self, db_session_factory: Any, mock_record_store: Any
+    ) -> None:
         """Insert 3 snapshots, verify latest (by created_at) is returned."""
         now = datetime.now(UTC)
         with db_session_factory() as session:
@@ -139,22 +151,24 @@ class TestGetLatestSnapshot:
                 created_at=now,
             )
 
-        lookup = DatabaseSnapshotLookup(session_factory=db_session_factory)
+        lookup = DatabaseSnapshotLookup(record_store=mock_record_store)
         result = lookup.get_latest_snapshot("/ws")
 
         assert result is not None
         assert result["snapshot_id"] == "s3"
         assert result["snapshot_number"] == 3
 
-    def test_get_latest_no_snapshots(self, db_session_factory: Any) -> None:
+    def test_get_latest_no_snapshots(self, mock_record_store: Any) -> None:
         """No snapshots for workspace → returns None."""
-        lookup = DatabaseSnapshotLookup(session_factory=db_session_factory)
+        lookup = DatabaseSnapshotLookup(record_store=mock_record_store)
 
         result = lookup.get_latest_snapshot("/empty-workspace")
 
         assert result is None
 
-    def test_get_latest_filters_by_workspace(self, db_session_factory: Any) -> None:
+    def test_get_latest_filters_by_workspace(
+        self, db_session_factory: Any, mock_record_store: Any
+    ) -> None:
         """Latest is per-workspace, not global."""
         now = datetime.now(UTC)
         with db_session_factory() as session:
@@ -173,7 +187,7 @@ class TestGetLatestSnapshot:
                 created_at=now,
             )
 
-        lookup = DatabaseSnapshotLookup(session_factory=db_session_factory)
+        lookup = DatabaseSnapshotLookup(record_store=mock_record_store)
 
         result = lookup.get_latest_snapshot("/ws1")
         assert result is not None

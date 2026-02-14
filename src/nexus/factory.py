@@ -391,7 +391,7 @@ def create_nexus_services(
                 WorkspaceSnapshotExecutor,
             )
 
-            snapshot_lookup = DatabaseSnapshotLookup(session_factory=session_factory)
+            snapshot_lookup = DatabaseSnapshotLookup(record_store=record_store)
             cas_reader = CASManifestReader(backend=backend)
             executors["workspace_snapshot"] = WorkspaceSnapshotExecutor(
                 snapshot_lookup=snapshot_lookup,
@@ -545,7 +545,12 @@ def create_nexus_fs(
     # Pop services that NexusFS doesn't accept as constructor params.
     # These are stored in nx._service_extras for server-layer access.
     service_extras: dict[str, Any] = {}
-    for key in ("observability_subsystem", "chunked_upload_service", "manifest_resolver", "manifest_metrics"):
+    for key in (
+        "observability_subsystem",
+        "chunked_upload_service",
+        "manifest_resolver",
+        "manifest_metrics",
+    ):
         val = services.pop(key, None)
         if val is not None:
             service_extras[key] = val

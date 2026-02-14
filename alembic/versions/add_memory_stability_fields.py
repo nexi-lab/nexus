@@ -1,7 +1,7 @@
 """feat(#1191): Add memory temporal stability classification fields
 
 Revision ID: add_memory_stability_fields
-Revises: add_contextual_chunk_fields
+Revises: add_ipc_messages_table
 Create Date: 2026-02-14
 
 Adds three nullable columns for auto-classification of memory temporal stability:
@@ -23,7 +23,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "add_memory_stability_fields"
-down_revision: Union[str, Sequence[str], None] = "add_contextual_chunk_fields"
+down_revision: Union[str, Sequence[str], None] = "add_ipc_messages_table"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

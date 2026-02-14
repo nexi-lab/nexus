@@ -31,7 +31,7 @@ repos:
     rev: v1.8.0
     hooks:
       - id: mypy
-        additional_dependencies: [pydantic, types-PyYAML, alembic, sqlalchemy, cachetools, types-cachetools, types-requests]
+        additional_dependencies: [pydantic, types-PyYAML, alembic, sqlalchemy, cachetools, types-cachetools, types-requests, types-redis, types-aiofiles]
         args: [--ignore-missing-imports]
         exclude: ^(tests/|alembic/|examples/|benchmarks/|\.claude/|scripts/|nexus-plugin-)
 
@@ -41,14 +41,14 @@ repos:
       - id: check-file-size
         name: Check File Size Limit
         entry: python .pre-commit-hooks/check_file_size.py
-        language: system
+        language: python
         files: \.py$
         exclude: ^tests/
 
       - id: check-type-ignore
         name: Block New Type Ignores
         entry: python .pre-commit-hooks/check_type_ignore.py
-        language: system
+        language: python
         files: \.py$
         exclude: ^\.pre-commit-hooks/
 

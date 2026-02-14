@@ -390,8 +390,8 @@ def test_agent_with_api_key(base_url: str, api_key: str) -> None:
 
     # Step 3: Test agent API key access - should only see agent config directory
     print("Step 3: Testing agent API key access (should only see agent config directory)...")
-    # Agent directory uses the namespace: /zone/{zone_id}/user:{user_id}/agent/{agent_name}
-    agent_dir = f"/zone/default/user:admin/agent/{agent_name}"
+    # Agent directory uses the namespace: /zone/{zone_id}/user/{user_id}/agent/{agent_name}
+    agent_dir = f"/zone/default/user/admin/agent/{agent_name}"
 
     # First, check if agent can see its own directory
     list_agent_dir_params = {
@@ -946,7 +946,7 @@ def test_agent_with_granular_permissions(base_url: str, api_key: str) -> None:
     print(f"   Agent can see {len(root_files)} item(s) at root: {root_paths}")
 
     # Should see /zone (zone parent dir) or its own agent directory
-    agent_dir = f"/zone/default/user:admin/agent/{agent_name}"
+    agent_dir = f"/zone/default/user/admin/agent/{agent_name}"
     has_zone_access = "/zone" in root_paths or "/zone/default" in root_paths
 
     # Also check if agent can access its own directory

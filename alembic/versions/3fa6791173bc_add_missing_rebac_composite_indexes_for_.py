@@ -30,25 +30,25 @@ def upgrade() -> None:
     """
 
     # CRITICAL: Index for _find_subject_sets() query (line 1341)
-    # Query: WHERE tenant_id = ? AND relation = ? AND object_type = ? AND object_id = ?
+    # Query: WHERE zone_id = ? AND relation = ? AND object_type = ? AND object_id = ?
     #        AND subject_relation IS NOT NULL AND (expires_at IS NULL OR expires_at >= ?)
     # This is used heavily for group-based permission checks
     op.create_index(
         "idx_rebac_tenant_obj_rel_subrel",
         "rebac_tuples",
-        ["tenant_id", "relation", "object_type", "object_id", "subject_relation", "expires_at"],
+        ["zone_id", "relation", "object_type", "object_id", "subject_relation", "expires_at"],
         postgresql_where=sa.text("subject_relation IS NOT NULL"),  # Partial index for efficiency
     )
 
     # IMPORTANT: Tenant-aware version of the main check index (line 1169)
-    # Query: WHERE tenant_id = ? AND subject_type = ? AND subject_id = ?
+    # Query: WHERE zone_id = ? AND subject_type = ? AND subject_id = ?
     #        AND relation = ? AND object_type = ? AND object_id = ?
     # Replaces idx_rebac_check for tenant-aware deployments
     op.create_index(
         "idx_rebac_tenant_full_check",
         "rebac_tuples",
         [
-            "tenant_id",
+            "zone_id",
             "subject_type",
             "subject_id",
             "relation",
@@ -59,12 +59,12 @@ def upgrade() -> None:
     )
 
     # OPTIMIZATION: Index for finding related objects (tupleToUserset pattern)
-    # Query: WHERE tenant_id = ? AND object_type = ? AND object_id = ? AND relation = ?
+    # Query: WHERE zone_id = ? AND object_type = ? AND object_id = ? AND relation = ?
     # Used when traversing permission hierarchies via indirect relations
     op.create_index(
         "idx_rebac_tenant_obj_reverse",
         "rebac_tuples",
-        ["tenant_id", "object_type", "object_id", "relation", "subject_type", "subject_id"],
+        ["zone_id", "object_type", "object_id", "relation", "subject_type", "subject_id"],
     )
 
 

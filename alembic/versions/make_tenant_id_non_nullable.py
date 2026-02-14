@@ -18,7 +18,7 @@ Security Impact:
 Affected Tables:
 - file_paths
 - directory_entries
-- rebac_tuples (tenant_id, subject_tenant_id, object_tenant_id)
+- rebac_tuples (zone_id, subject_zone_id, object_zone_id)
 - rebac_changelog
 - rebac_check_cache
 - api_keys
@@ -30,7 +30,7 @@ Affected Tables:
 - oauth_credentials
 - content_cache
 
-Note: Cross-tenant sharing still works via subject_tenant_id != object_tenant_id
+Note: Cross-zone sharing still works via subject_zone_id != object_zone_id
 for relations in CROSS_TENANT_ALLOWED_RELATIONS.
 """
 
@@ -63,8 +63,8 @@ TABLES_WITH_TENANT_ID = [
     "content_cache",
 ]
 
-# Tables with multiple tenant_id columns
-REBAC_TENANT_COLUMNS = ["tenant_id", "subject_tenant_id", "object_tenant_id"]
+# rebac_tuples uses zone_id (not tenant_id) for multi-tenant isolation
+REBAC_ZONE_COLUMNS = ["zone_id", "subject_zone_id", "object_zone_id"]
 
 
 def _table_has_column(inspector, table: str, column: str) -> bool:
@@ -89,8 +89,8 @@ def upgrade() -> None:
                 sa.text(f"UPDATE {table} SET tenant_id = 'default' WHERE tenant_id IS NULL")
             )
 
-    # Backfill rebac_tuples (has 3 tenant columns)
-    for col in REBAC_TENANT_COLUMNS:
+    # Backfill rebac_tuples (has 3 zone columns)
+    for col in REBAC_ZONE_COLUMNS:
         if _table_has_column(inspector, "rebac_tuples", col):
             bind.execute(sa.text(f"UPDATE rebac_tuples SET {col} = 'default' WHERE {col} IS NULL"))
 
@@ -112,8 +112,8 @@ def upgrade() -> None:
                     nullable=False,
                 )
 
-        # rebac_tuples: Make all 3 tenant columns non-nullable
-        for col in REBAC_TENANT_COLUMNS:
+        # rebac_tuples: Make all 3 zone columns non-nullable
+        for col in REBAC_ZONE_COLUMNS:
             if _table_has_column(inspector, "rebac_tuples", col):
                 op.alter_column(
                     "rebac_tuples",
@@ -143,9 +143,9 @@ def upgrade() -> None:
                         nullable=False,
                     )
 
-        if _table_has_column(inspector, "rebac_tuples", "tenant_id"):
+        if _table_has_column(inspector, "rebac_tuples", "zone_id"):
             with op.batch_alter_table("rebac_tuples") as batch_op:
-                for col in REBAC_TENANT_COLUMNS:
+                for col in REBAC_ZONE_COLUMNS:
                     batch_op.alter_column(
                         col,
                         existing_type=sa.String(255),
@@ -177,7 +177,7 @@ def downgrade() -> None:
                     nullable=True,
                 )
 
-        for col in REBAC_TENANT_COLUMNS:
+        for col in REBAC_ZONE_COLUMNS:
             if _table_has_column(inspector, "rebac_tuples", col):
                 op.alter_column(
                     "rebac_tuples",
@@ -204,9 +204,9 @@ def downgrade() -> None:
                         nullable=True,
                     )
 
-        if _table_has_column(inspector, "rebac_tuples", "tenant_id"):
+        if _table_has_column(inspector, "rebac_tuples", "zone_id"):
             with op.batch_alter_table("rebac_tuples") as batch_op:
-                for col in REBAC_TENANT_COLUMNS:
+                for col in REBAC_ZONE_COLUMNS:
                     batch_op.alter_column(
                         col,
                         existing_type=sa.String(255),

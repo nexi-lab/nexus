@@ -128,7 +128,7 @@ FAILED_TESTS=0
 echo "🔒 Step 3: Testing initial access (zero permissions except own config)..."
 
 # Test 1: List agent directory (should see own config - auto-granted)
-echo -e "${BLUE}  Test 1: List /zone/${ZONE_ID}/user:${USER_ID}/agent/${TEST_AGENT_NAME}${NC}"
+echo -e "${BLUE}  Test 1: List /zone/${ZONE_ID}/user/${USER_ID}/agent/${TEST_AGENT_NAME}${NC}"
 AGENT_DIR_RESULT=$(curl -s -X POST "${SERVER_URL}/api/nfs/list" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${TEST_AGENT_API_KEY}" \
@@ -136,7 +136,7 @@ AGENT_DIR_RESULT=$(curl -s -X POST "${SERVER_URL}/api/nfs/list" \
     \"jsonrpc\": \"2.0\",
     \"method\": \"list\",
     \"params\": {
-      \"path\": \"/zone/${ZONE_ID}/user:${USER_ID}/agent/${TEST_AGENT_NAME}\"
+      \"path\": \"/zone/${ZONE_ID}/user/${USER_ID}/agent/${TEST_AGENT_NAME}\"
     },
     \"id\": 3
   }")
@@ -150,7 +150,7 @@ else
 fi
 
 # Test 2: Try to list skill directory (should return empty - no permission)
-echo -e "${BLUE}  Test 2: List /zone/${ZONE_ID}/user:${USER_ID}/skill (should be empty)${NC}"
+echo -e "${BLUE}  Test 2: List /zone/${ZONE_ID}/user/${USER_ID}/skill (should be empty)${NC}"
 SKILL_DIR_RESULT=$(curl -s -X POST "${SERVER_URL}/api/nfs/list" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${TEST_AGENT_API_KEY}" \
@@ -158,7 +158,7 @@ SKILL_DIR_RESULT=$(curl -s -X POST "${SERVER_URL}/api/nfs/list" \
     \"jsonrpc\": \"2.0\",
     \"method\": \"list\",
     \"params\": {
-      \"path\": \"/zone/${ZONE_ID}/user:${USER_ID}/skill\"
+      \"path\": \"/zone/${ZONE_ID}/user/${USER_ID}/skill\"
     },
     \"id\": 4
   }")
@@ -175,7 +175,7 @@ else
 fi
 
 # Test 3: Try to list resource directory (should return empty - no permission)
-echo -e "${BLUE}  Test 3: List /zone/${ZONE_ID}/user:${USER_ID}/resource (should be empty)${NC}"
+echo -e "${BLUE}  Test 3: List /zone/${ZONE_ID}/user/${USER_ID}/resource (should be empty)${NC}"
 RESOURCE_DIR_RESULT=$(curl -s -X POST "${SERVER_URL}/api/nfs/list" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${TEST_AGENT_API_KEY}" \
@@ -183,7 +183,7 @@ RESOURCE_DIR_RESULT=$(curl -s -X POST "${SERVER_URL}/api/nfs/list" \
     \"jsonrpc\": \"2.0\",
     \"method\": \"list\",
     \"params\": {
-      \"path\": \"/zone/${ZONE_ID}/user:${USER_ID}/resource\"
+      \"path\": \"/zone/${ZONE_ID}/user/${USER_ID}/resource\"
     },
     \"id\": 5
   }")
@@ -199,7 +199,7 @@ else
 fi
 
 # Test 4: Try to list workspace directory (should return empty - no permission)
-echo -e "${BLUE}  Test 4: List /zone/${ZONE_ID}/user:${USER_ID}/workspace (should be empty)${NC}"
+echo -e "${BLUE}  Test 4: List /zone/${ZONE_ID}/user/${USER_ID}/workspace (should be empty)${NC}"
 WORKSPACE_DIR_RESULT=$(curl -s -X POST "${SERVER_URL}/api/nfs/list" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${TEST_AGENT_API_KEY}" \
@@ -207,7 +207,7 @@ WORKSPACE_DIR_RESULT=$(curl -s -X POST "${SERVER_URL}/api/nfs/list" \
     \"jsonrpc\": \"2.0\",
     \"method\": \"list\",
     \"params\": {
-      \"path\": \"/zone/${ZONE_ID}/user:${USER_ID}/workspace\"
+      \"path\": \"/zone/${ZONE_ID}/user/${USER_ID}/workspace\"
     },
     \"id\": 6
   }")
@@ -237,7 +237,7 @@ curl -s -X POST "${SERVER_URL}/api/nfs/rebac_create" \
     \"params\": {
       \"subject\": [\"agent\", \"${TEST_AGENT_ID}\"],
       \"relation\": \"viewer\",
-      \"object\": [\"file\", \"/zone/${ZONE_ID}/user:${USER_ID}/skill/pdf\"],
+      \"object\": [\"file\", \"/zone/${ZONE_ID}/user/${USER_ID}/skill/pdf\"],
       \"zone_id\": \"${ZONE_ID}\"
     },
     \"id\": 7
@@ -256,7 +256,7 @@ curl -s -X POST "${SERVER_URL}/api/nfs/rebac_create" \
     \"params\": {
       \"subject\": [\"agent\", \"${TEST_AGENT_ID}\"],
       \"relation\": \"viewer\",
-      \"object\": [\"file\", \"/zone/${ZONE_ID}/user:${USER_ID}/resource\"],
+      \"object\": [\"file\", \"/zone/${ZONE_ID}/user/${USER_ID}/resource\"],
       \"zone_id\": \"${ZONE_ID}\"
     },
     \"id\": 8
@@ -275,7 +275,7 @@ curl -s -X POST "${SERVER_URL}/api/nfs/rebac_create" \
     \"params\": {
       \"subject\": [\"agent\", \"${TEST_AGENT_ID}\"],
       \"relation\": \"viewer\",
-      \"object\": [\"file\", \"/zone/${ZONE_ID}/user:${USER_ID}/workspace\"],
+      \"object\": [\"file\", \"/zone/${ZONE_ID}/user/${USER_ID}/workspace\"],
       \"zone_id\": \"${ZONE_ID}\"
     },
     \"id\": 9
@@ -288,7 +288,7 @@ echo ""
 echo "✅ Step 5: Testing access after permissions granted..."
 
 # Test 1: List pdf skill directory (should now succeed)
-echo -e "${BLUE}  Test 1: List /zone/${ZONE_ID}/user:${USER_ID}/skill/pdf${NC}"
+echo -e "${BLUE}  Test 1: List /zone/${ZONE_ID}/user/${USER_ID}/skill/pdf${NC}"
 PDF_SKILL_RESULT=$(curl -s -X POST "${SERVER_URL}/api/nfs/list" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${TEST_AGENT_API_KEY}" \
@@ -296,7 +296,7 @@ PDF_SKILL_RESULT=$(curl -s -X POST "${SERVER_URL}/api/nfs/list" \
     \"jsonrpc\": \"2.0\",
     \"method\": \"list\",
     \"params\": {
-      \"path\": \"/zone/${ZONE_ID}/user:${USER_ID}/skill/pdf\"
+      \"path\": \"/zone/${ZONE_ID}/user/${USER_ID}/skill/pdf\"
     },
     \"id\": 10
   }")
@@ -316,7 +316,7 @@ else
 fi
 
 # Test 2: List resource directory (should now succeed)
-echo -e "${BLUE}  Test 2: List /zone/${ZONE_ID}/user:${USER_ID}/resource${NC}"
+echo -e "${BLUE}  Test 2: List /zone/${ZONE_ID}/user/${USER_ID}/resource${NC}"
 RESOURCE_DIR_RESULT2=$(curl -s -X POST "${SERVER_URL}/api/nfs/list" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${TEST_AGENT_API_KEY}" \
@@ -324,7 +324,7 @@ RESOURCE_DIR_RESULT2=$(curl -s -X POST "${SERVER_URL}/api/nfs/list" \
     \"jsonrpc\": \"2.0\",
     \"method\": \"list\",
     \"params\": {
-      \"path\": \"/zone/${ZONE_ID}/user:${USER_ID}/resource\"
+      \"path\": \"/zone/${ZONE_ID}/user/${USER_ID}/resource\"
     },
     \"id\": 11
   }")
@@ -339,7 +339,7 @@ else
 fi
 
 # Test 3: List workspace directory (should now succeed)
-echo -e "${BLUE}  Test 3: List /zone/${ZONE_ID}/user:${USER_ID}/workspace${NC}"
+echo -e "${BLUE}  Test 3: List /zone/${ZONE_ID}/user/${USER_ID}/workspace${NC}"
 WORKSPACE_DIR_RESULT2=$(curl -s -X POST "${SERVER_URL}/api/nfs/list" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${TEST_AGENT_API_KEY}" \
@@ -347,7 +347,7 @@ WORKSPACE_DIR_RESULT2=$(curl -s -X POST "${SERVER_URL}/api/nfs/list" \
     \"jsonrpc\": \"2.0\",
     \"method\": \"list\",
     \"params\": {
-      \"path\": \"/zone/${ZONE_ID}/user:${USER_ID}/workspace\"
+      \"path\": \"/zone/${ZONE_ID}/user/${USER_ID}/workspace\"
     },
     \"id\": 12
   }")
@@ -362,7 +362,7 @@ else
 fi
 
 # Test 4: Try to access docx skill (should return empty - no permission)
-echo -e "${BLUE}  Test 4: List /zone/${ZONE_ID}/user:${USER_ID}/skill/docx (should be empty)${NC}"
+echo -e "${BLUE}  Test 4: List /zone/${ZONE_ID}/user/${USER_ID}/skill/docx (should be empty)${NC}"
 DOCX_SKILL_RESULT=$(curl -s -X POST "${SERVER_URL}/api/nfs/list" \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer ${TEST_AGENT_API_KEY}" \
@@ -370,7 +370,7 @@ DOCX_SKILL_RESULT=$(curl -s -X POST "${SERVER_URL}/api/nfs/list" \
     \"jsonrpc\": \"2.0\",
     \"method\": \"list\",
     \"params\": {
-      \"path\": \"/zone/${ZONE_ID}/user:${USER_ID}/skill/docx\"
+      \"path\": \"/zone/${ZONE_ID}/user/${USER_ID}/skill/docx\"
     },
     \"id\": 13
   }")

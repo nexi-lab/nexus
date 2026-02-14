@@ -51,13 +51,13 @@ def upgrade() -> None:
         op.execute(
             sa.text("""
             CREATE INDEX IF NOT EXISTS idx_rebac_alive_permission_check
-            ON rebac_tuples (subject_type, subject_id, relation, object_type, object_id, tenant_id)
+            ON rebac_tuples (subject_type, subject_id, relation, object_type, object_id, zone_id)
             WHERE expires_at IS NULL
         """)
         )
 
         # 2. Partial subject lookup index (for reverse lookups)
-        # Covers: WHERE subject_type=? AND subject_id=? AND tenant_id=?
+        # Covers: WHERE subject_type=? AND subject_id=? AND zone_id=?
         op.execute(
             sa.text("""
             CREATE INDEX IF NOT EXISTS idx_rebac_alive_by_subject
@@ -67,11 +67,11 @@ def upgrade() -> None:
         )
 
         # 3. Partial tenant-scoped object index
-        # Covers: WHERE tenant_id=? AND object_type=? AND object_id=? AND relation=?
+        # Covers: WHERE zone_id=? AND object_type=? AND object_id=? AND relation=?
         op.execute(
             sa.text("""
             CREATE INDEX IF NOT EXISTS idx_rebac_alive_tenant_object
-            ON rebac_tuples (tenant_id, object_type, object_id, relation)
+            ON rebac_tuples (zone_id, object_type, object_id, relation)
             WHERE expires_at IS NULL
         """)
         )
@@ -81,7 +81,7 @@ def upgrade() -> None:
         op.execute(
             sa.text("""
             CREATE INDEX IF NOT EXISTS idx_rebac_alive_userset
-            ON rebac_tuples (relation, object_type, object_id, subject_relation, tenant_id)
+            ON rebac_tuples (relation, object_type, object_id, subject_relation, zone_id)
             WHERE expires_at IS NULL AND subject_relation IS NOT NULL
         """)
         )
@@ -91,7 +91,7 @@ def upgrade() -> None:
         op.create_index(
             "idx_rebac_alive_permission_check",
             "rebac_tuples",
-            ["subject_type", "subject_id", "relation", "object_type", "object_id", "tenant_id"],
+            ["subject_type", "subject_id", "relation", "object_type", "object_id", "zone_id"],
             if_not_exists=True,
         )
         op.create_index(
@@ -103,13 +103,13 @@ def upgrade() -> None:
         op.create_index(
             "idx_rebac_alive_tenant_object",
             "rebac_tuples",
-            ["tenant_id", "object_type", "object_id", "relation"],
+            ["zone_id", "object_type", "object_id", "relation"],
             if_not_exists=True,
         )
         op.create_index(
             "idx_rebac_alive_userset",
             "rebac_tuples",
-            ["relation", "object_type", "object_id", "subject_relation", "tenant_id"],
+            ["relation", "object_type", "object_id", "subject_relation", "zone_id"],
             if_not_exists=True,
         )
 

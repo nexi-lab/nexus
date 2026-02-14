@@ -57,7 +57,7 @@ def upgrade() -> None:
     # =========================================================================
     # rebac_tuples table - 6 duplicates (covered by composites)
     # =========================================================================
-    op.execute(text("DROP INDEX IF EXISTS ix_rebac_tuples_tenant_id"))
+    op.execute(text("DROP INDEX IF EXISTS ix_rebac_tuples_zone_id"))
     op.execute(text("DROP INDEX IF EXISTS ix_rebac_tuples_subject_type"))
     op.execute(text("DROP INDEX IF EXISTS ix_rebac_tuples_subject_id"))
     op.execute(text("DROP INDEX IF EXISTS ix_rebac_tuples_relation"))
@@ -67,7 +67,7 @@ def upgrade() -> None:
     # =========================================================================
     # rebac_check_cache table - 8 duplicates (covered by composites)
     # =========================================================================
-    op.execute(text("DROP INDEX IF EXISTS ix_rebac_check_cache_tenant_id"))
+    op.execute(text("DROP INDEX IF EXISTS ix_rebac_check_cache_zone_id"))
     op.execute(text("DROP INDEX IF EXISTS ix_rebac_check_cache_subject_type"))
     op.execute(text("DROP INDEX IF EXISTS ix_rebac_check_cache_subject_id"))
     op.execute(text("DROP INDEX IF EXISTS ix_rebac_check_cache_permission"))
@@ -77,9 +77,9 @@ def upgrade() -> None:
     op.execute(text("DROP INDEX IF EXISTS ix_rebac_check_cache_expires_at"))
 
     # =========================================================================
-    # rebac_version_sequences - 1 duplicate (tenant_id is PK!)
+    # rebac_version_sequences - 1 duplicate (zone_id is PK!)
     # =========================================================================
-    op.execute(text("DROP INDEX IF EXISTS ix_rebac_version_sequences_tenant_id"))
+    op.execute(text("DROP INDEX IF EXISTS ix_rebac_version_sequences_zone_id"))
 
     # =========================================================================
     # trajectories table - 9 duplicates
@@ -242,9 +242,7 @@ def downgrade() -> None:
     op.execute(text("CREATE INDEX IF NOT EXISTS ix_memories_namespace ON memories (namespace)"))
 
     # rebac_tuples table
-    op.execute(
-        text("CREATE INDEX IF NOT EXISTS ix_rebac_tuples_tenant_id ON rebac_tuples (tenant_id)")
-    )
+    op.execute(text("CREATE INDEX IF NOT EXISTS ix_rebac_tuples_zone_id ON rebac_tuples (zone_id)"))
     op.execute(
         text(
             "CREATE INDEX IF NOT EXISTS ix_rebac_tuples_subject_type ON rebac_tuples (subject_type)"
@@ -260,7 +258,7 @@ def downgrade() -> None:
     # rebac_check_cache table
     op.execute(
         text(
-            "CREATE INDEX IF NOT EXISTS ix_rebac_check_cache_tenant_id ON rebac_check_cache (tenant_id)"
+            "CREATE INDEX IF NOT EXISTS ix_rebac_check_cache_zone_id ON rebac_check_cache (zone_id)"
         )
     )
     op.execute(
@@ -272,7 +270,7 @@ def downgrade() -> None:
     # rebac_version_sequences - index on PK, not needed
     op.execute(
         text(
-            "CREATE INDEX IF NOT EXISTS ix_rebac_version_sequences_tenant_id ON rebac_version_sequences (tenant_id)"
+            "CREATE INDEX IF NOT EXISTS ix_rebac_version_sequences_zone_id ON rebac_version_sequences (zone_id)"
         )
     )
 

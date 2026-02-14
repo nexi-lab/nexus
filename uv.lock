@@ -3135,6 +3135,7 @@ dependencies = [
     { name = "slack-sdk" },
     { name = "slowapi" },
     { name = "sqlalchemy" },
+    { name = "structlog" },
     { name = "tenacity" },
     { name = "tiktoken" },
     { name = "tqdm" },
@@ -3315,6 +3316,7 @@ requires-dist = [
     { name = "sqlalchemy", specifier = ">=2.0.44" },
     { name = "sqlite-vec", marker = "extra == 'all'", specifier = ">=0.1.0" },
     { name = "sqlite-vec", marker = "extra == 'semantic-search'", specifier = ">=0.1.0" },
+    { name = "structlog", specifier = ">=24.4.0" },
     { name = "tenacity", specifier = ">=8.2.0" },
     { name = "tiktoken", specifier = ">=0.12" },
     { name = "tqdm", specifier = ">=4.66.0" },
@@ -5382,6 +5384,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/1b/3f/507c21db33b66fb027a332f2cb3abbbe924cc3a79ced12f01ed8645955c9/starlette-0.49.1.tar.gz", hash = "sha256:481a43b71e24ed8c43b11ea02f5353d77840e01480881b8cb5a26b8cae64a8cb", size = 2654703, upload-time = "2025-10-28T17:34:10.928Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/51/da/545b75d420bb23b5d494b0517757b351963e974e79933f01e05c929f20a6/starlette-0.49.1-py3-none-any.whl", hash = "sha256:d92ce9f07e4a3caa3ac13a79523bd18e3bc0042bb8ff2d759a8e7dd0e1859875", size = 74175, upload-time = "2025-10-28T17:34:09.13Z" },
+]
+
+[[package]]
+name = "structlog"
+version = "25.5.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/ef/52/9ba0f43b686e7f3ddfeaa78ac3af750292662284b3661e91ad5494f21dbc/structlog-25.5.0.tar.gz", hash = "sha256:098522a3bebed9153d4570c6d0288abf80a031dfdb2048d59a49e9dc2190fc98", size = 1460830, upload-time = "2025-10-27T08:28:23.028Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a8/45/a132b9074aa18e799b891b91ad72133c98d8042c70f6240e4c5f9dabee2f/structlog-25.5.0-py3-none-any.whl", hash = "sha256:a8453e9b9e636ec59bd9e79bbd4a72f025981b3ba0f5837aebf48f02f37a7f9f", size = 72510, upload-time = "2025-10-27T08:28:21.535Z" },
 ]
 
 [[package]]

@@ -4327,6 +4327,11 @@ async def _dispatch_method(method: str, params: Any, context: Any) -> Any:
     if nexus_fs is None:
         raise RuntimeError("NexusFS not initialized")
 
+    # Issue #1457: Enforce admin_only for ALL dispatch paths (auto + manual)
+    func = _app_state.exposed_methods.get(method)
+    if func and getattr(func, "_rpc_admin_only", False):
+        _require_admin(context)
+
     # Methods that need special handling
     MANUAL_METHODS = {
         "read",
@@ -4445,6 +4450,8 @@ async def _auto_dispatch(method: str, params: Any, context: Any) -> Any:
     import inspect
 
     func = _app_state.exposed_methods[method]
+
+    # Note: admin_only guard is enforced in _dispatch_method (Issue #1457)
 
     # Build kwargs
     kwargs: dict[str, Any] = {}

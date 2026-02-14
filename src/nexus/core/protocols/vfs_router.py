@@ -11,7 +11,10 @@ References:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from nexus.backends.backend import Backend
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,7 +77,7 @@ class VFSRouterProtocol(Protocol):
     async def add_mount(
         self,
         mount_point: str,
-        backend: Any,
+        backend: Backend,
         *,
         priority: int = 0,
         readonly: bool = False,

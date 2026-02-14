@@ -4,10 +4,21 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from nexus.backends.local import LocalBackend
 from nexus.core.nexus_fs import NexusFS
 from nexus.services.version_service import VersionService
-from nexus.storage.raft_metadata_store import RaftMetadataStore
+
+try:
+    from nexus.storage.raft_metadata_store import RaftMetadataStore
+
+    RaftMetadataStore.embedded("/tmp/_raft_probe")  # noqa: S108
+    _raft_available = True
+except Exception:
+    _raft_available = False
+
+pytestmark = pytest.mark.skipif(not _raft_available, reason="Raft metastore not available")
 
 
 def _make_fs(tmp_path: Path, *, enforce_permissions: bool = True) -> NexusFS:
@@ -36,7 +47,7 @@ class TestNexusFSServiceComposition:
     """Test that NexusFS correctly instantiates all services."""
 
     def test_all_services_instantiated(self, tmp_path: Path):
-        """Test that all 8 services are created during NexusFS initialization."""
+        """Test that all services are created during NexusFS initialization."""
         fs = _make_fs(tmp_path, enforce_permissions=False)
 
         # Verify all services are instantiated
@@ -46,9 +57,10 @@ class TestNexusFSServiceComposition:
         assert hasattr(fs, "mcp_service"), "MCPService not instantiated"
         assert hasattr(fs, "llm_service"), "LLMService not instantiated"
         assert hasattr(fs, "oauth_service"), "OAuthService not instantiated"
-        # SkillService uses mixin pattern with lazy initialization via _get_skill_service()
-        assert hasattr(fs, "_get_skill_service"), "SkillService mixin not present"
+        assert hasattr(fs, "skill_service"), "SkillService not instantiated"
         assert hasattr(fs, "search_service"), "SearchService not instantiated"
+        assert hasattr(fs, "share_link_service"), "ShareLinkService not instantiated"
+        assert hasattr(fs, "events_service"), "EventsService not instantiated"
 
         # Verify services are not None
         assert fs.version_service is not None
@@ -57,9 +69,10 @@ class TestNexusFSServiceComposition:
         assert fs.mcp_service is not None
         assert fs.llm_service is not None
         assert fs.oauth_service is not None
-        # SkillService is lazily initialized through mixin - verify method exists
-        assert callable(fs._get_skill_service)
+        assert fs.skill_service is not None
         assert fs.search_service is not None
+        assert fs.share_link_service is not None
+        assert fs.events_service is not None
 
     def test_service_dependencies_correct(self, tmp_path: Path):
         """Test that services receive correct dependencies."""
@@ -79,13 +92,18 @@ class TestNexusFSServiceComposition:
         # Services that take nexus_fs should have it
         assert fs.mcp_service.nexus_fs == fs
         assert fs.llm_service.nexus_fs == fs
-        # SkillService uses gateway pattern - verify it can be retrieved through mixin
-        skill_service = fs._get_skill_service()
-        assert skill_service._gw._fs == fs
+        # SkillService is directly instantiated
+        assert fs.skill_service is not None
 
         # SearchService should have metadata and permission_enforcer
         assert fs.search_service.metadata == fs.metadata
         assert fs.search_service._permission_enforcer == fs._permission_enforcer
+
+        # ShareLinkService should have gateway
+        assert fs.share_link_service._gw is not None
+
+        # EventsService should have backend
+        assert fs.events_service._backend == fs.backend
 
     def test_version_service_delegation(self, tmp_path: Path):
         """Test that VersionService delegation methods work correctly."""

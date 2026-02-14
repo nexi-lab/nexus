@@ -22,8 +22,17 @@ import pytest
 from nexus import LocalBackend, NexusFS
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
-from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
+
+try:
+    from nexus.storage.raft_metadata_store import RaftMetadataStore
+
+    RaftMetadataStore.embedded("/tmp/_raft_probe")  # noqa: S108
+    _raft_available = True
+except Exception:
+    _raft_available = False
+
+pytestmark = pytest.mark.skipif(not _raft_available, reason="Raft metastore not available")
 
 
 @pytest.fixture
@@ -263,8 +272,8 @@ class TestSkillsDiscover:
             context=context,
         )
 
-        # Subscribe using the service
-        service = nx._get_skill_service()
+        # Subscribe using the service (Issue #1287: _get_skill_service() -> skill_service)
+        service = nx.skill_service
         service.subscribe(skill_path, context)
 
         result = nx.skills_discover(filter="subscribed", context=context)

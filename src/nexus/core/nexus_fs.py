@@ -252,6 +252,10 @@ class NexusFS(  # type: ignore[misc]
         self._overlay_resolver = svc.overlay_resolver
         self._wallet_provisioner = svc.wallet_provisioner
 
+        # Agent registry — injected externally (e.g. by FastAPI lifespan) or
+        # lazily created via _ensure_agent_registry() when first needed.
+        self._agent_registry: Any | None = None
+
         # Infrastructure services (previously created inline, now injected)
         self._event_bus = svc.event_bus
         self._lock_manager = svc.lock_manager
@@ -3694,6 +3698,29 @@ class NexusFS(  # type: ignore[misc]
         finally:
             session.close()
 
+    def _ensure_agent_registry(self) -> None:
+        """Lazily create AgentRegistry if not already set.
+
+        The registry is normally injected by the FastAPI server lifespan,
+        but for tests or standalone usage we auto-create it from the
+        available SessionLocal and EntityRegistry.
+        """
+        if self._agent_registry is not None:
+            return
+
+        if self.SessionLocal is None:
+            raise RuntimeError(
+                "AgentRegistry not initialized and no SessionLocal available "
+                "to create one. Provide a record_store when constructing NexusFS."
+            )
+
+        from nexus.core.agent_registry import AgentRegistry
+
+        self._agent_registry = AgentRegistry(
+            session_factory=self.SessionLocal,
+            entity_registry=self._entity_registry,
+        )
+
     @rpc_expose(description="Register an AI agent")
     def register_agent(
         self,
@@ -3753,6 +3780,9 @@ class NexusFS(  # type: ignore[misc]
 
         # Pre-flight: ensure agent does not already exist
         self._check_agent_not_exists(agent_id, user_id, zone_id)
+
+        # Lazily initialise AgentRegistry if not injected (e.g. in tests)
+        self._ensure_agent_registry()
 
         # --- Single registration path (Issue #1588) ---
         # AgentRegistry.register() handles BOTH the DB write AND the EntityRegistry bridge.
@@ -4526,6 +4556,9 @@ class NexusFS(  # type: ignore[misc]
                 logger.warning(
                     f"[WALLET] Failed to cleanup wallet for agent {agent_id}: {wallet_err}"
                 )
+
+        # Lazily initialise AgentRegistry if not injected (e.g. in tests)
+        self._ensure_agent_registry()
 
         # Single unregister path (Issue #1588): AgentRegistry.unregister() handles
         # BOTH the agent_records DB delete AND the EntityRegistry bridge delete.

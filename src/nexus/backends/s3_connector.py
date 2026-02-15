@@ -58,6 +58,7 @@ logger = logging.getLogger(__name__)
     description="AWS S3 with direct path mapping",
     category="storage",
     requires=["boto3"],
+    service_name="s3",
 )
 class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, MultipartUploadMixin):
     """

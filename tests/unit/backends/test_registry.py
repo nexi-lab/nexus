@@ -72,12 +72,20 @@ class DummyBackend(Backend):
 @pytest.fixture(autouse=True)
 def clear_registry():
     """Clear registry before and after each test."""
+    import nexus.backends as _backends
+    import nexus.backends.service_map as _sm
+
+    # Ensure optional backends are registered before saving
+    _backends._register_optional_backends()
+
     # Save existing connectors
     saved = dict(ConnectorRegistry._base._items)
     ConnectorRegistry.clear()
     yield
-    # Restore after test
+    # Restore after test — reset lazy-init flags so future syncs re-derive
     ConnectorRegistry._base._items = saved
+    _backends._optional_backends_registered = False
+    _sm._synced = False
 
 
 class TestConnectorRegistry:

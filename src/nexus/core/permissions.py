@@ -895,6 +895,8 @@ class PermissionEnforcer:
         Performs direct check, TRAVERSE implication, boundary cache lookup,
         and parent walk one level at a time. Efficient when only 1-2 parents.
         """
+        assert self.rebac_manager is not None  # guaranteed by _check_rebac guard
+
         # 1. Direct permission check
         result = self.rebac_manager.rebac_check(
             subject=subject,
@@ -989,6 +991,8 @@ class PermissionEnforcer:
         and resolves them in a single rebac_check_bulk() call instead of O(D)
         sequential queries.
         """
+        assert self.rebac_manager is not None  # guaranteed by _check_rebac guard
+
         subject_type, subject_id = subject
 
         # FAST PATH: Boundary cache (Issue #922)

@@ -247,12 +247,14 @@ class PluginRegistry(BaseRegistry[NexusPlugin]):
                 if info.metadata:
                     result.append(info.metadata)
                 else:
-                    result.append(PluginMetadata(
-                        name=info.name,
-                        version="(not loaded)",
-                        description=f"Discovered from {info.module_path}",
-                        author="",
-                    ))
+                    result.append(
+                        PluginMetadata(
+                            name=info.name,
+                            version="(not loaded)",
+                            description=f"Discovered from {info.module_path}",
+                            author="",
+                        )
+                    )
 
         return result
 

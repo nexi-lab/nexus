@@ -73,7 +73,9 @@ def scaffold_plugin(
     files_created: list[str] = []
 
     # pyproject.toml
-    pyproject = _generate_pyproject(package_name, module_name, class_name, name, author, description)
+    pyproject = _generate_pyproject(
+        package_name, module_name, class_name, name, author, description
+    )
     _write(project_dir / "pyproject.toml", pyproject, files_created)
 
     # __init__.py
@@ -220,7 +222,7 @@ class {class_name}(NexusPlugin):
 '''
 
     if plugin_type == "storage":
-        base += '''
+        base += """
 
     # Storage backend methods — implement these for a storage plugin:
     #
@@ -231,9 +233,9 @@ class {class_name}(NexusPlugin):
     #     async def read_content(self, hash_str: str) -> bytes: ...
     #     async def delete_content(self, hash_str: str) -> None: ...
     #     async def content_exists(self, hash_str: str) -> bool: ...
-'''
+"""
     elif plugin_type == "parser":
-        base += '''
+        base += """
 
     # Parser methods — implement these for a parser plugin:
     #
@@ -242,7 +244,7 @@ class {class_name}(NexusPlugin):
     # class MyParser(ParseProvider):
     #     def supported_formats(self) -> list[str]: ...
     #     async def parse(self, content: bytes, format: str) -> str: ...
-'''
+"""
 
     return base
 
@@ -350,7 +352,7 @@ ruff check src/
 
 ## Plugin Type: {plugin_type}
 
-{PLUGIN_TYPES.get(plugin_type, '')}
+{PLUGIN_TYPES.get(plugin_type, "")}
 
 ## License
 

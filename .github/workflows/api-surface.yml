@@ -45,11 +45,11 @@ jobs:
 
       - name: Export base API surface
         run: |
+          PR_SHA=$(git rev-parse HEAD)
           git checkout origin/main -- src/
           python -c "
           from nexus.sdk.api_versioning import export_api_surface
           from pathlib import Path
-          import importlib
           import nexus.core.filesystem as fs_mod
           import nexus.plugins.base as plugin_mod
 
@@ -58,7 +58,7 @@ jobs:
           count += export_api_surface(plugin_mod, Path('/tmp/api-surface-base-plugins.json'))
           print(f'Exported {count} API entries from main branch')
           " || echo "No base surface available (first run)"
-          git checkout - -- src/
+          git checkout "$PR_SHA" -- src/
 
       - name: Compare API surfaces
         id: diff

@@ -96,15 +96,24 @@ class TestScaffoldValidation:
     """Test input validation."""
 
     def test_rejects_empty_name(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir, pytest.raises(ValueError, match="Invalid plugin name"):
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            pytest.raises(ValueError, match="Invalid plugin name"),
+        ):
             scaffold_plugin("", Path(tmpdir))
 
     def test_rejects_invalid_name(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir, pytest.raises(ValueError, match="Invalid plugin name"):
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            pytest.raises(ValueError, match="Invalid plugin name"),
+        ):
             scaffold_plugin("my plugin!", Path(tmpdir))
 
     def test_rejects_unknown_type(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir, pytest.raises(ValueError, match="Unknown plugin type"):
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            pytest.raises(ValueError, match="Unknown plugin type"),
+        ):
             scaffold_plugin("test", Path(tmpdir), plugin_type="unknown")
 
     def test_rejects_existing_directory(self) -> None:

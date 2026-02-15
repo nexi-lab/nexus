@@ -132,9 +132,7 @@ def collect_api_surface(module: types.ModuleType) -> list[dict[str, Any]]:
                 method = getattr(obj, method_name, None)
                 if method is None:
                     continue
-                method_entry = _inspect_object(
-                    f"{qualified}.{method_name}", method
-                )
+                method_entry = _inspect_object(f"{qualified}.{method_name}", method)
                 if method_entry:
                     method_entry["kind"] = "method"
                     surface.append(method_entry)

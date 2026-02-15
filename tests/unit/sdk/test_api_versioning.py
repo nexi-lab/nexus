@@ -255,9 +255,7 @@ class TestDiffApiSurfaces:
     """Test API surface diffing."""
 
     def test_no_changes(self) -> None:
-        surface = [
-            {"name": "mod.func", "stability": "stable", "since": "1.0"}
-        ]
+        surface = [{"name": "mod.func", "stability": "stable", "since": "1.0"}]
         diff = diff_api_surfaces(surface, surface)
         assert diff["removed_stable"] == []
         assert diff["removed_experimental"] == []

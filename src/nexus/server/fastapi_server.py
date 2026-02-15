@@ -1255,6 +1255,16 @@ def create_app(
     else:
         app.state.async_session_factory = None
 
+    # Expose sync session_factory from RecordStoreABC (Issue #1519).
+    # This is the canonical way for sync endpoints to get database sessions
+    # without reaching into NexusFS.SessionLocal internals.
+    if _record_store is not None:
+        app.state.session_factory = _record_store.session_factory
+    elif hasattr(nexus_fs, "SessionLocal") and nexus_fs.SessionLocal is not None:
+        app.state.session_factory = nexus_fs.SessionLocal
+    else:
+        app.state.session_factory = None
+
     # Thread pool and timeout settings (Issue #932)
     app.state.thread_pool_size = thread_pool_size or int(
         os.environ.get("NEXUS_THREAD_POOL_SIZE", "200")
@@ -1726,9 +1736,10 @@ def _register_routes(app: FastAPI) -> None:
 
         # Circuit breaker health (Issue #1366)
         _resiliency_mgr = (
-            getattr(getattr(_fastapi_app.state.nexus_fs, "_services", None), "resiliency_manager", None)
-            if _fastapi_app.state.nexus_fs
-            and hasattr(_fastapi_app.state.nexus_fs, "_services")
+            getattr(
+                getattr(_fastapi_app.state.nexus_fs, "_services", None), "resiliency_manager", None
+            )
+            if _fastapi_app.state.nexus_fs and hasattr(_fastapi_app.state.nexus_fs, "_services")
             else None
         )
         if _resiliency_mgr is not None:

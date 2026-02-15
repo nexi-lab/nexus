@@ -486,7 +486,7 @@ class BulkPermissionChecker:
                     """
                 )
                 value_params.extend([zone_id, now_iso])
-                params = value_params  # type: ignore[assignment]
+                params = value_params
             else:
                 query = self._fix_sql(
                     f"""
@@ -505,7 +505,7 @@ class BulkPermissionChecker:
                     """
                 )
                 value_params.append(now_iso)
-                params = value_params  # type: ignore[assignment]
+                params = value_params
 
         cursor.execute(query, params)
         return [
@@ -586,7 +586,7 @@ class BulkPermissionChecker:
             )
             ct_value_params.extend(cross_zone_relations)
             ct_value_params.append(now_iso)
-            cross_zone_params = ct_value_params  # type: ignore[assignment]
+            cross_zone_params = ct_value_params
 
         cursor.execute(cross_zone_query, cross_zone_params)
         cross_zone_count = 0

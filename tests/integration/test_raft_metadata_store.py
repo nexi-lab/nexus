@@ -80,6 +80,9 @@ class FakeLocalRaft:
             self.delete_metadata(key)
         return len(keys)
 
+    def get_metadata_multi(self, keys: list[str]) -> list[tuple[str, bytes | None]]:
+        return [(k, self._metadata.get(k)) for k in keys]
+
     def count_metadata(self, prefix: str) -> int:
         return len(self.list_metadata(prefix))
 
@@ -333,7 +336,7 @@ class TestListOperations:
         assert isinstance(result, PaginatedResult)
         assert len(result.items) == 3
         assert result.has_more is True
-        assert result.total_count == 5
+        # total_count is None — avoided to prevent full scan
 
     def test_list_paginated_cursor(self) -> None:
         store = _make_store()
@@ -713,8 +716,16 @@ class TestMultiZoneIsolation:
         store = _make_store()  # zone_id is None
         store.put(_make_meta(path="/test.txt"))
 
-        with pytest.raises(AssertionError, match="zone_id filter passed"):
+        with pytest.raises(AssertionError, match="zone_id filter.*passed to a non-zone-scoped"):
             store.list(zone_id="zone_a")
+
+    def test_default_zone_id_allowed_on_unzoned_store(self) -> None:
+        """zone_id='default' should NOT trigger assertion on unzoned store."""
+        store = _make_store()  # zone_id is None
+        store.put(_make_meta(path="/test.txt"))
+        # "default" is the fallback zone — unzoned stores serve it implicitly
+        result = store.list(zone_id="default")
+        assert len(result) == 1
 
     def test_list_without_zone_id_works_on_unzoned_store(self) -> None:
         """list() without zone_id should work fine on unzoned store."""

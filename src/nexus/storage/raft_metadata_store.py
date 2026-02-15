@@ -443,9 +443,12 @@ class RaftMetadataStore(FileMetadataProtocol):
         """
         # RaftMetadataStore is zone-local: each zone has its own sled database.
         # zone_id parameter accepted for API consistency but filtering is inherent.
-        assert self._zone_id is not None or zone_id is None, (
-            "zone_id filter passed to a non-zone-scoped store"
-        )
+        # RaftMetadataStore is zone-local. Non-zoned stores serve the "default" zone,
+        # so zone_id="default" is always allowed. Only assert on specific zone_ids.
+        if zone_id is not None and zone_id != "default":
+            assert self._zone_id is not None, (
+                f"zone_id filter '{zone_id}' passed to a non-zone-scoped store"
+            )
         if self._has_engine:
             return self._list_engine(prefix, recursive)
         else:
@@ -506,9 +509,12 @@ class RaftMetadataStore(FileMetadataProtocol):
         Memory usage is O(limit) instead of O(total).
         """
         # RaftMetadataStore is zone-local: zone_id accepted for API consistency.
-        assert self._zone_id is not None or zone_id is None, (
-            "zone_id filter passed to a non-zone-scoped store"
-        )
+        # RaftMetadataStore is zone-local. Non-zoned stores serve the "default" zone,
+        # so zone_id="default" is always allowed. Only assert on specific zone_ids.
+        if zone_id is not None and zone_id != "default":
+            assert self._zone_id is not None, (
+                f"zone_id filter '{zone_id}' passed to a non-zone-scoped store"
+            )
         from itertools import islice
 
         # Decode cursor if it's base64-encoded
@@ -1055,9 +1061,12 @@ class RaftMetadataStore(FileMetadataProtocol):
             List of file metadata
         """
         # RaftMetadataStore is zone-local: zone_id accepted for API consistency.
-        assert self._zone_id is not None or zone_id is None, (
-            "zone_id filter passed to a non-zone-scoped store"
-        )
+        # RaftMetadataStore is zone-local. Non-zoned stores serve the "default" zone,
+        # so zone_id="default" is always allowed. Only assert on specific zone_ids.
+        if zone_id is not None and zone_id != "default":
+            assert self._zone_id is not None, (
+                f"zone_id filter '{zone_id}' passed to a non-zone-scoped store"
+            )
         if self._has_engine:
             return self._list_engine(prefix, recursive)
         else:

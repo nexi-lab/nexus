@@ -11,7 +11,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core.permission_filter_chain import (
+from nexus.core.permissions import OperationContext
+from nexus.services.permissions.permission_filter_chain import (
     BulkReBACStrategy,
     FilterContext,
     FilterResult,
@@ -21,7 +22,6 @@ from nexus.core.permission_filter_chain import (
     ZonePreFilterStrategy,
     run_filter_chain,
 )
-from nexus.core.permissions import OperationContext
 
 # ---------------------------------------------------------------------------
 # Fixtures

@@ -101,9 +101,7 @@ class TestServiceRegistry:
         # connector=None when those packages aren't installed.
         # They still have a valid entry (connector auto-derives when deps are available).
         connector_only_services = {
-            name
-            for name, info in SERVICE_REGISTRY.items()
-            if info.klavis_mcp is None
+            name for name, info in SERVICE_REGISTRY.items() if info.klavis_mcp is None
         }
         for name, info in SERVICE_REGISTRY.items():
             assert info.name == name  # name matches key
@@ -112,9 +110,7 @@ class TestServiceRegistry:
             # Services with MCP always have it.  Connector-only services
             # may have connector=None if optional deps are missing.
             if name not in connector_only_services:
-                assert info.klavis_mcp is not None, (
-                    f"Service '{name}' should have MCP"
-                )
+                assert info.klavis_mcp is not None, f"Service '{name}' should have MCP"
 
 
 class TestAutoDerive:

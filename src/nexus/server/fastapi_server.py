@@ -1726,9 +1726,10 @@ def _register_routes(app: FastAPI) -> None:
 
         # Circuit breaker health (Issue #1366)
         _resiliency_mgr = (
-            getattr(getattr(_fastapi_app.state.nexus_fs, "_services", None), "resiliency_manager", None)
-            if _fastapi_app.state.nexus_fs
-            and hasattr(_fastapi_app.state.nexus_fs, "_services")
+            getattr(
+                getattr(_fastapi_app.state.nexus_fs, "_services", None), "resiliency_manager", None
+            )
+            if _fastapi_app.state.nexus_fs and hasattr(_fastapi_app.state.nexus_fs, "_services")
             else None
         )
         if _resiliency_mgr is not None:

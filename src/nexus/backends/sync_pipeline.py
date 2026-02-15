@@ -294,12 +294,8 @@ class SyncPipelineService:
                 f"{len(paths_needing_version_check)} files..."
             )
             try:
-                versions = connector._batch_get_versions(
-                    paths_needing_version_check, all_contexts
-                )
-                logger.info(
-                    f"[CACHE-SYNC] Batch version fetch complete: {len(versions)} versions"
-                )
+                versions = connector._batch_get_versions(paths_needing_version_check, all_contexts)
+                logger.info(f"[CACHE-SYNC] Batch version fetch complete: {len(versions)} versions")
             except Exception as e:
                 logger.warning(f"[CACHE-SYNC] Batch version fetch failed: {e}")
                 versions = {}
@@ -400,9 +396,7 @@ class SyncPipelineService:
 
                 # Skip if too large
                 if len(content) > max_size:
-                    logger.debug(
-                        f"[CACHE] SYNC SKIP (too large): {vpath} ({len(content)} bytes)"
-                    )
+                    logger.debug(f"[CACHE] SYNC SKIP (too large): {vpath} ({len(content)} bytes)")
                     result.files_skipped += 1
                     continue
 

@@ -567,39 +567,77 @@ class ZoneManager:
         )
         return new_zone_id
 
-    def init_topology(
+    # =========================================================================
+    # Static Bootstrap (Day 1 cluster formation)
+    # =========================================================================
+
+    def bootstrap_static(
         self,
         zones: list[str],
-        mounts: dict[str, str],
+        peers: list[str],
+        mounts: dict[str, str] | None = None,
     ) -> None:
-        """Initialize zone topology: create zones, directories, and mounts.
+        """Static Day-1 cluster formation: create zones with known peers and apply mounts.
+
+        All nodes in the cluster call this with identical parameters during
+        startup. Each node creates Raft groups locally for every zone with
+        the full peer list. Mount topology writes (DT_DIR, DT_MOUNT) go
+        through Raft consensus — only the elected leader commits them;
+        followers receive the entries via log replication.
 
         Idempotent — safe to call on every startup. Skips zones and mounts
         that already exist.
 
-        Mounts are specified as global paths and resolved to the correct
-        parent zone by finding the longest-prefix active mount. Must be
-        processed in path-depth order (shorter paths first).
+        For Day 2+ dynamic membership changes (adding/removing nodes at
+        runtime), see expand_zone() [tracked, not yet implemented].
 
         Args:
-            zones: Zone IDs to create (e.g., ["corp", "corp-eng"]).
+            zones: Non-root zone IDs to create (e.g., ["corp", "corp-eng"]).
+                Root zone must already exist via bootstrap().
+            peers: Peer addresses shared by all zones ("id@host:port" format).
+                Every zone uses the same Raft group membership.
             mounts: Global path → target zone mapping
                 (e.g., {"/corp": "corp", "/corp/engineering": "corp-eng"}).
+                Processed in path-depth order (parents before children).
+
+        Raises:
+            RuntimeError: If bootstrap() has not been called first.
         """
         if not self._root_zone_id:
-            raise RuntimeError("Must call bootstrap() before init_topology()")
+            raise RuntimeError("Must call bootstrap() before bootstrap_static()")
 
-        # Step 1: Create zones (idempotent)
+        # Phase 1: Create Raft groups for all zones with peers
+        # This is a local operation — each node initializes its own Raft
+        # state machine. No consensus needed; raft-rs handles election.
         for zone_id in zones:
             if self.get_store(zone_id) is not None:
                 logger.debug("Zone '%s' already exists, skipping", zone_id)
                 continue
-            self.create_zone(zone_id)
+            self.create_zone(zone_id, peers=peers)
 
         if not mounts:
             return
 
-        # Step 2: Process mounts in path-depth order (parents before children)
+        # Phase 2: Apply mount topology (requires Raft consensus)
+        self._apply_mounts(mounts)
+
+    def _apply_mounts(self, mounts: dict[str, str]) -> None:
+        """Apply mount topology: create directories and DT_MOUNT entries.
+
+        Writes go through Raft consensus. On follower nodes, proposals are
+        either forwarded to the leader or committed once the leader is
+        elected. This is standard Raft behavior — not a retry loop.
+
+        Mounts are specified as global paths (e.g., "/corp/engineering")
+        and resolved to the correct parent zone via longest-prefix matching
+        against already-active mounts.
+
+        Args:
+            mounts: Global path → target zone mapping.
+        """
+        assert self._root_zone_id is not None
+
+        # Process mounts in path-depth order (parents before children)
         sorted_mounts = sorted(mounts.items(), key=lambda x: x[0].count("/"))
 
         # Track active mounts for nested path resolution
@@ -650,8 +688,7 @@ class ZoneManager:
             active_mounts[global_path] = target_zone_id
 
         logger.info(
-            "Zone topology initialized: %d zones, %d mounts",
-            len(zones),
+            "Static topology applied: %d mounts",
             len(active_mounts),
         )
 

@@ -1465,6 +1465,7 @@ def serve(
                 api_key=api_key,
                 auth_provider=auth_provider,
                 database_url=database_url,
+                data_dir=backend_config.data_dir,
             )
 
             # Start background sync for connector mounts (non-blocking)

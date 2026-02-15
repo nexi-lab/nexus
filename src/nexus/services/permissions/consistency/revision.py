@@ -93,7 +93,28 @@ def increment_version_token(
             row = cursor.fetchone()
             version = row["current_version"] if row else 1
         else:
-            # SQLite: Two-step increment
+            # SQLite: Atomic INSERT OR IGNORE + UPDATE to avoid race conditions
+            now_iso = datetime.now(UTC).isoformat()
+            cursor.execute(
+                conn_helper.fix_sql_placeholders(
+                    """
+                    INSERT OR IGNORE INTO rebac_version_sequences
+                        (zone_id, current_version, updated_at)
+                    VALUES (?, 0, ?)
+                    """
+                ),
+                (zone_id, now_iso),
+            )
+            cursor.execute(
+                conn_helper.fix_sql_placeholders(
+                    """
+                    UPDATE rebac_version_sequences
+                    SET current_version = current_version + 1, updated_at = ?
+                    WHERE zone_id = ?
+                    """
+                ),
+                (now_iso, zone_id),
+            )
             cursor.execute(
                 conn_helper.fix_sql_placeholders(
                     "SELECT current_version FROM rebac_version_sequences WHERE zone_id = ?"
@@ -101,34 +122,7 @@ def increment_version_token(
                 (zone_id,),
             )
             row = cursor.fetchone()
-
-            if row:
-                current = row["current_version"]
-                new_version = current + 1
-                cursor.execute(
-                    conn_helper.fix_sql_placeholders(
-                        """
-                        UPDATE rebac_version_sequences
-                        SET current_version = ?, updated_at = ?
-                        WHERE zone_id = ?
-                        """
-                    ),
-                    (new_version, datetime.now(UTC).isoformat(), zone_id),
-                )
-            else:
-                # First version for this zone
-                new_version = 1
-                cursor.execute(
-                    conn_helper.fix_sql_placeholders(
-                        """
-                        INSERT INTO rebac_version_sequences (zone_id, current_version, updated_at)
-                        VALUES (?, ?, ?)
-                        """
-                    ),
-                    (zone_id, new_version, datetime.now(UTC).isoformat()),
-                )
-
-            version = new_version
+            version = row["current_version"] if row else 1
 
         conn.commit()
         return f"v{version}"

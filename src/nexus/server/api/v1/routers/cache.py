@@ -133,6 +133,16 @@ async def get_cache_stats(
         if hasattr(dvc, "get_metrics"):
             cache_stats["dir_visibility_cache"] = dvc.get_metrics()
 
+    # Issue #1169: Read-set-aware cache stats (precision metrics)
+    read_set_cache = getattr(nexus_fs, "_read_set_cache", None)
+    if read_set_cache is not None:
+        cache_stats["read_set_cache"] = read_set_cache.get_stats()
+
+    # Issue #1169: ReadSetRegistry stats
+    read_set_registry = getattr(nexus_fs, "_read_set_registry", None)
+    if read_set_registry is not None:
+        cache_stats["read_set_registry"] = read_set_registry.get_stats()
+
     # File access tracker stats
     tracker = get_file_access_tracker()
     cache_stats["file_access_tracker"] = tracker.get_stats()

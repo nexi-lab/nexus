@@ -40,6 +40,7 @@ See also:
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import threading
@@ -50,7 +51,7 @@ from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Generator, Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -352,6 +353,63 @@ class ReadSet:
         )
 
 
+class RWLock:
+    """Read-Write Lock for concurrent read access with exclusive writes.
+
+    Issue #1169: Optimizes ReadSetRegistry for read-heavy workloads.
+    Multiple readers can hold the lock simultaneously, but writers
+    get exclusive access. Writer preference prevents writer starvation.
+
+    Usage:
+        lock = RWLock()
+        with lock.read_lock():
+            # concurrent read access
+            ...
+        with lock.write_lock():
+            # exclusive write access
+            ...
+    """
+
+    __slots__ = ("_condition", "_readers", "_writer", "_pending_writers")
+
+    def __init__(self) -> None:
+        self._condition = threading.Condition(threading.Lock())
+        self._readers: int = 0
+        self._writer: bool = False
+        self._pending_writers: int = 0
+
+    @contextlib.contextmanager
+    def read_lock(self) -> Generator[None, None, None]:
+        """Acquire shared read lock. Blocks if a writer holds or is waiting."""
+        with self._condition:
+            while self._writer or self._pending_writers > 0:
+                self._condition.wait()
+            self._readers += 1
+        try:
+            yield
+        finally:
+            with self._condition:
+                self._readers -= 1
+                if self._readers == 0:
+                    self._condition.notify_all()
+
+    @contextlib.contextmanager
+    def write_lock(self) -> Generator[None, None, None]:
+        """Acquire exclusive write lock. Blocks until all readers/writers release."""
+        with self._condition:
+            self._pending_writers += 1
+            while self._writer or self._readers > 0:
+                self._condition.wait()
+            self._pending_writers -= 1
+            self._writer = True
+        try:
+            yield
+        finally:
+            with self._condition:
+                self._writer = False
+                self._condition.notify_all()
+
+
 class ReadSetRegistry:
     """Global registry of active read sets with reverse indexing.
 
@@ -391,7 +449,7 @@ class ReadSetRegistry:
         self._directory_index: dict[str, set[str]] = {}  # dir_path -> query_ids
         self._zone_index: dict[str, set[str]] = {}  # zone_id -> query_ids
         self._default_ttl = default_ttl_seconds
-        self._lock = threading.RLock()
+        self._lock = RWLock()  # Issue #1169: RWLock for read-heavy workloads
 
         # Stats
         self._stats = {
@@ -408,7 +466,7 @@ class ReadSetRegistry:
         Args:
             read_set: The ReadSet to register
         """
-        with self._lock:
+        with self._lock.write_lock():
             query_id = read_set.query_id
 
             # Remove old registration if exists
@@ -458,7 +516,7 @@ class ReadSetRegistry:
         Returns:
             True if found and removed, False if not found
         """
-        with self._lock:
+        with self._lock.write_lock():
             return self._unregister_internal(query_id)
 
     def _unregister_internal(self, query_id: str) -> bool:
@@ -517,8 +575,8 @@ class ReadSetRegistry:
         Returns:
             Set of query IDs whose read sets overlap with the write
         """
-        with self._lock:
-            self._stats["lookups"] += 1
+        with self._lock.read_lock():
+            self._stats["lookups"] += 1  # Minor race OK — stats are best-effort
             affected: set[str] = set()
 
             # Direct path match - O(1)
@@ -567,7 +625,7 @@ class ReadSetRegistry:
         Returns:
             ReadSet if found, None otherwise
         """
-        with self._lock:
+        with self._lock.read_lock():
             return self._read_sets.get(query_id)
 
     def get_queries_for_zone(self, zone_id: str) -> set[str]:
@@ -579,7 +637,7 @@ class ReadSetRegistry:
         Returns:
             Set of query IDs registered for this zone
         """
-        with self._lock:
+        with self._lock.read_lock():
             return self._zone_index.get(zone_id, set()).copy()
 
     def cleanup_expired(self) -> int:
@@ -588,7 +646,7 @@ class ReadSetRegistry:
         Returns:
             Number of read sets removed
         """
-        with self._lock:
+        with self._lock.write_lock():
             expired = [
                 query_id for query_id, read_set in self._read_sets.items() if read_set.is_expired()
             ]
@@ -604,7 +662,7 @@ class ReadSetRegistry:
 
     def clear(self) -> None:
         """Clear all registered read sets."""
-        with self._lock:
+        with self._lock.write_lock():
             self._read_sets.clear()
             self._reverse_index.clear()
             self._directory_index.clear()
@@ -617,7 +675,7 @@ class ReadSetRegistry:
         Returns:
             Dictionary with stats including counts and hit rates
         """
-        with self._lock:
+        with self._lock.read_lock():
             lookups = self._stats["lookups"]
             hits = self._stats["hits"]
             return {
@@ -635,7 +693,7 @@ class ReadSetRegistry:
 
     def __len__(self) -> int:
         """Return number of registered read sets."""
-        with self._lock:
+        with self._lock.read_lock():
             return len(self._read_sets)
 
 

@@ -632,28 +632,46 @@ class NexusFSEventsMixin:
 
         Called by event callbacks when file changes are detected.
 
+        Issue #1169: Delegates to ReadSetAwareCache when available for
+        precise invalidation via read sets. Falls back to path-based.
+
         Args:
             path: Path that changed (physical or virtual)
         """
-        if hasattr(self, "metadata") and hasattr(self.metadata, "_cache"):
-            cache = self.metadata._cache
-            if cache is not None:
-                # Convert physical path to virtual if needed
-                virtual_path = path
-                if self._is_same_box():
-                    from nexus.backends.passthrough import PassthroughBackend
+        if not hasattr(self, "metadata") or not hasattr(self.metadata, "_cache"):
+            return
+        cache = self.metadata._cache
+        if cache is None:
+            return
 
-                    # Type narrowing: is_passthrough guarantees PassthroughBackend
-                    assert isinstance(self.backend, PassthroughBackend)
-                    # Strip base path to get virtual path
-                    base_path = str(self.backend.base_path)
-                    if path.startswith(base_path):
-                        virtual_path = path[len(base_path) :]
-                        if not virtual_path.startswith("/"):
-                            virtual_path = "/" + virtual_path
+        # Convert physical path to virtual if needed
+        virtual_path = path
+        if self._is_same_box():
+            from nexus.backends.passthrough import PassthroughBackend
 
-                cache.invalidate_path(virtual_path)
-                logger.debug(f"Cache invalidated: {virtual_path}")
+            # Type narrowing: is_passthrough guarantees PassthroughBackend
+            assert isinstance(self.backend, PassthroughBackend)
+            # Strip base path to get virtual path
+            base_path = str(self.backend.base_path)
+            if path.startswith(base_path):
+                virtual_path = path[len(base_path) :]
+                if not virtual_path.startswith("/"):
+                    virtual_path = "/" + virtual_path
+
+        # Issue #1169: Use read-set-aware invalidation when available
+        read_set_cache = getattr(self, "_read_set_cache", None)
+        if read_set_cache is not None:
+            revision = self._get_zone_revision()
+            zone_id = getattr(self, "zone_id", None)
+            count = read_set_cache.invalidate_for_write(
+                virtual_path, revision, zone_id=zone_id
+            )
+            logger.debug(
+                f"Cache invalidated (read-set): {virtual_path} ({count} entries)"
+            )
+        else:
+            cache.invalidate_path(virtual_path)
+            logger.debug(f"Cache invalidated: {virtual_path}")
 
     def _handle_cache_invalidation_event(
         self, event_type: Any, path: str, old_path: str | None

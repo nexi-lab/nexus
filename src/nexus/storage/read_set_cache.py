@@ -30,7 +30,7 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.read_set import ReadSet, ReadSetRegistry
-from nexus.storage.cache import MetadataCache, _CACHE_MISS
+from nexus.storage.cache import _CACHE_MISS, MetadataCache
 
 if TYPE_CHECKING:
     from nexus.core._metadata_generated import FileMetadata

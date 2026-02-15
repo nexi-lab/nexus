@@ -147,6 +147,50 @@ class ZoneAwareMetadataStore(FileMetadataProtocol):
         resolved = self._resolve(path)
         return resolved.store.exists(resolved.path)
 
+    def _walk_mount_tree(
+        self,
+        resolved: ResolvedPath,
+        recursive: bool,
+        **kwargs: Any,
+    ) -> list[FileMetadata]:
+        """List entries with iterative BFS into child DT_MOUNTs (stack-safe).
+
+        When recursive=True, discovered DT_MOUNT entries are traversed to
+        include files from child zones. A visited set prevents cycles
+        (e.g. zone A mounts B, B mounts A).
+        """
+        results = resolved.store.list(resolved.path, recursive, **kwargs)
+        remapped = [self._remap_metadata(m, resolved.mount_chain) for m in results]
+
+        if not recursive:
+            return remapped
+
+        # BFS queue: (mount_chain, zone_id)
+        visited: set[str] = {resolved.zone_id}
+        queue: list[tuple[list[tuple[str, str]], str]] = []
+
+        for meta in results:
+            if meta.is_mount and meta.target_zone_id and meta.target_zone_id not in visited:
+                queue.append(
+                    (resolved.mount_chain + [(resolved.zone_id, meta.path)], meta.target_zone_id)
+                )
+                visited.add(meta.target_zone_id)
+
+        while queue:
+            mount_chain, zone_id = queue.pop(0)
+            store = self._resolver._zone_manager.get_store(zone_id)
+            if store is None:
+                logger.warning("Mount target zone '%s' not found, skipping", zone_id)
+                continue
+            child_results = store.list("/", recursive, **kwargs)
+            for meta in child_results:
+                remapped.append(self._remap_metadata(meta, mount_chain))
+                if meta.is_mount and meta.target_zone_id and meta.target_zone_id not in visited:
+                    queue.append((mount_chain + [(zone_id, meta.path)], meta.target_zone_id))
+                    visited.add(meta.target_zone_id)
+
+        return remapped
+
     def list(
         self,
         prefix: str = "",
@@ -155,8 +199,7 @@ class ZoneAwareMetadataStore(FileMetadataProtocol):
     ) -> list[FileMetadata]:
         resolve_path = prefix if prefix else "/"
         resolved = self._resolve(resolve_path)
-        results = resolved.store.list(resolved.path, recursive, **kwargs)
-        return [self._remap_metadata(m, resolved.mount_chain) for m in results]
+        return self._walk_mount_tree(resolved, recursive, **kwargs)
 
     def list_iter(
         self,
@@ -166,8 +209,7 @@ class ZoneAwareMetadataStore(FileMetadataProtocol):
     ) -> Iterator[FileMetadata]:
         resolve_path = prefix if prefix else "/"
         resolved = self._resolve(resolve_path)
-        for meta in resolved.store.list_iter(resolved.path, recursive, **kwargs):
-            yield self._remap_metadata(meta, resolved.mount_chain)
+        yield from self._walk_mount_tree(resolved, recursive, **kwargs)
 
     def list_paginated(
         self,

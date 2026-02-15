@@ -505,6 +505,9 @@ class NamespaceManager:
         try:
             revision = self._rebac_manager._get_zone_revision(zone_id)
         except Exception:
+            # Broad catch is intentional: fail-safe for thread-isolated SQLite
+            # (sqlite3.OperationalError) and any other DB errors. Returns 0
+            # which causes a dcache miss — safe because it triggers a fresh check.
             return 0
         return revision // self._revision_window
 
@@ -543,6 +546,7 @@ class NamespaceManager:
                     try:
                         current_revision = self._rebac_manager._get_zone_revision(zone_id)
                     except Exception:
+                        # Broad catch: fail-safe for thread-isolated SQLite
                         current_revision = 0
                     current_bucket = current_revision // self._revision_window
                     if view.revision_bucket == current_bucket:
@@ -566,6 +570,7 @@ class NamespaceManager:
                         )
                         return restored_entries, restored_paths
             except Exception:
+                # Broad catch: fail-safe for thread-isolated SQLite and persistent store errors
                 logger.warning(
                     "[NAMESPACE] L3 persistent view load failed for %s:%s, "
                     "falling through to ReBAC rebuild",
@@ -628,6 +633,7 @@ class NamespaceManager:
                 limit=10_000,  # Generous limit — most subjects have <1000 grants
             )
         except Exception:
+            # Broad catch: fail-closed on any DB/runtime error (incl. thread-isolated SQLite)
             logger.exception(
                 f"[NAMESPACE] Failed to rebuild mount table for {subject_type}:{subject_id}"
             )
@@ -649,6 +655,7 @@ class NamespaceManager:
         try:
             current_revision = self._rebac_manager._get_zone_revision(zone_id)
         except Exception:
+            # Broad catch: fail-safe for thread-isolated SQLite
             logger.warning(f"[NAMESPACE] Failed to get zone revision for {zone_id}, using 0")
             current_revision = 0
 
@@ -674,11 +681,12 @@ class NamespaceManager:
                     grants_hash=grants_hash,
                     revision_bucket=revision_bucket,
                 )
-            except Exception:
+            except (OSError, RuntimeError) as e:
                 logger.warning(
-                    "[NAMESPACE] L3 persistent view save failed for %s:%s",
+                    "[NAMESPACE] L3 persistent view save failed for %s:%s: %s",
                     subject_type,
                     subject_id,
+                    e,
                 )
 
         elapsed_ms = (time.perf_counter() - start) * 1000
@@ -705,6 +713,7 @@ class NamespaceManager:
         try:
             current_revision = self._rebac_manager._get_zone_revision(zone_id)
         except Exception:
+            # Broad catch: fail-safe for thread-isolated SQLite
             logger.warning(
                 "[NAMESPACE] Failed to get zone revision for freshness check, treating as stale"
             )

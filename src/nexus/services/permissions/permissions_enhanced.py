@@ -20,6 +20,8 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 # Import Permission and OperationContext from the original module (don't duplicate)
+from sqlalchemy.exc import OperationalError, ProgrammingError
+
 from nexus.core.permissions import OperationContext, PermissionEnforcer
 
 if TYPE_CHECKING:
@@ -217,7 +219,7 @@ class AuditStore:
                             )
                         )
                         conn.commit()
-        except Exception:
+        except (OperationalError, ProgrammingError):
             # If table creation fails, it might already exist or migrations handle it
             pass
 

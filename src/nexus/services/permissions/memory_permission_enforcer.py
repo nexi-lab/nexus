@@ -20,6 +20,7 @@ from nexus.core.permissions import (
     PermissionEnforcer,
 )
 from nexus.services.permissions.entity_registry import EntityRegistry
+from nexus.services.permissions.utils.zone import normalize_zone_id
 from nexus.storage.models import MemoryModel
 
 if TYPE_CHECKING:
@@ -174,7 +175,7 @@ class MemoryPermissionEnforcer(PermissionEnforcer):
                 return False
 
             # P0-4: Pass zone_id for multi-zone isolation
-            zone_id = context.zone_id or "default"
+            zone_id = normalize_zone_id(context.zone_id)
 
             # 5a. Direct permission check
             if self.rebac_manager.rebac_check(

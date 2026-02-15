@@ -20,9 +20,12 @@ Usage:
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from nexus.core.path_utils import get_ancestors, get_parent, get_parent_chain
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
@@ -453,9 +456,6 @@ class HierarchyManager:
 
             # Log progress for large operations (only if multiple batches)
             if total_batches > 1:
-                import logging
-
-                logger = logging.getLogger(__name__)
                 logger.info(
                     f"[HIERARCHY] Processing batch {batch_idx}/{total_batches}: "
                     f"tuples {i + 1}-{batch_end} of {len(unique_tuples)}"

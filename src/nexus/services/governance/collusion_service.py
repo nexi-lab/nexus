@@ -64,14 +64,21 @@ class CollusionService:
         self,
         zone_id: str,
         since: datetime | None = None,
+        *,
+        _edges: list[GovernanceEdge] | None = None,
     ) -> nx.DiGraph:
         """Build a NetworkX DiGraph from stored governance edges.
 
         Zone-scoped with size limits to prevent OOM.
+
+        Args:
+            zone_id: Zone to build graph for
+            since: Optional time filter for edges
+            _edges: Pre-loaded edges (avoids duplicate DB query)
         """
         import networkx as nx
 
-        edges = await self._load_edges(zone_id, since)
+        edges = _edges if _edges is not None else await self._load_edges(zone_id, since)
 
         g = nx.DiGraph()
         for edge in edges[: self._max_edges]:
@@ -93,15 +100,24 @@ class CollusionService:
 
         return g
 
-    async def detect_rings(self, zone_id: str) -> list[FraudRing]:
+    async def detect_rings(
+        self,
+        zone_id: str,
+        *,
+        _graph: nx.DiGraph | None = None,
+    ) -> list[FraudRing]:
         """Detect transaction rings (cycles) in the interaction graph.
 
         Uses Johnson's algorithm (nx.simple_cycles) to find all simple cycles
         with length between 3 and max_cycle_length.
+
+        Args:
+            zone_id: Zone to detect rings in
+            _graph: Pre-built graph (avoids duplicate edge load)
         """
         import networkx as nx
 
-        graph = await self.build_interaction_graph(zone_id)
+        graph = _graph if _graph is not None else await self.build_interaction_graph(zone_id)
 
         if graph.number_of_nodes() == 0:
             return []
@@ -184,12 +200,16 @@ class CollusionService:
         """
         now = datetime.now(UTC)
 
-        # Get rings and trust scores
-        rings = await self.detect_rings(zone_id)
+        # Load edges once and reuse for both ring detection and trust computation
+        # (Issue #1459: previously loaded edges twice — once in detect_rings, once here)
         edges = await self._load_edges(zone_id)
 
         if not edges:
             return {}
+
+        # Build graph and detect rings from pre-loaded edges
+        graph = await self.build_interaction_graph(zone_id, _edges=edges)
+        rings = await self.detect_rings(zone_id, _graph=graph)
 
         # Build trust scores
         node_set: set[str] = set()

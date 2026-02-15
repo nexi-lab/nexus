@@ -21,6 +21,7 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.permissions import OperationContext, Permission, check_stale_session
+from nexus.services.permissions.utils.zone import normalize_zone_id
 
 if TYPE_CHECKING:
     from nexus.services.permissions.async_rebac_manager import AsyncReBACManager
@@ -113,7 +114,7 @@ class AsyncPermissionEnforcer:
         permission_name = self._permission_to_name(permission)
 
         # Check ReBAC permission
-        zone_id = context.zone_id or "default"
+        zone_id = normalize_zone_id(context.zone_id)
         subject = context.get_subject()
 
         logger.debug(
@@ -210,7 +211,7 @@ class AsyncPermissionEnforcer:
         if not self.rebac_manager:
             return paths
 
-        zone_id = context.zone_id or "default"
+        zone_id = normalize_zone_id(context.zone_id)
         subject = context.get_subject()
 
         # Issue #1239 + #1244: Namespace pre-filter with dcache-accelerated batch lookup.

@@ -466,7 +466,7 @@ class HotspotPrefetcher:
                     f"-> {entry.permission} (priority=1)"
                 )
 
-            except Exception as e:
+            except (RuntimeError, ValueError, KeyError) as e:
                 logger.warning(
                     f"[HOTSPOT] Failed to queue prefetch for {entry.subject_type}:{entry.subject_id}: {e}"
                 )

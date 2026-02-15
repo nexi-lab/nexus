@@ -13,6 +13,7 @@ Storage Affinity (per data-storage-matrix.md):
     - EventLogProtocol       → RecordStore (append-only BRIN audit log)
     - HookEngineProtocol     → CacheStore (ephemeral hook registration)
     - NamespaceManagerProtocol → RecordStore + CacheStore (ReBAC views)
+    - PermissionProtocol     → RecordStore (Zanzibar relationship tuples)
     - SchedulerProtocol      → CacheStore or RecordStore (work queue)
 
 References:
@@ -41,6 +42,7 @@ from nexus.services.protocols.hook_engine import (
     HookSpec,
 )
 from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol, NamespaceMount
+from nexus.services.protocols.permission import PermissionProtocol
 from nexus.services.protocols.scheduler import AgentRequest, SchedulerProtocol
 
 __all__ = [
@@ -58,6 +60,7 @@ __all__ = [
     "KernelEvent",
     "NamespaceManagerProtocol",
     "NamespaceMount",
+    "PermissionProtocol",
     "POST_COPY",
     "POST_DELETE",
     "POST_MKDIR",

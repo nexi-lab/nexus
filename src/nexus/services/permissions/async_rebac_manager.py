@@ -36,6 +36,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import text
+from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from nexus.core.rebac import (
@@ -847,7 +848,7 @@ class AsyncReBACManager:
                     logger.debug(
                         f"[LEOPARD] Added {leopard_count} synthetic membership tuples from closure"
                     )
-            except Exception as e:
+            except (OperationalError, ProgrammingError) as e:
                 # Leopard table may not exist in older databases - graceful fallback
                 logger.debug(f"[LEOPARD] Closure lookup failed (table may not exist): {e}")
 
@@ -1077,7 +1078,7 @@ class AsyncReBACManager:
                         f"[LEOPARD] Added closure: {subject[0]}:{subject[1]} -> "
                         f"{object[0]}:{object[1]}"
                     )
-                except Exception as e:
+                except (OperationalError, ProgrammingError) as e:
                     # Leopard table may not exist - graceful fallback
                     logger.debug(f"[LEOPARD] Closure update failed: {e}")
 
@@ -1151,7 +1152,7 @@ class AsyncReBACManager:
                         f"[LEOPARD] Removed closure: {subject[0]}:{subject[1]} -> "
                         f"{object[0]}:{object[1]}"
                     )
-                except Exception as e:
+                except (OperationalError, ProgrammingError) as e:
                     logger.debug(f"[LEOPARD] Closure delete failed: {e}")
 
         # Invalidate L1 cache

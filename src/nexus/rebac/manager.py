@@ -45,7 +45,10 @@ from nexus.rebac.consistency.revision import (
     get_zone_revision_for_grant,
     increment_version_token,
 )
-from nexus.rebac.consistency.zone_manager import ZoneManager
+from nexus.rebac.consistency.zone_manager import (
+    ZoneIsolationError,  # noqa: F401 — re-exported for backward compat
+    ZoneManager,
+)
 from nexus.rebac.directory.expander import DirectoryExpander
 from nexus.rebac.graph.bulk_evaluator import (
     check_direct_relation as _check_direct_relation_in_graph,
@@ -128,7 +131,7 @@ class ReBACManager:
         engine: Engine,
         cache_ttl_seconds: int = 300,
         max_depth: int = 50,
-        enforce_zone_isolation: bool = True,
+        enforce_zone_isolation: bool = False,
         enable_graph_limits: bool = True,
         enable_leopard: bool = True,
         enable_tiger_cache: bool = True,
@@ -1783,10 +1786,9 @@ class ReBACManager:
         # Ensure default namespaces are initialized
         self._ensure_namespaces_initialized()
 
-        # If zone isolation is disabled, use base ReBACManager implementation
+        # If zone isolation is disabled, use base write implementation
         if not self.enforce_zone_isolation:
-            return ReBACManager.rebac_write(
-                self,
+            return self._rebac_write_base(
                 subject=subject,
                 relation=relation,
                 object=object,
@@ -1949,9 +1951,9 @@ class ReBACManager:
         Returns:
             List of (subject_type, subject_id) tuples within zone
         """
-        # If zone isolation is disabled, use base ReBACManager implementation
+        # If zone isolation is disabled, use base expand implementation
         if not self.enforce_zone_isolation:
-            return ReBACManager.rebac_expand(self, permission, object)
+            return self._expander.expand(permission, object)
 
         if not zone_id:
             zone_id = "default"
@@ -3538,6 +3540,146 @@ class ReBACManager:
         TupleRepository.validate_cross_zone(zone_id, subject_zone_id, object_zone_id)
 
 # ====================================================================================
+# Write (Base implementation — no zone-aware wrapping)
+# ====================================================================================
+
+    def _rebac_write_base(
+        self,
+        subject: tuple[str, str] | tuple[str, str, str],
+        relation: str,
+        object: tuple[str, str],
+        expires_at: datetime | None = None,
+        conditions: dict[str, Any] | None = None,
+        zone_id: str | None = None,
+        subject_zone_id: str | None = None,
+        object_zone_id: str | None = None,
+    ) -> str:
+        """Base tuple write — no zone-aware wrapping.
+
+        Used when ``enforce_zone_isolation`` is False.
+        """
+        self._ensure_namespaces_initialized()
+
+        tuple_id = str(uuid.uuid4())
+
+        # Parse subject (support userset-as-subject with 3-tuple)
+        if len(subject) == 3:
+            subject_type, subject_id, subject_relation = subject
+            subject_entity = Entity(subject_type, subject_id)
+        elif len(subject) == 2:
+            subject_type, subject_id = subject
+            subject_relation = None
+            subject_entity = Entity(subject_type, subject_id)
+        else:
+            raise ValueError(f"subject must be 2-tuple or 3-tuple, got {len(subject)}-tuple")
+        object_entity = Entity(object[0], object[1])
+
+        if zone_id is None:
+            zone_id = "default"
+        if subject_zone_id is None:
+            subject_zone_id = zone_id
+        if object_zone_id is None:
+            object_zone_id = zone_id
+
+        self._validate_cross_zone(zone_id, subject_zone_id, object_zone_id)
+
+        with self._connection() as conn:
+            if relation == "parent" and self._would_create_cycle_with_conn(
+                conn, subject_entity, object_entity, zone_id
+            ):
+                raise ValueError(
+                    f"Cycle detected: Creating parent relation from "
+                    f"{subject_entity.entity_type}:{subject_entity.entity_id} to "
+                    f"{object_entity.entity_type}:{object_entity.entity_id} would create a cycle"
+                )
+            cursor = self._create_cursor(conn)
+
+            cursor.execute(
+                self._fix_sql_placeholders(
+                    """
+                    SELECT tuple_id FROM rebac_tuples
+                    WHERE subject_type = ? AND subject_id = ?
+                    AND (subject_relation = ? OR (subject_relation IS NULL AND ? IS NULL))
+                    AND relation = ?
+                    AND object_type = ? AND object_id = ?
+                    AND (zone_id = ? OR (zone_id IS NULL AND ? IS NULL))
+                    """
+                ),
+                (
+                    subject_entity.entity_type,
+                    subject_entity.entity_id,
+                    subject_relation,
+                    subject_relation,
+                    relation,
+                    object_entity.entity_type,
+                    object_entity.entity_id,
+                    zone_id,
+                    zone_id,
+                ),
+            )
+            existing = cursor.fetchone()
+            if existing:
+                return cast(
+                    str, existing[0] if isinstance(existing, tuple) else existing["tuple_id"]
+                )
+
+            cursor.execute(
+                self._fix_sql_placeholders(
+                    """
+                    INSERT INTO rebac_tuples (
+                        tuple_id, subject_type, subject_id, subject_relation, relation,
+                        object_type, object_id, created_at, expires_at, conditions,
+                        zone_id, subject_zone_id, object_zone_id
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """
+                ),
+                (
+                    tuple_id,
+                    subject_entity.entity_type,
+                    subject_entity.entity_id,
+                    subject_relation,
+                    relation,
+                    object_entity.entity_type,
+                    object_entity.entity_id,
+                    datetime.now(UTC).isoformat(),
+                    expires_at.isoformat() if expires_at else None,
+                    json.dumps(conditions) if conditions else None,
+                    zone_id,
+                    subject_zone_id,
+                    object_zone_id,
+                ),
+            )
+
+            insert_changelog_entry(
+                cursor, self._fix_sql_placeholders,
+                change_type="INSERT",
+                tuple_id=tuple_id,
+                subject_type=subject_entity.entity_type,
+                subject_id=subject_entity.entity_id,
+                relation=relation,
+                object_type=object_entity.entity_type,
+                object_id=object_entity.entity_id,
+                zone_id=zone_id or "default",
+            )
+
+            self._increment_zone_revision(zone_id, conn)
+            conn.commit()
+            self._tuple_version += 1
+
+            self._invalidate_cache_for_tuple(
+                subject_entity, relation, object_entity, zone_id,
+                subject_relation, expires_at, conn=conn,
+            )
+
+            if subject_zone_id is not None and subject_zone_id != zone_id:
+                self._invalidate_cache_for_tuple(
+                    subject_entity, relation, object_entity, subject_zone_id,
+                    subject_relation, expires_at, conn=conn,
+                )
+
+        return tuple_id
+
 # Write Batch (Renamed from rebac_write_batch)
 # ====================================================================================
 
@@ -5939,10 +6081,6 @@ class ReBACManager:
 # Backward Compatibility Alias
 # ====================================================================================
 
-# Alias for backward compatibility (will be removed in v2.0)
-# This allows existing code that imports `EnhancedReBACManager` to continue working
-# EnhancedReBACManager = ReBACManager
-
-
-# Backward-compat alias (Issue #1385)
+# Backward-compat aliases (Issue #1385)
 EnhancedReBACManager = ReBACManager
+ZoneAwareReBACManager = ReBACManager

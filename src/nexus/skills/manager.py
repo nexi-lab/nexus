@@ -1,7 +1,5 @@
 """Skill lifecycle management: create, fork, publish, and versioning."""
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import logging
@@ -9,21 +7,21 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from nexus.skills.exceptions import SkillPermissionDeniedError, SkillValidationError
+from nexus.core.exceptions import PermissionDeniedError, ValidationError
+from nexus.core.permissions import OperationContext
 from nexus.skills.models import SkillMetadata
 from nexus.skills.parser import SkillParser
 from nexus.skills.protocols import NexusFilesystem
 from nexus.skills.registry import SkillNotFoundError, SkillRegistry
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
     from nexus.rebac.manager import ReBACManager
     from nexus.skills.governance import SkillGovernance
 
 logger = logging.getLogger(__name__)
 
 
-class SkillManagerError(SkillValidationError):
+class SkillManagerError(ValidationError):
     """Raised when skill management operations fail."""
 
     pass
@@ -69,8 +67,8 @@ class SkillManager:
         self,
         filesystem: NexusFilesystem | None = None,
         registry: SkillRegistry | None = None,
-        rebac_manager: ReBACManager | None = None,
-        governance: SkillGovernance | None = None,
+        rebac_manager: "ReBACManager | None" = None,
+        governance: "SkillGovernance | None" = None,
     ):
         """Initialize skill manager.
 
@@ -153,7 +151,7 @@ class SkillManager:
 
         try:
             # Get zone_id from context if not provided
-            effective_zone_id = zone_id or (context.zone_id if context else None) or "root"
+            effective_zone_id = zone_id or (context.zone_id if context else None) or "default"
 
             # For user-level skills: Owner gets direct_owner on the skill directory
             # This allows them full control (read, write, delete)
@@ -186,7 +184,7 @@ class SkillManager:
                     subject=("role", "public"),
                     relation="viewer",
                     object=("file", skill_dir.rstrip("/")),
-                    zone_id="root",  # System skills use root zone
+                    zone_id="default",  # System skills use default zone
                 )
                 logger.debug(f"Created public viewer permission on {skill_dir}")
 
@@ -231,7 +229,7 @@ class SkillManager:
 
         Raises:
             SkillManagerError: If creation fails
-            SkillPermissionDeniedError: If creator lacks permission
+            PermissionDeniedError: If creator lacks permission
 
         Example:
             >>> path = await manager.create_skill(
@@ -251,9 +249,12 @@ class SkillManager:
 
         # Validate tier
         if tier not in tier_paths:
-            raise SkillManagerError(
-                f"Invalid tier '{tier}'. Must be one of: {list(tier_paths.keys())}"
-            )
+            # Fall back to static paths for backward compatibility
+            if tier not in SkillRegistry.TIER_PATHS:
+                raise SkillManagerError(
+                    f"Invalid tier '{tier}'. Must be one of: {list(SkillRegistry.TIER_PATHS.keys())}"
+                )
+            tier_paths = SkillRegistry.TIER_PATHS
 
         # Permission check: System tier requires admin (simplified for now)
         if tier == "system" and self._rebac and creator_id:
@@ -396,9 +397,12 @@ class SkillManager:
 
         # Validate tier
         if tier not in tier_paths:
-            raise SkillManagerError(
-                f"Invalid tier '{tier}'. Must be one of: {list(tier_paths.keys())}"
-            )
+            # Fall back to static paths for backward compatibility
+            if tier not in SkillRegistry.TIER_PATHS:
+                raise SkillManagerError(
+                    f"Invalid tier '{tier}'. Must be one of: {list(SkillRegistry.TIER_PATHS.keys())}"
+                )
+            tier_paths = SkillRegistry.TIER_PATHS
 
         # Get tier path (context-aware)
         tier_path = tier_paths[tier]
@@ -511,7 +515,7 @@ class SkillManager:
         Raises:
             SkillNotFoundError: If source skill not found
             SkillManagerError: If fork fails
-            SkillPermissionDeniedError: If creator lacks read permission on source
+            PermissionDeniedError: If creator lacks read permission on source
 
         Example:
             >>> path = await manager.fork_skill(
@@ -530,7 +534,7 @@ class SkillManager:
         if creator_id and not await self._check_permission(
             creator_type, creator_id, "fork", source_name, zone_id
         ):
-            raise SkillPermissionDeniedError(
+            raise PermissionDeniedError(
                 f"No permission to fork skill '{source_name}'. "
                 f"Subject ({creator_type}:{creator_id}) lacks 'fork' permission."
             )
@@ -665,7 +669,7 @@ class SkillManager:
         Raises:
             SkillNotFoundError: If skill not found in source tier
             SkillManagerError: If publish fails
-            SkillPermissionDeniedError: If publisher lacks publish permission
+            PermissionDeniedError: If publisher lacks publish permission
 
         Example:
             >>> # Publish agent skill to zone library
@@ -706,7 +710,7 @@ class SkillManager:
         if publisher_id and not await self._check_permission(
             publisher_type, publisher_id, "publish", name, zone_id
         ):
-            raise SkillPermissionDeniedError(
+            raise PermissionDeniedError(
                 f"No permission to publish skill '{name}'. "
                 f"Subject ({publisher_type}:{publisher_id}) lacks 'publish' permission."
             )

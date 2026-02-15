@@ -16,8 +16,8 @@ from nexus.core.workspace_manifest import WorkspaceManifest
 from nexus.storage.models import WorkspaceSnapshotModel
 
 if TYPE_CHECKING:
+    from nexus.backends.backend import Backend
     from nexus.core._metadata_generated import FileMetadataProtocol
-    from nexus.core.protocols.connector import ConnectorProtocol
     from nexus.rebac.manager import ReBACManager
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ class WorkspaceManager:
     def __init__(
         self,
         metadata: FileMetadataProtocol,
-        backend: ConnectorProtocol,
+        backend: Backend,
         rebac_manager: ReBACManager | None = None,
         zone_id: str | None = None,
         agent_id: str | None = None,

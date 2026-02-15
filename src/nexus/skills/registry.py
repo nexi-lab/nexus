@@ -1,34 +1,29 @@
 """Skill registry with progressive disclosure and lazy loading."""
 
-from __future__ import annotations
-
 import logging
 from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from nexus.skills.exceptions import (
-    SkillPermissionDeniedError,
-    SkillValidationError,
-)
+from nexus.core.exceptions import PermissionDeniedError, ValidationError
+from nexus.core.permissions import OperationContext
 from nexus.skills.models import Skill, SkillMetadata
 from nexus.skills.parser import SkillParseError, SkillParser
 from nexus.skills.protocols import NexusFilesystem
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
     from nexus.rebac.manager import ReBACManager
 
 logger = logging.getLogger(__name__)
 
 
-class SkillNotFoundError(SkillValidationError):
+class SkillNotFoundError(ValidationError):
     """Raised when a skill is not found in the registry."""
 
     pass
 
 
-class SkillDependencyError(SkillValidationError):
+class SkillDependencyError(ValidationError):
     """Raised when skill dependencies cannot be resolved."""
 
     pass
@@ -70,33 +65,29 @@ class SkillRegistry:
         "system": "/skill/",
     }
 
-    @classmethod
-    def get_tier_paths(cls, context: OperationContext | None = None) -> dict[str, str]:
+    @staticmethod
+    def get_tier_paths(context: OperationContext | None = None) -> dict[str, str]:
         """Get context-aware tier paths for skill discovery.
-
-        Always includes TIER_PATHS as baseline defaults. When a context is
-        provided, context-aware paths override the defaults for their tier.
 
         Structure (new namespace convention):
             /skill/                                            - System-wide skills (priority 1)
             /zone/{zone_id}/skill/                           - Zone shared skills (priority 2)
             /zone/{zone_id}/user/{user_id}/skill/            - User personal skills (priority 3)
 
-        Without context, falls back to TIER_PATHS which provides default
-        paths for user, zone, and system tiers.
+        Legacy paths (for backward compatibility):
+            /skills/zones/{zone_id}/                          - Old zone path
+            /skills/users/{user_id}/                            - Old user path
 
         Args:
             context: Operation context with user_id, zone_id, agent_id
 
         Returns:
-            Dict mapping tier name to path (all tiers from TIER_PATHS plus
-            any context-specific overrides)
+            Dict mapping tier name to path (only tiers available for this context)
         """
-        # Start with static TIER_PATHS as baseline defaults
-        paths: dict[str, str] = {**cls.TIER_PATHS}
+        paths = {"system": "/skill/"}
 
         if context:
-            zone_id = context.zone_id or "root"
+            zone_id = context.zone_id or "default"
 
             # Zone-level skills: /zone/{tid}/skill/
             paths["zone"] = f"/zone/{zone_id}/skill/"
@@ -106,13 +97,11 @@ class SkillRegistry:
             if user_id:
                 # Personal skills: /zone/{tid}/user/{uid}/skill/
                 paths["personal"] = f"/zone/{zone_id}/user/{user_id}/skill/"
-                # Override the default user path with context-aware path
-                paths["user"] = f"/zone/{zone_id}/user/{user_id}/skill/"
 
         return paths
 
     def __init__(
-        self, filesystem: NexusFilesystem | None = None, rebac_manager: ReBACManager | None = None
+        self, filesystem: NexusFilesystem | None = None, rebac_manager: "ReBACManager | None" = None
     ):
         """Initialize skill registry.
 
@@ -160,14 +149,18 @@ class SkillRegistry:
         """
         tier_paths = self.get_tier_paths(context)
 
+        # Merge with static TIER_PATHS for backward compatibility
+        # Context-aware paths take precedence over static paths
+        merged_paths = {**self.TIER_PATHS, **tier_paths}
+
         if tiers is None:
-            tiers = list(tier_paths.keys())
+            tiers = list(merged_paths.keys())
 
         discovered_count = 0
 
         # Discover from each tier (in priority order - higher priority first)
         for tier in sorted(tiers, key=lambda t: self.TIER_PRIORITY.get(t, 0), reverse=True):
-            tier_path = tier_paths.get(tier)
+            tier_path = merged_paths.get(tier)
             if not tier_path:
                 logger.debug(f"Tier {tier} not available for context")
                 continue
@@ -351,7 +344,7 @@ class SkillRegistry:
 
         Raises:
             SkillNotFoundError: If skill not found
-            SkillPermissionDeniedError: If subject lacks read permission
+            PermissionDeniedError: If subject lacks read permission
 
         Example:
             >>> ctx = OperationContext(user_id="alice", zone_id="acme")
@@ -380,11 +373,11 @@ class SkillRegistry:
                         zone_id=context.zone_id,
                     )
                     if not has_permission:
-                        raise SkillPermissionDeniedError(
+                        raise PermissionDeniedError(
                             f"No permission to read skill '{name}'. "
                             f"Subject ({subject_type}:{subject_id}) lacks 'read' permission."
                         )
-                except SkillPermissionDeniedError:
+                except PermissionDeniedError:
                     # Re-raise permission errors
                     raise
                 except Exception as e:

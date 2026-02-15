@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from nexus.backends.local import LocalBackend
-from nexus.core.exceptions import NexusFileNotFoundError
+from nexus.core.exceptions import NotFoundError
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -127,7 +127,7 @@ class TestTimeTravelDebug:
             assert state_before["content"] == b"Content before delete"
 
             # Cannot read file at delete operation (it's been deleted)
-            with pytest.raises(NexusFileNotFoundError):
+            with pytest.raises(NotFoundError):
                 time_travel.get_file_at_operation(path, op_delete)
 
     def test_time_travel_list_directory(self, nx, record_store):
@@ -278,12 +278,12 @@ class TestTimeTravelDebug:
 
     def test_time_travel_with_agent_id(self, nx, record_store):
         """Test time-travel with agent-specific operations using context parameter."""
-        from nexus.core.types import OperationContext
+        from nexus.rebac.permissions_enhanced import EnhancedOperationContext
         from nexus.storage.operation_logger import OperationLogger
         from nexus.storage.time_travel import TimeTravelReader
 
         # Use context parameter with agent ID
-        context = OperationContext(user="test", groups=[], agent_id="agent-1")
+        context = EnhancedOperationContext(user="test", groups=[], agent_id="agent-1")
 
         path = "/workspace/agent_file.txt"
         nx.write(path, b"Agent 1 content", context=context)
@@ -296,15 +296,13 @@ class TestTimeTravelDebug:
             assert len(ops) == 1
             assert ops[0].agent_id == "agent-1"
             op_id = ops[0].operation_id
+            op_zone_id = ops[0].zone_id
 
             # Create time-travel reader
             time_travel = TimeTravelReader(session, nx.backend)
 
-            # Read file at operation (no zone_id filter — this test validates
-            # agent_id tracking, not zone isolation. The OperationLogModel and
-            # FilePathModel may record different zone_id values when context
-            # has zone_id=None, so omitting zone_id avoids a false mismatch.)
-            state = time_travel.get_file_at_operation(path, op_id)
+            # Read file at operation (use the operation's zone_id)
+            state = time_travel.get_file_at_operation(path, op_id, zone_id=op_zone_id)
             assert state["content"] == b"Agent 1 content"
 
     def test_time_travel_nonexistent_operation(self, nx, record_store):
@@ -315,7 +313,7 @@ class TestTimeTravelDebug:
             time_travel = TimeTravelReader(session, nx.backend)
 
             # Try to read with fake operation ID
-            with pytest.raises(NexusFileNotFoundError):
+            with pytest.raises(NotFoundError):
                 time_travel.get_operation_by_id("fake-operation-id")
 
     def test_time_travel_metadata_preservation(self, nx, record_store):

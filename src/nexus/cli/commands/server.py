@@ -368,17 +368,12 @@ def _mount_fuse(
             # log_file must be set when daemon=True
             assert log_file is not None, "log_file must be set in daemon mode"
 
-            # Configure logging to file with secret redaction (Issue #86)
-            from nexus.core.logging_utils import RedactingFormatter
-
-            _fuse_formatter = RedactingFormatter(
-                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+            # Configure logging to file
+            logging.basicConfig(
+                filename=log_file,
+                level=logging.DEBUG if debug else logging.INFO,
+                format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
             )
-            _fuse_handler = logging.FileHandler(log_file)
-            _fuse_handler.setFormatter(_fuse_formatter)
-            logging.root.handlers.clear()
-            logging.root.addHandler(_fuse_handler)
-            logging.root.setLevel(logging.DEBUG if debug else logging.INFO)
 
             # Redirect stdout/stderr to log file (for any print statements or uncaught errors)
             sys.stdout = open(log_file, "a")  # noqa: SIM115
@@ -593,13 +588,11 @@ def serve(
     import os
     import subprocess
 
-    from nexus.core.logging_utils import setup_logging
-
-    # Set up logging with secret redaction (Issue #86)
-    # Read redaction setting from env var (config hasn't loaded yet at this point)
-    _redaction_env = os.getenv("NEXUS_LOG_REDACTION_ENABLED", "true").lower()
-    _redaction_enabled = _redaction_env in ("true", "1", "yes", "on")
-    setup_logging(level=logging.INFO, redaction_enabled=_redaction_enabled)
+    # Set up logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
 
     try:
         # ============================================
@@ -1246,8 +1239,8 @@ def serve(
             from sqlalchemy import create_engine
             from sqlalchemy.orm import sessionmaker
 
-            from nexus.rebac.entity_registry import EntityRegistry
             from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+            from nexus.rebac.entity_registry import EntityRegistry
 
             engine = create_engine(db_url)
             Session = sessionmaker(bind=engine)

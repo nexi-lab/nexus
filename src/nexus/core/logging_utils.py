@@ -1,17 +1,5 @@
 """Logging utilities for Nexus error classification and secret redaction.
 
-<<<<<<< Updated upstream
-.. deprecated::
-    This module's functions still work but are superseded by the
-    ``error_classification_processor`` in ``nexus.server.logging_processors``
-    (Issue #1002). With structlog configured, error classification is automatic
-    via the processor pipeline — no need to call ``log_error()`` manually.
-
-This module provides utilities for logging errors based on their classification
-(expected vs unexpected), enabling cleaner logs and better observability.
-
-Usage (legacy):
-=======
 This module provides:
 - Error classification logging (log_error, log_exception)
 - Secret redaction via RedactingFormatter (Issue #86)
@@ -32,7 +20,6 @@ Secret Redaction (Issue #86):
         # Output: "Connected to [REDACTED]"
 
 Error Classification:
->>>>>>> Stashed changes
     from nexus.core.logging_utils import log_error
 
     try:

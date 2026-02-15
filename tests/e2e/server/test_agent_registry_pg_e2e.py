@@ -32,8 +32,8 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
-from nexus.services.agents.agent_record import AgentState
-from nexus.services.agents.agent_registry import (
+from nexus.core.agent_record import AgentState
+from nexus.core.agent_registry import (
     AgentRegistry,
     InvalidTransitionError,
     StaleAgentError,
@@ -343,12 +343,12 @@ class TestHeartbeatPostgreSQL:
 
         # Heartbeat should write to buffer
         pg_registry.heartbeat("e2e-heartbeat-1")
-        assert "e2e-heartbeat-1" in pg_registry._heartbeat_buffer._buffer
+        assert "e2e-heartbeat-1" in pg_registry._heartbeat_buffer
 
         # Flush should persist to PostgreSQL
         flushed = pg_registry.flush_heartbeats()
         assert flushed >= 1
-        assert pg_registry._heartbeat_buffer.stats()["buffer_size"] == 0
+        assert len(pg_registry._heartbeat_buffer) == 0
 
         # Verify persisted in PostgreSQL
         record = pg_registry.get("e2e-heartbeat-1")
@@ -615,8 +615,8 @@ class TestNamespaceE2E:
 
     def test_namespace_manager_with_postgres(self, pg_engine):
         """NamespaceManager works with PostgreSQL-backed ReBAC."""
-        from nexus.rebac.manager import EnhancedReBACManager
         from nexus.rebac.namespace_manager import NamespaceManager
+        from nexus.rebac.manager import EnhancedReBACManager
 
         rebac = EnhancedReBACManager(engine=pg_engine, cache_ttl_seconds=5, max_depth=10)
         tuple_ids: list[str] = []

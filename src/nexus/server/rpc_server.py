@@ -36,7 +36,6 @@ from nexus.core.exceptions import (
 )
 from nexus.core.filters import is_os_metadata_file
 from nexus.core.nexus_fs import NexusFS
-from nexus.core.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.core.virtual_views import (
     add_virtual_views_to_listing,
     get_parsed_content,
@@ -51,6 +50,8 @@ from nexus.server.protocol import (
     RPCErrorCode,
     RPCRequest,
     RPCResponse,
+    decode_rpc_message,
+    encode_rpc_message,
     parse_method_params,
 )
 
@@ -74,6 +75,10 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
     # handler instance per request, so do_POST/do_GET sets an instance attribute
     # that shadows this class default. Each thread has its own handler.
     _cached_auth_result: Any = None
+
+    # Legacy executor fields kept for backward compatibility (now unused — Issue #1300)
+    _async_executor: Any = None
+    _async_executor_lock: Any = None
 
     def log_message(self, format: str, *args: Any) -> None:
         """Override to use Python logging instead of stderr."""
@@ -192,6 +197,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                             "subject_id": context.subject_id,
                             "zone_id": context.zone_id,
                             "is_admin": context.is_admin,
+                            "user": context.user,  # For backward compatibility
                         },
                     )
                 else:
@@ -343,15 +349,18 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                     user_id = result.subject_id
 
                     # If agent_id provided and subject is user, validate agent ownership
-                    if agent_id and result.subject_type == "user":
+                    if (
+                        agent_id
+                        and result.subject_type == "user"
+                        and hasattr(self.nexus_fs, "entity_registry")
+                        and self.nexus_fs.entity_registry
+                    ):
                         # Validate agent belongs to user
-                        _agent_reg = getattr(self.nexus_fs, "_agent_registry", None)
-                        ownership_valid = True
-                        if _agent_reg is not None:
-                            ownership_valid = _agent_reg.validate_ownership(
-                                agent_id, result.subject_id
-                            )
-                        if not ownership_valid:
+                        from nexus.core.agents import validate_agent_ownership
+
+                        if not validate_agent_ownership(
+                            agent_id, result.subject_id, self.nexus_fs.entity_registry
+                        ):
                             logger.warning(
                                 f"Agent {agent_id} not owned by user {result.subject_id}, ignoring X-Agent-ID"
                             )
@@ -360,6 +369,8 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                     # For agent-authenticated requests (via API key), extract user and agent
                     if result.subject_type == "agent":
                         agent_id = result.subject_id
+                        # Get user from metadata (owner of the agent key)
+                        user_id = result.metadata.get("legacy_user_id", result.subject_id)
 
                     # Determine the subject for permission checking
                     # If X-Agent-ID header is provided and validated, use agent as subject
@@ -479,8 +490,8 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         import uuid
         from datetime import timedelta
 
-        from nexus.rebac.entity_registry import EntityRegistry
         from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+        from nexus.rebac.entity_registry import EntityRegistry
 
         if not self.auth_provider or not hasattr(self.auth_provider, "session_factory"):
             raise RuntimeError("Database auth provider not configured")
@@ -1057,7 +1068,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         # Extract authentication context for manual dispatch
         context = self._get_operation_context()
 
-        # Manual dispatch for methods requiring special handling (virtual views, metadata wrapping, etc.)
+        # Fall back to manual dispatch for backward compatibility
         # Core file operations
         if method == "read":
             # Check if this is a virtual view request (.txt or .md)
@@ -1068,13 +1079,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 raw_content = self.nexus_fs.read(original_path, context=context)
                 # Type narrowing: when return_metadata=False (default), result is bytes
                 assert isinstance(raw_content, bytes), "Expected bytes from read()"
-                from nexus.parsers import create_default_parse_fn
-
-                if not hasattr(self, "_parse_fn"):
-                    self._parse_fn = create_default_parse_fn()
-                return get_parsed_content(
-                    raw_content, original_path, view_type, parse_fn=self._parse_fn
-                )
+                return get_parsed_content(raw_content, original_path, view_type)
             else:
                 # v0.3.9: Support return_metadata parameter
                 result = self.nexus_fs.read(
@@ -1795,6 +1800,12 @@ class NexusRPCServer:
         logger.info("Shutting down server...")
         self.server.shutdown()
         self.server.server_close()
+
+        # Cleanup shared async executor
+        if RPCRequestHandler._async_executor is not None:
+            RPCRequestHandler._async_executor.shutdown(wait=True)
+            RPCRequestHandler._async_executor = None
+            logger.debug("Shared async executor shutdown complete")
 
         if hasattr(self.nexus_fs, "close"):
             self.nexus_fs.close()

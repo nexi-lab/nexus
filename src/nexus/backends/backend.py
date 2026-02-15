@@ -5,15 +5,16 @@ combining content-addressable storage (CAS) with directory operations.
 """
 
 from abc import ABC, abstractmethod
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any
 
 from nexus.core.response import HandlerResponse
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
+    from nexus.rebac.permissions_enhanced import EnhancedOperationContext
 
 
 @dataclass
@@ -91,14 +92,28 @@ class Backend(ABC):
 
     @staticmethod
     def resolve_database_url(db_param: str) -> str:
-        """Resolve database URL with TOKEN_MANAGER_DB env var priority.
-
-        .. deprecated::
-            Use ``nexus.backends.connector_utils.resolve_database_url`` instead.
         """
-        from nexus.backends.connector_utils import resolve_database_url
+        Resolve database URL with TOKEN_MANAGER_DB environment variable priority.
 
-        return resolve_database_url(db_param)
+        This utility method is used by connector backends (GDrive, Gmail, X) to
+        resolve the database URL for TokenManager, giving priority to the
+        TOKEN_MANAGER_DB environment variable over the provided parameter.
+
+        Args:
+            db_param: Database URL or path provided to the connector
+
+        Returns:
+            Resolved database URL (from env var if set, otherwise db_param)
+
+        Examples:
+            >>> import os
+            >>> os.environ['TOKEN_MANAGER_DB'] = 'postgresql://localhost/nexus'
+            >>> Backend.resolve_database_url('sqlite:///local.db')
+            'postgresql://localhost/nexus'
+        """
+        import os
+
+        return os.getenv("TOKEN_MANAGER_DB") or db_param
 
     @property
     @abstractmethod
@@ -410,7 +425,7 @@ class Backend(ABC):
         return result
 
     def stream_content(
-        self, content_hash: str, chunk_size: int = 65536, context: "OperationContext | None" = None
+        self, content_hash: str, chunk_size: int = 8192, context: "OperationContext | None" = None
     ) -> Any:
         """
         Stream content by its hash in chunks (generator).
@@ -447,7 +462,7 @@ class Backend(ABC):
         content_hash: str,
         start: int,
         end: int,
-        chunk_size: int = 65536,
+        chunk_size: int = 8192,
         context: "OperationContext | None" = None,
     ) -> "Iterator[bytes]":
         """Stream a byte range [start, end] inclusive from stored content.
@@ -599,7 +614,7 @@ class Backend(ABC):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: "OperationContext | None" = None,
+        context: "OperationContext | EnhancedOperationContext | None" = None,
     ) -> "HandlerResponse[None]":
         """
         Create a directory.
@@ -627,7 +642,7 @@ class Backend(ABC):
         self,
         path: str,
         recursive: bool = False,
-        context: "OperationContext | None" = None,
+        context: "OperationContext | EnhancedOperationContext | None" = None,
     ) -> "HandlerResponse[None]":
         """
         Remove a directory.
@@ -733,65 +748,50 @@ class Backend(ABC):
     # === ReBAC Object Type Mapping ===
 
     def get_object_type(self, _backend_path: str) -> str:
-        """Map backend path to ReBAC object type.
+        """
+        Map backend path to ReBAC object type.
 
-        .. deprecated::
-            Use ``ObjectTypeMapper.get_object_type()`` instead. Kept on Backend
-            so IPCVFSDriver and other subclass overrides still work.
+        Used by the permission enforcer to determine what type of object
+        is being accessed for ReBAC permission checks. This allows different
+        backends to have different permission models.
+
+        Args:
+            _backend_path: Path relative to backend (no mount point prefix)
 
         Returns:
-            ReBAC object type string. Default: 'file'.
+            ReBAC object type string
+
+        Examples:
+            LocalBackend: "file"
+            PostgresBackend: "postgres:table" or "postgres:row"
+            RedisBackend: "redis:instance" or "redis:key"
+
+        Note:
+            Default implementation returns "file" for file storage backends.
+            Database/API backends should override to return appropriate types.
         """
         return "file"
 
     def get_object_id(self, backend_path: str) -> str:
-        """Map backend path to ReBAC object identifier.
+        """
+        Map backend path to ReBAC object identifier.
 
-        .. deprecated::
-            Use ``ObjectTypeMapper.get_object_id()`` instead. Kept on Backend
-            so IPCVFSDriver and other subclass overrides still work.
+        Used by the permission enforcer to identify the specific object
+        being accessed in ReBAC permission checks.
+
+        Args:
+            backend_path: Path relative to backend
 
         Returns:
-            Object identifier for ReBAC. Default: backend_path as-is.
+            Object identifier for ReBAC
+
+        Examples:
+            LocalBackend: backend_path (full relative path)
+            PostgresBackend: "public/users" (schema/table)
+            RedisBackend: "prod-cache" (instance name)
+
+        Note:
+            Default implementation returns the path as-is.
+            Backends can override to return more appropriate identifiers.
         """
         return backend_path
-
-
-@runtime_checkable
-class AsyncBackend(Protocol):
-    """Async variant of Backend — ObjectStore ABC for async drivers.
-
-    Mirrors the Backend interface with async method signatures.
-    Required by the Four Pillars architecture: all ObjectStore drivers
-    must implement the pillar ABC for interchangeability.
-    """
-
-    @property
-    def name(self) -> str: ...
-
-    async def initialize(self) -> None: ...
-
-    async def close(self) -> None: ...
-
-    async def write_content(
-        self, content: bytes, context: "OperationContext | None" = None
-    ) -> HandlerResponse[str]: ...
-
-    async def read_content(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> HandlerResponse[bytes]: ...
-
-    async def delete_content(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> HandlerResponse[None]: ...
-
-    async def content_exists(
-        self, content_hash: str, context: "OperationContext | None" = None
-    ) -> HandlerResponse[bool]: ...
-
-    def stream_content(
-        self,
-        content_hash: str,
-        chunk_size: int = 65536,
-        context: "OperationContext | None" = None,
-    ) -> AsyncIterator[bytes]: ...

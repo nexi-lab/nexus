@@ -20,21 +20,20 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from nexus.services.delegation.derivation import MAX_DELEGATABLE_GRANTS, GrantSpec, derive_grants
-from nexus.services.delegation.errors import (
+from nexus.delegation.derivation import MAX_DELEGATABLE_GRANTS, GrantSpec, derive_grants
+from nexus.delegation.errors import (
     DelegationChainError,
     DelegationError,
     DelegationNotFoundError,
 )
-from nexus.services.delegation.models import DelegationMode, DelegationRecord, DelegationResult
+from nexus.delegation.models import DelegationMode, DelegationRecord, DelegationResult
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
 
-    from nexus.services.agents.agent_registry import AgentRegistry
-    from nexus.services.permissions.entity_registry import EntityRegistry
-    from nexus.services.permissions.namespace_manager import NamespaceManager
-    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.entity_registry import EntityRegistry
+    from nexus.rebac.namespace_manager import NamespaceManager
+    from nexus.rebac.manager import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
 
@@ -55,13 +54,11 @@ class DelegationService:
         rebac_manager: EnhancedReBACManager,
         namespace_manager: NamespaceManager | None = None,
         entity_registry: EntityRegistry | None = None,
-        agent_registry: AgentRegistry | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._rebac_manager = rebac_manager
         self._namespace_manager = namespace_manager
         self._entity_registry = entity_registry
-        self._agent_registry: AgentRegistry | None = agent_registry
         logger.info("[DelegationService] Initialized")
 
     def delegate(
@@ -133,14 +130,15 @@ class DelegationService:
         )
 
         # 5. Register worker agent (UNKNOWN state, no API key yet)
-        if self._agent_registry is None:
-            raise DelegationError("agent_registry is required for DelegationService")
-        self._agent_registry.register(
+        from nexus.core.agents import register_agent
+
+        register_agent(
+            user_id=coordinator_owner_id,
             agent_id=worker_id,
-            owner_id=coordinator_owner_id,
-            zone_id=zone_id,
             name=worker_name,
+            zone_id=zone_id,
             metadata={"delegated_by": coordinator_agent_id},
+            entity_registry=self._entity_registry,
         )
 
         try:
@@ -182,7 +180,9 @@ class DelegationService:
 
         except Exception:
             # Cleanup: unregister agent on failure (no key exists yet)
-            self._agent_registry.unregister(worker_id)
+            from nexus.core.agents import unregister_agent
+
+            unregister_agent(worker_id, entity_registry=self._entity_registry)
             raise
 
         logger.info(
@@ -226,9 +226,9 @@ class DelegationService:
         self._revoke_worker_api_key(record.agent_id)
 
         # 3. Unregister agent entity
-        if self._agent_registry is None:
-            raise DelegationError("agent_registry is required for DelegationService")
-        self._agent_registry.unregister(record.agent_id)
+        from nexus.core.agents import unregister_agent
+
+        unregister_agent(record.agent_id, entity_registry=self._entity_registry)
 
         # 4. Delete delegation record
         self._delete_delegation_record(delegation_id)
@@ -260,30 +260,6 @@ class DelegationService:
                 .all()
             )
             return [self._model_to_record(row) for row in rows]
-        finally:
-            session.close()
-
-    def get_delegation_by_id(self, delegation_id: str) -> DelegationRecord | None:
-        """Get delegation record by delegation_id.
-
-        Args:
-            delegation_id: The delegation record ID.
-
-        Returns:
-            DelegationRecord or None if not found.
-        """
-        from nexus.storage.models.agents import DelegationRecordModel
-
-        session = self._session_factory()
-        try:
-            row = (
-                session.query(DelegationRecordModel)
-                .filter(DelegationRecordModel.delegation_id == delegation_id)
-                .first()
-            )
-            if row is None:
-                return None
-            return self._model_to_record(row)
         finally:
             session.close()
 
@@ -506,17 +482,76 @@ class DelegationService:
     def _delete_worker_tuples(self, worker_id: str, zone_id: str | None) -> None:
         """Delete all ReBAC tuples for a worker agent.
 
-        Delegates to ReBACManager.rebac_delete_by_subject() public API.
+        Uses a single connection with batch DELETE + batch changelog INSERT
+        instead of N individual rebac_delete() calls.
         """
         try:
-            deleted = self._rebac_manager.rebac_delete_by_subject(
-                subject_type="agent",
-                subject_id=worker_id,
-                zone_id=zone_id,
-            )
+            from nexus.rebac.utils.zone import normalize_zone_id
+
+            normalized_zone = normalize_zone_id(zone_id)
+            now = datetime.now(UTC).isoformat()
+            fix = self._rebac_manager._fix_sql_placeholders
+
+            with self._rebac_manager._connection() as conn:
+                cursor = self._rebac_manager._create_cursor(conn)
+
+                # 1. SELECT all tuples to capture details for changelog
+                select_q = (
+                    "SELECT tuple_id, subject_type, subject_id, relation, "
+                    "object_type, object_id, zone_id "
+                    "FROM rebac_tuples "
+                    "WHERE subject_type = ? AND subject_id = ?"
+                )
+                params: list[Any] = ["agent", worker_id]
+                if normalized_zone:
+                    select_q += " AND zone_id = ?"
+                    params.append(normalized_zone)
+                cursor.execute(fix(select_q), params)
+                rows = cursor.fetchall()
+
+                if not rows:
+                    return
+
+                # 2. Batch DELETE in a single statement
+                delete_q = "DELETE FROM rebac_tuples WHERE subject_type = ? AND subject_id = ?"
+                delete_params: list[Any] = ["agent", worker_id]
+                if normalized_zone:
+                    delete_q += " AND zone_id = ?"
+                    delete_params.append(normalized_zone)
+                cursor.execute(fix(delete_q), delete_params)
+
+                # 3. Batch INSERT changelog entries
+                for row in rows:
+                    cursor.execute(
+                        fix(
+                            "INSERT INTO rebac_changelog ("
+                            "  change_type, tuple_id, subject_type, subject_id,"
+                            "  relation, object_type, object_id, zone_id, created_at"
+                            ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                        ),
+                        (
+                            "DELETE",
+                            row["tuple_id"],
+                            row["subject_type"],
+                            row["subject_id"],
+                            row["relation"],
+                            row["object_type"],
+                            row["object_id"],
+                            row["zone_id"] or "default",
+                            now,
+                        ),
+                    )
+
+                # 4. Single zone revision increment + commit
+                self._rebac_manager._increment_zone_revision(zone_id, conn)
+                conn.commit()
+
+                # 5. Invalidate graph cache once (not per-tuple)
+                self._rebac_manager._tuple_version += 1
+
             logger.debug(
                 "[Delegation] Deleted %d ReBAC tuples for worker=%s",
-                deleted,
+                len(rows),
                 worker_id,
             )
         except Exception as e:

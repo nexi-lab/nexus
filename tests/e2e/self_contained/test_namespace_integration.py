@@ -18,10 +18,9 @@ import pytest
 from sqlalchemy import create_engine
 
 from nexus.core.exceptions import NexusFileNotFoundError
-from nexus.core.permissions import OperationContext, Permission
-from nexus.services.permissions.enforcer import PermissionEnforcer
-from nexus.services.permissions.namespace_manager import NamespaceManager
-from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+from nexus.core.permissions import OperationContext, Permission, PermissionEnforcer
+from nexus.rebac.namespace_manager import NamespaceManager
+from nexus.rebac.manager import EnhancedReBACManager
 from nexus.storage.models import Base
 
 if TYPE_CHECKING:
@@ -74,8 +73,8 @@ def permission_enforcer(
 def alice_context() -> OperationContext:
     """Operation context for user alice."""
     return OperationContext(
-        user="alice",
-        groups=[],
+        subject_type="user",
+        subject_id="alice",
         zone_id="test",
     )
 
@@ -84,8 +83,8 @@ def alice_context() -> OperationContext:
 def bob_context() -> OperationContext:
     """Operation context for user bob."""
     return OperationContext(
-        user="bob",
-        groups=[],
+        subject_type="user",
+        subject_id="bob",
         zone_id="test",
     )
 
@@ -94,10 +93,10 @@ def bob_context() -> OperationContext:
 def admin_context() -> OperationContext:
     """Operation context for admin user."""
     return OperationContext(
-        user="admin",
-        groups=[],
+        subject_type="user",
+        subject_id="admin",
         zone_id="test",
-        is_admin=True,
+        require_admin=True,
     )
 
 
@@ -165,9 +164,6 @@ def test_per_subject_namespace_isolation(
     rebac_manager.rebac_delete(tuple_id=bob_tid)
 
 
-@pytest.mark.skip(
-    reason="TODO: https://github.com/nexi-lab/nexus/issues/1702 — PermissionEnforcer admin bypass broken"
-)
 def test_admin_bypasses_namespace(
     rebac_manager: EnhancedReBACManager,
     permission_enforcer: PermissionEnforcer,
@@ -220,9 +216,6 @@ def test_defense_in_depth_namespace_then_rebac(
     rebac_manager.rebac_delete(tuple_id=tid)
 
 
-@pytest.mark.skip(
-    reason="TODO: https://github.com/nexi-lab/nexus/issues/1702 — PermissionEnforcer admin bypass broken"
-)
 def test_grant_revocation_makes_path_invisible(
     rebac_manager: EnhancedReBACManager,
     permission_enforcer: PermissionEnforcer,
@@ -254,9 +247,6 @@ def test_grant_revocation_makes_path_invisible(
         permission_enforcer.check(project_path, Permission.READ, alice_context)
 
 
-@pytest.mark.skip(
-    reason="TODO: https://github.com/nexi-lab/nexus/issues/1702 — PermissionEnforcer admin bypass broken"
-)
 def test_filter_list_with_namespace(
     rebac_manager: EnhancedReBACManager,
     permission_enforcer: PermissionEnforcer,

@@ -7,19 +7,15 @@ Includes temporal query operators (Issue #1023) for time-based filtering.
 Includes version tracking (#1184) for memory audit trails.
 """
 
-from __future__ import annotations
-
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
+from nexus.rebac.entity_registry import EntityRegistry
 from nexus.storage.models import MemoryModel, VersionHistoryModel
-
-if TYPE_CHECKING:
-    from nexus.services.permissions.entity_registry import EntityRegistry
 
 
 class MemoryViewRouter:
@@ -30,11 +26,10 @@ class MemoryViewRouter:
 
         Args:
             session: SQLAlchemy database session.
-            entity_registry: Entity registry instance. If None, path-based
-                entity extraction (e.g. workspace paths) will return empty IDs.
+            entity_registry: Entity registry instance (creates new if None).
         """
         self.session = session
-        self.entity_registry = entity_registry
+        self.entity_registry = entity_registry or EntityRegistry(session)
 
     @staticmethod
     def is_memory_path(path: str) -> bool:
@@ -105,10 +100,7 @@ class MemoryViewRouter:
 
         Returns:
             Dictionary mapping entity type keys to IDs.
-            Empty dict if no entity_registry is configured.
         """
-        if self.entity_registry is None:
-            return {}
         return self.entity_registry.extract_ids_from_path_parts(parts)
 
     def _query_by_relationships(self, ids: dict[str, str]) -> MemoryModel | None:
@@ -559,7 +551,7 @@ class MemoryViewRouter:
             if owner_id:
                 from sqlalchemy import Engine
 
-                from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+                from nexus.rebac.manager import EnhancedReBACManager
 
                 bind = self.session.get_bind()
                 assert isinstance(bind, Engine), "Expected Engine, got Connection"
@@ -631,7 +623,7 @@ class MemoryViewRouter:
             if user_id:
                 from sqlalchemy import Engine
 
-                from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+                from nexus.rebac.manager import EnhancedReBACManager
 
                 bind = self.session.get_bind()
                 assert isinstance(bind, Engine), "Expected Engine, got Connection"

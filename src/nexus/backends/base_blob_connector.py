@@ -30,6 +30,7 @@ from nexus.core.response import HandlerResponse
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
+    from nexus.rebac.permissions_enhanced import EnhancedOperationContext
 
 
 class BaseBlobStorageConnector(Backend):
@@ -537,7 +538,7 @@ class BaseBlobStorageConnector(Backend):
     def stream_content(
         self,
         content_hash: str,
-        chunk_size: int = 65536,
+        chunk_size: int = 8192,
         context: "OperationContext | None" = None,
     ) -> Iterator[bytes]:
         """
@@ -597,7 +598,7 @@ class BaseBlobStorageConnector(Backend):
     def _stream_blob(
         self,
         blob_path: str,
-        chunk_size: int = 65536,
+        chunk_size: int = 8192,
         version_id: str | None = None,
     ) -> Iterator[bytes]:
         """
@@ -805,7 +806,7 @@ class BaseBlobStorageConnector(Backend):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: "OperationContext | None" = None,
+        context: "OperationContext | EnhancedOperationContext | None" = None,
     ) -> HandlerResponse[None]:
         """
         Create directory marker in blob storage.
@@ -892,7 +893,7 @@ class BaseBlobStorageConnector(Backend):
         self,
         path: str,
         recursive: bool = False,
-        context: "OperationContext | None" = None,
+        context: "OperationContext | EnhancedOperationContext | None" = None,
     ) -> HandlerResponse[None]:
         """
         Remove directory from blob storage.

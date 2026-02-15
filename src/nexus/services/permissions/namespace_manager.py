@@ -52,7 +52,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from cachetools import TTLCache
-from sqlalchemy.exc import OperationalError
 
 if TYPE_CHECKING:
     from nexus.core.persistent_view_store import PersistentViewStore
@@ -505,7 +504,10 @@ class NamespaceManager:
         """
         try:
             revision = self._rebac_manager._get_zone_revision(zone_id)
-        except (RuntimeError, OperationalError):
+        except Exception:
+            # Broad catch is intentional: fail-safe for thread-isolated SQLite
+            # (sqlite3.OperationalError) and any other DB errors. Returns 0
+            # which causes a dcache miss — safe because it triggers a fresh check.
             return 0
         return revision // self._revision_window
 
@@ -543,7 +545,8 @@ class NamespaceManager:
                     # Read actual revision (not synthetic) — avoids TOCTOU race
                     try:
                         current_revision = self._rebac_manager._get_zone_revision(zone_id)
-                    except (RuntimeError, OperationalError):
+                    except Exception:
+                        # Broad catch: fail-safe for thread-isolated SQLite
                         current_revision = 0
                     current_bucket = current_revision // self._revision_window
                     if view.revision_bucket == current_bucket:
@@ -566,7 +569,8 @@ class NamespaceManager:
                             len(restored_entries),
                         )
                         return restored_entries, restored_paths
-            except (OSError, RuntimeError, OperationalError):
+            except Exception:
+                # Broad catch: fail-safe for thread-isolated SQLite and persistent store errors
                 logger.warning(
                     "[NAMESPACE] L3 persistent view load failed for %s:%s, "
                     "falling through to ReBAC rebuild",
@@ -628,7 +632,8 @@ class NamespaceManager:
                 zone_id=zone_id,
                 limit=10_000,  # Generous limit — most subjects have <1000 grants
             )
-        except (RuntimeError, ValueError, OperationalError):
+        except Exception:
+            # Broad catch: fail-closed on any DB/runtime error (incl. thread-isolated SQLite)
             logger.exception(
                 f"[NAMESPACE] Failed to rebuild mount table for {subject_type}:{subject_id}"
             )
@@ -649,7 +654,8 @@ class NamespaceManager:
         # Get current zone revision for cache freshness tracking
         try:
             current_revision = self._rebac_manager._get_zone_revision(zone_id)
-        except (RuntimeError, OperationalError):
+        except Exception:
+            # Broad catch: fail-safe for thread-isolated SQLite
             logger.warning(f"[NAMESPACE] Failed to get zone revision for {zone_id}, using 0")
             current_revision = 0
 
@@ -706,7 +712,8 @@ class NamespaceManager:
         """
         try:
             current_revision = self._rebac_manager._get_zone_revision(zone_id)
-        except (RuntimeError, OperationalError):
+        except Exception:
+            # Broad catch: fail-safe for thread-isolated SQLite
             logger.warning(
                 "[NAMESPACE] Failed to get zone revision for freshness check, treating as stale"
             )

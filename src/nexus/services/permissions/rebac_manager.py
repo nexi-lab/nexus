@@ -2109,9 +2109,7 @@ class ReBACManager:
         zone_id: str | None = None,
     ) -> dict[str, Any] | None:
         """Find direct relation tuple. Delegates to PermissionComputer (Issue #1459)."""
-        return self._computer.find_direct_relation_tuple(
-            subject, relation, obj, context, zone_id
-        )
+        return self._computer.find_direct_relation_tuple(subject, relation, obj, context, zone_id)
 
     def _find_subject_sets(
         self, relation: str, obj: Entity, zone_id: str | None = None

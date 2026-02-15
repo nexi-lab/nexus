@@ -542,16 +542,12 @@ class PermissionComputer:
 
             # Check 2: Wildcard/public access
             if (subject.entity_type, subject.entity_id) != WILDCARD_SUBJECT:
-                wildcard_result = self._check_wildcard_access(
-                    cursor, relation, obj, zone_id
-                )
+                wildcard_result = self._check_wildcard_access(cursor, relation, obj, zone_id)
                 if wildcard_result is not None:
                     return wildcard_result
 
             # Check 3: Userset-as-subject grants
-            return self._check_userset_grants(
-                cursor, subject, relation, obj, context, zone_id
-            )
+            return self._check_userset_grants(cursor, subject, relation, obj, context, zone_id)
 
     def _query_direct_tuple(
         self,
@@ -641,9 +637,7 @@ class PermissionComputer:
                 )
                 if not TupleRepository.evaluate_conditions(conditions, context):
                     if logger.isEnabledFor(logging.DEBUG):
-                        logger.debug(
-                            "Tuple exists but conditions not satisfied"
-                        )
+                        logger.debug("Tuple exists but conditions not satisfied")
                     return None  # Tuple exists but conditions failed
             except (json.JSONDecodeError, TypeError) as e:
                 logger.warning("Failed to parse conditions JSON: %s", e)

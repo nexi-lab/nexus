@@ -62,8 +62,9 @@ def mgr_shallow(engine):
 # ── Helpers ───────────────────────────────────────────────────────────
 
 
-def _register_file_ns(mgr: ReBACManager, *, with_intersection: bool = False,
-                       with_exclusion: bool = False) -> None:
+def _register_file_ns(
+    mgr: ReBACManager, *, with_intersection: bool = False, with_exclusion: bool = False
+) -> None:
     """Register a 'file' namespace with common Zanzibar relations."""
     relations: dict = {
         "direct_owner": {},
@@ -87,54 +88,60 @@ def _register_file_ns(mgr: ReBACManager, *, with_intersection: bool = False,
         relations["can_access"] = {"exclusion": "blocked"}
         permissions["access"] = ["can_access"]
 
-    mgr.create_namespace(NamespaceConfig(
-        namespace_id="file-ns",
-        object_type="file",
-        config={
-            "relations": relations,
-            "permissions": permissions,
-        },
-    ))
+    mgr.create_namespace(
+        NamespaceConfig(
+            namespace_id="file-ns",
+            object_type="file",
+            config={
+                "relations": relations,
+                "permissions": permissions,
+            },
+        )
+    )
 
 
 def _register_group_ns(mgr: ReBACManager) -> None:
     """Register a 'group' namespace with member-of relation."""
-    mgr.create_namespace(NamespaceConfig(
-        namespace_id="group-ns",
-        object_type="group",
-        config={
-            "relations": {
-                "member-of": {},
-                "direct_member": {},
-                "member": {"union": ["direct_member"]},
+    mgr.create_namespace(
+        NamespaceConfig(
+            namespace_id="group-ns",
+            object_type="group",
+            config={
+                "relations": {
+                    "member-of": {},
+                    "direct_member": {},
+                    "member": {"union": ["direct_member"]},
+                },
             },
-        },
-    ))
+        )
+    )
 
 
 def _register_folder_ns(mgr: ReBACManager) -> None:
     """Register a 'folder' namespace with parent-based inheritance."""
-    mgr.create_namespace(NamespaceConfig(
-        namespace_id="folder-ns",
-        object_type="folder",
-        config={
-            "relations": {
-                "direct_owner": {},
-                "direct_viewer": {},
-                "parent": {},
-                "owner": {
-                    "union": ["direct_owner"],
+    mgr.create_namespace(
+        NamespaceConfig(
+            namespace_id="folder-ns",
+            object_type="folder",
+            config={
+                "relations": {
+                    "direct_owner": {},
+                    "direct_viewer": {},
+                    "parent": {},
+                    "owner": {
+                        "union": ["direct_owner"],
+                    },
+                    "viewer": {
+                        "union": ["direct_viewer", "direct_owner"],
+                    },
                 },
-                "viewer": {
-                    "union": ["direct_viewer", "direct_owner"],
+                "permissions": {
+                    "read": ["direct_viewer", "direct_owner"],
+                    "write": ["direct_owner"],
                 },
             },
-            "permissions": {
-                "read": ["direct_viewer", "direct_owner"],
-                "write": ["direct_owner"],
-            },
-        },
-    ))
+        )
+    )
 
 
 # =====================================================================
@@ -157,24 +164,33 @@ class TestWildcardPermissions:
         )
 
         # Any user should have read access
-        assert mgr.rebac_check(
-            subject=("agent", "alice"),
-            permission="read",
-            object=("file", "public-doc"),
-        ) is True
+        assert (
+            mgr.rebac_check(
+                subject=("agent", "alice"),
+                permission="read",
+                object=("file", "public-doc"),
+            )
+            is True
+        )
 
-        assert mgr.rebac_check(
-            subject=("agent", "bob"),
-            permission="read",
-            object=("file", "public-doc"),
-        ) is True
+        assert (
+            mgr.rebac_check(
+                subject=("agent", "bob"),
+                permission="read",
+                object=("file", "public-doc"),
+            )
+            is True
+        )
 
         # Even a never-seen user
-        assert mgr.rebac_check(
-            subject=("agent", "stranger"),
-            permission="read",
-            object=("file", "public-doc"),
-        ) is True
+        assert (
+            mgr.rebac_check(
+                subject=("agent", "stranger"),
+                permission="read",
+                object=("file", "public-doc"),
+            )
+            is True
+        )
 
     def test_wildcard_does_not_grant_unrelated_permissions(self, mgr):
         """Wildcard viewer should NOT grant write access."""
@@ -187,11 +203,14 @@ class TestWildcardPermissions:
         )
 
         # Write should still be denied
-        assert mgr.rebac_check(
-            subject=("agent", "alice"),
-            permission="write",
-            object=("file", "public-doc"),
-        ) is False
+        assert (
+            mgr.rebac_check(
+                subject=("agent", "alice"),
+                permission="write",
+                object=("file", "public-doc"),
+            )
+            is False
+        )
 
     def test_wildcard_with_zone_id(self, mgr):
         """Wildcard in zone-a is also accessible from zone-b via cross-zone fallback.
@@ -209,20 +228,26 @@ class TestWildcardPermissions:
         )
 
         # Same zone → allowed
-        assert mgr.rebac_check(
-            subject=("agent", "alice"),
-            permission="read",
-            object=("file", "zone-doc"),
-            zone_id="zone-a",
-        ) is True
+        assert (
+            mgr.rebac_check(
+                subject=("agent", "alice"),
+                permission="read",
+                object=("file", "zone-doc"),
+                zone_id="zone-a",
+            )
+            is True
+        )
 
         # Different zone → also allowed via cross-zone wildcard fallback (#1064)
-        assert mgr.rebac_check(
-            subject=("agent", "alice"),
-            permission="read",
-            object=("file", "zone-doc"),
-            zone_id="zone-b",
-        ) is True
+        assert (
+            mgr.rebac_check(
+                subject=("agent", "alice"),
+                permission="read",
+                object=("file", "zone-doc"),
+                zone_id="zone-b",
+            )
+            is True
+        )
 
     def test_cross_zone_wildcard_grants_all_zones(self, mgr):
         """A wildcard tuple with NO zone_id should match requests in any zone."""
@@ -236,12 +261,15 @@ class TestWildcardPermissions:
         )
 
         # Should be accessible from any zone via cross-zone wildcard fallback
-        assert mgr.rebac_check(
-            subject=("agent", "alice"),
-            permission="read",
-            object=("file", "global-doc"),
-            zone_id="zone-a",
-        ) is True
+        assert (
+            mgr.rebac_check(
+                subject=("agent", "alice"),
+                permission="read",
+                object=("file", "global-doc"),
+                zone_id="zone-a",
+            )
+            is True
+        )
 
     def test_wildcard_self_check_skipped(self, mgr):
         """Checking permission for (*:*) itself should not recurse infinitely."""
@@ -283,9 +311,14 @@ class TestIntersectionPermissions:
         mgr.rebac_write(subject=alice, relation="direct_editor", object=doc)
         mgr.rebac_write(subject=alice, relation="approved", object=doc)
 
-        assert mgr.rebac_check(
-            subject=alice, permission="publish", object=doc,
-        ) is True
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="publish",
+                object=doc,
+            )
+            is True
+        )
 
     def test_intersection_denied_when_one_missing(self, mgr):
         """User with editor but NOT approved should be denied publish."""
@@ -297,9 +330,14 @@ class TestIntersectionPermissions:
         # Only editor, no approved
         mgr.rebac_write(subject=alice, relation="direct_editor", object=doc)
 
-        assert mgr.rebac_check(
-            subject=alice, permission="publish", object=doc,
-        ) is False
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="publish",
+                object=doc,
+            )
+            is False
+        )
 
     def test_intersection_denied_when_other_missing(self, mgr):
         """User with approved but NOT editor should be denied publish."""
@@ -311,19 +349,27 @@ class TestIntersectionPermissions:
         # Only approved, no editor
         mgr.rebac_write(subject=alice, relation="approved", object=doc)
 
-        assert mgr.rebac_check(
-            subject=alice, permission="publish", object=doc,
-        ) is False
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="publish",
+                object=doc,
+            )
+            is False
+        )
 
     def test_intersection_denied_when_none_present(self, mgr):
         """User with neither relation should be denied."""
         _register_file_ns(mgr, with_intersection=True)
 
-        assert mgr.rebac_check(
-            subject=("agent", "alice"),
-            permission="publish",
-            object=("file", "report"),
-        ) is False
+        assert (
+            mgr.rebac_check(
+                subject=("agent", "alice"),
+                permission="publish",
+                object=("file", "report"),
+            )
+            is False
+        )
 
 
 # =====================================================================
@@ -339,11 +385,14 @@ class TestExclusionPermissions:
         _register_file_ns(mgr, with_exclusion=True)
 
         # No 'blocked' tuple → can_access passes (NOT blocked = True)
-        assert mgr.rebac_check(
-            subject=("agent", "alice"),
-            permission="access",
-            object=("file", "resource"),
-        ) is True
+        assert (
+            mgr.rebac_check(
+                subject=("agent", "alice"),
+                permission="access",
+                object=("file", "resource"),
+            )
+            is True
+        )
 
     def test_exclusion_denied_when_blocked(self, mgr):
         """User WITH 'blocked' relation should be denied access."""
@@ -355,9 +404,14 @@ class TestExclusionPermissions:
         # Block alice
         mgr.rebac_write(subject=alice, relation="blocked", object=resource)
 
-        assert mgr.rebac_check(
-            subject=alice, permission="access", object=resource,
-        ) is False
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="access",
+                object=resource,
+            )
+            is False
+        )
 
     def test_exclusion_other_user_not_affected(self, mgr):
         """Blocking alice should NOT affect bob's access."""
@@ -367,15 +421,20 @@ class TestExclusionPermissions:
 
         # Block only alice
         mgr.rebac_write(
-            subject=("agent", "alice"), relation="blocked", object=resource,
+            subject=("agent", "alice"),
+            relation="blocked",
+            object=resource,
         )
 
         # Bob should still have access (not blocked)
-        assert mgr.rebac_check(
-            subject=("agent", "bob"),
-            permission="access",
-            object=resource,
-        ) is True
+        assert (
+            mgr.rebac_check(
+                subject=("agent", "bob"),
+                permission="access",
+                object=resource,
+            )
+            is True
+        )
 
     def test_exclusion_unblock_restores_access(self, mgr):
         """Removing 'blocked' relation should restore access."""
@@ -386,16 +445,26 @@ class TestExclusionPermissions:
 
         # Block alice
         tuple_id = mgr.rebac_write(subject=alice, relation="blocked", object=resource)
-        assert mgr.rebac_check(
-            subject=alice, permission="access", object=resource,
-        ) is False
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="access",
+                object=resource,
+            )
+            is False
+        )
 
         # Unblock alice by deleting the tuple
         mgr.rebac_delete(tuple_id)
 
-        assert mgr.rebac_check(
-            subject=alice, permission="access", object=resource,
-        ) is True
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="access",
+                object=resource,
+            )
+            is True
+        )
 
 
 # =====================================================================
@@ -425,9 +494,14 @@ class TestNestedGroupInheritance:
         )
 
         # alice should have read through: alice → team → file
-        assert mgr.rebac_check(
-            subject=alice, permission="read", object=doc,
-        ) is True
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="read",
+                object=doc,
+            )
+            is True
+        )
 
     def test_multiple_userset_grants_on_same_file(self, mgr):
         """Multiple groups granting different permissions on same file."""
@@ -455,20 +529,35 @@ class TestNestedGroupInheritance:
         )
 
         # alice can read (via readers)
-        assert mgr.rebac_check(
-            subject=alice, permission="read", object=doc,
-        ) is True
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="read",
+                object=doc,
+            )
+            is True
+        )
         # alice cannot write (not in writers)
-        assert mgr.rebac_check(
-            subject=alice, permission="write", object=doc,
-        ) is False
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="write",
+                object=doc,
+            )
+            is False
+        )
 
         # Now add alice to writers too
         mgr.rebac_write(subject=alice, relation="member-of", object=writers)
         # Now alice can write
-        assert mgr.rebac_check(
-            subject=alice, permission="write", object=doc,
-        ) is True
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="write",
+                object=doc,
+            )
+            is True
+        )
 
     def test_deep_chain_denied_beyond_max_depth(self, mgr_shallow):
         """Chain deeper than max_depth=3 should be denied."""
@@ -480,14 +569,21 @@ class TestNestedGroupInheritance:
         mgr_shallow.rebac_write(subject=alice, relation="member-of", object=groups[0])
         for i in range(5):
             mgr_shallow.rebac_write(
-                subject=groups[i], relation="member-of", object=groups[i + 1],
+                subject=groups[i],
+                relation="member-of",
+                object=groups[i + 1],
             )
 
         # Chain is 6 levels deep (alice → g0 → g1 → g2 → g3 → g4 → g5)
         # max_depth=3 should cause denial
-        assert mgr_shallow.rebac_check(
-            subject=alice, permission="member-of", object=groups[5],
-        ) is False
+        assert (
+            mgr_shallow.rebac_check(
+                subject=alice,
+                permission="member-of",
+                object=groups[5],
+            )
+            is False
+        )
 
     def test_user_in_multiple_groups_gets_union_of_permissions(self, mgr):
         """User in multiple groups inherits permissions from all."""
@@ -517,12 +613,22 @@ class TestNestedGroupInheritance:
         )
 
         # alice should have both read and write
-        assert mgr.rebac_check(
-            subject=alice, permission="read", object=doc,
-        ) is True
-        assert mgr.rebac_check(
-            subject=alice, permission="write", object=doc,
-        ) is True
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="read",
+                object=doc,
+            )
+            is True
+        )
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="write",
+                object=doc,
+            )
+            is True
+        )
 
 
 # =====================================================================
@@ -547,13 +653,23 @@ class TestUserToUserDelegation:
         mgr.rebac_write(subject=bob, relation="direct_viewer", object=doc)
 
         # Bob can read
-        assert mgr.rebac_check(
-            subject=bob, permission="read", object=doc,
-        ) is True
+        assert (
+            mgr.rebac_check(
+                subject=bob,
+                permission="read",
+                object=doc,
+            )
+            is True
+        )
         # Bob cannot write
-        assert mgr.rebac_check(
-            subject=bob, permission="write", object=doc,
-        ) is False
+        assert (
+            mgr.rebac_check(
+                subject=bob,
+                permission="write",
+                object=doc,
+            )
+            is False
+        )
 
     def test_delegation_chain_a_to_b_to_c(self, mgr):
         """A grants to B, B creates a group containing C."""
@@ -582,12 +698,22 @@ class TestUserToUserDelegation:
         mgr.rebac_write(subject=charlie, relation="member-of", object=bobs_team)
 
         # Both Bob and Charlie can read
-        assert mgr.rebac_check(
-            subject=bob, permission="read", object=doc,
-        ) is True
-        assert mgr.rebac_check(
-            subject=charlie, permission="read", object=doc,
-        ) is True
+        assert (
+            mgr.rebac_check(
+                subject=bob,
+                permission="read",
+                object=doc,
+            )
+            is True
+        )
+        assert (
+            mgr.rebac_check(
+                subject=charlie,
+                permission="read",
+                object=doc,
+            )
+            is True
+        )
 
     def test_revoke_delegation_denies_downstream(self, mgr):
         """Removing a group member revokes their transitive access."""
@@ -605,21 +731,33 @@ class TestUserToUserDelegation:
             object=doc,
         )
         membership_id = mgr.rebac_write(
-            subject=bob, relation="member-of", object=team,
+            subject=bob,
+            relation="member-of",
+            object=team,
         )
 
         # Bob can read
-        assert mgr.rebac_check(
-            subject=bob, permission="read", object=doc,
-        ) is True
+        assert (
+            mgr.rebac_check(
+                subject=bob,
+                permission="read",
+                object=doc,
+            )
+            is True
+        )
 
         # Revoke bob's membership via tuple_id
         mgr.rebac_delete(membership_id)
 
         # Bob can no longer read
-        assert mgr.rebac_check(
-            subject=bob, permission="read", object=doc,
-        ) is False
+        assert (
+            mgr.rebac_check(
+                subject=bob,
+                permission="read",
+                object=doc,
+            )
+            is False
+        )
 
 
 # =====================================================================
@@ -675,9 +813,14 @@ class TestCycleDetectionComplex:
         )
 
         # alice → doc via b AND via c (should succeed via either path)
-        assert mgr.rebac_check(
-            subject=alice, permission="read", object=doc,
-        ) is True
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="read",
+                object=doc,
+            )
+            is True
+        )
 
     def test_mutual_cycle_between_two_groups(self, mgr):
         """A member-of B, B member-of A — should not hang."""
@@ -710,11 +853,14 @@ class TestCycleDetectionComplex:
         mgr.rebac_write(subject=g_c, relation="member-of", object=g_a)
 
         # Should terminate with denial (no concrete user in the cycle)
-        assert mgr.rebac_check(
-            subject=("agent", "outsider"),
-            permission="member-of",
-            object=g_a,
-        ) is False
+        assert (
+            mgr.rebac_check(
+                subject=("agent", "outsider"),
+                permission="member-of",
+                object=g_a,
+            )
+            is False
+        )
 
 
 # =====================================================================
@@ -805,13 +951,24 @@ class TestConditionEvaluation:
         mgr.rebac_write(subject=alice, relation="direct_viewer", object=doc)
 
         # With any context or no context
-        assert mgr.rebac_check(
-            subject=alice, permission="read", object=doc, context=None,
-        ) is True
-        assert mgr.rebac_check(
-            subject=alice, permission="read", object=doc,
-            context={"arbitrary": "value"},
-        ) is True
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="read",
+                object=doc,
+                context=None,
+            )
+            is True
+        )
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="read",
+                object=doc,
+                context={"arbitrary": "value"},
+            )
+            is True
+        )
 
 
 # =====================================================================
@@ -825,26 +982,28 @@ class TestTupleToUserset:
     def test_file_inherits_from_parent_folder(self, mgr):
         """Owner of parent folder should have access to child file."""
         # Register file namespace with parent-based tupleToUserset
-        mgr.create_namespace(NamespaceConfig(
-            namespace_id="file-ns",
-            object_type="file",
-            config={
-                "relations": {
-                    "direct_owner": {},
-                    "direct_viewer": {},
-                    "parent": {},
-                    "owner": {
-                        "tupleToUserset": {
-                            "tupleset": "parent",
-                            "computedUserset": "direct_owner",
-                        }
+        mgr.create_namespace(
+            NamespaceConfig(
+                namespace_id="file-ns",
+                object_type="file",
+                config={
+                    "relations": {
+                        "direct_owner": {},
+                        "direct_viewer": {},
+                        "parent": {},
+                        "owner": {
+                            "tupleToUserset": {
+                                "tupleset": "parent",
+                                "computedUserset": "direct_owner",
+                            }
+                        },
+                    },
+                    "permissions": {
+                        "read": ["direct_viewer", "direct_owner"],
                     },
                 },
-                "permissions": {
-                    "read": ["direct_viewer", "direct_owner"],
-                },
-            },
-        ))
+            )
+        )
         _register_folder_ns(mgr)
 
         alice = ("agent", "alice")
@@ -861,11 +1020,14 @@ class TestTupleToUserset:
         )
 
         # alice should inherit ownership on child via tupleToUserset
-        assert mgr.rebac_check(
-            subject=alice,
-            permission="owner",
-            object=child,
-        ) is True
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="owner",
+                object=child,
+            )
+            is True
+        )
 
 
 # =====================================================================
@@ -891,9 +1053,14 @@ class TestDepthLimitBoundary:
         mgr_shallow.rebac_write(subject=g1, relation="member-of", object=g2)
 
         # Direct check at depth 0 is fine
-        assert mgr_shallow.rebac_check(
-            subject=alice, permission="member-of", object=g0,
-        ) is True
+        assert (
+            mgr_shallow.rebac_check(
+                subject=alice,
+                permission="member-of",
+                object=g0,
+            )
+            is True
+        )
 
     def test_one_beyond_max_depth_fails(self, mgr_shallow):
         """Chain one level beyond max_depth=3 should fail."""
@@ -905,18 +1072,30 @@ class TestDepthLimitBoundary:
         mgr_shallow.rebac_write(subject=alice, relation="member-of", object=groups[0])
         for i in range(4):
             mgr_shallow.rebac_write(
-                subject=groups[i], relation="member-of", object=groups[i + 1],
+                subject=groups[i],
+                relation="member-of",
+                object=groups[i + 1],
             )
 
         # Direct relation still works
-        assert mgr_shallow.rebac_check(
-            subject=alice, permission="member-of", object=groups[0],
-        ) is True
+        assert (
+            mgr_shallow.rebac_check(
+                subject=alice,
+                permission="member-of",
+                object=groups[0],
+            )
+            is True
+        )
 
         # Deep chain should fail
-        assert mgr_shallow.rebac_check(
-            subject=alice, permission="member-of", object=groups[4],
-        ) is False
+        assert (
+            mgr_shallow.rebac_check(
+                subject=alice,
+                permission="member-of",
+                object=groups[4],
+            )
+            is False
+        )
 
 
 # =====================================================================
@@ -934,9 +1113,14 @@ class TestNoNamespaceFallback:
 
         mgr.rebac_write(subject=alice, relation="viewer", object=thing)
 
-        assert mgr.rebac_check(
-            subject=alice, permission="viewer", object=thing,
-        ) is True
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="viewer",
+                object=thing,
+            )
+            is True
+        )
 
     def test_unrelated_permission_denied_without_namespace(self, mgr):
         """Without namespace, only exact relation match works."""
@@ -946,9 +1130,14 @@ class TestNoNamespaceFallback:
         mgr.rebac_write(subject=alice, relation="viewer", object=thing)
 
         # "read" is not the same as "viewer" without namespace to map them
-        assert mgr.rebac_check(
-            subject=alice, permission="read", object=thing,
-        ) is False
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="read",
+                object=thing,
+            )
+            is False
+        )
 
 
 # =====================================================================
@@ -987,17 +1176,19 @@ class TestExpandEdgeCases:
 
     def test_expand_with_union_namespace(self, mgr):
         """Expand should follow union relations."""
-        mgr.create_namespace(NamespaceConfig(
-            namespace_id="file-ns",
-            object_type="file",
-            config={
-                "relations": {
-                    "direct_owner": {},
-                    "direct_viewer": {},
-                    "viewer": {"union": ["direct_owner", "direct_viewer"]},
+        mgr.create_namespace(
+            NamespaceConfig(
+                namespace_id="file-ns",
+                object_type="file",
+                config={
+                    "relations": {
+                        "direct_owner": {},
+                        "direct_viewer": {},
+                        "viewer": {"union": ["direct_owner", "direct_viewer"]},
+                    },
                 },
-            },
-        ))
+            )
+        )
 
         doc = ("file", "doc")
         mgr.rebac_write(subject=("agent", "alice"), relation="direct_owner", object=doc)
@@ -1031,9 +1222,14 @@ class TestExpirationEdgeCases:
             expires_at=datetime(2025, 1, 2, tzinfo=UTC),  # Tomorrow
         )
 
-        assert mgr.rebac_check(
-            subject=alice, permission="read", object=doc,
-        ) is True
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="read",
+                object=doc,
+            )
+            is True
+        )
 
     @freeze_time("2025-01-03 12:00:00")
     def test_tuple_denied_after_expiry(self, mgr):
@@ -1050,9 +1246,14 @@ class TestExpirationEdgeCases:
             expires_at=datetime(2025, 1, 2, tzinfo=UTC),  # Yesterday
         )
 
-        assert mgr.rebac_check(
-            subject=alice, permission="read", object=doc,
-        ) is False
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="read",
+                object=doc,
+            )
+            is False
+        )
 
 
 # =====================================================================
@@ -1082,12 +1283,22 @@ class TestMixedScenarios:
         # Direct editor grant
         mgr.rebac_write(subject=alice, relation="direct_editor", object=doc)
 
-        assert mgr.rebac_check(
-            subject=alice, permission="read", object=doc,
-        ) is True
-        assert mgr.rebac_check(
-            subject=alice, permission="write", object=doc,
-        ) is True
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="read",
+                object=doc,
+            )
+            is True
+        )
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="write",
+                object=doc,
+            )
+            is True
+        )
 
     def test_grant_revoke_grant_cycle(self, mgr):
         """Grant → revoke → re-grant should work correctly."""
@@ -1098,21 +1309,36 @@ class TestMixedScenarios:
 
         # Grant
         tid1 = mgr.rebac_write(subject=alice, relation="direct_viewer", object=doc)
-        assert mgr.rebac_check(
-            subject=alice, permission="read", object=doc,
-        ) is True
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="read",
+                object=doc,
+            )
+            is True
+        )
 
         # Revoke via tuple_id
         mgr.rebac_delete(tid1)
-        assert mgr.rebac_check(
-            subject=alice, permission="read", object=doc,
-        ) is False
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="read",
+                object=doc,
+            )
+            is False
+        )
 
         # Re-grant
         mgr.rebac_write(subject=alice, relation="direct_viewer", object=doc)
-        assert mgr.rebac_check(
-            subject=alice, permission="read", object=doc,
-        ) is True
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="read",
+                object=doc,
+            )
+            is True
+        )
 
     def test_different_permissions_on_same_object(self, mgr):
         """Multiple users with different permission levels on same object."""
@@ -1149,27 +1375,55 @@ class TestMixedScenarios:
 
         # alice has access in zone-a
         mgr.rebac_write(
-            subject=alice, relation="direct_viewer", object=doc,
+            subject=alice,
+            relation="direct_viewer",
+            object=doc,
             zone_id="zone-a",
         )
         # bob has access in zone-b
         mgr.rebac_write(
-            subject=bob, relation="direct_viewer", object=doc,
+            subject=bob,
+            relation="direct_viewer",
+            object=doc,
             zone_id="zone-b",
         )
 
         # alice can read in zone-a but NOT zone-b
-        assert mgr.rebac_check(
-            subject=alice, permission="read", object=doc, zone_id="zone-a",
-        ) is True
-        assert mgr.rebac_check(
-            subject=alice, permission="read", object=doc, zone_id="zone-b",
-        ) is False
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="read",
+                object=doc,
+                zone_id="zone-a",
+            )
+            is True
+        )
+        assert (
+            mgr.rebac_check(
+                subject=alice,
+                permission="read",
+                object=doc,
+                zone_id="zone-b",
+            )
+            is False
+        )
 
         # bob can read in zone-b but NOT zone-a
-        assert mgr.rebac_check(
-            subject=bob, permission="read", object=doc, zone_id="zone-b",
-        ) is True
-        assert mgr.rebac_check(
-            subject=bob, permission="read", object=doc, zone_id="zone-a",
-        ) is False
+        assert (
+            mgr.rebac_check(
+                subject=bob,
+                permission="read",
+                object=doc,
+                zone_id="zone-b",
+            )
+            is True
+        )
+        assert (
+            mgr.rebac_check(
+                subject=bob,
+                permission="read",
+                object=doc,
+                zone_id="zone-a",
+            )
+            is False
+        )

@@ -112,7 +112,9 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
         # Issue #1459: LRU-capped to max 100 zones to prevent unbounded memory growth
         from cachetools import LRUCache
 
-        self._zone_graph_cache: LRUCache[str, tuple[list[dict[str, Any]], dict[str, Any], float]] = LRUCache(maxsize=100)
+        self._zone_graph_cache: LRUCache[
+            str, tuple[list[dict[str, Any]], dict[str, Any], float]
+        ] = LRUCache(maxsize=100)
         self._zone_graph_cache_ttl = cache_ttl_seconds  # Reuse existing TTL
         self._zone_graph_cache_lock = threading.RLock()
 
@@ -4197,6 +4199,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
             RUST_AVAILABLE,
             list_objects_for_subject_rust,
         )
+
         start_time = time_module.perf_counter()
 
         subject_type, subject_id = subject
@@ -4276,6 +4279,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
         Slower than Rust but provides same functionality when Rust is not available.
         """
         import time as time_module
+
         start_time = time_module.perf_counter()
 
         subject = Entity(subject_type, subject_id)

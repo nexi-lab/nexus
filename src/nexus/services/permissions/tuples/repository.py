@@ -673,17 +673,19 @@ class TupleRepository:
                     "relation = ? AND object_type = ? AND object_id = ? AND "
                     "(zone_id = ? OR (zone_id IS NULL AND ? IS NULL)))"
                 )
-                params.extend([
-                    pt["subject_type"],
-                    pt["subject_id"],
-                    pt["subject_relation"],
-                    pt["subject_relation"],
-                    pt["relation"],
-                    pt["object_type"],
-                    pt["object_id"],
-                    pt["zone_id"],
-                    pt["zone_id"],
-                ])
+                params.extend(
+                    [
+                        pt["subject_type"],
+                        pt["subject_id"],
+                        pt["subject_relation"],
+                        pt["subject_relation"],
+                        pt["relation"],
+                        pt["object_type"],
+                        pt["object_id"],
+                        pt["zone_id"],
+                        pt["zone_id"],
+                    ]
+                )
 
             query = f"""
                 SELECT subject_type, subject_id, subject_relation, relation,
@@ -705,12 +707,14 @@ class TupleRepository:
                 except (KeyError, IndexError):
                     row_zone_id = None
 
-                existing.add((
-                    (row["subject_type"], row["subject_id"], subject_relation),
-                    row["relation"],
-                    (row["object_type"], row["object_id"]),
-                    row_zone_id,
-                ))
+                existing.add(
+                    (
+                        (row["subject_type"], row["subject_id"], subject_relation),
+                        row["relation"],
+                        (row["object_type"], row["object_id"]),
+                        row_zone_id,
+                    )
+                )
 
         return existing
 
@@ -884,7 +888,14 @@ class TupleRepository:
                     LIMIT 1
                     """
                 ),
-                (subject.entity_type, subject.entity_id, relation, obj.entity_type, obj.entity_id, now),
+                (
+                    subject.entity_type,
+                    subject.entity_id,
+                    relation,
+                    obj.entity_type,
+                    obj.entity_id,
+                    now,
+                ),
             )
         else:
             cursor.execute(
@@ -919,7 +930,11 @@ class TupleRepository:
             conditions_json = row["conditions"]
             if conditions_json:
                 try:
-                    conds = json.loads(conditions_json) if isinstance(conditions_json, str) else conditions_json
+                    conds = (
+                        json.loads(conditions_json)
+                        if isinstance(conditions_json, str)
+                        else conditions_json
+                    )
                     # Return None with a flag if conditions need context evaluation
                     # The caller (manager) will handle context-based evaluation
                     return dict(row) if not conds else dict(row)

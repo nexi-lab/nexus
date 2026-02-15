@@ -298,7 +298,9 @@ class TestRebacCreate:
         fs = MockNexusFS(rebac_manager=mock_manager)
         fs._check_share_permission = Mock()
 
-        with pytest.raises(ValueError, match="can only be provided when relation is 'dynamic_viewer'"):
+        with pytest.raises(
+            ValueError, match="can only be provided when relation is 'dynamic_viewer'"
+        ):
             fs.rebac_create(
                 subject=("user", "alice"),
                 relation="viewer",
@@ -1002,9 +1004,7 @@ class TestListIncomingShares:
         mock_manager = MagicMock()
         mock_manager._iterator_cache = MagicMock()
         all_items = [{"share_id": f"uuid-{i}"} for i in range(50)]
-        mock_manager._iterator_cache.get_or_create = Mock(
-            return_value=("cursor-id", all_items, 50)
-        )
+        mock_manager._iterator_cache.get_or_create = Mock(return_value=("cursor-id", all_items, 50))
         fs = MockNexusFS(rebac_manager=mock_manager)
         fs.rebac_list_tuples = Mock(return_value=[])
 
@@ -1048,10 +1048,12 @@ class TestGetDynamicViewerConfig:
             "aggregations": {"age": "mean"},
             "visible_columns": ["name", "email"],
         }
-        conditions = json.dumps({
-            "type": "dynamic_viewer",
-            "column_config": column_config,
-        })
+        conditions = json.dumps(
+            {
+                "type": "dynamic_viewer",
+                "column_config": column_config,
+            }
+        )
 
         mock_row = {"conditions": conditions}
         mock_cursor.fetchone = Mock(return_value=mock_row)

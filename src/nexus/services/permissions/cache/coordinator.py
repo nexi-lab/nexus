@@ -92,9 +92,7 @@ class CacheCoordinator:
         self._boundary_invalidators: list[
             tuple[str, Callable[[str, str, str, str, str], None]]
         ] = []
-        self._visibility_invalidators: list[
-            tuple[str, Callable[[str, str], None]]
-        ] = []
+        self._visibility_invalidators: list[tuple[str, Callable[[str, str], None]]] = []
 
         # Metrics
         self._invalidation_count = 0
@@ -209,7 +207,9 @@ class CacheCoordinator:
         self._invalidate_l1(subject_type, subject_id, object_type, object_id, zone_id)
 
         # 3. Boundary cache (external callbacks)
-        self._notify_boundary_invalidators(zone_id, subject_type, subject_id, relation, object_type, object_id)
+        self._notify_boundary_invalidators(
+            zone_id, subject_type, subject_id, relation, object_type, object_id
+        )
 
         # 4. Directory visibility cache (external callbacks)
         self._notify_visibility_invalidators(zone_id, object_type, object_id)

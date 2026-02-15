@@ -113,6 +113,18 @@ async def get_conflict_log_store() -> Any:
     return store
 
 
+async def get_write_back_service() -> Any:
+    """Get WriteBackService instance from app state."""
+    app_state = _get_app_state()
+    service = getattr(app_state, "write_back_service", None)
+    if service is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Write-back service not initialized (set NEXUS_WRITE_BACK=true)",
+        )
+    return service
+
+
 async def get_trajectory_manager(
     nexus_fs: Any = Depends(get_nexus_fs),
     auth_result: dict[str, Any] = Depends(_get_require_auth()),

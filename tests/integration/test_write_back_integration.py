@@ -148,9 +148,14 @@ class TestWriteBackIntegration:
         # Step 3: Process pending entries (simulates poll loop)
         await service._process_all_backends()
 
-        # Step 4: Verify backend.write_content was called
+        # Step 4: Verify backend.write_content was called with content + context
         backend = mock_gateway.get_mount_for_path.return_value["backend"]
-        backend.write_content.assert_called_once_with(b"hello world")
+        backend.write_content.assert_called_once()
+        call_args = backend.write_content.call_args
+        assert call_args[0][0] == b"hello world"
+        ctx = call_args[0][1]
+        assert ctx.is_system is True
+        assert ctx.backend_path == "project/file.txt"
 
         # Step 5: Verify change log was updated
         change_log = change_log_store.get_change_log(

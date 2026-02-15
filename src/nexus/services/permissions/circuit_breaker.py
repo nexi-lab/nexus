@@ -103,9 +103,7 @@ class AsyncCircuitBreaker:
 
         # Sliding window of failure timestamps (Decision 15A)
         # maxlen caps memory at 2x threshold to bound growth during sustained failures.
-        self._failure_timestamps: deque[float] = deque(
-            maxlen=self._config.failure_threshold * 2
-        )
+        self._failure_timestamps: deque[float] = deque(maxlen=self._config.failure_threshold * 2)
 
         # Half-open success counter
         self._half_open_successes: int = 0

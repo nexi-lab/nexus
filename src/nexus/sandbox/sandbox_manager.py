@@ -42,6 +42,14 @@ try:
 except ImportError:
     DOCKER_PROVIDER_AVAILABLE = False
 
+# Try to import Monty provider (Issue #1316)
+try:
+    from nexus.sandbox.sandbox_monty_provider import MontySandboxProvider
+
+    MONTY_PROVIDER_AVAILABLE = True
+except ImportError:
+    MONTY_PROVIDER_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
@@ -107,6 +115,21 @@ class SandboxManager:
                 logger.info(f"Docker provider not available: {e}")
             except Exception as e:
                 logger.warning(f"Failed to initialize Docker provider: {e}")
+
+        # Initialize Monty provider if available (no external deps, Issue #1316)
+        if MONTY_PROVIDER_AVAILABLE:
+            try:
+                monty_profile = "standard"
+                if config and hasattr(config, "monty_resource_profile"):
+                    monty_profile = config.monty_resource_profile
+                self.providers["monty"] = MontySandboxProvider(
+                    resource_profile=monty_profile,
+                )
+                logger.info("Monty provider initialized successfully")
+            except RuntimeError as e:
+                logger.info(f"Monty provider not available: {e}")
+            except Exception as e:
+                logger.warning(f"Failed to initialize Monty provider: {e}")
 
         logger.info(f"Initialized sandbox manager with providers: {list(self.providers.keys())}")
 
@@ -347,6 +370,51 @@ class SandboxManager:
         )
 
         return result_dict
+
+    def set_monty_host_functions(
+        self,
+        sandbox_id: str,
+        host_functions: dict[str, Callable[..., Any]],
+    ) -> None:
+        """Set host function callbacks for a Monty sandbox (Issue #1316).
+
+        Host functions bridge Monty's isolated interpreter to Nexus VFS
+        and services. They are called when sandboxed code invokes external
+        functions. The caller is responsible for constructing agent-scoped
+        callables with appropriate permission checks.
+
+        This is a no-op if the sandbox is not a Monty sandbox.
+
+        Args:
+            sandbox_id: Sandbox ID.
+            host_functions: Mapping of function name to callable.
+                Callables must validate all inputs (sandboxed code
+                controls the arguments).
+
+        Example:
+            host_fns = {
+                "read_file": lambda path: nexus.read(path, agent_id=aid),
+                "write_file": lambda path, content: nexus.write(path, content, agent_id=aid),
+            }
+            manager.set_monty_host_functions(sandbox_id, host_fns)
+        """
+        monty_provider = self.providers.get("monty")
+        if monty_provider is None:
+            logger.debug("Monty provider not available, skipping host function setup")
+            return
+
+        # Narrow type for mypy — only MontySandboxProvider has set_host_functions
+        if not MONTY_PROVIDER_AVAILABLE or not isinstance(monty_provider, MontySandboxProvider):
+            return
+
+        try:
+            monty_provider.set_host_functions(sandbox_id, host_functions)
+        except SandboxNotFoundError:
+            # Non-fatal — sandbox may not be a Monty sandbox
+            logger.debug(
+                "Failed to set host functions for sandbox %s (not a Monty sandbox)",
+                sandbox_id,
+            )
 
     async def run_code(
         self,

@@ -72,7 +72,7 @@ class SandboxMetadataModel(Base):
             raise ValidationError("user_id is required")
         if not self.zone_id:
             raise ValidationError("zone_id is required")
-        valid_providers = ["e2b", "docker", "modal"]
+        valid_providers = ["e2b", "docker", "modal", "monty"]
         if self.provider not in valid_providers:
             raise ValidationError(f"provider must be one of {valid_providers}, got {self.provider}")
         valid_statuses = ["creating", "active", "paused", "stopping", "stopped", "error"]

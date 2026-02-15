@@ -143,6 +143,11 @@ mobile = [
     "llama-cpp-python>=0.2.0",
 ]
 
+sandbox-monty = [
+    # Pydantic Monty — lightweight in-process Python sandbox (Issue #1316)
+    "pydantic-monty>=0.0.4",
+]
+
 sentry = [
     # Sentry error tracking and performance monitoring (Issue #759)
     "sentry-sdk[fastapi]>=2.0.0",

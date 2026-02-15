@@ -18,11 +18,11 @@ from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 
 if TYPE_CHECKING:
-    from nexus.core.memory_api import Memory
     from nexus.core.mount_manager import MountManager
     from nexus.core.permissions import PermissionEnforcer
     from nexus.core.workspace_manager import WorkspaceManager
     from nexus.core.workspace_registry import WorkspaceRegistry
+    from nexus.services.memory.memory_api import Memory
     from nexus.services.permissions.deferred_permission_buffer import DeferredPermissionBuffer
     from nexus.services.permissions.dir_visibility_cache import DirectoryVisibilityCache
     from nexus.services.permissions.entity_registry import EntityRegistry
@@ -971,7 +971,7 @@ class NexusFS(  # type: ignore[misc]
 
             # Issue #1258: Create MemoryWithPaging if enabled, else standard Memory
             if self._enable_memory_paging:
-                from nexus.core.memory_with_paging import MemoryWithPaging
+                from nexus.services.memory.memory_with_paging import MemoryWithPaging
 
                 # Try to get engine for VectorDatabase integration
                 engine = None
@@ -992,7 +992,7 @@ class NexusFS(  # type: ignore[misc]
                     session_factory=self.SessionLocal,
                 )
             else:
-                from nexus.core.memory_api import Memory
+                from nexus.services.memory.memory_api import Memory
 
                 self._memory_api = Memory(
                     session=session,
@@ -1107,7 +1107,7 @@ class NexusFS(  # type: ignore[misc]
         Returns:
             Memory API instance
         """
-        from nexus.core.memory_api import Memory
+        from nexus.services.memory.memory_api import Memory
         from nexus.services.permissions.entity_registry import EntityRegistry
 
         # Get or create entity registry
@@ -6144,16 +6144,8 @@ class NexusFS(  # type: ignore[misc]
                 e2b_api_key=os.getenv("E2B_API_KEY"),
                 e2b_team_id=os.getenv("E2B_TEAM_ID"),
                 e2b_template_id=os.getenv("E2B_TEMPLATE_ID"),
-                config=config,  # Pass config for Docker provider
+                config=config,
             )
-
-            # Attach smart router if providers are available (Issue #1317)
-            if self._sandbox_manager.providers:
-                from nexus.sandbox.sandbox_router import SandboxRouter
-
-                self._sandbox_manager._router = SandboxRouter(
-                    available_providers=self._sandbox_manager.providers,
-                )
 
     @staticmethod
     def _run_async(coro: Any) -> Any:

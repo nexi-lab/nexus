@@ -132,8 +132,15 @@ class SandboxManager:
             except Exception as e:
                 logger.warning(f"Failed to initialize Monty provider: {e}")
 
-        # Smart routing (Issue #1317): set externally after construction
+        # Smart routing (Issue #1317): auto-attach if providers available
         self._router: Any | None = None
+        if self.providers:
+            try:
+                from nexus.sandbox.sandbox_router import SandboxRouter
+
+                self._router = SandboxRouter(available_providers=self.providers)
+            except Exception as e:
+                logger.warning(f"Failed to initialize sandbox router: {e}")
 
         logger.info(f"Initialized sandbox manager with providers: {list(self.providers.keys())}")
 

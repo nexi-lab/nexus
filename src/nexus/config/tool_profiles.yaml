@@ -1,0 +1,67 @@
+# Default MCP tool profiles for Nexus (Issue #1272).
+#
+# Profiles define which tools are visible to agents based on their
+# ReBAC grants. Profiles support single inheritance via `extends`.
+#
+# Profile assignment flow:
+#   1. Admin assigns a profile to an agent via grant_tools_for_profile()
+#   2. ToolNamespaceMiddleware filters tools/list and tools/call
+#   3. Discovery tools post-filter results through the visible set
+#
+# To override: set NEXUS_TOOL_PROFILES_PATH env var to a custom YAML.
+
+profiles:
+  minimal:
+    description: "Read-only file access"
+    tools:
+      - nexus_read_file
+      - nexus_list_files
+      - nexus_file_info
+      - nexus_glob
+
+  coding:
+    extends: minimal
+    description: "File operations for coding agents"
+    tools:
+      - nexus_write_file
+      - nexus_edit_file
+      - nexus_delete_file
+      - nexus_mkdir
+      - nexus_rmdir
+      - nexus_rename_file
+      - nexus_grep
+
+  search:
+    extends: minimal
+    description: "Search and memory operations"
+    tools:
+      - nexus_grep
+      - nexus_semantic_search
+      - nexus_store_memory
+      - nexus_query_memory
+
+  execution:
+    extends: coding
+    description: "Code execution (requires sandbox)"
+    tools:
+      - nexus_python
+      - nexus_bash
+      - nexus_sandbox_create
+      - nexus_sandbox_list
+      - nexus_sandbox_stop
+
+  full:
+    extends: execution
+    description: "All tools (admin/development)"
+    tools:
+      - nexus_semantic_search
+      - nexus_store_memory
+      - nexus_query_memory
+      - nexus_list_workflows
+      - nexus_execute_workflow
+      - nexus_discovery_search_tools
+      - nexus_discovery_list_servers
+      - nexus_discovery_get_tool_details
+      - nexus_discovery_load_tools
+
+default_profile: minimal

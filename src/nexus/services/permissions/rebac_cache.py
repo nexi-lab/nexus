@@ -38,6 +38,8 @@ from typing import Any
 
 from cachetools import TTLCache
 
+from nexus.services.permissions.utils.zone import normalize_zone_id
+
 logger = logging.getLogger(__name__)
 
 
@@ -459,7 +461,7 @@ class ReBACPermissionCache:
         if not self._enable_revision_quantization:
             return 0
 
-        effective_zone = zone_id or "default"
+        effective_zone = normalize_zone_id(zone_id)
         current_time = time.time()
 
         # Check local revision cache
@@ -490,7 +492,7 @@ class ReBACPermissionCache:
         Returns:
             Current revision number, or 0 if unavailable
         """
-        effective_zone = zone_id or "default"
+        effective_zone = normalize_zone_id(zone_id)
         current_time = time.time()
 
         # Check local revision cache first

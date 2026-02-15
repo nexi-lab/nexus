@@ -41,6 +41,8 @@ from cachetools import TTLCache
 if TYPE_CHECKING:
     pass
 
+from nexus.services.permissions.utils.zone import normalize_zone_id
+
 logger = logging.getLogger(__name__)
 
 
@@ -127,7 +129,7 @@ class PermissionBoundaryCache:
         Returns:
             Boundary path if found (e.g., "/workspace/"), None if not cached
         """
-        key = (zone_id or "default", subject_type, subject_id, permission)
+        key = (normalize_zone_id(zone_id), subject_type, subject_id, permission)
         normalized_path = self._normalize_path(path)
 
         with self._lock:
@@ -202,7 +204,7 @@ class PermissionBoundaryCache:
             path: File path that was checked
             boundary_path: The ancestor path where grant was found
         """
-        key = (zone_id or "default", subject_type, subject_id, permission)
+        key = (normalize_zone_id(zone_id), subject_type, subject_id, permission)
         normalized_path = self._normalize_path(path)
         normalized_boundary = self._normalize_path(boundary_path)
 
@@ -244,7 +246,7 @@ class PermissionBoundaryCache:
         Returns:
             Number of entries invalidated
         """
-        effective_zone = zone_id or "default"
+        effective_zone = normalize_zone_id(zone_id)
         count = 0
 
         with self._lock:
@@ -290,7 +292,7 @@ class PermissionBoundaryCache:
         Returns:
             Number of entries invalidated
         """
-        effective_zone = zone_id or "default"
+        effective_zone = normalize_zone_id(zone_id)
         # Normalize path prefix for consistent matching
         normalized_prefix = path_prefix.rstrip("/")
         if not normalized_prefix:
@@ -360,7 +362,7 @@ class PermissionBoundaryCache:
         Returns:
             Number of entries invalidated
         """
-        effective_zone = zone_id or "default"
+        effective_zone = normalize_zone_id(zone_id)
         key = (effective_zone, subject_type, subject_id, permission)
         normalized_path = object_path.rstrip("/") or "/"
         count = 0

@@ -9,13 +9,17 @@ This module contains relationship-based permission operations:
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.rpc_decorator import rpc_expose
+from nexus.services.permissions.utils.zone import normalize_zone_id
 
 if TYPE_CHECKING:
     from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager, WriteResult
+
+logger = logging.getLogger(__name__)
 
 
 class NexusFSReBACMixin:
@@ -391,9 +395,6 @@ class NexusFSReBACMixin:
                             pass
                         except Exception as e:
                             # If CSV parsing fails (non-validation error), provide warning but allow creation
-                            import logging
-
-                            logger = logging.getLogger(__name__)
                             logger.warning(
                                 f"Could not validate CSV columns for {file_path}: {e}. "
                                 f"Column config will be created without validation."
@@ -403,9 +404,6 @@ class NexusFSReBACMixin:
                     raise
                 except Exception as e:
                     # If file read fails, skip validation (file might not exist yet)
-                    import logging
-
-                    logger = logging.getLogger(__name__)
                     logger.debug(f"Could not read file {file_path} for column validation: {e}")
 
             # Check that a column only appears in one category
@@ -498,10 +496,6 @@ class NexusFSReBACMixin:
         Returns:
             True if user has READ on any descendant, False otherwise
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
-
         # Normalize path prefix for matching
         prefix = path if path.endswith("/") else path + "/"
         if path == "/":
@@ -512,7 +506,7 @@ class NexusFSReBACMixin:
         # metadata.list() call.
         try:
             # Get all tuples for this subject in this zone
-            effective_zone = zone_id or "default"
+            effective_zone = normalize_zone_id(zone_id)
 
             # Use the _fetch_zone_tuples_from_db method to get cached tuples
             # or fall back to checking the in-memory graph
@@ -2440,7 +2434,7 @@ class NexusFSReBACMixin:
         if subject is None:
             subject = ("group", "authenticated")
 
-        effective_zone_id = zone_id or "default"
+        effective_zone_id = normalize_zone_id(zone_id)
 
         # Root-level implicit directories that need TRAVERSE permission
         implicit_dirs = [
@@ -2476,9 +2470,6 @@ class NexusFSReBACMixin:
                 )
                 tuple_ids.append(tuple_id)
             except Exception as e:
-                import logging
-
-                logger = logging.getLogger(__name__)
                 logger.warning(f"Failed to grant TRAVERSE on {dir_path}: {e}")
 
         return tuple_ids
@@ -2550,7 +2541,7 @@ class NexusFSReBACMixin:
         if not hasattr(self, "_rebac_manager"):
             return 0
 
-        effective_zone_id = zone_id or "default"
+        effective_zone_id = normalize_zone_id(zone_id)
         entries_created = 0
 
         # If no subjects provided, get all unique subjects from tuples
@@ -2587,8 +2578,6 @@ class NexusFSReBACMixin:
                 # Use small batch size since each entry can take 10-40 seconds
                 self._require_rebac.tiger_process_queue(batch_size=5)
             except Exception as e:
-                import logging
-
-                logging.getLogger(__name__).warning(f"[WARM-TIGER] Queue processing failed: {e}")
+                logger.warning(f"[WARM-TIGER] Queue processing failed: {e}")
 
         return entries_created

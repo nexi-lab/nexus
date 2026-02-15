@@ -37,7 +37,6 @@ if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter
     from nexus.parsers.registry import ParserRegistry
-    from nexus.services.permissions.permission_policy import PolicyMatcher
 
 
 class NexusFSCoreMixin:
@@ -56,7 +55,6 @@ class NexusFSCoreMixin:
         is_admin: bool
         auto_parse: bool
         parser_registry: ParserRegistry
-        policy_matcher: PolicyMatcher
         _default_context: OperationContext
         _parser_threads: list[threading.Thread]
         _parser_threads_lock: threading.Lock
@@ -80,9 +78,6 @@ class NexusFSCoreMixin:
             context: OperationContext | None,
             file_metadata: FileMetadata | None = None,
         ) -> None: ...
-        def _inherit_permissions_from_parent(
-            self, path: str, is_directory: bool
-        ) -> tuple[str | None, str | None, int | None]: ...
         def _get_routing_params(
             self, context: OperationContext | dict[Any, Any] | None
         ) -> tuple[str | None, str | None, bool]: ...

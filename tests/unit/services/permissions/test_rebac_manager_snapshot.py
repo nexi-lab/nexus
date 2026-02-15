@@ -25,11 +25,11 @@ from sqlalchemy.pool import StaticPool
 
 from nexus.services.permissions.rebac_manager_enhanced import (
     ConsistencyLevel,
-    ConsistencyMode,
     ConsistencyRequirement,
     EnhancedReBACManager,
     WriteResult,
 )
+from nexus.services.permissions.types import ConsistencyMode
 from nexus.storage.models import Base
 
 

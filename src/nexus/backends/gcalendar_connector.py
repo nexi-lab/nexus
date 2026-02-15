@@ -39,6 +39,7 @@ import yaml
 
 from nexus.backends.backend import Backend
 from nexus.backends.cache_mixin import IMMUTABLE_VERSION, CacheConnectorMixin
+from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.connectors.base import (
     CheckpointMixin,
     ConfirmLevel,
@@ -69,6 +70,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@register_connector(
+    "gcalendar_connector",
+    description="Google Calendar with OAuth 2.0 authentication (full CRUD)",
+    category="oauth",
+    requires=["google-api-python-client", "google-auth-oauthlib"],
+    service_name="google-calendar",
+)
 class GoogleCalendarConnectorBackend(
     Backend,
     CacheConnectorMixin,
@@ -180,6 +188,32 @@ send_notifications: true
 
     # Enable metadata-based listing for fast database queries
     use_metadata_listing = True
+
+    # Connection arguments for registry-based instantiation
+    CONNECTION_ARGS: dict[str, ConnectionArg] = {
+        "token_manager_db": ConnectionArg(
+            type=ArgType.PATH,
+            description="Path to TokenManager database or database URL",
+            required=True,
+        ),
+        "user_email": ConnectionArg(
+            type=ArgType.STRING,
+            description="User email for OAuth lookup (None for multi-user from context)",
+            required=False,
+        ),
+        "provider": ConnectionArg(
+            type=ArgType.STRING,
+            description="OAuth provider name from config",
+            required=False,
+            default="gcalendar",
+        ),
+        "max_events_per_calendar": ConnectionArg(
+            type=ArgType.INTEGER,
+            description="Maximum number of events to fetch per calendar",
+            required=False,
+            default=250,
+        ),
+    }
 
     def __init__(
         self,

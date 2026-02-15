@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-from nexus.backends.service_map import SERVICE_REGISTRY, ServiceInfo
+from nexus.backends.service_map import SERVICE_REGISTRY, ServiceInfo, _sync_from_connector_registry
 from nexus.skills.mcp_models import MCPMount, MCPToolConfig, MCPToolDefinition
 from nexus.skills.skill_generator import (
     ConnectorTemplate,
@@ -61,14 +61,14 @@ invalid: yaml: structure:
 
 
 @pytest.fixture
-def skill_generator(temp_templates_dir: Path) -> SkillGenerator:
-    """Create a SkillGenerator with temporary templates."""
-    return SkillGenerator(templates_path=temp_templates_dir)
-
-
-@pytest.fixture
 def mock_service_registry():
-    """Mock the service registry."""
+    """Mock the service registry.
+
+    Must be used BEFORE skill_generator fixture so templates load with
+    mock data in place.
+    """
+    # Trigger sync first so we capture the post-sync state
+    _sync_from_connector_registry()
     original_registry = SERVICE_REGISTRY.copy()
 
     # Add test service info
@@ -94,9 +94,22 @@ def mock_service_registry():
 
     yield SERVICE_REGISTRY
 
-    # Restore original registry
+    # Restore original registry and re-sync so other tests see correct state
     SERVICE_REGISTRY.clear()
     SERVICE_REGISTRY.update(original_registry)
+    # Reset sync flag so next access re-syncs from ConnectorRegistry
+    import nexus.backends.service_map as _sm
+    _sm._synced = False
+
+
+@pytest.fixture
+def skill_generator(temp_templates_dir: Path, mock_service_registry) -> SkillGenerator:
+    """Create a SkillGenerator with temporary templates.
+
+    Depends on mock_service_registry to ensure SERVICE_REGISTRY is populated
+    before templates are loaded.
+    """
+    return SkillGenerator(templates_path=temp_templates_dir)
 
 
 class TestSkillGenerator:

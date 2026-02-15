@@ -165,6 +165,13 @@ class ConnectorInfo:
     Auto-populated at registration time by :func:`derive_config_mapping`.
     """
 
+    service_name: str | None = None
+    """Unified service name for service_map integration (e.g., 'gmail', 'google-drive').
+
+    When set, service_map.py auto-derives the connector field from this registry,
+    eliminating manual synchronization between ConnectorRegistry and SERVICE_REGISTRY.
+    """
+
     @property
     def connection_args(self) -> dict[str, ConnectionArg]:
         """Get CONNECTION_ARGS from the connector class if defined.
@@ -259,6 +266,7 @@ class ConnectorRegistry:
         description: str = "",
         category: str = "storage",
         requires: list[str] | None = None,
+        service_name: str | None = None,
     ) -> None:
         """Register a connector class.
 
@@ -268,6 +276,7 @@ class ConnectorRegistry:
             description: Human-readable description
             category: Category for grouping
             requires: List of optional dependencies
+            service_name: Unified service name for service_map integration
 
         Raises:
             ValueError: If a connector with the same name is already registered
@@ -299,6 +308,7 @@ class ConnectorRegistry:
             requires=requires or [],
             user_scoped=user_scoped,
             config_mapping=config_mapping,
+            service_name=service_name,
         )
         cls._base.register(name, info, allow_overwrite=True)
 
@@ -398,6 +408,21 @@ class ConnectorRegistry:
         return name in cls._base
 
     @classmethod
+    def get_by_service_name(cls, service_name: str) -> ConnectorInfo | None:
+        """Get connector info by unified service name.
+
+        Args:
+            service_name: Unified service name (e.g., 'gmail', 'google-drive')
+
+        Returns:
+            ConnectorInfo if found, None otherwise
+        """
+        for info in cls._base.list_all():
+            if info.service_name == service_name:
+                return info
+        return None
+
+    @classmethod
     def clear(cls) -> None:
         """Clear all registered connectors. Primarily for testing."""
         cls._base.clear()
@@ -408,6 +433,7 @@ def register_connector(
     description: str = "",
     category: str = "storage",
     requires: list[str] | None = None,
+    service_name: str | None = None,
 ) -> Callable[[type[Backend]], type[Backend]]:
     """Decorator to register a connector class.
 
@@ -419,6 +445,9 @@ def register_connector(
         description: Human-readable description
         category: Category for grouping (default: 'storage')
         requires: List of optional dependencies (e.g., ['google-cloud-storage'])
+        service_name: Unified service name for service_map integration
+            (e.g., 'gmail', 'google-drive'). When set, service_map.py
+            auto-derives the connector field from this registry.
 
     Returns:
         Decorator function
@@ -440,6 +469,7 @@ def register_connector(
             description=description,
             category=category,
             requires=requires,
+            service_name=service_name,
         )
         return cls
 

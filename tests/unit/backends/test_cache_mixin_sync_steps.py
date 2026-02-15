@@ -1,4 +1,4 @@
-"""Unit tests for CacheConnectorMixin.sync() refactored steps.
+"""Unit tests for SyncPipelineService (extracted from CacheConnectorMixin).
 
 Tests each of the 7 sync steps independently to ensure they work correctly
 in isolation and handle edge cases properly.
@@ -27,6 +27,7 @@ from nexus.backends.cache_mixin import (
     CacheEntry,
     SyncResult,
 )
+from nexus.backends.sync_pipeline import SyncPipelineService
 from nexus.core.permissions import OperationContext
 from nexus.storage.models import Base, ContentCacheModel, FilePathModel
 
@@ -44,15 +45,19 @@ class MockConnector(CacheConnectorMixin):
         return self.files.get(path)
 
     def list_dir(self, path, context=None):
-        # Return files in this directory
+        # Return files and directories in this directory
         prefix = path.rstrip("/") + "/" if path else ""
-        files_in_dir = []
+        entries = set()
         for f in self.files:
             if f.startswith(prefix):
-                relative = f.replace(prefix, "", 1)
-                if "/" not in relative:  # Only immediate children
-                    files_in_dir.append(relative)
-        return files_in_dir
+                relative = f[len(prefix):]
+                if "/" not in relative:
+                    entries.add(relative)
+                else:
+                    # Return subdirectory with trailing "/"
+                    dir_name = relative.split("/")[0]
+                    entries.add(dir_name + "/")
+        return sorted(entries)
 
     def get_version(self, path, context=None):
         return self.versions.get(path)
@@ -82,6 +87,12 @@ def connector(db_session):
 
 
 @pytest.fixture
+def pipeline(connector):
+    """Create sync pipeline for testing."""
+    return SyncPipelineService(connector)
+
+
+@pytest.fixture
 def test_context():
     """Create test operation context."""
     return OperationContext(
@@ -95,7 +106,7 @@ def test_context():
 class TestStep1DiscoverFiles:
     """Test Step 1: File discovery and filtering."""
 
-    def test_discover_all_files(self, connector, test_context):
+    def test_discover_all_files(self, connector, pipeline, test_context):
         """Test discovering all files from backend."""
         connector.files = {
             "file1.txt": b"content1",
@@ -104,7 +115,7 @@ class TestStep1DiscoverFiles:
         }
 
         result = SyncResult()
-        files, mapping = connector._sync_step1_discover_files(
+        files, mapping = pipeline._step1_discover_files(
             path=None,
             mount_point="/test",
             include_patterns=None,
@@ -121,7 +132,7 @@ class TestStep1DiscoverFiles:
         assert mapping["file2.py"] == "/test/file2.py"
         assert mapping["dir/file3.md"] == "/test/dir/file3.md"
 
-    def test_discover_with_include_patterns(self, connector, test_context):
+    def test_discover_with_include_patterns(self, connector, pipeline, test_context):
         """Test file discovery with include patterns."""
         connector.files = {
             "file1.txt": b"content1",
@@ -130,7 +141,7 @@ class TestStep1DiscoverFiles:
         }
 
         result = SyncResult()
-        files, mapping = connector._sync_step1_discover_files(
+        files, mapping = pipeline._step1_discover_files(
             path=None,
             mount_point="/test",
             include_patterns=["*.py", "*.md"],
@@ -145,7 +156,7 @@ class TestStep1DiscoverFiles:
         assert "file1.txt" not in files
         assert result.files_skipped == 1
 
-    def test_discover_with_exclude_patterns(self, connector, test_context):
+    def test_discover_with_exclude_patterns(self, connector, pipeline, test_context):
         """Test file discovery with exclude patterns."""
         connector.files = {
             "file1.txt": b"content1",
@@ -154,7 +165,7 @@ class TestStep1DiscoverFiles:
         }
 
         result = SyncResult()
-        files, mapping = connector._sync_step1_discover_files(
+        files, mapping = pipeline._step1_discover_files(
             path=None,
             mount_point="/test",
             include_patterns=None,
@@ -169,7 +180,7 @@ class TestStep1DiscoverFiles:
         assert ".git/config" not in files
         assert result.files_skipped == 2
 
-    def test_discover_specific_path(self, connector, test_context):
+    def test_discover_specific_path(self, connector, pipeline, test_context):
         """Test discovering files from specific path."""
         connector.files = {
             "reports/2024/q1.pdf": b"content1",
@@ -177,17 +188,17 @@ class TestStep1DiscoverFiles:
             "data/file.txt": b"content3",
         }
 
-        # Mock list_dir to return files in reports/2024
+        # Mock list_dir on connector and _list_files_recursive on pipeline
         with (
             patch.object(connector, "list_dir", return_value=["q1.pdf", "q2.pdf"]),
             patch.object(
-                connector,
+                pipeline,
                 "_list_files_recursive",
                 return_value=["reports/2024/q1.pdf", "reports/2024/q2.pdf"],
             ),
         ):
             result = SyncResult()
-            files, mapping = connector._sync_step1_discover_files(
+            files, mapping = pipeline._step1_discover_files(
                 path="reports/2024",
                 mount_point="/test",
                 include_patterns=None,
@@ -201,14 +212,14 @@ class TestStep1DiscoverFiles:
             assert "reports/2024/q2.pdf" in files
             assert "data/file.txt" not in files
 
-    def test_discover_error_handling(self, connector, test_context):
+    def test_discover_error_handling(self, connector, pipeline, test_context):
         """Test error handling during file discovery."""
         # Make _list_files_recursive raise an error
         with patch.object(
-            connector, "_list_files_recursive", side_effect=Exception("Backend error")
+            pipeline, "_list_files_recursive", side_effect=Exception("Backend error")
         ):
             result = SyncResult()
-            files, mapping = connector._sync_step1_discover_files(
+            files, mapping = pipeline._step1_discover_files(
                 path=None,
                 mount_point="/test",
                 include_patterns=None,
@@ -226,15 +237,15 @@ class TestStep1DiscoverFiles:
 class TestStep2LoadCache:
     """Test Step 2: Bulk cache loading."""
 
-    def test_load_empty_cache(self, connector):
+    def test_load_empty_cache(self, connector, pipeline):
         """Test loading cache when nothing is cached."""
         virtual_paths = ["/test/file1.txt", "/test/file2.txt"]
 
-        cached = connector._sync_step2_load_cache(virtual_paths)
+        cached = pipeline._step2_load_cache(virtual_paths)
 
         assert len(cached) == 0
 
-    def test_load_partial_cache(self, connector, db_session):
+    def test_load_partial_cache(self, connector, pipeline, db_session):
         """Test loading cache with some files cached."""
         session = db_session()
 
@@ -275,19 +286,19 @@ class TestStep2LoadCache:
 
         # Load cache
         virtual_paths = ["/test/file1.txt", "/test/file2.txt"]
-        cached = connector._sync_step2_load_cache(virtual_paths)
+        cached = pipeline._step2_load_cache(virtual_paths)
 
         assert len(cached) == 1
         assert "/test/file1.txt" in cached
         assert "/test/file2.txt" not in cached
 
-    def test_load_cache_performance(self, connector):
+    def test_load_cache_performance(self, connector, pipeline):
         """Test that bulk cache loading uses single query."""
         virtual_paths = [f"/test/file{i}.txt" for i in range(100)]
 
         with patch.object(connector, "_get_path_ids_bulk") as mock_bulk:
             mock_bulk.return_value = {}
-            connector._sync_step2_load_cache(virtual_paths)
+            pipeline._step2_load_cache(virtual_paths)
 
             # Should use single bulk query, not 100 individual queries
             assert mock_bulk.call_count == 1
@@ -296,7 +307,7 @@ class TestStep2LoadCache:
 class TestStep3CheckVersions:
     """Test Step 3: Version checking and filtering."""
 
-    def test_skip_immutable_files(self, connector, test_context):
+    def test_skip_immutable_files(self, connector, pipeline, test_context):
         """Test that immutable files are skipped."""
         files = ["email1.eml", "email2.eml"]
         backend_to_virtual = {
@@ -320,7 +331,7 @@ class TestStep3CheckVersions:
         }
 
         result = SyncResult()
-        files_needing, contexts, metadata = connector._sync_step3_check_versions(
+        files_needing, contexts, metadata = pipeline._step3_check_versions(
             files, backend_to_virtual, cached_entries, test_context, result
         )
 
@@ -329,7 +340,7 @@ class TestStep3CheckVersions:
         assert "email2.eml" in files_needing
         assert result.files_skipped == 1
 
-    def test_skip_fresh_cached_files(self, connector, test_context):
+    def test_skip_fresh_cached_files(self, connector, pipeline, test_context):
         """Test that fresh cached files with matching versions are skipped."""
         connector.versions = {"file1.txt": "v1", "file2.txt": "v2"}
 
@@ -355,7 +366,7 @@ class TestStep3CheckVersions:
         }
 
         result = SyncResult()
-        files_needing, contexts, metadata = connector._sync_step3_check_versions(
+        files_needing, contexts, metadata = pipeline._step3_check_versions(
             files, backend_to_virtual, cached_entries, test_context, result
         )
 
@@ -364,7 +375,7 @@ class TestStep3CheckVersions:
         assert "file2.txt" in files_needing
         assert result.files_skipped == 1
 
-    def test_sync_stale_files(self, connector, test_context):
+    def test_sync_stale_files(self, connector, pipeline, test_context):
         """Test that stale cached files are re-synced."""
         connector.versions = {"file1.txt": "v2"}
 
@@ -387,7 +398,7 @@ class TestStep3CheckVersions:
         }
 
         result = SyncResult()
-        files_needing, contexts, metadata = connector._sync_step3_check_versions(
+        files_needing, contexts, metadata = pipeline._step3_check_versions(
             files, backend_to_virtual, cached_entries, test_context, result
         )
 
@@ -396,7 +407,7 @@ class TestStep3CheckVersions:
         assert "file1.txt" in files_needing
         assert result.files_skipped == 0
 
-    def test_batch_version_fetch(self, connector, test_context):
+    def test_batch_version_fetch(self, connector, pipeline, test_context):
         """Test that version fetching uses batch API when available."""
         connector.versions = {f"file{i}.txt": f"v{i}" for i in range(10)}
 
@@ -408,7 +419,7 @@ class TestStep3CheckVersions:
             mock_batch.return_value = connector.versions
 
             result = SyncResult()
-            connector._sync_step3_check_versions(
+            pipeline._step3_check_versions(
                 files, backend_to_virtual, cached_entries, test_context, result
             )
 
@@ -419,7 +430,7 @@ class TestStep3CheckVersions:
 class TestStep4ReadBackend:
     """Test Step 4: Batch backend reads."""
 
-    def test_read_from_backend(self, connector):
+    def test_read_from_backend(self, connector, pipeline):
         """Test reading files from backend."""
         connector.files = {
             "file1.txt": b"content1",
@@ -427,13 +438,13 @@ class TestStep4ReadBackend:
         }
 
         contexts = {}
-        backend_contents = connector._sync_step4_read_backend(["file1.txt", "file2.txt"], contexts)
+        backend_contents = pipeline._step4_read_backend(["file1.txt", "file2.txt"], contexts)
 
         assert len(backend_contents) == 2
         assert backend_contents["file1.txt"] == b"content1"
         assert backend_contents["file2.txt"] == b"content2"
 
-    def test_read_partial_failure(self, connector):
+    def test_read_partial_failure(self, connector, pipeline):
         """Test handling partial backend read failures."""
         connector.files = {
             "file1.txt": b"content1",
@@ -441,7 +452,7 @@ class TestStep4ReadBackend:
         }
 
         contexts = {}
-        backend_contents = connector._sync_step4_read_backend(["file1.txt", "file2.txt"], contexts)
+        backend_contents = pipeline._step4_read_backend(["file1.txt", "file2.txt"], contexts)
 
         # Should return only successful reads
         assert len(backend_contents) == 1
@@ -452,7 +463,7 @@ class TestStep4ReadBackend:
 class TestStep5ProcessContent:
     """Test Step 5: Content processing and parsing."""
 
-    def test_process_simple_files(self, connector, test_context):
+    def test_process_simple_files(self, connector, pipeline, test_context):
         """Test processing simple text files."""
         backend_contents = {
             "file1.txt": b"content1",
@@ -464,7 +475,7 @@ class TestStep5ProcessContent:
         }
 
         result = SyncResult()
-        cache_entries, files_to_embed = connector._sync_step5_process_content(
+        cache_entries, files_to_embed = pipeline._step5_process_content(
             backend_contents,
             file_metadata,
             max_size=1024 * 1024,
@@ -481,7 +492,7 @@ class TestStep5ProcessContent:
         assert result.files_synced == 2
         assert result.bytes_synced == 16
 
-    def test_skip_large_files(self, connector, test_context):
+    def test_skip_large_files(self, connector, pipeline, test_context):
         """Test that files exceeding max_size are skipped."""
         large_content = b"x" * (10 * 1024 * 1024)  # 10MB
         backend_contents = {
@@ -494,7 +505,7 @@ class TestStep5ProcessContent:
         }
 
         result = SyncResult()
-        cache_entries, files_to_embed = connector._sync_step5_process_content(
+        cache_entries, files_to_embed = pipeline._step5_process_content(
             backend_contents,
             file_metadata,
             max_size=1 * 1024 * 1024,  # 1MB limit
@@ -509,7 +520,7 @@ class TestStep5ProcessContent:
         assert result.files_synced == 1
         assert result.files_skipped == 1
 
-    def test_skip_unchanged_content(self, connector, test_context):
+    def test_skip_unchanged_content(self, connector, pipeline, test_context):
         """Test that unchanged content (matching hash) is skipped."""
         from nexus.core.hash_fast import hash_content
 
@@ -538,7 +549,7 @@ class TestStep5ProcessContent:
         }
 
         result = SyncResult()
-        cache_entries, files_to_embed = connector._sync_step5_process_content(
+        cache_entries, files_to_embed = pipeline._step5_process_content(
             backend_contents,
             file_metadata,
             max_size=1024 * 1024,
@@ -556,7 +567,7 @@ class TestStep5ProcessContent:
 class TestStep6WriteCache:
     """Test Step 6: Batch cache writing."""
 
-    def test_write_cache_entries(self, connector, db_session):
+    def test_write_cache_entries(self, connector, pipeline, db_session):
         """Test writing cache entries to database."""
         session = db_session()
 
@@ -586,7 +597,7 @@ class TestStep6WriteCache:
         ]
 
         result = SyncResult()
-        connector._sync_step6_write_cache(cache_entries, result)
+        pipeline._step6_write_cache(cache_entries, result)
 
         # Verify cache was written
         session = db_session()
@@ -597,7 +608,7 @@ class TestStep6WriteCache:
         assert cache_model.backend_version == "v1"
         session.close()
 
-    def test_write_cache_error_handling(self, connector):
+    def test_write_cache_error_handling(self, connector, pipeline):
         """Test error handling during cache write."""
         cache_entries = [
             {
@@ -613,7 +624,7 @@ class TestStep6WriteCache:
         ]
 
         result = SyncResult()
-        connector._sync_step6_write_cache(cache_entries, result)
+        pipeline._step6_write_cache(cache_entries, result)
 
         # Should gracefully skip missing paths (logged as warning, not error)
         # The batch write skips paths not found in file_paths and logs warning
@@ -623,19 +634,19 @@ class TestStep6WriteCache:
 class TestStep7GenerateEmbeddings:
     """Test Step 7: Embedding generation."""
 
-    def test_generate_embeddings(self, connector):
+    def test_generate_embeddings(self, connector, pipeline):
         """Test embedding generation for files."""
         files = ["/test/file1.txt", "/test/file2.txt"]
 
         with patch.object(connector, "_generate_embeddings") as mock_gen:
             result = SyncResult()
-            connector._sync_step7_generate_embeddings(files, result)
+            pipeline._step7_generate_embeddings(files, result)
 
             # Should generate embeddings for all files
             assert mock_gen.call_count == 2
             assert result.embeddings_generated == 2
 
-    def test_generate_embeddings_error_handling(self, connector):
+    def test_generate_embeddings_error_handling(self, connector, pipeline):
         """Test error handling during embedding generation."""
         files = ["/test/file1.txt"]
 
@@ -643,7 +654,7 @@ class TestStep7GenerateEmbeddings:
             connector, "_generate_embeddings", side_effect=Exception("Embedding error")
         ):
             result = SyncResult()
-            connector._sync_step7_generate_embeddings(files, result)
+            pipeline._step7_generate_embeddings(files, result)
 
             # Should capture error and continue
             assert result.embeddings_generated == 0

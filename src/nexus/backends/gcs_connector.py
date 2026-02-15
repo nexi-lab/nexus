@@ -64,6 +64,7 @@ logger = logging.getLogger(__name__)
     description="Google Cloud Storage with direct path mapping",
     category="storage",
     requires=["google-cloud-storage"],
+    service_name="gcs",
 )
 class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
     """

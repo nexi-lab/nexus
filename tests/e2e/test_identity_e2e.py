@@ -22,6 +22,7 @@ from typing import Any
 import pytest
 
 from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol, PaginatedResult
+from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.storage.models import Base
 
 # ---------------------------------------------------------------------------
@@ -164,8 +165,8 @@ def app(tmp_path: Any, db_path: Any, session_factory: Any, api_keys: Any) -> Any
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
-        enforce_permissions=True,
-        auto_parse=False,
+        permissions=PermissionConfig(enforce=True),
+        parsing=ParseConfig(auto_parse=False),
     )
 
     # Wire database auth

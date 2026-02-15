@@ -22,6 +22,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.core.config import KernelServices, ParseConfig, PermissionConfig
 from tests.helpers.in_memory_metadata_store import InMemoryFileMetadataStore
 
 
@@ -42,9 +43,9 @@ def nx(temp_dir: Path, observer: MagicMock) -> Generator[NexusFS, None, None]:
     nx = NexusFS(
         backend=LocalBackend(str(temp_dir / "data")),
         metadata_store=InMemoryFileMetadataStore(),
-        enforce_permissions=False,
-        auto_parse=False,
-        write_observer=observer,
+        permissions=PermissionConfig(enforce=False),
+        parsing=ParseConfig(auto_parse=False),
+        services=KernelServices(write_observer=observer),
     )
     yield nx
     nx.close()

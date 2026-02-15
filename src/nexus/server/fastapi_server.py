@@ -780,7 +780,7 @@ async def lifespan(_app: FastAPI) -> Any:
     # Fall back to creating one here if the factory didn't provide it.
     _upload_cleanup_task = None
     _factory_upload_svc = (
-        _app.state.nexus_fs._service_extras.get("chunked_upload_service")
+        getattr(getattr(_app.state.nexus_fs, "_services", None), "chunked_upload_service", None)
         if _app.state.nexus_fs
         else None
     )
@@ -834,8 +834,8 @@ async def lifespan(_app: FastAPI) -> Any:
 
     # Issue #726: Wire circuit breaker from factory for health endpoint access
     if _app.state.nexus_fs:
-        _app.state.rebac_circuit_breaker = _app.state.nexus_fs._service_extras.get(
-            "rebac_circuit_breaker"
+        _app.state.rebac_circuit_breaker = getattr(
+            getattr(_app.state.nexus_fs, "_services", None), "rebac_circuit_breaker", None
         )
 
     # Issue #1240: Start agent heartbeat and stale detection background tasks
@@ -1429,7 +1429,7 @@ def create_app(
 
         from nexus.server.pg_metrics_collector import QueryObserverCollector
 
-        obs_sub = nexus_fs._service_extras.get("observability_subsystem")
+        obs_sub = getattr(getattr(nexus_fs, "_services", None), "observability_subsystem", None)
         if obs_sub is not None:
             REGISTRY.register(QueryObserverCollector(obs_sub.observer))
     except Exception:
@@ -1726,9 +1726,9 @@ def _register_routes(app: FastAPI) -> None:
 
         # Circuit breaker health (Issue #1366)
         _resiliency_mgr = (
-            _fastapi_app.state.nexus_fs._service_extras.get("resiliency_manager")
+            getattr(getattr(_fastapi_app.state.nexus_fs, "_services", None), "resiliency_manager", None)
             if _fastapi_app.state.nexus_fs
-            and hasattr(_fastapi_app.state.nexus_fs, "_service_extras")
+            and hasattr(_fastapi_app.state.nexus_fs, "_services")
             else None
         )
         if _resiliency_mgr is not None:

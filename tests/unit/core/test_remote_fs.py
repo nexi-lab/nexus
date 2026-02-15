@@ -8,6 +8,7 @@ from unittest.mock import Mock
 import pytest
 
 from nexus import NexusFS
+from nexus.core.config import PermissionConfig
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.core.response import HandlerResponse
 from nexus.factory import create_nexus_fs
@@ -60,7 +61,7 @@ class TestNexusFSInitialization:
         fs = NexusFS(
             backend=mock_gcs_backend,
             metadata_store=metadata_store,
-            audit_strict_mode=False,
+            permissions=PermissionConfig(audit_strict_mode=False),
         )
 
         assert sled_path.exists()
@@ -72,7 +73,7 @@ class TestNexusFSInitialization:
         fs = NexusFS(
             backend=mock_gcs_backend,
             metadata_store=metadata_store,
-            audit_strict_mode=False,
+            permissions=PermissionConfig(audit_strict_mode=False),
         )
 
         assert fs.backend.bucket_name == "test-bucket"
@@ -98,7 +99,7 @@ class TestNexusFSInitialization:
         fs.close()
 
     def test_init_with_zone_and_agent(self, temp_dir: Path, mock_gcs_backend: Mock) -> None:
-        """Test initialization with zone and agent context."""
+        """Test initialization with zone and agent context (passed to services)."""
         db_path = temp_dir / "metadata.db"
         fs = create_nexus_fs(
             backend=mock_gcs_backend,
@@ -109,8 +110,7 @@ class TestNexusFSInitialization:
             is_admin=True,
         )
 
-        assert fs.zone_id == "zone-123"
-        assert fs.agent_id == "agent-456"
+        # zone_id/agent_id are now passed to services, not stored on NexusFS
         assert fs.is_admin is True
         fs.close()
 

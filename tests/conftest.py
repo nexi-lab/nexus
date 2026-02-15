@@ -94,6 +94,92 @@ if _HAS_STRUCTLOG:
         structlog.contextvars.clear_contextvars()
 
 
+def make_test_nexus(
+    tmp_path,
+    *,
+    permissions=None,
+    parsing=None,
+    cache=None,
+    memory=None,
+    distributed=None,
+    services=None,
+    is_admin=False,
+    record_store=None,
+    use_raft=False,
+    backend=None,
+    metadata_store=None,
+):
+    """Create a NexusFS instance for testing with sensible defaults.
+
+    Defaults: permissions off, no auto-parse, no distributed features.
+    Avoids heavy I/O (event bus, lock manager, workflows) for fast tests.
+
+    Args:
+        tmp_path: pytest tmp_path fixture for backend/metadata storage.
+        permissions: PermissionConfig override. Default: enforce=False.
+        parsing: ParseConfig override. Default: auto_parse=False.
+        cache: CacheConfig override.
+        memory: MemoryConfig override.
+        distributed: DistributedConfig override. Default: all disabled.
+        services: KernelServices override.
+        is_admin: Admin flag.
+        record_store: Optional RecordStoreABC.
+        use_raft: Use RaftMetadataStore (requires Python 3.13).
+        backend: Override backend. Default: LocalBackend(tmp_path / "data").
+        metadata_store: Override metadata store. Default: InMemory or Raft.
+
+    Returns:
+        NexusFS instance ready for testing.
+    """
+    from nexus.core.config import (
+        DistributedConfig,
+        ParseConfig,
+        PermissionConfig,
+    )
+    from nexus.core.nexus_fs import NexusFS
+
+    if permissions is None:
+        permissions = PermissionConfig(enforce=False, audit_strict_mode=False)
+    if parsing is None:
+        parsing = ParseConfig(auto_parse=False)
+    if distributed is None:
+        distributed = DistributedConfig(
+            enable_events=False,
+            enable_locks=False,
+            enable_workflows=False,
+        )
+
+    if backend is None:
+        from nexus.backends.local import LocalBackend
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir(exist_ok=True)
+        backend = LocalBackend(root_path=data_dir)
+
+    if metadata_store is None:
+        if use_raft:
+            from nexus.storage.raft_metadata_store import RaftMetadataStore
+
+            metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft"))
+        else:
+            from tests.helpers.in_memory_metadata_store import InMemoryFileMetadataStore
+
+            metadata_store = InMemoryFileMetadataStore()
+
+    return NexusFS(
+        backend=backend,
+        metadata_store=metadata_store,
+        record_store=record_store,
+        is_admin=is_admin,
+        permissions=permissions,
+        parsing=parsing,
+        cache=cache,
+        memory=memory,
+        distributed=distributed,
+        services=services,
+    )
+
+
 @pytest.fixture(autouse=True)
 def _reset_auth_cache_fixture():
     """Reset the TTLCache auth cache between tests for isolation."""

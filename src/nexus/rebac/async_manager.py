@@ -90,7 +90,9 @@ class AsyncReBACManager:
         zone_id: str | None = None,
     ) -> list[tuple[str, str]]:
         """Async permission expansion."""
-        return await asyncio.to_thread(self._sync.rebac_expand, permission, object, zone_id)
+        return await asyncio.to_thread(
+            self._sync.rebac_expand, permission, object, zone_id
+        )
 
     # ── Bulk APIs ───────────────────────────────────────────────────
 
@@ -98,9 +100,12 @@ class AsyncReBACManager:
         self,
         checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
         zone_id: str = "default",
-    ) -> dict[tuple[tuple[str, str], str, tuple[str, str]], bool]:
+        use_rust: bool = True,
+    ) -> list[bool]:
         """Async bulk permission check."""
-        return await asyncio.to_thread(self._sync.rebac_check_bulk, checks, zone_id)
+        return await asyncio.to_thread(
+            self._sync.rebac_check_bulk, checks, zone_id, use_rust
+        )
 
     async def rebac_list_objects(
         self,
@@ -161,73 +166,19 @@ class AsyncReBACManager:
         zone_id: str = "default",
     ) -> set[tuple[str, str]]:
         """Async transitive group lookup."""
-        return await asyncio.to_thread(self._sync.get_transitive_groups, subject, zone_id)
+        return await asyncio.to_thread(
+            self._sync.get_transitive_groups, subject, zone_id
+        )
 
     async def invalidate_zone_graph_cache(self, zone_id: str | None = None) -> None:
         """Async cache invalidation."""
-        return await asyncio.to_thread(self._sync.invalidate_zone_graph_cache, zone_id)
+        return await asyncio.to_thread(
+            self._sync.invalidate_zone_graph_cache, zone_id
+        )
 
     async def get_cache_stats(self) -> dict[str, Any]:
         """Async cache stats."""
         return await asyncio.to_thread(self._sync.get_cache_stats)
-
-    def get_l1_cache_stats(self) -> dict[str, Any]:
-        """Synchronous cache stats (alias for bridge compatibility)."""
-        return self._sync.get_cache_stats()  # type: ignore[no-any-return]
-
-    # ── Bridge convenience methods ─────────────────────────────────
-
-    async def write_tuple(
-        self,
-        subject: tuple[str, str],
-        relation: str,
-        object: tuple[str, str],
-        zone_id: str | None = None,
-        subject_relation: str | None = None,  # noqa: ARG002
-    ) -> str:
-        """Write a relationship tuple and return the tuple_id.
-
-        Convenience wrapper around rebac_write for AsyncReBACBridge.
-        """
-        result = await self.rebac_write(
-            subject=subject, relation=relation, object=object, zone_id=zone_id
-        )
-        return result.tuple_id
-
-    async def delete_tuple(
-        self,
-        subject: tuple[str, str],
-        relation: str,
-        object: tuple[str, str],
-        zone_id: str | None = None,
-    ) -> bool:
-        """Delete a relationship tuple by its components.
-
-        Convenience wrapper for AsyncReBACBridge that looks up the tuple_id
-        by (subject, relation, object, zone_id) and deletes it.
-        """
-
-        def _delete_by_components() -> bool:
-            from nexus.rebac.utils.zone import normalize_zone_id
-
-            nz = normalize_zone_id(zone_id)
-            with self._sync._connection() as conn:
-                cursor = self._sync._create_cursor(conn)
-                cursor.execute(
-                    self._sync._fix_sql_placeholders(
-                        "SELECT tuple_id FROM rebac_tuples "
-                        "WHERE subject_type = ? AND subject_id = ? "
-                        "AND relation = ? AND object_type = ? AND object_id = ? "
-                        "AND zone_id = ?"
-                    ),
-                    (subject[0], subject[1], relation, object[0], object[1], nz),
-                )
-                row = cursor.fetchone()
-            if not row:
-                return False
-            return self._sync.rebac_delete(row[0])  # type: ignore[no-any-return]
-
-        return await asyncio.to_thread(_delete_by_components)
 
     # ── Lifecycle ───────────────────────────────────────────────────
 
@@ -245,75 +196,4 @@ class AsyncReBACManager:
     @property
     def enforce_zone_isolation(self) -> bool:
         """Delegate to sync manager's zone isolation setting."""
-        return self._sync.enforce_zone_isolation  # type: ignore[no-any-return]
-
-
-# ── Utility ─────────────────────────────────────────────────────────
-
-
-def create_async_engine_from_url(
-    database_url: str,
-    pool_size: int | None = None,
-    max_overflow: int | None = None,
-    pool_recycle: int | None = None,
-    prepared_statement_cache_size: int = 1024,
-) -> Any:
-    """Create async SQLAlchemy engine from database URL.
-
-    Automatically selects the correct async driver:
-    - postgresql:// -> postgresql+asyncpg://
-    - sqlite:// -> sqlite+aiosqlite://
-
-    Args:
-        database_url: Standard database URL
-        pool_size: Connection pool size (default: from env or 20)
-        max_overflow: Max overflow connections (default: from env or 30)
-        pool_recycle: Seconds before connection recycling (default: from env or 1800)
-        prepared_statement_cache_size: Asyncpg statement cache size (default: 1024)
-
-    Returns:
-        AsyncEngine instance
-    """
-    import os
-
-    from sqlalchemy.ext.asyncio import create_async_engine
-
-    # Convert to async driver URL
-    if database_url.startswith("postgresql://"):
-        async_url = database_url.replace("postgresql://", "postgresql+asyncpg://")
-    elif database_url.startswith("sqlite://"):
-        async_url = database_url.replace("sqlite://", "sqlite+aiosqlite://")
-    else:
-        async_url = database_url
-
-    engine_kwargs: dict[str, Any] = {
-        "echo": False,
-        "pool_recycle": pool_recycle or int(os.getenv("NEXUS_DB_POOL_RECYCLE", "1800")),
-    }
-
-    if "postgresql" in async_url:
-        engine_kwargs["pool_size"] = pool_size or int(os.getenv("NEXUS_DB_POOL_SIZE", "20"))
-        engine_kwargs["max_overflow"] = max_overflow or int(
-            os.getenv("NEXUS_DB_MAX_OVERFLOW", "30")
-        )
-        engine_kwargs["pool_timeout"] = int(os.getenv("NEXUS_DB_POOL_TIMEOUT", "30"))
-        engine_kwargs["pool_pre_ping"] = True
-        engine_kwargs["pool_use_lifo"] = True
-
-        statement_timeout = os.getenv("NEXUS_DB_STATEMENT_TIMEOUT", "60000")
-        engine_kwargs["connect_args"] = {
-            "prepared_statement_cache_size": prepared_statement_cache_size,
-            "server_settings": {
-                "plan_cache_mode": "force_custom_plan",
-                "statement_timeout": statement_timeout,
-            },
-        }
-
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                "Async PostgreSQL engine: pool_size=%d, max_overflow=%d",
-                engine_kwargs["pool_size"],
-                engine_kwargs["max_overflow"],
-            )
-
-    return create_async_engine(async_url, **engine_kwargs)
+        return self._sync.enforce_zone_isolation

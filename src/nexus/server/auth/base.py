@@ -41,6 +41,7 @@ class AuthResult:
     zone_id: str | None = None
     is_admin: bool = False
     metadata: dict[str, Any] | None = None
+    agent_generation: int | None = None  # Session generation counter (Issue #1445)
 
 
 class AuthProvider(ABC):

@@ -20,7 +20,7 @@ import logging
 import time
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.permissions import OperationContext, Permission
+from nexus.core.permissions import OperationContext, Permission, check_stale_session
 
 if TYPE_CHECKING:
     from nexus.services.permissions.async_rebac_manager import AsyncReBACManager
@@ -101,23 +101,8 @@ class AsyncPermissionEnforcer:
                     message="Path not found",  # Intentionally vague — path is invisible
                 )
 
-        # Issue #1240: Stale-session detection (Agent OS Phase 1)
-        if (
-            self.agent_registry is not None
-            and context.agent_generation is not None
-            and context.subject_type == "agent"
-        ):
-            agent_id = context.agent_id or context.subject_id
-            if agent_id:
-                current_record = self.agent_registry.get(agent_id)
-                if current_record and current_record.generation != context.agent_generation:
-                    from nexus.core.exceptions import StaleSessionError
-
-                    raise StaleSessionError(
-                        agent_id,
-                        f"Session generation {context.agent_generation} is stale "
-                        f"(current: {current_record.generation})",
-                    )
+        # Issue #1240 / #1445: Stale-session detection (Agent OS Phase 1)
+        check_stale_session(self.agent_registry, context)
 
         # No ReBAC manager = permissive mode
         if not self.rebac_manager:

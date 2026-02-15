@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import hashlib
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -27,12 +27,6 @@ from nexus.server.dependencies import (
     require_auth,
 )
 
-# The _fastapi_app object lives in nexus.server.fastapi_server and is imported
-# lazily inside get_operation_context.  We must patch it at its canonical
-# location so the lazy import picks up the mock.
-_FASTAPI_APP_PATH = "nexus.server.fastapi_server._fastapi_app"
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -42,13 +36,11 @@ def _make_app_state(
     *,
     api_key: str | None = None,
     auth_provider: Any = None,
-    agent_registry: Any = None,
 ) -> MagicMock:
-    """Build a minimal mock _app_state."""
+    """Build a minimal mock app state."""
     state = MagicMock()
     state.api_key = api_key
     state.auth_provider = auth_provider
-    state.agent_registry = agent_registry
     return state
 
 
@@ -69,13 +61,6 @@ def _make_mock_request_from_state(state: MagicMock) -> MagicMock:
     request = MagicMock()
     request.app.state = state
     return request
-
-
-def _make_mock_app(*, agent_registry: Any = None) -> MagicMock:
-    """Create a mock FastAPI app with state."""
-    app = MagicMock()
-    app.state.agent_registry = agent_registry
-    return app
 
 
 async def _call_get_auth_result(
@@ -435,7 +420,6 @@ class TestRequireAuth:
 class TestGetOperationContext:
     """Tests for get_operation_context."""
 
-    @patch(_FASTAPI_APP_PATH, _make_mock_app())
     def test_basic_user_context(self):
         """Basic user auth result should produce a user context."""
         ctx = get_operation_context(
@@ -452,7 +436,6 @@ class TestGetOperationContext:
         assert ctx.zone_id == "z1"
         assert ctx.is_admin is False
 
-    @patch(_FASTAPI_APP_PATH, _make_mock_app())
     def test_admin_capabilities(self):
         """Admin should get full admin capabilities set."""
         ctx = get_operation_context(
@@ -466,7 +449,6 @@ class TestGetOperationContext:
         assert ctx.is_admin is True
         assert len(ctx.admin_capabilities) == 4
 
-    @patch(_FASTAPI_APP_PATH, _make_mock_app())
     def test_agent_subject_type(self):
         """Agent subject_type should set agent_id from subject_id."""
         ctx = get_operation_context(
@@ -481,7 +463,6 @@ class TestGetOperationContext:
         assert ctx.agent_id == "agent-001"
         assert ctx.user == "alice"  # From legacy_user_id
 
-    @patch(_FASTAPI_APP_PATH, _make_mock_app())
     def test_x_agent_id_upgrades_user_to_agent(self):
         """X-Agent-ID header should upgrade user subject to agent."""
         ctx = get_operation_context(
@@ -497,7 +478,6 @@ class TestGetOperationContext:
         assert ctx.subject_id == "my-agent"
         assert ctx.agent_id == "my-agent"
 
-    @patch(_FASTAPI_APP_PATH, _make_mock_app())
     def test_defaults_for_missing_fields(self):
         """Missing fields should get sensible defaults."""
         ctx = get_operation_context({})
@@ -506,55 +486,44 @@ class TestGetOperationContext:
         assert ctx.zone_id == "default"
         assert ctx.is_admin is False
 
-    def test_agent_generation_from_registry(self):
-        """Agent generation should be looked up from agent registry."""
-        registry = MagicMock()
-        record = MagicMock()
-        record.generation = 42
-        registry.get.return_value = record
-
-        with patch(_FASTAPI_APP_PATH, _make_mock_app(agent_registry=registry)):
-            ctx = get_operation_context(
-                {
-                    "subject_type": "agent",
-                    "subject_id": "agent-001",
-                    "zone_id": "default",
-                    "is_admin": False,
-                    "metadata": {},
-                }
-            )
+    def test_agent_generation_from_auth_result(self):
+        """Agent generation should come from auth_result (JWT claims), not DB."""
+        ctx = get_operation_context(
+            {
+                "subject_type": "agent",
+                "subject_id": "agent-001",
+                "zone_id": "default",
+                "is_admin": False,
+                "metadata": {},
+                "agent_generation": 42,
+            }
+        )
         assert ctx.agent_generation == 42
 
-    def test_agent_generation_none_when_not_found(self):
-        """Missing agent record should result in None generation."""
-        registry = MagicMock()
-        registry.get.return_value = None
-
-        with patch(_FASTAPI_APP_PATH, _make_mock_app(agent_registry=registry)):
-            ctx = get_operation_context(
-                {
-                    "subject_type": "agent",
-                    "subject_id": "unknown-agent",
-                    "zone_id": "default",
-                    "is_admin": False,
-                    "metadata": {},
-                }
-            )
+    def test_agent_generation_none_when_absent(self):
+        """Missing agent_generation in auth_result should result in None."""
+        ctx = get_operation_context(
+            {
+                "subject_type": "agent",
+                "subject_id": "agent-001",
+                "zone_id": "default",
+                "is_admin": False,
+                "metadata": {},
+            }
+        )
         assert ctx.agent_generation is None
 
-    def test_agent_generation_exception_handled(self):
-        """Registry exception should be caught and generation set to None."""
-        registry = MagicMock()
-        registry.get.side_effect = RuntimeError("DB down")
-
-        with patch(_FASTAPI_APP_PATH, _make_mock_app(agent_registry=registry)):
-            ctx = get_operation_context(
-                {
-                    "subject_type": "agent",
-                    "subject_id": "agent-001",
-                    "zone_id": "default",
-                    "is_admin": False,
-                    "metadata": {},
-                }
-            )
-        assert ctx.agent_generation is None
+    def test_agent_generation_none_for_user_subject(self):
+        """User subjects should not have agent_generation even if present in auth."""
+        ctx = get_operation_context(
+            {
+                "subject_type": "user",
+                "subject_id": "alice",
+                "zone_id": "default",
+                "is_admin": False,
+                "agent_generation": 5,
+            }
+        )
+        # agent_generation is passed through regardless of subject_type;
+        # the PermissionEnforcer only checks it for agent subjects.
+        assert ctx.agent_generation == 5

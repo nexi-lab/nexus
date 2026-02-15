@@ -680,6 +680,183 @@ class TestStaleSessionDetection:
         )
         assert enforcer.check("/file.txt", Permission.READ, ctx) is True
 
+    def test_deleted_agent_with_valid_jwt_raises_stale_error(self):
+        """Agent deleted from registry but JWT still valid should be rejected."""
+        from nexus.core.exceptions import StaleSessionError
+
+        agent_registry = MagicMock()
+        agent_registry.get.return_value = None  # Agent no longer exists
+
+        enforcer = PermissionEnforcer(
+            rebac_manager=MagicMock(rebac_check=MagicMock(return_value=True)),
+            agent_registry=agent_registry,
+        )
+        ctx = OperationContext(
+            user="alice",
+            groups=[],
+            subject_type="agent",
+            subject_id="deleted_agent",
+            agent_id="deleted_agent",
+            agent_generation=3,  # From JWT
+        )
+        with pytest.raises(StaleSessionError):
+            enforcer.check("/file.txt", Permission.READ, ctx)
+
+    def test_no_generation_skips_stale_check(self):
+        """Agent without agent_generation (SK-key auth) should skip stale check."""
+        agent_registry = MagicMock()
+
+        rebac = MagicMock()
+        rebac.rebac_check.return_value = True
+        enforcer = PermissionEnforcer(
+            rebac_manager=rebac,
+            agent_registry=agent_registry,
+        )
+        ctx = OperationContext(
+            user="alice",
+            groups=[],
+            subject_type="agent",
+            subject_id="sk_key_agent",
+            agent_id="sk_key_agent",
+            agent_generation=None,  # No generation = SK-key auth
+        )
+        assert enforcer.check("/file.txt", Permission.READ, ctx) is True
+        # agent_registry.get should NOT be called when generation is None
+        agent_registry.get.assert_not_called()
+
+    def test_user_subject_skips_stale_check(self):
+        """User subjects should never trigger stale-session checks."""
+        agent_registry = MagicMock()
+
+        rebac = MagicMock()
+        rebac.rebac_check.return_value = True
+        enforcer = PermissionEnforcer(
+            rebac_manager=rebac,
+            agent_registry=agent_registry,
+        )
+        ctx = OperationContext(
+            user="alice",
+            groups=[],
+            subject_type="user",
+            subject_id="alice",
+            agent_generation=None,
+        )
+        assert enforcer.check("/file.txt", Permission.READ, ctx) is True
+        agent_registry.get.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Shared stale-session helper (Issue #1445)
+# ---------------------------------------------------------------------------
+
+
+class TestCheckStaleSessionHelper:
+    """Tests for the check_stale_session() shared helper function."""
+
+    def test_stale_generation_raises(self):
+        """Mismatched generation should raise StaleSessionError."""
+        from nexus.core.exceptions import StaleSessionError
+        from nexus.core.permissions import check_stale_session
+
+        registry = MagicMock()
+        record = MagicMock()
+        record.generation = 10
+        registry.get.return_value = record
+
+        ctx = OperationContext(
+            user="alice",
+            groups=[],
+            subject_type="agent",
+            subject_id="agent_x",
+            agent_id="agent_x",
+            agent_generation=5,
+        )
+        with pytest.raises(StaleSessionError):
+            check_stale_session(registry, ctx)
+
+    def test_current_generation_passes(self):
+        """Matching generation should not raise."""
+        from nexus.core.permissions import check_stale_session
+
+        registry = MagicMock()
+        record = MagicMock()
+        record.generation = 5
+        registry.get.return_value = record
+
+        ctx = OperationContext(
+            user="alice",
+            groups=[],
+            subject_type="agent",
+            subject_id="agent_x",
+            agent_id="agent_x",
+            agent_generation=5,
+        )
+        check_stale_session(registry, ctx)  # Should not raise
+
+    def test_missing_agent_raises(self):
+        """Agent not found in registry should raise StaleSessionError."""
+        from nexus.core.exceptions import StaleSessionError
+        from nexus.core.permissions import check_stale_session
+
+        registry = MagicMock()
+        registry.get.return_value = None
+
+        ctx = OperationContext(
+            user="alice",
+            groups=[],
+            subject_type="agent",
+            subject_id="gone_agent",
+            agent_id="gone_agent",
+            agent_generation=3,
+        )
+        with pytest.raises(StaleSessionError):
+            check_stale_session(registry, ctx)
+
+    def test_none_registry_skips(self):
+        """None agent_registry should skip check entirely."""
+        from nexus.core.permissions import check_stale_session
+
+        ctx = OperationContext(
+            user="alice",
+            groups=[],
+            subject_type="agent",
+            subject_id="agent_x",
+            agent_id="agent_x",
+            agent_generation=5,
+        )
+        check_stale_session(None, ctx)  # Should not raise
+
+    def test_none_generation_skips(self):
+        """None agent_generation should skip check entirely."""
+        from nexus.core.permissions import check_stale_session
+
+        registry = MagicMock()
+        ctx = OperationContext(
+            user="alice",
+            groups=[],
+            subject_type="agent",
+            subject_id="agent_x",
+            agent_id="agent_x",
+            agent_generation=None,
+        )
+        check_stale_session(registry, ctx)  # Should not raise
+        registry.get.assert_not_called()
+
+    def test_user_subject_skips(self):
+        """Non-agent subject_type should skip check entirely."""
+        from nexus.core.permissions import check_stale_session
+
+        registry = MagicMock()
+        ctx = OperationContext(
+            user="alice",
+            groups=[],
+            subject_type="user",
+            subject_id="alice",
+            agent_generation=5,
+        )
+        check_stale_session(registry, ctx)  # Should not raise
+        registry.get.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # Namespace visibility (Issue #1239)

@@ -183,6 +183,11 @@ class LocalAuth(AuthProvider):
             "iat": int(time.time()),
             "exp": int(time.time()) + self.token_expiry,
         }
+        # Issue #1445: Include agent_generation in JWT for stale-session detection.
+        # Only present for agent subject types; omitted (not stored) for users.
+        agent_generation = user_info.get("agent_generation")
+        if agent_generation is not None:
+            payload["agent_generation"] = agent_generation
 
         token = jwt.encode(header, payload, self.jwt_secret)
         result: str = token.decode() if isinstance(token, bytes) else token
@@ -236,6 +241,15 @@ class LocalAuth(AuthProvider):
         try:
             claims = self.verify_token(token)
 
+            # Issue #1445: Extract agent_generation from JWT claims.
+            # Present only for agent tokens; None for user tokens.
+            raw_gen = claims.get("agent_generation")
+            try:
+                agent_generation = int(raw_gen) if raw_gen is not None else None
+            except (ValueError, TypeError):
+                logger.warning("Invalid agent_generation in JWT: %r, treating as None", raw_gen)
+                agent_generation = None
+
             return AuthResult(
                 authenticated=True,
                 subject_type=claims.get("subject_type", "user"),
@@ -243,6 +257,7 @@ class LocalAuth(AuthProvider):
                 zone_id=claims.get("zone_id"),
                 is_admin=claims.get("is_admin", False),
                 metadata={"email": claims.get("email"), "name": claims.get("name")},
+                agent_generation=agent_generation,
             )
         except ValueError as e:
             logger.debug(f"Authentication failed: {e}")

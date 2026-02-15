@@ -203,9 +203,8 @@ async def list_events(
     """
     from nexus.storage.operation_logger import OperationLogger
 
-    # Get session factory from NexusFS (canonical pattern — see fastapi_server.py)
-    nexus_fs = getattr(request.app.state, "nexus_fs", None)
-    session_factory = getattr(nexus_fs, "SessionLocal", None) if nexus_fs else None
+    # Get session factory from app.state (set by fastapi_server.py startup)
+    session_factory = getattr(request.app.state, "session_factory", None)
     if session_factory is None or not callable(session_factory):
         raise HTTPException(status_code=503, detail="Database not configured")
 

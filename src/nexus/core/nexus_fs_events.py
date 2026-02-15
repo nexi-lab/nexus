@@ -73,6 +73,8 @@ class NexusFSEventsMixin:
             self, context: OperationContext | dict[Any, Any] | None
         ) -> tuple[str | None, str | None, bool]: ...
 
+        def _get_zone_revision(self) -> int: ...
+
     def _is_same_box(self) -> bool:
         """Check if we're in same-box mode (local file watching available).
 

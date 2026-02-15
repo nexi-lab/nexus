@@ -55,15 +55,8 @@ from nexus.core.rpc_decorator import rpc_expose
 from nexus.parsers import MarkItDownParser, ParserRegistry
 from nexus.parsers.types import ParseResult
 
-# Phase 2: Service imports - Independent, testable services extracted from mixins
-from nexus.services.llm_service import LLMService
-from nexus.services.mcp_service import MCPService
-from nexus.services.mount_service import MountService
-from nexus.services.oauth_service import OAuthService
-
+# Phase 2: Service imports moved to _wire_services() as lazy imports (Issue #1519)
 # NexusFSReBACMixin import removed (Issue #1387)
-from nexus.services.rebac_service import ReBACService
-from nexus.services.search_service import SearchService
 from nexus.storage.content_cache import ContentCache
 from nexus.storage.record_store import RecordStoreABC
 
@@ -340,6 +333,14 @@ class NexusFS(  # type: ignore[misc]
         # VersionService: injected by factory (Task #45)
         self.version_service = self._services.version_service
 
+        # Lazy-import services to avoid core/ → services/ top-level coupling (#1519)
+        from nexus.services.llm_service import LLMService
+        from nexus.services.mcp_service import MCPService
+        from nexus.services.mount_service import MountService
+        from nexus.services.oauth_service import OAuthService
+        from nexus.services.rebac_service import ReBACService
+        from nexus.services.search_service import SearchService
+
         # ReBACService: Permission and access control operations
         self.rebac_service = ReBACService(
             rebac_manager=self._rebac_manager,
@@ -418,29 +419,28 @@ class NexusFS(  # type: ignore[misc]
 
     @property
     def _service_extras(self) -> dict[str, Any]:
-        """Backward compat — server layer reads extras via this dict interface."""
-        s = self._services
-        return {
-            k: getattr(s, k)
-            for k in (
-                "observability_subsystem",
-                "chunked_upload_service",
-                "manifest_resolver",
-                "manifest_metrics",
-                "rebac_circuit_breaker",
-                "tool_namespace_middleware",
-                "resiliency_manager",
-                "delivery_worker",
-            )
-            if getattr(s, k) is not None
-        }
+        """Server layer reads extras via this dict interface."""
+        return {k: v for k, v in self._services.server_extras.items() if v is not None}
 
     @_service_extras.setter
     def _service_extras(self, value: dict[str, Any]) -> None:
-        """Backward compat — factory.py sets extras via dict assignment."""
-        for k, v in value.items():
-            if hasattr(self._services, k):
-                object.__setattr__(self._services, k, v)
+        """Server layer sets extras via dict assignment."""
+        self._services.server_extras.update(value)
+
+    @property
+    def read_set_cache(self) -> Any | None:
+        """Public accessor for the read-set-aware cache (Issue #1169)."""
+        return self._read_set_cache
+
+    @property
+    def read_set_registry(self) -> Any | None:
+        """Public accessor for the ReadSetRegistry (Issue #1169)."""
+        return getattr(self, "_read_set_registry", None)
+
+    @property
+    def metadata_cache(self) -> Any | None:
+        """Public accessor for the underlying MetadataCache on the metadata store."""
+        return getattr(self.metadata, "_cache", None)
 
     def _init_performance_optimizations(self) -> None:
         """Initialize performance optimizations for permission checks.

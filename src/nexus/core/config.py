@@ -14,7 +14,7 @@ Note: ``CacheConfig`` configures the kernel's **in-memory LRU caches**
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 # ---------------------------------------------------------------------------
@@ -138,15 +138,9 @@ class KernelServices:
     lock_manager: Any = None
     workflow_engine: Any = None
 
-    # Server-layer extras (moved from _service_extras dict)
-    observability_subsystem: Any = None
-    chunked_upload_service: Any = None
-    manifest_resolver: Any = None
-    manifest_metrics: Any = None
-    rebac_circuit_breaker: Any = None
-    tool_namespace_middleware: Any = None
-    resiliency_manager: Any = None
-    delivery_worker: Any = None
+    # Server-layer extras — opaque to the kernel, passed through to server
+    # code via NexusFS._service_extras. The kernel never inspects these.
+    server_extras: dict[str, Any] = field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------

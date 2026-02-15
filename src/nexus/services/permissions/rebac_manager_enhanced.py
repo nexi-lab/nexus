@@ -1946,6 +1946,58 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
             if logger:
                 logger.debug(f"[TIGER] Write-through failed: {e}")
 
+    def get_cached_permission(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        object: tuple[str, str],
+        zone_id: str | None = None,
+    ) -> bool | None:
+        """Query L1 caches without hitting the database (Issue #726).
+
+        Used by the circuit breaker fallback to serve stale-but-available
+        permission results when the database is unreachable.
+
+        Checks Tiger Cache (bitmap) and Boundary Cache (path inheritance)
+        in order.  Returns None on cache miss (no DB fallback).
+
+        Args:
+            subject: (subject_type, subject_id) tuple
+            permission: Permission to check
+            object: (object_type, object_id) tuple
+            zone_id: Zone ID (used for boundary cache lookups)
+
+        Returns:
+            True if permission is cached as granted, None if not in cache.
+            Does NOT return False — a cache miss is not a denial.
+        """
+        # Try Tiger Cache first (O(1) bitmap lookup)
+        if self._tiger_cache:
+            tiger_result = self._tiger_cache.check_access(
+                subject_type=subject[0],
+                subject_id=subject[1],
+                permission=permission,
+                resource_type=object[0],
+                resource_id=object[1],
+            )
+            if tiger_result is True:
+                return True
+
+        # Try Boundary Cache (O(1) inheritance shortcut for files)
+        effective_zone = zone_id or "default"
+        if (
+            object[0] == "file"
+            and permission in ("read", "write", "execute")
+            and self._boundary_cache
+        ):
+            boundary = self._boundary_cache.get_boundary(
+                effective_zone, subject[0], subject[1], permission, object[1]
+            )
+            if boundary:
+                return True
+
+        return None
+
     def tiger_check_access(
         self,
         subject: tuple[str, str],

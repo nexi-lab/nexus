@@ -17,15 +17,21 @@ Changes require security review before deployment.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Callable
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, TypeVar
 
+from nexus.core.exceptions import CircuitOpenError
 from nexus.core.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
 
+T = TypeVar("T")
+
 if TYPE_CHECKING:
+    from nexus.services.permissions.circuit_breaker import AsyncCircuitBreaker
     from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
 
@@ -85,6 +91,7 @@ class ReBACService:
         rebac_manager: EnhancedReBACManager | None,
         enforce_permissions: bool = True,
         enable_audit_logging: bool = True,
+        circuit_breaker: AsyncCircuitBreaker | None = None,
     ):
         """Initialize ReBAC service.
 
@@ -92,12 +99,49 @@ class ReBACService:
             rebac_manager: Enhanced ReBAC manager for relationship storage
             enforce_permissions: Whether to enforce permission checks
             enable_audit_logging: Whether to log permission grants/denials
+            circuit_breaker: Optional circuit breaker for database resilience (Issue #726)
         """
         self._rebac_manager = rebac_manager
         self._enforce_permissions = enforce_permissions
         self._enable_audit_logging = enable_audit_logging
+        self._circuit_breaker = circuit_breaker
 
-        logger.info("[ReBACService] Initialized with audit_logging=%s", enable_audit_logging)
+        logger.info(
+            "[ReBACService] Initialized with audit_logging=%s, circuit_breaker=%s",
+            enable_audit_logging,
+            "enabled" if circuit_breaker else "disabled",
+        )
+
+    # =========================================================================
+    # Internal: Thread Pool Helper with Circuit Breaker (Issue #726)
+    # =========================================================================
+
+    async def _run_in_thread(self, fn: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        """Execute sync ReBAC operation in thread pool with circuit breaker protection.
+
+        Decision 14A: Checks circuit state BEFORE spawning a thread to avoid
+        exhausting the thread pool during a DB outage.
+
+        Args:
+            fn: Synchronous callable to run in a thread.
+            *args: Positional arguments forwarded to *fn*.
+            **kwargs: Keyword arguments forwarded to *fn*.
+
+        Returns:
+            The return value of *fn*.
+
+        Raises:
+            RuntimeError: If ReBAC manager is not available.
+            CircuitOpenError: If the circuit breaker is open.
+        """
+        if not self._rebac_manager:
+            raise RuntimeError(
+                "ReBAC manager is not available. Ensure ReBACService is properly initialized."
+            )
+
+        if self._circuit_breaker:
+            return await self._circuit_breaker.call(asyncio.to_thread, fn, *args, **kwargs)
+        return await asyncio.to_thread(fn, *args, **kwargs)
 
     # =========================================================================
     # Public API: Core ReBAC Operations
@@ -174,11 +218,6 @@ class ReBACService:
 
         def _create_sync() -> dict[str, Any]:
             """Synchronous implementation for thread pool execution."""
-            if not self._rebac_manager:
-                raise RuntimeError(
-                    "ReBAC manager is not available. Ensure ReBACService is properly initialized."
-                )
-
             # Validate tuples (support 2-tuple and 3-tuple for subject to support userset-as-subject)
             if not isinstance(subject, tuple) or len(subject) not in (2, 3):
                 raise ValueError(
@@ -289,7 +328,8 @@ class ReBACService:
                     "column_config can only be provided when relation is 'dynamic_viewer'"
                 )
 
-            # Create relationship tuple
+            # Create relationship tuple (manager guaranteed by _run_in_thread)
+            assert self._rebac_manager is not None
             result = self._rebac_manager.rebac_write(
                 subject=subject,
                 relation=relation,
@@ -318,10 +358,8 @@ class ReBACService:
                 "consistency_token": result.consistency_token,
             }
 
-        # Run in thread pool since _rebac_manager operations may block
-        import asyncio
-
-        return await asyncio.to_thread(_create_sync)
+        # Write operation — no cache fallback (Decision 3A)
+        return await self._run_in_thread(_create_sync)
 
     @rpc_expose(description="Check ReBAC permission")
     async def rebac_check(
@@ -389,11 +427,6 @@ class ReBACService:
 
         def _check_sync() -> bool:
             """Synchronous implementation for thread pool execution."""
-            if not self._rebac_manager:
-                raise RuntimeError(
-                    "ReBAC manager is not available. Ensure ReBACService is properly initialized."
-                )
-
             # Validate tuples
             if not isinstance(subject, tuple) or len(subject) != 2:
                 raise ValueError(f"subject must be (type, id) tuple, got {subject}")
@@ -426,6 +459,8 @@ class ReBACService:
                 consistency = ConsistencyRequirement(mode=mode, min_revision=min_revision)
 
             # Check permission with optional ABAC context and consistency
+            # Manager guaranteed by _run_in_thread
+            assert self._rebac_manager is not None
             result = self._rebac_manager.rebac_check(
                 subject=subject,
                 permission=permission,
@@ -435,17 +470,25 @@ class ReBACService:
                 consistency=consistency,
             )
 
-            # TODO: Unix-like TRAVERSE behavior fallback
-            # If permission is "traverse" and object is a file path,
-            # check if user has READ on any descendant (deferred for now)
-            # This requires _has_descendant_access_for_traverse() helper
-
             return result
 
-        # Run in thread pool since _rebac_manager operations may block
-        import asyncio
-
-        return await asyncio.to_thread(_check_sync)
+        # Read operation — supports L1 cache fallback (Decision 3A)
+        try:
+            return await self._run_in_thread(_check_sync)
+        except CircuitOpenError:
+            if self._rebac_manager:
+                cached = self._rebac_manager.get_cached_permission(
+                    subject=subject, permission=permission, object=object, zone_id=zone_id
+                )
+                if cached is not None:
+                    logger.warning(
+                        "[ReBACService] Circuit open — serving cached permission for %s %s %s",
+                        subject,
+                        permission,
+                        object,
+                    )
+                    return cached
+            raise
 
     @rpc_expose(description="Expand ReBAC permissions to find all subjects")
     async def rebac_expand(
@@ -489,22 +532,15 @@ class ReBACService:
 
         def _expand_sync() -> list[tuple[str, str]]:
             """Synchronous implementation for thread pool execution."""
-            if not self._rebac_manager:
-                raise RuntimeError(
-                    "ReBAC manager is not available. Ensure ReBACService is properly initialized."
-                )
-
             # Validate tuple
             if not isinstance(object, tuple) or len(object) != 2:
                 raise ValueError(f"object must be (type, id) tuple, got {object}")
 
-            # Expand permission
+            # Expand permission (manager guaranteed by _run_in_thread)
+            assert self._rebac_manager is not None
             return self._rebac_manager.rebac_expand(permission=permission, object=object)
 
-        # Run in thread pool since _rebac_manager operations may block
-        import asyncio
-
-        return await asyncio.to_thread(_expand_sync)
+        return await self._run_in_thread(_expand_sync)
 
     @rpc_expose(description="Explain ReBAC permission check")
     async def rebac_explain(
@@ -559,11 +595,6 @@ class ReBACService:
 
         def _explain_sync() -> dict[str, Any]:
             """Synchronous implementation for thread pool execution."""
-            if not self._rebac_manager:
-                raise RuntimeError(
-                    "ReBAC manager is not available. Ensure ReBACService is properly initialized."
-                )
-
             # Validate tuples
             if not isinstance(subject, tuple) or len(subject) != 2:
                 raise ValueError(f"subject must be (type, id) tuple, got {subject}")
@@ -579,7 +610,8 @@ class ReBACService:
                 elif hasattr(context, "zone_id"):
                     effective_zone_id = context.zone_id
 
-            # Get explanation from manager
+            # Get explanation from manager (manager guaranteed by _run_in_thread)
+            assert self._rebac_manager is not None
             return self._rebac_manager.rebac_explain(
                 subject=subject,
                 permission=permission,
@@ -587,10 +619,7 @@ class ReBACService:
                 zone_id=effective_zone_id,
             )
 
-        # Run in thread pool since _rebac_manager operations may block
-        import asyncio
-
-        return await asyncio.to_thread(_explain_sync)
+        return await self._run_in_thread(_explain_sync)
 
     @rpc_expose(description="Batch ReBAC permission checks")
     async def rebac_check_batch(
@@ -633,28 +662,44 @@ class ReBACService:
 
         def _check_batch_sync() -> list[bool]:
             """Synchronous implementation for thread pool execution."""
-            if not self._rebac_manager:
-                raise RuntimeError(
-                    "ReBAC manager is not available. Ensure ReBACService is properly initialized."
-                )
-
             # Validate all checks
             for i, check in enumerate(checks):
                 if not isinstance(check, tuple) or len(check) != 3:
                     raise ValueError(f"Check {i} must be (subject, permission, object) tuple")
-                subject, permission, obj = check
-                if not isinstance(subject, tuple) or len(subject) != 2:
-                    raise ValueError(f"Check {i}: subject must be (type, id) tuple, got {subject}")
+                subj, perm, obj = check
+                if not isinstance(subj, tuple) or len(subj) != 2:
+                    raise ValueError(f"Check {i}: subject must be (type, id) tuple, got {subj}")
                 if not isinstance(obj, tuple) or len(obj) != 2:
                     raise ValueError(f"Check {i}: object must be (type, id) tuple, got {obj}")
 
-            # Perform batch check with Rust acceleration
+            # Perform batch check with Rust acceleration (manager guaranteed by _run_in_thread)
+            assert self._rebac_manager is not None
             return self._rebac_manager.rebac_check_batch_fast(checks=checks)
 
-        # Run in thread pool since _rebac_manager operations may block
-        import asyncio
-
-        return await asyncio.to_thread(_check_batch_sync)
+        # Read operation — supports L1 cache fallback per-item (Decision 3A)
+        try:
+            return await self._run_in_thread(_check_batch_sync)
+        except CircuitOpenError:
+            if self._rebac_manager:
+                results: list[bool] = []
+                all_cached = True
+                for check in checks:
+                    subj, perm, obj = check
+                    cached = self._rebac_manager.get_cached_permission(
+                        subject=subj, permission=perm, object=obj
+                    )
+                    if cached is not None:
+                        results.append(cached)
+                    else:
+                        all_cached = False
+                        break
+                if all_cached:
+                    logger.warning(
+                        "[ReBACService] Circuit open — serving %d cached batch results",
+                        len(results),
+                    )
+                    return results
+            raise
 
     @rpc_expose(description="Delete ReBAC relationship tuple")
     async def rebac_delete(self, tuple_id: str) -> bool:
@@ -685,12 +730,9 @@ class ReBACService:
 
         def _delete_sync() -> bool:
             """Synchronous implementation for thread pool execution."""
-            if not self._rebac_manager:
-                raise RuntimeError(
-                    "ReBAC manager is not available. Ensure ReBACService is properly initialized."
-                )
-
             # Delete tuple - enhanced rebac_delete handles Tiger Cache invalidation
+            # Manager guaranteed by _run_in_thread
+            assert self._rebac_manager is not None
             result = self._rebac_manager.rebac_delete(tuple_id=tuple_id)
 
             if self._enable_audit_logging and result:
@@ -698,10 +740,8 @@ class ReBACService:
 
             return result
 
-        # Run in thread pool since _rebac_manager operations may block
-        import asyncio
-
-        return await asyncio.to_thread(_delete_sync)
+        # Write operation — no cache fallback (Decision 3A)
+        return await self._run_in_thread(_delete_sync)
 
     @rpc_expose(description="List ReBAC relationship tuples")
     async def rebac_list_tuples(
@@ -761,10 +801,8 @@ class ReBACService:
 
         def _list_tuples_sync() -> list[dict[str, Any]]:
             """Synchronous implementation for thread pool execution."""
-            if not self._rebac_manager:
-                raise RuntimeError(
-                    "ReBAC manager is not available. Ensure ReBACService is properly initialized."
-                )
+            # Manager guaranteed by _run_in_thread
+            assert self._rebac_manager is not None
 
             # Build query dynamically with filters
             conn = self._rebac_manager._get_connection()
@@ -822,10 +860,7 @@ class ReBACService:
             finally:
                 self._rebac_manager._close_connection(conn)
 
-        # Run in thread pool since database operations block
-        import asyncio
-
-        return await asyncio.to_thread(_list_tuples_sync)
+        return await self._run_in_thread(_list_tuples_sync)
 
     # =========================================================================
     # Public API: Configuration & Namespaces

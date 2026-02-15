@@ -133,6 +133,36 @@ class BackendError(NexusError):
         super().__init__(message, path)
 
 
+class ServiceUnavailableError(NexusError):
+    """Service temporarily unavailable (e.g., circuit breaker open).
+
+    This is an unexpected error — indicates infrastructure degradation
+    that may self-heal. Maps to HTTP 503 Service Unavailable.
+    """
+
+    is_expected = False  # Infrastructure failure
+
+    def __init__(self, message: str, path: str | None = None):
+        super().__init__(message, path)
+
+
+class CircuitOpenError(ServiceUnavailableError):
+    """Circuit breaker is open — database unreachable.
+
+    Raised when the circuit breaker detects repeated infrastructure failures
+    and short-circuits requests to fail fast, preventing cascade failures.
+
+    This is an unexpected error — maps to HTTP 503 Service Unavailable.
+    """
+
+    is_expected = False  # Infrastructure failure (circuit open)
+
+    def __init__(self, service_name: str, message: str | None = None):
+        self.service_name = service_name
+        msg = message or f"Circuit breaker open for '{service_name}'"
+        super().__init__(msg)
+
+
 class InvalidPathError(NexusError):
     """Raised when a path is invalid or contains illegal characters.
 

@@ -823,6 +823,12 @@ async def lifespan(_app: FastAPI) -> Any:
     else:
         _app.state.chunked_upload_service = None
 
+    # Issue #726: Wire circuit breaker from factory for health endpoint access
+    if _app.state.nexus_fs:
+        _app.state.rebac_circuit_breaker = _app.state.nexus_fs._service_extras.get(
+            "rebac_circuit_breaker"
+        )
+
     # Issue #1240: Start agent heartbeat and stale detection background tasks
     _heartbeat_task = None
     _stale_detection_task = None
@@ -1248,6 +1254,7 @@ def create_app(
     app.state.task_runner = None
     app.state.event_log = None
     app.state.key_service = None
+    app.state.rebac_circuit_breaker = None
     app.state.chunked_upload_service = None
 
     # Initialize subscription manager if we have a metadata store
@@ -1572,10 +1579,33 @@ def _register_routes(app: FastAPI) -> None:
                 "message": "Set NEXUS_SEARCH_DAEMON=true to enable",
             }
 
-        # Check async ReBAC manager
-        health["components"]["rebac"] = {
-            "status": "healthy" if _fastapi_app.state.async_rebac_manager else "disabled",
-        }
+        # Check ReBAC + circuit breaker (Issue #726)
+        rebac_health: dict[str, Any] = {"status": "disabled"}
+        has_rebac = _fastapi_app.state.async_rebac_manager or getattr(
+            _fastapi_app.state.nexus_fs, "_rebac_manager", None
+        )
+        if has_rebac:
+            cb = getattr(_fastapi_app.state, "rebac_circuit_breaker", None)
+            if cb:
+                from nexus.services.permissions.circuit_breaker import CircuitState
+
+                cb_state = cb.state
+                if cb_state == CircuitState.CLOSED:
+                    rebac_status = "healthy"
+                elif cb_state == CircuitState.HALF_OPEN:
+                    rebac_status = "degraded"
+                else:
+                    rebac_status = "unhealthy"
+                rebac_health = {
+                    "status": rebac_status,
+                    "circuit_state": cb_state.value,
+                    "failure_count": cb.failure_count,
+                    "open_count": cb.open_count,
+                    "last_failure_time": cb.last_failure_time,
+                }
+            else:
+                rebac_health = {"status": "healthy"}
+        health["components"]["rebac"] = rebac_health
 
         # Check subscription manager
         health["components"]["subscriptions"] = {

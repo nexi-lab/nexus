@@ -67,23 +67,15 @@ class TestSecurityDenyByDefault:
     """
 
     @pytest.mark.asyncio
-    async def test_open_file_blocked(
-        self, provider: MontySandboxProvider, sandbox_id: str
-    ) -> None:
+    async def test_open_file_blocked(self, provider: MontySandboxProvider, sandbox_id: str) -> None:
         """open() should fail — no filesystem access."""
-        result = await provider.run_code(
-            sandbox_id, "python", 'open("/etc/passwd").read()'
-        )
+        result = await provider.run_code(sandbox_id, "python", 'open("/etc/passwd").read()')
         assert result.exit_code != 0
 
     @pytest.mark.asyncio
-    async def test_import_os_blocked(
-        self, provider: MontySandboxProvider, sandbox_id: str
-    ) -> None:
+    async def test_import_os_blocked(self, provider: MontySandboxProvider, sandbox_id: str) -> None:
         """import os should fail — no stdlib imports."""
-        result = await provider.run_code(
-            sandbox_id, "python", "import os\nos.system('whoami')"
-        )
+        result = await provider.run_code(sandbox_id, "python", "import os\nos.system('whoami')")
         assert result.exit_code != 0
 
     @pytest.mark.asyncio
@@ -97,23 +89,15 @@ class TestSecurityDenyByDefault:
         assert result.exit_code != 0
 
     @pytest.mark.asyncio
-    async def test_eval_blocked(
-        self, provider: MontySandboxProvider, sandbox_id: str
-    ) -> None:
+    async def test_eval_blocked(self, provider: MontySandboxProvider, sandbox_id: str) -> None:
         """eval() should fail — code injection prevention."""
-        result = await provider.run_code(
-            sandbox_id, "python", "eval(\"__import__('os')\")"
-        )
+        result = await provider.run_code(sandbox_id, "python", "eval(\"__import__('os')\")")
         assert result.exit_code != 0
 
     @pytest.mark.asyncio
-    async def test_exec_blocked(
-        self, provider: MontySandboxProvider, sandbox_id: str
-    ) -> None:
+    async def test_exec_blocked(self, provider: MontySandboxProvider, sandbox_id: str) -> None:
         """exec() should fail — code injection prevention."""
-        result = await provider.run_code(
-            sandbox_id, "python", "exec(\"import socket\")"
-        )
+        result = await provider.run_code(sandbox_id, "python", 'exec("import socket")')
         assert result.exit_code != 0
 
     @pytest.mark.asyncio
@@ -122,8 +106,7 @@ class TestSecurityDenyByDefault:
     ) -> None:
         """Attempting to access globals/builtins should not escape."""
         result = await provider.run_code(
-            sandbox_id, "python",
-            "globals()['__builtins__']['__import__']('os').system('whoami')"
+            sandbox_id, "python", "globals()['__builtins__']['__import__']('os').system('whoami')"
         )
         assert result.exit_code != 0
 
@@ -150,8 +133,11 @@ recurse(500)
 """
         result = await strict_provider.run_code(strict_sandbox_id, "python", code)
         assert result.exit_code != 0
-        assert ("recursion" in result.stderr.lower() or "depth" in result.stderr.lower()
-                or "Runtime error" in result.stderr)
+        assert (
+            "recursion" in result.stderr.lower()
+            or "depth" in result.stderr.lower()
+            or "Runtime error" in result.stderr
+        )
 
     @pytest.mark.asyncio
     async def test_memory_limit_large_list(
@@ -191,9 +177,12 @@ class TestIterativeExecution:
         self, provider: MontySandboxProvider, sandbox_id: str
     ) -> None:
         """Single external function call → pause → resume → complete."""
-        provider.set_host_functions(sandbox_id, {
-            "get_value": lambda: 42,
-        })
+        provider.set_host_functions(
+            sandbox_id,
+            {
+                "get_value": lambda: 42,
+            },
+        )
         result = await provider.run_code(
             sandbox_id, "python", "result = get_value()\nprint(result)"
         )
@@ -230,6 +219,7 @@ print(f"{name} v{version}")
         self, provider: MontySandboxProvider, sandbox_id: str
     ) -> None:
         """Host function exception propagated and catchable in sandbox."""
+
         def risky_fn() -> str:
             raise ValueError("something went wrong")
 
@@ -249,6 +239,7 @@ except ValueError as e:
         self, provider: MontySandboxProvider, sandbox_id: str
     ) -> None:
         """Uncaught host function exception results in runtime error."""
+
         def fail() -> None:
             raise RuntimeError("kaboom")
 
@@ -269,9 +260,7 @@ except ValueError as e:
             return "ok"
 
         provider.set_host_functions(sandbox_id, {"log_call": log_call})
-        result = await provider.run_code(
-            sandbox_id, "python", 'log_call("hello", 42)'
-        )
+        result = await provider.run_code(sandbox_id, "python", 'log_call("hello", 42)')
         assert result.exit_code == 0
         assert len(received) == 1
         assert received[0][0] == ("hello", 42)
@@ -286,9 +275,7 @@ class TestEdgeCases:
     """Edge case tests for unusual inputs and behaviors."""
 
     @pytest.mark.asyncio
-    async def test_empty_code(
-        self, provider: MontySandboxProvider, sandbox_id: str
-    ) -> None:
+    async def test_empty_code(self, provider: MontySandboxProvider, sandbox_id: str) -> None:
         """Empty code should succeed with empty output."""
         result = await provider.run_code(sandbox_id, "python", "")
         # Empty code may be a syntax error or succeed with None
@@ -304,9 +291,7 @@ class TestEdgeCases:
         assert result.execution_time >= 0
 
     @pytest.mark.asyncio
-    async def test_large_output(
-        self, provider: MontySandboxProvider, sandbox_id: str
-    ) -> None:
+    async def test_large_output(self, provider: MontySandboxProvider, sandbox_id: str) -> None:
         """Large print output should be captured."""
         code = """
 for i in range(100):
@@ -326,9 +311,7 @@ for i in range(100):
         assert "true" in result.stdout.lower()
 
     @pytest.mark.asyncio
-    async def test_list_return_value(
-        self, provider: MontySandboxProvider, sandbox_id: str
-    ) -> None:
+    async def test_list_return_value(self, provider: MontySandboxProvider, sandbox_id: str) -> None:
         result = await provider.run_code(sandbox_id, "python", "[1, 2, 3]")
         assert result.exit_code == 0
         assert "[1, 2, 3]" in result.stdout

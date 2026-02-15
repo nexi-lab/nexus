@@ -153,25 +153,19 @@ class TestCodeExecution:
     """Tests for run_code() in complete mode (no host functions)."""
 
     @pytest.mark.asyncio
-    async def test_simple_expression(
-        self, provider: MontySandboxProvider, sandbox_id: str
-    ) -> None:
+    async def test_simple_expression(self, provider: MontySandboxProvider, sandbox_id: str) -> None:
         result = await provider.run_code(sandbox_id, "python", "1 + 1")
         assert result.exit_code == 0
         assert "2" in result.stdout
 
     @pytest.mark.asyncio
-    async def test_print_output(
-        self, provider: MontySandboxProvider, sandbox_id: str
-    ) -> None:
+    async def test_print_output(self, provider: MontySandboxProvider, sandbox_id: str) -> None:
         result = await provider.run_code(sandbox_id, "python", 'print("hello world")')
         assert result.exit_code == 0
         assert "hello world" in result.stdout
 
     @pytest.mark.asyncio
-    async def test_multiline_code(
-        self, provider: MontySandboxProvider, sandbox_id: str
-    ) -> None:
+    async def test_multiline_code(self, provider: MontySandboxProvider, sandbox_id: str) -> None:
         code = "x = 10\ny = 20\nprint(x + y)"
         result = await provider.run_code(sandbox_id, "python", code)
         assert result.exit_code == 0
@@ -212,9 +206,7 @@ class TestCodeExecution:
         assert result.execution_time < 5.0  # Should be sub-second
 
     @pytest.mark.asyncio
-    async def test_none_return_value(
-        self, provider: MontySandboxProvider, sandbox_id: str
-    ) -> None:
+    async def test_none_return_value(self, provider: MontySandboxProvider, sandbox_id: str) -> None:
         result = await provider.run_code(sandbox_id, "python", "x = 42")
         assert result.exit_code == 0
         # Assignment returns None, so stdout should not contain extra output
@@ -238,9 +230,7 @@ class TestLanguageValidation:
     """Tests for language support enforcement."""
 
     @pytest.mark.asyncio
-    async def test_python_accepted(
-        self, provider: MontySandboxProvider, sandbox_id: str
-    ) -> None:
+    async def test_python_accepted(self, provider: MontySandboxProvider, sandbox_id: str) -> None:
         result = await provider.run_code(sandbox_id, "python", "42")
         assert result.exit_code == 0
 
@@ -252,9 +242,7 @@ class TestLanguageValidation:
             await provider.run_code(sandbox_id, "javascript", "console.log('hi')")
 
     @pytest.mark.asyncio
-    async def test_bash_rejected(
-        self, provider: MontySandboxProvider, sandbox_id: str
-    ) -> None:
+    async def test_bash_rejected(self, provider: MontySandboxProvider, sandbox_id: str) -> None:
         with pytest.raises(UnsupportedLanguageError):
             await provider.run_code(sandbox_id, "bash", "echo hi")
 
@@ -268,16 +256,12 @@ class TestUnsupportedOperations:
     """Tests for operations that Monty doesn't support."""
 
     @pytest.mark.asyncio
-    async def test_pause_raises(
-        self, provider: MontySandboxProvider, sandbox_id: str
-    ) -> None:
+    async def test_pause_raises(self, provider: MontySandboxProvider, sandbox_id: str) -> None:
         with pytest.raises(UnsupportedOperationError, match="do not support pause"):
             await provider.pause(sandbox_id)
 
     @pytest.mark.asyncio
-    async def test_resume_raises(
-        self, provider: MontySandboxProvider, sandbox_id: str
-    ) -> None:
+    async def test_resume_raises(self, provider: MontySandboxProvider, sandbox_id: str) -> None:
         with pytest.raises(UnsupportedOperationError, match="do not support resume"):
             await provider.resume(sandbox_id)
 
@@ -294,9 +278,7 @@ class TestUnsupportedOperations:
             )
 
     @pytest.mark.asyncio
-    async def test_pause_nonexistent_raises_not_found(
-        self, provider: MontySandboxProvider
-    ) -> None:
+    async def test_pause_nonexistent_raises_not_found(self, provider: MontySandboxProvider) -> None:
         with pytest.raises(SandboxNotFoundError):
             await provider.pause("nonexistent")
 
@@ -371,9 +353,7 @@ class TestHostFunctions:
             return f"content of {path}"
 
         provider.set_host_functions(sandbox_id, {"read_file": mock_read})
-        result = await provider.run_code(
-            sandbox_id, "python", 'read_file("/test.txt")'
-        )
+        result = await provider.run_code(sandbox_id, "python", 'read_file("/test.txt")')
         assert result.exit_code == 0
         assert call_log == ["/test.txt"]
         assert "content of /test.txt" in result.stdout

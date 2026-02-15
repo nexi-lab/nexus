@@ -153,9 +153,7 @@ class TestMontySandboxE2E:
         sandbox_id = create_resp.json()["sandbox_id"]
 
         # Try JavaScript — should fail
-        run_resp = _run_code(
-            base_url, sandbox_id, 'console.log("hi")', language="javascript"
-        )
+        run_resp = _run_code(base_url, sandbox_id, 'console.log("hi")', language="javascript")
         if run_resp.status_code == 200:
             data = run_resp.json()
             # Should either be an error response or non-zero exit code
@@ -200,9 +198,7 @@ class TestMontySandboxE2E:
         sandbox_id = create_resp.json()["sandbox_id"]
 
         # Try to access filesystem — should fail
-        run_resp = _run_code(
-            base_url, sandbox_id, 'open("/etc/passwd").read()'
-        )
+        run_resp = _run_code(base_url, sandbox_id, 'open("/etc/passwd").read()')
         if run_resp.status_code == 200:
             data = run_resp.json()
             assert data.get("exit_code") != 0, "Filesystem access should be denied"

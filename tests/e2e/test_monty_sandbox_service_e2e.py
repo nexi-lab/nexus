@@ -204,9 +204,7 @@ class TestHostFunctionPermissionsWithAuth:
             """Agent-scoped file read — validates namespace."""
             allowed_prefix = f"/agents/{agent_id}/"
             if not path.startswith(allowed_prefix):
-                raise ValueError(
-                    f"Access denied: {path} outside agent namespace {allowed_prefix}"
-                )
+                raise ValueError(f"Access denied: {path} outside agent namespace {allowed_prefix}")
             return f"[content of {path}]"
 
         def write_file(path: str, content: str) -> str:
@@ -216,14 +214,18 @@ class TestHostFunctionPermissionsWithAuth:
                 raise ValueError(f"Write denied: {path}")
             return "ok"
 
-        sandbox_manager.set_monty_host_functions(sandbox_id, {
-            "read_file": read_file,
-            "write_file": write_file,
-        })
+        sandbox_manager.set_monty_host_functions(
+            sandbox_id,
+            {
+                "read_file": read_file,
+                "write_file": write_file,
+            },
+        )
 
         # Successful scoped read
         exec_result = await sandbox_manager.run_code(
-            sandbox_id, "python",
+            sandbox_id,
+            "python",
             'print(read_file("/agents/user-1,TestAgent/data.txt"))',
         )
         assert exec_result.exit_code == 0
@@ -231,7 +233,8 @@ class TestHostFunctionPermissionsWithAuth:
 
         # Cross-namespace read should fail
         exec_result = await sandbox_manager.run_code(
-            sandbox_id, "python",
+            sandbox_id,
+            "python",
             """
 try:
     read_file("/agents/other-agent/secrets.txt")
@@ -271,9 +274,7 @@ class TestLogValidation:
             )
             sandbox_id = result.sandbox["sandbox_id"]
 
-            await sandbox_manager.run_code(
-                sandbox_id, "python", "print('log-check')"
-            )
+            await sandbox_manager.run_code(sandbox_id, "python", "print('log-check')")
 
         # Verify key log entries
         log_text = caplog.text
@@ -312,9 +313,7 @@ class TestPerformanceWithAuth:
         times: list[float] = []
         for _ in range(self.N):
             start = time.perf_counter_ns()
-            exec_result = await sandbox_manager.run_code(
-                sandbox_id, "python", "1 + 1"
-            )
+            exec_result = await sandbox_manager.run_code(sandbox_id, "python", "1 + 1")
             elapsed_ns = time.perf_counter_ns() - start
             times.append(elapsed_ns)
             assert exec_result.exit_code == 0

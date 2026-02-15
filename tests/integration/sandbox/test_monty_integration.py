@@ -124,7 +124,8 @@ class TestManagerIntegration:
         manager.set_monty_host_functions(sandbox_id, {"read_file": mock_read_file})
 
         result = await manager.run_code(
-            sandbox_id, "python",
+            sandbox_id,
+            "python",
             'content = read_file("/data/config.json")\nprint(content)',
         )
         assert result.exit_code == 0
@@ -260,7 +261,8 @@ except ValueError as e:
         manager.set_monty_host_functions(sandbox_id, {"read_file": scoped_read})
 
         result = await manager.run_code(
-            sandbox_id, "python",
+            sandbox_id,
+            "python",
             'print(read_file("/agent-1/data.txt"))',
         )
         assert result.exit_code == 0
@@ -381,16 +383,17 @@ class TestMontyPerformance:
     async def test_host_function_call_speed(self, monty_provider: MontySandboxProvider) -> None:
         """Host function call overhead should be < 5ms per call."""
         sandbox_id = await monty_provider.create()
-        monty_provider.set_host_functions(sandbox_id, {
-            "identity": lambda x: x,
-        })
+        monty_provider.set_host_functions(
+            sandbox_id,
+            {
+                "identity": lambda x: x,
+            },
+        )
 
         times: list[float] = []
         for _ in range(self.N_ITERATIONS):
             start = time.perf_counter_ns()
-            result = await monty_provider.run_code(
-                sandbox_id, "python", "identity(42)"
-            )
+            result = await monty_provider.run_code(sandbox_id, "python", "identity(42)")
             elapsed_ns = time.perf_counter_ns() - start
             times.append(elapsed_ns)
             assert result.exit_code == 0

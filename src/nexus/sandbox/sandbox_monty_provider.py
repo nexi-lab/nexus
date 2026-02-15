@@ -242,8 +242,7 @@ class MontySandboxProvider(SandboxProvider):
         if language not in self.SUPPORTED_LANGUAGES:
             supported = ", ".join(self.SUPPORTED_LANGUAGES)
             raise UnsupportedLanguageError(
-                f"Monty only supports Python. Got '{language}'. "
-                f"Supported: {supported}"
+                f"Monty only supports Python. Got '{language}'. Supported: {supported}"
             )
 
         profile = MONTY_RESOURCE_PROFILES[instance.resource_profile_name]
@@ -292,9 +291,7 @@ class MontySandboxProvider(SandboxProvider):
             # Execute — use iterative mode if host functions exist,
             # complete mode otherwise
             if ext_fn_names:
-                output = self._run_iterative(
-                    monty, instance, limits, _print_callback
-                )
+                output = self._run_iterative(monty, instance, limits, _print_callback)
             else:
                 output = monty.run(
                     limits=limits,
@@ -339,9 +336,7 @@ class MontySandboxProvider(SandboxProvider):
             exit_code = 1
             # Distinguish timeout from other runtime errors
             if "time limit" in stderr.lower() or "timeout" in stderr.lower():
-                raise ExecutionTimeoutError(
-                    f"Code execution timed out after {elapsed:.1f}s"
-                ) from e
+                raise ExecutionTimeoutError(f"Code execution timed out after {elapsed:.1f}s") from e
             return CodeExecutionResult(
                 stdout="".join(stdout_parts),
                 stderr=f"Runtime error:\n{stderr}",
@@ -368,16 +363,14 @@ class MontySandboxProvider(SandboxProvider):
         """Not supported — Monty sandboxes are ephemeral."""
         self._get_instance(sandbox_id)  # Validate exists
         raise UnsupportedOperationError(
-            "Monty sandboxes do not support pause. "
-            "Use snapshot serialization for durable state."
+            "Monty sandboxes do not support pause. Use snapshot serialization for durable state."
         )
 
     async def resume(self, sandbox_id: str) -> None:
         """Not supported — Monty sandboxes are ephemeral."""
         self._get_instance(sandbox_id)  # Validate exists
         raise UnsupportedOperationError(
-            "Monty sandboxes do not support resume. "
-            "Use snapshot deserialization to restore state."
+            "Monty sandboxes do not support resume. Use snapshot deserialization to restore state."
         )
 
     async def destroy(self, sandbox_id: str) -> None:
@@ -451,8 +444,7 @@ class MontySandboxProvider(SandboxProvider):
         for name in host_functions:
             if not name.isidentifier():
                 raise ValueError(
-                    f"Invalid host function name: {name!r}. "
-                    f"Must be a valid Python identifier."
+                    f"Invalid host function name: {name!r}. Must be a valid Python identifier."
                 )
         instance.host_functions = dict(host_functions)
         logger.debug(
@@ -475,9 +467,7 @@ class MontySandboxProvider(SandboxProvider):
         if instance is None:
             raise SandboxNotFoundError(f"Monty sandbox {sandbox_id} not found")
         if instance.status == "stopped":
-            raise SandboxNotFoundError(
-                f"Monty sandbox {sandbox_id} has been destroyed"
-            )
+            raise SandboxNotFoundError(f"Monty sandbox {sandbox_id} has been destroyed")
         return instance
 
     # Upper bound on iterative execution steps to prevent infinite loops.
@@ -529,9 +519,7 @@ class MontySandboxProvider(SandboxProvider):
                 if handler is None:
                     # Unknown function — resume with NameError
                     progress = progress.resume(
-                        exception=NameError(
-                            f"Host function '{fn_name}' is not registered"
-                        )
+                        exception=NameError(f"Host function '{fn_name}' is not registered")
                     )
                     continue
 
@@ -568,8 +556,5 @@ class MontySandboxProvider(SandboxProvider):
         for fn_name in host_functions:
             # Generic stubs — host functions accept Any and return Any.
             # More specific stubs could be provided per-function if needed.
-            parts.append(
-                f"def {fn_name}(*args: Any, **kwargs: Any) -> Any:\n"
-                f"    ..."
-            )
+            parts.append(f"def {fn_name}(*args: Any, **kwargs: Any) -> Any:\n    ...")
         return "\n\n".join(parts)

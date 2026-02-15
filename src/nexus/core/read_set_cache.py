@@ -60,7 +60,9 @@ class ReadSetAwareCache:
     ) -> None:
         self._cache = base_cache
         self._registry = registry
-        self._lock = threading.RLock()  # Reentrant: eviction callback may re-enter during invalidate
+        self._lock = (
+            threading.RLock()
+        )  # Reentrant: eviction callback may re-enter during invalidate
 
         # Bidirectional mapping: cache_key <-> query_id
         self._cache_key_to_query: dict[str, str] = {}
@@ -184,9 +186,7 @@ class ReadSetAwareCache:
         invalidated = 0
 
         # Step 1: Find affected queries via registry reverse index (O(1) + O(d))
-        affected_queries = self._registry.get_affected_queries(
-            path, revision, zone_id=zone_id
-        )
+        affected_queries = self._registry.get_affected_queries(path, revision, zone_id=zone_id)
 
         if affected_queries:
             # Step 2: Map queries -> cache keys -> invalidate
@@ -217,9 +217,7 @@ class ReadSetAwareCache:
                 self._cache.invalidate_path(path)
                 self._stats["fallback_invalidations"] += 1
                 invalidated += 1
-                logger.debug(
-                    f"[ReadSetCache] Fallback invalidation for {path} (no read set)"
-                )
+                logger.debug(f"[ReadSetCache] Fallback invalidation for {path} (no read set)")
             else:
                 # Either not cached, or cached with read set that wasn't affected
                 self._stats["skipped_invalidations"] += 1

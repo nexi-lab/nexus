@@ -9,8 +9,8 @@ cache invalidation by tracking which resources each cache entry depends on.
 import threading
 
 from nexus.core.read_set import AccessType, ReadSet, ReadSetRegistry
+from nexus.core.read_set_cache import ReadSetAwareCache
 from nexus.storage.cache import _CACHE_MISS, MetadataCache
-from nexus.storage.read_set_cache import ReadSetAwareCache
 
 
 def _is_cached(cache: MetadataCache, path: str) -> bool:
@@ -40,7 +40,9 @@ class TestReadSetAwareCachePutAndGet:
         """Cache works normally without read sets — backward compatible."""
         from nexus.core._metadata_generated import FileMetadata
 
-        meta = FileMetadata(path="/test.txt", backend_name="local", physical_path="abc123", size=100, etag="abc123")
+        meta = FileMetadata(
+            path="/test.txt", backend_name="local", physical_path="abc123", size=100, etag="abc123"
+        )
         self.cache.put_path("/test.txt", meta)
 
         result = self.base_cache.get_path("/test.txt")
@@ -51,7 +53,9 @@ class TestReadSetAwareCachePutAndGet:
         """Cache stores read set mapping when provided."""
         from nexus.core._metadata_generated import FileMetadata
 
-        meta = FileMetadata(path="/test.txt", backend_name="local", physical_path="abc123", size=100, etag="abc123")
+        meta = FileMetadata(
+            path="/test.txt", backend_name="local", physical_path="abc123", size=100, etag="abc123"
+        )
         rs = ReadSet(query_id="q1", zone_id="z1")
         rs.record_read("file", "/test.txt", revision=5)
 
@@ -71,7 +75,9 @@ class TestReadSetAwareCachePutAndGet:
         """Zookie pattern: skip caching if revision already advanced."""
         from nexus.core._metadata_generated import FileMetadata
 
-        meta = FileMetadata(path="/test.txt", backend_name="local", physical_path="abc123", size=100, etag="abc123")
+        meta = FileMetadata(
+            path="/test.txt", backend_name="local", physical_path="abc123", size=100, etag="abc123"
+        )
         rs = ReadSet(query_id="q1", zone_id="z1")
         rs.record_read("file", "/test.txt", revision=5)
 
@@ -110,7 +116,13 @@ class TestReadSetAwareCacheInvalidation:
         """Helper to cache a file with a read set."""
         from nexus.core._metadata_generated import FileMetadata
 
-        meta = FileMetadata(path=path, backend_name="local", physical_path=f"hash_{path}", size=100, etag=f"hash_{path}")
+        meta = FileMetadata(
+            path=path,
+            backend_name="local",
+            physical_path=f"hash_{path}",
+            size=100,
+            etag=f"hash_{path}",
+        )
         rs = ReadSet(query_id=query_id, zone_id="z1")
         rs.record_read("file", path, revision=revision)
         self.cache.put_path(path, meta, read_set=rs)
@@ -150,7 +162,13 @@ class TestReadSetAwareCacheInvalidation:
         from nexus.core._metadata_generated import FileMetadata
 
         # Cache a directory listing result
-        meta = FileMetadata(path="/inbox/a.txt", backend_name="local", physical_path="hash_a", size=100, etag="hash_a")
+        meta = FileMetadata(
+            path="/inbox/a.txt",
+            backend_name="local",
+            physical_path="hash_a",
+            size=100,
+            etag="hash_a",
+        )
         rs = ReadSet(query_id="q_dir", zone_id="z1")
         rs.record_read("directory", "/inbox/", revision=5, access_type=AccessType.LIST)
         rs.record_read("file", "/inbox/a.txt", revision=5)
@@ -167,7 +185,13 @@ class TestReadSetAwareCacheInvalidation:
         from nexus.core._metadata_generated import FileMetadata
 
         # Cache without read set (legacy behavior)
-        meta = FileMetadata(path="/legacy.txt", backend_name="local", physical_path="hash_legacy", size=100, etag="hash_legacy")
+        meta = FileMetadata(
+            path="/legacy.txt",
+            backend_name="local",
+            physical_path="hash_legacy",
+            size=100,
+            etag="hash_legacy",
+        )
         self.cache.put_path("/legacy.txt", meta)  # No read_set
 
         # Invalidation should fall back to path-based
@@ -202,7 +226,13 @@ class TestReadSetAwareCacheEviction:
         # Fill cache to capacity
         for i in range(3):
             path = f"/file_{i}.txt"
-            meta = FileMetadata(path=path, backend_name="local", physical_path=f"hash_{i}", size=100, etag=f"hash_{i}")
+            meta = FileMetadata(
+                path=path,
+                backend_name="local",
+                physical_path=f"hash_{i}",
+                size=100,
+                etag=f"hash_{i}",
+            )
             rs = ReadSet(query_id=f"q_{i}", zone_id="z1")
             rs.record_read("file", path, revision=5)
             cache.put_path(path, meta, read_set=rs)
@@ -211,7 +241,13 @@ class TestReadSetAwareCacheEviction:
         assert len(registry) == 3
 
         # Add 4th entry — should evict LRU (q_0)
-        meta = FileMetadata(path="/file_3.txt", backend_name="local", physical_path="hash_3", size=100, etag="hash_3")
+        meta = FileMetadata(
+            path="/file_3.txt",
+            backend_name="local",
+            physical_path="hash_3",
+            size=100,
+            etag="hash_3",
+        )
         rs = ReadSet(query_id="q_3", zone_id="z1")
         rs.record_read("file", "/file_3.txt", revision=5)
         cache.put_path("/file_3.txt", meta, read_set=rs)
@@ -241,7 +277,13 @@ class TestReadSetAwareCacheEviction:
         # Insert many more than capacity
         for i in range(20):
             path = f"/file_{i}.txt"
-            meta = FileMetadata(path=path, backend_name="local", physical_path=f"hash_{i}", size=100, etag=f"hash_{i}")
+            meta = FileMetadata(
+                path=path,
+                backend_name="local",
+                physical_path=f"hash_{i}",
+                size=100,
+                etag=f"hash_{i}",
+            )
             rs = ReadSet(query_id=f"q_{i}", zone_id="z1")
             rs.record_read("file", path, revision=5)
             cache.put_path(path, meta, read_set=rs)

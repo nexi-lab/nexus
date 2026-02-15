@@ -154,6 +154,7 @@ async def resolve_auth(
             if hasattr(result, "inherit_permissions")
             else True,
             "metadata": result.metadata if hasattr(result, "metadata") else {},
+            "agent_generation": getattr(result, "agent_generation", None),  # Issue #1445: from JWT
             "x_agent_id": x_agent_id,
             "_auth_time_ms": _auth_elapsed,  # Pass to RPC for logging
             "_auth_cached": False,
@@ -227,7 +228,6 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
         OperationContext for filesystem operations
     """
     from nexus.core.permissions import OperationContext
-    from nexus.server.fastapi_server import _fastapi_app
 
     subject_type = auth_result.get("subject_type") or "user"
     subject_id = auth_result.get("subject_id") or "anonymous"
@@ -259,19 +259,10 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
             AdminCapability.MANAGE_REBAC,
         }
 
-    # Issue #1240: Populate agent_generation from AgentRegistry
-    agent_generation = None
-    _agent_registry = getattr(_fastapi_app.state, "agent_registry", None) if _fastapi_app else None
-    if subject_type == "agent" and _agent_registry:
-        try:
-            agent_record = _agent_registry.get(subject_id)
-            if agent_record:
-                agent_generation = agent_record.generation
-        except Exception:
-            logger.debug(
-                "[AGENT-GEN] Failed to look up generation for agent %s",
-                subject_id,
-            )
+    # Issue #1445: agent_generation comes from JWT claims (via auth pipeline),
+    # not from a DB lookup.  SK-key agents will have agent_generation=None
+    # and skip stale-session detection (documented limitation).
+    agent_generation = auth_result.get("agent_generation")
 
     return OperationContext(
         user=user_id,

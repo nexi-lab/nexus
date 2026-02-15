@@ -41,6 +41,14 @@ from nexus.core.exceptions import (
 from nexus.core.filesystem import NexusFilesystem
 from nexus.remote.base_client import BaseRemoteNexusFS
 from nexus.remote.rpc_proxy import RPCProxyBase
+
+# TYPE_CHECKING trick: mypy sees NexusFilesystem in MRO for type compatibility,
+# but at runtime we use virtual subclass registration so abstract methods don't
+# shadow __getattr__-based dispatch.
+if TYPE_CHECKING:
+    _NexusFSBase = NexusFilesystem
+else:
+    _NexusFSBase = object
 from nexus.server.protocol import (
     RPCRequest,
     RPCResponse,
@@ -385,16 +393,16 @@ class RemoteMemory:
 # ============================================================
 
 
-class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
+class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS, _NexusFSBase):
     """Remote Nexus filesystem client.
 
     Implements NexusFilesystem interface by making RPC calls to a remote server.
     Trivial methods (~170) are auto-dispatched via __getattr__; complex methods
     (~30) are explicit overrides below.
 
-    Registered as a virtual subclass of NexusFilesystem (via ABC.register)
-    so isinstance() checks work, while avoiding ABC instantiation checks
-    that conflict with __getattr__-based dispatch.
+    Uses TYPE_CHECKING trick: mypy sees NexusFilesystem in MRO for static type
+    compatibility; at runtime uses virtual subclass registration (ABC.register)
+    so abstract methods don't shadow __getattr__-based dispatch.
     """
 
     def __init__(
@@ -1075,6 +1083,6 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         self.session.close()
 
 
-# Register as virtual subclass of NexusFilesystem so isinstance() works
-# without triggering ABC abstract method checks (handled by __getattr__)
+# Register as virtual subclass of NexusFilesystem so isinstance() works at runtime
+# without putting abstract methods in MRO (which would shadow __getattr__ dispatch).
 NexusFilesystem.register(RemoteNexusFS)

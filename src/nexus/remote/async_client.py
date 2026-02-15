@@ -19,7 +19,7 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urljoin
 
 import httpx
@@ -33,8 +33,17 @@ from tenacity import (
 from nexus.core.exceptions import (
     NexusFileNotFoundError,
 )
+from nexus.core.filesystem import NexusFilesystem
 from nexus.remote.base_client import BaseRemoteNexusFS
 from nexus.remote.rpc_proxy import RPCProxyBase
+
+# TYPE_CHECKING trick: mypy sees NexusFilesystem in MRO for type compatibility,
+# but at runtime we use virtual subclass registration so abstract methods don't
+# shadow __getattr__-based dispatch.
+if TYPE_CHECKING:
+    _AsyncNexusFSBase = NexusFilesystem
+else:
+    _AsyncNexusFSBase = object
 from nexus.server.protocol import (
     RPCRequest,
     RPCResponse,
@@ -51,7 +60,7 @@ from .client import (
 logger = logging.getLogger(__name__)
 
 
-class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
+class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS, _AsyncNexusFSBase):
     """Async remote Nexus filesystem client.
 
     Uses httpx.AsyncClient for non-blocking HTTP calls. Trivial methods
@@ -735,6 +744,11 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
     async def unlock(self, lock_id: str, path: str) -> bool:
         result = await self._call_rpc("unlock", {"lock_id": lock_id, "path": path})
         return bool(result.get("released", False)) if result else False
+
+
+# Register as virtual subclass of NexusFilesystem so isinstance() works at runtime
+# without putting abstract methods in MRO (which would shadow __getattr__ dispatch).
+NexusFilesystem.register(AsyncRemoteNexusFS)
 
 
 # ============================================================

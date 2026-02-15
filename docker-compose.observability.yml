@@ -156,6 +156,34 @@ services:
     profiles:
       - observability
 
+  # =========================================================================
+  # postgres_exporter — PostgreSQL metrics for Prometheus (Issue #762)
+  # =========================================================================
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:latest
+    container_name: nexus-postgres-exporter
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "postgresql://nexus_monitor:${POSTGRES_EXPORTER_PASSWORD:-nexus_monitor}@postgres:5432/${POSTGRES_DB:-nexus}?sslmode=disable"
+    command:
+      - "--collector.stat_statements"
+      - "--collector.stat_activity"
+      - "--collector.stat_bgwriter"
+      - "--collector.stat_database"
+      - "--collector.stat_user_tables"
+      - "--collector.locks"
+      - "--collector.wal"
+    ports:
+      - "9187:9187"
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    networks:
+      - nexus-network
+    profiles:
+      - observability
+
 volumes:
   prometheus-data:
   loki-data:

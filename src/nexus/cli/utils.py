@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import click
 from rich.console import Console
@@ -210,9 +210,12 @@ def get_filesystem(
             # Client mode: use remote server connection
             from nexus.remote import RemoteNexusFS
 
-            return RemoteNexusFS(
-                server_url=backend_config.remote_url,
-                api_key=backend_config.remote_api_key,
+            return cast(
+                NexusFilesystem,
+                RemoteNexusFS(
+                    server_url=backend_config.remote_url,
+                    api_key=backend_config.remote_api_key,
+                ),
             )
         elif backend_config.config_path:
             # Use explicit config file
@@ -418,9 +421,12 @@ def get_default_filesystem() -> NexusFilesystem:
             # Use remote server connection
             from nexus.remote import RemoteNexusFS
 
-            return RemoteNexusFS(
-                server_url=remote_url,
-                api_key=os.environ.get("NEXUS_API_KEY"),
+            return cast(
+                NexusFilesystem,
+                RemoteNexusFS(
+                    server_url=remote_url,
+                    api_key=os.environ.get("NEXUS_API_KEY"),
+                ),
             )
 
         # Fall back to local mode

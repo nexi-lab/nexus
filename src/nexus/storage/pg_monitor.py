@@ -69,6 +69,31 @@ class TableStats:
     live_tuples: int
 
 
+# Shared SELECT column list for pg_stat_statements queries (DRY — Issue #762)
+_STAT_COLUMNS = """
+    query,
+    calls,
+    round(total_exec_time::numeric, 2) as total_time_ms,
+    round(mean_exec_time::numeric, 2) as mean_time_ms,
+    round(min_exec_time::numeric, 2) as min_time_ms,
+    round(max_exec_time::numeric, 2) as max_time_ms,
+    rows
+"""
+
+
+def _row_to_query_stats(row: Any) -> QueryStats:
+    """Convert a pg_stat_statements result row to a QueryStats dataclass."""
+    return QueryStats(
+        query=row.query,
+        calls=row.calls,
+        total_time_ms=float(row.total_time_ms),
+        mean_time_ms=float(row.mean_time_ms),
+        min_time_ms=float(row.min_time_ms),
+        max_time_ms=float(row.max_time_ms),
+        rows=row.rows,
+    )
+
+
 class PgMonitor:
     """PostgreSQL monitoring utilities.
 
@@ -122,35 +147,11 @@ class PgMonitor:
 
         result = self.session.execute(
             text(
-                """
-                SELECT
-                    query,
-                    calls,
-                    round(total_exec_time::numeric, 2) as total_time_ms,
-                    round(mean_exec_time::numeric, 2) as mean_time_ms,
-                    round(min_exec_time::numeric, 2) as min_time_ms,
-                    round(max_exec_time::numeric, 2) as max_time_ms,
-                    rows
-                FROM pg_stat_statements
-                ORDER BY total_exec_time DESC
-                LIMIT :limit
-                """
+                f"SELECT {_STAT_COLUMNS} FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT :limit"
             ),
             {"limit": limit},
         )
-
-        return [
-            QueryStats(
-                query=row.query,
-                calls=row.calls,
-                total_time_ms=float(row.total_time_ms),
-                mean_time_ms=float(row.mean_time_ms),
-                min_time_ms=float(row.min_time_ms),
-                max_time_ms=float(row.max_time_ms),
-                rows=row.rows,
-            )
-            for row in result
-        ]
+        return [_row_to_query_stats(row) for row in result]
 
     def get_most_frequent_queries(self, limit: int = 10) -> list[QueryStats]:
         """Get the most frequently executed queries.
@@ -167,35 +168,11 @@ class PgMonitor:
 
         result = self.session.execute(
             text(
-                """
-                SELECT
-                    query,
-                    calls,
-                    round(total_exec_time::numeric, 2) as total_time_ms,
-                    round(mean_exec_time::numeric, 2) as mean_time_ms,
-                    round(min_exec_time::numeric, 2) as min_time_ms,
-                    round(max_exec_time::numeric, 2) as max_time_ms,
-                    rows
-                FROM pg_stat_statements
-                ORDER BY calls DESC
-                LIMIT :limit
-                """
+                f"SELECT {_STAT_COLUMNS} FROM pg_stat_statements ORDER BY calls DESC LIMIT :limit"
             ),
             {"limit": limit},
         )
-
-        return [
-            QueryStats(
-                query=row.query,
-                calls=row.calls,
-                total_time_ms=float(row.total_time_ms),
-                mean_time_ms=float(row.mean_time_ms),
-                min_time_ms=float(row.min_time_ms),
-                max_time_ms=float(row.max_time_ms),
-                rows=row.rows,
-            )
-            for row in result
-        ]
+        return [_row_to_query_stats(row) for row in result]
 
     def get_slow_average_queries(
         self, min_mean_time_ms: float = 100, limit: int = 10
@@ -217,36 +194,12 @@ class PgMonitor:
 
         result = self.session.execute(
             text(
-                """
-                SELECT
-                    query,
-                    calls,
-                    round(total_exec_time::numeric, 2) as total_time_ms,
-                    round(mean_exec_time::numeric, 2) as mean_time_ms,
-                    round(min_exec_time::numeric, 2) as min_time_ms,
-                    round(max_exec_time::numeric, 2) as max_time_ms,
-                    rows
-                FROM pg_stat_statements
-                WHERE mean_exec_time > :min_mean_time
-                ORDER BY mean_exec_time DESC
-                LIMIT :limit
-                """
+                f"SELECT {_STAT_COLUMNS} FROM pg_stat_statements"
+                " WHERE mean_exec_time > :min_mean_time ORDER BY mean_exec_time DESC LIMIT :limit"
             ),
             {"min_mean_time": min_mean_time_ms, "limit": limit},
         )
-
-        return [
-            QueryStats(
-                query=row.query,
-                calls=row.calls,
-                total_time_ms=float(row.total_time_ms),
-                mean_time_ms=float(row.mean_time_ms),
-                min_time_ms=float(row.min_time_ms),
-                max_time_ms=float(row.max_time_ms),
-                rows=row.rows,
-            )
-            for row in result
-        ]
+        return [_row_to_query_stats(row) for row in result]
 
     def find_missing_fk_indexes(self) -> list[MissingFKIndex]:
         """Find foreign key columns that lack indexes.

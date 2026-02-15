@@ -50,6 +50,7 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.gzip import GZipMiddleware
 
+from nexus.constants import DEFAULT_GOOGLE_REDIRECT_URI, DEFAULT_NEXUS_URL
 from nexus.core.exceptions import (
     ConflictError,
     InvalidPathError,
@@ -882,12 +883,7 @@ async def lifespan(_app: FastAPI) -> Any:
                 )
 
                 # Attach smart router for Monty -> Docker -> E2B routing (Issue #1317)
-                if sandbox_mgr.providers:
-                    from nexus.sandbox.sandbox_router import SandboxRouter
-
-                    sandbox_mgr._router = SandboxRouter(
-                        available_providers=sandbox_mgr.providers,
-                    )
+                sandbox_mgr.wire_router()
 
                 # Get NamespaceManager if available (best-effort)
                 # Issue #1265: Factory function handles L3 persistent store wiring
@@ -1457,9 +1453,7 @@ def _initialize_oauth_provider(
         google_client_secret = os.getenv("GOOGLE_CLIENT_SECRET") or os.getenv(
             "NEXUS_OAUTH_GOOGLE_CLIENT_SECRET"
         )
-        google_redirect_uri = os.getenv(
-            "GOOGLE_REDIRECT_URI", "http://localhost:5173/oauth/callback"
-        )
+        google_redirect_uri = os.getenv("GOOGLE_REDIRECT_URI", DEFAULT_GOOGLE_REDIRECT_URI)
         jwt_secret = os.getenv("NEXUS_JWT_SECRET")
 
         if not google_client_id or not google_client_secret:
@@ -1826,7 +1820,7 @@ def _register_routes(app: FastAPI) -> None:
     try:
         from nexus.a2a import create_a2a_router
 
-        a2a_base_url = os.environ.get("NEXUS_A2A_BASE_URL", "http://localhost:2026")
+        a2a_base_url = os.environ.get("NEXUS_A2A_BASE_URL", DEFAULT_NEXUS_URL)
         a2a_auth_required = bool(
             getattr(_fastapi_app.state, "api_key", None)
             or getattr(_fastapi_app.state, "auth_provider", None)
@@ -1863,6 +1857,49 @@ def _register_routes(app: FastAPI) -> None:
         logger.info("A2A protocol endpoint registered (/.well-known/agent.json + /a2a)")
     except ImportError as e:
         logger.warning(f"Failed to import A2A router: {e}. A2A endpoint will not be available.")
+
+    # Secrets audit log endpoints (Issue #997)
+    try:
+        from nexus.server.api.v2.routers.secrets_audit import (
+            get_secrets_audit_logger as _secrets_audit_dep,
+        )
+        from nexus.server.api.v2.routers.secrets_audit import (
+            router as secrets_audit_router,
+        )
+        from nexus.storage.secrets_audit_logger import SecretsAuditLogger
+
+        # Wire up dependency: create audit logger from app session_factory + auth zone_id
+        _secrets_audit_logger_instance: SecretsAuditLogger | None = None
+
+        def _get_secrets_audit_logger_override(
+            auth_result: dict[str, Any] = Depends(require_auth),
+        ) -> tuple:
+            nonlocal _secrets_audit_logger_instance
+            # Admin-only: secrets audit log is sensitive
+            if not auth_result.get("is_admin", False):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Secrets audit log access requires admin privileges",
+                )
+            if _secrets_audit_logger_instance is None:
+                session_factory = getattr(_fastapi_app.state.nexus_fs, "SessionLocal", None)
+                if session_factory is None:
+                    raise HTTPException(status_code=500, detail="Secrets audit not configured")
+                # Ensure audit tables exist on the session_factory's engine
+                engine = session_factory.kw.get("bind") if hasattr(session_factory, "kw") else None
+                if engine is not None:
+                    from nexus.storage.models.secrets_audit_log import SecretsAuditLogModel
+
+                    SecretsAuditLogModel.__table__.create(engine, checkfirst=True)
+                _secrets_audit_logger_instance = SecretsAuditLogger(session_factory=session_factory)
+            zone_id = auth_result.get("zone_id", "default")
+            return _secrets_audit_logger_instance, zone_id
+
+        app.dependency_overrides[_secrets_audit_dep] = _get_secrets_audit_logger_override
+        app.include_router(secrets_audit_router)
+        logger.info("Secrets audit routes registered")
+    except ImportError as e:
+        logger.warning(f"Failed to import secrets audit router: {e}")
 
     # Asyncio debug endpoint (Python 3.14+)
     @app.get("/debug/asyncio", tags=["debug"])

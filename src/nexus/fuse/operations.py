@@ -908,8 +908,7 @@ class NexusFUSEOperations(Operations):
             self._readahead.invalidate_path(original_path)
 
         # Issue #1115: Fire write event to downstream systems
-        if HAS_EVENT_BUS and FileEventType is not None:
-            self._fire_event(FileEventType.FILE_WRITE, original_path, size=len(new_content))
+        self._fire_event(FileEventType.FILE_WRITE, original_path, size=len(new_content))
 
         return len(data)
 
@@ -983,8 +982,7 @@ class NexusFUSEOperations(Operations):
             }
 
         # Issue #1115: Fire create event (file_write with size=0)
-        if HAS_EVENT_BUS and FileEventType is not None:
-            self._fire_event(FileEventType.FILE_WRITE, original_path, size=0)
+        self._fire_event(FileEventType.FILE_WRITE, original_path, size=0)
 
         return fd
 
@@ -1014,8 +1012,7 @@ class NexusFUSEOperations(Operations):
             self.cache.invalidate_path(path)
 
         # Issue #1115: Fire delete event
-        if HAS_EVENT_BUS and FileEventType is not None:
-            self._fire_event(FileEventType.FILE_DELETE, original_path)
+        self._fire_event(FileEventType.FILE_DELETE, original_path)
 
     @fuse_operation("MKDIR")
     def mkdir(self, path: str, mode: int) -> None:  # noqa: ARG002
@@ -1038,8 +1035,7 @@ class NexusFUSEOperations(Operations):
         self.nexus_fs.mkdir(path, parents=True, exist_ok=True)
 
         # Issue #1115: Fire directory create event
-        if HAS_EVENT_BUS and FileEventType is not None:
-            self._fire_event(FileEventType.DIR_CREATE, path)
+        self._fire_event(FileEventType.DIR_CREATE, path)
 
     @fuse_operation("RMDIR")
     def rmdir(self, path: str) -> None:
@@ -1061,8 +1057,7 @@ class NexusFUSEOperations(Operations):
         self.nexus_fs.rmdir(path, recursive=False)
 
         # Issue #1115: Fire directory delete event
-        if HAS_EVENT_BUS and FileEventType is not None:
-            self._fire_event(FileEventType.DIR_DELETE, path)
+        self._fire_event(FileEventType.DIR_DELETE, path)
 
     @fuse_operation("RENAME")
     def rename(self, old: str, new: str) -> None:
@@ -1155,8 +1150,7 @@ class NexusFUSEOperations(Operations):
             self.cache.invalidate_path(new)
 
         # Issue #1115: Fire rename event
-        if HAS_EVENT_BUS and FileEventType is not None:
-            self._fire_event(FileEventType.FILE_RENAME, new_path, old_path=old_path)
+        self._fire_event(FileEventType.FILE_RENAME, new_path, old_path=old_path)
 
     # ============================================================
     # File Attribute Modification
@@ -1193,8 +1187,7 @@ class NexusFUSEOperations(Operations):
             self.cache.invalidate_path(path)
 
         # Issue #1115: Fire metadata change event
-        if HAS_EVENT_BUS and FileEventType is not None:
-            self._fire_event(FileEventType.METADATA_CHANGE, original_path)
+        self._fire_event(FileEventType.METADATA_CHANGE, original_path)
 
     @fuse_operation("CHOWN")
     def chown(self, path: str, uid: int, gid: int) -> None:
@@ -1252,8 +1245,7 @@ class NexusFUSEOperations(Operations):
                 self.cache.invalidate_path(path)
 
             # Issue #1115: Fire metadata change event
-            if HAS_EVENT_BUS and FileEventType is not None:
-                self._fire_event(FileEventType.METADATA_CHANGE, original_path)
+            self._fire_event(FileEventType.METADATA_CHANGE, original_path)
 
         except (ModuleNotFoundError, AttributeError):
             # Windows doesn't have pwd/grp modules - silently ignore
@@ -1304,8 +1296,7 @@ class NexusFUSEOperations(Operations):
             self.cache.invalidate_path(path)
 
         # Issue #1115: Fire write event (truncate modifies content)
-        if HAS_EVENT_BUS and FileEventType is not None:
-            self._fire_event(FileEventType.FILE_WRITE, original_path, size=length)
+        self._fire_event(FileEventType.FILE_WRITE, original_path, size=length)
 
     def utimens(self, path: str, times: tuple[float, float] | None = None) -> None:
         """Update file access and modification times.

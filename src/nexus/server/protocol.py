@@ -45,6 +45,8 @@ from datetime import date, datetime, timedelta
 from enum import Enum
 from typing import Any
 
+from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
+
 
 class RPCErrorCode(Enum):
     """Standard JSON-RPC error codes + custom Nexus error codes."""
@@ -1947,7 +1949,7 @@ class OAuthGetAuthUrlParams:
     """Parameters for oauth_get_auth_url method."""
 
     provider: str
-    redirect_uri: str = "http://localhost:3000/oauth/callback"
+    redirect_uri: str = DEFAULT_OAUTH_REDIRECT_URI
     scopes: list[str] | None = None
 
 
@@ -1959,7 +1961,7 @@ class OAuthExchangeCodeParams:
     code: str
     user_email: str | None = None  # Optional: will be fetched from provider if not provided
     state: str | None = None
-    redirect_uri: str = "http://localhost:3000/oauth/callback"
+    redirect_uri: str = DEFAULT_OAUTH_REDIRECT_URI
 
 
 @dataclass

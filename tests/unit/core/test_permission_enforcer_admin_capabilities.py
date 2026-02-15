@@ -46,6 +46,14 @@ class MockReBACManager:
         )
         return self.granted_permissions.get(key, False)
 
+    def rebac_check_bulk(self, checks, zone_id=None):
+        """Bulk check: delegate each check to rebac_check and return results dict."""
+        results = {}
+        for check in checks:
+            subject, permission, obj = check
+            results[check] = self.rebac_check(subject, permission, obj, zone_id)
+        return results
+
 
 class MockAuditStore:
     """Mock audit store for testing bypass logging."""

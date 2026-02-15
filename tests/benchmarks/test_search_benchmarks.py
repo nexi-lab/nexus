@@ -62,6 +62,7 @@ class TestPythonRegexBenchmarks:
         result = benchmark(search)
         assert len(result) == 100  # 1 ERROR per 10 lines
 
+    @pytest.mark.benchmark_ci
     def test_python_regex_simple_10k_lines(self, benchmark):
         """Benchmark Python regex search in 10K lines."""
         content = generate_log_content(10000)
@@ -159,6 +160,7 @@ class TestRustGrepBenchmarks:
         else:
             print("\n[INFO] Python fallback was used")
 
+    @pytest.mark.benchmark_ci
     def test_rust_grep_10k_lines(self, benchmark):
         """Benchmark Rust grep in 10K lines."""
         from nexus.core.grep_fast import grep_bulk
@@ -595,6 +597,7 @@ class TestHybridSearchFusionBenchmarks:
         result = benchmark(fuse)
         assert len(result) == 10
 
+    @pytest.mark.benchmark_ci
     def test_rrf_fusion_1k_results(self, benchmark, large_result_sets):
         """Benchmark RRF fusion with 1K results from each source."""
         from nexus.search.fusion import rrf_fusion

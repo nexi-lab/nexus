@@ -23,6 +23,8 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urljoin
 
+from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
+
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.services.llm_service import LLMService
@@ -1682,7 +1684,7 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
     def oauth_get_auth_url(
         self,
         provider: str,
-        redirect_uri: str = "http://localhost:3000/oauth/callback",
+        redirect_uri: str = DEFAULT_OAUTH_REDIRECT_URI,
         scopes: builtins.list[str] | None = None,
         context: Any = None,
     ) -> dict[str, Any]:
@@ -1720,7 +1722,7 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         code: str,
         user_email: str | None = None,
         state: str | None = None,
-        redirect_uri: str = "http://localhost:3000/oauth/callback",
+        redirect_uri: str = DEFAULT_OAUTH_REDIRECT_URI,
         code_verifier: str | None = None,
         context: Any = None,
     ) -> dict[str, Any]:

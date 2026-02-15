@@ -13,7 +13,10 @@ import logging
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
+
+if TYPE_CHECKING:
+    from nexus.sandbox.sandbox_router import SandboxRouter
 
 from sqlalchemy import select
 from sqlalchemy.exc import PendingRollbackError, SQLAlchemyError
@@ -132,17 +135,24 @@ class SandboxManager:
             except Exception as e:
                 logger.warning(f"Failed to initialize Monty provider: {e}")
 
-        # Smart routing (Issue #1317): auto-attach if providers available
-        self._router: Any | None = None
-        if self.providers:
-            try:
-                from nexus.sandbox.sandbox_router import SandboxRouter
-
-                self._router = SandboxRouter(available_providers=self.providers)
-            except Exception as e:
-                logger.warning(f"Failed to initialize sandbox router: {e}")
+        # Smart routing (Issue #1317)
+        self._router: SandboxRouter | None = None
 
         logger.info(f"Initialized sandbox manager with providers: {list(self.providers.keys())}")
+
+    def wire_router(self) -> None:
+        """Attach a SandboxRouter for smart tier selection (Issue #1317).
+
+        Creates and attaches a router if providers are available.
+        Idempotent — safe to call multiple times.
+        """
+        if not self.providers:
+            return
+
+        from nexus.sandbox.sandbox_router import SandboxRouter
+
+        self._router = SandboxRouter(available_providers=self.providers)
+        logger.info("SandboxRouter wired with providers: %s", list(self.providers.keys()))
 
     @contextmanager
     def _get_session(self) -> Generator[Session, None, None]:
@@ -428,14 +438,13 @@ class SandboxManager:
             )
 
         # Cache in router for re-wiring on escalation (Issue #1317)
-        router = getattr(self, "_router", None)
-        if router is not None:
+        if self._router is not None:
             # Look up agent_id from sandbox metadata
             try:
                 meta = self._get_metadata(sandbox_id)
                 agent_id = meta.get("agent_id")
                 if agent_id:
-                    router.cache_host_functions(agent_id, host_functions)
+                    self._router.cache_host_functions(agent_id, host_functions)
             except SandboxNotFoundError:
                 pass
 
@@ -490,9 +499,8 @@ class SandboxManager:
             )
 
         # Record execution in router if available
-        router = getattr(self, "_router", None)
-        if router is not None and agent_id:
-            router.record_execution(agent_id, provider_name, escalated=False)
+        if self._router is not None and agent_id:
+            self._router.record_execution(agent_id, provider_name, escalated=False)
 
         # Update last_active_at and expires_at
         now = datetime.now(UTC)
@@ -533,16 +541,13 @@ class SandboxManager:
         Raises:
             EscalationNeeded: If no next tier is available.
         """
-        router = getattr(self, "_router", None)
-        if router is None:
+        if self._router is None:
             raise exc
 
         # Determine next tier
-        to_tier = exc.suggested_tier
-        if to_tier and to_tier in self.providers:
-            next_tier = to_tier
-        else:
-            next_tier = router.get_next_tier(from_tier)
+        next_tier: str | None = exc.suggested_tier if exc.suggested_tier in self.providers else None
+        if next_tier is None:
+            next_tier = self._router.get_next_tier(from_tier)
 
         if next_tier is None:
             logger.warning(
@@ -561,7 +566,7 @@ class SandboxManager:
 
         # Record escalation
         if agent_id:
-            router.record_escalation(agent_id, from_tier, next_tier)
+            self._router.record_escalation(agent_id, from_tier, next_tier)
 
         # Create a temporary sandbox on the next tier and run code
         next_provider = self.providers[next_tier]
@@ -569,8 +574,8 @@ class SandboxManager:
 
         try:
             # Re-wire host functions if escalating from monty
-            if from_tier == "monty" and agent_id and router:
-                cached_fns = router.get_cached_host_functions(agent_id)
+            if from_tier == "monty" and agent_id:
+                cached_fns = self._router.get_cached_host_functions(agent_id)
                 if cached_fns and hasattr(next_provider, "set_host_functions"):
                     next_provider.set_host_functions(temp_sandbox_id, cached_fns)
 

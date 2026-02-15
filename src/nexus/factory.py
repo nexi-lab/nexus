@@ -434,6 +434,26 @@ def create_nexus_services(
 
         write_observer = RecordStoreSyncer(session_factory)
 
+    # --- Event Delivery Worker (Issue #1241) ---
+    # Transactional outbox: polls undelivered operation_log rows and
+    # dispatches FileEvents to EventBus/webhooks with at-least-once semantics.
+    # Only enabled for PostgreSQL — SQLite doesn't support concurrent thread access.
+    delivery_worker = None
+    if db_url.startswith(("postgres", "postgresql")):
+        try:
+            from nexus.services.event_log.delivery_worker import EventDeliveryWorker
+
+            delivery_worker = EventDeliveryWorker(
+                session_factory=session_factory,
+                poll_interval_ms=200,
+                batch_size=50,
+            )
+            delivery_worker.start()
+        except Exception as _dw_exc:
+            import logging as _dw_logging
+
+            _dw_logging.getLogger(__name__).warning("EventDeliveryWorker unavailable: %s", _dw_exc)
+
     # --- VersionService (Task #45) ---
     # Version history queries go through RecordStore (VersionHistoryModel),
     # not through Metastore (sled doesn't track version history).
@@ -617,6 +637,7 @@ def create_nexus_services(
         "mount_manager": mount_manager,
         "workspace_manager": workspace_manager,
         "write_observer": write_observer,
+        "delivery_worker": delivery_worker,
         "version_service": version_service,
         "observability_subsystem": observability_subsystem,
         "wallet_provisioner": wallet_provisioner,
@@ -730,6 +751,7 @@ def create_nexus_fs(
         "rebac_circuit_breaker",
         "tool_namespace_middleware",
         "resiliency_manager",
+        "delivery_worker",
     ):
         val = services.pop(key, None)
         if val is not None:

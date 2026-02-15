@@ -41,7 +41,6 @@ from nexus.sandbox.sandbox_provider import (  # noqa: E402
     CodeExecutionResult,
     SandboxProvider,
 )
-from nexus.sandbox.sandbox_router import SandboxRouter  # noqa: E402
 from nexus.storage.models import Base  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -116,10 +115,8 @@ def server_stack(session_factory, mock_docker, mock_e2b):
     mgr.providers["docker"] = mock_docker
     mgr.providers["e2b"] = mock_e2b
 
-    # Step 3: Attach router (same logic as server wiring)
-    if mgr.providers:
-        router = SandboxRouter(available_providers=mgr.providers)
-        mgr._router = router
+    # Step 3: Attach router (same logic as server wiring via wire_router())
+    mgr.wire_router()
 
     return mgr, mgr._router, monty, mock_docker, mock_e2b
 

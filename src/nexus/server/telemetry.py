@@ -37,6 +37,8 @@ import logging
 import os
 from typing import TYPE_CHECKING
 
+from nexus.constants import DEFAULT_OTEL_ENDPOINT
+
 if TYPE_CHECKING:
     from opentelemetry.trace import Tracer
 
@@ -94,9 +96,7 @@ def setup_telemetry(
 
         # Configuration from args or environment
         _service_name = service_name or os.environ.get("OTEL_SERVICE_NAME", "nexus")
-        _endpoint = endpoint or os.environ.get(
-            "OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317"
-        )
+        _endpoint = endpoint or os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", DEFAULT_OTEL_ENDPOINT)
         _insecure = (
             insecure
             if insecure is not None

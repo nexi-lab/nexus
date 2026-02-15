@@ -1515,7 +1515,7 @@ async def oauth_callback(request: OAuthCallbackRequest) -> OAuthCallbackResponse
         # Determine if this is a new user (check if user was just created)
         # For now, we'll assume it's new if the user was created recently
         # This is a simplification - in practice, you'd track this in the handler
-        is_new_user = False  # TODO: Track this properly in OAuthUserAuth
+        is_new_user = False  # Stub: needs proper tracking in OAuthUserAuth
 
         return OAuthCallbackResponse(
             token=token,
@@ -1551,8 +1551,7 @@ async def list_oauth_accounts() -> list[OAuthAccountResponse]:
         401: Not authenticated
         501: Not implemented
     """
-    # TODO: Implement OAuth account listing
-    # Requires: JWT token authentication middleware
+    # Stub: requires JWT token authentication middleware
     raise HTTPException(
         status_code=status.HTTP_501_NOT_IMPLEMENTED,
         detail="OAuth account listing requires JWT token authentication middleware",
@@ -1574,8 +1573,7 @@ async def unlink_oauth_account(_oauth_account_id: str) -> dict[str, Any]:
         404: OAuth account not found
         501: Not implemented
     """
-    # TODO: Implement OAuth account unlinking
-    # Requires: JWT token authentication middleware
+    # Stub: requires JWT token authentication middleware
     raise HTTPException(
         status_code=status.HTTP_501_NOT_IMPLEMENTED,
         detail="OAuth account unlinking requires JWT token authentication middleware",

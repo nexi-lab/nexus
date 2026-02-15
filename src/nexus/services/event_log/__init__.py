@@ -11,7 +11,11 @@ Architecture:
         ├─ event_log.append(event)   # WAL-first durability (if available)
         └─ redis.publish(event)      # Dragonfly fan-out to subscribers
 
-Tracked by: #1397
+    EventDeliveryWorker (Issue #1241):
+        operation_log WHERE delivered = FALSE
+        → build FileEvent → dispatch → mark delivered = TRUE
+
+Tracked by: #1397, #1241
 """
 
 from nexus.services.event_log.factory import create_event_log

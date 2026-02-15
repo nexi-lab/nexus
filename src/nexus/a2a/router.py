@@ -37,6 +37,7 @@ from nexus.a2a.models import (
     TaskState,
 )
 from nexus.a2a.task_manager import TaskManager
+from nexus.constants import DEFAULT_NEXUS_URL
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +76,7 @@ def build_router(
         resolves authentication.  Injected by the server layer so
         that this module has **zero** imports from ``nexus.server``.
     """
-    effective_base_url = base_url or "http://localhost:2026"
+    effective_base_url = base_url or DEFAULT_NEXUS_URL
 
     router = APIRouter(tags=["a2a"])
     if task_manager is None:

@@ -61,16 +61,6 @@ def is_sentry_enabled() -> bool:
     return bool(os.environ.get("SENTRY_DSN", "").strip())
 
 
-def _get_version() -> str:
-    """Get Nexus version for Sentry release tag."""
-    try:
-        from importlib.metadata import version
-
-        return version("nexus-ai-fs")
-    except Exception:
-        return "unknown"
-
-
 def _parse_sample_rate(env_var: str, default: float = 0.0) -> float:
     """Parse a sample rate from an environment variable, clamping to [0.0, 1.0].
 
@@ -228,7 +218,9 @@ def setup_sentry(
             )
         )
 
-        version = _get_version()
+        from nexus.server._version import get_nexus_version
+
+        version = get_nexus_version()
 
         sentry_sdk.init(
             dsn=_dsn,

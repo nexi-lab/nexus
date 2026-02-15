@@ -12,6 +12,7 @@ from nexus.server.api.v2.routers import (
     playbooks,
     reflect,
     reputation,
+    sync_push,
     trajectories,
 )
 
@@ -28,4 +29,5 @@ __all__ = [
     "operations",
     "pay",
     "reputation",
+    "sync_push",
 ]

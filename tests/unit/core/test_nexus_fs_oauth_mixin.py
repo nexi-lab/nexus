@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.core.config import ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -142,9 +143,8 @@ class TestGetTokenManager:
         nx = NexusFS(
             backend=LocalBackend(temp_dir),
             metadata_store=RaftMetadataStore.embedded(str(temp_dir / "metadata")),
-            auto_parse=False,
-            enforce_permissions=False,
-            audit_strict_mode=False,
+            parsing=ParseConfig(auto_parse=False),
+            permissions=PermissionConfig(enforce=False, audit_strict_mode=False),
         )
 
         try:

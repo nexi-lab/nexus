@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
+from nexus.core.config import PermissionConfig
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 if TYPE_CHECKING:
@@ -84,7 +85,7 @@ async def nx_with_lock(temp_dir, redis_client, isolated_db):
     backend = PassthroughBackend(base_path=temp_dir)
     # Disable permission enforcement for tests
     metadata_store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", ""))
-    nx = NexusFS(backend=backend, metadata_store=metadata_store, enforce_permissions=False)
+    nx = NexusFS(backend=backend, metadata_store=metadata_store, permissions=PermissionConfig(enforce=False))
 
     # Inject lock manager (redis_client is already connected by fixture)
     nx._lock_manager = RedisLockManager(redis_client)
@@ -115,9 +116,9 @@ async def nx_pair_with_lock(temp_dir, redis_client, isolated_db, tmp_path):
 
     # Disable permission enforcement for tests
     metadata_store = RaftMetadataStore.embedded(str(shared_db).replace(".db", ""))
-    nx1 = NexusFS(backend=backend, metadata_store=metadata_store, enforce_permissions=False)
+    nx1 = NexusFS(backend=backend, metadata_store=metadata_store, permissions=PermissionConfig(enforce=False))
     metadata_store = RaftMetadataStore.embedded(str(shared_db).replace(".db", ""))
-    nx2 = NexusFS(backend=backend, metadata_store=metadata_store, enforce_permissions=False)
+    nx2 = NexusFS(backend=backend, metadata_store=metadata_store, permissions=PermissionConfig(enforce=False))
 
     # Both share the same Redis lock manager (distributed lock)
     lock_manager = RedisLockManager(redis_client)
@@ -156,7 +157,7 @@ def nx_sync_with_lock(temp_dir, isolated_db):
 
     backend = PassthroughBackend(base_path=temp_dir)
     metadata_store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", ""))
-    nx = NexusFS(backend=backend, metadata_store=metadata_store, enforce_permissions=False)
+    nx = NexusFS(backend=backend, metadata_store=metadata_store, permissions=PermissionConfig(enforce=False))
     nx._lock_manager = lock_manager
 
     yield nx
@@ -393,7 +394,7 @@ class TestWriteWithLock:
         def create_nx():
             stub_client = DragonflyClient(url=redis_url)
             metadata_store = RaftMetadataStore.embedded(str(shared_db).replace(".db", ""))
-            nx = NexusFS(backend=backend, metadata_store=metadata_store, enforce_permissions=False)
+            nx = NexusFS(backend=backend, metadata_store=metadata_store, permissions=PermissionConfig(enforce=False))
             nx._lock_manager = RedisLockManager(stub_client)
             return nx
 
@@ -658,7 +659,7 @@ class TestEdgeCases:
         backend = PassthroughBackend(base_path=temp_dir)
         # Disable permission enforcement and don't inject lock manager
         metadata_store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", ""))
-        nx = NexusFS(backend=backend, metadata_store=metadata_store, enforce_permissions=False)
+        nx = NexusFS(backend=backend, metadata_store=metadata_store, permissions=PermissionConfig(enforce=False))
 
         # No lock manager configured - should warn but succeed (LWW)
         result = nx.write("/test.txt", b"content", lock=True)
@@ -796,7 +797,7 @@ class TestMultiThreadingContention:
                 try:
                     metadata_store = RaftMetadataStore.embedded(str(db_path).replace(".db", ""))
                     nx = NexusFS(
-                        backend=backend, metadata_store=metadata_store, enforce_permissions=False
+                        backend=backend, metadata_store=metadata_store, permissions=PermissionConfig(enforce=False)
                     )
                     nx._lock_manager = RedisLockManager(client)
                     try:
@@ -1172,7 +1173,7 @@ class TestLockIsolation:
         try:
             backend = PassthroughBackend(base_path=temp_dir)
             metadata_store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", ""))
-            nx = NexusFS(backend=backend, metadata_store=metadata_store, enforce_permissions=False)
+            nx = NexusFS(backend=backend, metadata_store=metadata_store, permissions=PermissionConfig(enforce=False))
             nx._lock_manager = RedisLockManager(client)
 
             nx.write("/shared.txt", b"content")

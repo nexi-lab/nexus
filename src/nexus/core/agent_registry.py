@@ -1,4 +1,4 @@
-"""Agent registry with lifecycle state machine (Agent OS Phase 1, Issue #1240).
+"""Agent registry with lifecycle state machine (Agent OS Phase 1, Issues #1240, #1588).
 
 Consolidates all agent identity and lifecycle logic into a single class:
 - Registration and unregistration

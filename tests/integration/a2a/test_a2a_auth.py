@@ -40,7 +40,6 @@ def app_no_auth() -> FastAPI:
     return app
 
 
-
 def _rpc_body(
     method: str,
     params: dict[str, Any] | None = None,

@@ -215,7 +215,7 @@ class NatsEventBus(EventBusBase):
             logger.debug(
                 f"Published {event_type} event for {event.path} to {subject} (seq={ack.seq})"
             )
-            return ack.seq
+            return int(ack.seq)
         except Exception as e:
             logger.error(f"Failed to publish event to NATS: {e}")
             raise

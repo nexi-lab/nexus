@@ -18,7 +18,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import grpc
 from grpc import aio as grpc_aio
@@ -157,6 +157,8 @@ class RaftClient:
         if self.config.tls_cert_path:
             from pathlib import Path
 
+            if not self.config.tls_key_path or not self.config.tls_ca_path:
+                raise ValueError("TLS requires tls_cert_path, tls_key_path, and tls_ca_path")
             cert = Path(self.config.tls_cert_path).read_bytes()
             key = Path(self.config.tls_key_path).read_bytes()
             ca = Path(self.config.tls_ca_path).read_bytes()
@@ -185,7 +187,9 @@ class RaftClient:
         await self.connect()
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(
+        self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: object
+    ) -> None:
         await self.close()
 
     def _ensure_connected(self) -> transport_pb2_grpc.ZoneApiServiceStub:
@@ -462,7 +466,7 @@ class RaftClient:
         )
 
         response = await self._propose(command)
-        return response.success
+        return bool(response.success)
 
     async def get_metadata(
         self,
@@ -559,9 +563,9 @@ class RaftClient:
         )
 
         response = await self._propose(command)
-        return response.success
+        return bool(response.success)
 
-    def _proto_to_file_metadata(self, proto: metadata_pb2.FileMetadata) -> FileMetadata:
+    def _proto_to_file_metadata(self, proto: Any) -> FileMetadata:
         """Convert proto FileMetadata to dataclass."""
         from nexus.core._metadata_generated import FileMetadata as FM
 
@@ -581,7 +585,7 @@ class RaftClient:
         return FM(
             path=proto.path,
             backend_name=proto.backend_name,
-            physical_path=proto.physical_path or None,
+            physical_path=str(proto.physical_path) if proto.physical_path else "",
             size=proto.size,
             etag=proto.etag or None,
             mime_type=proto.mime_type or None,
@@ -668,7 +672,7 @@ class RaftClient:
         )
 
         response = await self._propose(command)
-        return response.success
+        return bool(response.success)
 
     async def extend_lock(
         self,
@@ -700,7 +704,7 @@ class RaftClient:
         )
 
         response = await self._propose(command)
-        return response.success
+        return bool(response.success)
 
     async def get_lock_info(
         self,
@@ -802,5 +806,7 @@ class RaftClientPool:
     async def __aenter__(self) -> RaftClientPool:
         return self
 
-    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+    async def __aexit__(
+        self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: object
+    ) -> None:
         await self.close_all()

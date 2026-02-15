@@ -36,6 +36,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from nexus.core.rebac import CROSS_ZONE_ALLOWED_RELATIONS, Entity, NamespaceConfig
 from nexus.services.permissions.rebac_manager import ReBACManager
+from nexus.services.permissions.utils.changelog import insert_changelog_entry
 
 logger = logging.getLogger(__name__)
 
@@ -278,27 +279,17 @@ class ZoneAwareReBACManager(ReBACManager):
             )
 
             # Log to changelog (include zone_id)
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    INSERT INTO rebac_changelog (
-                        change_type, tuple_id, zone_id, subject_type, subject_id,
-                        relation, object_type, object_id, created_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """
-                ),
-                (
-                    "INSERT",
-                    tuple_id,
-                    zone_id,
-                    subject_entity.entity_type,
-                    subject_entity.entity_id,
-                    relation,
-                    object_entity.entity_type,
-                    object_entity.entity_id,
-                    datetime.now(UTC).isoformat(),
-                ),
+            insert_changelog_entry(
+                cursor,
+                self._fix_sql_placeholders,
+                change_type="INSERT",
+                tuple_id=tuple_id,
+                subject_type=subject_entity.entity_type,
+                subject_id=subject_entity.entity_id,
+                relation=relation,
+                object_type=object_entity.entity_type,
+                object_id=object_entity.entity_id,
+                zone_id=zone_id,
             )
 
             conn.commit()

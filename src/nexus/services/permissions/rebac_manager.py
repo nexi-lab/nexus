@@ -19,6 +19,8 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
+from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
+
 from nexus.core.rebac import (
     DEFAULT_FILE_NAMESPACE,
     DEFAULT_GROUP_NAMESPACE,
@@ -35,6 +37,12 @@ from nexus.services.permissions.rebac_fast import (
     check_permissions_bulk_with_fallback,
     is_rust_available,
 )
+from nexus.services.permissions.utils.changelog import (
+    changelog_params,
+    insert_changelog_entries_batch,
+    insert_changelog_entry,
+)
+from nexus.services.permissions.utils.zone import normalize_zone_id
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -231,7 +239,7 @@ class ReBACManager:
 
                     match = re.search(r"PostgreSQL (\d+)", version_str or "")
                     self._pg_version = int(match.group(1)) if match else 0
-            except Exception:
+            except (IndexError, ValueError, AttributeError):
                 self._pg_version = 0
 
         return self._pg_version >= 18
@@ -249,7 +257,7 @@ class ReBACManager:
         Returns:
             Current revision number (0 if zone has no writes yet)
         """
-        effective_zone = zone_id or "default"
+        effective_zone = normalize_zone_id(zone_id)
         should_close = conn is None
         if conn is None:
             conn = self._get_connection()
@@ -285,7 +293,7 @@ class ReBACManager:
         Returns:
             New revision number after increment
         """
-        effective_zone = zone_id or "default"
+        effective_zone = normalize_zone_id(zone_id)
         cursor = self._create_cursor(conn)
 
         if self.engine.dialect.name == "postgresql":
@@ -412,9 +420,6 @@ class ReBACManager:
     def _ensure_namespaces_initialized(self) -> None:
         """Ensure default namespaces are initialized (called before first ReBAC operation)."""
         if not self._namespaces_initialized:
-            import logging
-
-            logger = logging.getLogger(__name__)
             logger.info("Initializing default namespaces...")
 
             # Use engine.connect() to leverage pool_pre_ping for stale connection detection
@@ -425,7 +430,7 @@ class ReBACManager:
                     sa_conn.commit()
                     self._namespaces_initialized = True
                     logger.info("Default namespaces initialized successfully")
-                except Exception as e:
+                except (OperationalError, ProgrammingError, IntegrityError) as e:
                     sa_conn.rollback()
                     logger.warning(f"Failed to initialize namespaces: {type(e).__name__}: {e}")
                     import traceback
@@ -649,11 +654,8 @@ class ReBACManager:
                             ),
                         )
             conn.commit()
-        except Exception as e:
+        except (OperationalError, ProgrammingError) as e:
             # If tables don't exist yet or other error, skip initialization
-            import logging
-
-            logger = logging.getLogger(__name__)
             logger.warning(f"Failed to register default namespaces: {type(e).__name__}: {e}")
             import traceback
 
@@ -919,27 +921,17 @@ class ReBACManager:
             )
 
             # Log to changelog (Issue #773: include zone_id)
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    INSERT INTO rebac_changelog (
-                        change_type, tuple_id, subject_type, subject_id,
-                        relation, object_type, object_id, zone_id, created_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """
-                ),
-                (
-                    "INSERT",
-                    tuple_id,
-                    subject_entity.entity_type,
-                    subject_entity.entity_id,
-                    relation,
-                    object_entity.entity_type,
-                    object_entity.entity_id,
-                    zone_id or "default",
-                    datetime.now(UTC).isoformat(),
-                ),
+            insert_changelog_entry(
+                cursor,
+                self._fix_sql_placeholders,
+                change_type="INSERT",
+                tuple_id=tuple_id,
+                subject_type=subject_entity.entity_type,
+                subject_id=subject_entity.entity_id,
+                relation=relation,
+                object_type=object_entity.entity_type,
+                object_id=object_entity.entity_id,
+                zone_id=zone_id,
             )
 
             # Increment zone revision before commit for atomicity (Issue #909)
@@ -1188,32 +1180,24 @@ class ReBACManager:
                 cursor.executemany(tuple_insert_sql, tuple_data)
 
                 # Step 5: PERF OPTIMIZATION - Bulk insert changelog entries
-                changelog_insert_sql = self._fix_sql_placeholders(
-                    """
-                    INSERT INTO rebac_changelog (
-                        change_type, tuple_id, subject_type, subject_id,
-                        relation, object_type, object_id, zone_id, created_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """
-                )
-
                 changelog_data = [
-                    (
-                        "INSERT",
-                        pt["tuple_id"],
-                        pt["subject_type"],
-                        pt["subject_id"],
-                        pt["relation"],
-                        pt["object_type"],
-                        pt["object_id"],
-                        pt["zone_id"] or "default",
-                        now,
+                    changelog_params(
+                        change_type="INSERT",
+                        tuple_id=pt["tuple_id"],
+                        subject_type=pt["subject_type"],
+                        subject_id=pt["subject_id"],
+                        relation=pt["relation"],
+                        object_type=pt["object_type"],
+                        object_id=pt["object_id"],
+                        zone_id=pt["zone_id"],
+                        created_at=now,
                     )
                     for pt in tuples_to_create
                 ]
 
-                cursor.executemany(changelog_insert_sql, changelog_data)
+                insert_changelog_entries_batch(
+                    cursor, self._fix_sql_placeholders, changelog_data
+                )
 
                 created_count = len(tuples_to_create)
 
@@ -1268,7 +1252,7 @@ class ReBACManager:
                             "AND object_type = ? AND object_id = ?)"
                         )
                         delete_params.extend(
-                            [tid or "default", subj_type, subj_id, obj_type, obj_id]
+                            [normalize_zone_id(tid), subj_type, subj_id, obj_type, obj_id]
                         )
 
                     # Chunk the deletes to avoid too large SQL
@@ -1288,7 +1272,7 @@ class ReBACManager:
                 if created_count > 0:
                     affected_zones = set()
                     for pt in parsed_tuples:
-                        affected_zones.add(pt["zone_id"] or "default")
+                        affected_zones.add(normalize_zone_id(pt["zone_id"]))
                         if pt["subject_zone_id"] and pt["subject_zone_id"] != pt["zone_id"]:
                             affected_zones.add(pt["subject_zone_id"])
                     for zone in affected_zones:
@@ -1299,7 +1283,7 @@ class ReBACManager:
                 if created_count > 0:
                     self._tuple_version += 1  # Invalidate Rust graph cache
 
-            except Exception as e:
+            except (OperationalError, IntegrityError, ProgrammingError) as e:
                 # Rollback transaction on any error to maintain consistency
                 conn.rollback()
                 logger.error(
@@ -1465,27 +1449,18 @@ class ReBACManager:
             zone_id = row["zone_id"]
 
             # Log to changelog (Issue #773: include zone_id)
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    INSERT INTO rebac_changelog (
-                        change_type, tuple_id, subject_type, subject_id,
-                        relation, object_type, object_id, zone_id, created_at
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """
-                ),
-                (
-                    "DELETE",
-                    tuple_id,
-                    subject.entity_type,
-                    subject.entity_id,
-                    relation,
-                    obj.entity_type,
-                    obj.entity_id,
-                    zone_id or "default",
-                    now,
-                ),
+            insert_changelog_entry(
+                cursor,
+                self._fix_sql_placeholders,
+                change_type="DELETE",
+                tuple_id=tuple_id,
+                subject_type=subject.entity_type,
+                subject_id=subject.entity_id,
+                relation=relation,
+                object_type=obj.entity_type,
+                object_id=obj.entity_id,
+                zone_id=zone_id,
+                created_at=now,
             )
 
             # Increment zone revision before commit for atomicity (Issue #909)
@@ -1531,9 +1506,6 @@ class ReBACManager:
         """
         updated_count = 0
 
-        import logging
-
-        logger = logging.getLogger(__name__)
         logger.info(
             f"update_object_path: {old_path} -> {new_path}, object_type={object_type}, is_directory={is_directory}"
         )
@@ -1650,22 +1622,13 @@ class ReBACManager:
                             row["relation"],
                             object_type,
                             new_object_id,
-                            row["zone_id"] or "default",
+                            normalize_zone_id(row["zone_id"]),
                             now_iso,
                         )
                     )
 
-                cursor.executemany(
-                    self._fix_sql_placeholders(
-                        """
-                        INSERT INTO rebac_changelog (
-                            change_type, tuple_id, subject_type, subject_id,
-                            relation, object_type, object_id, zone_id, created_at
-                        )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """
-                    ),
-                    changelog_entries,
+                insert_changelog_entries_batch(
+                    cursor, self._fix_sql_placeholders, changelog_entries
                 )
 
                 # Invalidate caches (still need to iterate, but it's in-memory)
@@ -1695,9 +1658,9 @@ class ReBACManager:
                             self.tiger_invalidate_cache(
                                 subject=(subject.entity_type, subject.entity_id),
                                 resource_type=old_obj.entity_type,
-                                zone_id=zone_id or "default",
+                                zone_id=normalize_zone_id(zone_id),
                             )
-                        except Exception as e:
+                        except (RuntimeError, ValueError) as e:
                             logger.warning(f"Tiger Cache invalidation failed during rename: {e}")
 
                     self._invalidate_cache_for_tuple(
@@ -1818,22 +1781,13 @@ class ReBACManager:
                             row["relation"],
                             row["object_type"],
                             row["object_id"],
-                            row["zone_id"] or "default",
+                            normalize_zone_id(row["zone_id"]),
                             now_iso,
                         )
                     )
 
-                cursor.executemany(
-                    self._fix_sql_placeholders(
-                        """
-                        INSERT INTO rebac_changelog (
-                            change_type, tuple_id, subject_type, subject_id,
-                            relation, object_type, object_id, zone_id, created_at
-                        )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """
-                    ),
-                    changelog_entries,
+                insert_changelog_entries_batch(
+                    cursor, self._fix_sql_placeholders, changelog_entries
                 )
 
                 # Invalidate caches (still need to iterate, but it's in-memory)
@@ -1911,7 +1865,7 @@ class ReBACManager:
                             int_id = resource_map._uuid_to_int.pop(key, None)
                             if int_id is not None and hasattr(resource_map, "_int_to_uuid"):
                                 resource_map._int_to_uuid.pop(int_id, None)
-                except Exception as e:
+                except (KeyError, AttributeError) as e:
                     logger.warning(f"[UPDATE-OBJECT-PATH] Failed to update tiger_resource_map: {e}")
 
             conn.commit()
@@ -2064,7 +2018,7 @@ class ReBACManager:
                         subject_entity, permission, object_entity, result, zone_id, delta=delta
                     )
                     return result
-                except Exception:
+                except (RuntimeError, ValueError, OperationalError):
                     # On error, cancel the compute lock so others don't wait forever
                     self._l1_cache.cancel_compute(cache_key)
                     raise
@@ -2243,7 +2197,7 @@ class ReBACManager:
                             zone_id=None,
                             delta=avg_delta,
                         )
-                except Exception as e:
+                except (RuntimeError, ValueError) as e:
                     logger.warning(f"Rust batch computation failed, falling back to Python: {e}")
                     # Fall back to Python computation
                     self._compute_batch_python(uncached_checks, results)
@@ -3976,7 +3930,7 @@ class ReBACManager:
             self._cache_check_result(subject_entity, permission, object_entity, result, zone_id)
 
             logger.debug(f"✅ REFRESH: Background refresh complete for {cache_key[:50]}...")
-        except Exception as e:
+        except (RuntimeError, ValueError, OperationalError) as e:
             logger.warning(f"⚠️ REFRESH: Background refresh failed for {cache_key[:50]}: {e}")
         finally:
             if self._l1_cache:
@@ -4116,10 +4070,6 @@ class ReBACManager:
         # Use "default" zone if not specified
         effective_zone_id = zone_id if zone_id is not None else "default"
 
-        import logging
-
-        logger = logging.getLogger(__name__)
-
         # Track write for adaptive TTL (Phase 4)
         if self._l1_cache:
             self._l1_cache.track_write(obj.entity_id)
@@ -4198,7 +4148,7 @@ class ReBACManager:
                             logger.debug(
                                 f"Eager cache update: ({subject}, {permission}, {obj}) = {result}"
                             )
-                        except Exception as e:
+                        except (RuntimeError, ValueError, OperationalError) as e:
                             # If recomputation fails, fall back to invalidation
                             logger.debug(
                                 f"Eager recomputation failed, falling back to invalidation: {e}"
@@ -4483,27 +4433,17 @@ class ReBACManager:
                 zone_id = row["zone_id"]
 
                 # Issue #773: include zone_id in changelog
-                cursor.execute(
-                    self._fix_sql_placeholders(
-                        """
-                        INSERT INTO rebac_changelog (
-                            change_type, tuple_id, subject_type, subject_id,
-                            relation, object_type, object_id, zone_id, created_at
-                        )
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """
-                    ),
-                    (
-                        "DELETE",
-                        tuple_id,
-                        subject_type,
-                        subject_id,
-                        relation,
-                        object_type,
-                        object_id,
-                        zone_id or "default",
-                        datetime.now(UTC).isoformat(),
-                    ),
+                insert_changelog_entry(
+                    cursor,
+                    self._fix_sql_placeholders,
+                    change_type="DELETE",
+                    tuple_id=tuple_id,
+                    subject_type=subject_type,
+                    subject_id=subject_id,
+                    relation=relation,
+                    object_type=object_type,
+                    object_id=object_id,
+                    zone_id=zone_id,
                 )
 
                 # Invalidate cache for this tuple

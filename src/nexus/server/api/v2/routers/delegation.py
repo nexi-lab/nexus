@@ -15,7 +15,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from nexus.delegation.service import MAX_TTL_SECONDS as _MAX_TTL
+from nexus.services.delegation.service import MAX_TTL_SECONDS as _MAX_TTL
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ def _get_delegation_service() -> Any:
         getattr(state, "nexus_fs", None), "_entity_registry", None
     )
 
-    from nexus.delegation.service import DelegationService
+    from nexus.services.delegation.service import DelegationService
 
     service = DelegationService(
         session_factory=session_factory,
@@ -165,7 +165,7 @@ async def create_delegation(
     zone_id = auth_result.get("zone_id")
 
     # Validate namespace_mode
-    from nexus.delegation.models import DelegationMode
+    from nexus.services.delegation.models import DelegationMode
 
     try:
         mode = DelegationMode(request.namespace_mode)
@@ -221,6 +221,18 @@ async def revoke_delegation(
 
     service = _get_delegation_service()
 
+    # Ownership check: only the parent agent can revoke its delegation
+    record = service.get_delegation_by_id(delegation_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Delegation {delegation_id} not found.")
+
+    agent_id = auth_result.get("subject_id", "")
+    if record.parent_agent_id != agent_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the parent agent can revoke a delegation.",
+        )
+
     try:
         service.revoke_delegation(delegation_id)
     except Exception as e:
@@ -270,7 +282,7 @@ async def list_delegations(
 
 def _handle_delegation_error(e: Exception) -> None:
     """Map domain errors to HTTP responses. Always raises."""
-    from nexus.delegation.errors import (
+    from nexus.services.delegation.errors import (
         DelegationChainError,
         DelegationNotFoundError,
         EscalationError,

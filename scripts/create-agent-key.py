@@ -27,7 +27,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from nexus.core.agents import create_agent_with_api_key, register_agent
+from nexus.core.agents import register_agent
+from nexus.server.auth.database_key import DatabaseAPIKeyAuth
 from nexus.services.permissions.entity_registry import EntityRegistry
 
 
@@ -100,18 +101,24 @@ Agent Identity System (v0.5.0):
         registry = EntityRegistry(SessionFactory)
 
         if args.with_key:
-            # Create agent WITH API key
-            # Pass Session (not factory) to create_agent_with_api_key for transaction
+            # Create agent WITH API key (inlined from removed create_agent_with_api_key)
             session = SessionFactory()
             try:
-                agent, raw_key = create_agent_with_api_key(
-                    session,
-                    user_id=args.user_id,
-                    agent_id=args.agent_id,
-                    name=args.name,
-                    expires_at=expires_at,
+                register_agent(
+                    args.user_id,
+                    args.agent_id,
+                    args.name,
                     entity_registry=registry,
                 )
+                _key_id, raw_key = DatabaseAPIKeyAuth.create_key(
+                    session,
+                    user_id=args.user_id,
+                    name=args.name,
+                    subject_type="agent",
+                    subject_id=args.agent_id,
+                    expires_at=expires_at,
+                )
+                session.commit()
             finally:
                 session.close()
 

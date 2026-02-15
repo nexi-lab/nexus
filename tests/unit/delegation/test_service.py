@@ -12,12 +12,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nexus.delegation.errors import (
+from nexus.services.delegation.errors import (
     DelegationChainError,
     DelegationError,
 )
-from nexus.delegation.models import DelegationMode, DelegationResult
-from nexus.delegation.service import MAX_TTL_SECONDS, DelegationService
+from nexus.services.delegation.models import DelegationMode, DelegationResult
+from nexus.services.delegation.service import MAX_TTL_SECONDS, DelegationService
 
 
 @pytest.fixture()
@@ -175,7 +175,7 @@ class TestAntiEscalation:
         service,
     ):
         """Clean mode rejects grants not held by parent."""
-        from nexus.delegation.errors import EscalationError
+        from nexus.services.delegation.errors import EscalationError
 
         mock_register.return_value = {"agent_id": "worker_1"}
 
@@ -304,7 +304,7 @@ class TestRevokeDelegation:
 
     def test_revoke_nonexistent(self, service, mock_session_factory):
         """Revoking a non-existent delegation raises error."""
-        from nexus.delegation.errors import DelegationNotFoundError
+        from nexus.services.delegation.errors import DelegationNotFoundError
 
         session = mock_session_factory()
         session.query.return_value.filter.return_value.first.return_value = None

@@ -10,16 +10,16 @@ import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from nexus.delegation.derivation import (
+from nexus.services.delegation.derivation import (
     MAX_DELEGATABLE_GRANTS,
     GrantSpec,
     derive_grants,
 )
-from nexus.delegation.errors import (
+from nexus.services.delegation.errors import (
     EscalationError,
     TooManyGrantsError,
 )
-from nexus.delegation.models import DelegationMode
+from nexus.services.delegation.models import DelegationMode
 
 # ---------------------------------------------------------------------------
 # Hypothesis strategies

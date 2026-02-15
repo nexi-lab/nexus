@@ -29,11 +29,12 @@ EXCEPTIONS = [
     "src/nexus/services/permissions/rebac_manager_enhanced.py",  # 4,500 lines - Phase 2 consolidation
     "src/nexus/services/permissions/tiger_cache.py",  # 2,896 lines - Leopard-style directory grants
     "src/nexus/services/permissions/nexus_fs_rebac.py",  # 2,192 lines - NexusFS mixin
+    "src/nexus/services/rebac_service.py",  # 2,400 lines - sync + async methods for ReBAC delegation
     "src/nexus/remote/client.py",  # 5,000 lines - Phase 4 splitting
     "src/nexus/remote/async_client.py",  # 2,500 lines - Phase 4 splitting
     "src/nexus/storage/models/__init__.py",  # 3,400 lines - Phase 4 splitting (partially done)
     "src/nexus/server/fastapi_server.py",  # 2,133 lines - Phase 4 splitting
-    "src/nexus/core/memory_api.py",  # 2,097 lines - #1039 graph storage integration
+    "src/nexus/services/memory/memory_api.py",  # 3,012 lines - moved from core/, split tracked
 ]
 
 

@@ -1,13 +1,10 @@
 """Tests for agent registration and management."""
 
-from datetime import UTC, datetime, timedelta
-
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from nexus.core.agents import (
-    create_agent_with_api_key,
     register_agent,
     unregister_agent,
     validate_agent_ownership,
@@ -146,97 +143,6 @@ class TestRegisterAgent:
         # Verify both registered
         children = entity_registry.get_children("user", "alice")
         assert len(children) == 2
-
-
-class TestCreateAgentWithAPIKey:
-    """Test create_agent_with_api_key function."""
-
-    def test_create_agent_with_api_key(self, session, entity_registry):
-        """Test creating agent with API key."""
-        # Register user first
-        entity_registry.register_entity("user", "alice")
-
-        agent, api_key = create_agent_with_api_key(
-            session,
-            user_id="alice",
-            agent_id="agent_task",
-            name="Task Agent",
-            entity_registry=entity_registry,
-        )
-
-        assert agent is not None
-        assert agent["agent_id"] == "agent_task"
-        assert api_key is not None
-        assert isinstance(api_key, str)
-        assert len(api_key) > 0
-
-    def test_create_agent_with_temporary_api_key(self, session, entity_registry):
-        """Test creating agent with temporary API key."""
-        entity_registry.register_entity("user", "alice")
-
-        expires_at = datetime.now(UTC) + timedelta(hours=1)
-
-        agent, api_key = create_agent_with_api_key(
-            session,
-            user_id="alice",
-            agent_id="agent_temp",
-            name="Temp Agent",
-            expires_at=expires_at,
-            entity_registry=entity_registry,
-        )
-
-        assert agent is not None
-        assert api_key is not None
-
-    def test_create_agent_with_permanent_api_key(self, session, entity_registry):
-        """Test creating agent with permanent API key."""
-        entity_registry.register_entity("user", "alice")
-
-        agent, api_key = create_agent_with_api_key(
-            session,
-            user_id="alice",
-            agent_id="agent_perm",
-            name="Permanent Agent",
-            expires_at=None,  # Permanent
-            entity_registry=entity_registry,
-        )
-
-        assert agent is not None
-        assert api_key is not None
-
-    def test_create_agent_registers_entity(self, session, entity_registry):
-        """Test that creating agent with API key also registers entity."""
-        entity_registry.register_entity("user", "alice")
-
-        agent, _api_key = create_agent_with_api_key(
-            session,
-            user_id="alice",
-            agent_id="agent_test",
-            name="Test Agent",
-            entity_registry=entity_registry,
-        )
-
-        # Verify entity was registered
-        entity = entity_registry.get_entity("agent", "agent_test")
-        assert entity is not None
-        assert entity.parent_id == "alice"
-
-    def test_create_agent_with_additional_kwargs(self, session, entity_registry):
-        """Test creating agent with additional kwargs for register_agent."""
-        entity_registry.register_entity("user", "alice")
-
-        agent, _api_key = create_agent_with_api_key(
-            session,
-            user_id="alice",
-            agent_id="agent_test",
-            name="Test Agent",
-            zone_id="acme",
-            metadata={"version": "1.0"},
-            entity_registry=entity_registry,
-        )
-
-        assert agent["zone_id"] == "acme"
-        assert agent["metadata"]["version"] == "1.0"
 
 
 class TestUnregisterAgent:
@@ -381,30 +287,6 @@ class TestAgentIntegration:
 
         # 5. Verify agent is gone
         assert validate_agent_ownership("agent_lifecycle", "alice", entity_registry) is False
-
-    def test_agent_with_api_key_lifecycle(self, session, entity_registry):
-        """Test agent with API key lifecycle."""
-        # 1. Register user
-        entity_registry.register_entity("user", "alice")
-
-        # 2. Create agent with API key
-        agent, api_key = create_agent_with_api_key(
-            session,
-            user_id="alice",
-            agent_id="agent_api",
-            name="API Agent",
-            entity_registry=entity_registry,
-        )
-
-        assert agent is not None
-        assert api_key is not None
-
-        # 3. Validate ownership
-        assert validate_agent_ownership("agent_api", "alice", entity_registry) is True
-
-        # 4. Unregister (note: API key would need separate revocation in real system)
-        success = unregister_agent("agent_api", entity_registry=entity_registry)
-        assert success is True
 
     def test_multi_zone_agent_isolation(self, session, entity_registry):
         """Test agent isolation across zones."""

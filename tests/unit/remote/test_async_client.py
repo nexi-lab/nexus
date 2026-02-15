@@ -756,13 +756,13 @@ class TestAsyncRemoteNexusFSFileOperations:
 
     @pytest.mark.asyncio
     async def test_delete(self, async_client):
-        """Test delete operation — hand-written override returns None."""
+        """Test delete operation — hand-written override returns True."""
         async_client._call_rpc = AsyncMock(return_value=None)
 
         result = await async_client.delete("/test.txt")
 
-        # delete() returns None (void operation)
-        assert result is None
+        # delete() returns True on success
+        assert result is True
         async_client._call_rpc.assert_called_once_with("delete", {"path": "/test.txt"})
 
     @pytest.mark.asyncio

@@ -354,7 +354,7 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
             raise
         return result  # type: ignore[no-any-return]
 
-    async def exists(self, path: str) -> bool:
+    async def exists(self, path: str, context: Any = None) -> bool:  # noqa: ARG002
         if self._negative_cache_check(path):
             return False
         result = await self._call_rpc("exists", {"path": path})
@@ -505,9 +505,10 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         self._negative_cache_invalidate(path)
         return result  # type: ignore[no-any-return]
 
-    async def delete(self, path: str) -> None:
+    async def delete(self, path: str, context: Any = None) -> bool:  # noqa: ARG002
         await self._call_rpc("delete", {"path": path})
         self._negative_cache_invalidate(path)
+        return True
 
     async def delete_bulk(
         self,
@@ -519,9 +520,10 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
             self._negative_cache_invalidate_bulk(paths)
         return result  # type: ignore[no-any-return]
 
-    async def rename(self, old_path: str, new_path: str) -> None:
-        await self._call_rpc("rename", {"old_path": old_path, "new_path": new_path})
+    async def rename(self, old_path: str, new_path: str, context: Any = None) -> dict[str, Any]:  # noqa: ARG002
+        result = await self._call_rpc("rename", {"old_path": old_path, "new_path": new_path})
         self._negative_cache_invalidate(old_path)
+        return result if isinstance(result, dict) else {}
 
     async def rename_bulk(
         self,

@@ -47,7 +47,7 @@ __version__ = "0.7.1.dev0"
 __author__ = "Nexi Lab Team"
 __license__ = "Apache-2.0"
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 # =============================================================================
 # LAZY IMPORTS for performance optimization
@@ -331,12 +331,12 @@ def connect(
         api_key = cfg.api_key or os.getenv("NEXUS_API_KEY")
         timeout = int(cfg.timeout) if hasattr(cfg, "timeout") else 30
         connect_timeout = int(cfg.connect_timeout) if hasattr(cfg, "connect_timeout") else 5
-        return RemoteNexusFS(  # type: ignore[return-value]  # virtual subclass of NexusFilesystem
+        return cast(NexusFilesystem, RemoteNexusFS(
             server_url=server_url,
             api_key=api_key,
             timeout=timeout,
             connect_timeout=connect_timeout,
-        )
+        ))
 
     # ── Modes: standalone / federation ───────────────────────────────
     if cfg.mode not in ("standalone", "federation"):

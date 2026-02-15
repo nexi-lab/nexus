@@ -9,6 +9,8 @@ Issue #715: Added adaptive TTL based on write frequency.
 
 import threading
 import time
+from collections import OrderedDict
+from collections.abc import Callable
 from typing import Any, cast
 
 from cachetools import LRUCache
@@ -25,12 +27,19 @@ class AdaptiveTTLCache(dict[str, tuple[Any, float]]):
     Supports variable TTL per entry, unlike cachetools.TTLCache which uses fixed TTL.
 
     Issue #715: Enables adaptive TTL based on write frequency.
+    Issue #1169: Uses OrderedDict for O(1) LRU tracking (was O(n) list).
+                 Added on_evict callback for read set cleanup.
     """
 
-    def __init__(self, maxsize: int):
+    def __init__(
+        self,
+        maxsize: int,
+        on_evict: Callable[[str], None] | None = None,
+    ):
         super().__init__()
         self._maxsize = maxsize
-        self._order: list[str] = []  # Track access order for LRU
+        self._order: OrderedDict[str, None] = OrderedDict()  # O(1) LRU tracking
+        self._on_evict = on_evict
 
     @property
     def maxsize(self) -> int:
@@ -43,16 +52,16 @@ class AdaptiveTTLCache(dict[str, tuple[Any, float]]):
 
         value, expiry = self[key]
         if time.time() > expiry:
-            # Expired - remove and return default
+            # Expired - remove and notify
             self.pop(key, None)
-            if key in self._order:
-                self._order.remove(key)
+            self._order.pop(key, None)
+            if self._on_evict:
+                self._on_evict(key)
             return default
 
-        # Move to end (most recently used)
+        # Move to end (most recently used) — O(1)
         if key in self._order:
-            self._order.remove(key)
-        self._order.append(key)
+            self._order.move_to_end(key)
 
         return value
 
@@ -62,20 +71,25 @@ class AdaptiveTTLCache(dict[str, tuple[Any, float]]):
 
         # Evict LRU entries if at capacity
         while len(self) >= self._maxsize and self._order:
-            lru_key = self._order.pop(0)
+            lru_key, _ = self._order.popitem(last=False)  # O(1) pop from front
             self.pop(lru_key, None)
+            if self._on_evict:
+                self._on_evict(lru_key)
 
         self[key] = (value, expiry)
-        if key in self._order:
-            self._order.remove(key)
-        self._order.append(key)
+        # Move to end (most recently used) — O(1)
+        self._order.pop(key, None)
+        self._order[key] = None
 
     def pop_entry(self, key: str) -> Any:
         """Remove entry and return value."""
-        if key in self._order:
-            self._order.remove(key)
+        self._order.pop(key, None)
         entry = self.pop(key, None)
-        return entry[0] if entry else None
+        if entry is not None:
+            if self._on_evict:
+                self._on_evict(key)
+            return entry[0]
+        return None
 
 
 class MetadataCache(AdaptiveTTLMixin):

@@ -44,6 +44,12 @@ class NexusFSCoreMixin:
 
     _revision_notifier: ClassVar[Any] = None
 
+    # Issue #1169: Defaults for per-instance zone revision state.
+    # Actual instances override these in _init_zone_revision().
+    _zone_revision: int = 0
+    _zone_revision_lock: threading.Lock | None = None
+    _read_tracking_enabled: bool = False
+
     # Type hints for attributes/methods that will be provided by NexusFS parent class
     if TYPE_CHECKING:
         from nexus.core._metadata_generated import FileMetadataProtocol
@@ -416,7 +422,50 @@ class NexusFSCoreMixin:
         return notifier.wait_for_revision(zone_id, min_revision, timeout_ms)
 
     # =========================================================================
-    # Read Set Tracking - Issue #1166
+    # Zone Revision Counter - Issue #1169
+    # =========================================================================
+
+    def _init_zone_revision(self) -> None:
+        """Initialize per-instance zone revision state.
+
+        Must be called during NexusFS.__init__ to ensure each instance
+        has its own lock and counter (not shared via class-level defaults).
+        """
+        self._zone_revision = 0
+        self._zone_revision_lock = threading.Lock()
+
+    def _increment_zone_revision(self) -> int:
+        """Atomically increment and return the new zone revision.
+
+        Called after every write/delete to advance the monotonic counter.
+        Thread-safe via per-instance lock.
+
+        Returns:
+            The new revision number (always > previous).
+        """
+        lock = self._zone_revision_lock
+        if lock is None:
+            # Fallback: not yet initialized (shouldn't happen in production)
+            self._zone_revision += 1
+            return self._zone_revision
+        with lock:
+            self._zone_revision += 1
+            return self._zone_revision
+
+    def _get_zone_revision(self) -> int:
+        """Return the current zone revision (read-only, thread-safe).
+
+        Returns:
+            Current monotonic revision counter value.
+        """
+        lock = self._zone_revision_lock
+        if lock is None:
+            return self._zone_revision
+        with lock:
+            return self._zone_revision
+
+    # =========================================================================
+    # Read Set Tracking - Issue #1166 / #1169
     # =========================================================================
 
     def _record_read_if_tracking(
@@ -431,21 +480,26 @@ class NexusFSCoreMixin:
         This is called automatically by read(), stat(), and list() operations
         when the context has read tracking enabled.
 
+        Issue #1169: Uses per-zone monotonic counter instead of hardcoded 0.
+                     Gated by instance-level _read_tracking_enabled flag.
+
         Args:
             context: Operation context (may have track_reads=True)
             resource_type: Type of resource (file, directory, metadata)
             resource_id: Path or identifier of the resource
             access_type: Type of access (content, metadata, list, exists)
         """
+        if not self._read_tracking_enabled:
+            return
+
         if context is None or not getattr(context, "track_reads", False):
             return
 
         if context.read_set is None:
             return
 
-        # Get current revision for this zone
-        _zone_id = context.zone_id or "default"  # noqa: F841 — will be used with Raft read-index
-        revision = 0  # TODO: Replace with proper Raft read-index
+        # Issue #1169: Use per-zone monotonic counter for meaningful revisions
+        revision = self._get_zone_revision()
 
         # Record the read
         context.record_read(
@@ -457,6 +511,38 @@ class NexusFSCoreMixin:
         logger.debug(
             f"[READ-SET] Recorded {access_type} read: {resource_type}:{resource_id}@{revision}"
         )
+
+    def _register_cache_read_set(
+        self,
+        path: str,
+        metadata: FileMetadata | None,
+        resource_type: str = "file",
+    ) -> None:
+        """Register a read set for a cached metadata entry (Issue #1169).
+
+        Creates a minimal ReadSet tracking that this cache entry depends on
+        the given path, enabling precise invalidation when the path is written.
+
+        Called after metadata reads (get/stat) to associate read sets with
+        cache entries. This is a no-op when ReadSetAwareCache is not configured.
+
+        Args:
+            path: Virtual path of the cached entry
+            metadata: File metadata (None means not found — skip)
+            resource_type: Type of resource (file, directory)
+        """
+        read_set_cache = getattr(self, "_read_set_cache", None)
+        if read_set_cache is None or metadata is None:
+            return
+
+        from nexus.core.read_set import ReadSet
+
+        zone_id = getattr(self, "zone_id", None) or "default"
+        revision = self._get_zone_revision()
+
+        rs = ReadSet(query_id=f"cache:{path}", zone_id=zone_id)
+        rs.record_read(resource_type, path, revision=revision)
+        read_set_cache.put_path(path, metadata, read_set=rs, zone_revision=revision)
 
     # =========================================================================
     # Sync Lock Helpers for write(lock=True) - Issue #1106 Block 3
@@ -958,6 +1044,9 @@ class NexusFSCoreMixin:
 
         # Issue #1166: Record read for dependency tracking
         self._record_read_if_tracking(context, "file", path, "content")
+
+        # Issue #1169: Register read set for precise cache invalidation
+        self._register_cache_read_set(path, meta, "file")
 
         # Return content with metadata if requested
         if return_metadata:
@@ -1882,6 +1971,16 @@ class NexusFSCoreMixin:
         )
 
         self.metadata.put(metadata)
+
+        # Issue #1169: Advance zone revision counter after mutation
+        new_revision = self._increment_zone_revision()
+
+        # Issue #1169: Precise cache invalidation via read sets
+        # Invalidates other cache entries whose read sets depend on this path
+        # (e.g., directory listings that included this file)
+        read_set_cache = getattr(self, "_read_set_cache", None)
+        if read_set_cache is not None:
+            read_set_cache.invalidate_for_write(path, new_revision, zone_id=zone_id or "default")
 
         # Leopard-style: Add new file to ancestor directory grants
         # When a file is created in a directory that has been granted to users,
@@ -2915,6 +3014,14 @@ class NexusFSCoreMixin:
         # Remove from metadata
         self.metadata.delete(path)
 
+        # Issue #1169: Advance zone revision counter after delete
+        new_revision = self._increment_zone_revision()
+
+        # Issue #1169: Precise cache invalidation via read sets
+        read_set_cache = getattr(self, "_read_set_cache", None)
+        if read_set_cache is not None:
+            read_set_cache.invalidate_for_write(path, new_revision, zone_id=zone_id or "default")
+
         # v0.7.0: Fire workflow event for automatic trigger execution
         from nexus.workflows.types import TriggerType
 
@@ -3087,6 +3194,13 @@ class NexusFSCoreMixin:
         # For CAS backends: metadata-only (content stays at same hash location)
         # For connector backends: metadata follows the file we just moved
         self.metadata.rename_path(old_path, new_path)
+
+        # Issue #1169: Advance zone revision + invalidate both old and new paths
+        new_revision = self._increment_zone_revision()
+        read_set_cache = getattr(self, "_read_set_cache", None)
+        if read_set_cache is not None:
+            read_set_cache.invalidate_for_write(old_path, new_revision, zone_id=zone_id or "default")
+            read_set_cache.invalidate_for_write(new_path, new_revision, zone_id=zone_id or "default")
 
         # Update ReBAC permissions to follow the renamed file/directory
         # This ensures permissions are preserved when files are moved
@@ -3454,6 +3568,9 @@ class NexusFSCoreMixin:
 
         # Issue #1166: Record metadata read for dependency tracking
         self._record_read_if_tracking(context, "file", path, "metadata")
+
+        # Issue #1169: Register read set for precise cache invalidation
+        self._register_cache_read_set(path, meta, "file")
 
         return {
             "size": size,

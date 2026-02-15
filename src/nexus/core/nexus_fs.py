@@ -684,6 +684,25 @@ class NexusFS(  # type: ignore[misc]
             metadata_cache=metadata_cache,
         )
 
+        # Issue #1169: Read Set-Aware Cache for precise invalidation
+        # Wraps the metadata cache with read-set-aware invalidation.
+        # Falls back to path-based invalidation for entries without read sets.
+        self._read_set_cache = None
+        metadata_cache = None
+        if hasattr(self.metadata, "_cache"):
+            metadata_cache = self.metadata._cache
+
+        if metadata_cache is not None and enable_metadata_cache:
+            from nexus.core.read_set import ReadSetRegistry
+            from nexus.storage.read_set_cache import ReadSetAwareCache
+
+            self._read_set_registry = ReadSetRegistry()
+            self._read_set_cache = ReadSetAwareCache(
+                base_cache=metadata_cache,
+                registry=self._read_set_registry,
+            )
+            self._read_tracking_enabled = True
+
         # OPTIMIZATION: Initialize TRAVERSE permissions and Tiger Cache
         # This enables O(1) permission checks for FUSE path resolution
         self._init_performance_optimizations()

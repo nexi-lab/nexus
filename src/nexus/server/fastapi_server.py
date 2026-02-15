@@ -825,8 +825,8 @@ async def lifespan(_app: FastAPI) -> Any:
 
     # Issue #726: Wire circuit breaker from factory for health endpoint access
     if _app.state.nexus_fs:
-        _app.state.rebac_circuit_breaker = (
-            _app.state.nexus_fs._service_extras.get("rebac_circuit_breaker")
+        _app.state.rebac_circuit_breaker = _app.state.nexus_fs._service_extras.get(
+            "rebac_circuit_breaker"
         )
 
     # Issue #1240: Start agent heartbeat and stale detection background tasks
@@ -1565,9 +1565,8 @@ def _register_routes(app: FastAPI) -> None:
 
         # Check ReBAC + circuit breaker (Issue #726)
         rebac_health: dict[str, Any] = {"status": "disabled"}
-        has_rebac = (
-            _fastapi_app.state.async_rebac_manager
-            or getattr(_fastapi_app.state.nexus_fs, "_rebac_manager", None)
+        has_rebac = _fastapi_app.state.async_rebac_manager or getattr(
+            _fastapi_app.state.nexus_fs, "_rebac_manager", None
         )
         if has_rebac:
             cb = getattr(_fastapi_app.state, "rebac_circuit_breaker", None)

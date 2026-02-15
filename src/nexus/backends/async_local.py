@@ -5,11 +5,15 @@ Uses CASBlobStore via asyncio.to_thread() for non-blocking file I/O.
 """
 
 import asyncio
+import contextlib
+import json
 import logging
+import os
+import tempfile
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nexus.backends.cas_blob_store import CASBlobStore
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
@@ -128,6 +132,108 @@ class AsyncLocalBackend:
     def _get_meta_path(self, content_hash: str) -> Path:
         """Get path to metadata file for content."""
         return self._hash_to_path(content_hash).with_suffix(".meta")
+
+    # === Metadata Operations ===
+
+    async def _read_metadata(self, content_hash: str) -> dict[str, Any]:
+        """Read metadata for content asynchronously.
+
+        Uses tenacity for async retry with exponential backoff + jitter.
+        Each attempt runs blocking I/O in a thread; the backoff sleep
+        uses asyncio.sleep so the thread pool slot is freed between retries.
+        """
+        from tenacity import (
+            retry,
+            retry_if_exception_type,
+            stop_after_attempt,
+            wait_exponential,
+        )
+
+        meta_path = self._get_meta_path(content_hash)
+
+        def _single_read() -> dict[str, Any]:
+            if not meta_path.exists():
+                return {"ref_count": 0, "size": 0}
+            content = meta_path.read_text(encoding="utf-8")
+            result: dict[str, Any] = json.loads(content)
+            return result
+
+        @retry(
+            stop=stop_after_attempt(10),
+            wait=wait_exponential(multiplier=0.001, max=1.0),
+            retry=retry_if_exception_type((json.JSONDecodeError, OSError)),
+            reraise=True,
+        )
+        async def _read_with_retry() -> dict[str, Any]:
+            return await asyncio.to_thread(_single_read)
+
+        try:
+            result: dict[str, Any] = await _read_with_retry()
+            return result
+        except (json.JSONDecodeError, OSError) as e:
+            raise BackendError(
+                f"Failed to read metadata: {e}: {content_hash}",
+                backend="local",
+                path=content_hash,
+            ) from e
+
+    async def _write_metadata(self, content_hash: str, metadata: dict[str, Any]) -> None:
+        """Write metadata for content asynchronously.
+
+        Uses tenacity for async retry with exponential backoff.
+        Only PermissionError is retried (Windows antivirus / lock contention);
+        other OSErrors fail immediately.
+        """
+        from tenacity import (
+            retry,
+            retry_if_exception_type,
+            stop_after_attempt,
+            wait_exponential,
+        )
+
+        meta_path = self._get_meta_path(content_hash)
+
+        def _single_write() -> None:
+            meta_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = None
+            try:
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    dir=meta_path.parent,
+                    delete=False,
+                    suffix=".tmp",
+                ) as tmp_file:
+                    tmp_path = Path(tmp_file.name)
+                    tmp_file.write(json.dumps(metadata))
+                    tmp_file.flush()
+                    os.fsync(tmp_file.fileno())
+
+                os.replace(str(tmp_path), str(meta_path))
+                tmp_path = None
+            except BaseException:
+                if tmp_path is not None and tmp_path.exists():
+                    with contextlib.suppress(OSError):
+                        tmp_path.unlink()
+                raise
+
+        @retry(
+            stop=stop_after_attempt(10),
+            wait=wait_exponential(multiplier=0.001, max=1.0),
+            retry=retry_if_exception_type(PermissionError),
+            reraise=True,
+        )
+        async def _write_with_retry() -> None:
+            await asyncio.to_thread(_single_write)
+
+        try:
+            await _write_with_retry()
+        except OSError as e:
+            raise BackendError(
+                f"Failed to write metadata: {e}: {content_hash}",
+                backend="local",
+                path=content_hash,
+            ) from e
 
     # === Content Write Operations ===
 

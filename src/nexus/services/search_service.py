@@ -1987,7 +1987,8 @@ class SearchService(SemanticSearchMixin):
 
         logger.debug(
             "[GREP] Issue #954: Trigram index found %d candidates for zone=%s",
-            len(candidates), zone_id,
+            len(candidates),
+            zone_id,
         )
 
         # Phase 2: Verify candidates by reading content through NexusFS.
@@ -2014,12 +2015,14 @@ class SearchService(SemanticSearchMixin):
                         break
                     match_obj = regex.search(line)
                     if match_obj:
-                        results.append({
-                            "file": file_path,
-                            "line": line_num,
-                            "content": line,
-                            "match": match_obj.group(0),
-                        })
+                        results.append(
+                            {
+                                "file": file_path,
+                                "line": line_num,
+                                "content": line,
+                                "match": match_obj.group(0),
+                            }
+                        )
             except Exception:
                 continue
 
@@ -2196,9 +2199,13 @@ class SearchService(SemanticSearchMixin):
         if file_count < GREP_SEQUENTIAL_THRESHOLD:
             return SearchStrategy.SEQUENTIAL
         # Issue #954: Trigram index — prefer for large file sets with built index.
-        if file_count > GREP_TRIGRAM_THRESHOLD and zone_id:
-            if trigram_fast.is_available() and trigram_fast.index_exists(zone_id):
-                return SearchStrategy.TRIGRAM_INDEX
+        if (
+            file_count > GREP_TRIGRAM_THRESHOLD
+            and zone_id
+            and trigram_fast.is_available()
+            and trigram_fast.index_exists(zone_id)
+        ):
+            return SearchStrategy.TRIGRAM_INDEX
         if file_count > GREP_ZOEKT_THRESHOLD:
             if zoekt_available is None:
                 zoekt_available = self._is_zoekt_available()

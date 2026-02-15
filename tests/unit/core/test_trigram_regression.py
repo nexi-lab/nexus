@@ -13,9 +13,7 @@ import pytest
 
 from nexus.core import trigram_fast
 
-CORPUS_DIR = os.path.join(
-    os.path.dirname(__file__), "..", "..", "fixtures", "trigram_corpus"
-)
+CORPUS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "fixtures", "trigram_corpus")
 
 
 def _corpus_files() -> list[str]:
@@ -151,9 +149,7 @@ class TestResultConsistency:
 
         assert tg is not None
         # Same number of matches for literal patterns
-        assert len(tg) == len(bf), (
-            f"Match count differs: trigram={len(tg)}, brute-force={len(bf)}"
-        )
+        assert len(tg) == len(bf), f"Match count differs: trigram={len(tg)}, brute-force={len(bf)}"
 
     def test_empty_corpus_builds(self, tmp_path):
         """Building index from empty corpus should work."""

@@ -29,22 +29,46 @@ _trigram_index_stats: Callable[..., dict[str, Any]] | None = None
 _invalidate_trigram_cache: Callable[..., None] | None = None
 
 try:
-    from nexus._nexus_fast import build_trigram_index as _build_trigram_index  # type: ignore[no-redef]
-    from nexus._nexus_fast import build_trigram_index_from_entries as _build_trigram_index_from_entries  # type: ignore[no-redef]
-    from nexus._nexus_fast import invalidate_trigram_cache as _invalidate_trigram_cache  # type: ignore[no-redef]
-    from nexus._nexus_fast import trigram_grep as _trigram_grep  # type: ignore[no-redef]
-    from nexus._nexus_fast import trigram_index_stats as _trigram_index_stats  # type: ignore[no-redef]
-    from nexus._nexus_fast import trigram_search_candidates as _trigram_search_candidates  # type: ignore[no-redef]
+    from nexus._nexus_fast import (  # type: ignore[no-redef]
+        build_trigram_index as _build_trigram_index,
+    )
+    from nexus._nexus_fast import (  # type: ignore[no-redef]
+        build_trigram_index_from_entries as _build_trigram_index_from_entries,
+    )
+    from nexus._nexus_fast import (  # type: ignore[no-redef]
+        invalidate_trigram_cache as _invalidate_trigram_cache,
+    )
+    from nexus._nexus_fast import (  # type: ignore[no-redef]
+        trigram_grep as _trigram_grep,
+    )
+    from nexus._nexus_fast import (  # type: ignore[no-redef]
+        trigram_index_stats as _trigram_index_stats,
+    )
+    from nexus._nexus_fast import (  # type: ignore[no-redef]
+        trigram_search_candidates as _trigram_search_candidates,
+    )
 
     TRIGRAM_AVAILABLE = True
 except ImportError:
     try:
-        from nexus_fast import build_trigram_index as _build_trigram_index  # type: ignore[no-redef]
-        from nexus_fast import build_trigram_index_from_entries as _build_trigram_index_from_entries  # type: ignore[no-redef]
-        from nexus_fast import invalidate_trigram_cache as _invalidate_trigram_cache  # type: ignore[no-redef]
-        from nexus_fast import trigram_grep as _trigram_grep  # type: ignore[no-redef]
-        from nexus_fast import trigram_index_stats as _trigram_index_stats  # type: ignore[no-redef]
-        from nexus_fast import trigram_search_candidates as _trigram_search_candidates  # type: ignore[no-redef]
+        from nexus_fast import (  # type: ignore[no-redef]
+            build_trigram_index as _build_trigram_index,
+        )
+        from nexus_fast import (  # type: ignore[no-redef]
+            build_trigram_index_from_entries as _build_trigram_index_from_entries,
+        )
+        from nexus_fast import (  # type: ignore[no-redef]
+            invalidate_trigram_cache as _invalidate_trigram_cache,
+        )
+        from nexus_fast import (  # type: ignore[no-redef]
+            trigram_grep as _trigram_grep,
+        )
+        from nexus_fast import (  # type: ignore[no-redef]
+            trigram_index_stats as _trigram_index_stats,
+        )
+        from nexus_fast import (  # type: ignore[no-redef]
+            trigram_search_candidates as _trigram_search_candidates,
+        )
 
         TRIGRAM_AVAILABLE = True
     except ImportError:
@@ -139,7 +163,9 @@ def build_index_from_entries(
         _build_trigram_index_from_entries(entries, output_path)
         return True
     except Exception:
-        logger.warning("Failed to build trigram index from entries at %s", output_path, exc_info=True)
+        logger.warning(
+            "Failed to build trigram index from entries at %s", output_path, exc_info=True
+        )
         return False
 
 
@@ -168,12 +194,12 @@ def grep(
         return None
 
     try:
-        result: list[dict[str, Any]] = _trigram_grep(
-            index_path, pattern, ignore_case, max_results
-        )
+        result: list[dict[str, Any]] = _trigram_grep(index_path, pattern, ignore_case, max_results)
         return result
     except Exception:
-        logger.warning("Trigram grep failed for pattern %r on %s", pattern, index_path, exc_info=True)
+        logger.warning(
+            "Trigram grep failed for pattern %r on %s", pattern, index_path, exc_info=True
+        )
         return None
 
 
@@ -205,7 +231,9 @@ def search_candidates(
     except Exception:
         logger.warning(
             "Trigram candidate search failed for pattern %r on %s",
-            pattern, index_path, exc_info=True,
+            pattern,
+            index_path,
+            exc_info=True,
         )
         return None
 

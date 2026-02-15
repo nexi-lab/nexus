@@ -7,7 +7,7 @@ including strategy selection, fallback behavior, and index management.
 from __future__ import annotations
 
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -21,9 +21,7 @@ from nexus.search.strategies import (
 @pytest.fixture
 def corpus_dir():
     """Path to test corpus."""
-    return os.path.join(
-        os.path.dirname(__file__), "..", "fixtures", "trigram_corpus"
-    )
+    return os.path.join(os.path.dirname(__file__), "..", "fixtures", "trigram_corpus")
 
 
 @pytest.fixture
@@ -59,9 +57,7 @@ class TestStrategySelection:
         base_dir = str(tmp_path)
 
         # Build properly-named index
-        corpus_dir = os.path.join(
-            os.path.dirname(__file__), "..", "fixtures", "trigram_corpus"
-        )
+        corpus_dir = os.path.join(os.path.dirname(__file__), "..", "fixtures", "trigram_corpus")
         files = sorted(
             os.path.join(corpus_dir, name)
             for name in os.listdir(corpus_dir)
@@ -157,9 +153,10 @@ class TestTrigramFallback:
             with open(path, "rb") as f:
                 return f.read()
 
-        with patch.object(
-            trigram_fast, "get_index_path", return_value=built_index
-        ), patch.object(service, "_read", side_effect=_mock_read):
+        with (
+            patch.object(trigram_fast, "get_index_path", return_value=built_index),
+            patch.object(service, "_read", side_effect=_mock_read),
+        ):
             result = service._try_grep_with_trigram(
                 pattern="hello",
                 ignore_case=False,

@@ -24,7 +24,6 @@ import uuid
 import httpx
 import pytest
 
-
 ADMIN_HEADERS = {
     "X-Nexus-Subject": "user:admin",
     "X-Nexus-Zone-Id": "default",
@@ -35,15 +34,18 @@ def _b64(text: str) -> dict:
     return {"__type__": "bytes", "data": base64.b64encode(text.encode()).decode()}
 
 
-def _rpc(client: httpx.Client, method: str, params: dict | None = None,
-         headers: dict | None = None) -> dict:
+def _rpc(
+    client: httpx.Client, method: str, params: dict | None = None, headers: dict | None = None
+) -> dict:
     """Make a real HTTP RPC call."""
-    body = json.dumps({
-        "jsonrpc": "2.0",
-        "id": str(uuid.uuid4()),
-        "method": method,
-        "params": params or {},
-    })
+    body = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": str(uuid.uuid4()),
+            "method": method,
+            "params": params or {},
+        }
+    )
     resp = client.post(
         f"/api/nfs/{method}",
         content=body,
@@ -52,8 +54,9 @@ def _rpc(client: httpx.Client, method: str, params: dict | None = None,
     return {"status": resp.status_code, "body": resp.json()}
 
 
-def _rpc_result(client: httpx.Client, method: str, params: dict | None = None,
-                headers: dict | None = None):
+def _rpc_result(
+    client: httpx.Client, method: str, params: dict | None = None, headers: dict | None = None
+):
     """Make an RPC call and return the result, asserting success."""
     data = _rpc(client, method, params, headers)
     assert data["status"] == 200, f"Expected 200, got {data['status']}: {data['body']}"
@@ -75,15 +78,23 @@ class TestTrigramGrepE2E:
 
     def test_grep_finds_content_after_write(self, test_app: httpx.Client) -> None:
         """Write files, then grep for content — basic flow validation."""
-        _write_file(test_app, "/zone/default/user/admin/trgm/hello.py",
-                     "def hello_world():\n    return 'Hello, World!'")
-        _write_file(test_app, "/zone/default/user/admin/trgm/other.txt",
-                     "This file has nothing relevant")
+        _write_file(
+            test_app,
+            "/zone/default/user/admin/trgm/hello.py",
+            "def hello_world():\n    return 'Hello, World!'",
+        )
+        _write_file(
+            test_app, "/zone/default/user/admin/trgm/other.txt", "This file has nothing relevant"
+        )
 
-        result = _rpc_result(test_app, "grep", {
-            "pattern": "hello_world",
-            "path": "/zone/default/user/admin/trgm/",
-        })
+        result = _rpc_result(
+            test_app,
+            "grep",
+            {
+                "pattern": "hello_world",
+                "path": "/zone/default/user/admin/trgm/",
+            },
+        )
 
         assert isinstance(result, dict)
         results = result["results"]
@@ -92,13 +103,16 @@ class TestTrigramGrepE2E:
 
     def test_grep_no_matches(self, test_app: httpx.Client) -> None:
         """Grep for a pattern that doesn't exist returns empty results."""
-        _write_file(test_app, "/zone/default/user/admin/trgm2/file.py",
-                     "def foo(): pass")
+        _write_file(test_app, "/zone/default/user/admin/trgm2/file.py", "def foo(): pass")
 
-        result = _rpc_result(test_app, "grep", {
-            "pattern": "nonexistent_pattern_xyz",
-            "path": "/zone/default/user/admin/trgm2/",
-        })
+        result = _rpc_result(
+            test_app,
+            "grep",
+            {
+                "pattern": "nonexistent_pattern_xyz",
+                "path": "/zone/default/user/admin/trgm2/",
+            },
+        )
 
         assert isinstance(result, dict)
         results = result["results"]
@@ -106,28 +120,40 @@ class TestTrigramGrepE2E:
 
     def test_grep_case_insensitive(self, test_app: httpx.Client) -> None:
         """Case-insensitive grep finds mixed-case content."""
-        _write_file(test_app, "/zone/default/user/admin/trgm3/code.py",
-                     "class MyClassName:\n    pass")
+        _write_file(
+            test_app, "/zone/default/user/admin/trgm3/code.py", "class MyClassName:\n    pass"
+        )
 
-        result = _rpc_result(test_app, "grep", {
-            "pattern": "myclassname",
-            "path": "/zone/default/user/admin/trgm3/",
-            "ignore_case": True,
-        })
+        result = _rpc_result(
+            test_app,
+            "grep",
+            {
+                "pattern": "myclassname",
+                "path": "/zone/default/user/admin/trgm3/",
+                "ignore_case": True,
+            },
+        )
 
         assert isinstance(result, dict)
         results = result["results"]
-        assert len(results) >= 1, f"Expected at least 1 case-insensitive match"
+        assert len(results) >= 1, "Expected at least 1 case-insensitive match"
 
     def test_grep_regex_pattern(self, test_app: httpx.Client) -> None:
         """Grep with regex pattern works."""
-        _write_file(test_app, "/zone/default/user/admin/trgm4/data.txt",
-                     "error: file not found\nwarning: deprecated\nerror: timeout")
+        _write_file(
+            test_app,
+            "/zone/default/user/admin/trgm4/data.txt",
+            "error: file not found\nwarning: deprecated\nerror: timeout",
+        )
 
-        result = _rpc_result(test_app, "grep", {
-            "pattern": "error:.*",
-            "path": "/zone/default/user/admin/trgm4/",
-        })
+        result = _rpc_result(
+            test_app,
+            "grep",
+            {
+                "pattern": "error:.*",
+                "path": "/zone/default/user/admin/trgm4/",
+            },
+        )
 
         assert isinstance(result, dict)
         results = result["results"]
@@ -141,10 +167,14 @@ class TestTrigramGrepE2E:
                 content += "SEARCH_TARGET_MARKER\n"
             _write_file(test_app, f"/zone/default/user/admin/trgm5/file_{i}.py", content)
 
-        result = _rpc_result(test_app, "grep", {
-            "pattern": "SEARCH_TARGET_MARKER",
-            "path": "/zone/default/user/admin/trgm5/",
-        })
+        result = _rpc_result(
+            test_app,
+            "grep",
+            {
+                "pattern": "SEARCH_TARGET_MARKER",
+                "path": "/zone/default/user/admin/trgm5/",
+            },
+        )
 
         assert isinstance(result, dict)
         results = result["results"]
@@ -161,10 +191,14 @@ class TestTrigramGrepE2E:
 
         # Time the grep
         start = time.perf_counter()
-        result = _rpc_result(test_app, "grep", {
-            "pattern": "process_1",
-            "path": "/zone/default/user/admin/trgm_perf/",
-        })
+        result = _rpc_result(
+            test_app,
+            "grep",
+            {
+                "pattern": "process_1",
+                "path": "/zone/default/user/admin/trgm_perf/",
+            },
+        )
         elapsed_ms = (time.perf_counter() - start) * 1000
 
         assert isinstance(result, dict)
@@ -173,19 +207,22 @@ class TestTrigramGrepE2E:
 
         # Relaxed bound: <2000ms for full E2E including HTTP overhead
         # The Rust-level target is <20ms, but E2E adds HTTP + NexusFS overhead
-        assert elapsed_ms < 2000, (
-            f"Grep took {elapsed_ms:.0f}ms, expected <2000ms"
-        )
+        assert elapsed_ms < 2000, f"Grep took {elapsed_ms:.0f}ms, expected <2000ms"
 
     def test_grep_result_format(self, test_app: httpx.Client) -> None:
         """Grep results have the expected format: file, line, content, match."""
-        _write_file(test_app, "/zone/default/user/admin/trgm_fmt/code.py",
-                     "line1\ntarget_value = 42\nline3")
+        _write_file(
+            test_app, "/zone/default/user/admin/trgm_fmt/code.py", "line1\ntarget_value = 42\nline3"
+        )
 
-        result = _rpc_result(test_app, "grep", {
-            "pattern": "target_value",
-            "path": "/zone/default/user/admin/trgm_fmt/",
-        })
+        result = _rpc_result(
+            test_app,
+            "grep",
+            {
+                "pattern": "target_value",
+                "path": "/zone/default/user/admin/trgm_fmt/",
+            },
+        )
 
         assert isinstance(result, dict)
         results = result["results"]

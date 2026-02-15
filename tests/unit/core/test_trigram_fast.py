@@ -13,9 +13,7 @@ import pytest
 from nexus.core import trigram_fast
 
 # Path to golden test corpus
-CORPUS_DIR = os.path.join(
-    os.path.dirname(__file__), "..", "..", "fixtures", "trigram_corpus"
-)
+CORPUS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "fixtures", "trigram_corpus")
 
 
 def _corpus_files() -> list[str]:
@@ -96,20 +94,14 @@ class TestTrigramGrep:
 
     def test_trigram_grep_no_matches(self, index_path):
         """Pattern not in any file should return empty list."""
-        results = trigram_fast.grep(
-            index_path, "xyzzy_nonexistent_pattern_12345", max_results=100
-        )
+        results = trigram_fast.grep(index_path, "xyzzy_nonexistent_pattern_12345", max_results=100)
         assert results is not None
         assert len(results) == 0
 
     def test_trigram_grep_case_insensitive(self, index_path):
         """Case-insensitive search should find more matches."""
-        case_results = trigram_fast.grep(
-            index_path, "Hello", ignore_case=False, max_results=100
-        )
-        icase_results = trigram_fast.grep(
-            index_path, "Hello", ignore_case=True, max_results=100
-        )
+        case_results = trigram_fast.grep(index_path, "Hello", ignore_case=False, max_results=100)
+        icase_results = trigram_fast.grep(index_path, "Hello", ignore_case=True, max_results=100)
         assert case_results is not None
         assert icase_results is not None
         assert len(icase_results) >= len(case_results)

@@ -5,6 +5,15 @@ Architecture Note:
     - All SSOT data (metadata, locks) is in Raft state machine (sled)
     - dragonfly-coordination has been removed - locks are now linearizable via Raft
 
+Event Bus Configuration (Issue #1331):
+    NEXUS_NATS_URL: NATS server URL for JetStream event bus
+        Example: nats://localhost:4222
+        If not set, Redis/Dragonfly pub/sub is used for events
+
+    NEXUS_EVENT_BUS_BACKEND: Event bus backend selection
+        - "redis": Use Dragonfly/Redis pub/sub (default, legacy)
+        - "nats": Use NATS JetStream (durable, recommended)
+
 Environment variables:
     NEXUS_DRAGONFLY_URL: Redis-compatible URL for Dragonfly cache instance
         Example: redis://localhost:6379
@@ -125,6 +134,12 @@ class CacheSettings:
         default_factory=lambda: (
             os.environ.get("NEXUS_DRAGONFLY_RETRY_ON_TIMEOUT", "true").lower() == "true"
         )
+    )
+
+    # Event bus configuration (Issue #1331)
+    nats_url: str | None = field(default_factory=lambda: os.environ.get("NEXUS_NATS_URL"))
+    event_bus_backend: str = field(
+        default_factory=lambda: os.environ.get("NEXUS_EVENT_BUS_BACKEND", "redis")
     )
 
     # L1 in-memory cache (optional layer before Dragonfly)

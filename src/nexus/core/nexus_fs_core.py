@@ -211,6 +211,16 @@ class NexusFSCoreMixin:
             # Fire event asynchronously (fire-and-forget via sync bridge)
             from nexus.core.sync_bridge import fire_and_forget
 
+            # Ensure event bus is started (lazy init for NATS JetStream)
+            if not getattr(self._event_bus, "_started", False):
+
+                async def _start_and_publish() -> None:
+                    await self._event_bus.start()
+                    await self._event_bus.publish(event)
+
+                fire_and_forget(_start_and_publish())
+                return
+
             fire_and_forget(self._event_bus.publish(event))
         except Exception as e:
             logger.warning(f"Failed to create {event_type} event: {e}")

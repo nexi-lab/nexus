@@ -3187,3 +3187,94 @@ class EnhancedReBACManager(ReBACManager):
     ) -> list[Entity]:
         """Find all subjects that have a relation to obj in the graph."""
         return _find_subjects_in_graph(obj, tupleset_relation, tuples_graph)
+
+    # =========================================================================
+    # Public Batch Delete API
+    # =========================================================================
+
+    def rebac_delete_by_subject(
+        self,
+        subject_type: str,
+        subject_id: str,
+        zone_id: str | None = None,
+    ) -> int:
+        """Delete all ReBAC tuples for a given subject.
+
+        Uses batch DELETE + changelog INSERT in a single transaction.
+        This is the proper public API for bulk subject removal (e.g., revoking
+        all permissions for a delegated agent).
+
+        Args:
+            subject_type: Subject type (e.g., "agent", "user")
+            subject_id: Subject identifier
+            zone_id: Optional zone scope (normalized internally)
+
+        Returns:
+            Number of tuples deleted
+        """
+        from datetime import UTC, datetime
+
+        from nexus.services.permissions.utils.zone import normalize_zone_id
+
+        normalized_zone = normalize_zone_id(zone_id)
+        now = datetime.now(UTC).isoformat()
+        fix = self._fix_sql_placeholders
+
+        with self._connection() as conn:
+            cursor = self._create_cursor(conn)
+
+            # 1. SELECT all tuples to capture for changelog
+            select_q = (
+                "SELECT tuple_id, subject_type, subject_id, relation, "
+                "object_type, object_id, zone_id "
+                "FROM rebac_tuples "
+                "WHERE subject_type = ? AND subject_id = ?"
+            )
+            params: list = [subject_type, subject_id]
+            if normalized_zone:
+                select_q += " AND zone_id = ?"
+                params.append(normalized_zone)
+            cursor.execute(fix(select_q), params)
+            rows = cursor.fetchall()
+
+            if not rows:
+                return 0
+
+            # 2. Batch DELETE
+            delete_q = "DELETE FROM rebac_tuples WHERE subject_type = ? AND subject_id = ?"
+            delete_params: list = [subject_type, subject_id]
+            if normalized_zone:
+                delete_q += " AND zone_id = ?"
+                delete_params.append(normalized_zone)
+            cursor.execute(fix(delete_q), delete_params)
+
+            # 3. Batch INSERT changelog entries
+            for row in rows:
+                cursor.execute(
+                    fix(
+                        "INSERT INTO rebac_changelog ("
+                        "  change_type, tuple_id, subject_type, subject_id,"
+                        "  relation, object_type, object_id, zone_id, created_at"
+                        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                    ),
+                    (
+                        "DELETE",
+                        row["tuple_id"],
+                        row["subject_type"],
+                        row["subject_id"],
+                        row["relation"],
+                        row["object_type"],
+                        row["object_id"],
+                        row["zone_id"] or "default",
+                        now,
+                    ),
+                )
+
+            # 4. Increment zone revision + commit
+            self._increment_zone_revision(zone_id, conn)
+            conn.commit()
+
+            # 5. Invalidate graph cache
+            self._tuple_version += 1
+
+        return len(rows)

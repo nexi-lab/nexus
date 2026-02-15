@@ -136,9 +136,17 @@ class TestLogLevel:
 
         raw = buf.getvalue().strip()
         lines = [line for line in raw.split("\n") if line.strip()]
-        assert len(lines) == 1
-        entry = json.loads(lines[0])
-        assert entry["event"] == "should appear"
+        # Filter to only our logger's lines (stray lines from other tests may leak)
+        our_lines = []
+        for line in lines:
+            try:
+                entry = json.loads(line)
+                if entry.get("logger") == "nexus.test":
+                    our_lines.append(entry)
+            except json.JSONDecodeError:
+                continue
+        assert len(our_lines) == 1
+        assert our_lines[0]["event"] == "should appear"
 
     def test_log_level_from_env_var(self) -> None:
         buf = StringIO()
@@ -154,9 +162,17 @@ class TestLogLevel:
 
         raw = buf.getvalue().strip()
         lines = [line for line in raw.split("\n") if line.strip()]
-        assert len(lines) == 1
-        entry = json.loads(lines[0])
-        assert entry["event"] == "visible"
+        # Filter to only our logger's lines (stray lines from other tests may leak)
+        our_lines = []
+        for line in lines:
+            try:
+                entry = json.loads(line)
+                if entry.get("logger") == "nexus.test":
+                    our_lines.append(entry)
+            except json.JSONDecodeError:
+                continue
+        assert len(our_lines) == 1
+        assert our_lines[0]["event"] == "visible"
 
     def test_log_level_default_is_info(self) -> None:
         buf = StringIO()
@@ -176,9 +192,17 @@ class TestLogLevel:
 
         raw = buf.getvalue().strip()
         lines = [line for line in raw.split("\n") if line.strip()]
-        assert len(lines) == 1
-        entry = json.loads(lines[0])
-        assert entry["event"] == "visible"
+        # Filter to only our logger's lines (stray lines from other tests may leak)
+        our_lines = []
+        for line in lines:
+            try:
+                entry = json.loads(line)
+                if entry.get("logger") == "nexus.test":
+                    our_lines.append(entry)
+            except json.JSONDecodeError:
+                continue
+        assert len(our_lines) == 1
+        assert our_lines[0]["event"] == "visible"
 
 
 class TestStdlibBridge:

@@ -7,16 +7,17 @@ import pkgutil
 from pathlib import Path
 
 from nexus.core.exceptions import ParserError
+from nexus.core.registry import BaseRegistry
 from nexus.parsers.base import Parser
 
 logger = logging.getLogger(__name__)
 
 
-class ParserRegistry:
+class ParserRegistry(BaseRegistry[Parser]):
     """Registry for managing document parsers.
 
-    The registry allows registering multiple parsers and automatically
-    selecting the appropriate parser based on file extension and MIME type.
+    Inherits generic register/get/list/clear from ``BaseRegistry`` and adds
+    extension-based indexing and priority-ordered selection on top.
 
     Example:
         >>> registry = ParserRegistry()
@@ -28,10 +29,11 @@ class ParserRegistry:
 
     def __init__(self) -> None:
         """Initialize the parser registry."""
+        super().__init__(name="parsers")
         self._parsers: list[Parser] = []
         self._parsers_by_extension: dict[str, list[Parser]] = {}
 
-    def register(self, parser: Parser) -> None:
+    def register(self, parser: Parser, **_kw: object) -> None:  # type: ignore[override]
         """Register a new parser.
 
         Args:
@@ -42,6 +44,9 @@ class ParserRegistry:
         """
         if not isinstance(parser, Parser):
             raise ValueError(f"Parser must be an instance of Parser, got {type(parser)}")
+
+        # Store in BaseRegistry (keyed by name, allow duplicates)
+        super().register(parser.name, parser, allow_overwrite=True)
 
         self._parsers.append(parser)
 
@@ -113,11 +118,26 @@ class ParserRegistry:
         """
         return self._parsers.copy()
 
+    def unregister(self, key: str) -> Parser | None:
+        """Remove a parser by name.
+
+        Cleans up both the base registry and the domain-specific stores.
+        """
+        item = super().unregister(key)
+        if item is not None:
+            self._parsers = [p for p in self._parsers if p.name != key]
+            for ext in list(self._parsers_by_extension):
+                self._parsers_by_extension[ext] = [
+                    p for p in self._parsers_by_extension[ext] if p.name != key
+                ]
+        return item
+
     def clear(self) -> None:
         """Clear all registered parsers.
 
         Useful for testing or reconfiguration.
         """
+        super().clear()
         self._parsers.clear()
         self._parsers_by_extension.clear()
         logger.info("Cleared all parsers from registry")

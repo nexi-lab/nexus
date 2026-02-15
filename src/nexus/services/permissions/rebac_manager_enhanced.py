@@ -38,11 +38,25 @@ from typing import TYPE_CHECKING, Any, cast
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from nexus.core.rebac import CROSS_ZONE_ALLOWED_RELATIONS, Entity, NamespaceConfig
+from nexus.services.permissions.cache.tiger.facade import TigerFacade
 from nexus.services.permissions.consistency.revision import (
     get_zone_revision_for_grant,
     increment_version_token,
 )
 from nexus.services.permissions.consistency.zone_manager import ZoneManager
+from nexus.services.permissions.directory.expander import DirectoryExpander
+from nexus.services.permissions.graph.bulk_evaluator import (
+    check_direct_relation as _check_direct_relation_in_graph,
+)
+from nexus.services.permissions.graph.bulk_evaluator import (
+    compute_permission as _compute_permission_bulk,
+)
+from nexus.services.permissions.graph.bulk_evaluator import (
+    find_related_objects as _find_related_objects_in_graph,
+)
+from nexus.services.permissions.graph.bulk_evaluator import (
+    find_subjects as _find_subjects_in_graph,
+)
 from nexus.services.permissions.rebac_manager import ReBACManager
 from nexus.services.permissions.rebac_tracing import (
     record_check_result,
@@ -170,6 +184,18 @@ class EnhancedReBACManager(ReBACManager):
                 rebac_manager=self,
             )
 
+        # Issue #1459 Phase 12: Tiger Cache facade
+        self._tiger_facade = TigerFacade(
+            tiger_cache=self._tiger_cache,
+            tiger_updater=self._tiger_updater,
+        )
+
+        # Issue #1459 Phase 13: Directory permission expander (Leopard-style)
+        self._directory_expander = DirectoryExpander(
+            engine=engine,
+            tiger_cache=self._tiger_cache,
+        )
+
         # Iterator cache for paginated list operations (Issue #722)
         from nexus.services.permissions.rebac_iterator_cache import IteratorCache
 
@@ -179,29 +205,20 @@ class EnhancedReBACManager(ReBACManager):
         )
 
         # Issue #922: Permission boundary cache for O(1) inheritance checks
-        # Instead of walking up O(depth) parent relations in the graph,
-        # cache the nearest ancestor with an explicit permission grant.
         from nexus.services.permissions.permission_boundary_cache import PermissionBoundaryCache
 
         self._boundary_cache: PermissionBoundaryCache = PermissionBoundaryCache()
 
-        # Issue #922: Boundary cache invalidation callbacks (for external caches)
-        # PermissionEnforcer can register a callback to invalidate its boundary cache
-        # when permission tuples are written
+        # Issue #922/#919: Cache invalidation callbacks — now managed by CacheCoordinator
+        # Kept for backward compatibility with code that reads these lists directly.
         self._boundary_cache_invalidators: list[
             tuple[str, Any]  # (callback_id, callback_fn)
         ] = []
-
-        # Issue #919: Directory visibility cache invalidation callbacks
-        # NexusFS can register its DirectoryVisibilityCache for automatic invalidation
-        # when permission tuples are written or deleted
         self._dir_visibility_invalidators: list[
             tuple[str, Any]  # (callback_id, callback_fn)
         ] = []
 
         # Issue #1459: Unified cache coordinator
-        # Consolidates cache invalidation orchestration for future phases.
-        # Currently wired alongside existing invalidation paths.
         from nexus.services.permissions.cache.coordinator import CacheCoordinator
 
         self._cache_coordinator: CacheCoordinator = CacheCoordinator(
@@ -2449,34 +2466,19 @@ class EnhancedReBACManager(ReBACManager):
 
         return None
 
+    # =========================================================================
+    # Tiger Cache Operations (Issue #1459 Phase 12: delegated to TigerFacade)
+    # =========================================================================
+
     def tiger_check_access(
         self,
         subject: tuple[str, str],
         permission: str,
         object: tuple[str, str],
-        _zone_id: str = "",  # Deprecated: kept for API compatibility, ignored
+        _zone_id: str = "",
     ) -> bool | None:
-        """Check permission using Tiger Cache (O(1) bitmap lookup).
-
-        Args:
-            subject: (subject_type, subject_id) tuple
-            permission: Permission to check
-            object: (object_type, object_id) tuple
-            zone_id: Zone ID
-
-        Returns:
-            True if allowed, False if denied, None if not in cache (use rebac_check fallback)
-        """
-        if not self._tiger_cache:
-            return None
-
-        return self._tiger_cache.check_access(
-            subject_type=subject[0],
-            subject_id=subject[1],
-            permission=permission,
-            resource_type=object[0],
-            resource_id=object[1],
-        )
+        """Check permission using Tiger Cache (O(1) bitmap lookup)."""
+        return self._tiger_facade.check_access(subject, permission, object)
 
     def tiger_get_accessible_resources(
         self,
@@ -2485,26 +2487,9 @@ class EnhancedReBACManager(ReBACManager):
         resource_type: str,
         zone_id: str,
     ) -> set[int]:
-        """Get all resources accessible by subject using Tiger Cache.
-
-        Args:
-            subject: (subject_type, subject_id) tuple
-            permission: Permission type
-            resource_type: Type of resource (e.g., "file")
-            zone_id: Zone ID
-
-        Returns:
-            Set of integer resource IDs (use tiger_resource_map for UUID lookup)
-        """
-        if not self._tiger_cache:
-            return set()
-
-        return self._tiger_cache.get_accessible_resources(
-            subject_type=subject[0],
-            subject_id=subject[1],
-            permission=permission,
-            resource_type=resource_type,
-            zone_id=zone_id,
+        """Get all resources accessible by subject using Tiger Cache."""
+        return self._tiger_facade.get_accessible_resources(
+            subject, permission, resource_type, zone_id
         )
 
     def tiger_queue_update(
@@ -2515,30 +2500,9 @@ class EnhancedReBACManager(ReBACManager):
         zone_id: str,
         priority: int = 100,
     ) -> int | None:
-        """Queue a Tiger Cache update for background processing.
-
-        Call this when permissions change to schedule cache rebuild.
-
-        Args:
-            subject: (subject_type, subject_id) tuple
-            permission: Permission to recompute
-            resource_type: Type of resource
-            zone_id: Zone ID
-            priority: Priority (lower = higher priority)
-
-        Returns:
-            Queue entry ID, or None if Tiger Cache is disabled
-        """
-        if not self._tiger_updater:
-            return None
-
-        return self._tiger_updater.queue_update(
-            subject_type=subject[0],
-            subject_id=subject[1],
-            permission=permission,
-            resource_type=resource_type,
-            zone_id=zone_id,
-            priority=priority,
+        """Queue a Tiger Cache update for background processing."""
+        return self._tiger_facade.queue_update(
+            subject, permission, resource_type, zone_id, priority
         )
 
     def tiger_persist_grant(
@@ -2549,32 +2513,9 @@ class EnhancedReBACManager(ReBACManager):
         resource_id: str,
         zone_id: str,
     ) -> bool:
-        """Write-through: Persist a single permission grant to Tiger Cache.
-
-        This is the fast path (~1-5ms) that updates both in-memory cache and
-        database immediately when a permission is granted. Much faster than
-        queue processing (~20-40 seconds) which recomputes all resources.
-
-        Args:
-            subject: (subject_type, subject_id) tuple
-            permission: Permission type (e.g., "read", "write")
-            resource_type: Type of resource (e.g., "file")
-            resource_id: String ID of the resource being granted
-            zone_id: Zone ID
-
-        Returns:
-            True if persisted successfully, False on error
-        """
-        if not self._tiger_cache:
-            return False
-
-        return self._tiger_cache.persist_single_grant(
-            subject_type=subject[0],
-            subject_id=subject[1],
-            permission=permission,
-            resource_type=resource_type,
-            resource_id=resource_id,
-            zone_id=zone_id,
+        """Write-through: Persist a single permission grant to Tiger Cache."""
+        return self._tiger_facade.persist_grant(
+            subject, permission, resource_type, resource_id, zone_id
         )
 
     def tiger_persist_revoke(
@@ -2585,52 +2526,14 @@ class EnhancedReBACManager(ReBACManager):
         resource_id: str,
         zone_id: str,
     ) -> bool:
-        """Write-through: Persist a single permission revocation to Tiger Cache.
-
-        Critical for security - permission revocations must propagate immediately.
-
-        Args:
-            subject: (subject_type, subject_id) tuple
-            permission: Permission type (e.g., "read", "write")
-            resource_type: Type of resource (e.g., "file")
-            resource_id: String ID of the resource being revoked
-            zone_id: Zone ID
-
-        Returns:
-            True if persisted successfully, False on error
-        """
-        if not self._tiger_cache:
-            return False
-
-        return self._tiger_cache.persist_single_revoke(
-            subject_type=subject[0],
-            subject_id=subject[1],
-            permission=permission,
-            resource_type=resource_type,
-            resource_id=resource_id,
-            zone_id=zone_id,
+        """Write-through: Persist a single permission revocation to Tiger Cache."""
+        return self._tiger_facade.persist_revoke(
+            subject, permission, resource_type, resource_id, zone_id
         )
 
     def tiger_process_queue(self, batch_size: int = 100) -> int:
-        """Process pending Tiger Cache update queue.
-
-        Call this periodically from a background worker.
-
-        Args:
-            batch_size: Maximum entries to process
-
-        Returns:
-            Number of entries processed
-        """
-
-        if not self._tiger_updater:
-            logger.warning("[TIGER] tiger_process_queue: _tiger_updater is None")
-            return 0
-
-        logger.info(f"[TIGER] tiger_process_queue: calling updater (batch={batch_size})")
-        result = self._tiger_updater.process_queue(batch_size=batch_size)
-        logger.info(f"[TIGER] tiger_process_queue: result={result}")
-        return result
+        """Process pending Tiger Cache update queue."""
+        return self._tiger_facade.process_queue(batch_size)
 
     def tiger_invalidate_cache(
         self,
@@ -2639,174 +2542,28 @@ class EnhancedReBACManager(ReBACManager):
         resource_type: str | None = None,
         zone_id: str | None = None,
     ) -> int:
-        """Invalidate Tiger Cache entries.
-
-        Args:
-            subject: (subject_type, subject_id) tuple (None = all subjects)
-            permission: Filter by permission (None = all)
-            resource_type: Filter by resource type (None = all)
-            zone_id: Filter by zone (None = all)
-
-        Returns:
-            Number of entries invalidated
-        """
-        if not self._tiger_cache:
-            return 0
-
-        subject_type = subject[0] if subject else None
-        subject_id = subject[1] if subject else None
-
-        return self._tiger_cache.invalidate(
-            subject_type=subject_type,
-            subject_id=subject_id,
-            permission=permission,
-            resource_type=resource_type,
-            zone_id=zone_id,
-        )
+        """Invalidate Tiger Cache entries."""
+        return self._tiger_facade.invalidate_cache(subject, permission, resource_type, zone_id)
 
     def tiger_register_resource(
         self,
         resource_type: str,
         resource_id: str,
-        _zone_id: str = "",  # Deprecated: kept for API compatibility, ignored
+        _zone_id: str = "",
     ) -> int:
-        """Register a resource in the Tiger resource map.
-
-        Call this when creating new resources to get their integer ID.
-
-        Args:
-            resource_type: Type of resource (e.g., "file")
-            resource_id: String ID of resource (e.g., UUID or path)
-            zone_id: Zone ID
-
-        Returns:
-            Integer ID for use in bitmaps
-        """
-        if not self._tiger_cache:
-            return -1
-
-        return self._tiger_cache._resource_map.get_or_create_int_id(
-            resource_type=resource_type,
-            resource_id=resource_id,
-        )
+        """Register a resource in the Tiger resource map."""
+        return self._tiger_facade.register_resource(resource_type, resource_id)
 
     # =========================================================================
-    # Leopard-style Directory Permission Pre-materialization
+    # Directory Operations (Issue #1459 Phase 13: delegated to DirectoryExpander)
     # =========================================================================
 
-    # Write amplification limit: max files to expand synchronously
-    # Beyond this, expansion is queued for async processing
+    # Kept for backward compatibility — class attribute referenced by some tests
     DIRECTORY_EXPANSION_LIMIT = 10_000
 
     def _is_directory_path(self, path: str) -> bool:
-        """Check if a path represents a directory.
-
-        Uses heuristics since NexusFS uses implicit directories:
-        1. Path ends with /
-        2. Path has no file extension in the last component
-        3. Files exist under this path (queried from metadata store if available)
-
-        Args:
-            path: File path to check
-
-        Returns:
-            True if path appears to be a directory
-        """
-
-        # Explicit directory marker
-        if path.endswith("/"):
-            return True
-
-        # Root is always a directory
-        if path == "/":
-            return True
-
-        # Check for common file extensions (not a directory)
-        last_component = path.rsplit("/", 1)[-1]
-        if "." in last_component:
-            extension = last_component.rsplit(".", 1)[-1].lower()
-            # Common file extensions that indicate NOT a directory
-            file_extensions = {
-                "txt",
-                "md",
-                "json",
-                "yaml",
-                "yml",
-                "xml",
-                "csv",
-                "tsv",
-                "py",
-                "js",
-                "ts",
-                "jsx",
-                "tsx",
-                "html",
-                "css",
-                "scss",
-                "java",
-                "c",
-                "cpp",
-                "h",
-                "hpp",
-                "go",
-                "rs",
-                "rb",
-                "php",
-                "sql",
-                "sh",
-                "bash",
-                "zsh",
-                "ps1",
-                "bat",
-                "cmd",
-                "png",
-                "jpg",
-                "jpeg",
-                "gif",
-                "svg",
-                "ico",
-                "webp",
-                "pdf",
-                "doc",
-                "docx",
-                "xls",
-                "xlsx",
-                "ppt",
-                "pptx",
-                "zip",
-                "tar",
-                "gz",
-                "bz2",
-                "7z",
-                "rar",
-                "mp3",
-                "mp4",
-                "wav",
-                "avi",
-                "mov",
-                "mkv",
-                "log",
-                "ini",
-                "conf",
-                "cfg",
-                "env",
-                "lock",
-            }
-            if extension in file_extensions:
-                return False
-
-        # If we have a metadata store reference, check for children
-        # This is the most accurate but requires a DB query
-        if hasattr(self, "_metadata_store") and self._metadata_store:
-            try:
-                # Check if any files exist under this path
-                return bool(self._metadata_store.is_implicit_directory(path))
-            except (RuntimeError, OperationalError) as e:
-                logger.debug(f"[LEOPARD] Failed to check directory via metadata: {e}")
-
-        # Default: treat paths without extensions as potential directories
-        # The expansion will be a no-op if there are no descendants
-        return "." not in last_component
+        """Check if a path represents a directory."""
+        return self._directory_expander.is_directory_path(path)
 
     def _expand_directory_permission_grant(
         self,
@@ -2815,179 +2572,22 @@ class EnhancedReBACManager(ReBACManager):
         directory_path: str,
         zone_id: str,
     ) -> None:
-        """Expand a directory permission grant to all descendants (Leopard-style).
-
-        This is the core of pre-materialization. When a permission is granted
-        on a directory, expand it to ALL descendant files so that permission
-        checks become O(1) bitmap lookups instead of O(depth) tree walks.
-
-        Args:
-            subject: (subject_type, subject_id) tuple
-            permissions: List of permissions granted (e.g., ["read", "write"])
-            directory_path: Directory path that was granted
-            zone_id: Zone ID
-
-        Trade-offs (Zanzibar Leopard pattern):
-            - Write amplification: 1 grant -> N bitmap updates
-            - Read optimization: O(depth) -> O(1) per file
-            - Storage: O(grants) -> O(grants * avg_descendants)
-        """
-
-        if not self._tiger_cache:
-            return
-
-        # Normalize directory path
-        if not directory_path.endswith("/"):
-            directory_path = directory_path + "/"
-
-        # Get current revision for consistency (prevents "new enemy" problem)
-        grant_revision = self._get_zone_revision_for_grant(zone_id)
-
-        # Get all descendants of the directory
-        descendants = self._get_directory_descendants(directory_path, zone_id)
-
-        logger.info(
-            f"[LEOPARD] Directory grant expansion: {directory_path} "
-            f"-> {len(descendants)} descendants for {subject[0]}:{subject[1]}"
+        """Expand a directory permission grant to all descendants (Leopard-style)."""
+        self._directory_expander.expand_directory_permission_grant(
+            subject, permissions, directory_path, zone_id
         )
 
-        if not descendants:
-            # No descendants - just record the grant for future file integration
-            for permission in permissions:
-                self._tiger_cache.record_directory_grant(
-                    subject_type=subject[0],
-                    subject_id=subject[1],
-                    permission=permission,
-                    directory_path=directory_path,
-                    zone_id=zone_id,
-                    grant_revision=grant_revision,
-                    include_future_files=True,
-                )
-                # Mark as completed immediately (empty directory)
-                self._tiger_cache._update_grant_status(
-                    subject[0],
-                    subject[1],
-                    permission,
-                    directory_path,
-                    zone_id,
-                    status="completed",
-                    expanded_count=0,
-                    total_count=0,
-                )
-            return
-
-        # Check write amplification limit
-        if len(descendants) > self.DIRECTORY_EXPANSION_LIMIT:
-            logger.warning(
-                f"[LEOPARD] Directory {directory_path} has {len(descendants)} files, "
-                f"exceeds limit {self.DIRECTORY_EXPANSION_LIMIT}. Using async expansion."
-            )
-            # Queue for async expansion
-            for permission in permissions:
-                self._tiger_cache.record_directory_grant(
-                    subject_type=subject[0],
-                    subject_id=subject[1],
-                    permission=permission,
-                    directory_path=directory_path,
-                    zone_id=zone_id,
-                    grant_revision=grant_revision,
-                    include_future_files=True,
-                )
-                # Status remains "pending" - background worker will process
-            return
-
-        # Synchronous expansion for small directories
-        for permission in permissions:
-            # Record the directory grant first
-            self._tiger_cache.record_directory_grant(
-                subject_type=subject[0],
-                subject_id=subject[1],
-                permission=permission,
-                directory_path=directory_path,
-                zone_id=zone_id,
-                grant_revision=grant_revision,
-                include_future_files=True,
-            )
-
-            # Expand to all descendants
-            expanded, completed = self._tiger_cache.expand_directory_grant(
-                subject_type=subject[0],
-                subject_id=subject[1],
-                permission=permission,
-                directory_path=directory_path,
-                zone_id=zone_id,
-                grant_revision=grant_revision,
-                descendants=descendants,
-            )
-
-            if completed:
-                logger.info(
-                    f"[LEOPARD] Expanded {permission} on {directory_path}: "
-                    f"{expanded} files for {subject[0]}:{subject[1]}"
-                )
-            else:
-                logger.error(f"[LEOPARD] Failed to expand {permission} on {directory_path}")
-
     def _get_zone_revision_for_grant(self, zone_id: str) -> int:
-        """Get current zone revision for consistency during expansion.
-
-        Delegates to consistency.revision module (Issue #1459).
-        """
+        """Get current zone revision for consistency during expansion."""
         return get_zone_revision_for_grant(self.engine, zone_id)
 
-    def _get_directory_descendants(
-        self,
-        directory_path: str,
-        zone_id: str,
-    ) -> list[str]:
-        """Get all file paths under a directory.
-
-        Args:
-            directory_path: Directory path (with trailing /)
-            zone_id: Zone ID
-
-        Returns:
-            List of descendant file paths
-        """
-
-        # Try using metadata store if available
-        if hasattr(self, "_metadata_store") and self._metadata_store:
-            try:
-                files = self._metadata_store.list(
-                    prefix=directory_path,
-                    recursive=True,
-                    zone_id=zone_id,
-                )
-                return [f.path for f in files]
-            except (RuntimeError, OperationalError) as e:
-                logger.warning(f"[LEOPARD] Metadata store query failed: {e}")
-
-        # Fallback: query file_paths table directly
-        from sqlalchemy import text
-
-        try:
-            query = text("""
-                SELECT virtual_path
-                FROM file_paths
-                WHERE virtual_path LIKE :prefix
-                  AND deleted_at IS NULL
-                  AND (zone_id = :zone_id OR zone_id = 'default' OR zone_id IS NULL)
-            """)
-
-            with self.engine.connect() as conn:
-                result = conn.execute(query, {"prefix": f"{directory_path}%", "zone_id": zone_id})
-                return [row.virtual_path for row in result]
-        except (RuntimeError, OperationalError) as e:
-            logger.error(f"[LEOPARD] Failed to query descendants: {e}")
-            return []
+    def _get_directory_descendants(self, directory_path: str, zone_id: str) -> list[str]:
+        """Get all file paths under a directory."""
+        return self._directory_expander.get_directory_descendants(directory_path, zone_id)
 
     def set_metadata_store(self, metadata_store: Any) -> None:
-        """Set the metadata store reference for directory queries.
-
-        Args:
-            metadata_store: FileMetadataProtocol instance
-        """
-        self._metadata_store = metadata_store
+        """Set the metadata store reference for directory queries."""
+        self._directory_expander.set_metadata_store(metadata_store)
 
     def _get_namespace_configs_for_rust(self) -> dict[str, Any]:
         """Get namespace configurations for Rust permission computation.
@@ -4916,6 +4516,10 @@ class EnhancedReBACManager(ReBACManager):
                 }
         return configs
 
+    # =========================================================================
+    # Bulk Graph Evaluator (Issue #1459 Phase 11: delegated to graph.bulk_evaluator)
+    # =========================================================================
+
     def _compute_permission_bulk_helper(
         self,
         subject: Entity,
@@ -4928,267 +4532,19 @@ class EnhancedReBACManager(ReBACManager):
         bulk_memo_cache: dict[tuple[str, str, str, str, str], bool] | None = None,
         memo_stats: dict[str, int] | None = None,
     ) -> bool:
-        """Compute permission using pre-fetched tuples graph with full in-memory traversal.
-
-        This implements the complete ReBAC graph traversal algorithm without additional DB queries.
-        Handles: direct relations, union, intersection, exclusion, tupleToUserset (parent/group inheritance).
-
-        Args:
-            subject: Subject entity
-            permission: Permission to check
-            obj: Object entity
-            zone_id: Zone ID
-            tuples_graph: Pre-fetched list of all relevant tuples
-            depth: Current traversal depth (for cycle detection)
-            visited: Set of visited nodes (for cycle detection)
-            bulk_memo_cache: Shared memoization cache for bulk operations (optimization)
-
-        Returns:
-            True if permission is granted
-        """
-
-        # Initialize visited set on first call
-        if visited is None:
-            visited = set()
-
-        # OPTIMIZATION: Check memoization cache first
-        # This avoids recomputing the same permission checks multiple times within a bulk operation
-        # Example: All 679 files check "does admin own /workspace?" - only compute once!
-        memo_key = (
-            subject.entity_type,
-            subject.entity_id,
-            permission,
-            obj.entity_type,
-            obj.entity_id,
+        """Compute permission using pre-fetched tuples graph with full in-memory traversal."""
+        return _compute_permission_bulk(
+            subject=subject,
+            permission=permission,
+            obj=obj,
+            zone_id=zone_id,
+            tuples_graph=tuples_graph,
+            get_namespace=self.get_namespace,
+            depth=depth,
+            visited=visited,
+            bulk_memo_cache=bulk_memo_cache,
+            memo_stats=memo_stats,
         )
-        if bulk_memo_cache is not None and memo_key in bulk_memo_cache:
-            # Cache hit! Return cached result
-            if memo_stats is not None:
-                memo_stats["hits"] += 1
-                # Log every 100th hit to show progress without flooding
-                if memo_stats["hits"] % 100 == 0:
-                    logger.debug(
-                        f"[MEMO HIT #{memo_stats['hits']}] {subject.entity_type}:{subject.entity_id} {permission} on {obj.entity_type}:{obj.entity_id}"
-                    )
-            return bulk_memo_cache[memo_key]
-
-        # Cache miss - will need to compute
-        if memo_stats is not None:
-            memo_stats["misses"] += 1
-            # Track maximum depth reached
-            if depth > memo_stats.get("max_depth", 0):
-                memo_stats["max_depth"] = depth
-
-        # Depth limit check (prevent infinite recursion)
-        MAX_DEPTH = 50
-        if depth > MAX_DEPTH:
-            logger.warning(
-                f"_compute_permission_bulk_helper: Depth limit exceeded ({depth} > {MAX_DEPTH}), denying"
-            )
-            return False
-
-        # Cycle detection (within this specific traversal path)
-        visit_key = memo_key  # Same key works for both
-        if visit_key in visited:
-            logger.debug(f"_compute_permission_bulk_helper: Cycle detected at {visit_key}, denying")
-            return False
-        visited.add(visit_key)
-
-        # Get namespace config
-        namespace = self.get_namespace(obj.entity_type)
-        if not namespace:
-            # No namespace, check for direct relation
-            return self._check_direct_relation_in_graph(subject, permission, obj, tuples_graph)
-
-        # P0-1: Check if permission is defined via "permissions" config
-        # Example: "read" -> ["viewer", "editor", "owner"]
-        if namespace.has_permission(permission):
-            usersets = namespace.get_permission_usersets(permission)
-            logger.debug(
-                f"_compute_permission_bulk_helper [depth={depth}]: Permission '{permission}' expands to usersets: {usersets}"
-            )
-            # Check each userset in union (OR semantics)
-            result = False
-            for userset in usersets:
-                if self._compute_permission_bulk_helper(
-                    subject,
-                    userset,
-                    obj,
-                    zone_id,
-                    tuples_graph,
-                    depth + 1,
-                    visited.copy(),
-                    bulk_memo_cache,
-                    memo_stats,
-                ):
-                    result = True
-                    break
-            # Store result in memo cache before returning
-            if bulk_memo_cache is not None:
-                bulk_memo_cache[memo_key] = result
-            return result
-
-        # Handle union (OR of multiple relations)
-        # Example: "owner" -> union: ["direct_owner", "parent_owner", "group_owner"]
-        if namespace.has_union(permission):
-            union_relations = namespace.get_union_relations(permission)
-            logger.debug(
-                f"_compute_permission_bulk_helper [depth={depth}]: Union '{permission}' -> {union_relations}"
-            )
-            result = False
-            for rel in union_relations:
-                if self._compute_permission_bulk_helper(
-                    subject,
-                    rel,
-                    obj,
-                    zone_id,
-                    tuples_graph,
-                    depth + 1,
-                    visited.copy(),
-                    bulk_memo_cache,
-                    memo_stats,
-                ):
-                    result = True
-                    break
-            # Store result in memo cache before returning
-            if bulk_memo_cache is not None:
-                bulk_memo_cache[memo_key] = result
-            return result
-
-        # Handle intersection (AND of multiple relations)
-        if namespace.has_intersection(permission):
-            intersection_relations = namespace.get_intersection_relations(permission)
-            logger.debug(
-                f"_compute_permission_bulk_helper [depth={depth}]: Intersection '{permission}' -> {intersection_relations}"
-            )
-            result = True
-            for rel in intersection_relations:
-                if not self._compute_permission_bulk_helper(
-                    subject,
-                    rel,
-                    obj,
-                    zone_id,
-                    tuples_graph,
-                    depth + 1,
-                    visited.copy(),
-                    bulk_memo_cache,
-                    memo_stats,
-                ):
-                    result = False
-                    break  # If any is false, whole intersection is false
-            # Store result in memo cache before returning
-            if bulk_memo_cache is not None:
-                bulk_memo_cache[memo_key] = result
-            return result
-
-        # Handle exclusion (NOT relation)
-        if namespace.has_exclusion(permission):
-            excluded_rel = namespace.get_exclusion_relation(permission)
-            if excluded_rel:
-                logger.debug(
-                    f"_compute_permission_bulk_helper [depth={depth}]: Exclusion '{permission}' NOT {excluded_rel}"
-                )
-                result = not self._compute_permission_bulk_helper(
-                    subject,
-                    excluded_rel,
-                    obj,
-                    zone_id,
-                    tuples_graph,
-                    depth + 1,
-                    visited.copy(),
-                    bulk_memo_cache,
-                    memo_stats,
-                )
-                # Store result in memo cache before returning
-                if bulk_memo_cache is not None:
-                    bulk_memo_cache[memo_key] = result
-                return result
-            return False
-
-        # Handle tupleToUserset (indirect relation via another object)
-        # This is the KEY fix for parent/group inheritance performance!
-        # Example: parent_owner -> tupleToUserset: {tupleset: "parent", computedUserset: "owner"}
-        # Meaning: Check if subject has "owner" permission on any parent of obj
-        if namespace.has_tuple_to_userset(permission):
-            ttu = namespace.get_tuple_to_userset(permission)
-            logger.debug(
-                f"_compute_permission_bulk_helper [depth={depth}]: tupleToUserset '{permission}' -> {ttu}"
-            )
-            if ttu:
-                tupleset_relation = ttu["tupleset"]
-                computed_userset = ttu["computedUserset"]
-
-                # Pattern 1 (parent-style): Find objects where (obj, tupleset_relation, ?)
-                related_objects = self._find_related_objects_in_graph(
-                    obj, tupleset_relation, tuples_graph
-                )
-                logger.debug(
-                    f"_compute_permission_bulk_helper [depth={depth}]: Pattern 1 (parent) found {len(related_objects)} related objects via '{tupleset_relation}'"
-                )
-
-                # Check if subject has computed_userset on any related object
-                for related_obj in related_objects:
-                    if self._compute_permission_bulk_helper(
-                        subject,
-                        computed_userset,
-                        related_obj,
-                        zone_id,
-                        tuples_graph,
-                        depth + 1,
-                        visited.copy(),
-                        bulk_memo_cache,
-                        memo_stats,
-                    ):
-                        logger.debug(
-                            f"_compute_permission_bulk_helper [depth={depth}]: GRANTED via tupleToUserset parent pattern through {related_obj}"
-                        )
-                        if bulk_memo_cache is not None:
-                            bulk_memo_cache[memo_key] = True
-                        return True
-
-                # Pattern 2 (group-style): Find subjects where (?, tupleset_relation, obj)
-                related_subjects = self._find_subjects_in_graph(
-                    obj, tupleset_relation, tuples_graph
-                )
-                logger.debug(
-                    f"_compute_permission_bulk_helper [depth={depth}]: Pattern 2 (group) found {len(related_subjects)} subjects with '{tupleset_relation}' on obj"
-                )
-
-                # Check if subject has computed_userset on any related subject (typically group membership)
-                for related_subj in related_subjects:
-                    if self._compute_permission_bulk_helper(
-                        subject,
-                        computed_userset,
-                        related_subj,
-                        zone_id,
-                        tuples_graph,
-                        depth + 1,
-                        visited.copy(),
-                        bulk_memo_cache,
-                        memo_stats,
-                    ):
-                        logger.debug(
-                            f"_compute_permission_bulk_helper [depth={depth}]: GRANTED via tupleToUserset group pattern through {related_subj}"
-                        )
-                        if bulk_memo_cache is not None:
-                            bulk_memo_cache[memo_key] = True
-                        return True
-
-                logger.debug(
-                    f"_compute_permission_bulk_helper [depth={depth}]: No related objects/subjects granted permission"
-                )
-                # Store result in memo cache before returning
-                if bulk_memo_cache is not None:
-                    bulk_memo_cache[memo_key] = False
-                return False
-            return False
-
-        # Direct relation check (base case)
-        result = self._check_direct_relation_in_graph(subject, permission, obj, tuples_graph)
-        # Store result in memo cache before returning
-        if bulk_memo_cache is not None:
-            bulk_memo_cache[memo_key] = result
-        return result
 
     def _check_direct_relation_in_graph(
         self,
@@ -5197,29 +4553,8 @@ class EnhancedReBACManager(ReBACManager):
         obj: Entity,
         tuples_graph: list[dict[str, Any]],
     ) -> bool:
-        """Check if a direct relation tuple exists in the pre-fetched graph.
-
-        Args:
-            subject: Subject entity
-            permission: Relation name
-            obj: Object entity
-            tuples_graph: Pre-fetched tuples
-
-        Returns:
-            True if direct tuple exists
-        """
-        for tuple_data in tuples_graph:
-            if (
-                tuple_data["subject_type"] == subject.entity_type
-                and tuple_data["subject_id"] == subject.entity_id
-                and tuple_data["relation"] == permission
-                and tuple_data["object_type"] == obj.entity_type
-                and tuple_data["object_id"] == obj.entity_id
-                and tuple_data["subject_relation"] is None  # Direct relation only
-            ):
-                # TODO: Check conditions and expiry if needed
-                return True
-        return False
+        """Check if a direct relation tuple exists in the pre-fetched graph."""
+        return _check_direct_relation_in_graph(subject, permission, obj, tuples_graph)
 
     def _find_related_objects_in_graph(
         self,
@@ -5227,33 +4562,8 @@ class EnhancedReBACManager(ReBACManager):
         tupleset_relation: str,
         tuples_graph: list[dict[str, Any]],
     ) -> list[Entity]:
-        """Find all objects related to obj via tupleset_relation in the pre-fetched graph.
-
-        This is used for tupleToUserset traversal. For example:
-        - To find parent directories: look for tuples (child, "parent", parent)
-        - To find group memberships: look for tuples (subject, "member", group)
-
-        Args:
-            obj: Object to find relations for
-            tupleset_relation: Relation name (e.g., "parent", "member")
-            tuples_graph: Pre-fetched tuples
-
-        Returns:
-            List of related Entity objects
-        """
-        related = []
-        for tuple_data in tuples_graph:
-            # For parent inheritance: (child, "parent", parent)
-            # obj is the child, we want to find parents
-            if (
-                tuple_data["subject_type"] == obj.entity_type
-                and tuple_data["subject_id"] == obj.entity_id
-                and tuple_data["relation"] == tupleset_relation
-            ):
-                # The object of this tuple is the related entity
-                related.append(Entity(tuple_data["object_type"], tuple_data["object_id"]))
-
-        return related
+        """Find all objects related to obj via tupleset_relation in the graph."""
+        return _find_related_objects_in_graph(obj, tupleset_relation, tuples_graph)
 
     def _find_subjects_in_graph(
         self,
@@ -5261,29 +4571,5 @@ class EnhancedReBACManager(ReBACManager):
         tupleset_relation: str,
         tuples_graph: list[dict[str, Any]],
     ) -> list[Entity]:
-        """Find all subjects that have a relation to obj in the pre-fetched graph.
-
-        This is used for group-style tupleToUserset traversal. For example:
-        - To find groups with direct_viewer on file: look for tuples (group, "direct_viewer", file)
-
-        Args:
-            obj: Object that subjects have relations to
-            tupleset_relation: Relation name (e.g., "direct_viewer", "direct_owner")
-            tuples_graph: Pre-fetched tuples
-
-        Returns:
-            List of subject Entity objects
-        """
-        subjects = []
-        for tuple_data in tuples_graph:
-            # For group inheritance: (group, "direct_viewer", file)
-            # obj is the file, we want to find groups
-            if (
-                tuple_data["object_type"] == obj.entity_type
-                and tuple_data["object_id"] == obj.entity_id
-                and tuple_data["relation"] == tupleset_relation
-            ):
-                # The subject of this tuple is the related entity
-                subjects.append(Entity(tuple_data["subject_type"], tuple_data["subject_id"]))
-
-        return subjects
+        """Find all subjects that have a relation to obj in the graph."""
+        return _find_subjects_in_graph(obj, tupleset_relation, tuples_graph)

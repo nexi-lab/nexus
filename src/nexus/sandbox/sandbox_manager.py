@@ -403,8 +403,8 @@ class SandboxManager:
             logger.debug("Monty provider not available, skipping host function setup")
             return
 
-        # Only set host functions on actual MontySandboxProvider instances
-        if not hasattr(monty_provider, "set_host_functions"):
+        # Narrow type for mypy — only MontySandboxProvider has set_host_functions
+        if not MONTY_PROVIDER_AVAILABLE or not isinstance(monty_provider, MontySandboxProvider):
             return
 
         try:

@@ -107,12 +107,18 @@ class TestCreateNexusServices:
             "workspace_manager",
             "write_observer",
             "version_service",
-            "observability_subsystem",
             "wallet_provisioner",
-            "tool_namespace_middleware",
         ]
         for attr in expected_attrs:
             assert hasattr(result, attr), f"Missing attribute: {attr}"
+
+        # Server-layer extras are in server_extras dict
+        expected_extras = [
+            "observability_subsystem",
+            "tool_namespace_middleware",
+        ]
+        for key in expected_extras:
+            assert key in result.server_extras, f"Missing server_extras key: {key}"
 
     def test_no_none_values_for_required_services(self, deps: dict, tmp_path: Path) -> None:
         """Required services should not be None."""
@@ -388,7 +394,7 @@ class TestToolNamespaceMiddleware:
             router=router,
         )
 
-        mw = result.tool_namespace_middleware
+        mw = result.server_extras.get("tool_namespace_middleware")
         assert mw is not None
         assert type(mw).__name__ == "ToolNamespaceMiddleware"
 
@@ -409,7 +415,7 @@ class TestToolNamespaceMiddleware:
             router=router,
         )
 
-        mw = result.tool_namespace_middleware
+        mw = result.server_extras.get("tool_namespace_middleware")
         assert mw._rebac_manager is result.rebac_manager
 
     def test_middleware_receives_zone_id(self, tmp_path: Path) -> None:
@@ -430,7 +436,7 @@ class TestToolNamespaceMiddleware:
             zone_id="test-zone-42",
         )
 
-        mw = result.tool_namespace_middleware
+        mw = result.server_extras.get("tool_namespace_middleware")
         assert mw._zone_id == "test-zone-42"
 
     def test_middleware_metrics_initially_zero(self, tmp_path: Path) -> None:
@@ -450,7 +456,7 @@ class TestToolNamespaceMiddleware:
             router=router,
         )
 
-        mw = result.tool_namespace_middleware
+        mw = result.server_extras.get("tool_namespace_middleware")
         assert mw.metrics["cache_hits"] == 0
         assert mw.metrics["cache_misses"] == 0
         assert mw.metrics["enabled"] is True

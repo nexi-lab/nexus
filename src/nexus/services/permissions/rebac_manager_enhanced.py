@@ -3,7 +3,7 @@ Enhanced ReBAC Manager with P0 Fixes
 
 This module implements critical security and reliability fixes for GA:
 - P0-1: Consistency levels and version tokens
-- P0-2: Zone scoping (integrates ZoneAwareReBACManager)
+- P0-2: Zone scoping (absorbed from ZoneAwareReBACManager — Phase 10)
 - P0-5: Graph limits and DoS protection
 
 Usage:
@@ -26,17 +26,24 @@ Usage:
 
 from __future__ import annotations
 
+import json
 import logging
 import threading
 import time
+import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
-from nexus.core.rebac import CROSS_ZONE_ALLOWED_RELATIONS, Entity
-from nexus.services.permissions.rebac_manager_zone_aware import ZoneAwareReBACManager
+from nexus.core.rebac import CROSS_ZONE_ALLOWED_RELATIONS, Entity, NamespaceConfig
+from nexus.services.permissions.consistency.revision import (
+    get_zone_revision_for_grant,
+    increment_version_token,
+)
+from nexus.services.permissions.consistency.zone_manager import ZoneManager
+from nexus.services.permissions.rebac_manager import ReBACManager
 from nexus.services.permissions.rebac_tracing import (
     record_check_result,
     record_graph_limit_exceeded,
@@ -54,6 +61,7 @@ from nexus.services.permissions.types import (
     TraversalStats,
     WriteResult,
 )
+from nexus.services.permissions.utils.changelog import insert_changelog_entry
 from nexus.services.permissions.utils.zone import normalize_zone_id
 
 if TYPE_CHECKING:
@@ -71,12 +79,12 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 
-class EnhancedReBACManager(ZoneAwareReBACManager):
+class EnhancedReBACManager(ReBACManager):
     """ReBAC Manager with all P0 fixes integrated.
 
     Combines:
     - P0-1: Consistency levels and version tokens
-    - P0-2: Zone scoping (via ZoneAwareReBACManager)
+    - P0-2: Zone scoping (absorbed from ZoneAwareReBACManager — Phase 10)
     - P0-5: Graph limits and DoS protection
     - Leopard: Pre-computed transitive group closure for O(1) group lookups
 
@@ -107,7 +115,10 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
             enable_leopard: Enable Leopard transitive closure index (default: True)
             enable_tiger_cache: Enable Tiger Cache for materialized permissions (default: True)
         """
-        super().__init__(engine, cache_ttl_seconds, max_depth, enforce_zone_isolation)
+        super().__init__(engine, cache_ttl_seconds, max_depth)
+        # Zone isolation (absorbed from ZoneAwareReBACManager — Phase 10)
+        self.enforce_zone_isolation = enforce_zone_isolation
+        self._zone_manager = ZoneManager(enforce=enforce_zone_isolation)
         self.enable_graph_limits = enable_graph_limits
         self.enable_leopard = enable_leopard
         self.enable_tiger_cache = enable_tiger_cache
@@ -1387,8 +1398,8 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
         effective_subject_zone = subject_zone_id if subject_zone_id is not None else zone_id
         effective_object_zone = object_zone_id if object_zone_id is not None else zone_id
 
-        # Call parent implementation
-        result = super().rebac_write(
+        # Zone-aware tuple insertion (absorbed from ZoneAwareReBACManager — Phase 10)
+        result = self._write_tuple_zone_aware(
             subject=subject,
             relation=relation,
             object=object,
@@ -1654,6 +1665,415 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                     self._l1_cache.invalidate_object(obj[0], obj[1], zone_id)
 
         return created_count
+
+    # ============================================================================
+    # Zone-Aware Methods (Absorbed from ZoneAwareReBACManager — Phase 10)
+    # ============================================================================
+
+    def _write_tuple_zone_aware(
+        self,
+        subject: tuple[str, str] | tuple[str, str, str],
+        relation: str,
+        object: tuple[str, str],
+        expires_at: datetime | None = None,
+        conditions: dict[str, Any] | None = None,
+        zone_id: str | None = None,
+        subject_zone_id: str | None = None,
+        object_zone_id: str | None = None,
+    ) -> str:
+        """Insert a relationship tuple with zone isolation.
+
+        Handles zone validation, subject parsing, tuple insertion, changelog
+        logging, and cache invalidation. Returns the tuple ID.
+
+        If zone isolation is disabled, delegates to ReBACManager.rebac_write.
+        """
+        # Ensure default namespaces are initialized
+        self._ensure_namespaces_initialized()
+
+        # If zone isolation is disabled, use base ReBACManager implementation
+        if not self.enforce_zone_isolation:
+            return ReBACManager.rebac_write(
+                self,
+                subject=subject,
+                relation=relation,
+                object=object,
+                expires_at=expires_at,
+                conditions=conditions,
+                zone_id=zone_id,
+                subject_zone_id=subject_zone_id,
+                object_zone_id=object_zone_id,
+            )
+
+        # Delegate zone validation to ZoneManager (Issue #1459)
+        zone_id, subject_zone_id, object_zone_id, _is_cross_zone = (
+            self._zone_manager.validate_write_zones(
+                zone_id, subject_zone_id, object_zone_id, relation
+            )
+        )
+
+        # Parse subject (support userset-as-subject with 3-tuple) - P0 FIX
+        if len(subject) == 3:
+            subject_type, subject_id, subject_relation = subject
+            subject_entity = Entity(subject_type, subject_id)
+        elif len(subject) == 2:
+            subject_type, subject_id = subject
+            subject_relation = None
+            subject_entity = Entity(subject_type, subject_id)
+        else:
+            raise ValueError(f"subject must be 2-tuple or 3-tuple, got {len(subject)}-tuple")
+
+        # Create tuple with zone isolation
+        tuple_id = str(uuid.uuid4())
+        object_entity = Entity(object[0], object[1])
+
+        with self._connection() as conn:
+            # CYCLE DETECTION: Prevent cycles in parent relations
+            if relation == "parent" and self._would_create_cycle_with_conn(
+                conn, subject_entity, object_entity, zone_id
+            ):
+                raise ValueError(
+                    f"Cycle detected: Creating parent relation from "
+                    f"{subject_entity.entity_type}:{subject_entity.entity_id} to "
+                    f"{object_entity.entity_type}:{object_entity.entity_id} would create a cycle"
+                )
+
+            cursor = self._create_cursor(conn)
+
+            # Check if tuple already exists (idempotency fix)
+            cursor.execute(
+                self._fix_sql_placeholders(
+                    """
+                    SELECT tuple_id FROM rebac_tuples
+                    WHERE subject_type = ? AND subject_id = ?
+                    AND (subject_relation = ? OR (subject_relation IS NULL AND ? IS NULL))
+                    AND relation = ?
+                    AND object_type = ? AND object_id = ?
+                    AND (zone_id = ? OR (zone_id IS NULL AND ? IS NULL))
+                    """
+                ),
+                (
+                    subject_entity.entity_type,
+                    subject_entity.entity_id,
+                    subject_relation,
+                    subject_relation,
+                    relation,
+                    object_entity.entity_type,
+                    object_entity.entity_id,
+                    zone_id,
+                    zone_id,
+                ),
+            )
+            existing = cursor.fetchone()
+            if existing:
+                return cast(
+                    str, existing[0] if isinstance(existing, tuple) else existing["tuple_id"]
+                )
+
+            # Insert tuple with zone_id columns
+            cursor.execute(
+                self._fix_sql_placeholders(
+                    """
+                    INSERT INTO rebac_tuples (
+                        tuple_id, zone_id, subject_type, subject_id, subject_relation, subject_zone_id,
+                        relation, object_type, object_id, object_zone_id,
+                        created_at, expires_at, conditions
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """
+                ),
+                (
+                    tuple_id,
+                    zone_id,
+                    subject_entity.entity_type,
+                    subject_entity.entity_id,
+                    subject_relation,
+                    subject_zone_id,
+                    relation,
+                    object_entity.entity_type,
+                    object_entity.entity_id,
+                    object_zone_id,
+                    datetime.now(UTC).isoformat(),
+                    expires_at.isoformat() if expires_at else None,
+                    json.dumps(conditions) if conditions else None,
+                ),
+            )
+
+            # Log to changelog
+            insert_changelog_entry(
+                cursor,
+                self._fix_sql_placeholders,
+                change_type="INSERT",
+                tuple_id=tuple_id,
+                subject_type=subject_entity.entity_type,
+                subject_id=subject_entity.entity_id,
+                relation=relation,
+                object_type=object_entity.entity_type,
+                object_id=object_entity.entity_id,
+                zone_id=zone_id,
+            )
+
+            conn.commit()
+
+            # Invalidate cache entries affected by this change
+            self._invalidate_cache_for_tuple(
+                subject_entity,
+                relation,
+                object_entity,
+                zone_id,
+                subject_relation,
+                expires_at,
+                conn=conn,
+            )
+
+            # CROSS-ZONE FIX: If subject is from a different zone, also invalidate
+            # cache for the subject's zone
+            if subject_zone_id != zone_id:
+                self._invalidate_cache_for_tuple(
+                    subject_entity,
+                    relation,
+                    object_entity,
+                    subject_zone_id,
+                    subject_relation,
+                    expires_at,
+                    conn=conn,
+                )
+
+        return tuple_id
+
+    def rebac_expand(
+        self,
+        permission: str,
+        object: tuple[str, str],
+        zone_id: str = "default",
+    ) -> list[tuple[str, str]]:
+        """Find all subjects with permission on object (zone-scoped).
+
+        Args:
+            permission: Permission to check
+            object: (object_type, object_id) tuple
+            zone_id: Zone ID to scope expansion
+
+        Returns:
+            List of (subject_type, subject_id) tuples within zone
+        """
+        # If zone isolation is disabled, use base ReBACManager implementation
+        if not self.enforce_zone_isolation:
+            return ReBACManager.rebac_expand(self, permission, object)
+
+        if not zone_id:
+            zone_id = "default"
+
+        object_entity = Entity(object[0], object[1])
+        subjects: set[tuple[str, str]] = set()
+
+        # Get namespace config
+        namespace = self.get_namespace(object_entity.entity_type)
+        if not namespace:
+            return self._get_direct_subjects_zone_aware(permission, object_entity, zone_id)
+
+        # Recursively expand permission via namespace config (zone-scoped)
+        self._expand_permission_zone_aware(
+            permission, object_entity, namespace, zone_id, subjects, visited=set(), depth=0
+        )
+
+        return list(subjects)
+
+    def _expand_permission_zone_aware(
+        self,
+        permission: str,
+        obj: Entity,
+        namespace: NamespaceConfig,
+        zone_id: str,
+        subjects: set[tuple[str, str]],
+        visited: set[tuple[str, str, str]],
+        depth: int,
+    ) -> None:
+        """Recursively expand permission to find all subjects (zone-scoped)."""
+        if depth > self.max_depth:
+            return
+
+        visit_key = (permission, obj.entity_type, obj.entity_id)
+        if visit_key in visited:
+            return
+        visited.add(visit_key)
+
+        rel_config = namespace.get_relation_config(permission)
+        if not rel_config:
+            direct_subjects = self._get_direct_subjects_zone_aware(permission, obj, zone_id)
+            for subj in direct_subjects:
+                subjects.add(subj)
+            return
+
+        # Handle union
+        if namespace.has_union(permission):
+            union_relations = namespace.get_union_relations(permission)
+            for rel in union_relations:
+                self._expand_permission_zone_aware(
+                    rel, obj, namespace, zone_id, subjects, visited.copy(), depth + 1
+                )
+            return
+
+        # Handle tupleToUserset
+        if namespace.has_tuple_to_userset(permission):
+            ttu = namespace.get_tuple_to_userset(permission)
+            if ttu:
+                tupleset_relation = ttu["tupleset"]
+                computed_userset = ttu["computedUserset"]
+
+                related_objects = self._find_related_objects_zone_aware(
+                    obj, tupleset_relation, zone_id
+                )
+
+                for related_obj in related_objects:
+                    related_ns = self.get_namespace(related_obj.entity_type)
+                    if related_ns:
+                        self._expand_permission_zone_aware(
+                            computed_userset,
+                            related_obj,
+                            related_ns,
+                            zone_id,
+                            subjects,
+                            visited.copy(),
+                            depth + 1,
+                        )
+            return
+
+        # Direct relation
+        direct_subjects = self._get_direct_subjects_zone_aware(permission, obj, zone_id)
+        for subj in direct_subjects:
+            subjects.add(subj)
+
+    def _get_direct_subjects_zone_aware(
+        self, relation: str, obj: Entity, zone_id: str
+    ) -> list[tuple[str, str]]:
+        """Get all subjects with direct relation to object (zone-scoped)."""
+        with self._connection() as conn:
+            cursor = self._create_cursor(conn)
+
+            cursor.execute(
+                self._fix_sql_placeholders(
+                    """
+                    SELECT subject_type, subject_id
+                    FROM rebac_tuples
+                    WHERE zone_id = ?
+                      AND relation = ?
+                      AND object_type = ? AND object_id = ?
+                      AND (expires_at IS NULL OR expires_at > ?)
+                    """
+                ),
+                (
+                    zone_id,
+                    relation,
+                    obj.entity_type,
+                    obj.entity_id,
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+
+            results = []
+            for row in cursor.fetchall():
+                results.append((row["subject_type"], row["subject_id"]))
+            return results
+
+    def _get_cached_check_zone_aware(
+        self, subject: Entity, permission: str, obj: Entity, zone_id: str
+    ) -> bool | None:
+        """Get cached permission check result (zone-aware cache key)."""
+        with self._connection() as conn:
+            cursor = self._create_cursor(conn)
+
+            cursor.execute(
+                self._fix_sql_placeholders(
+                    """
+                    SELECT result, expires_at
+                    FROM rebac_check_cache
+                    WHERE zone_id = ?
+                      AND subject_type = ? AND subject_id = ?
+                      AND permission = ?
+                      AND object_type = ? AND object_id = ?
+                      AND expires_at > ?
+                    """
+                ),
+                (
+                    zone_id,
+                    subject.entity_type,
+                    subject.entity_id,
+                    permission,
+                    obj.entity_type,
+                    obj.entity_id,
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
+
+            row = cursor.fetchone()
+            if row:
+                result = row["result"]
+                return bool(result)
+            return None
+
+    def _cache_check_result_zone_aware(
+        self, subject: Entity, permission: str, obj: Entity, zone_id: str, result: bool
+    ) -> None:
+        """Cache permission check result (zone-aware cache key)."""
+        cache_id = str(uuid.uuid4())
+        computed_at = datetime.now(UTC)
+        expires_at = computed_at + timedelta(seconds=self.cache_ttl_seconds)
+
+        with self._connection() as conn:
+            cursor = self._create_cursor(conn)
+
+            # Delete existing cache entry if present
+            cursor.execute(
+                self._fix_sql_placeholders(
+                    """
+                    DELETE FROM rebac_check_cache
+                    WHERE zone_id = ?
+                      AND subject_type = ? AND subject_id = ?
+                      AND permission = ?
+                      AND object_type = ? AND object_id = ?
+                    """
+                ),
+                (
+                    zone_id,
+                    subject.entity_type,
+                    subject.entity_id,
+                    permission,
+                    obj.entity_type,
+                    obj.entity_id,
+                ),
+            )
+
+            # Insert new cache entry
+            cursor.execute(
+                self._fix_sql_placeholders(
+                    """
+                    INSERT INTO rebac_check_cache (
+                        cache_id, zone_id, subject_type, subject_id, permission,
+                        object_type, object_id, result, computed_at, expires_at
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """
+                ),
+                (
+                    cache_id,
+                    zone_id,
+                    subject.entity_type,
+                    subject.entity_id,
+                    permission,
+                    obj.entity_type,
+                    obj.entity_id,
+                    int(result),
+                    computed_at.isoformat(),
+                    expires_at.isoformat(),
+                ),
+            )
+
+            conn.commit()
+
+    # ============================================================================
+    # End Zone-Aware Methods
+    # ============================================================================
 
     def rebac_delete(self, tuple_id: str) -> bool:
         """Delete a relationship tuple with cache invalidation.
@@ -2511,29 +2931,9 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
     def _get_zone_revision_for_grant(self, zone_id: str) -> int:
         """Get current zone revision for consistency during expansion.
 
-        This prevents the "new enemy" problem: files created after the grant
-        revision are not automatically included (user must explicitly include
-        future files or re-grant).
-
-        Args:
-            zone_id: Zone ID
-
-        Returns:
-            Current revision number
+        Delegates to consistency.revision module (Issue #1459).
         """
-        from sqlalchemy import text
-
-        try:
-            query = text("""
-                SELECT current_version FROM rebac_version_sequences
-                WHERE zone_id = :zone_id
-            """)
-            with self.engine.connect() as conn:
-                result = conn.execute(query, {"zone_id": zone_id})
-                row = result.fetchone()
-                return int(row.current_version) if row else 0
-        except (OperationalError, ProgrammingError):
-            return 0
+        return get_zone_revision_for_grant(self.engine, zone_id)
 
     def _get_directory_descendants(
         self,
@@ -3058,11 +3458,16 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
             True if direct relation exists within the zone
         """
 
-        # EXTENSIVE DEBUG LOGGING
-        logger.debug(
-            f"[DIRECT-CHECK] Checking: ({subject.entity_type}:{subject.entity_id}) "
-            f"has '{relation}' on ({obj.entity_type}:{obj.entity_id})? zone={zone_id}"
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "[DIRECT-CHECK] Checking: (%s:%s) has '%s' on (%s:%s)? zone=%s",
+                subject.entity_type,
+                subject.entity_id,
+                relation,
+                obj.entity_type,
+                obj.entity_id,
+                zone_id,
+            )
 
         with self._connection() as conn:
             cursor = self._create_cursor(conn)
@@ -3086,20 +3491,20 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                 zone_id,
                 datetime.now(UTC).isoformat(),
             )
-            logger.debug(f"[DIRECT-CHECK] SQL Query params: {params}")
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("[DIRECT-CHECK] SQL Query params: %s", params)
 
             cursor.execute(self._fix_sql_placeholders(query), params)
 
             row = cursor.fetchone()
-            logger.debug(f"[DIRECT-CHECK] Query result row: {dict(row) if row else None}")
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug("[DIRECT-CHECK] Query result row: %s", dict(row) if row else None)
             if row:
                 # Tuple exists - check conditions if context provided
                 conditions_json = row["conditions"]
 
                 if conditions_json:
                     try:
-                        import json
-
                         conditions = (
                             json.loads(conditions_json)
                             if isinstance(conditions_json, str)
@@ -3120,9 +3525,8 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
             # Cross-zone check for shared-* relations (PR #647, #648)
             # Cross-zone shares are stored in the resource owner's zone
             # but should be visible when checking from the recipient's zone.
-            from nexus.core.rebac import CROSS_ZONE_ALLOWED_RELATIONS
-
-            if relation in CROSS_ZONE_ALLOWED_RELATIONS:
+            # Policy decision delegated to ZoneManager (Issue #1459).
+            if self._zone_manager.is_cross_zone_readable(relation):
                 cursor.execute(
                     self._fix_sql_placeholders(
                         """
@@ -3144,7 +3548,13 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                     ),
                 )
                 if cursor.fetchone():
-                    logger.debug(f"Cross-zone share found: {subject} -> {relation} -> {obj}")
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(
+                            "Cross-zone share found: %s -> %s -> %s",
+                            subject,
+                            relation,
+                            obj,
+                        )
                     return True
 
             # Check for wildcard/public access (*:*) - Issue #1064
@@ -3176,9 +3586,12 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                     ),
                 )
                 if cursor.fetchone():
-                    logger.debug(
-                        f"[DIRECT-CHECK] Wildcard access found: *:* -> {relation} -> {obj}"
-                    )
+                    if logger.isEnabledFor(logging.DEBUG):
+                        logger.debug(
+                            "[DIRECT-CHECK] Wildcard access found: *:* -> %s -> %s",
+                            relation,
+                            obj,
+                        )
                     return True
 
             # Check for userset-as-subject tuple (e.g., group#member)
@@ -3247,78 +3660,9 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
     def _get_version_token(self, zone_id: str = "default") -> str:
         """Get current version token (P0-1).
 
-        BUGFIX (Issue #2): Use DB-backed per-zone sequence instead of in-memory counter.
-        This ensures version tokens are:
-        - Monotonic across process restarts
-        - Consistent across multiple processes/replicas
-        - Scoped per-zone for proper isolation
-
-        Args:
-            zone_id: Zone ID to get version for
-
-        Returns:
-            Monotonic version token string (e.g., "v123")
+        Delegates to consistency.revision module (Issue #1459).
         """
-        with self._connection() as conn:
-            cursor = self._create_cursor(conn)
-
-            # PostgreSQL: Use atomic UPDATE ... RETURNING for increment-and-fetch
-            # SQLite: Use SELECT + UPDATE (less efficient but works)
-            if self.engine.dialect.name == "postgresql":
-                # Atomic increment-and-return
-                cursor.execute(
-                    """
-                    INSERT INTO rebac_version_sequences (zone_id, current_version, updated_at)
-                    VALUES (%s, 1, NOW())
-                    ON CONFLICT (zone_id)
-                    DO UPDATE SET current_version = rebac_version_sequences.current_version + 1,
-                                  updated_at = NOW()
-                    RETURNING current_version
-                    """,
-                    (zone_id,),
-                )
-                row = cursor.fetchone()
-                version = row["current_version"] if row else 1
-            else:
-                # SQLite: Two-step increment
-                cursor.execute(
-                    self._fix_sql_placeholders(
-                        "SELECT current_version FROM rebac_version_sequences WHERE zone_id = ?"
-                    ),
-                    (zone_id,),
-                )
-                row = cursor.fetchone()
-
-                if row:
-                    current = row["current_version"]
-                    new_version = current + 1
-                    cursor.execute(
-                        self._fix_sql_placeholders(
-                            """
-                            UPDATE rebac_version_sequences
-                            SET current_version = ?, updated_at = ?
-                            WHERE zone_id = ?
-                            """
-                        ),
-                        (new_version, datetime.now(UTC).isoformat(), zone_id),
-                    )
-                else:
-                    # First version for this zone
-                    new_version = 1
-                    cursor.execute(
-                        self._fix_sql_placeholders(
-                            """
-                            INSERT INTO rebac_version_sequences (zone_id, current_version, updated_at)
-                            VALUES (?, ?, ?)
-                            """
-                        ),
-                        (zone_id, new_version, datetime.now(UTC).isoformat()),
-                    )
-
-                version = new_version
-
-            conn.commit()
-            return f"v{version}"
+        return increment_version_token(self.engine, self._repo, zone_id)
 
     def _get_cached_check_zone_aware_bounded(
         self,

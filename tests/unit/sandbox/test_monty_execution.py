@@ -21,8 +21,7 @@ except ImportError:
 
 pytestmark = pytest.mark.skipif(not MONTY_AVAILABLE, reason="pydantic-monty not installed")
 
-from nexus.sandbox.sandbox_monty_provider import MontySandboxProvider
-
+from nexus.sandbox.sandbox_monty_provider import MontySandboxProvider  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Fixtures

@@ -36,12 +36,12 @@ pytestmark = [
     pytest.mark.skipif(not MONTY_AVAILABLE, reason="pydantic-monty not installed"),
 ]
 
-from nexus.core.agent_record import AgentState
-from nexus.core.agent_registry import AgentRegistry
-from nexus.sandbox.auth_service import SandboxAuthService
-from nexus.sandbox.sandbox_manager import SandboxManager
-from nexus.sandbox.sandbox_monty_provider import MontySandboxProvider
-from nexus.storage.models import Base
+from nexus.core.agent_record import AgentState  # noqa: E402
+from nexus.core.agent_registry import AgentRegistry  # noqa: E402
+from nexus.sandbox.auth_service import SandboxAuthService  # noqa: E402
+from nexus.sandbox.sandbox_manager import SandboxManager  # noqa: E402
+from nexus.sandbox.sandbox_monty_provider import MontySandboxProvider  # noqa: E402
+from nexus.storage.models import Base  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

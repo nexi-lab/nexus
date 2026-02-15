@@ -136,7 +136,7 @@ def check_permissions_bulk_rust(
                 raise
 
         return result  # type: ignore[no-any-return]
-    except Exception as e:
+    except (RuntimeError, ValueError) as e:
         logger.error(f"Rust permission check failed: {e}", exc_info=True)
         raise
 
@@ -185,7 +185,7 @@ def check_permissions_bulk_with_fallback(
                 f"[RUST-INNER] Pure Rust computation: {elapsed * 1000:.1f}ms for {len(checks)} checks"
             )
             return result
-        except Exception as e:
+        except (RuntimeError, ValueError) as e:
             logger.warning(f"Rust permission check failed, falling back to Python: {e}")
             # Fall through to Python implementation
 
@@ -358,7 +358,7 @@ def check_permission_single_rust(
             f"{permission} {object_type}:{object_id} = {result} ({elapsed * 1000:.2f}ms)"
         )
         return result
-    except Exception as e:
+    except (RuntimeError, ValueError) as e:
         logger.error(f"Rust single permission check failed: {e}", exc_info=True)
         raise
 
@@ -404,7 +404,7 @@ def check_permission_single_with_fallback(
                 tuples,
                 namespace_configs,
             )
-        except Exception as e:
+        except (RuntimeError, ValueError) as e:
             logger.warning(f"Rust single check failed, falling back to Python: {e}")
             # Fall through to Python
 
@@ -496,7 +496,7 @@ def expand_subjects_rust(
         )
         # Convert from list of tuples to list of tuples (already correct format)
         return [(t[0], t[1]) for t in result]
-    except Exception as e:
+    except (RuntimeError, ValueError) as e:
         logger.error(f"Rust expand_subjects failed: {e}", exc_info=True)
         raise
 
@@ -535,7 +535,7 @@ def expand_subjects_with_fallback(
                 tuples,
                 namespace_configs,
             )
-        except Exception as e:
+        except (RuntimeError, ValueError) as e:
             logger.warning(f"Rust expand_subjects failed, falling back to Python: {e}")
             # Fall through to Python
 
@@ -620,7 +620,7 @@ def list_objects_for_subject_rust(
         )
         # Convert from list of tuples to list of tuples (already correct format)
         return [(t[0], t[1]) for t in result]
-    except Exception as e:
+    except (RuntimeError, ValueError) as e:
         logger.error(f"Rust list_objects_for_subject failed: {e}", exc_info=True)
         raise
 
@@ -671,7 +671,7 @@ def list_objects_for_subject_with_fallback(
                 limit,
                 offset,
             )
-        except Exception as e:
+        except (RuntimeError, ValueError) as e:
             logger.warning(f"Rust list_objects_for_subject failed, falling back to Python: {e}")
             # Fall through to Python
 

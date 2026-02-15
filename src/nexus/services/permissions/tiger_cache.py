@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from pyroaring import BitMap as RoaringBitmap
+from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Connection, Engine
@@ -595,7 +596,7 @@ class TigerCache:
         except concurrent.futures.TimeoutError:
             logger.warning("[TIGER] L2 Dragonfly operation timed out")
             return None
-        except Exception as e:
+        except (TimeoutError, RuntimeError) as e:
             logger.warning(f"[TIGER] L2 Dragonfly error: {e}")
             return None
 
@@ -1243,7 +1244,7 @@ class TigerCache:
                     execute(new_conn)
                 # Transaction committed after exiting 'with' block
                 logger.info(f"[TIGER] L3 PostgreSQL write COMMITTED for {key}")
-        except Exception as e:
+        except (OperationalError, IntegrityError, ProgrammingError) as e:
             logger.error(f"[TIGER] L3 PostgreSQL write FAILED for {key}: {e}")
             raise
 
@@ -1577,7 +1578,7 @@ class TigerCache:
             )
             return True
 
-        except Exception as e:
+        except (OperationalError, IntegrityError, ProgrammingError) as e:
             logger.error(f"[TIGER] Write-through failed for {key}: {e}")
             return False
 
@@ -1728,7 +1729,7 @@ class TigerCache:
             )
             return True
 
-        except Exception as e:
+        except (OperationalError, IntegrityError, ProgrammingError) as e:
             logger.error(f"[TIGER] Write-through revoke failed for {key}: {e}")
             return False
 
@@ -1938,7 +1939,7 @@ class TigerCache:
             logger.debug(f"[TIGER] Persisted bulk bitmap for {key} ({len(bitmap)} resources)")
             return True
 
-        except Exception as e:
+        except (OperationalError, IntegrityError, ProgrammingError) as e:
             logger.error(f"[TIGER] persist_bitmap_bulk failed for {key}: {e}")
             return False
 
@@ -2030,7 +2031,7 @@ class TigerCache:
                     return int(row.grant_id) if row else None
                 return None
 
-        except Exception as e:
+        except (OperationalError, IntegrityError, ProgrammingError) as e:
             logger.error(f"[TIGER] record_directory_grant failed: {e}")
             return None
 
@@ -2102,7 +2103,7 @@ class TigerCache:
 
             return grants
 
-        except Exception as e:
+        except (OperationalError, ProgrammingError) as e:
             logger.error(f"[TIGER] get_directory_grants_for_path failed: {e}")
             return []
 
@@ -2259,7 +2260,7 @@ class TigerCache:
 
             return (total_expanded, True)
 
-        except Exception as e:
+        except (OperationalError, IntegrityError, ProgrammingError) as e:
             logger.error(f"[TIGER] expand_directory_grant failed: {e}")
             self._update_grant_status(
                 subject_type,
@@ -2338,7 +2339,7 @@ class TigerCache:
         try:
             with self._engine.begin() as conn:
                 conn.execute(query, params)
-        except Exception as e:
+        except (OperationalError, IntegrityError, ProgrammingError) as e:
             logger.error(f"[TIGER] _update_grant_status failed: {e}")
 
     def remove_directory_grant(
@@ -2395,7 +2396,7 @@ class TigerCache:
             )
             return True
 
-        except Exception as e:
+        except (OperationalError, IntegrityError, ProgrammingError) as e:
             logger.error(f"[TIGER] remove_directory_grant failed: {e}")
             return False
 
@@ -2463,7 +2464,7 @@ class TigerCache:
                     f"{grant['subject_type']}:{grant['subject_id']} ({grant['permission']})"
                 )
 
-            except Exception as e:
+            except (OperationalError, IntegrityError, ProgrammingError) as e:
                 logger.error(f"[TIGER] Failed to add file to grant: {e}")
 
         if added_count > 0:
@@ -2500,7 +2501,7 @@ class TigerCache:
                     logger.debug(
                         f"[TIGER] Incremented zone revision for {zone_id} after adding file to grants"
                     )
-            except Exception as e:
+            except (OperationalError, IntegrityError, ProgrammingError) as e:
                 logger.warning(f"[TIGER] Failed to increment zone revision: {e}")
 
         return added_count
@@ -2554,7 +2555,7 @@ class TigerCache:
             logger.info(f"[TIGER] Warmed cache with {loaded} entries from database")
             return loaded
 
-        except Exception as e:
+        except (OperationalError, ProgrammingError) as e:
             logger.error(f"[TIGER] warm_from_db failed: {e}")
             return loaded
 
@@ -2708,7 +2709,6 @@ class TigerCacheUpdater:
         import sqlite3
 
         from sqlalchemy import text
-        from sqlalchemy.exc import OperationalError
 
         if self._rebac_manager is None:
             logger.warning("[TIGER] Cannot process queue - no ReBAC manager set")
@@ -2717,7 +2717,7 @@ class TigerCacheUpdater:
         # Reset any stuck entries before processing
         try:
             self.reset_stuck_entries(stuck_timeout_minutes=5)
-        except Exception as e:
+        except (OperationalError, IntegrityError, ProgrammingError) as e:
             logger.debug(f"[TIGER] Could not reset stuck entries: {e}")
 
         now_sql = "NOW()" if self._is_postgresql else "datetime('now')"
@@ -2819,7 +2819,7 @@ class TigerCacheUpdater:
                                 ),
                                 {"qid": entry.queue_id, "err": str(e)[:1000]},
                             )
-                        except Exception as update_err:
+                        except (OperationalError, IntegrityError, ProgrammingError) as update_err:
                             # If we can't update the status, just log and continue
                             logger.debug(
                                 f"[TIGER] Could not update queue entry status: {update_err}"
@@ -3052,7 +3052,7 @@ class DirectoryGrantExpander:
                         }
                     )
                 return grants
-        except Exception as e:
+        except (OperationalError, ProgrammingError) as e:
             logger.error(f"[LEOPARD-WORKER] Failed to get pending grants: {e}")
             return []
 
@@ -3087,7 +3087,7 @@ class DirectoryGrantExpander:
                     },
                 )
                 return result.rowcount > 0
-        except Exception as e:
+        except (OperationalError, IntegrityError, ProgrammingError) as e:
             logger.error(f"[LEOPARD-WORKER] Failed to mark in_progress: {e}")
             return False
 
@@ -3120,7 +3120,7 @@ class DirectoryGrantExpander:
                     },
                 )
                 return result.rowcount > 0
-        except Exception as e:
+        except (OperationalError, IntegrityError, ProgrammingError) as e:
             logger.error(f"[LEOPARD-WORKER] Failed to update progress: {e}")
             return False
 
@@ -3155,7 +3155,7 @@ class DirectoryGrantExpander:
                     },
                 )
                 return result.rowcount > 0
-        except Exception as e:
+        except (OperationalError, IntegrityError, ProgrammingError) as e:
             logger.error(f"[LEOPARD-WORKER] Failed to mark completed: {e}")
             return False
 
@@ -3189,7 +3189,7 @@ class DirectoryGrantExpander:
                     },
                 )
                 return result.rowcount > 0
-        except Exception as e:
+        except (OperationalError, IntegrityError, ProgrammingError) as e:
             logger.error(f"[LEOPARD-WORKER] Failed to mark failed: {e}")
             return False
 
@@ -3218,7 +3218,7 @@ class DirectoryGrantExpander:
                 zone_id=zone_id,
             )
             return [f.path for f in files if f.path]
-        except Exception as e:
+        except (OperationalError, ProgrammingError) as e:
             logger.error(f"[LEOPARD-WORKER] Failed to list directory: {e}")
             return []
 
@@ -3303,7 +3303,7 @@ class DirectoryGrantExpander:
             )
             return expanded_count, True
 
-        except Exception as e:
+        except (OperationalError, IntegrityError, ProgrammingError) as e:
             error_msg = f"Expansion failed: {e}"
             logger.error(f"[LEOPARD-WORKER] Grant {grant_id}: {error_msg}")
             self._mark_failed(grant_id, error_msg)

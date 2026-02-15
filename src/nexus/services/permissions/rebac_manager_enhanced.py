@@ -35,6 +35,8 @@ from enum import Enum
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy.exc import OperationalError, ProgrammingError
+
 from nexus.core.rebac import CROSS_ZONE_ALLOWED_RELATIONS, Entity
 from nexus.services.permissions.rebac_manager_zone_aware import ZoneAwareReBACManager
 from nexus.services.permissions.utils.zone import normalize_zone_id
@@ -323,6 +325,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
         # This dramatically reduces DB queries: from O(T) per check to O(1) amortized
         self._zone_graph_cache: dict[str, tuple[list[dict[str, Any]], dict[str, Any], float]] = {}
         self._zone_graph_cache_ttl = cache_ttl_seconds  # Reuse existing TTL
+        self._zone_graph_cache_lock = threading.RLock()
 
         # Leopard index for O(1) transitive group lookups (Issue #692)
         self._leopard: LeopardIndex | None = None
@@ -993,7 +996,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                 )
                 return result
 
-        except Exception as e:
+        except (RuntimeError, ValueError) as e:
             logger.warning(f"Rust single permission check failed, falling back to Python: {e}")
             # Fall through to Python implementation
 
@@ -1103,18 +1106,19 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
         Returns:
             Cached tuples list or None if cache miss/expired
         """
-        if zone_id not in self._zone_graph_cache:
-            return None
+        with self._zone_graph_cache_lock:
+            if zone_id not in self._zone_graph_cache:
+                return None
 
-        tuples, _namespace_configs, cached_at = self._zone_graph_cache[zone_id]
-        age = time.perf_counter() - cached_at
+            tuples, _namespace_configs, cached_at = self._zone_graph_cache[zone_id]
+            age = time.perf_counter() - cached_at
 
-        if age > self._zone_graph_cache_ttl:
-            # Cache expired
-            del self._zone_graph_cache[zone_id]
-            return None
+            if age > self._zone_graph_cache_ttl:
+                # Cache expired
+                del self._zone_graph_cache[zone_id]
+                return None
 
-        return tuples
+            return tuples
 
     def _cache_zone_tuples(self, zone_id: str, tuples: list[dict[str, Any]]) -> None:
         """Cache zone tuples with timestamp.
@@ -1124,7 +1128,8 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
             tuples: Tuples list to cache
         """
         namespace_configs = self._get_namespace_configs_for_rust()
-        self._zone_graph_cache[zone_id] = (tuples, namespace_configs, time.perf_counter())
+        with self._zone_graph_cache_lock:
+            self._zone_graph_cache[zone_id] = (tuples, namespace_configs, time.perf_counter())
 
     def get_zone_tuples(self, zone_id: str) -> list[dict[str, Any]]:
         """Fetch all permission tuples for a zone (for export/portability).
@@ -1299,13 +1304,16 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
             zone_id: Specific zone to invalidate, or None to clear all
         """
 
-        if zone_id is None:
-            count = len(self._zone_graph_cache)
-            self._zone_graph_cache.clear()
-            logger.debug(f"[GRAPH-CACHE] Cleared all {count} cached zone graphs")
-        elif zone_id in self._zone_graph_cache:
-            del self._zone_graph_cache[zone_id]
-            logger.debug(f"[GRAPH-CACHE] Invalidated cache for zone {zone_id}")
+        with self._zone_graph_cache_lock:
+            if zone_id is None:
+                count = len(self._zone_graph_cache)
+                self._zone_graph_cache.clear()
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug("[GRAPH-CACHE] Cleared all %d cached zone graphs", count)
+            elif zone_id in self._zone_graph_cache:
+                del self._zone_graph_cache[zone_id]
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug("[GRAPH-CACHE] Invalidated cache for zone %s", zone_id)
 
     # =========================================================================
     # Issue #922: Permission Boundary Cache Invalidation
@@ -1411,7 +1419,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
             try:
                 for permission in permissions:
                     callback(zone_id, subject_type, subject_id, permission, object_id)
-            except Exception as e:
+            except (RuntimeError, ValueError, KeyError) as e:
                 logger.warning(f"[BOUNDARY-CACHE] Invalidator {callback_id} failed: {e}")
 
     # =========================================================================
@@ -1490,7 +1498,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                 logger.debug(
                     f"[DIR-VIS-CACHE] Invalidator {callback_id} called for {zone_id}:{object_path}"
                 )
-            except Exception as e:
+            except (RuntimeError, ValueError, KeyError) as e:
                 logger.warning(f"[DIR-VIS-CACHE] Invalidator {callback_id} failed: {e}")
 
     def rebac_write(  # type: ignore[override]  # Issue #1081: Returns WriteResult instead of str
@@ -1581,7 +1589,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                     f"[LEOPARD] Updated closure for {subject_type}:{subject_id} -> "
                     f"{object_type}:{object_id}: {entries} entries"
                 )
-            except Exception as e:
+            except (OperationalError, ProgrammingError) as e:
                 # Log but don't fail the write - closure can be rebuilt
                 logger.warning(f"[LEOPARD] Failed to update closure: {e}")
 
@@ -1734,7 +1742,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                                 f"[LEOPARD] Updated closure for {subject_type}:{subject_id} -> "
                                 f"{object_type}:{object_id}: {entries} entries"
                             )
-                        except Exception as e:
+                        except (OperationalError, ProgrammingError) as e:
                             # Log but don't fail - closure can be rebuilt
                             logger.warning(f"[LEOPARD] Failed to update closure: {e}")
 
@@ -1901,7 +1909,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                                 resource_id=object_id,
                                 zone_id=normalize_zone_id(zone_id),
                             )
-                        except Exception as e:
+                        except (OperationalError, ProgrammingError) as e:
                             logger.debug(f"[TIGER] Revoke failed: {e}")
 
             # Leopard: Update transitive closure for membership relations
@@ -1921,7 +1929,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                         f"{tuple_info['subject_type']}:{tuple_info['subject_id']} -> "
                         f"{tuple_info['object_type']}:{tuple_info['object_id']}: {entries} entries"
                     )
-                except Exception as e:
+                except (OperationalError, ProgrammingError) as e:
                     # Log but don't fail the delete - closure can be rebuilt
                     logger.warning(f"[LEOPARD] Failed to update closure on delete: {e}")
 
@@ -2125,7 +2133,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                 # The permission grant (write path) will populate via persist_single_grant
                 if logger:
                     logger.debug(f"[TIGER] Read skip: resource {object[1]} not in memory cache")
-        except Exception as e:
+        except (RuntimeError, ValueError, KeyError) as e:
             # Don't fail the permission check if Tiger write fails
             if logger:
                 logger.debug(f"[TIGER] Write-through failed: {e}")
@@ -2482,7 +2490,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
             try:
                 # Check if any files exist under this path
                 return bool(self._metadata_store.is_implicit_directory(path))
-            except Exception as e:
+            except (RuntimeError, OperationalError) as e:
                 logger.debug(f"[LEOPARD] Failed to check directory via metadata: {e}")
 
         # Default: treat paths without extensions as potential directories
@@ -2633,7 +2641,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                 result = conn.execute(query, {"zone_id": zone_id})
                 row = result.fetchone()
                 return int(row.current_version) if row else 0
-        except Exception:
+        except (OperationalError, ProgrammingError):
             return 0
 
     def _get_directory_descendants(
@@ -2660,7 +2668,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                     zone_id=zone_id,
                 )
                 return [f.path for f in files]
-            except Exception as e:
+            except (RuntimeError, OperationalError) as e:
                 logger.warning(f"[LEOPARD] Metadata store query failed: {e}")
 
         # Fallback: query file_paths table directly
@@ -2678,7 +2686,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
             with self.engine.connect() as conn:
                 result = conn.execute(query, {"prefix": f"{directory_path}%", "zone_id": zone_id})
                 return [row.virtual_path for row in result]
-        except Exception as e:
+        except (RuntimeError, OperationalError) as e:
             logger.error(f"[LEOPARD] Failed to query descendants: {e}")
             return []
 
@@ -2820,7 +2828,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                             logger.debug(f"{indent}└─[✅ GRANTED] via relation '{relation}'")
                             memo[memo_key] = True  # Cache positive result
                             return True
-                    except Exception as e:
+                    except (RuntimeError, ValueError) as e:
                         logger.error(
                             f"{indent}│ └─[ERROR] Exception while checking '{relation}': {type(e).__name__}: {e}"
                         )
@@ -2884,7 +2892,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                     )
                     # Re-raise to propagate to caller
                     raise
-                except Exception as e:
+                except (RuntimeError, ValueError) as e:
                     logger.error(
                         f"{indent}[depth={depth}]   [{i + 1}/{len(union_relations)}] Unexpected exception while checking '{rel}': {type(e).__name__}: {e}"
                     )
@@ -4120,7 +4128,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                                         tiger_updates[group_key] = set()
                                     tiger_updates[group_key].add(resource_int_id)
                                     tiger_writes += 1
-                            except Exception as e:
+                            except (KeyError, ValueError) as e:
                                 logger.debug(f"[TIGER] Failed to get int_id for {obj}: {e}")
 
                     # Bulk add to Tiger Cache bitmaps (memory)
@@ -4150,7 +4158,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                                     resource_int_ids=ids,
                                     zone_id=t,
                                 )
-                            except Exception as e:
+                            except (RuntimeError, OperationalError) as e:
                                 logger.debug(f"[TIGER] Background persist failed: {e}")
 
                     threading.Thread(
@@ -4170,7 +4178,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                     f"✅ [BULK-DEBUG] Rust acceleration successful for {len(cache_misses)} checks"
                 )
 
-            except Exception as e:
+            except (RuntimeError, ValueError) as e:
                 logger.warning(
                     f"[BULK-DEBUG] Rust acceleration failed: {e}, falling back to Python"
                 )
@@ -4199,7 +4207,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                         bulk_memo_cache=bulk_memo_cache,  # Pass shared memo cache
                         memo_stats=memo_stats,  # Pass stats tracker
                     )
-                except Exception as e:
+                except (RuntimeError, ValueError, OperationalError) as e:
                     logger.warning(f"Bulk check failed for {check}, falling back: {e}")
                     # Fallback to individual check
                     result = self.rebac_check(
@@ -4243,7 +4251,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                                     fallback_tiger_updates[group_key] = set()
                                 fallback_tiger_updates[group_key].add(resource_int_id)
                                 tiger_writes += 1
-                        except Exception as e:
+                        except (KeyError, ValueError) as e:
                             logger.debug(f"[TIGER] Failed to get int_id for {obj}: {e}")
 
                 # Bulk add to Tiger Cache bitmaps (memory)
@@ -4273,7 +4281,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                                 resource_int_ids=ids,
                                 zone_id=t,
                             )
-                        except Exception as e:
+                        except (RuntimeError, OperationalError) as e:
                             logger.debug(f"[TIGER] Background persist failed: {e}")
 
                 threading.Thread(
@@ -4428,7 +4436,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                     f"[LIST-OBJECTS] Rust completed: {len(result)} objects in {elapsed:.1f}ms"
                 )
                 return result
-            except Exception as e:
+            except (RuntimeError, ValueError) as e:
                 logger.warning(f"Rust list_objects_for_subject failed, falling back to Python: {e}")
                 # Fall through to Python implementation
 

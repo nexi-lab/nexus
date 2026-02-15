@@ -13,6 +13,8 @@ import logging
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy.exc import OperationalError
+
 from nexus.core.rpc_decorator import rpc_expose
 from nexus.services.permissions.utils.zone import normalize_zone_id
 
@@ -393,7 +395,7 @@ class NexusFSReBACMixin:
                         except ImportError:
                             # pandas not available, skip validation
                             pass
-                        except Exception as e:
+                        except (RuntimeError, pd.errors.ParserError) as e:
                             # If CSV parsing fails (non-validation error), provide warning but allow creation
                             logger.warning(
                                 f"Could not validate CSV columns for {file_path}: {e}. "
@@ -402,7 +404,7 @@ class NexusFSReBACMixin:
                 except ValueError:
                     # Re-raise validation errors
                     raise
-                except Exception as e:
+                except OSError as e:
                     # If file read fails, skip validation (file might not exist yet)
                     logger.debug(f"Could not read file {file_path} for column validation: {e}")
 
@@ -543,7 +545,7 @@ class NexusFSReBACMixin:
                     return True
 
             return False
-        except Exception as e:
+        except (RuntimeError, ValueError) as e:
             logger.debug(f"_has_descendant_access_for_traverse: check failed: {e}")
             return False
 
@@ -2178,7 +2180,7 @@ class NexusFSReBACMixin:
         # Parse CSV data
         try:
             df = pd.read_csv(io.StringIO(data))
-        except Exception as e:
+        except (ValueError, pd.errors.ParserError) as e:
             raise RuntimeError(f"Failed to parse CSV data: {e}") from e
 
         # Get configuration
@@ -2241,7 +2243,7 @@ class NexusFSReBACMixin:
                     agg_series = pd.Series([agg_value] * len(df), name=agg_col_name)
                     result_columns.append((agg_col_name, agg_series))
 
-                except Exception as e:
+                except (ValueError, TypeError, KeyError) as e:
                     # If aggregation fails, store error message
                     if col not in aggregation_results:
                         aggregation_results[col] = {}
@@ -2469,7 +2471,7 @@ class NexusFSReBACMixin:
                     zone_id=effective_zone_id,
                 )
                 tuple_ids.append(tuple_id)
-            except Exception as e:
+            except (RuntimeError, ValueError, OperationalError) as e:
                 logger.warning(f"Failed to grant TRAVERSE on {dir_path}: {e}")
 
         return tuple_ids
@@ -2555,7 +2557,7 @@ class NexusFSReBACMixin:
                     if subject_type and subject_id:
                         subjects_set.add((subject_type, subject_id))
                 subjects = list(subjects_set)
-            except Exception:
+            except (KeyError, TypeError, AttributeError):
                 subjects = []
 
         # Queue updates for each subject
@@ -2577,7 +2579,7 @@ class NexusFSReBACMixin:
             try:
                 # Use small batch size since each entry can take 10-40 seconds
                 self._require_rebac.tiger_process_queue(batch_size=5)
-            except Exception as e:
+            except (RuntimeError, OperationalError) as e:
                 logger.warning(f"[WARM-TIGER] Queue processing failed: {e}")
 
         return entries_created

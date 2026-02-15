@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session
 
 from nexus.storage.models import EntityRegistryModel
@@ -327,7 +328,7 @@ class EntityRegistry:
                         session.delete(entity_to_delete)
                         session.commit()
                 break  # Success
-            except Exception as e:
+            except (OperationalError, ProgrammingError) as e:
                 if "database is locked" in str(e) and attempt < max_retries - 1:
                     time.sleep(0.1 * (attempt + 1))  # Exponential backoff
                     continue

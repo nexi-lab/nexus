@@ -19,6 +19,8 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
+from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
+
 from nexus.core.rebac import (
     DEFAULT_FILE_NAMESPACE,
     DEFAULT_GROUP_NAMESPACE,
@@ -237,7 +239,7 @@ class ReBACManager:
 
                     match = re.search(r"PostgreSQL (\d+)", version_str or "")
                     self._pg_version = int(match.group(1)) if match else 0
-            except Exception:
+            except (IndexError, ValueError, AttributeError):
                 self._pg_version = 0
 
         return self._pg_version >= 18
@@ -428,7 +430,7 @@ class ReBACManager:
                     sa_conn.commit()
                     self._namespaces_initialized = True
                     logger.info("Default namespaces initialized successfully")
-                except Exception as e:
+                except (OperationalError, ProgrammingError, IntegrityError) as e:
                     sa_conn.rollback()
                     logger.warning(f"Failed to initialize namespaces: {type(e).__name__}: {e}")
                     import traceback
@@ -652,7 +654,7 @@ class ReBACManager:
                             ),
                         )
             conn.commit()
-        except Exception as e:
+        except (OperationalError, ProgrammingError) as e:
             # If tables don't exist yet or other error, skip initialization
             logger.warning(f"Failed to register default namespaces: {type(e).__name__}: {e}")
             import traceback
@@ -1281,7 +1283,7 @@ class ReBACManager:
                 if created_count > 0:
                     self._tuple_version += 1  # Invalidate Rust graph cache
 
-            except Exception as e:
+            except (OperationalError, IntegrityError, ProgrammingError) as e:
                 # Rollback transaction on any error to maintain consistency
                 conn.rollback()
                 logger.error(
@@ -1658,7 +1660,7 @@ class ReBACManager:
                                 resource_type=old_obj.entity_type,
                                 zone_id=normalize_zone_id(zone_id),
                             )
-                        except Exception as e:
+                        except (RuntimeError, ValueError) as e:
                             logger.warning(f"Tiger Cache invalidation failed during rename: {e}")
 
                     self._invalidate_cache_for_tuple(
@@ -1863,7 +1865,7 @@ class ReBACManager:
                             int_id = resource_map._uuid_to_int.pop(key, None)
                             if int_id is not None and hasattr(resource_map, "_int_to_uuid"):
                                 resource_map._int_to_uuid.pop(int_id, None)
-                except Exception as e:
+                except (KeyError, AttributeError) as e:
                     logger.warning(f"[UPDATE-OBJECT-PATH] Failed to update tiger_resource_map: {e}")
 
             conn.commit()
@@ -2016,7 +2018,7 @@ class ReBACManager:
                         subject_entity, permission, object_entity, result, zone_id, delta=delta
                     )
                     return result
-                except Exception:
+                except (RuntimeError, ValueError, OperationalError):
                     # On error, cancel the compute lock so others don't wait forever
                     self._l1_cache.cancel_compute(cache_key)
                     raise
@@ -2195,7 +2197,7 @@ class ReBACManager:
                             zone_id=None,
                             delta=avg_delta,
                         )
-                except Exception as e:
+                except (RuntimeError, ValueError) as e:
                     logger.warning(f"Rust batch computation failed, falling back to Python: {e}")
                     # Fall back to Python computation
                     self._compute_batch_python(uncached_checks, results)
@@ -3928,7 +3930,7 @@ class ReBACManager:
             self._cache_check_result(subject_entity, permission, object_entity, result, zone_id)
 
             logger.debug(f"✅ REFRESH: Background refresh complete for {cache_key[:50]}...")
-        except Exception as e:
+        except (RuntimeError, ValueError, OperationalError) as e:
             logger.warning(f"⚠️ REFRESH: Background refresh failed for {cache_key[:50]}: {e}")
         finally:
             if self._l1_cache:
@@ -4146,7 +4148,7 @@ class ReBACManager:
                             logger.debug(
                                 f"Eager cache update: ({subject}, {permission}, {obj}) = {result}"
                             )
-                        except Exception as e:
+                        except (RuntimeError, ValueError, OperationalError) as e:
                             # If recomputation fails, fall back to invalidation
                             logger.debug(
                                 f"Eager recomputation failed, falling back to invalidation: {e}"

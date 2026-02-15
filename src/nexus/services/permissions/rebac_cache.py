@@ -37,6 +37,7 @@ from collections.abc import Callable
 from typing import Any
 
 from cachetools import TTLCache
+from sqlalchemy.exc import OperationalError
 
 from nexus.services.permissions.utils.zone import normalize_zone_id
 
@@ -476,7 +477,7 @@ class ReBACPermissionCache:
                 revision = self._revision_fetcher(effective_zone)
                 self._revision_cache[effective_zone] = (revision, current_time)
                 return revision // self._revision_quantization_window
-            except Exception as e:
+            except (RuntimeError, OperationalError) as e:
                 logger.warning(f"Failed to fetch revision for {effective_zone}: {e}")
 
         return 0  # Fallback: all entries share same bucket (still functional)
@@ -507,7 +508,7 @@ class ReBACPermissionCache:
                 revision = self._revision_fetcher(effective_zone)
                 self._revision_cache[effective_zone] = (revision, current_time)
                 return revision
-            except Exception as e:
+            except (RuntimeError, OperationalError) as e:
                 logger.warning(f"Failed to fetch revision for {effective_zone}: {e}")
 
         return 0  # Fallback

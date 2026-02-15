@@ -9,11 +9,14 @@ from unittest.mock import MagicMock, Mock
 
 import pytest
 
-from nexus.services.permissions.nexus_fs_rebac import NexusFSReBACMixin
+from nexus.core.nexus_fs import NexusFS
 
 
-class MockNexusFS(NexusFSReBACMixin):
-    """Test fixture class that provides mock attributes for NexusFSReBACMixin."""
+class MockNexusFS:
+    """Test fixture class that provides mock attributes for ReBAC methods on NexusFS.
+
+    Uses NexusFS methods directly by binding them to this mock class.
+    """
 
     def __init__(self, rebac_manager=None, enforce_permissions=True):
         self._rebac_manager = rebac_manager
@@ -23,6 +26,42 @@ class MockNexusFS(NexusFSReBACMixin):
     def _validate_path(self, path):
         """Mock path validation that returns path unchanged."""
         return path
+
+    # Bind ReBAC methods from NexusFS to this mock class
+    _require_rebac = NexusFS._require_rebac  # type: ignore[assignment]
+    _get_subject_from_context = NexusFS._get_subject_from_context
+    _check_share_permission = NexusFS._check_share_permission
+    rebac_create = NexusFS.rebac_create
+    rebac_check = NexusFS.rebac_check
+    rebac_expand = NexusFS.rebac_expand
+    rebac_explain = NexusFS.rebac_explain
+    rebac_check_batch = NexusFS.rebac_check_batch
+    rebac_delete = NexusFS.rebac_delete
+    rebac_list_tuples = NexusFS.rebac_list_tuples
+    get_namespace = NexusFS.get_namespace
+    set_rebac_option = NexusFS.set_rebac_option
+    get_rebac_option = NexusFS.get_rebac_option
+    register_namespace = NexusFS.register_namespace
+    namespace_create = NexusFS.namespace_create
+    namespace_list = NexusFS.namespace_list
+    namespace_delete = NexusFS.namespace_delete
+    rebac_expand_with_privacy = NexusFS.rebac_expand_with_privacy
+    grant_consent = NexusFS.grant_consent
+    revoke_consent = NexusFS.revoke_consent
+    make_public = NexusFS.make_public
+    make_private = NexusFS.make_private
+    share_with_user = NexusFS.share_with_user
+    share_with_group = NexusFS.share_with_group
+    revoke_share = NexusFS.revoke_share
+    revoke_share_by_id = NexusFS.revoke_share_by_id
+    list_outgoing_shares = NexusFS.list_outgoing_shares
+    list_incoming_shares = NexusFS.list_incoming_shares
+    get_dynamic_viewer_config = NexusFS.get_dynamic_viewer_config
+    apply_dynamic_viewer_filter = NexusFS.apply_dynamic_viewer_filter
+    read_with_dynamic_viewer = NexusFS.read_with_dynamic_viewer
+    grant_traverse_on_implicit_dirs = NexusFS.grant_traverse_on_implicit_dirs
+    process_tiger_cache_queue = NexusFS.process_tiger_cache_queue
+    warm_tiger_cache = NexusFS.warm_tiger_cache
 
 
 class TestRequireRebac:

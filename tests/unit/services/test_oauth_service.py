@@ -255,8 +255,8 @@ class TestOAuthGetAuthUrl:
             },
         )
 
-        # _pkce_cache is imported from nexus.core.nexus_fs_oauth inside the method
-        with patch("nexus.core.nexus_fs_oauth._pkce_cache", {}, create=True):
+        # _pkce_cache is in nexus.services.oauth_service (moved from mixin, Issue #1387)
+        with patch("nexus.services.oauth_service._pkce_cache", {}):
             result = await service.oauth_get_auth_url(
                 provider="x",
                 redirect_uri="http://localhost:3000/oauth/callback",

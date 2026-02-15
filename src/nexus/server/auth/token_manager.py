@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import Any
 
 from cachetools import TTLCache
-from sqlalchemy import create_engine, select, update
+from sqlalchemy import create_engine, delete, select, update
 from sqlalchemy.orm import sessionmaker
 
 from nexus.core.exceptions import AuthenticationError
@@ -213,7 +213,7 @@ class TokenManager:
                     ip_address=ip_address,
                 )
                 self._invalidate_cache(provider, user_email, zone_id)
-                return existing.credential_id
+                return str(existing.credential_id)
             else:
                 token_family_id = str(uuid.uuid4())
                 model = OAuthCredentialModel(
@@ -731,7 +731,7 @@ class TokenManager:
         cutoff = datetime.now(UTC) - timedelta(days=_HISTORY_RETENTION_DAYS)
         try:
             session.execute(
-                RefreshTokenHistoryModel.__table__.delete().where(
+                delete(RefreshTokenHistoryModel).where(
                     RefreshTokenHistoryModel.token_family_id == token_family_id,
                     RefreshTokenHistoryModel.rotated_at < cutoff,
                 )

@@ -516,8 +516,8 @@ class TokenManager:
             user_email: User's email
             zone_id: Optional zone ID
         """
-        # TODO: Implement proper audit logging to database
-        # For now, just log to application logger
+        # Audit logging: currently writes to application logger only.
+        # Database-backed audit trail deferred to dedicated audit service.
         logger.info(
             f"AUDIT: {operation} | provider={provider} | user={user_email} | zone={zone_id}"
         )

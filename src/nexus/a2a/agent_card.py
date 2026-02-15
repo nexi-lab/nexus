@@ -18,6 +18,7 @@ from nexus.a2a.models import (
     AgentSkill,
     AuthScheme,
 )
+from nexus.constants import DEFAULT_NEXUS_URL
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ class AgentCardCache:
         *,
         config: Any = None,
         skills: list[Any] | None = None,
-        base_url: str = "http://localhost:2026",
+        base_url: str = DEFAULT_NEXUS_URL,
         auth_provider: Any = None,
         force_rebuild: bool = False,
     ) -> bytes:
@@ -91,7 +92,7 @@ def get_cached_card_bytes(
     *,
     config: Any = None,
     skills: list[Any] | None = None,
-    base_url: str = "http://localhost:2026",
+    base_url: str = DEFAULT_NEXUS_URL,
     auth_provider: Any = None,
     force_rebuild: bool = False,
 ) -> bytes:
@@ -122,7 +123,7 @@ def build_agent_card(
     *,
     config: Any = None,
     skills: list[Any] | None = None,
-    base_url: str = "http://localhost:2026",
+    base_url: str = DEFAULT_NEXUS_URL,
     auth_provider: Any = None,
 ) -> AgentCard:
     """Build an Agent Card from server configuration and skills.

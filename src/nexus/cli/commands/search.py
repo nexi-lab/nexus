@@ -144,10 +144,10 @@ def grep(
     line_number: bool,
     files_with_matches: bool,
     count: bool,
-    invert_match: bool,  # noqa: ARG001 - TODO: implement invert match
-    after_context: int,  # noqa: ARG001 - TODO: implement context lines
-    before_context: int,  # noqa: ARG001 - TODO: implement context lines
-    context: int,  # noqa: ARG001 - TODO: implement context lines
+    invert_match: bool,  # noqa: ARG001 - not yet wired to core grep
+    after_context: int,  # noqa: ARG001 - not yet wired to core grep
+    before_context: int,  # noqa: ARG001 - not yet wired to core grep
+    context: int,  # noqa: ARG001 - not yet wired to core grep
     max_results: int,
     search_mode: str,
     backend_config: BackendConfig,
@@ -178,8 +178,8 @@ def grep(
     try:
         nx = get_filesystem(backend_config)
 
-        # TODO: Handle context lines when implemented in core grep()
-        # Currently after_context, before_context, and context are not used
+        # Context lines (after_context, before_context, context) are accepted
+        # by the CLI but not yet wired to core grep() — see arg suppression above
 
         matches = nx.grep(
             pattern,

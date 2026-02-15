@@ -17,6 +17,7 @@ import builtins
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
 from nexus.core.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
@@ -172,7 +173,7 @@ class OAuthService:
     async def oauth_get_auth_url(
         self,
         provider: str,
-        redirect_uri: str = "http://localhost:3000/oauth/callback",
+        redirect_uri: str = DEFAULT_OAUTH_REDIRECT_URI,
         scopes: builtins.list[str] | None = None,
     ) -> dict[str, Any]:
         """Get OAuth authorization URL for any provider.

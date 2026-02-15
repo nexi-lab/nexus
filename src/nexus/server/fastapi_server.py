@@ -50,6 +50,7 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.gzip import GZipMiddleware
 
+from nexus.constants import DEFAULT_GOOGLE_REDIRECT_URI, DEFAULT_NEXUS_URL
 from nexus.core.exceptions import (
     ConflictError,
     InvalidPathError,
@@ -1457,9 +1458,7 @@ def _initialize_oauth_provider(
         google_client_secret = os.getenv("GOOGLE_CLIENT_SECRET") or os.getenv(
             "NEXUS_OAUTH_GOOGLE_CLIENT_SECRET"
         )
-        google_redirect_uri = os.getenv(
-            "GOOGLE_REDIRECT_URI", "http://localhost:5173/oauth/callback"
-        )
+        google_redirect_uri = os.getenv("GOOGLE_REDIRECT_URI", DEFAULT_GOOGLE_REDIRECT_URI)
         jwt_secret = os.getenv("NEXUS_JWT_SECRET")
 
         if not google_client_id or not google_client_secret:
@@ -1826,7 +1825,7 @@ def _register_routes(app: FastAPI) -> None:
     try:
         from nexus.a2a import create_a2a_router
 
-        a2a_base_url = os.environ.get("NEXUS_A2A_BASE_URL", "http://localhost:2026")
+        a2a_base_url = os.environ.get("NEXUS_A2A_BASE_URL", DEFAULT_NEXUS_URL)
         a2a_auth_required = bool(
             getattr(_fastapi_app.state, "api_key", None)
             or getattr(_fastapi_app.state, "auth_provider", None)

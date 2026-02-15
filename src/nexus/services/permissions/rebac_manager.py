@@ -1248,7 +1248,7 @@ class ReBACManager:
                         subject, relation, old_obj, zone_id, subject_relation, conn=conn
                     )
 
-                    # BUG FIX (Issue #XXX): Also invalidate Tiger Cache for the subject
+                    # BUG FIX (PR #969): Also invalidate Tiger Cache for the subject
                     # Tiger Cache stores materialized permissions - when a file is renamed,
                     # the cached permissions for the subject are stale and must be invalidated
                     if hasattr(self, "tiger_invalidate_cache"):
@@ -2487,7 +2487,7 @@ class ReBACManager:
                 and subject.entity_id != "*"
             )
 
-            # BUG FIX (Issue #XXX): ALWAYS invalidate L1 cache first, regardless of eager recompute
+            # BUG FIX (PR #969): ALWAYS invalidate L1 cache first, regardless of eager recompute
             # The eager recompute only updates L2 (database) cache, but L1 (in-memory) cache
             # will still have stale entries. We must invalidate L1 before any recomputation.
             if self._l1_cache:

@@ -392,7 +392,7 @@ class ZoneExportService:
             output_path = output_path.with_suffix(".nexus")
 
         # Create tar.gz bundle
-        # Note: tarfile "w:gz" uses default compression; custom level support TODO
+        # Note: tarfile "w:gz" uses default gzip compression level
         with tarfile.open(output_path, mode="w:gz") as tar:
             # Add all files from source directory
             for item in source_dir.rglob("*"):

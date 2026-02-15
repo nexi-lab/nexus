@@ -6291,10 +6291,45 @@ class NexusFS(  # type: ignore[misc]
                 env_prefix = "\n".join(env_lines) + "\n"
                 code = env_prefix + code
 
-        result: dict[Any, Any] = await self._sandbox_manager.run_code(
+        import dataclasses
+
+        execution_result = await self._sandbox_manager.run_code(
             sandbox_id, language, code, timeout, as_script=as_script
         )
+        result = dataclasses.asdict(execution_result)
+        # Convert ValidationResult Pydantic models to dicts for serialization
+        if result.get("validations"):
+            result["validations"] = [
+                v.model_dump() if hasattr(v, "model_dump") else v
+                for v in result["validations"]
+            ]
         return result
+
+    @rpc_expose(description="Validate code in sandbox")
+    async def sandbox_validate(
+        self,
+        sandbox_id: str,
+        workspace_path: str = "/workspace",
+        context: dict | None = None,  # noqa: ARG002
+    ) -> dict:
+        """Run validation pipeline in sandbox.
+
+        Detects project type and runs applicable linters (ruff, mypy, eslint, etc.),
+        returning structured validation results.
+
+        Args:
+            sandbox_id: Sandbox ID
+            workspace_path: Workspace root path in sandbox
+            context: Operation context
+
+        Returns:
+            Dict with validations list
+        """
+        self._ensure_sandbox_manager()
+        assert self._sandbox_manager is not None
+
+        results = await self._sandbox_manager.validate(sandbox_id, workspace_path)
+        return {"validations": results}
 
     @rpc_expose(description="Pause sandbox")
     async def sandbox_pause(self, sandbox_id: str, context: dict | None = None) -> dict:  # type: ignore[override]  # noqa: ARG002

@@ -24,6 +24,7 @@ from nexus.sandbox.sandbox_provider import (
     SandboxProvider,
     UnsupportedLanguageError,
     validate_agent_id,
+    validate_language,
     validate_mount_path,
     validate_nexus_url,
 )
@@ -293,11 +294,7 @@ class DockerSandboxProvider(SandboxProvider):
         _ = as_script
 
         # Validate language
-        if language not in self.SUPPORTED_LANGUAGES:
-            supported = ", ".join(self.SUPPORTED_LANGUAGES.keys())
-            raise UnsupportedLanguageError(
-                f"Language '{language}' not supported. Supported: {supported}"
-            )
+        validate_language(language, self.SUPPORTED_LANGUAGES)
 
         # Get container
         container_info = self._get_container_info(sandbox_id)

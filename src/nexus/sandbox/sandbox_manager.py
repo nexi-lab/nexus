@@ -20,6 +20,7 @@ from sqlalchemy.exc import PendingRollbackError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from nexus.sandbox.sandbox_provider import (
+    CodeExecutionResult,
     SandboxNotFoundError,
     SandboxProvider,
 )
@@ -354,7 +355,8 @@ class SandboxManager:
         code: str,
         timeout: int = 300,
         as_script: bool = False,
-    ) -> dict[str, Any]:
+        auto_validate: bool | None = None,
+    ) -> CodeExecutionResult:
         """Run code in sandbox.
 
         Args:
@@ -364,9 +366,13 @@ class SandboxManager:
             timeout: Timeout in seconds
             as_script: If True, run as standalone script (stateless).
                       If False (default), use Jupyter kernel for Python (stateful).
+            auto_validate: If True, run validation after execution.
+                If None, use pipeline config's auto_run setting.
+                If False, skip validation.
 
         Returns:
-            Dict with stdout, stderr, exit_code, execution_time
+            CodeExecutionResult with stdout, stderr, exit_code, execution_time,
+            and optional validations list.
 
         Raises:
             SandboxNotFoundError: If sandbox doesn't exist
@@ -390,12 +396,37 @@ class SandboxManager:
 
         logger.debug(f"Executed {language} code in sandbox {sandbox_id}")
 
-        return {
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "exit_code": result.exit_code,
-            "execution_time": result.execution_time,
-        }
+        return result
+
+    async def validate(
+        self,
+        sandbox_id: str,
+        workspace_path: str = "/workspace",
+    ) -> list[dict[str, Any]]:
+        """Run validation pipeline in sandbox.
+
+        Explicit validation API — detects project type and runs applicable
+        linters, returning structured results.
+
+        Args:
+            sandbox_id: Sandbox ID
+            workspace_path: Path to workspace root in sandbox.
+
+        Returns:
+            List of validation result dicts.
+
+        Raises:
+            SandboxNotFoundError: If sandbox doesn't exist
+        """
+        from nexus.validation import ValidationRunner
+
+        meta_dict = self._get_metadata(sandbox_id)
+        provider_name = meta_dict["provider"]
+        provider = self.providers[provider_name]
+
+        runner = ValidationRunner()
+        results = await runner.validate(sandbox_id, provider, workspace_path)
+        return [r.model_dump() for r in results]
 
     async def pause_sandbox(self, sandbox_id: str) -> dict[str, Any]:
         """Pause sandbox.

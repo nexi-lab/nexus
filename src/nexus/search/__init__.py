@@ -104,6 +104,7 @@ from nexus.search.hnsw_config import (
     get_recommended_config,
     get_vector_count,
 )
+from nexus.search.manifest import SearchBrickManifest, verify_imports
 from nexus.search.mobile_config import (
     EMBEDDING_MODELS,
     RERANKER_MODELS,
@@ -166,7 +167,18 @@ from nexus.search.ranking import (
     detect_matched_field,
     get_ranking_config_from_env,
 )
+from nexus.search.results import BaseSearchResult
 from nexus.search.semantic import SemanticSearch, SemanticSearchResult
+from nexus.search.strategies import (
+    GLOB_RUST_THRESHOLD,
+    GREP_CACHED_TEXT_RATIO,
+    GREP_PARALLEL_THRESHOLD,
+    GREP_PARALLEL_WORKERS,
+    GREP_SEQUENTIAL_THRESHOLD,
+    GREP_ZOEKT_THRESHOLD,
+    GlobStrategy,
+    SearchStrategy,
+)
 from nexus.search.vector_db import VectorDatabase
 from nexus.search.zoekt_client import (
     ZoektClient,
@@ -177,6 +189,19 @@ from nexus.search.zoekt_client import (
 )
 
 __all__ = [
+    # Search Brick (Issue #1520)
+    "BaseSearchResult",
+    "SearchBrickManifest",
+    "verify_imports",
+    # Strategy Enums (Issue #929, #1520)
+    "SearchStrategy",
+    "GlobStrategy",
+    "GREP_SEQUENTIAL_THRESHOLD",
+    "GREP_PARALLEL_THRESHOLD",
+    "GREP_ZOEKT_THRESHOLD",
+    "GREP_PARALLEL_WORKERS",
+    "GREP_CACHED_TEXT_RATIO",
+    "GLOB_RUST_THRESHOLD",
     # Chunking
     "ChunkStrategy",
     "DocumentChunk",

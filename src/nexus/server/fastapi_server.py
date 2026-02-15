@@ -257,6 +257,14 @@ async def lifespan(_app: FastAPI) -> Any:
     except ImportError:
         logger.debug("OpenTelemetry not available")
 
+    # Initialize Pyroscope continuous profiling (Issue #763)
+    try:
+        from nexus.server.profiling import setup_profiling
+
+        setup_profiling()
+    except ImportError:
+        logger.debug("Pyroscope not available")
+
     # Initialize Prometheus metrics (Issue #761)
     try:
         from nexus.server.metrics import setup_prometheus
@@ -1147,6 +1155,14 @@ async def lifespan(_app: FastAPI) -> Any:
             logger.info("Cache factory stopped")
         except Exception as e:
             logger.warning(f"Error shutting down cache factory: {e}")
+
+    # Shutdown Pyroscope continuous profiling (Issue #763)
+    try:
+        from nexus.server.profiling import shutdown_profiling
+
+        shutdown_profiling()
+    except ImportError:
+        pass
 
     # Shutdown OpenTelemetry (Issue #764)
     try:

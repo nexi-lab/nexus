@@ -327,7 +327,7 @@ exclude_lines = [
 # Type checking configuration - Phase 3 will enable full strict mode
 python_version = "3.11"
 exclude = [
-    "nexus/raft/",  # Generated gRPC/protobuf code (Issue #1159)
+    "_pb2(_grpc)?\\.py$",  # Generated gRPC/protobuf stubs
 ]
 warn_return_any = true
 warn_unused_configs = true
@@ -543,11 +543,12 @@ disable_error_code = ["no-any-return"]
 
 [[tool.mypy.overrides]]
 module = [
-    "nexus.raft",
-    "nexus.raft.*",
+    "nexus.raft.commands_pb2",
+    "nexus.raft.commands_pb2_grpc",
+    "nexus.raft.transport_pb2",
+    "nexus.raft.transport_pb2_grpc",
 ]
-# Generated gRPC/protobuf and Raft infrastructure - not yet typed (Issue #1159)
-# skip = treat as unresolvable, same as before raft files were committed
+# Generated gRPC/protobuf stubs — no type info available
 follow_imports = "skip"
 
 [[tool.mypy.overrides]]

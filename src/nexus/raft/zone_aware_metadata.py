@@ -23,6 +23,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol, PaginatedResult
+from nexus.raft.zone_manager import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from nexus.raft.zone_path_resolver import ResolvedPath, ZonePathResolver
@@ -60,7 +61,7 @@ class ZoneAwareMetadataStore(FileMetadataProtocol):
     def from_zone_manager(
         cls,
         zone_manager: Any,
-        root_zone_id: str = "default",
+        root_zone_id: str = ROOT_ZONE_ID,
     ) -> ZoneAwareMetadataStore:
         """Create from a ZoneManager instance.
 
@@ -273,7 +274,8 @@ class ZoneAwareMetadataStore(FileMetadataProtocol):
         return {path: self.get_file_metadata(path, key) for path in paths}
 
     def get_searchable_text(self, path: str) -> str | None:
-        return self.get_file_metadata(path, "parsed_text")
+        text: str | None = self.get_file_metadata(path, "parsed_text")
+        return text
 
     def get_searchable_text_bulk(self, paths: Sequence[str]) -> dict[str, str]:
         result: dict[str, str] = {}

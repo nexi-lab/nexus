@@ -26,13 +26,14 @@ repos:
       - id: ruff-format
         exclude: ^benchmarks/
 
-  # Type checking (10-30s) - enabled for local type error detection
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.8.0
+  # Type checking — uses project venv mypy for correct type resolution
+  - repo: local
     hooks:
       - id: mypy
-        additional_dependencies: [pydantic, types-PyYAML, alembic, sqlalchemy, cachetools, types-cachetools, types-requests, types-redis, types-aiofiles]
-        args: [--ignore-missing-imports]
+        name: mypy
+        entry: .venv/bin/python -m mypy
+        language: system
+        types: [python]
         exclude: ^(tests/|alembic/|examples/|benchmarks/|\.claude/|scripts/|nexus-plugin-)
 
   - repo: local

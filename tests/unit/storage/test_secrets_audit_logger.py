@@ -7,7 +7,6 @@ Covers: CRUD, hash integrity, immutability, pagination, filters, verify integrit
 from __future__ import annotations
 
 import gc
-import tempfile
 from datetime import UTC, datetime
 
 import pytest
@@ -138,8 +137,9 @@ class TestSecretsAuditLoggerImmutability:
 
         session = session_factory()
         try:
-            from nexus.storage.models.secrets_audit_log import SecretsAuditLogModel
             from sqlalchemy import select
+
+            from nexus.storage.models.secrets_audit_log import SecretsAuditLogModel
 
             row = session.execute(
                 select(SecretsAuditLogModel).where(SecretsAuditLogModel.id == record_id)
@@ -161,8 +161,9 @@ class TestSecretsAuditLoggerImmutability:
 
         session = session_factory()
         try:
-            from nexus.storage.models.secrets_audit_log import SecretsAuditLogModel
             from sqlalchemy import select
+
+            from nexus.storage.models.secrets_audit_log import SecretsAuditLogModel
 
             row = session.execute(
                 select(SecretsAuditLogModel).where(SecretsAuditLogModel.id == record_id)

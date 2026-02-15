@@ -18,12 +18,12 @@ import tempfile
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from nexus.core.exceptions import AuthenticationError
-from nexus.server.auth.oauth_provider import OAuthCredential, OAuthError
+from nexus.server.auth.oauth_provider import OAuthCredential
 from nexus.server.auth.token_manager import TokenManager, _hash_token
 
 
@@ -118,6 +118,7 @@ class TestTokenRotation:
 
         # Verify via direct DB query
         from sqlalchemy import select
+
         from nexus.storage.models import OAuthCredentialModel
 
         with manager.SessionLocal() as session:
@@ -179,6 +180,7 @@ class TestTokenRotation:
         # The old refresh token hash should be in history
         old_hash = _hash_token("1//test_refresh_token")
         from sqlalchemy import select
+
         from nexus.storage.models.refresh_token_history import RefreshTokenHistoryModel
 
         with manager.SessionLocal() as session:
@@ -316,6 +318,7 @@ class TestTokenRotation:
 
         # Set last_refreshed_at to NOW (simulating recent refresh)
         from sqlalchemy import select
+
         from nexus.storage.models import OAuthCredentialModel
 
         with manager.SessionLocal() as session:
@@ -482,6 +485,7 @@ class TestReuseDetectionDuringRefresh:
         # Get token family ID and pre-seed the old refresh hash in history
         # (simulates another caller already having rotated this token)
         from sqlalchemy import select
+
         from nexus.storage.models import OAuthCredentialModel
         from nexus.storage.models.refresh_token_history import RefreshTokenHistoryModel
 

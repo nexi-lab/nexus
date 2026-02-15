@@ -94,6 +94,10 @@ EXPECTED_MODELS = [
     "SpendingApprovalModel",
     # IPC (Issue #1469)
     "IPCMessageModel",
+    # OAuth Token Rotation (Issue #997)
+    "RefreshTokenHistoryModel",
+    # Secrets Audit (Issue #997)
+    "SecretsAuditLogModel",
 ]
 
 

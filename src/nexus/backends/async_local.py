@@ -1,7 +1,7 @@
 """Async local filesystem backend with CAS and directory support.
 
 Phase 2 of async migration (Issue #940).
-Uses asyncio.to_thread() for non-blocking file I/O.
+Uses CASBlobStore via asyncio.to_thread() for non-blocking file I/O.
 """
 
 import asyncio
@@ -15,8 +15,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from filelock import FileLock
-
+from nexus.backends.cas_blob_store import CASBlobStore
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 from nexus.core.response import HandlerResponse
@@ -37,7 +36,7 @@ class AsyncLocalBackend:
     - Content deduplication (same content stored once)
     - Reference counting for safe deletion
     - Atomic write operations
-    - Thread-safe file locking
+    - Lock-free blob writes with striped metadata locks (via CASBlobStore)
 
     Storage structure:
         root/
@@ -72,6 +71,7 @@ class AsyncLocalBackend:
         self.content_cache = content_cache
         self.batch_read_workers = batch_read_workers
         self._initialized = False
+        self._cas: CASBlobStore | None = None
 
     @property
     def root_path(self) -> Path:
@@ -110,6 +110,7 @@ class AsyncLocalBackend:
             self.dir_root.mkdir(parents=True, exist_ok=True)
 
         await asyncio.to_thread(_ensure_roots)
+        self._cas = CASBlobStore(self.cas_root)
         self._initialized = True
 
     async def close(self) -> None:
@@ -123,34 +124,14 @@ class AsyncLocalBackend:
         return hash_content(content)
 
     def _hash_to_path(self, content_hash: str) -> Path:
-        """
-        Convert content hash to filesystem path.
-
-        Uses two-level directory structure:
-        cas/ab/cd/abcd1234...ef56
-
-        Args:
-            content_hash: SHA-256/BLAKE3 hash as hex string
-
-        Returns:
-            Path object for content file
-        """
+        """Convert content hash to filesystem path."""
         if len(content_hash) < 4:
             raise ValueError(f"Invalid hash length: {content_hash}")
-
-        dir1 = content_hash[:2]
-        dir2 = content_hash[2:4]
-
-        return self.cas_root / dir1 / dir2 / content_hash
+        return self.cas_root / content_hash[:2] / content_hash[2:4] / content_hash
 
     def _get_meta_path(self, content_hash: str) -> Path:
         """Get path to metadata file for content."""
-        content_path = self._hash_to_path(content_hash)
-        return content_path.with_suffix(".meta")
-
-    def _get_lock_path(self, content_hash: str) -> Path:
-        """Get the lock file path for a content hash."""
-        return self._get_meta_path(content_hash).with_suffix(".lock")
+        return self._hash_to_path(content_hash).with_suffix(".meta")
 
     # === Metadata Operations ===
 
@@ -161,7 +142,12 @@ class AsyncLocalBackend:
         Each attempt runs blocking I/O in a thread; the backoff sleep
         uses asyncio.sleep so the thread pool slot is freed between retries.
         """
-        from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+        from tenacity import (
+            retry,
+            retry_if_exception_type,
+            stop_after_attempt,
+            wait_exponential,
+        )
 
         meta_path = self._get_meta_path(content_hash)
 
@@ -198,7 +184,12 @@ class AsyncLocalBackend:
         Only PermissionError is retried (Windows antivirus / lock contention);
         other OSErrors fail immediately.
         """
-        from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
+        from tenacity import (
+            retry,
+            retry_if_exception_type,
+            stop_after_attempt,
+            wait_exponential,
+        )
 
         meta_path = self._get_meta_path(content_hash)
 
@@ -253,7 +244,7 @@ class AsyncLocalBackend:
         Write content to CAS storage and return its hash.
 
         If content already exists, increments reference count.
-        Handles race conditions when multiple tasks write the same content.
+        Uses CASBlobStore via asyncio.to_thread for non-blocking I/O.
 
         Args:
             content: File content as bytes
@@ -265,74 +256,24 @@ class AsyncLocalBackend:
         start_time = time.perf_counter()
 
         content_hash = await asyncio.to_thread(self._compute_hash, content)
-        content_path = self._hash_to_path(content_hash)
 
-        def _write_with_lock() -> HandlerResponse[str]:
-            nonlocal start_time
-            lock_path = self._get_lock_path(content_hash)
-            lock_path.parent.mkdir(parents=True, exist_ok=True)
+        assert self._cas is not None  # noqa: S101
+        cas = self._cas
 
+        def _store() -> HandlerResponse[str]:
             try:
-                with FileLock(lock_path):
-                    # Check if content already exists (inside lock)
-                    if content_path.exists():
-                        # Content exists - increment ref_count
-                        meta_path = self._get_meta_path(content_hash)
-                        if meta_path.exists():
-                            meta_content = meta_path.read_text(encoding="utf-8")
-                            metadata = json.loads(meta_content)
-                        else:
-                            metadata = {"ref_count": 0, "size": len(content)}
-                        metadata["ref_count"] = metadata.get("ref_count", 0) + 1
-                        self._write_metadata_sync(content_hash, metadata)
+                cas.store(content_hash, content)
 
-                        # Add to cache
-                        if self.content_cache is not None:
-                            self.content_cache.put(content_hash, content)
+                # Add to cache
+                if self.content_cache is not None:
+                    self.content_cache.put(content_hash, content)
 
-                        return HandlerResponse.ok(
-                            data=content_hash,
-                            execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                            backend_name=self.name,
-                            path=content_hash,
-                        )
-
-                    # Content doesn't exist - write atomically
-                    content_path.parent.mkdir(parents=True, exist_ok=True)
-
-                    tmp_path = None
-                    try:
-                        with tempfile.NamedTemporaryFile(
-                            mode="wb", dir=content_path.parent, delete=False
-                        ) as tmp_file:
-                            tmp_path = Path(tmp_file.name)
-                            tmp_file.write(content)
-                            tmp_file.flush()
-                            os.fsync(tmp_file.fileno())
-
-                        os.replace(str(tmp_path), str(content_path))
-                        tmp_path = None
-
-                        # Create metadata with ref_count=1
-                        metadata = {"ref_count": 1, "size": len(content)}
-                        self._write_metadata_sync(content_hash, metadata)
-
-                        # Add to cache
-                        if self.content_cache is not None:
-                            self.content_cache.put(content_hash, content)
-
-                        return HandlerResponse.ok(
-                            data=content_hash,
-                            execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                            backend_name=self.name,
-                            path=content_hash,
-                        )
-
-                    finally:
-                        if tmp_path is not None and tmp_path.exists():
-                            with contextlib.suppress(OSError):
-                                tmp_path.unlink()
-
+                return HandlerResponse.ok(
+                    data=content_hash,
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name=self.name,
+                    path=content_hash,
+                )
             except Exception as e:
                 return HandlerResponse.from_exception(
                     e,
@@ -341,35 +282,7 @@ class AsyncLocalBackend:
                     path=content_hash,
                 )
 
-        return await asyncio.to_thread(_write_with_lock)
-
-    def _write_metadata_sync(self, content_hash: str, metadata: dict[str, Any]) -> None:
-        """Synchronous metadata write for use inside locked sections."""
-        meta_path = self._get_meta_path(content_hash)
-        meta_path.parent.mkdir(parents=True, exist_ok=True)
-
-        tmp_path = None
-        try:
-            with tempfile.NamedTemporaryFile(
-                mode="w",
-                encoding="utf-8",
-                dir=meta_path.parent,
-                delete=False,
-                suffix=".tmp",
-            ) as tmp_file:
-                tmp_path = Path(tmp_file.name)
-                tmp_file.write(json.dumps(metadata))
-                tmp_file.flush()
-                os.fsync(tmp_file.fileno())
-
-            os.replace(str(tmp_path), str(meta_path))
-            tmp_path = None
-
-        except Exception:
-            if tmp_path is not None and tmp_path.exists():
-                with contextlib.suppress(OSError):
-                    tmp_path.unlink()
-            raise
+        return await asyncio.to_thread(_store)
 
     # === Content Read Operations ===
 
@@ -401,68 +314,36 @@ class AsyncLocalBackend:
                     path=content_hash,
                 )
 
-        content_path = self._hash_to_path(content_hash)
-
         def _read() -> HandlerResponse[bytes]:
-            max_retries = 3
-            retry_delay = 0.01
+            assert self._cas is not None  # noqa: S101
+            if not self._cas.blob_exists(content_hash):
+                return HandlerResponse.not_found(
+                    path=content_hash,
+                    message=f"CAS content not found: {content_hash}",
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name=self.name,
+                )
 
-            for attempt in range(max_retries):
-                if not content_path.exists():
-                    if attempt < max_retries - 1:
-                        time.sleep(retry_delay)
-                        continue
-                    return HandlerResponse.not_found(
-                        path=content_hash,
-                        message=f"CAS content not found: {content_hash}",
-                        execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                        backend_name=self.name,
-                    )
+            try:
+                content = self._cas.read_blob(content_hash, verify=True)
 
-                try:
-                    content = content_path.read_bytes()
+                # Add to cache
+                if self.content_cache is not None:
+                    self.content_cache.put(content_hash, content)
 
-                    # Verify hash
-                    actual_hash = self._compute_hash(content)
-                    if actual_hash != content_hash:
-                        msg = f"Content hash mismatch: expected {content_hash}, got {actual_hash}"
-                        return HandlerResponse.error(
-                            message=msg,
-                            code=500,
-                            execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                            backend_name=self.name,
-                            path=content_hash,
-                        )
-
-                    # Add to cache
-                    if self.content_cache is not None:
-                        self.content_cache.put(content_hash, content)
-
-                    return HandlerResponse.ok(
-                        data=content,
-                        execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                        backend_name=self.name,
-                        path=content_hash,
-                    )
-
-                except OSError as e:
-                    if attempt < max_retries - 1:
-                        time.sleep(retry_delay)
-                        continue
-                    return HandlerResponse.from_exception(
-                        e,
-                        execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                        backend_name=self.name,
-                        path=content_hash,
-                    )
-
-            return HandlerResponse.error(
-                message=f"Failed to read content after {max_retries} retries",
-                code=500,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=content_hash,
-            )
+                return HandlerResponse.ok(
+                    data=content,
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name=self.name,
+                    path=content_hash,
+                )
+            except Exception as e:
+                return HandlerResponse.from_exception(
+                    e,
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name=self.name,
+                    path=content_hash,
+                )
 
         return await asyncio.to_thread(_read)
 
@@ -524,6 +405,8 @@ class AsyncLocalBackend:
         """
         Delete content by hash with reference counting.
 
+        Delegates to CASBlobStore.release() via asyncio.to_thread().
+
         Args:
             content_hash: BLAKE3 hash as hex string
             context: Operation context (ignored for local backend)
@@ -534,7 +417,10 @@ class AsyncLocalBackend:
         start_time = time.perf_counter()
         content_path = self._hash_to_path(content_hash)
 
-        def _delete_with_lock() -> HandlerResponse[None]:
+        assert self._cas is not None  # noqa: S101
+        cas = self._cas
+
+        def _delete() -> HandlerResponse[None]:
             if not content_path.exists():
                 return HandlerResponse.not_found(
                     path=content_hash,
@@ -543,45 +429,8 @@ class AsyncLocalBackend:
                     backend_name=self.name,
                 )
 
-            lock_path = self._get_lock_path(content_hash)
-            lock_path.parent.mkdir(parents=True, exist_ok=True)
-
-            should_delete_lock = False
             try:
-                with FileLock(lock_path):
-                    meta_path = self._get_meta_path(content_hash)
-                    if meta_path.exists():
-                        meta_content = meta_path.read_text(encoding="utf-8")
-                        metadata = json.loads(meta_content)
-                    else:
-                        metadata = {"ref_count": 1}
-                    ref_count = metadata.get("ref_count", 1)
-
-                    if ref_count <= 1:
-                        # Last reference - delete file and metadata
-                        content_path.unlink()
-
-                        if meta_path.exists():
-                            meta_path.unlink()
-
-                        should_delete_lock = True
-
-                        # Clean up empty directories
-                        self._cleanup_empty_dirs(content_path.parent)
-                    else:
-                        # Decrement reference count
-                        metadata["ref_count"] = ref_count - 1
-                        self._write_metadata_sync(content_hash, metadata)
-
-                # Clean up lock file after releasing the lock
-                if should_delete_lock and lock_path.exists():
-                    for attempt in range(3):
-                        try:
-                            lock_path.unlink()
-                            break
-                        except PermissionError:
-                            if attempt < 2:
-                                time.sleep(0.01 * (2**attempt))
+                cas.release(content_hash)
 
                 return HandlerResponse.ok(
                     data=None,
@@ -598,20 +447,7 @@ class AsyncLocalBackend:
                     path=content_hash,
                 )
 
-        return await asyncio.to_thread(_delete_with_lock)
-
-    def _cleanup_empty_dirs(self, dir_path: Path) -> None:
-        """Remove empty parent directories up to CAS root."""
-        try:
-            current = dir_path
-            while current != self.cas_root and current.exists():
-                if not any(current.iterdir()):
-                    current.rmdir()
-                    current = current.parent
-                else:
-                    break
-        except OSError:
-            pass
+        return await asyncio.to_thread(_delete)
 
     # === Content Existence/Size Operations ===
 
@@ -710,22 +546,27 @@ class AsyncLocalBackend:
                 backend_name=self.name,
             )
 
-        try:
-            metadata = await self._read_metadata(content_hash)
-            ref_count = int(metadata.get("ref_count", 0))
-            return HandlerResponse.ok(
-                data=ref_count,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=content_hash,
-            )
-        except Exception as e:
-            return HandlerResponse.from_exception(
-                e,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=content_hash,
-            )
+        assert self._cas is not None  # noqa: S101
+        cas = self._cas
+
+        def _read_ref() -> HandlerResponse[int]:
+            try:
+                meta = cas.read_meta(content_hash)
+                return HandlerResponse.ok(
+                    data=meta.ref_count,
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name=self.name,
+                    path=content_hash,
+                )
+            except Exception as e:
+                return HandlerResponse.from_exception(
+                    e,
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name=self.name,
+                    path=content_hash,
+                )
+
+        return await asyncio.to_thread(_read_ref)
 
     # === Streaming Operations ===
 
@@ -759,7 +600,7 @@ class AsyncLocalBackend:
 
         def _read_all_chunks() -> list[bytes]:
             """Read all chunks from file in a thread."""
-            chunks = []
+            chunks: list[bytes] = []
             try:
                 with open(content_path, "rb") as f:
                     while True:

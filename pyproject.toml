@@ -210,6 +210,10 @@ postgres = [
     "psycopg2-binary>=2.9.9",  # PostgreSQL adapter
 ]
 
+cloud-sql = [
+    "cloud-sql-python-connector[asyncpg]>=1.14.0",
+]
+
 semantic-search = [
     # Keyword search support - uses existing SQLite/PostgreSQL FTS
     # BM25S is now in core dependencies (Issue #796)
@@ -307,6 +311,7 @@ markers = [
     "benchmark: marks tests as benchmarks",
     "evaluation: marks tests as LLM evaluation tests (requires ANTHROPIC_API_KEY)",
     "quarantine: Tests that are flaky or timing-dependent (deselected by default in CI)",
+    "postgres: marks tests that require a running PostgreSQL instance (Issue #1299)",
 ]
 
 [tool.coverage.run]

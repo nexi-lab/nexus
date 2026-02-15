@@ -148,6 +148,11 @@ sentry = [
     "sentry-sdk[fastapi]>=2.0.0",
 ]
 
+profiling = [
+    # Pyroscope continuous profiling (Issue #763)
+    "pyroscope-io>=0.8.16",
+    "pyroscope-otel",
+]
 dev = [
     # Testing
     "pytest>=9.0.2",

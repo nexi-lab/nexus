@@ -86,13 +86,13 @@ class TestDatasourcesConfig:
             OBSERVABILITY_DIR / "grafana" / "provisioning" / "datasources" / "datasources.yml"
         )
 
-    def test_has_three_datasources(self) -> None:
+    def test_has_four_datasources(self) -> None:
         data = _load_yaml(
             OBSERVABILITY_DIR / "grafana" / "provisioning" / "datasources" / "datasources.yml"
         )
         assert "datasources" in data
         names = {ds["name"] for ds in data["datasources"]}
-        assert names == {"Prometheus", "Loki", "Tempo"}
+        assert names == {"Prometheus", "Loki", "Tempo", "Pyroscope"}
 
     def test_prometheus_is_default(self) -> None:
         data = _load_yaml(
@@ -153,6 +153,21 @@ class TestDashboardJson:
             assert ds.get("uid") == "prometheus", (
                 f"Panel '{panel.get('title')}' uses datasource UID '{ds.get('uid')}', expected 'prometheus'"
             )
+
+
+class TestPyroscopeConfig:
+    """Validate observability/pyroscope/pyroscope.yml (Issue #763)."""
+
+    def test_file_parseable(self) -> None:
+        _load_yaml(OBSERVABILITY_DIR / "pyroscope" / "pyroscope.yml")
+
+    def test_has_server_port(self) -> None:
+        data = _load_yaml(OBSERVABILITY_DIR / "pyroscope" / "pyroscope.yml")
+        assert data["server"]["http_listen_port"] == 4040
+
+    def test_filesystem_storage(self) -> None:
+        data = _load_yaml(OBSERVABILITY_DIR / "pyroscope" / "pyroscope.yml")
+        assert data["storage"]["backend"] == "filesystem"
 
 
 class TestAllYamlFilesParseable:

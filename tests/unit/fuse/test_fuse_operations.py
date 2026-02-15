@@ -9,11 +9,12 @@ from __future__ import annotations
 import errno
 import os
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import pytest
 
+from nexus.core.exceptions import NexusFileNotFoundError
 from nexus.fuse.mount import MountMode
 from nexus.fuse.operations import NexusFUSEOperations
 
@@ -277,7 +278,7 @@ class TestFileCreationDeletion:
         fd = fuse_ops.create("/workspace/new.txt", 0o644)
 
         assert fd > 0
-        mock_nexus_fs.write.assert_called_with("/workspace/new.txt", b"")
+        mock_nexus_fs.write.assert_called_with("/workspace/new.txt", b"", context=None)
 
     def test_create_virtual_view_fails(
         self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock
@@ -354,7 +355,7 @@ class TestRename:
         fuse_ops.rename("/workspace/old.txt", "/workspace/new.txt")
 
         # Verify metadata-only rename was called (no read/write/delete!)
-        mock_nexus_fs.is_directory.assert_called_with("/workspace/old.txt")
+        mock_nexus_fs.is_directory.assert_called_with("/workspace/old.txt", context=None)
         mock_nexus_fs.rename.assert_called_with("/workspace/old.txt", "/workspace/new.txt")
 
         # Verify NO content I/O happened
@@ -401,11 +402,13 @@ class TestRename:
 
         fuse_ops.rename("/workspace/old_dir", "/workspace/new_dir")
 
-        # Verify directory was checked
-        mock_nexus_fs.is_directory.assert_called_with("/workspace/old_dir")
+        # Verify directory was checked (context=None since no context set)
+        mock_nexus_fs.is_directory.assert_called_with("/workspace/old_dir", context=None)
 
-        # Verify files were listed
-        mock_nexus_fs.list.assert_called_with("/workspace/old_dir", recursive=True, details=True)
+        # Verify files were listed (context=None since no context set)
+        mock_nexus_fs.list.assert_called_with(
+            "/workspace/old_dir", recursive=True, details=True, context=None
+        )
 
         # Verify files were moved using metadata-only rename (no content I/O!)
         assert mock_nexus_fs.rename.call_count == 2
@@ -996,3 +999,438 @@ class TestMetadataObjSize:
         assert metadata is not None
         assert hasattr(metadata, "size")
         assert metadata.size is None
+
+
+# ---------------------------------------------------------------------------
+# Namespace-Scoped FUSE Tests (Issue #1305)
+# ---------------------------------------------------------------------------
+
+
+class TestNamespaceScopedFUSE:
+    """Test namespace-scoped FUSE operations (Issue #1305).
+
+    Verifies that when an OperationContext is set, all filesystem calls
+    forward the context for namespace filtering.
+    """
+
+    @pytest.fixture
+    def mock_context(self) -> MagicMock:
+        """Create a mock OperationContext with agent identity."""
+        ctx = MagicMock()
+        ctx.get_subject.return_value = ("agent", "agent-001")
+        ctx.subject_type = "agent"
+        ctx.subject_id = "agent-001"
+        ctx.zone_id = "test-zone"
+        return ctx
+
+    @pytest.fixture
+    def fuse_ops_with_context(
+        self, mock_nexus_fs: MagicMock, mock_context: MagicMock
+    ) -> NexusFUSEOperations:
+        """Create FUSE operations with a mock context for namespace scoping.
+
+        Readahead is disabled to isolate context-forwarding assertions from
+        background prefetch calls that would also invoke nexus_fs.read().
+        """
+        return NexusFUSEOperations(
+            mock_nexus_fs,
+            MountMode.SMART,
+            cache_config={"readahead_enabled": False},
+            context=mock_context,
+        )
+
+    def test_readdir_passes_context_to_list(
+        self,
+        fuse_ops_with_context: NexusFUSEOperations,
+        mock_nexus_fs: MagicMock,
+        mock_context: MagicMock,
+    ) -> None:
+        """readdir() forwards context to nexus_fs.list() for namespace filtering."""
+        mock_nexus_fs.list.return_value = []
+
+        fuse_ops_with_context.readdir("/workspace")
+
+        mock_nexus_fs.list.assert_called_once_with(
+            "/workspace", recursive=False, details=True, context=mock_context
+        )
+
+    def test_readdir_without_context_backward_compat(
+        self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock
+    ) -> None:
+        """readdir() passes context=None when no context is set (backward compat)."""
+        mock_nexus_fs.list.return_value = []
+
+        fuse_ops.readdir("/workspace")
+
+        mock_nexus_fs.list.assert_called_once_with(
+            "/workspace", recursive=False, details=True, context=None
+        )
+
+    def test_getattr_with_context_passes_to_is_directory(
+        self,
+        fuse_ops_with_context: NexusFUSEOperations,
+        mock_nexus_fs: MagicMock,
+        mock_context: MagicMock,
+    ) -> None:
+        """getattr() passes context to is_directory() for namespace checks."""
+        mock_nexus_fs.is_directory.return_value = True
+
+        fuse_ops_with_context.getattr("/workspace")
+
+        mock_nexus_fs.is_directory.assert_called_with("/workspace", context=mock_context)
+
+    def test_read_skips_context_after_open(
+        self,
+        fuse_ops_with_context: NexusFUSEOperations,
+        mock_nexus_fs: MagicMock,
+    ) -> None:
+        """A1-B: read() skips context after open() validated permissions."""
+        mock_nexus_fs.exists.return_value = True
+        mock_nexus_fs.read.return_value = b"data"
+
+        fd = fuse_ops_with_context.open("/file.txt", os.O_RDONLY)
+        fuse_ops_with_context.read("/file.txt", 4, 0, fd)
+
+        # A1-B: Auth was checked at open() — read skips context
+        mock_nexus_fs.read.assert_called_with("/file.txt", context=None)
+
+    def test_write_skips_context_after_create(
+        self,
+        fuse_ops_with_context: NexusFUSEOperations,
+        mock_nexus_fs: MagicMock,
+        mock_context: MagicMock,
+    ) -> None:
+        """A1-B: write() skips context after create() validated permissions."""
+        mock_nexus_fs.exists.return_value = False
+
+        fd = fuse_ops_with_context.create("/file.txt", 0o644)
+        fuse_ops_with_context.write("/file.txt", b"data", 0, fd)
+
+        # create still uses context for the initial write (namespace validation)
+        mock_nexus_fs.write.assert_any_call("/file.txt", b"", context=mock_context)
+        # A1-B: subsequent write skips context (auth was at create)
+        mock_nexus_fs.write.assert_any_call("/file.txt", b"data", context=None)
+
+    def test_dir_cache_context_aware_key(
+        self,
+        fuse_ops_with_context: NexusFUSEOperations,
+        mock_nexus_fs: MagicMock,
+    ) -> None:
+        """Dir cache uses (path, subject_type, subject_id) key when context is set."""
+        mock_nexus_fs.list.return_value = []
+
+        fuse_ops_with_context.readdir("/workspace")
+
+        # Cache key should be a tuple including subject identity
+        cache_key = ("/workspace", "agent", "agent-001")
+        assert cache_key in fuse_ops_with_context._dir_cache
+
+    def test_dir_cache_without_context_uses_path_key(
+        self, fuse_ops: NexusFUSEOperations, mock_nexus_fs: MagicMock
+    ) -> None:
+        """Dir cache uses plain path key when no context is set."""
+        mock_nexus_fs.list.return_value = []
+
+        fuse_ops.readdir("/workspace")
+
+        # Cache key should be just the path string
+        assert "/workspace" in fuse_ops._dir_cache
+
+    def test_different_agents_get_different_cache_entries(self, mock_nexus_fs: MagicMock) -> None:
+        """Two agents with different identities get isolated dir cache entries."""
+        ctx_a = MagicMock()
+        ctx_a.get_subject.return_value = ("agent", "agent-A")
+
+        ctx_b = MagicMock()
+        ctx_b.get_subject.return_value = ("agent", "agent-B")
+
+        ops_a = NexusFUSEOperations(mock_nexus_fs, MountMode.SMART, cache_config={}, context=ctx_a)
+        ops_b = NexusFUSEOperations(mock_nexus_fs, MountMode.SMART, cache_config={}, context=ctx_b)
+
+        mock_nexus_fs.list.return_value = ["/workspace/file_a.txt"]
+        ops_a.readdir("/workspace")
+
+        mock_nexus_fs.list.return_value = ["/workspace/file_b.txt"]
+        ops_b.readdir("/workspace")
+
+        # Each should have their own cache entry
+        assert ("/workspace", "agent", "agent-A") in ops_a._dir_cache
+        assert ("/workspace", "agent", "agent-B") in ops_b._dir_cache
+
+    def test_context_stored_on_operations(
+        self, fuse_ops_with_context: NexusFUSEOperations, mock_context: MagicMock
+    ) -> None:
+        """OperationContext is stored on the operations instance."""
+        assert fuse_ops_with_context._context is mock_context
+
+    def test_no_context_is_none(self, fuse_ops: NexusFUSEOperations) -> None:
+        """When no context provided, _context is None."""
+        assert fuse_ops._context is None
+
+
+# ---------------------------------------------------------------------------
+# T1-C: Namespace-blocked mutating operations (Issue #1305)
+# ---------------------------------------------------------------------------
+
+
+class TestNamespaceBlockedMutations:
+    """T1-C: Verify mutating ops raise ENOENT when namespace manager rejects the path.
+
+    Mutating FUSE operations (unlink, mkdir, rmdir) call _check_namespace_visible()
+    before forwarding to NexusFilesystem. When the agent has no grant for the path,
+    ENOENT is returned (Plan 9 model: invisible ≠ forbidden).
+    """
+
+    @pytest.fixture
+    def mock_context(self) -> MagicMock:
+        ctx = MagicMock()
+        ctx.get_subject.return_value = ("agent", "agent-001")
+        ctx.zone_id = "test-zone"
+        return ctx
+
+    @pytest.fixture
+    def mock_ns_manager(self) -> MagicMock:
+        ns = MagicMock()
+        # Default: all paths invisible
+        ns.is_visible.return_value = False
+        return ns
+
+    @pytest.fixture
+    def scoped_ops(
+        self,
+        mock_nexus_fs: MagicMock,
+        mock_context: MagicMock,
+        mock_ns_manager: MagicMock,
+    ) -> NexusFUSEOperations:
+        return NexusFUSEOperations(
+            mock_nexus_fs,
+            MountMode.SMART,
+            cache_config={},
+            context=mock_context,
+            namespace_manager=mock_ns_manager,
+        )
+
+    @pytest.mark.parametrize(
+        "operation,args",
+        [
+            ("unlink", ["/secret/file.txt"]),
+            ("mkdir", ["/secret/new_dir", 0o755]),
+            ("rmdir", ["/secret/old_dir"]),
+        ],
+        ids=["unlink", "mkdir", "rmdir"],
+    )
+    def test_blocked_mutating_op_raises_enoent(
+        self,
+        scoped_ops: NexusFUSEOperations,
+        mock_ns_manager: MagicMock,
+        mock_nexus_fs: MagicMock,
+        operation: str,
+        args: list[Any],
+    ) -> None:
+        """Parametrized: mutating ops on invisible paths raise ENOENT."""
+        mock_ns_manager.is_visible.return_value = False
+        mock_nexus_fs.exists.return_value = False  # not a virtual view
+
+        with pytest.raises(FuseOSError) as exc_info:
+            getattr(scoped_ops, operation)(*args)
+
+        assert exc_info.value.errno == errno.ENOENT
+        # Verify namespace check was called with the actual path
+        mock_ns_manager.is_visible.assert_called()
+
+    @pytest.mark.parametrize(
+        "operation,args",
+        [
+            ("unlink", ["/workspace/file.txt"]),
+            ("mkdir", ["/workspace/new_dir", 0o755]),
+            ("rmdir", ["/workspace/old_dir"]),
+        ],
+        ids=["unlink-visible", "mkdir-visible", "rmdir-visible"],
+    )
+    def test_visible_mutating_op_proceeds(
+        self,
+        scoped_ops: NexusFUSEOperations,
+        mock_ns_manager: MagicMock,
+        mock_nexus_fs: MagicMock,
+        operation: str,
+        args: list[Any],
+    ) -> None:
+        """Parametrized: mutating ops on visible paths proceed to NexusFilesystem."""
+        mock_ns_manager.is_visible.return_value = True
+        mock_nexus_fs.exists.return_value = False  # not a virtual view
+
+        # Should NOT raise
+        getattr(scoped_ops, operation)(*args)
+
+    def test_rename_blocked_source_raises_enoent(
+        self,
+        scoped_ops: NexusFUSEOperations,
+        mock_ns_manager: MagicMock,
+        mock_nexus_fs: MagicMock,
+    ) -> None:
+        """rename() raises ENOENT when source path is invisible."""
+        mock_nexus_fs.exists.return_value = False  # not virtual views
+        # Source invisible, destination visible
+        mock_ns_manager.is_visible.side_effect = lambda subj, path, zone: path != "/secret/src.txt"
+
+        with pytest.raises(FuseOSError) as exc_info:
+            scoped_ops.rename("/secret/src.txt", "/workspace/dst.txt")
+
+        assert exc_info.value.errno == errno.ENOENT
+
+    def test_rename_blocked_destination_raises_enoent(
+        self,
+        scoped_ops: NexusFUSEOperations,
+        mock_ns_manager: MagicMock,
+        mock_nexus_fs: MagicMock,
+    ) -> None:
+        """rename() raises ENOENT when destination path is invisible."""
+        mock_nexus_fs.exists.return_value = False
+        # Source visible, destination invisible
+        mock_ns_manager.is_visible.side_effect = lambda subj, path, zone: path != "/secret/dst.txt"
+
+        with pytest.raises(FuseOSError) as exc_info:
+            scoped_ops.rename("/workspace/src.txt", "/secret/dst.txt")
+
+        assert exc_info.value.errno == errno.ENOENT
+
+    def test_no_namespace_manager_fallback_to_is_directory(
+        self,
+        mock_nexus_fs: MagicMock,
+        mock_context: MagicMock,
+    ) -> None:
+        """Without NamespaceManager, falls back to is_directory() on parent."""
+        ops = NexusFUSEOperations(
+            mock_nexus_fs,
+            MountMode.SMART,
+            cache_config={},
+            context=mock_context,
+            namespace_manager=None,  # No manager → fallback path
+        )
+        mock_nexus_fs.exists.return_value = False  # not a virtual view
+        # Parent visibility probe fails → path is invisible
+        mock_nexus_fs.is_directory.side_effect = NexusFileNotFoundError("/secret", "not found")
+
+        with pytest.raises(FuseOSError) as exc_info:
+            ops.unlink("/secret/file.txt")
+
+        assert exc_info.value.errno == errno.ENOENT
+
+
+# ---------------------------------------------------------------------------
+# T2-B: Truncate context forwarding (Issue #1305)
+# ---------------------------------------------------------------------------
+
+
+class TestTruncateContextForwarding:
+    """T2-B: Verify truncate() context handling matches A1-B model.
+
+    - truncate(path, length, fh=None) → direct call, passes self._context
+    - truncate(path, length, fh=<fd>) → ftruncate, skips context (auth at open)
+    """
+
+    @pytest.fixture
+    def mock_context(self) -> MagicMock:
+        ctx = MagicMock()
+        ctx.get_subject.return_value = ("agent", "agent-001")
+        ctx.zone_id = "test-zone"
+        return ctx
+
+    @pytest.fixture
+    def fuse_ops_ctx(
+        self, mock_nexus_fs: MagicMock, mock_context: MagicMock
+    ) -> NexusFUSEOperations:
+        return NexusFUSEOperations(
+            mock_nexus_fs, MountMode.SMART, cache_config={}, context=mock_context
+        )
+
+    def test_truncate_without_fh_passes_context(
+        self,
+        fuse_ops_ctx: NexusFUSEOperations,
+        mock_nexus_fs: MagicMock,
+        mock_context: MagicMock,
+    ) -> None:
+        """truncate() without file handle passes context to read/write."""
+        mock_nexus_fs.exists.return_value = True
+        mock_nexus_fs.read.return_value = b"Hello, World!"
+
+        fuse_ops_ctx.truncate("/file.txt", 5)
+
+        mock_nexus_fs.read.assert_called_with("/file.txt", context=mock_context)
+        mock_nexus_fs.write.assert_called_with("/file.txt", b"Hello", context=mock_context)
+
+    def test_truncate_with_fh_skips_context(
+        self,
+        fuse_ops_ctx: NexusFUSEOperations,
+        mock_nexus_fs: MagicMock,
+    ) -> None:
+        """truncate() with file handle skips context (auth was at open)."""
+        mock_nexus_fs.exists.return_value = True
+        mock_nexus_fs.read.return_value = b"Hello, World!"
+
+        # Open the file first to get a valid fh
+        fd = fuse_ops_ctx.open("/file.txt", os.O_RDWR)
+
+        fuse_ops_ctx.truncate("/file.txt", 5, fh=fd)
+
+        # Should use context=None because fh is provided (A1-B)
+        mock_nexus_fs.read.assert_called_with("/file.txt", context=None)
+        mock_nexus_fs.write.assert_called_with("/file.txt", b"Hello", context=None)
+
+
+# ---------------------------------------------------------------------------
+# T4-B: Root always accessible (Issue #1305)
+# ---------------------------------------------------------------------------
+
+
+class TestRootAlwaysAccessible:
+    """T4-B: Root ('/') must always be accessible, even with namespace scoping.
+
+    The FUSE mount point itself must be navigable — getattr('/') returns dir
+    attrs without checking namespace visibility, because the mount root is
+    the entry point for all agent interactions.
+    """
+
+    def test_getattr_root_with_context(self, mock_nexus_fs: MagicMock) -> None:
+        """getattr('/') returns dir attrs even with strict namespace context."""
+        ctx = MagicMock()
+        ctx.get_subject.return_value = ("agent", "restricted-agent")
+        ctx.zone_id = "zone-1"
+
+        # Namespace manager that rejects everything
+        ns = MagicMock()
+        ns.is_visible.return_value = False
+
+        ops = NexusFUSEOperations(
+            mock_nexus_fs,
+            MountMode.SMART,
+            cache_config={},
+            context=ctx,
+            namespace_manager=ns,
+        )
+
+        attrs = ops.getattr("/")
+
+        assert attrs["st_mode"] & 0o040000  # S_IFDIR
+        assert attrs["st_nlink"] == 2
+        # Importantly, is_visible was NOT called for root
+        ns.is_visible.assert_not_called()
+
+    def test_readdir_root_with_context(self, mock_nexus_fs: MagicMock) -> None:
+        """readdir('/') returns at least ['.', '..', '.raw'] with context."""
+        ctx = MagicMock()
+        ctx.get_subject.return_value = ("agent", "restricted-agent")
+
+        ops = NexusFUSEOperations(
+            mock_nexus_fs,
+            MountMode.SMART,
+            cache_config={},
+            context=ctx,
+        )
+        mock_nexus_fs.list.return_value = []
+
+        entries = ops.readdir("/")
+
+        assert "." in entries
+        assert ".." in entries
+        assert ".raw" in entries

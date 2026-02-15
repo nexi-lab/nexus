@@ -1462,6 +1462,11 @@ class Memory:
             "temporal_stability": memory.temporal_stability,  # #1191
             "stability_confidence": memory.stability_confidence,  # #1191
             "estimated_ttl_days": memory.estimated_ttl_days,  # #1191
+            "supersedes_id": memory.supersedes_id,  # #1190
+            "superseded_by_id": memory.superseded_by_id,  # #1190
+            "extends_ids": memory.extends_ids,  # #1190
+            "extended_by_ids": memory.extended_by_ids,  # #1190
+            "derived_from_ids": memory.derived_from_ids,  # #1190
         }
 
     def retrieve(

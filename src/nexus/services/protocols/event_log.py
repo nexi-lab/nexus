@@ -1,5 +1,11 @@
 """Event log service protocol (Issue #1383).
 
+.. deprecated::
+    Use ``nexus.services.event_log.protocol.EventLogProtocol`` instead.
+    This protocol has no implementations.  Kept for backward compatibility.
+    Event delivery is now handled by the transactional outbox pattern
+    (Issue #1241) via ``EventDeliveryWorker``.
+
 Defines the contract for persistent audit-trail event storage.
 This is SEPARATE from ``EventBusProtocol`` (real-time pub/sub in CacheStore).
 EventLog is append-only durable history; EventBus is ephemeral pub/sub.

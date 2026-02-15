@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, Index, String, Text
+from sqlalchemy import Boolean, DateTime, Index, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base, _generate_uuid, _get_uuid_server_default
@@ -56,6 +56,12 @@ class OperationLogModel(Base):
         DateTime, nullable=False, default=lambda: datetime.now(UTC)
     )
 
+    # Transactional outbox (Issue #1241): tracks whether event has been
+    # delivered to downstream systems (EventBus, webhooks, hooks).
+    delivered: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
     # Indexes
     __table_args__ = (
         Index("idx_operation_log_type", "operation_type"),
@@ -83,6 +89,14 @@ class OperationLogModel(Base):
             "zone_id",
             "agent_id",
             created_at.desc(),
+        ),
+        # Transactional outbox index (Issue #1241): partial index on
+        # undelivered rows for efficient polling by EventDeliveryWorker.
+        # PostgreSQL-only; SQLite migration uses a regular index fallback.
+        Index(
+            "idx_operation_log_undelivered",
+            "created_at",
+            postgresql_where=text("delivered = false"),
         ),
     )
 

@@ -739,9 +739,7 @@ class TestNamespaceEdgeCases:
             "deep-grant-uncle-invisible",
         ],
     )
-    def test_namespace_edge_cases(
-        self, enhanced_rebac_manager, grants, path, expected
-    ):
+    def test_namespace_edge_cases(self, enhanced_rebac_manager, grants, path, expected):
         """Verify namespace visibility for various grant patterns."""
         zone = "edge_zone"
 
@@ -791,9 +789,7 @@ class TestNamespaceEdgeCases:
         with pytest.raises(NexusFileNotFoundError):
             enforcer.check("/workspace/secret/file.txt", Permission.READ, ctx)
 
-    def test_enforcer_batch_filter_uses_namespace(
-        self, enhanced_rebac_manager, namespace_manager
-    ):
+    def test_enforcer_batch_filter_uses_namespace(self, enhanced_rebac_manager, namespace_manager):
         """filter_list() uses namespace to pre-filter paths for agents."""
         zone = "test_zone"
 
@@ -832,9 +828,7 @@ class TestNamespaceEdgeCases:
         assert "/workspace/project-beta/secret.txt" not in filtered
         assert "/admin/config.yml" not in filtered
 
-    def test_enforcer_admin_bypasses_namespace(
-        self, enhanced_rebac_manager, namespace_manager
-    ):
+    def test_enforcer_admin_bypasses_namespace(self, enhanced_rebac_manager, namespace_manager):
         """Admin users bypass namespace checks — see all paths."""
         enforcer = PermissionEnforcer(
             rebac_manager=enhanced_rebac_manager,
@@ -851,7 +845,5 @@ class TestNamespaceEdgeCases:
         )
 
         # Admin should see any path regardless of namespace
-        result = enforcer.check(
-            "/workspace/secret/file.txt", Permission.READ, admin_ctx
-        )
+        result = enforcer.check("/workspace/secret/file.txt", Permission.READ, admin_ctx)
         assert result is True

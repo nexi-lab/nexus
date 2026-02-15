@@ -139,9 +139,15 @@ class ReBACService:
                 "ReBAC manager is not available. Ensure ReBACService is properly initialized."
             )
 
+        # Issue #702: Propagate OTel context to worker thread so spans are
+        # children of the async caller's span.
+        from nexus.services.permissions.rebac_tracing import propagate_otel_context
+
+        fn_with_ctx = propagate_otel_context(fn)
+
         if self._circuit_breaker:
-            return await self._circuit_breaker.call(asyncio.to_thread, fn, *args, **kwargs)
-        return await asyncio.to_thread(fn, *args, **kwargs)
+            return await self._circuit_breaker.call(asyncio.to_thread, fn_with_ctx, *args, **kwargs)
+        return await asyncio.to_thread(fn_with_ctx, *args, **kwargs)
 
     # =========================================================================
     # Public API: Core ReBAC Operations
@@ -676,30 +682,49 @@ class ReBACService:
             assert self._rebac_manager is not None
             return self._rebac_manager.rebac_check_batch_fast(checks=checks)
 
-        # Read operation — supports L1 cache fallback per-item (Decision 3A)
-        try:
-            return await self._run_in_thread(_check_batch_sync)
-        except CircuitOpenError:
-            if self._rebac_manager:
-                results: list[bool] = []
-                all_cached = True
-                for check in checks:
-                    subj, perm, obj = check
-                    cached = self._rebac_manager.get_cached_permission(
-                        subject=subj, permission=perm, object=obj
-                    )
-                    if cached is not None:
-                        results.append(cached)
-                    else:
-                        all_cached = False
-                        break
-                if all_cached:
-                    logger.warning(
-                        "[ReBACService] Circuit open — serving %d cached batch results",
-                        len(results),
-                    )
-                    return results
-            raise
+        # Issue #702: Wrap batch check in a summary span
+        import time as _time
+
+        from nexus.services.permissions.rebac_tracing import (
+            record_batch_result,
+            start_batch_check_span,
+        )
+
+        batch_start = _time.perf_counter()
+        with start_batch_check_span(batch_size=len(checks)):
+            # Read operation — supports L1 cache fallback per-item (Decision 3A)
+            try:
+                batch_results = await self._run_in_thread(_check_batch_sync)
+                batch_ms = (_time.perf_counter() - batch_start) * 1000
+                allowed_count = sum(1 for r in batch_results if r)
+                record_batch_result(
+                    None,  # span set by context manager
+                    allowed_count=allowed_count,
+                    denied_count=len(batch_results) - allowed_count,
+                    duration_ms=batch_ms,
+                )
+                return batch_results
+            except CircuitOpenError:
+                if self._rebac_manager:
+                    results: list[bool] = []
+                    all_cached = True
+                    for check in checks:
+                        subj, perm, obj = check
+                        cached = self._rebac_manager.get_cached_permission(
+                            subject=subj, permission=perm, object=obj
+                        )
+                        if cached is not None:
+                            results.append(cached)
+                        else:
+                            all_cached = False
+                            break
+                    if all_cached:
+                        logger.warning(
+                            "[ReBACService] Circuit open — serving %d cached batch results",
+                            len(results),
+                        )
+                        return results
+                raise
 
     @rpc_expose(description="Delete ReBAC relationship tuple")
     async def rebac_delete(self, tuple_id: str) -> bool:

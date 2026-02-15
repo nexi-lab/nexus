@@ -19,59 +19,31 @@ import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from enum import StrEnum
 from typing import TYPE_CHECKING, Any, cast
 
 from nexus.core import glob_fast, grep_fast
 from nexus.core.exceptions import PermissionDeniedError
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
+from nexus.search.strategies import (
+    GLOB_RUST_THRESHOLD,
+    GREP_CACHED_TEXT_RATIO,
+    GREP_PARALLEL_THRESHOLD,
+    GREP_PARALLEL_WORKERS,
+    GREP_SEQUENTIAL_THRESHOLD,
+    GREP_ZOEKT_THRESHOLD,
+    GlobStrategy,
+    SearchStrategy,
+)
 from nexus.services.gateway import NexusFSGateway
 from nexus.services.search_semantic import SemanticSearchMixin
-
-# =============================================================================
-# Adaptive Algorithm Selection Configuration (Issue #929)
-# =============================================================================
-
-# Grep strategy thresholds
-GREP_SEQUENTIAL_THRESHOLD = 10  # Below this file count, use sequential
-GREP_PARALLEL_THRESHOLD = 100  # Above this, consider parallel processing
-GREP_ZOEKT_THRESHOLD = 1000  # Above this, prefer Zoekt if available
-GREP_PARALLEL_WORKERS = 4  # Thread pool size for parallel grep
-GREP_CACHED_TEXT_RATIO = 0.8  # Use cached text if > 80% have cached text
 
 # List directory traversal thresholds (Issue #901)
 LIST_PARALLEL_WORKERS = 10  # Thread pool size for parallel directory listing (I/O-bound)
 LIST_PARALLEL_MAX_DEPTH = 100  # Safety limit to prevent infinite traversal (e.g., symlink loops)
 
-# Glob strategy thresholds
-GLOB_RUST_THRESHOLD = 50  # Use Rust acceleration above this file count
-
 # Zone-aware path prefixes for cross-zone filtering (Issue #899)
 ZONE_AWARE_PREFIXES: tuple[str, ...] = ("/zones/", "/shared/", "/archives/")
-
-
-class SearchStrategy(StrEnum):
-    """Strategy for grep operations (Issue #929).
-
-    Selected at runtime based on file count, cached text ratio, and backends.
-    """
-
-    SEQUENTIAL = "sequential"  # < 10 files - no parallelization overhead
-    CACHED_TEXT = "cached_text"  # > 80% files have pre-parsed text
-    RUST_BULK = "rust_bulk"  # 10-1000 files with Rust available
-    PARALLEL_POOL = "parallel_pool"  # 100-10000 files, parallel processing
-    ZOEKT_INDEX = "zoekt_index"  # > 1000 files with Zoekt index
-
-
-class GlobStrategy(StrEnum):
-    """Strategy for glob operations (Issue #929)."""
-
-    FNMATCH_SIMPLE = "fnmatch_simple"  # Simple patterns without **
-    REGEX_COMPILED = "regex_compiled"  # Complex patterns with **
-    RUST_BULK = "rust_bulk"  # > 50 files with Rust available
-    DIRECTORY_PRUNED = "directory_pruned"  # Pattern has static prefix
-
 
 # =============================================================================
 # Issue #538: Gitignore-style default exclusion patterns

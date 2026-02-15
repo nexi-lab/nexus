@@ -200,6 +200,55 @@ def _parse_resiliency_config(raw: dict[str, Any] | None) -> Any:
         return ResiliencyConfig()
 
 
+def create_record_store(
+    *,
+    db_url: str | None = None,
+    db_path: str | None = None,
+    create_tables: bool = True,
+) -> RecordStoreABC:
+    """Create a RecordStore with Cloud SQL support auto-detected from env.
+
+    When the ``CLOUD_SQL_INSTANCE`` environment variable is set, the
+    Cloud SQL Python Connector is used for IAM-authenticated connections
+    (no passwords, no public IP).  Otherwise, the standard URL-based
+    connection path is used.
+
+    Args:
+        db_url: Explicit database URL. Falls back to env vars.
+        db_path: SQLite path (development only).
+        create_tables: If True, run ``create_all`` on init. Set False
+            in production when Alembic is the schema SSOT.
+
+    Returns:
+        Fully initialized ``SQLAlchemyRecordStore``.
+    """
+    import os
+
+    from nexus.storage.record_store import SQLAlchemyRecordStore
+
+    cloud_sql_instance = os.getenv("CLOUD_SQL_INSTANCE")
+    if cloud_sql_instance:
+        from nexus.storage.cloud_sql import create_cloud_sql_creators
+
+        sync_creator, async_creator = create_cloud_sql_creators(
+            instance_connection_name=cloud_sql_instance,
+            db_user=os.getenv("CLOUD_SQL_USER", "nexus"),
+            db_name=os.getenv("CLOUD_SQL_DB", "nexus"),
+        )
+        return SQLAlchemyRecordStore(
+            db_url=db_url or "postgresql://",  # placeholder, creator overrides
+            create_tables=create_tables,
+            creator=sync_creator,
+            async_creator=async_creator,
+        )
+
+    return SQLAlchemyRecordStore(
+        db_url=db_url,
+        db_path=db_path,
+        create_tables=create_tables,
+    )
+
+
 def create_nexus_services(
     record_store: RecordStoreABC,
     metadata_store: FileMetadataProtocol,
@@ -442,6 +491,29 @@ def create_nexus_services(
         metadata_store=metadata_store,
         config=ChunkedUploadConfig(**_upload_config_kwargs),
     )
+
+    # --- Search Brick Import Validation (Issue #1520) ---
+    import logging as _search_log
+
+    _search_logger = _search_log.getLogger(__name__)
+    try:
+        from nexus.search.manifest import verify_imports as _verify_search
+
+        _search_status = _verify_search()
+        _search_logger.debug("[FACTORY] Search brick imports: %s", _search_status)
+    except ImportError:
+        _search_logger.debug("[FACTORY] Search brick manifest not available")
+
+    # Wire zoekt callbacks into backends (Issue #1520)
+    try:
+        from nexus.search.zoekt_client import notify_zoekt_sync_complete, notify_zoekt_write
+
+        if hasattr(backend, "_on_write_callback") and backend._on_write_callback is None:
+            backend._on_write_callback = notify_zoekt_write
+        if hasattr(backend, "on_sync_callback") and backend.on_sync_callback is None:
+            backend.on_sync_callback = notify_zoekt_sync_complete
+    except ImportError:
+        _search_logger.debug("[FACTORY] Zoekt not available, skipping callback wiring")
 
     # --- Wallet Provisioner (Issue #1210) ---
     # Creates TigerBeetle wallet accounts on agent registration.

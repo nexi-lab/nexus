@@ -9,6 +9,7 @@ from __future__ import annotations
 import errno
 import os
 import sys
+import threading
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
@@ -1434,3 +1435,84 @@ class TestRootAlwaysAccessible:
         assert "." in entries
         assert ".." in entries
         assert ".raw" in entries
+
+
+class TestThreadSafety:
+    """Test thread safety of FUSE operations (Issue #1563)."""
+
+    def test_concurrent_open_produces_unique_fds(self, mock_nexus_fs: MagicMock) -> None:
+        """50 threads opening files concurrently must get unique file descriptors."""
+        ops = NexusFUSEOperations(mock_nexus_fs, MountMode.SMART, cache_config={})
+        mock_nexus_fs.exists.return_value = True
+
+        fds: list[int] = []
+        lock = threading.Lock()
+        barrier = threading.Barrier(50)
+
+        def open_file(i: int) -> None:
+            barrier.wait()
+            fd = ops.open(f"/file_{i}.txt", os.O_RDONLY)
+            with lock:
+                fds.append(fd)
+
+        threads = [threading.Thread(target=open_file, args=(i,)) for i in range(50)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(fds) == 50
+        assert len(set(fds)) == 50, f"Duplicate fds detected: {len(fds) - len(set(fds))} dupes"
+
+    def test_concurrent_open_and_release_no_errors(self, mock_nexus_fs: MagicMock) -> None:
+        """100 concurrent open/read/release cycles must not raise."""
+        ops = NexusFUSEOperations(mock_nexus_fs, MountMode.SMART, cache_config={})
+        mock_nexus_fs.exists.return_value = True
+        mock_nexus_fs.read.return_value = b"hello"
+
+        errors: list[Exception] = []
+
+        def cycle(i: int) -> None:
+            try:
+                fd = ops.open(f"/file_{i}.txt", os.O_RDONLY)
+                ops.read(f"/file_{i}.txt", 5, 0, fd)
+                ops.release(f"/file_{i}.txt", fd)
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [threading.Thread(target=cycle, args=(i,)) for i in range(100)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert errors == [], f"Errors during concurrent open/read/release: {errors}"
+
+    def test_concurrent_readdir_consistent_results(self, mock_nexus_fs: MagicMock) -> None:
+        """30 threads calling readdir concurrently must get consistent results."""
+        ops = NexusFUSEOperations(mock_nexus_fs, MountMode.SMART, cache_config={})
+        mock_nexus_fs.list.return_value = [
+            {"path": "/doc.txt", "is_directory": False},
+            {"path": "/images", "is_directory": True},
+        ]
+
+        results: list[list[str]] = []
+        lock = threading.Lock()
+        barrier = threading.Barrier(30)
+
+        def readdir_call() -> None:
+            barrier.wait()
+            entries = ops.readdir("/")
+            with lock:
+                results.append(sorted(entries))
+
+        threads = [threading.Thread(target=readdir_call) for _ in range(30)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert len(results) == 30
+        first = results[0]
+        for i, r in enumerate(results[1:], 1):
+            assert r == first, f"Thread {i} got different result: {r} vs {first}"

@@ -17,7 +17,6 @@ from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 from nexus.core.response import HandlerResponse
-from nexus.search.zoekt_client import notify_zoekt_write
 from nexus.storage.content_cache import ContentCache
 
 if TYPE_CHECKING:
@@ -89,6 +88,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         batch_read_workers: int = 8,
         bloom_capacity: int = DEFAULT_CAS_BLOOM_CAPACITY,
         bloom_fp_rate: float = DEFAULT_CAS_BLOOM_FP_RATE,
+        on_write_callback: Any | None = None,
     ):
         """
         Initialize local backend.
@@ -100,6 +100,8 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
                                Use lower values (1-2) for HDDs, higher (8-16) for SSDs/NVMe.
             bloom_capacity: Expected number of CAS entries (default: 100,000)
             bloom_fp_rate: Target false positive rate (default: 0.01 = 1%)
+            on_write_callback: Optional callback(path: str) for write notifications
+                              (e.g., zoekt reindex). Injected by factory (Issue #1520).
         """
         self.root_path = Path(root_path).resolve()
         self.cas_root = self.root_path / "cas"  # CAS content storage
@@ -109,6 +111,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         self._cas_bloom = None
         self._bloom_capacity = bloom_capacity
         self._bloom_fp_rate = bloom_fp_rate
+        self._on_write_callback = on_write_callback
         self._ensure_roots()
         self._cas = CASBlobStore(self.cas_root)
         self._init_cas_bloom_filter()
@@ -296,10 +299,10 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
             # Add to Bloom filter for fast future lookups
             self._cas_bloom_add(content_hash)
 
-            # Notify Zoekt to reindex (new content written)
-            if is_new:
+            # Notify search brick of write (e.g., Zoekt reindex) via callback (Issue #1520)
+            if is_new and self._on_write_callback is not None:
                 content_path = self._hash_to_path(content_hash)
-                notify_zoekt_write(str(content_path))
+                self._on_write_callback(str(content_path))
 
             return HandlerResponse.ok(
                 data=content_hash,

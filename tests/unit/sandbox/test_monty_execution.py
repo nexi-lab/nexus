@@ -22,6 +22,7 @@ except ImportError:
 pytestmark = pytest.mark.skipif(not MONTY_AVAILABLE, reason="pydantic-monty not installed")
 
 from nexus.sandbox.sandbox_monty_provider import MontySandboxProvider  # noqa: E402
+from nexus.sandbox.sandbox_provider import EscalationNeeded  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -74,9 +75,9 @@ class TestSecurityDenyByDefault:
 
     @pytest.mark.asyncio
     async def test_import_os_blocked(self, provider: MontySandboxProvider, sandbox_id: str) -> None:
-        """import os should fail — no stdlib imports."""
-        result = await provider.run_code(sandbox_id, "python", "import os\nos.system('whoami')")
-        assert result.exit_code != 0
+        """import os; os.system() should escalate — needs real OS access."""
+        with pytest.raises(EscalationNeeded):
+            await provider.run_code(sandbox_id, "python", "import os\nos.system('whoami')")
 
     @pytest.mark.asyncio
     async def test_dunder_import_blocked(

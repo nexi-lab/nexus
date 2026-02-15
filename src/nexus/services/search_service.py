@@ -188,6 +188,9 @@ class SearchService(SemanticSearchMixin):
         # Shared thread pool for parallel grep (Issue #929, fix #14)
         self._thread_pool: ThreadPoolExecutor | None = None
 
+        # TTL cache for cross-zone sharing queries (Issue #904)
+        self._cross_zone_cache: dict[tuple[str, ...], tuple[float, builtins.list[str]]] = {}
+
         logger.info("[SearchService] Initialized")
 
     def _get_thread_pool(self) -> ThreadPoolExecutor:
@@ -492,6 +495,7 @@ class SearchService(SemanticSearchMixin):
             allowed_set,
             backend_dirs,
             context,
+            zone_id=list_zone_id,
         )
 
         logger.info(f"[LIST-DEBUG] FINAL directories: {sorted(directories)[:10]}")
@@ -506,13 +510,16 @@ class SearchService(SemanticSearchMixin):
     # List Helpers (extracted from mixin's monolithic list())
     # =========================================================================
 
-    def _extract_zone_info(self, context: Any) -> tuple[str | None, str | None, str | None]:
-        """Extract zone_id, subject_type, subject_id from context for DB filtering."""
-        list_zone_id: str | None = None
+    def _extract_zone_info(self, context: Any) -> tuple[str, str | None, str | None]:
+        """Extract zone_id, subject_type, subject_id from context for DB filtering.
+
+        zone_id always returns a non-None value (defaults to "default").
+        """
+        list_zone_id: str = "default"
         subject_type: str | None = None
         subject_id: str | None = None
         if self._enforce_permissions and context:
-            if hasattr(context, "zone_id"):
+            if hasattr(context, "zone_id") and context.zone_id:
                 list_zone_id = context.zone_id
             if hasattr(context, "subject_type") and hasattr(context, "subject_id"):
                 subject_type = context.subject_type
@@ -667,7 +674,7 @@ class SearchService(SemanticSearchMixin):
     def _list_fast_path(
         self,
         path: str,
-        list_zone_id: str | None,
+        list_zone_id: str,
         context: Any,
         _rebac_manager: Any,
     ) -> tuple[builtins.list[Any], set[str], bool, int | None]:
@@ -678,9 +685,7 @@ class SearchService(SemanticSearchMixin):
         _revision_before: int | None = None
 
         if _rebac_manager and hasattr(_rebac_manager, "_get_zone_revision_for_grant"):
-            _revision_before = _rebac_manager._get_zone_revision_for_grant(
-                list_zone_id or "default"
-            )
+            _revision_before = _rebac_manager._get_zone_revision_for_grant(list_zone_id)
 
         import time as _time
 
@@ -741,7 +746,7 @@ class SearchService(SemanticSearchMixin):
             and _rebac_manager
             and hasattr(_rebac_manager, "_get_zone_revision_for_grant")
         ):
-            _revision_after = _rebac_manager._get_zone_revision_for_grant(list_zone_id or "default")
+            _revision_after = _rebac_manager._get_zone_revision_for_grant(list_zone_id)
             if _revision_after != _revision_before:
                 logger.warning(
                     f"[LIST-TIMING] Revision changed ({_revision_before} -> {_revision_after}), "
@@ -754,7 +759,7 @@ class SearchService(SemanticSearchMixin):
     def _list_slow_path(
         self,
         list_prefix: str,
-        list_zone_id: str | None,
+        list_zone_id: str,
         subject_type: str | None,
         subject_id: str | None,
         _revision_before: int | None,
@@ -780,9 +785,7 @@ class SearchService(SemanticSearchMixin):
                         and _rebac_manager
                         and hasattr(_rebac_manager, "_get_zone_revision_for_grant")
                     ):
-                        _revision_before = _rebac_manager._get_zone_revision_for_grant(
-                            list_zone_id or "default"
-                        )
+                        _revision_before = _rebac_manager._get_zone_revision_for_grant(list_zone_id)
                     _accessible_int_ids = tiger_cache.get_accessible_int_ids(
                         subject_type=subject_type,
                         subject_id=subject_id,
@@ -806,37 +809,49 @@ class SearchService(SemanticSearchMixin):
         all_files = self.metadata.list(
             list_prefix,
             zone_id=list_zone_id,
-            accessible_int_ids=_accessible_int_ids,
-        )
-        _pushdown_info = (
-            f" (pushdown: {len(_accessible_int_ids)} int IDs)" if _accessible_int_ids else ""
         )
         logger.info(
             f"[LIST-TIMING] metadata.list(): {(_time.time() - _meta_start) * 1000:.1f}ms, "
-            f"{len(all_files)} files{_pushdown_info}"
+            f"{len(all_files)} files"
         )
 
-        # Issue #1147: Check if revision changed during query (TOCTOU race detection)
-        if (
-            _accessible_int_ids is not None
-            and _revision_before is not None
-            and _rebac_manager
-            and hasattr(_rebac_manager, "_get_zone_revision_for_grant")
-        ):
-            _revision_after = _rebac_manager._get_zone_revision_for_grant(list_zone_id or "default")
-            if _revision_after != _revision_before:
-                logger.warning("[PREDICATE-PUSHDOWN] Revision changed, re-running without filter")
-                _meta_start = _time.time()
-                all_files = self.metadata.list(
-                    list_prefix,
-                    zone_id=list_zone_id,
-                    accessible_int_ids=None,
-                )
+        # Predicate pushdown: filter by accessible_int_ids at service layer
+        if _accessible_int_ids is not None:
+            tiger_cache = getattr(_rebac_manager, "_tiger_cache", None) if _rebac_manager else None
+            if tiger_cache is not None:
+                before_count = len(all_files)
+                all_files = [
+                    f
+                    for f in all_files
+                    if tiger_cache.get_or_create_int_id("file", f.path) in _accessible_int_ids
+                ]
                 logger.info(
-                    f"[LIST-TIMING] metadata.list() retry: "
-                    f"{(_time.time() - _meta_start) * 1000:.1f}ms, {len(all_files)} files"
+                    f"[PREDICATE-PUSHDOWN] Service-layer filter: "
+                    f"{before_count} -> {len(all_files)} files "
+                    f"({len(_accessible_int_ids)} accessible int IDs)"
                 )
-                _accessible_int_ids = None
+
+            # Issue #1147: Check if revision changed during query (TOCTOU race detection)
+            if (
+                _revision_before is not None
+                and _rebac_manager
+                and hasattr(_rebac_manager, "_get_zone_revision_for_grant")
+            ):
+                _revision_after = _rebac_manager._get_zone_revision_for_grant(list_zone_id)
+                if _revision_after != _revision_before:
+                    logger.warning(
+                        "[PREDICATE-PUSHDOWN] Revision changed, re-running without filter"
+                    )
+                    _meta_start = _time.time()
+                    all_files = self.metadata.list(
+                        list_prefix,
+                        zone_id=list_zone_id,
+                    )
+                    logger.info(
+                        f"[LIST-TIMING] metadata.list() retry: "
+                        f"{(_time.time() - _meta_start) * 1000:.1f}ms, {len(all_files)} files"
+                    )
+                    _accessible_int_ids = None
 
         return all_files, _accessible_int_ids
 
@@ -906,6 +921,7 @@ class SearchService(SemanticSearchMixin):
         allowed_set: set[str],
         backend_dirs: set[str],
         context: Any,
+        zone_id: str = "default",
     ) -> set[str]:
         """Infer directory entries from file paths and backend."""
         import time as _time
@@ -932,6 +948,7 @@ class SearchService(SemanticSearchMixin):
                     allowed_set,
                     directories,
                     context,
+                    zone_id=zone_id,
                 )
             else:
                 for meta in all_files:
@@ -954,6 +971,7 @@ class SearchService(SemanticSearchMixin):
         allowed_set: set[str],
         directories: set[str],
         context: Any,
+        zone_id: str = "default",
     ) -> None:
         """Check backend directories for access using bulk TRAVERSE check."""
         import time as _time
@@ -983,7 +1001,7 @@ class SearchService(SemanticSearchMixin):
             dirs_needing_traverse.append(dir_path)
 
         # Two-phase TRAVERSE optimization (Fix #1147)
-        user_zone = context.zone_id if hasattr(context, "zone_id") else None
+        user_zone = zone_id
         _skipped_cross_zone = 0
         _ZONE_PREFIXES = ("/zones/", "/shared/", "/archives/")
         dirs_to_check: list[str] = []
@@ -1012,7 +1030,6 @@ class SearchService(SemanticSearchMixin):
         )
         if dirs_to_check and _rebac_manager and hasattr(_rebac_manager, "rebac_check_bulk"):
             subject = context.get_subject()
-            zone_id = context.zone_id or "default"
             bulk_checks = []
             for dp in dirs_to_check:
                 for perm in ("traverse", "read", "write"):
@@ -1119,9 +1136,7 @@ class SearchService(SemanticSearchMixin):
 
         _start = _time.time()
 
-        list_zone_id: str | None = None
-        if self._enforce_permissions and context and hasattr(context, "zone_id"):
-            list_zone_id = context.zone_id
+        list_zone_id, _, _ = self._extract_zone_info(context)
 
         if path and path != "/":
             path = self._validate_path(path)
@@ -1260,12 +1275,22 @@ class SearchService(SemanticSearchMixin):
         prefix: str = "",
     ) -> builtins.list[str]:
         """Fetch file paths shared with a user from other zones (Issue #904)."""
+        import sqlite3
+        import time as _time
         from datetime import UTC, datetime
 
         from nexus.core.rebac import CROSS_ZONE_ALLOWED_RELATIONS
 
         if not self._rebac_manager:
             return []
+
+        # Check TTL cache (5-second TTL)
+        cache_key = (subject_type, subject_id, zone_id, prefix)
+        now = _time.monotonic()
+        if cache_key in self._cross_zone_cache:
+            cached_time, cached_paths = self._cross_zone_cache[cache_key]
+            if now - cached_time < 5.0:
+                return cached_paths
 
         try:
             with self._rebac_manager._connection() as conn:
@@ -1281,24 +1306,18 @@ class SearchService(SemanticSearchMixin):
                       AND zone_id != ?
                       AND (expires_at IS NULL OR expires_at > ?)
                 """
+                base_params: tuple[Any, ...] = (
+                    *cross_zone_relations,
+                    subject_type,
+                    subject_id,
+                    zone_id,
+                    datetime.now(UTC).isoformat(),
+                )
                 if prefix:
                     query += " AND object_id LIKE ?"
-                    params = (
-                        *cross_zone_relations,
-                        subject_type,
-                        subject_id,
-                        zone_id,
-                        datetime.now(UTC).isoformat(),
-                        f"{prefix}%",
-                    )
+                    params = (*base_params, f"{prefix}%")
                 else:
-                    params = (
-                        *cross_zone_relations,
-                        subject_type,
-                        subject_id,
-                        zone_id,
-                        datetime.now(UTC).isoformat(),
-                    )
+                    params = base_params
                 cursor.execute(self._rebac_manager._fix_sql_placeholders(query), params)
                 paths = []
                 for row in cursor.fetchall():
@@ -1309,9 +1328,13 @@ class SearchService(SemanticSearchMixin):
                         f"[CROSS-ZONE] Found {len(paths)} shared paths "
                         f"for {subject_type}:{subject_id}"
                     )
+                self._cross_zone_cache[cache_key] = (now, paths)
                 return paths
+        except (sqlite3.OperationalError, sqlite3.InterfaceError) as e:
+            logger.error("Cross-zone sharing DB error for %s/%s: %s", subject_type, subject_id, e)
+            return []
         except Exception as e:
-            logger.warning(f"Failed to fetch cross-zone shared paths: {e}")
+            logger.error("Unexpected cross-zone sharing error: %s", e, exc_info=True)
             return []
 
     # =========================================================================
@@ -1666,7 +1689,7 @@ class SearchService(SemanticSearchMixin):
             try:
                 from nexus.storage.file_cache import get_file_cache
 
-                zone_id, _, _ = self._get_routing_params(context)
+                zone_id, _, _ = self._extract_zone_info(context)
                 if zone_id:
                     file_cache = get_file_cache()
                     disk_paths = file_cache.get_disk_paths_bulk(zone_id, files_needing_raw)

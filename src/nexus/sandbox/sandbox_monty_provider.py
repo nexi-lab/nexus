@@ -544,8 +544,8 @@ class MontySandboxProvider(SandboxProvider):
         return progress.output
 
     # Patterns in runtime error messages that indicate escalation is needed.
-    # These are specifically for ModuleNotFoundError / ImportError — not
-    # generic NameErrors which are genuine code bugs.
+    # These are specifically for module/import errors and missing capabilities —
+    # not generic NameErrors or TypeErrors which are genuine code bugs.
     _ESCALATION_PATTERNS = (
         "modulenotfounderror",
         "no module named",
@@ -555,15 +555,25 @@ class MontySandboxProvider(SandboxProvider):
         "permissionerror: [errno",
     )
 
+    # Pattern for module attribute errors — e.g., Monty has an `os` stub but
+    # `os.getcwd()` is not implemented. This means the code needs real OS access.
+    _MODULE_ATTR_PATTERN = "module '"
+
     def _is_escalation_error(self, stderr: str) -> bool:
         """Check if a runtime error indicates need for escalation.
 
-        Returns True for errors caused by missing module imports or filesystem
-        access — things Monty fundamentally cannot do.
+        Returns True for:
+        - Missing module imports (ModuleNotFoundError, ImportError)
+        - Missing module attributes (AttributeError: module 'X' has no attribute 'Y')
+        - Filesystem access errors (FileNotFoundError, PermissionError)
+
         Returns False for genuine code bugs (NameError, ZeroDivision, TypeError, etc.).
         """
         lower = stderr.lower()
-        return any(pattern in lower for pattern in self._ESCALATION_PATTERNS)
+        if any(pattern in lower for pattern in self._ESCALATION_PATTERNS):
+            return True
+        # Detect "AttributeError: module 'os' has no attribute 'getcwd'" etc.
+        return "attributeerror" in lower and self._MODULE_ATTR_PATTERN in stderr
 
     @staticmethod
     def _build_type_stubs(

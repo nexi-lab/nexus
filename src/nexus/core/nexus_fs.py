@@ -442,6 +442,21 @@ class NexusFS(  # type: ignore[misc]
             if hasattr(self._services, k):
                 object.__setattr__(self._services, k, v)
 
+    @property
+    def read_set_cache(self) -> Any | None:
+        """Public accessor for the read-set-aware cache (Issue #1169)."""
+        return self._read_set_cache
+
+    @property
+    def read_set_registry(self) -> Any | None:
+        """Public accessor for the ReadSetRegistry (Issue #1169)."""
+        return getattr(self, "_read_set_registry", None)
+
+    @property
+    def metadata_cache(self) -> Any | None:
+        """Public accessor for the underlying MetadataCache on the metadata store."""
+        return getattr(self.metadata, "_cache", None)
+
     def _init_performance_optimizations(self) -> None:
         """Initialize performance optimizations for permission checks.
 

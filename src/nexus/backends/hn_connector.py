@@ -84,6 +84,7 @@ MAX_COMMENTS_TOTAL = 100
     description="HackerNews API (read-only)",
     category="api",
     requires=["httpx"],
+    service_name="hackernews",
 )
 class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
     """

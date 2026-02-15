@@ -28,17 +28,24 @@ XConnectorBackend = None
 HNConnectorBackend = None
 SlackConnectorBackend = None
 LocalConnectorBackend = None
+GmailConnectorBackend = None
+GoogleCalendarConnectorBackend = None
+
+
+_optional_backends_registered = False
 
 
 def _register_optional_backends() -> None:
     """Register optional backends on first use (lazy loading)."""
+    global _optional_backends_registered
     global GCSBackend, GoogleDriveConnectorBackend, GCSConnectorBackend
     global S3ConnectorBackend, XConnectorBackend, HNConnectorBackend, SlackConnectorBackend
-    global LocalConnectorBackend
+    global LocalConnectorBackend, GmailConnectorBackend, GoogleCalendarConnectorBackend
 
     # Only register once
-    if GCSBackend is not None:
+    if _optional_backends_registered:
         return
+    _optional_backends_registered = True
 
     try:
         from nexus.backends.gcs import GCSBackend as _GCSBackend
@@ -97,6 +104,22 @@ def _register_optional_backends() -> None:
     except ImportError:
         pass
 
+    try:
+        from nexus.backends.gmail_connector import GmailConnectorBackend as _GmailConn
+
+        GmailConnectorBackend = _GmailConn
+    except ImportError:
+        pass
+
+    try:
+        from nexus.backends.gcalendar_connector import (
+            GoogleCalendarConnectorBackend as _GCalConn,
+        )
+
+        GoogleCalendarConnectorBackend = _GCalConn
+    except ImportError:
+        pass
+
 
 __all__ = [
     # Base classes
@@ -125,4 +148,6 @@ __all__ = [
     "HNConnectorBackend",
     "SlackConnectorBackend",
     "LocalConnectorBackend",
+    "GmailConnectorBackend",
+    "GoogleCalendarConnectorBackend",
 ]

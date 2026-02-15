@@ -10,6 +10,10 @@ The unified service name is used for:
 - SKILL.md generation
 - OAuth token mapping
 
+Connector fields are auto-derived from ConnectorRegistry via the
+``service_name`` metadata on each ``@register_connector`` decorator.
+This eliminates manual synchronization between the two registries.
+
 Example:
     >>> from nexus.backends.service_map import ServiceMap
     >>>
@@ -28,11 +32,10 @@ Example:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    pass
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -41,7 +44,7 @@ class ServiceInfo:
 
     name: str  # Unified service name
     display_name: str  # Human-readable name
-    connector: str | None  # Nexus connector type (if exists)
+    connector: str | None  # Nexus connector type (auto-derived from registry)
     klavis_mcp: str | None  # Klavis MCP server name (if exists)
     oauth_provider: str | None  # OAuth provider name (e.g., "google")
     capabilities: list[str]  # ["read", "write", "list", "delete", "tools"]
@@ -51,12 +54,17 @@ class ServiceInfo:
 # Unified service registry
 # Key: unified service name
 # Value: ServiceInfo
+#
+# NOTE: The `connector` field is intentionally set to None for services that
+# have connectors. It is auto-populated by _sync_from_connector_registry()
+# using the `service_name` metadata from @register_connector decorators.
+# This eliminates the class of bugs where connector fields go stale.
 SERVICE_REGISTRY: dict[str, ServiceInfo] = {
-    # Google services
+    # Google services — connector fields auto-derived from ConnectorRegistry
     "google-drive": ServiceInfo(
         name="google-drive",
         display_name="Google Drive",
-        connector="gdrive_connector",
+        connector=None,  # auto-derived: gdrive_connector
         klavis_mcp="google_drive",
         oauth_provider="google",
         capabilities=["read", "write", "list", "delete", "tools"],
@@ -65,16 +73,16 @@ SERVICE_REGISTRY: dict[str, ServiceInfo] = {
     "gmail": ServiceInfo(
         name="gmail",
         display_name="Gmail",
-        connector=None,
+        connector=None,  # auto-derived: gmail_connector
         klavis_mcp="gmail",
         oauth_provider="google",
-        capabilities=["tools"],
-        description="Gmail MCP integration. Read, send, and manage Gmail messages, threads, and labels via MCP tools.",
+        capabilities=["read", "list", "tools"],
+        description="Gmail emails with OAuth 2.0 authentication",
     ),
     "google-docs": ServiceInfo(
         name="google-docs",
         display_name="Google Docs",
-        connector=None,
+        connector=None,  # MCP-only, no connector
         klavis_mcp="google_docs",
         oauth_provider="google",
         capabilities=["tools"],
@@ -83,7 +91,7 @@ SERVICE_REGISTRY: dict[str, ServiceInfo] = {
     "google-sheets": ServiceInfo(
         name="google-sheets",
         display_name="Google Sheets",
-        connector=None,
+        connector=None,  # MCP-only, no connector
         klavis_mcp="google_sheets",
         oauth_provider="google",
         capabilities=["tools"],
@@ -92,17 +100,17 @@ SERVICE_REGISTRY: dict[str, ServiceInfo] = {
     "google-calendar": ServiceInfo(
         name="google-calendar",
         display_name="Google Calendar",
-        connector=None,
+        connector=None,  # auto-derived: gcalendar_connector
         klavis_mcp="google_calendar",
         oauth_provider="google",
-        capabilities=["tools"],
-        description="Google Calendar events",
+        capabilities=["read", "write", "list", "delete", "tools"],
+        description="Google Calendar events with full CRUD support",
     ),
-    # Cloud storage
+    # Cloud storage — connector fields auto-derived from ConnectorRegistry
     "gcs": ServiceInfo(
         name="gcs",
         display_name="Google Cloud Storage",
-        connector="gcs_connector",
+        connector=None,  # auto-derived: gcs_connector
         klavis_mcp=None,
         oauth_provider="google",
         capabilities=["read", "write", "list", "delete"],
@@ -111,7 +119,7 @@ SERVICE_REGISTRY: dict[str, ServiceInfo] = {
     "s3": ServiceInfo(
         name="s3",
         display_name="Amazon S3",
-        connector="s3_connector",
+        connector=None,  # auto-derived: s3_connector
         klavis_mcp=None,
         oauth_provider=None,  # Uses AWS credentials, not OAuth
         capabilities=["read", "write", "list", "delete"],
@@ -121,7 +129,7 @@ SERVICE_REGISTRY: dict[str, ServiceInfo] = {
     "github": ServiceInfo(
         name="github",
         display_name="GitHub",
-        connector=None,
+        connector=None,  # MCP-only, no connector
         klavis_mcp="github",
         oauth_provider="github",
         capabilities=["tools"],
@@ -130,7 +138,7 @@ SERVICE_REGISTRY: dict[str, ServiceInfo] = {
     "slack": ServiceInfo(
         name="slack",
         display_name="Slack",
-        connector="slack_connector",
+        connector="slack_connector",  # TODO: add @register_connector to slack_connector.py
         klavis_mcp="slack",
         oauth_provider="slack",
         capabilities=["read", "write", "list", "tools"],
@@ -139,7 +147,7 @@ SERVICE_REGISTRY: dict[str, ServiceInfo] = {
     "notion": ServiceInfo(
         name="notion",
         display_name="Notion",
-        connector=None,
+        connector=None,  # MCP-only, no connector
         klavis_mcp="notion",
         oauth_provider="notion",
         capabilities=["tools"],
@@ -148,7 +156,7 @@ SERVICE_REGISTRY: dict[str, ServiceInfo] = {
     "linear": ServiceInfo(
         name="linear",
         display_name="Linear",
-        connector=None,
+        connector=None,  # MCP-only, no connector
         klavis_mcp="linear",
         oauth_provider="linear",
         capabilities=["tools"],
@@ -157,7 +165,7 @@ SERVICE_REGISTRY: dict[str, ServiceInfo] = {
     "x": ServiceInfo(
         name="x",
         display_name="X (Twitter)",
-        connector="x_connector",
+        connector=None,  # auto-derived: x_connector
         klavis_mcp=None,  # Klavis doesn't support X yet
         oauth_provider="twitter",
         capabilities=["read", "write", "list"],
@@ -167,7 +175,7 @@ SERVICE_REGISTRY: dict[str, ServiceInfo] = {
     "hackernews": ServiceInfo(
         name="hackernews",
         display_name="Hacker News",
-        connector="hn_connector",
+        connector=None,  # auto-derived: hn_connector
         klavis_mcp=None,
         oauth_provider=None,  # No auth needed
         capabilities=["read", "list"],
@@ -175,19 +183,64 @@ SERVICE_REGISTRY: dict[str, ServiceInfo] = {
     ),
 }
 
-# Reverse lookup maps (built from SERVICE_REGISTRY)
+# Reverse lookup maps — rebuilt by _sync_from_connector_registry()
 _CONNECTOR_TO_SERVICE: dict[str, str] = {}
 _MCP_TO_SERVICE: dict[str, str] = {}
+_synced = False
 
-for _service_name, _info in SERVICE_REGISTRY.items():
-    if _info.connector:
-        _CONNECTOR_TO_SERVICE[_info.connector] = _service_name
-    if _info.klavis_mcp:
-        _MCP_TO_SERVICE[_info.klavis_mcp] = _service_name
+
+def _sync_from_connector_registry() -> None:
+    """Auto-derive connector fields from ConnectorRegistry.
+
+    Iterates all registered connectors that declare a ``service_name`` and
+    populates the corresponding ``connector`` field in SERVICE_REGISTRY.
+    Then rebuilds reverse lookup maps.
+
+    This is called lazily on first ServiceMap access, ensuring optional
+    backends have been registered via ``_register_optional_backends()``.
+    """
+    global _synced
+    if _synced:
+        return
+    _synced = True
+
+    # Ensure optional backends are imported (triggers @register_connector)
+    from nexus.backends import _register_optional_backends
+
+    _register_optional_backends()
+
+    # Auto-populate connector fields from ConnectorRegistry
+    from nexus.backends.registry import ConnectorRegistry
+
+    for info in ConnectorRegistry.list_all():
+        if info.service_name and info.service_name in SERVICE_REGISTRY:
+            service = SERVICE_REGISTRY[info.service_name]
+            if service.connector is not None and service.connector != info.name:
+                logger.warning(
+                    "Service '%s' connector mismatch: static=%s, registry=%s. "
+                    "Using registry value.",
+                    info.service_name,
+                    service.connector,
+                    info.name,
+                )
+            service.connector = info.name
+
+    # Rebuild reverse lookup maps
+    _CONNECTOR_TO_SERVICE.clear()
+    _MCP_TO_SERVICE.clear()
+    for service_name, service_info in SERVICE_REGISTRY.items():
+        if service_info.connector:
+            _CONNECTOR_TO_SERVICE[service_info.connector] = service_name
+        if service_info.klavis_mcp:
+            _MCP_TO_SERVICE[service_info.klavis_mcp] = service_name
 
 
 class ServiceMap:
-    """Helper class for service name lookups."""
+    """Helper class for service name lookups.
+
+    All methods trigger lazy sync from ConnectorRegistry on first access,
+    ensuring connector fields are always up-to-date.
+    """
 
     @staticmethod
     def get_service_name(
@@ -203,6 +256,7 @@ class ServiceMap:
         Returns:
             Unified service name or None if not found
         """
+        _sync_from_connector_registry()
         if connector:
             return _CONNECTOR_TO_SERVICE.get(connector)
         if mcp:
@@ -219,6 +273,7 @@ class ServiceMap:
         Returns:
             ServiceInfo or None if not found
         """
+        _sync_from_connector_registry()
         return SERVICE_REGISTRY.get(service_name)
 
     @staticmethod
@@ -231,6 +286,7 @@ class ServiceMap:
         Returns:
             Connector type or None if no connector exists
         """
+        _sync_from_connector_registry()
         info = SERVICE_REGISTRY.get(service_name)
         return info.connector if info else None
 
@@ -244,6 +300,7 @@ class ServiceMap:
         Returns:
             MCP name or None if no MCP exists
         """
+        _sync_from_connector_registry()
         info = SERVICE_REGISTRY.get(service_name)
         return info.klavis_mcp if info else None
 
@@ -257,6 +314,7 @@ class ServiceMap:
         Returns:
             OAuth provider name or None
         """
+        _sync_from_connector_registry()
         info = SERVICE_REGISTRY.get(service_name)
         return info.oauth_provider if info else None
 
@@ -267,6 +325,7 @@ class ServiceMap:
         Returns:
             List of service names
         """
+        _sync_from_connector_registry()
         return list(SERVICE_REGISTRY.keys())
 
     @staticmethod
@@ -276,6 +335,7 @@ class ServiceMap:
         Returns:
             List of service names with connectors
         """
+        _sync_from_connector_registry()
         return [name for name, info in SERVICE_REGISTRY.items() if info.connector]
 
     @staticmethod
@@ -285,6 +345,7 @@ class ServiceMap:
         Returns:
             List of service names with MCPs
         """
+        _sync_from_connector_registry()
         return [name for name, info in SERVICE_REGISTRY.items() if info.klavis_mcp]
 
     @staticmethod
@@ -297,5 +358,6 @@ class ServiceMap:
         Returns:
             True if service has both connector and MCP
         """
+        _sync_from_connector_registry()
         info = SERVICE_REGISTRY.get(service_name)
         return bool(info and info.connector and info.klavis_mcp)

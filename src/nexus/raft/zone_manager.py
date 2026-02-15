@@ -26,6 +26,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# SSOT for default root zone ID — used by bootstrap() and from_zone_manager()
+ROOT_ZONE_ID = "root"
+
 
 def _get_py_zone_manager() -> type | None:
     """Import PyO3 ZoneManager from _nexus_raft (avoid circular import with __init__)."""
@@ -84,7 +87,7 @@ class ZoneManager:
 
     def bootstrap(
         self,
-        root_zone_id: str = "root",
+        root_zone_id: str = ROOT_ZONE_ID,
         peers: list[str] | None = None,
     ) -> RaftMetadataStore:
         """Bootstrap this node's root zone with a "/" entry.

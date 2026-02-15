@@ -560,3 +560,168 @@ class TestPerformance:
 
         median_ms = statistics.median(times) / 1_000_000
         assert median_ms < 1.0, f"select_provider took {median_ms:.3f}ms (expected <1ms)"
+
+
+# ---------------------------------------------------------------------------
+# TestStickyOnlyEscalatesUp — Issue #1317 review fix #4
+# ---------------------------------------------------------------------------
+
+
+class TestStickyOnlyEscalatesUp:
+    """Verify sticky sessions only escalate UP, never downgrade."""
+
+    def test_sticky_does_not_downgrade_to_monty(self, router: SandboxRouter) -> None:
+        """History favoring monty should NOT override analysis saying docker."""
+        agent_id = "agent-downgrade"
+        # Record 8 monty executions (80% monty)
+        for _ in range(8):
+            router.record_execution(agent_id, "monty", escalated=False)
+        for _ in range(2):
+            router.record_execution(agent_id, "docker", escalated=False)
+
+        # Code with imports should route to docker despite monty-heavy history
+        tier = router.select_provider("import os", "python", agent_id=agent_id)
+        assert tier == "docker"
+
+    def test_sticky_can_escalate_to_docker(self, router: SandboxRouter) -> None:
+        """History favoring docker CAN override analysis saying monty (escalation UP)."""
+        agent_id = "agent-escalate-up"
+        # Record 8 docker executions
+        for _ in range(8):
+            router.record_execution(agent_id, "docker", escalated=False)
+        for _ in range(2):
+            router.record_execution(agent_id, "monty", escalated=False)
+
+        # Simple code would route to monty, but sticky says docker (UP)
+        tier = router.select_provider("x = 42", "python", agent_id=agent_id)
+        assert tier == "docker"
+
+    def test_sticky_can_escalate_to_e2b(self, router: SandboxRouter) -> None:
+        """History favoring e2b CAN override analysis saying docker."""
+        agent_id = "agent-e2b-sticky"
+        for _ in range(8):
+            router.record_execution(agent_id, "e2b", escalated=False)
+        for _ in range(2):
+            router.record_execution(agent_id, "docker", escalated=False)
+
+        tier = router.select_provider("import os", "python", agent_id=agent_id)
+        assert tier == "e2b"
+
+
+# ---------------------------------------------------------------------------
+# TestHostFnCacheEviction — Issue #1317 review fix #7
+# ---------------------------------------------------------------------------
+
+
+class TestHostFnCacheEviction:
+    """Verify _host_fn_cache is evicted alongside _agent_history."""
+
+    def test_host_fn_cache_evicted_on_lru(self) -> None:
+        """When agent history LRU evicts, host_fn_cache is also evicted."""
+        providers = {"monty": _make_mock_provider("monty")}
+        router = SandboxRouter(
+            available_providers=providers,
+            agent_cache_maxsize=3,
+        )
+
+        # Fill cache with 3 agents
+        for i in range(3):
+            agent_id = f"agent-{i}"
+            router.record_execution(agent_id, "monty", escalated=False)
+            router.cache_host_functions(agent_id, {"fn": lambda _i=i: _i})
+
+        # All 3 should be cached
+        assert router.get_cached_host_functions("agent-0") is not None
+        assert router.get_cached_host_functions("agent-1") is not None
+        assert router.get_cached_host_functions("agent-2") is not None
+
+        # Adding a 4th agent should evict agent-0 (LRU)
+        router.record_execution("agent-3", "monty", escalated=False)
+
+        assert router.get_cached_host_functions("agent-0") is None
+        assert router.get_cached_host_functions("agent-1") is not None
+
+
+# ---------------------------------------------------------------------------
+# TestThreadSafety — Issue #1317 review fix #3
+# ---------------------------------------------------------------------------
+
+
+class TestThreadSafety:
+    """Verify thread-safe access to SandboxRouter."""
+
+    def test_concurrent_record_execution(self, router: SandboxRouter) -> None:
+        """Concurrent record_execution calls don't corrupt state."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        def record(agent_idx: int) -> None:
+            agent_id = f"agent-thread-{agent_idx % 20}"
+            for _ in range(50):
+                router.record_execution(agent_id, "monty", escalated=False)
+
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            list(pool.map(record, range(100)))
+
+        # Verify metrics are consistent
+        snap = router.metrics.snapshot()
+        assert snap["tier_selections"]["monty"] == 5000  # 100 * 50
+
+    def test_concurrent_select_and_record(self, router: SandboxRouter) -> None:
+        """Concurrent select_provider + record_execution don't deadlock."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        def select_and_record(agent_idx: int) -> None:
+            agent_id = f"agent-sr-{agent_idx}"
+            for _ in range(20):
+                router.select_provider("x = 1", "python", agent_id=agent_id)
+                router.record_execution(agent_id, "monty", escalated=False)
+
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            list(pool.map(select_and_record, range(50)))
+
+        # Should complete without deadlock or crash
+        snap = router.metrics.snapshot()
+        assert snap["tier_selections"]["monty"] == 1000  # 50 * 20
+
+
+# ---------------------------------------------------------------------------
+# TestEdgeCasePatterns — Issue #1317 review fix #12
+# ---------------------------------------------------------------------------
+
+
+class TestEdgeCasePatterns:
+    """Real-world code patterns for AST analysis edge cases."""
+
+    @pytest.mark.parametrize(
+        "code,expected",
+        [
+            # try/except ImportError — still has import statement → docker
+            ("try:\n    import pandas\nexcept ImportError:\n    pandas = None", "docker"),
+            # async def/await — pure async → monty
+            ("async def foo():\n    return 42", "monty"),
+            # async with import → docker
+            ("import asyncio\nasync def main():\n    await asyncio.sleep(1)", "docker"),
+            # f-string with complex expression — pure → monty
+            ('name = "world"\nresult = f"hello {name}"', "monty"),
+            # walrus operator — pure → monty
+            ("if (n := 10) > 5:\n    print(n)", "monty"),
+            # Generator expression — pure → monty
+            ("g = (x**2 for x in range(10))\nprint(sum(g))", "monty"),
+            # Nested function with closure — pure → monty
+            ("def outer():\n    x = 1\n    def inner(): return x\n    return inner()", "monty"),
+            # compile() builtin — docker
+            ("compile('x=1', '<string>', 'exec')", "docker"),
+        ],
+        ids=[
+            "try_except_import",
+            "async_def_pure",
+            "async_with_import",
+            "fstring_pure",
+            "walrus_operator",
+            "generator_expr",
+            "nested_closure",
+            "compile_builtin",
+        ],
+    )
+    def test_real_world_patterns(self, router: SandboxRouter, code: str, expected: str) -> None:
+        assert router.analyze_code(code, "python") == expected

@@ -331,12 +331,15 @@ def connect(
         api_key = cfg.api_key or os.getenv("NEXUS_API_KEY")
         timeout = int(cfg.timeout) if hasattr(cfg, "timeout") else 30
         connect_timeout = int(cfg.connect_timeout) if hasattr(cfg, "connect_timeout") else 5
-        return cast(NexusFilesystem, RemoteNexusFS(
-            server_url=server_url,
-            api_key=api_key,
-            timeout=timeout,
-            connect_timeout=connect_timeout,
-        ))
+        return cast(
+            NexusFilesystem,
+            RemoteNexusFS(
+                server_url=server_url,
+                api_key=api_key,
+                timeout=timeout,
+                connect_timeout=connect_timeout,
+            ),
+        )
 
     # ── Modes: standalone / federation ───────────────────────────────
     if cfg.mode not in ("standalone", "federation"):

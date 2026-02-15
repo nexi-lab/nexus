@@ -210,10 +210,13 @@ def get_filesystem(
             # Client mode: use remote server connection
             from nexus.remote import RemoteNexusFS
 
-            return cast(NexusFilesystem, RemoteNexusFS(
-                server_url=backend_config.remote_url,
-                api_key=backend_config.remote_api_key,
-            ))
+            return cast(
+                NexusFilesystem,
+                RemoteNexusFS(
+                    server_url=backend_config.remote_url,
+                    api_key=backend_config.remote_api_key,
+                ),
+            )
         elif backend_config.config_path:
             # Use explicit config file
             if server_mode:
@@ -418,10 +421,13 @@ def get_default_filesystem() -> NexusFilesystem:
             # Use remote server connection
             from nexus.remote import RemoteNexusFS
 
-            return cast(NexusFilesystem, RemoteNexusFS(
-                server_url=remote_url,
-                api_key=os.environ.get("NEXUS_API_KEY"),
-            ))
+            return cast(
+                NexusFilesystem,
+                RemoteNexusFS(
+                    server_url=remote_url,
+                    api_key=os.environ.get("NEXUS_API_KEY"),
+                ),
+            )
 
         # Fall back to local mode
         data_dir = os.environ.get("NEXUS_DATA_DIR", str(Path.home() / ".nexus"))

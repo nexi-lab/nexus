@@ -58,6 +58,7 @@ def test_bench_append_single(benchmark: Any, wal: WALEventLog) -> None:
     loop.close()
 
 
+@pytest.mark.benchmark_ci
 def test_bench_append_batch_1k(benchmark: Any, wal: WALEventLog) -> None:
     """Benchmark batch of 1000 events."""
     loop = asyncio.new_event_loop()

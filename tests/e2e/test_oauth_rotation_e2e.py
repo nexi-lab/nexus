@@ -89,9 +89,7 @@ class TestOAuthRotationE2E:
         assert cred_id
 
         # Verify audit event was created
-        events, _ = audit_logger.list_events_cursor(
-            filters={"event_type": "credential_created"}
-        )
+        events, _ = audit_logger.list_events_cursor(filters={"event_type": "credential_created"})
         assert len(events) == 1
         assert events[0].actor_id == "alice@test.com"
 
@@ -496,9 +494,7 @@ class TestSecretsAuditRestE2E:
 
         mock_auth.authenticate = mock_authenticate
 
-        fake_nfs = _FakeNexusFS(
-            session_local=fastapi_e2e["audit_logger"]._session_factory
-        )
+        fake_nfs = _FakeNexusFS(session_local=fastapi_e2e["audit_logger"]._session_factory)
 
         old_app = fas._fastapi_app
         monkeypatch.setattr(fas, "_fastapi_app", old_app)

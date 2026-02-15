@@ -139,9 +139,15 @@ class ReBACService:
                 "ReBAC manager is not available. Ensure ReBACService is properly initialized."
             )
 
+        # Issue #702: Propagate OTel context to worker thread so spans are
+        # children of the async caller's span.
+        from nexus.services.permissions.rebac_tracing import propagate_otel_context
+
+        fn_with_ctx = propagate_otel_context(fn)
+
         if self._circuit_breaker:
-            return await self._circuit_breaker.call(asyncio.to_thread, fn, *args, **kwargs)
-        return await asyncio.to_thread(fn, *args, **kwargs)
+            return await self._circuit_breaker.call(asyncio.to_thread, fn_with_ctx, *args, **kwargs)
+        return await asyncio.to_thread(fn_with_ctx, *args, **kwargs)
 
     # =========================================================================
     # Public API: Core ReBAC Operations
@@ -676,30 +682,49 @@ class ReBACService:
             assert self._rebac_manager is not None
             return self._rebac_manager.rebac_check_batch_fast(checks=checks)
 
-        # Read operation — supports L1 cache fallback per-item (Decision 3A)
-        try:
-            return await self._run_in_thread(_check_batch_sync)
-        except CircuitOpenError:
-            if self._rebac_manager:
-                results: list[bool] = []
-                all_cached = True
-                for check in checks:
-                    subj, perm, obj = check
-                    cached = self._rebac_manager.get_cached_permission(
-                        subject=subj, permission=perm, object=obj
-                    )
-                    if cached is not None:
-                        results.append(cached)
-                    else:
-                        all_cached = False
-                        break
-                if all_cached:
-                    logger.warning(
-                        "[ReBACService] Circuit open — serving %d cached batch results",
-                        len(results),
-                    )
-                    return results
-            raise
+        # Issue #702: Wrap batch check in a summary span
+        import time as _time
+
+        from nexus.services.permissions.rebac_tracing import (
+            record_batch_result,
+            start_batch_check_span,
+        )
+
+        batch_start = _time.perf_counter()
+        with start_batch_check_span(batch_size=len(checks)):
+            # Read operation — supports L1 cache fallback per-item (Decision 3A)
+            try:
+                batch_results = await self._run_in_thread(_check_batch_sync)
+                batch_ms = (_time.perf_counter() - batch_start) * 1000
+                allowed_count = sum(1 for r in batch_results if r)
+                record_batch_result(
+                    None,  # span set by context manager
+                    allowed_count=allowed_count,
+                    denied_count=len(batch_results) - allowed_count,
+                    duration_ms=batch_ms,
+                )
+                return batch_results
+            except CircuitOpenError:
+                if self._rebac_manager:
+                    results: list[bool] = []
+                    all_cached = True
+                    for check in checks:
+                        subj, perm, obj = check
+                        cached = self._rebac_manager.get_cached_permission(
+                            subject=subj, permission=perm, object=obj
+                        )
+                        if cached is not None:
+                            results.append(cached)
+                        else:
+                            all_cached = False
+                            break
+                    if all_cached:
+                        logger.warning(
+                            "[ReBACService] Circuit open — serving %d cached batch results",
+                            len(results),
+                        )
+                        return results
+                raise
 
     @rpc_expose(description="Delete ReBAC relationship tuple")
     async def rebac_delete(self, tuple_id: str) -> bool:
@@ -1005,212 +1030,8 @@ class ReBACService:
         Returns:
             Namespace configuration or None
         """
-        # TODO: Extract get_namespace implementation
-        raise NotImplementedError("get_namespace() not yet implemented - Phase 2 in progress")
-
-    @rpc_expose(description="Create or update ReBAC namespace")
-    async def namespace_create(self, object_type: str, config: dict[str, Any]) -> None:
-        """Create or update a namespace configuration."""
-        # TODO: Extract namespace_create implementation
-        raise NotImplementedError("namespace_create() not yet implemented - Phase 2 in progress")
-
-    @rpc_expose(description="List all ReBAC namespaces")
-    async def namespace_list(self) -> list[dict[str, Any]]:
-        """List all registered namespace configurations."""
-        # TODO: Extract namespace_list implementation
-        raise NotImplementedError("namespace_list() not yet implemented - Phase 2 in progress")
-
-    @rpc_expose(description="Delete ReBAC namespace")
-    async def namespace_delete(self, object_type: str) -> bool:
-        """Delete a namespace configuration."""
-        # TODO: Extract namespace_delete implementation
-        raise NotImplementedError("namespace_delete() not yet implemented - Phase 2 in progress")
-
-    # =========================================================================
-    # Public API: Privacy & Consent
-    # =========================================================================
-
-    @rpc_expose(description="Expand ReBAC permissions with privacy filtering")
-    async def rebac_expand_with_privacy(
-        self,
-        permission: str,
-        object: tuple[str, str],
-        requesting_subject: tuple[str, str],
-        zone_id: str | None = None,
-        limit: int = 100,
-    ) -> list[tuple[str, str]]:
-        """Expand permissions with privacy filtering.
-
-        Only returns subjects that have granted discovery consent.
-        """
-        # TODO: Extract rebac_expand_with_privacy implementation
         raise NotImplementedError(
-            "rebac_expand_with_privacy() not yet implemented - Phase 2 in progress"
-        )
-
-    @rpc_expose(description="Grant consent for discovery")
-    async def grant_consent(
-        self,
-        from_subject: tuple[str, str],
-        to_subject: tuple[str, str],
-        context: Any = None,
-    ) -> str:
-        """Grant consent for another subject to discover you in permission expansion."""
-        # TODO: Extract grant_consent implementation
-        raise NotImplementedError("grant_consent() not yet implemented - Phase 2 in progress")
-
-    @rpc_expose(description="Revoke consent")
-    async def revoke_consent(
-        self, from_subject: tuple[str, str], to_subject: tuple[str, str]
-    ) -> bool:
-        """Revoke previously granted consent."""
-        # TODO: Extract revoke_consent implementation
-        raise NotImplementedError("revoke_consent() not yet implemented - Phase 2 in progress")
-
-    @rpc_expose(description="Make resource publicly discoverable")
-    async def make_public(self, resource: tuple[str, str], zone_id: str | None = None) -> str:
-        """Make a resource publicly discoverable."""
-        # TODO: Extract make_public implementation
-        raise NotImplementedError("make_public() not yet implemented - Phase 2 in progress")
-
-    @rpc_expose(description="Make resource private")
-    async def make_private(self, resource: tuple[str, str]) -> bool:
-        """Remove public discoverability from a resource."""
-        # TODO: Extract make_private implementation
-        raise NotImplementedError("make_private() not yet implemented - Phase 2 in progress")
-
-    # =========================================================================
-    # Public API: Resource Sharing
-    # =========================================================================
-
-    @rpc_expose(description="Share a resource with a specific user (same or different zone)")
-    async def share_with_user(
-        self,
-        resource: tuple[str, str],
-        target_user: str,
-        permission: str = "can-read",
-        context: Any = None,
-        target_zone_id: str | None = None,
-        expiry: datetime | None = None,
-        message: str | None = None,
-    ) -> str:
-        """Share a resource with a specific user.
-
-        Security:
-            - Requires "execute" permission on resource
-            - Creates relationship tuple
-            - Logs share for audit
-
-        Args:
-            resource: Resource tuple e.g., ("file", "/doc.txt")
-            target_user: User ID to share with
-            permission: Permission to grant (default: "can-read")
-            context: Operation context
-            target_zone_id: Target zone (for cross-zone sharing)
-            expiry: Optional expiry datetime
-            message: Optional message to recipient
-
-        Returns:
-            Share ID (tuple_id)
-        """
-        # TODO: Extract share_with_user implementation
-        raise NotImplementedError("share_with_user() not yet implemented - Phase 2 in progress")
-
-    @rpc_expose(description="Share a resource with a group (all members get access)")
-    async def share_with_group(
-        self,
-        resource: tuple[str, str],
-        target_group: str,
-        permission: str = "can-read",
-        context: Any = None,
-        expiry: datetime | None = None,
-    ) -> str:
-        """Share a resource with a group (all members get access)."""
-        # TODO: Extract share_with_group implementation
-        raise NotImplementedError("share_with_group() not yet implemented - Phase 2 in progress")
-
-    @rpc_expose(description="Revoke a share by resource and user")
-    async def revoke_share(
-        self,
-        resource: tuple[str, str],
-        target_user: str,
-        context: Any = None,
-    ) -> bool:
-        """Revoke a share by resource and user."""
-        # TODO: Extract revoke_share implementation
-        raise NotImplementedError("revoke_share() not yet implemented - Phase 2 in progress")
-
-    @rpc_expose(description="Revoke a share by share ID")
-    async def revoke_share_by_id(self, share_id: str) -> bool:
-        """Revoke a share using its ID (tuple_id)."""
-        # TODO: Extract revoke_share_by_id implementation
-        raise NotImplementedError("revoke_share_by_id() not yet implemented - Phase 2 in progress")
-
-    @rpc_expose(description="List shares I've created (outgoing)")
-    async def list_outgoing_shares(
-        self,
-        resource: tuple[str, str] | None = None,
-        context: Any = None,
-    ) -> list[dict[str, Any]]:
-        """List shares created by the caller (outgoing shares)."""
-        # TODO: Extract list_outgoing_shares implementation
-        raise NotImplementedError(
-            "list_outgoing_shares() not yet implemented - Phase 2 in progress"
-        )
-
-    @rpc_expose(description="List shares I've received (incoming)")
-    async def list_incoming_shares(
-        self,
-        user_id: str,
-        zone_id: str | None = None,
-    ) -> list[dict[str, Any]]:
-        """List shares received by a user (incoming shares)."""
-        # TODO: Extract list_incoming_shares implementation
-        raise NotImplementedError(
-            "list_incoming_shares() not yet implemented - Phase 2 in progress"
-        )
-
-    # =========================================================================
-    # Public API: Dynamic Viewer Permissions
-    # =========================================================================
-
-    @rpc_expose(description="Get dynamic viewer configuration for a file")
-    async def get_dynamic_viewer_config(
-        self,
-        subject: tuple[str, str],
-        file_path: str,
-        context: Any = None,
-    ) -> dict[str, Any]:
-        """Get dynamic viewer configuration (column visibility, filters) for a file."""
-        # TODO: Extract get_dynamic_viewer_config implementation
-        raise NotImplementedError(
-            "get_dynamic_viewer_config() not yet implemented - Phase 2 in progress"
-        )
-
-    @rpc_expose(description="Apply dynamic viewer filter to CSV data")
-    async def apply_dynamic_viewer_filter(
-        self,
-        data: str,
-        columns_allowed: list[str],
-        format: str = "csv",
-    ) -> str:
-        """Apply dynamic viewer filter to data (filter columns)."""
-        # TODO: Extract apply_dynamic_viewer_filter implementation
-        raise NotImplementedError(
-            "apply_dynamic_viewer_filter() not yet implemented - Phase 2 in progress"
-        )
-
-    @rpc_expose(description="Read file with dynamic viewer permissions applied")
-    async def read_with_dynamic_viewer(
-        self,
-        file_path: str,
-        subject: tuple[str, str],
-        context: Any = None,
-    ) -> str | bytes:
-        """Read file content with dynamic viewer permissions applied."""
-        # TODO: Extract read_with_dynamic_viewer implementation
-        raise NotImplementedError(
-            "read_with_dynamic_viewer() not yet implemented - Phase 2 in progress"
+            "get_namespace() not yet implemented — see permissions/ modules for namespace operations"
         )
 
     # =========================================================================
@@ -1388,35 +1209,3 @@ class ReBACService:
                     f"permission to manage permissions on '{resource_path}'. "
                     f"Only owners or zone admins can share resources."
                 )
-
-
-# =============================================================================
-# Phase 2 Extraction Progress
-# =============================================================================
-#
-# Status: Skeleton created ✅
-#
-# TODO (in order of priority):
-# 1. [ ] Extract core ReBAC operations (rebac_create, rebac_check, etc.)
-# 2. [ ] Extract batch operations (rebac_check_batch)
-# 3. [ ] Extract namespace management
-# 4. [ ] Extract privacy/consent operations
-# 5. [ ] Extract sharing operations (share_with_user, share_with_group)
-# 6. [ ] Extract dynamic viewer operations
-# 7. [ ] Extract helper methods
-# 8. [ ] Add unit tests for ReBACService
-# 9. [ ] Security review (REQUIRED before merge)
-# 10. [ ] Update NexusFS to use composition
-# 11. [ ] Add backward compatibility shims with deprecation warnings
-# 12. [ ] Update documentation and migration guide
-#
-# Lines extracted: 0 / 2,554 (0%)
-# Files affected: 1 created, 0 modified
-#
-# SECURITY NOTE:
-# This service handles all permission logic. All changes require:
-# - Code review by 2+ developers
-# - Security review
-# - Penetration testing
-# - Audit log verification
-#

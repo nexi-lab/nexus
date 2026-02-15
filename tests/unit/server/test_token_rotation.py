@@ -635,6 +635,7 @@ class TestHashToken:
 
     def test_hash_is_sha256(self):
         import hashlib
+
         expected = hashlib.sha256(b"test").hexdigest()
         assert _hash_token("test") == expected
 

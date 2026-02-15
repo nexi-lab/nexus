@@ -118,6 +118,11 @@ jobs:
           fi
         shell: bash
 
+      - name: Verify benchmark collection
+        run: |
+          uv run pytest tests/benchmarks/ --collect-only -q -o "addopts="
+        if: matrix.os == 'ubuntu-latest'
+
       - name: Check coverage threshold
         run: |
           # v0.8.0: Temporarily lowered to 50% due to new subscription/parser code without tests

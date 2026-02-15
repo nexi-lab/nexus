@@ -210,6 +210,10 @@ postgres = [
     "psycopg2-binary>=2.9.9",  # PostgreSQL adapter
 ]
 
+cloud-sql = [
+    "cloud-sql-python-connector[asyncpg]>=1.14.0",
+]
+
 semantic-search = [
     # Keyword search support - uses existing SQLite/PostgreSQL FTS
     # BM25S is now in core dependencies (Issue #796)
@@ -289,6 +293,7 @@ addopts = [
     "-n", "auto",                 # Parallel execution (auto-detect CPU cores)
     "--dist", "loadgroup",        # Group tests by xdist_group marker for serial execution
     "--ignore=tests/evaluation",  # Exclude LLM evaluation tests from default runs
+    "--ignore=tests/benchmarks",  # Exclude benchmarks from default runs (run via benchmark.yml)
 ]
 # Coverage disabled by default for faster local runs. Enable in CI:
 #   pytest --cov=nexus --cov-report=term-missing --cov-report=html --cov-report=xml
@@ -307,6 +312,8 @@ markers = [
     "benchmark: marks tests as benchmarks",
     "evaluation: marks tests as LLM evaluation tests (requires ANTHROPIC_API_KEY)",
     "quarantine: Tests that are flaky or timing-dependent (deselected by default in CI)",
+    "postgres: marks tests that require a running PostgreSQL instance (Issue #1299)",
+    "benchmark_ci: critical benchmarks run on every PR",
 ]
 
 [tool.coverage.run]

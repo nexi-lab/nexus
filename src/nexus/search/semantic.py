@@ -25,7 +25,6 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import delete, func, select
 
-from nexus.llm.context_builder import AdaptiveRetrievalConfig, ContextBuilder
 from nexus.search.chunking import (
     ChunkStrategy,
     DocumentChunker,
@@ -38,6 +37,7 @@ from nexus.search.contextual_chunking import (
     ContextualChunkingConfig,
 )
 from nexus.search.embeddings import EmbeddingProvider
+from nexus.search.results import BaseSearchResult
 from nexus.search.vector_db import VectorDatabase
 from nexus.storage.models import DocumentChunkModel, FilePathModel
 
@@ -45,26 +45,17 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
+    from nexus.llm.context_builder import AdaptiveRetrievalConfig
     from nexus.search.ranking import RankingConfig
 
 
 @dataclass
-class SemanticSearchResult:
-    """A semantic search result with source location metadata."""
+class SemanticSearchResult(BaseSearchResult):
+    """A semantic search result with source location metadata.
 
-    path: str
-    chunk_index: int
-    chunk_text: str
-    score: float
-    # Character offsets for highlighting
-    start_offset: int | None = None
-    end_offset: int | None = None
-    # Line numbers for source navigation (1-indexed)
-    line_start: int | None = None
-    line_end: int | None = None
-    # Individual search scores (for hybrid search debugging)
-    keyword_score: float | None = None
-    vector_score: float | None = None
+    Extends BaseSearchResult with attribute ranking fields (Issue #1092).
+    """
+
     # Issue #1092: Attribute ranking metadata
     matched_field: str | None = None  # Which field matched (filename, path, content, etc.)
     attribute_boost: float | None = None  # Boost multiplier applied
@@ -135,8 +126,16 @@ class SemanticSearch:
         )
 
         # Initialize context builder for adaptive retrieval (Issue #1021)
-        self.adaptive_config = adaptive_config or AdaptiveRetrievalConfig()
-        self._context_builder = ContextBuilder(adaptive_config=self.adaptive_config)
+        # Lazy import to break search → llm hard dependency (Issue #1520)
+        from nexus.llm.context_builder import (
+            AdaptiveRetrievalConfig as _ARC,
+        )
+        from nexus.llm.context_builder import (
+            ContextBuilder as _CB,
+        )
+
+        self.adaptive_config = adaptive_config or _ARC()
+        self._context_builder = _CB(adaptive_config=self.adaptive_config)
 
         # Initialize entropy-aware chunker (Issue #1024)
         self.entropy_filtering = entropy_filtering

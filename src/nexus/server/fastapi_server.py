@@ -50,6 +50,7 @@ from slowapi import Limiter
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.gzip import GZipMiddleware
 
+from nexus.constants import DEFAULT_GOOGLE_REDIRECT_URI, DEFAULT_NEXUS_URL
 from nexus.core.exceptions import (
     ConflictError,
     InvalidPathError,
@@ -881,6 +882,14 @@ async def lifespan(_app: FastAPI) -> Any:
                     config=sandbox_config,
                 )
 
+                # Attach smart router for Monty -> Docker -> E2B routing (Issue #1317)
+                if sandbox_mgr.providers:
+                    from nexus.sandbox.sandbox_router import SandboxRouter
+
+                    sandbox_mgr._router = SandboxRouter(
+                        available_providers=sandbox_mgr.providers,
+                    )
+
                 # Get NamespaceManager if available (best-effort)
                 # Issue #1265: Factory function handles L3 persistent store wiring
                 namespace_manager = None
@@ -1449,9 +1458,7 @@ def _initialize_oauth_provider(
         google_client_secret = os.getenv("GOOGLE_CLIENT_SECRET") or os.getenv(
             "NEXUS_OAUTH_GOOGLE_CLIENT_SECRET"
         )
-        google_redirect_uri = os.getenv(
-            "GOOGLE_REDIRECT_URI", "http://localhost:5173/oauth/callback"
-        )
+        google_redirect_uri = os.getenv("GOOGLE_REDIRECT_URI", DEFAULT_GOOGLE_REDIRECT_URI)
         jwt_secret = os.getenv("NEXUS_JWT_SECRET")
 
         if not google_client_id or not google_client_secret:
@@ -1814,20 +1821,41 @@ def _register_routes(app: FastAPI) -> None:
     except ImportError as e:
         logger.warning(f"Failed to register Exchange error handler: {e}.")
 
-    # A2A Protocol Endpoint (Issue #1256)
+    # A2A Protocol Endpoint (Issue #1256, brick-extracted #1401)
     try:
         from nexus.a2a import create_a2a_router
 
-        a2a_base_url = os.environ.get("NEXUS_A2A_BASE_URL", "http://localhost:2026")
+        a2a_base_url = os.environ.get("NEXUS_A2A_BASE_URL", DEFAULT_NEXUS_URL)
         a2a_auth_required = bool(
             getattr(_fastapi_app.state, "api_key", None)
             or getattr(_fastapi_app.state, "auth_provider", None)
         )
+
+        # Auth adapter: server-side concern, NOT imported by the brick.
+        # Passes through the auth result for zone_id / agent_id extraction.
+        # Note: resolve_auth may return {"authenticated": False} for
+        # invalid tokens — this is consistent with the pre-existing
+        # behavior where the router checks for header presence, not
+        # token validity.  A separate fix for resolve_auth (#TBD) will
+        # tighten this.
+        async def _a2a_auth_adapter(request: Request) -> dict[str, Any] | None:
+            try:
+                return await get_auth_result(
+                    request=request,
+                    authorization=request.headers.get("Authorization"),
+                    x_agent_id=request.headers.get("X-Agent-ID"),
+                    x_nexus_subject=request.headers.get("X-Nexus-Subject"),
+                    x_nexus_zone_id=request.headers.get("X-Nexus-Zone-ID"),
+                )
+            except Exception:
+                return None
+
         a2a_router = create_a2a_router(
             nexus_fs=_fastapi_app.state.nexus_fs,
             config=None,  # Will use defaults; config can be passed when available
             base_url=a2a_base_url,
             auth_required=a2a_auth_required,
+            auth_fn=_a2a_auth_adapter,
             data_dir=getattr(_fastapi_app.state, "data_dir", None),
         )
         app.include_router(a2a_router)
@@ -1866,10 +1894,9 @@ def _register_routes(app: FastAPI) -> None:
                 engine = session_factory.kw.get("bind") if hasattr(session_factory, "kw") else None
                 if engine is not None:
                     from nexus.storage.models.secrets_audit_log import SecretsAuditLogModel
+
                     SecretsAuditLogModel.__table__.create(engine, checkfirst=True)
-                _secrets_audit_logger_instance = SecretsAuditLogger(
-                    session_factory=session_factory
-                )
+                _secrets_audit_logger_instance = SecretsAuditLogger(session_factory=session_factory)
             zone_id = auth_result.get("zone_id", "default")
             return _secrets_audit_logger_instance, zone_id
 

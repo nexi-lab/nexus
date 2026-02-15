@@ -141,9 +141,7 @@ def list_events(
         )
     except Exception as e:
         logger.error("Secrets audit query error: %s", e, exc_info=True)
-        raise HTTPException(
-            status_code=500, detail="Failed to query secrets audit events"
-        ) from e
+        raise HTTPException(status_code=500, detail="Failed to query secrets audit events") from e
 
 
 # --------------------------------------------------------------------------
@@ -178,9 +176,7 @@ def export_events(
         rows = audit_logger.iter_events(filters=filters, limit=limit)
     except Exception as e:
         logger.error("Secrets audit export error: %s", e, exc_info=True)
-        raise HTTPException(
-            status_code=500, detail="Failed to export secrets audit events"
-        ) from e
+        raise HTTPException(status_code=500, detail="Failed to export secrets audit events") from e
 
     dicts = [_row_to_dict(r) for r in rows]
 
@@ -194,8 +190,15 @@ def _csv_stream(rows: list[dict[str, Any]]) -> Iterator[str]:
     writer = csv.writer(output)
 
     headers = [
-        "id", "created_at", "event_type", "actor_id", "provider",
-        "credential_id", "token_family_id", "zone_id", "ip_address",
+        "id",
+        "created_at",
+        "event_type",
+        "actor_id",
+        "provider",
+        "credential_id",
+        "token_family_id",
+        "zone_id",
+        "ip_address",
         "record_hash",
     ]
     writer.writerow(headers)

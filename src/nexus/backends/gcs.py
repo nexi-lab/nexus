@@ -62,6 +62,7 @@ class GCSBackend(Backend):
             type=ArgType.STRING,
             description="GCS bucket name",
             required=True,
+            config_key="bucket",
         ),
         "project_id": ConnectionArg(
             type=ArgType.STRING,

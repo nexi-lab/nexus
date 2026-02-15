@@ -14,6 +14,7 @@ Related: Issue #682
 
 from nexus.services.permissions.cache.tiger.bitmap_cache import CacheKey, TigerCache
 from nexus.services.permissions.cache.tiger.expander import DirectoryGrantExpander
+from nexus.services.permissions.cache.tiger.facade import TigerFacade
 from nexus.services.permissions.cache.tiger.resource_map import TigerResourceMap
 from nexus.services.permissions.cache.tiger.updater import TigerCacheUpdater
 
@@ -22,5 +23,6 @@ __all__ = [
     "DirectoryGrantExpander",
     "TigerCache",
     "TigerCacheUpdater",
+    "TigerFacade",
     "TigerResourceMap",
 ]

@@ -204,7 +204,10 @@ class TokenManager:
                     f"Updated OAuth credential: {provider}:{user_email} (user_id={user_id})"
                 )
                 self._log_audit(
-                    "credential_updated", provider, user_email, zone_id,
+                    "credential_updated",
+                    provider,
+                    user_email,
+                    zone_id,
                     credential_id=existing.credential_id,
                     token_family_id=existing.token_family_id,
                     ip_address=ip_address,
@@ -237,7 +240,10 @@ class TokenManager:
 
                 logger.info(f"Stored OAuth credential: {provider}:{user_email}")
                 self._log_audit(
-                    "credential_created", provider, user_email, zone_id,
+                    "credential_created",
+                    provider,
+                    user_email,
+                    zone_id,
                     credential_id=model.credential_id,
                     token_family_id=token_family_id,
                     ip_address=ip_address,
@@ -326,9 +332,7 @@ class TokenManager:
                                 timeout=_PROVIDER_REFRESH_TIMEOUT_SECONDS,
                             )
                         except TimeoutError:
-                            logger.error(
-                                f"OAuth refresh timed out for {provider}:{user_email}"
-                            )
+                            logger.error(f"OAuth refresh timed out for {provider}:{user_email}")
                             raise AuthenticationError(
                                 f"OAuth refresh timed out for {provider}"
                             ) from None
@@ -383,9 +387,7 @@ class TokenManager:
                                 new_credential.refresh_token
                             )
                             model.encrypted_refresh_token = encrypted_refresh_token
-                            model.refresh_token_hash = _hash_token(
-                                new_credential.refresh_token
-                            )
+                            model.refresh_token_hash = _hash_token(new_credential.refresh_token)
                             model.rotation_counter = (model.rotation_counter or 0) + 1
 
                             rotated = True
@@ -401,19 +403,16 @@ class TokenManager:
                             model.encrypted_refresh_token = encrypted_refresh_token
 
                         # Prune old history entries periodically (every 10 rotations)
-                        if (
-                            (model.rotation_counter or 0) > 0
-                            and (model.rotation_counter or 0) % 10 == 0
-                        ):
+                        if (model.rotation_counter or 0) > 0 and (
+                            model.rotation_counter or 0
+                        ) % 10 == 0:
                             self._prune_history(session, model.token_family_id)
 
                         credential = new_credential
                         refreshed = True
 
                     except OAuthError as e:
-                        logger.error(
-                            f"Failed to refresh token for {provider}:{user_email}: {e}"
-                        )
+                        logger.error(f"Failed to refresh token for {provider}:{user_email}: {e}")
                         raise AuthenticationError(f"Failed to refresh token: {e}") from e
 
                 # Single commit: all credential updates + last_used_at
@@ -454,9 +453,7 @@ class TokenManager:
 
             return credential.access_token
 
-    def detect_reuse(
-        self, token_family_id: str, refresh_token_hash: str
-    ) -> bool:
+    def detect_reuse(self, token_family_id: str, refresh_token_hash: str) -> bool:
         """Check if a refresh token hash exists in the rotation history.
 
         If it does, the token was already rotated out and this is a
@@ -496,7 +493,10 @@ class TokenManager:
                     f"{token_family_id} due to refresh token reuse"
                 )
                 self._log_audit(
-                    "family_invalidated", "", "", "",
+                    "family_invalidated",
+                    "",
+                    "",
+                    "",
                     token_family_id=token_family_id,
                     details={"revoked_count": count, "reason": "refresh_token_reuse"},
                 )
@@ -560,7 +560,10 @@ class TokenManager:
 
             logger.info(f"Revoked OAuth credential: {provider}:{user_email}")
             self._log_audit(
-                "credential_revoked", provider, user_email, zone_id,
+                "credential_revoked",
+                provider,
+                user_email,
+                zone_id,
                 credential_id=audit_credential_id,
                 token_family_id=audit_family_id,
                 ip_address=ip_address,

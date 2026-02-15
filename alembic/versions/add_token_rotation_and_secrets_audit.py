@@ -169,9 +169,7 @@ def downgrade() -> None:
         op.execute(
             sa.text("DROP TRIGGER IF EXISTS trg_secrets_audit_log_no_update ON secrets_audit_log")
         )
-        op.execute(
-            sa.text("DROP FUNCTION IF EXISTS prevent_secrets_audit_log_modification()")
-        )
+        op.execute(sa.text("DROP FUNCTION IF EXISTS prevent_secrets_audit_log_modification()"))
 
     # secrets_audit_log
     op.drop_index("idx_secrets_audit_family", table_name="secrets_audit_log")

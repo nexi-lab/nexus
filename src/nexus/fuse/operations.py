@@ -8,13 +8,18 @@ from __future__ import annotations
 
 import asyncio
 import errno
+import functools
 import logging
 import os
 import stat
+import threading
 import time
+from collections.abc import Callable
 from contextlib import suppress
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NoReturn
 
+from cachetools import TTLCache as _TTLCache
 from fuse import FuseOSError, Operations
 
 from nexus.core.exceptions import NexusFileNotFoundError, NexusPermissionError
@@ -48,7 +53,9 @@ except ImportError:
 
 if TYPE_CHECKING:
     from nexus.core.filesystem import NexusFilesystem
+    from nexus.core.permissions import OperationContext
     from nexus.fuse.mount import MountMode
+    from nexus.services.permissions.namespace_manager import NamespaceManager
 
 # Import remote exceptions for better error handling (may not be available in all contexts)
 try:
@@ -109,6 +116,66 @@ def _handle_remote_exception(e: Exception, operation: str, path: str, **context:
     raise FuseOSError(errno.EIO) from e
 
 
+@dataclass(frozen=True)
+class MetadataObj:
+    """Immutable metadata container for FUSE attribute responses (C2-B).
+
+    Converts a raw metadata dict (from RemoteNexusFS.get_metadata()) into
+    a typed, immutable object with named attributes.
+    """
+
+    path: str | None = None
+    size: int | None = None
+    owner: str | None = None
+    group: str | None = None
+    mode: int | None = None
+    is_directory: bool | None = None
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> MetadataObj:
+        return cls(
+            path=d.get("path"),
+            size=d.get("size"),
+            owner=d.get("owner"),
+            group=d.get("group"),
+            mode=d.get("mode"),
+            is_directory=d.get("is_directory"),
+        )
+
+
+def fuse_operation(op_name: str) -> Callable[..., Any]:
+    """Decorator for FUSE operations that standardizes error handling (C1-C).
+
+    Wraps the method body in a try/except that maps Nexus exceptions to FUSE
+    errno codes. This eliminates the repeated 8-line boilerplate across 13 methods.
+
+    Mapping:
+        FuseOSError           → re-raise (already a FUSE error)
+        NexusFileNotFoundError → ENOENT
+        NexusPermissionError   → EACCES (logged)
+        Exception              → delegated to _handle_remote_exception (EIO / ETIMEDOUT / etc.)
+    """
+
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        @functools.wraps(func)
+        def wrapper(self: NexusFUSEOperations, path_arg: str, *args: Any, **kwargs: Any) -> Any:
+            try:
+                return func(self, path_arg, *args, **kwargs)
+            except FuseOSError:
+                raise
+            except NexusFileNotFoundError:
+                raise FuseOSError(errno.ENOENT) from None
+            except NexusPermissionError as e:
+                logger.error(f"[FUSE-{op_name}] Permission denied: {path_arg} - {e}")
+                raise FuseOSError(errno.EACCES) from e
+            except Exception as e:
+                _handle_remote_exception(e, op_name, path_arg)
+
+        return wrapper
+
+    return decorator
+
+
 class NexusFUSEOperations(Operations):
     """FUSE operations implementation for Nexus filesystem.
 
@@ -121,6 +188,8 @@ class NexusFUSEOperations(Operations):
         nexus_fs: NexusFilesystem,
         mode: MountMode,
         cache_config: dict[str, Any] | None = None,
+        context: OperationContext | None = None,
+        namespace_manager: NamespaceManager | None = None,
     ) -> None:
         """Initialize FUSE operations.
 
@@ -133,11 +202,20 @@ class NexusFUSEOperations(Operations):
                          - content_cache_size: int (default: 10000)
                          - parsed_cache_size: int (default: 50)
                          - enable_metrics: bool (default: False)
+            context: Optional OperationContext for namespace-scoped mounts (Issue #1305).
+                    When provided, all filesystem operations are scoped to this agent's
+                    namespace. When None, the global view is used (backward compatible).
+            namespace_manager: Optional NamespaceManager for direct O(log m) visibility
+                    checks (A2-B). When provided, _check_namespace_visible() bypasses the
+                    full RPC/PermissionEnforcer pipeline and calls is_visible() directly.
         """
         self.nexus_fs = nexus_fs
         self.mode = mode
+        self._context = context
+        self._namespace_manager = namespace_manager
         self.fd_counter = 0
         self.open_files: dict[int, dict[str, Any]] = {}
+        self._files_lock = threading.RLock()
 
         # Initialize cache manager
         cache_config = cache_config or {}
@@ -167,10 +245,15 @@ class NexusFUSEOperations(Operations):
             except Exception as e:
                 logger.warning(f"[FUSE] Failed to initialize LocalDiskCache: {e}")
 
-        # Initialize readdir cache for faster directory listing
-        # Caches directory contents with short TTL to avoid repeated network calls
-        self._dir_cache: dict[str, tuple[float, list[str]]] = {}  # path -> (timestamp, entries)
-        self._dir_cache_ttl = cache_config.get("dir_cache_ttl", 5.0)  # 5 second default
+        # Initialize readdir cache for faster directory listing (P2-B: bounded TTLCache)
+        # Caches directory contents with short TTL to avoid repeated network calls.
+        # Issue #1305: Key is (path, subject_type, subject_id) when context is set,
+        # so different agents get isolated cache entries.
+        dir_cache_ttl = cache_config.get("dir_cache_ttl", 5)
+        self._dir_cache: _TTLCache[str | tuple[str, str, str], list[str]] = _TTLCache(
+            maxsize=1024, ttl=dir_cache_ttl
+        )
+        self._dir_cache_lock = threading.RLock()
 
         # Initialize readahead manager for sequential read optimization (Issue #1073)
         # Proactively prefetches data to warm L1/L2 caches
@@ -203,6 +286,52 @@ class NexusFUSEOperations(Operations):
             with suppress(RuntimeError):
                 self._event_loop = asyncio.get_running_loop()
             logger.info("[FUSE] Event firing enabled")
+
+    def _dir_cache_key(self, path: str) -> str | tuple[str, str, str]:
+        """Build context-aware dir cache key (Issue #1305).
+
+        When a context is set, includes (subject_type, subject_id) so different
+        agents get isolated cache entries. Without context, uses plain path.
+        """
+        if self._context is not None:
+            subj_type, subj_id = self._context.get_subject()
+            return (path, subj_type, subj_id)
+        return path
+
+    def _check_namespace_visible(self, path: str) -> None:
+        """Pre-flight namespace visibility check for mutating operations (Issue #1305).
+
+        For operations whose NexusFilesystem interface does not accept a context
+        param (delete, mkdir, rmdir, rename, exists), we enforce namespace scoping
+        by checking the actual path against the agent's mount table.
+
+        Uses NamespaceManager.is_visible() directly when available (A2-B) for
+        O(log m) bisect with no RPC. Falls back to is_directory() as proxy when
+        no NamespaceManager is available (e.g., remote mounts).
+
+        Args:
+            path: The path being accessed (actual path, not parent — C3-B)
+
+        Raises:
+            FuseOSError(ENOENT): If the path is invisible to this agent
+        """
+        if self._context is None:
+            return  # No namespace scoping — global view
+
+        # Fast path (A2-B): Direct NamespaceManager.is_visible() — O(log m), no RPC
+        if self._namespace_manager is not None:
+            subject = self._context.get_subject()
+            zone_id = getattr(self._context, "zone_id", None)
+            if not self._namespace_manager.is_visible(subject, path, zone_id):
+                raise FuseOSError(errno.ENOENT)
+            return
+
+        # Fallback: use is_directory() on parent as visibility probe (remote FS)
+        parent = path.rsplit("/", 1)[0] or "/"
+        try:
+            self.nexus_fs.is_directory(parent, context=self._context)
+        except NexusFileNotFoundError:
+            raise FuseOSError(errno.ENOENT) from None
 
     def set_event_loop(self, loop: asyncio.AbstractEventLoop) -> None:
         """Set the event loop for async event dispatching.
@@ -314,6 +443,7 @@ class NexusFUSEOperations(Operations):
     # Filesystem Metadata Operations
     # ============================================================
 
+    @fuse_operation("GETATTR")
     def getattr(self, path: str, fh: int | None = None) -> dict[str, Any]:  # noqa: ARG002
         """Get file attributes.
 
@@ -327,142 +457,136 @@ class NexusFUSEOperations(Operations):
         Raises:
             FuseOSError: If file not found
         """
-        import time
-
         start_time = time.time()
-        try:
-            # Check cache first
-            cached_attrs = self.cache.get_attr(path)
-            if cached_attrs is not None:
-                elapsed = time.time() - start_time
-                if elapsed > 0.001:  # Only log if > 1ms
-                    logger.debug(f"[FUSE-PERF] getattr CACHED: path={path}, {elapsed:.3f}s")
-                return cached_attrs
 
-            # Handle virtual views (.raw, .txt, .md)
-            original_path, view_type = self._parse_virtual_path(path)
+        # Check cache first
+        cached_attrs = self.cache.get_attr(path)
+        if cached_attrs is not None:
+            elapsed = time.time() - start_time
+            if elapsed > 0.001:  # Only log if > 1ms
+                logger.debug(f"[FUSE-PERF] getattr CACHED: path={path}, {elapsed:.3f}s")
+            return cached_attrs
 
-            # Special case: root directory always exists
-            if original_path == "/":
-                return self._dir_attrs()
+        # Handle virtual views (.raw, .txt, .md)
+        original_path, view_type = self._parse_virtual_path(path)
 
-            # Check if it's the .raw directory itself
-            if path == "/.raw":
-                return self._dir_attrs()
+        # Special case: root directory always exists
+        if original_path == "/":
+            return self._dir_attrs()
 
-            # Check if it's a directory
-            if self.nexus_fs.is_directory(original_path):
-                # Get directory metadata for permissions
-                metadata = self._get_metadata(original_path)
-                return self._dir_attrs(metadata)
+        # Check if it's the .raw directory itself
+        if path == "/.raw":
+            return self._dir_attrs()
 
-            # Check if file exists
-            if not self.nexus_fs.exists(original_path):
-                raise FuseOSError(errno.ENOENT)
-
-            # Get file metadata (includes size, permissions, etc.)
+        # Check if it's a directory
+        # Issue #1305: Pass context for namespace-scoped visibility
+        if self.nexus_fs.is_directory(original_path, context=self._context):
+            # Get directory metadata for permissions
             metadata = self._get_metadata(original_path)
+            return self._dir_attrs(metadata)
 
-            # Get file size efficiently
-            # Priority: 1) Use metadata.size if available, 2) Fetch content as fallback
-            if view_type and view_type != "raw":
-                # Special view - need to fetch content for accurate size
-                content = self._get_file_content(original_path, view_type)
-                file_size = len(content)
-            elif metadata:
-                # Try to get size from metadata (handles both dict and object)
-                meta_size = (
-                    metadata.get("size")
-                    if isinstance(metadata, dict)
-                    else getattr(metadata, "size", 0)
-                )
-                if meta_size and meta_size > 0:
-                    file_size = meta_size
-                else:
-                    # Fallback: fetch content to get size
-                    content = self._get_file_content(original_path, None)
-                    file_size = len(content)
+        # CRITICAL-2: is_directory() returning False does NOT validate file visibility.
+        # Explicitly check namespace before exists() which has no context param.
+        self._check_namespace_visible(original_path)
+
+        if not self.nexus_fs.exists(original_path):
+            raise FuseOSError(errno.ENOENT)
+
+        # Get file metadata (includes size, permissions, etc.)
+        metadata = self._get_metadata(original_path)
+
+        # Get file size efficiently
+        # Priority: 1) Use metadata.size if available, 2) Fetch content as fallback
+        # TODO(P4): For files without metadata.size, this fetches full content just
+        # to measure length. Consider a lightweight stat() RPC when available.
+        if view_type and view_type != "raw":
+            # Special view - need to fetch content for accurate size
+            content = self._get_file_content(original_path, view_type)
+            file_size = len(content)
+        elif metadata:
+            # Try to get size from metadata (handles both dict and object)
+            meta_size = (
+                metadata.get("size") if isinstance(metadata, dict) else getattr(metadata, "size", 0)
+            )
+            if meta_size and meta_size > 0:
+                file_size = meta_size
             else:
-                # No metadata: fetch content to get size (for backward compatibility)
+                # Fallback: fetch content to get size
                 content = self._get_file_content(original_path, None)
                 file_size = len(content)
+        else:
+            # No metadata: fetch content to get size (for backward compatibility)
+            content = self._get_file_content(original_path, None)
+            file_size = len(content)
 
-            # Return file attributes
-            now = time.time()
+        # Return file attributes
+        now = time.time()
 
-            # Map owner/group to uid/gid (Unix-only)
-            # Default to current user if not set or on Windows
+        # Map owner/group to uid/gid (Unix-only)
+        # Default to current user if not set or on Windows
+        try:
+            uid = os.getuid()
+            gid = os.getgid()
+        except AttributeError:
+            # Windows doesn't have getuid/getgid
+            uid = 0
+            gid = 0
+
+        # Get permission mode from metadata (default to 0o644)
+        file_mode = 0o644
+        if metadata and metadata.mode is not None:
+            file_mode = metadata.mode
+
+        # Try to map owner/group to uid/gid
+        if metadata:
             try:
-                uid = os.getuid()
-                gid = os.getgid()
-            except AttributeError:
-                # Windows doesn't have getuid/getgid
-                uid = 0
-                gid = 0
+                import grp
+                import pwd
 
-            # Get permission mode from metadata (default to 0o644)
-            file_mode = 0o644
-            if metadata and metadata.mode is not None:
-                file_mode = metadata.mode
+                if metadata.owner:
+                    try:
+                        uid = pwd.getpwnam(metadata.owner).pw_uid
+                    except KeyError:
+                        # Username not found, try as numeric
+                        import contextlib
 
-            # Try to map owner/group to uid/gid
-            if metadata:
-                try:
-                    import grp
-                    import pwd
+                        with contextlib.suppress(ValueError):
+                            uid = int(metadata.owner)
 
-                    if metadata.owner:
-                        try:
-                            uid = pwd.getpwnam(metadata.owner).pw_uid
-                        except KeyError:
-                            # Username not found, try as numeric
-                            import contextlib
+                if metadata.group:
+                    try:
+                        gid = grp.getgrnam(metadata.group).gr_gid
+                    except KeyError:
+                        # Group name not found, try as numeric
+                        import contextlib
 
-                            with contextlib.suppress(ValueError):
-                                uid = int(metadata.owner)
+                        with contextlib.suppress(ValueError):
+                            gid = int(metadata.group)
 
-                    if metadata.group:
-                        try:
-                            gid = grp.getgrnam(metadata.group).gr_gid
-                        except KeyError:
-                            # Group name not found, try as numeric
-                            import contextlib
+            except (ModuleNotFoundError, AttributeError):
+                # Windows doesn't have pwd/grp - use defaults
+                pass
 
-                            with contextlib.suppress(ValueError):
-                                gid = int(metadata.group)
+        attrs = {
+            "st_mode": stat.S_IFREG | file_mode,
+            "st_nlink": 1,
+            "st_size": file_size,
+            "st_ctime": now,
+            "st_mtime": now,
+            "st_atime": now,
+            "st_uid": uid,
+            "st_gid": gid,
+        }
 
-                except (ModuleNotFoundError, AttributeError):
-                    # Windows doesn't have pwd/grp - use defaults
-                    pass
+        # Cache the result
+        self.cache.cache_attr(path, attrs)
 
-            attrs = {
-                "st_mode": stat.S_IFREG | file_mode,
-                "st_nlink": 1,
-                "st_size": file_size,
-                "st_ctime": now,
-                "st_mtime": now,
-                "st_atime": now,
-                "st_uid": uid,
-                "st_gid": gid,
-            }
+        elapsed = time.time() - start_time
+        if elapsed > 0.01:  # Log if >10ms
+            logger.info(f"[FUSE-PERF] getattr UNCACHED: path={path}, {elapsed:.3f}s")
+        return attrs
 
-            # Cache the result
-            self.cache.cache_attr(path, attrs)
-
-            elapsed = time.time() - start_time
-            if elapsed > 0.01:  # Log if >10ms
-                logger.info(f"[FUSE-PERF] getattr UNCACHED: path={path}, {elapsed:.3f}s")
-            return attrs
-        except FuseOSError:
-            raise
-        except NexusFileNotFoundError:
-            raise FuseOSError(errno.ENOENT) from None
-        except NexusPermissionError as e:
-            logger.error(f"[FUSE-GETATTR] Permission denied: {path} - {e}")
-            raise FuseOSError(errno.EACCES) from e
-        except Exception as e:
-            _handle_remote_exception(e, "GETATTR", path)
-
+    @fuse_operation("READDIR")
     def readdir(self, path: str, fh: int | None = None) -> list[str]:  # noqa: ARG002
         """Read directory contents.
 
@@ -476,137 +600,128 @@ class NexusFUSEOperations(Operations):
         Raises:
             FuseOSError: If directory not found
         """
-        import time
-
         start_time = time.time()
 
-        # Check readdir cache first (fast path)
-        cached = self._dir_cache.get(path)
-        if cached is not None:
-            cache_time, cached_entries = cached
-            if time.time() - cache_time < self._dir_cache_ttl:
-                logger.info(
-                    f"[FUSE-PERF] readdir CACHE HIT: path={path}, {len(cached_entries)} entries"
-                )
-                return cached_entries
+        # Check readdir cache first (fast path, P2-B: TTLCache handles expiry)
+        # Issue #1305: Use context-aware key so different agents get isolated caches
+        cache_key = self._dir_cache_key(path)
+        with self._dir_cache_lock:
+            cached_entries = self._dir_cache.get(cache_key)
+        if cached_entries is not None:
+            logger.info(
+                f"[FUSE-PERF] readdir CACHE HIT: path={path}, {len(cached_entries)} entries"
+            )
+            return cached_entries
 
         logger.info(f"[FUSE-PERF] readdir START: path={path}")
 
-        try:
-            # Standard directory entries
-            entries = [".", ".."]
+        # Standard directory entries
+        entries = [".", ".."]
 
-            # At root level, add .raw directory
-            if path == "/":
-                entries.append(".raw")
+        # At root level, add .raw directory
+        if path == "/":
+            entries.append(".raw")
 
-            # List files in directory (non-recursive) - returns list[dict] with details
-            # Using details=True gets directory status in bulk, avoiding individual is_directory() calls
-            list_start = time.time()
-            files_raw = self.nexus_fs.list(path, recursive=False, details=True)
-            list_elapsed = time.time() - list_start
-            files = files_raw if isinstance(files_raw, list) else []
+        # List files in directory (non-recursive) - returns list[dict] with details
+        # Using details=True gets directory status in bulk, avoiding individual is_directory() calls
+        # Issue #1305: Pass context for namespace-scoped listing
+        list_start = time.time()
+        files_raw = self.nexus_fs.list(path, recursive=False, details=True, context=self._context)
+        list_elapsed = time.time() - list_start
+        files = files_raw if isinstance(files_raw, list) else []
+        logger.info(
+            f"[FUSE-PERF] readdir list() took {list_elapsed:.3f}s, returned {len(files)} items"
+        )
+
+        for file_info in files:
+            # Handle both string paths and dict entries
+            if isinstance(file_info, str):
+                # Fallback for backends that don't support details
+                file_path = file_info
+                is_dir = self.nexus_fs.is_directory(file_path, context=self._context)
+            else:
+                file_path = str(file_info.get("path", ""))
+                is_dir = file_info.get("is_directory", False)
+
+                # Pre-cache attributes for this file to avoid N+1 queries in getattr()
+                # This eliminates redundant is_directory() and get_metadata() RPC calls
+                # when the OS calls getattr() on each file after readdir()
+                self._cache_file_attrs_from_list(file_path, file_info, is_dir)
+
+            # Extract just the filename/dirname
+            name = file_path.rstrip("/").split("/")[-1]
+            if name and name not in entries:
+                # Filter out OS metadata files (._*, .DS_Store, etc.)
+                if is_os_metadata_file(name):
+                    continue
+
+                entries.append(name)
+
+                # In smart/text mode, add virtual views for non-text files (not directories)
+                if self.mode.value != "binary" and should_add_virtual_views(name) and not is_dir:
+                    # Add _parsed.{ext}.md virtual view
+                    # e.g., "file.xlsx" → "file_parsed.xlsx.md"
+                    last_dot = name.rfind(".")
+                    if last_dot != -1:
+                        base_name = name[:last_dot]
+                        extension = name[last_dot:]
+                        parsed_name = f"{base_name}_parsed{extension}.md"
+                        entries.append(parsed_name)
+
+        # Final filter to remove any OS metadata that might have slipped through
+        entries = [e for e in entries if not is_os_metadata_file(e)]
+
+        # Directory-level content prefetch: preload small files using read_bulk()
+        # P3-B: Skip prefetch for namespace-scoped mounts — agent views are narrow,
+        # and the prefetch RPC may fetch files the agent can't actually read.
+        if self._context is None and len(files) <= 1000:
+            small_files = [
+                f.get("path") if isinstance(f, dict) else f
+                for f in files
+                if not (isinstance(f, dict) and f.get("is_directory", False))
+                and (not isinstance(f, dict) or f.get("size", 0) < 1024 * 1024)  # <1MB
+            ]
             logger.info(
-                f"[FUSE-PERF] readdir list() took {list_elapsed:.3f}s, returned {len(files)} items"
+                f"[FUSE-PERF] readdir prefetch check: {len(small_files)} small files, "
+                f"has_read_bulk={hasattr(self.nexus_fs, 'read_bulk')}, "
+                f"sample_paths={small_files[:3] if small_files else []}"
             )
+            if small_files and hasattr(self.nexus_fs, "read_bulk"):
+                try:
+                    prefetch_start = time.time()
+                    bulk_content = self.nexus_fs.read_bulk(small_files[:500])  # Limit to 500
+                    for fpath, content in bulk_content.items():
+                        if content is not None:
+                            self.cache.cache_content(fpath, content)
+                    prefetch_elapsed = time.time() - prefetch_start
+                    logger.info(
+                        f"[FUSE-PERF] readdir content prefetch: {len(bulk_content)} files in {prefetch_elapsed:.3f}s"
+                    )
+                except Exception as e:
+                    logger.warning(f"[FUSE-PERF] readdir content prefetch failed: {e}")
 
-            for file_info in files:
-                # Handle both string paths and dict entries
-                if isinstance(file_info, str):
-                    # Fallback for backends that don't support details
-                    file_path = file_info
-                    is_dir = self.nexus_fs.is_directory(file_path)
-                else:
-                    file_path = str(file_info.get("path", ""))
-                    is_dir = file_info.get("is_directory", False)
+        total_elapsed = time.time() - start_time
+        logger.info(
+            f"[FUSE-PERF] readdir DONE: path={path}, {len(entries)} entries, {total_elapsed:.3f}s total"
+        )
 
-                    # Pre-cache attributes for this file to avoid N+1 queries in getattr()
-                    # This eliminates redundant is_directory() and get_metadata() RPC calls
-                    # when the OS calls getattr() on each file after readdir()
-                    self._cache_file_attrs_from_list(file_path, file_info, is_dir)
+        # Cache the result for subsequent calls (P2-B: TTLCache, context-aware key)
+        with self._dir_cache_lock:
+            self._dir_cache[cache_key] = entries
 
-                # Extract just the filename/dirname
-                name = file_path.rstrip("/").split("/")[-1]
-                if name and name not in entries:
-                    # Filter out OS metadata files (._*, .DS_Store, etc.)
-                    if is_os_metadata_file(name):
-                        continue
-
-                    entries.append(name)
-
-                    # In smart/text mode, add virtual views for non-text files (not directories)
-                    if (
-                        self.mode.value != "binary"
-                        and should_add_virtual_views(name)
-                        and not is_dir
-                    ):
-                        # Add _parsed.{ext}.md virtual view
-                        # e.g., "file.xlsx" → "file_parsed.xlsx.md"
-                        last_dot = name.rfind(".")
-                        if last_dot != -1:
-                            base_name = name[:last_dot]
-                            extension = name[last_dot:]
-                            parsed_name = f"{base_name}_parsed{extension}.md"
-                            entries.append(parsed_name)
-
-            # Final filter to remove any OS metadata that might have slipped through
-            entries = [e for e in entries if not is_os_metadata_file(e)]
-
-            # Directory-level content prefetch: preload small files using read_bulk()
-            # This dramatically improves performance when reading many files after ls
-            if len(files) <= 1000:  # Only prefetch for reasonable directory sizes
-                small_files = [
-                    f.get("path") if isinstance(f, dict) else f
-                    for f in files
-                    if not (isinstance(f, dict) and f.get("is_directory", False))
-                    and (not isinstance(f, dict) or f.get("size", 0) < 1024 * 1024)  # <1MB
-                ]
-                logger.info(
-                    f"[FUSE-PERF] readdir prefetch check: {len(small_files)} small files, "
-                    f"has_read_bulk={hasattr(self.nexus_fs, 'read_bulk')}, "
-                    f"sample_paths={small_files[:3] if small_files else []}"
-                )
-                if small_files and hasattr(self.nexus_fs, "read_bulk"):
-                    try:
-                        prefetch_start = time.time()
-                        # Use read_bulk to fetch all content in one RPC call
-                        bulk_content = self.nexus_fs.read_bulk(small_files[:500])  # Limit to 500
-                        # Cache the content (use self.cache, not self.cache_manager)
-                        for fpath, content in bulk_content.items():
-                            if content is not None:
-                                self.cache.cache_content(fpath, content)
-                        prefetch_elapsed = time.time() - prefetch_start
-                        logger.info(
-                            f"[FUSE-PERF] readdir content prefetch: {len(bulk_content)} files in {prefetch_elapsed:.3f}s"
-                        )
-                    except Exception as e:
-                        logger.warning(f"[FUSE-PERF] readdir content prefetch failed: {e}")
-
-            total_elapsed = time.time() - start_time
-            logger.info(
-                f"[FUSE-PERF] readdir DONE: path={path}, {len(entries)} entries, {total_elapsed:.3f}s total"
-            )
-
-            # Cache the result for subsequent calls
-            self._dir_cache[path] = (time.time(), entries)
-
-            return entries
-        except FuseOSError:
-            raise
-        except NexusFileNotFoundError:
-            raise FuseOSError(errno.ENOENT) from None
-        except NexusPermissionError as e:
-            logger.error(f"[FUSE-READDIR] Permission denied: {path} - {e}")
-            raise FuseOSError(errno.EACCES) from e
-        except Exception as e:
-            _handle_remote_exception(e, "READDIR", path)
+        return entries
 
     # ============================================================
     # File I/O Operations
     # ============================================================
 
+    @fuse_operation("OPEN")
     def open(self, path: str, flags: int) -> int:
         """Open a file.
+
+        A1-B: Permission/namespace visibility is validated here at open time.
+        Subsequent read()/write() calls on this file handle skip the context
+        check (standard POSIX: check at open, trust the handle).
 
         Args:
             path: File path
@@ -618,73 +733,73 @@ class NexusFUSEOperations(Operations):
         Raises:
             FuseOSError: If file not found or access denied
         """
-        try:
-            # Parse virtual path
-            original_path, view_type = self._parse_virtual_path(path)
+        # Parse virtual path
+        original_path, view_type = self._parse_virtual_path(path)
 
-            # Check if file exists - use cache first to avoid rate limiting
-            # If content or attrs are cached, we know the file exists (from readdir prefetch)
-            content_cached = self.cache.get_content(original_path) is not None
-            attr_cached = self.cache.get_attr(original_path) is not None
-            file_exists = content_cached or attr_cached
+        # A1-B: Validate namespace visibility at open time
+        self._check_namespace_visible(original_path)
 
-            if file_exists:
-                logger.debug(
-                    f"[FUSE-OPEN] Cache HIT for {original_path} "
-                    f"(content={content_cached}, attr={attr_cached})"
-                )
-            else:
-                # Fallback to remote check only if not in cache
-                logger.debug(f"[FUSE-OPEN] Cache MISS for {original_path}, checking remote")
-                if not self.nexus_fs.exists(original_path):
-                    raise FuseOSError(errno.ENOENT)
+        # Check if file exists - use cache first to avoid rate limiting
+        # If content or attrs are cached, we know the file exists (from readdir prefetch)
+        content_cached = self.cache.get_content(original_path) is not None
+        attr_cached = self.cache.get_attr(original_path) is not None
+        file_exists = content_cached or attr_cached
 
-            # Generate file descriptor
+        if file_exists:
+            logger.debug(
+                f"[FUSE-OPEN] Cache HIT for {original_path} "
+                f"(content={content_cached}, attr={attr_cached})"
+            )
+        else:
+            # A3-B: exists() does not accept context — namespace was already
+            # validated by _check_namespace_visible() above.
+            logger.debug(f"[FUSE-OPEN] Cache MISS for {original_path}, checking remote")
+            if not self.nexus_fs.exists(original_path):
+                raise FuseOSError(errno.ENOENT)
+
+        # Generate file descriptor (thread-safe: Issue #1563)
+        with self._files_lock:
             self.fd_counter += 1
             fd = self.fd_counter
 
-            # Store file info
+            # Store file info — A1-B: record that auth was checked at open time
             self.open_files[fd] = {
                 "path": original_path,
                 "view_type": view_type,
                 "flags": flags,
+                "auth_verified": self._context is not None,
             }
 
-            # Trigger prefetch-on-open for readahead (Issue #1073)
-            # This starts fetching file content in parallel before first read
-            # Skip if content already in L1 cache (from readdir prefetch) to avoid redundant network calls
-            if self._readahead and view_type is None and not content_cached:
-                try:
-                    # Get file size for smarter prefetch decisions
-                    file_size = None
-                    if hasattr(self.nexus_fs, "stat"):
-                        stat_result = self.nexus_fs.stat(original_path)
-                        if stat_result:
-                            file_size = stat_result.get("st_size")
-                    self._readahead.on_open(fd, original_path, file_size)
-                except Exception as e:
-                    logger.debug(f"[FUSE-OPEN] Readahead on_open failed (non-critical): {e}")
-            elif content_cached:
-                logger.debug(f"[FUSE-OPEN] Skipping readahead (L1 cached): {original_path}")
+        # Trigger prefetch-on-open for readahead (Issue #1073)
+        # This starts fetching file content in parallel before first read
+        # Skip if content already in L1 cache (from readdir prefetch) to avoid redundant network calls
+        if self._readahead and view_type is None and not content_cached:
+            try:
+                # Get file size for smarter prefetch decisions
+                file_size = None
+                if hasattr(self.nexus_fs, "stat"):
+                    stat_result = self.nexus_fs.stat(original_path)
+                    if stat_result:
+                        file_size = stat_result.get("st_size")
+                self._readahead.on_open(fd, original_path, file_size)
+            except Exception as e:
+                logger.debug(f"[FUSE-OPEN] Readahead on_open failed (non-critical): {e}")
+        elif content_cached:
+            logger.debug(f"[FUSE-OPEN] Skipping readahead (L1 cached): {original_path}")
 
-            return fd
-        except FuseOSError:
-            raise
-        except NexusFileNotFoundError:
-            raise FuseOSError(errno.ENOENT) from None
-        except NexusPermissionError as e:
-            logger.error(f"[FUSE-OPEN] Permission denied: {path} - {e}")
-            raise FuseOSError(errno.EACCES) from e
-        except Exception as e:
-            _handle_remote_exception(e, "OPEN", path, flags=flags)
+        return fd
 
-    def read(self, path: str, size: int, offset: int, fh: int) -> bytes:
+    @fuse_operation("READ")
+    def read(self, path: str, size: int, offset: int, fh: int) -> bytes:  # noqa: ARG002
         """Read file content.
 
         Read path with readahead optimization (Issue #1073):
             1. Check readahead buffer for prefetched data (fast path)
             2. Fall back to cache hierarchy (L1 → L2 → backend)
             3. Trigger async prefetch if sequential access detected
+
+        A1-B: Permission was checked at open() time. Reads on the same handle
+        skip the context check for lower latency.
 
         Args:
             path: File path
@@ -698,43 +813,38 @@ class NexusFUSEOperations(Operations):
         Raises:
             FuseOSError: If file not found or read error
         """
-        try:
-            # Get file info from handle
+        # Get file info from handle (thread-safe: Issue #1563)
+        with self._files_lock:
             file_info = self.open_files.get(fh)
-            if not file_info:
-                raise FuseOSError(errno.EBADF)
+        if not file_info:
+            raise FuseOSError(errno.EBADF)
 
-            original_path = file_info["path"]
-            view_type = file_info["view_type"]
+        original_path = file_info["path"]
+        view_type = file_info["view_type"]
 
-            # Issue #1073: Check readahead buffer first (fast path for sequential reads)
-            # Only use readahead for raw/binary reads (not parsed views)
-            if self._readahead and view_type is None:
-                prefetched = self._readahead.on_read(fh, original_path, offset, size)
-                if prefetched is not None:
-                    logger.debug(
-                        f"[FUSE-READ] READAHEAD HIT: {original_path}[{offset}:{offset + size}]"
-                    )
-                    return prefetched
+        # Issue #1073: Check readahead buffer first (fast path for sequential reads)
+        # Only use readahead for raw/binary reads (not parsed views)
+        if self._readahead and view_type is None:
+            prefetched = self._readahead.on_read(fh, original_path, offset, size)
+            if prefetched is not None:
+                logger.debug(
+                    f"[FUSE-READ] READAHEAD HIT: {original_path}[{offset}:{offset + size}]"
+                )
+                return prefetched
 
-            # Standard path: get from cache hierarchy
-            content = self._get_file_content(original_path, view_type)
+        # A1-B: Permission was checked at open() — skip context for I/O
+        skip_auth = file_info.get("auth_verified", False)
+        content = self._get_file_content(original_path, view_type, skip_auth=skip_auth)
 
-            # Return requested slice
-            return content[offset : offset + size]
-        except FuseOSError:
-            raise
-        except NexusFileNotFoundError:
-            logger.error(f"[FUSE-READ] File not found: {path}")
-            raise FuseOSError(errno.ENOENT) from None
-        except NexusPermissionError as e:
-            logger.error(f"[FUSE-READ] Permission denied: {path} - {e}")
-            raise FuseOSError(errno.EACCES) from e
-        except Exception as e:
-            _handle_remote_exception(e, "READ", path, fh=fh, size=size, offset=offset)
+        # Return requested slice
+        return content[offset : offset + size]
 
+    @fuse_operation("WRITE")
     def write(self, path: str, data: bytes, offset: int, fh: int) -> int:
         """Write file content.
+
+        A1-B: Permission was checked at open()/create() time. Writes on the
+        same handle skip the context check.
 
         Args:
             path: File path
@@ -748,64 +858,59 @@ class NexusFUSEOperations(Operations):
         Raises:
             FuseOSError: If write fails or path is read-only
         """
-        try:
-            # Get file info from handle
+        # Get file info from handle (thread-safe: Issue #1563)
+        with self._files_lock:
             file_info = self.open_files.get(fh)
-            if not file_info:
-                raise FuseOSError(errno.EBADF)
+        if not file_info:
+            raise FuseOSError(errno.EBADF)
 
-            # Don't allow writes to virtual views
-            if file_info["view_type"]:
-                raise FuseOSError(errno.EROFS)
+        # Don't allow writes to virtual views
+        if file_info["view_type"]:
+            raise FuseOSError(errno.EROFS)
 
-            original_path = file_info["path"]
+        original_path = file_info["path"]
 
-            # Block writes to OS metadata files
-            basename = original_path.split("/")[-1]
-            if is_os_metadata_file(basename):
-                logger.debug(f"Blocked write to OS metadata file: {original_path}")
-                raise FuseOSError(errno.EPERM)  # Permission denied
+        # Block writes to OS metadata files
+        basename = original_path.split("/")[-1]
+        if is_os_metadata_file(basename):
+            logger.debug(f"Blocked write to OS metadata file: {original_path}")
+            raise FuseOSError(errno.EPERM)  # Permission denied
 
-            # Read existing content if file exists
-            existing_content = b""
-            if self.nexus_fs.exists(original_path):
-                raw_content = self.nexus_fs.read(original_path)
-                # Type narrowing: when return_metadata=False (default), result is bytes
-                assert isinstance(raw_content, bytes), "Expected bytes from read()"
-                existing_content = raw_content
+        # A1-B: Permission was checked at open()/create() — skip context for I/O
+        ctx = None if file_info.get("auth_verified") else self._context
 
-            # Handle offset writes
-            if offset > len(existing_content):
-                # Pad with zeros
-                existing_content += b"\x00" * (offset - len(existing_content))
+        # Read existing content if file exists
+        existing_content = b""
+        if self.nexus_fs.exists(original_path):
+            raw_content = self.nexus_fs.read(original_path, context=ctx)
+            # Type narrowing: when return_metadata=False (default), result is bytes
+            assert isinstance(raw_content, bytes), "Expected bytes from read()"
+            existing_content = raw_content
 
-            # Combine content
-            new_content = existing_content[:offset] + data + existing_content[offset + len(data) :]
+        # Handle offset writes
+        if offset > len(existing_content):
+            # Pad with zeros
+            existing_content += b"\x00" * (offset - len(existing_content))
 
-            # Write to Nexus
-            self.nexus_fs.write(original_path, new_content)
+        # Combine content
+        new_content = existing_content[:offset] + data + existing_content[offset + len(data) :]
 
-            # Invalidate caches for this path
-            self.cache.invalidate_path(original_path)
-            if path != original_path:
-                self.cache.invalidate_path(path)
+        # Write to Nexus
+        self.nexus_fs.write(original_path, new_content, context=ctx)
 
-            # Issue #1073: Invalidate readahead buffers (prefetched data is now stale)
-            if self._readahead:
-                self._readahead.invalidate_path(original_path)
+        # Invalidate caches for this path
+        self.cache.invalidate_path(original_path)
+        if path != original_path:
+            self.cache.invalidate_path(path)
 
-            # Issue #1115: Fire write event to downstream systems
-            if HAS_EVENT_BUS and FileEventType is not None:
-                self._fire_event(FileEventType.FILE_WRITE, original_path, size=len(new_content))
+        # Issue #1073: Invalidate readahead buffers (prefetched data is now stale)
+        if self._readahead:
+            self._readahead.invalidate_path(original_path)
 
-            return len(data)
-        except FuseOSError:
-            raise
-        except NexusPermissionError as e:
-            logger.error(f"[FUSE-WRITE] Permission denied: {path} - {e}")
-            raise FuseOSError(errno.EACCES) from e
-        except Exception as e:
-            _handle_remote_exception(e, "WRITE", path, offset=offset, data_len=len(data))
+        # Issue #1115: Fire write event to downstream systems
+        self._fire_event(FileEventType.FILE_WRITE, original_path, size=len(new_content))
+
+        return len(data)
 
     def release(self, path: str, fh: int) -> None:  # noqa: ARG002
         """Release (close) a file.
@@ -818,13 +923,15 @@ class NexusFUSEOperations(Operations):
         if self._readahead:
             self._readahead.on_release(fh)
 
-        # Remove from open files
-        self.open_files.pop(fh, None)
+        # Remove from open files (thread-safe: Issue #1563)
+        with self._files_lock:
+            self.open_files.pop(fh, None)
 
     # ============================================================
     # File/Directory Creation and Deletion
     # ============================================================
 
+    @fuse_operation("CREATE")
     def create(self, path: str, mode: int, fi: Any = None) -> int:  # noqa: ARG002
         """Create a new file.
 
@@ -839,50 +946,47 @@ class NexusFUSEOperations(Operations):
         Raises:
             FuseOSError: If creation fails
         """
-        try:
-            # Block creation of OS metadata files
-            basename = path.split("/")[-1]
-            if is_os_metadata_file(basename):
-                logger.debug(f"Blocked creation of OS metadata file: {path}")
-                raise FuseOSError(errno.EPERM)  # Permission denied
+        # Block creation of OS metadata files
+        basename = path.split("/")[-1]
+        if is_os_metadata_file(basename):
+            logger.debug(f"Blocked creation of OS metadata file: {path}")
+            raise FuseOSError(errno.EPERM)
 
-            # Parse virtual path (reject virtual views)
-            original_path, view_type = self._parse_virtual_path(path)
-            if view_type:
-                raise FuseOSError(errno.EROFS)
+        # Parse virtual path (reject virtual views)
+        original_path, view_type = self._parse_virtual_path(path)
+        if view_type:
+            raise FuseOSError(errno.EROFS)
 
-            # Create empty file
-            self.nexus_fs.write(original_path, b"")
+        # A1-B: Validate namespace at create time (acts as open)
+        self._check_namespace_visible(original_path)
 
-            # Invalidate caches for this path (in case it existed before)
-            self.cache.invalidate_path(original_path)
-            if path != original_path:
-                self.cache.invalidate_path(path)
+        # Create empty file (Issue #1305: pass context)
+        self.nexus_fs.write(original_path, b"", context=self._context)
 
-            # Generate file descriptor
+        # Invalidate caches for this path (in case it existed before)
+        self.cache.invalidate_path(original_path)
+        if path != original_path:
+            self.cache.invalidate_path(path)
+
+        # Generate file descriptor (thread-safe: Issue #1563)
+        with self._files_lock:
             self.fd_counter += 1
             fd = self.fd_counter
 
-            # Store file info
+            # Store file info — A1-B: auth verified at create time
             self.open_files[fd] = {
                 "path": original_path,
                 "view_type": None,
                 "flags": os.O_RDWR,
+                "auth_verified": self._context is not None,
             }
 
-            # Issue #1115: Fire create event (file_write with size=0)
-            if HAS_EVENT_BUS and FileEventType is not None:
-                self._fire_event(FileEventType.FILE_WRITE, original_path, size=0)
+        # Issue #1115: Fire create event (file_write with size=0)
+        self._fire_event(FileEventType.FILE_WRITE, original_path, size=0)
 
-            return fd
-        except FuseOSError:
-            raise
-        except NexusPermissionError as e:
-            logger.error(f"[FUSE-CREATE] Permission denied: {path} - {e}")
-            raise FuseOSError(errno.EACCES) from e
-        except Exception as e:
-            _handle_remote_exception(e, "CREATE", path)
+        return fd
 
+    @fuse_operation("UNLINK")
     def unlink(self, path: str) -> None:
         """Delete a file.
 
@@ -892,34 +996,25 @@ class NexusFUSEOperations(Operations):
         Raises:
             FuseOSError: If deletion fails or file is read-only
         """
-        try:
-            # Parse virtual path (reject virtual views)
-            original_path, view_type = self._parse_virtual_path(path)
-            if view_type:
-                raise FuseOSError(errno.EROFS)
+        # Parse virtual path (reject virtual views)
+        original_path, view_type = self._parse_virtual_path(path)
+        if view_type:
+            raise FuseOSError(errno.EROFS)
 
-            # Delete file
-            self.nexus_fs.delete(original_path)
+        # Issue #1305: Pre-flight namespace check (delete() has no context param)
+        self._check_namespace_visible(original_path)
 
-            # Invalidate caches for this path
-            self.cache.invalidate_path(original_path)
-            if path != original_path:
-                self.cache.invalidate_path(path)
+        self.nexus_fs.delete(original_path)
 
-            # Issue #1115: Fire delete event
-            if HAS_EVENT_BUS and FileEventType is not None:
-                self._fire_event(FileEventType.FILE_DELETE, original_path)
+        # Invalidate caches for this path
+        self.cache.invalidate_path(original_path)
+        if path != original_path:
+            self.cache.invalidate_path(path)
 
-        except FuseOSError:
-            raise
-        except NexusFileNotFoundError:
-            raise FuseOSError(errno.ENOENT) from None
-        except NexusPermissionError as e:
-            logger.error(f"[FUSE-UNLINK] Permission denied: {path} - {e}")
-            raise FuseOSError(errno.EACCES) from e
-        except Exception as e:
-            _handle_remote_exception(e, "UNLINK", path)
+        # Issue #1115: Fire delete event
+        self._fire_event(FileEventType.FILE_DELETE, original_path)
 
+    @fuse_operation("MKDIR")
     def mkdir(self, path: str, mode: int) -> None:  # noqa: ARG002
         """Create a directory.
 
@@ -930,25 +1025,19 @@ class NexusFUSEOperations(Operations):
         Raises:
             FuseOSError: If creation fails
         """
-        try:
-            # Don't allow creating directories in .raw
-            if path.startswith("/.raw/"):
-                raise FuseOSError(errno.EROFS)
+        # Don't allow creating directories in .raw
+        if path.startswith("/.raw/"):
+            raise FuseOSError(errno.EROFS)
 
-            self.nexus_fs.mkdir(path, parents=True, exist_ok=True)
+        # Issue #1305: Pre-flight namespace check (mkdir() has no context param)
+        self._check_namespace_visible(path)
 
-            # Issue #1115: Fire directory create event
-            if HAS_EVENT_BUS and FileEventType is not None:
-                self._fire_event(FileEventType.DIR_CREATE, path)
+        self.nexus_fs.mkdir(path, parents=True, exist_ok=True)
 
-        except FuseOSError:
-            raise
-        except NexusPermissionError as e:
-            logger.error(f"[FUSE-MKDIR] Permission denied: {path} - {e}")
-            raise FuseOSError(errno.EACCES) from e
-        except Exception as e:
-            _handle_remote_exception(e, "MKDIR", path)
+        # Issue #1115: Fire directory create event
+        self._fire_event(FileEventType.DIR_CREATE, path)
 
+    @fuse_operation("RMDIR")
     def rmdir(self, path: str) -> None:
         """Remove a directory.
 
@@ -958,27 +1047,19 @@ class NexusFUSEOperations(Operations):
         Raises:
             FuseOSError: If deletion fails or directory is not empty
         """
-        try:
-            # Don't allow removing .raw directory
-            if path == "/.raw":
-                raise FuseOSError(errno.EROFS)
+        # Don't allow removing .raw directory
+        if path == "/.raw":
+            raise FuseOSError(errno.EROFS)
 
-            self.nexus_fs.rmdir(path, recursive=False)
+        # Issue #1305: Pre-flight namespace check (rmdir() has no context param)
+        self._check_namespace_visible(path)
 
-            # Issue #1115: Fire directory delete event
-            if HAS_EVENT_BUS and FileEventType is not None:
-                self._fire_event(FileEventType.DIR_DELETE, path)
+        self.nexus_fs.rmdir(path, recursive=False)
 
-        except FuseOSError:
-            raise
-        except NexusFileNotFoundError:
-            raise FuseOSError(errno.ENOENT) from None
-        except NexusPermissionError as e:
-            logger.error(f"[FUSE-RMDIR] Permission denied: {path} - {e}")
-            raise FuseOSError(errno.EACCES) from e
-        except Exception as e:
-            _handle_remote_exception(e, "RMDIR", path)
+        # Issue #1115: Fire directory delete event
+        self._fire_event(FileEventType.DIR_DELETE, path)
 
+    @fuse_operation("RENAME")
     def rename(self, old: str, new: str) -> None:
         """Rename/move a file or directory.
 
@@ -989,98 +1070,93 @@ class NexusFUSEOperations(Operations):
         Raises:
             FuseOSError: If rename fails
         """
-        try:
-            # Parse virtual paths (reject virtual views)
-            old_path, old_view = self._parse_virtual_path(old)
-            new_path, new_view = self._parse_virtual_path(new)
+        # Parse virtual paths (reject virtual views)
+        old_path, old_view = self._parse_virtual_path(old)
+        new_path, new_view = self._parse_virtual_path(new)
 
-            if old_view or new_view:
-                raise FuseOSError(errno.EROFS)
+        if old_view or new_view:
+            raise FuseOSError(errno.EROFS)
 
-            # Don't allow renaming in/out of .raw
-            if old.startswith("/.raw/") or new.startswith("/.raw/"):
-                raise FuseOSError(errno.EROFS)
+        # Don't allow renaming in/out of .raw
+        if old.startswith("/.raw/") or new.startswith("/.raw/"):
+            raise FuseOSError(errno.EROFS)
 
-            # Check if destination already exists - error out to prevent overwriting
-            if self.nexus_fs.exists(new_path):
-                logger.error(f"Destination {new_path} already exists")
-                raise FuseOSError(errno.EEXIST)
+        # Issue #1305: Pre-flight namespace check for both paths
+        self._check_namespace_visible(old_path)
+        self._check_namespace_visible(new_path)
 
-            # Check if source is a directory and handle recursively
-            if self.nexus_fs.is_directory(old_path):
-                # Handle directory rename/move
-                logger.debug(f"Renaming directory {old_path} to {new_path}")
+        # A3-B: exists() does not accept context — namespace was validated above.
+        if self.nexus_fs.exists(new_path):
+            logger.error(f"Destination {new_path} already exists")
+            raise FuseOSError(errno.EEXIST)
 
-                # Create destination directory explicitly to ensure it shows up
-                try:
-                    self.nexus_fs.mkdir(new_path, parents=True, exist_ok=True)
-                except Exception as e:
-                    logger.debug(f"mkdir {new_path} failed (may already exist): {e}")
+        # Check if source is a directory and handle recursively
+        if self.nexus_fs.is_directory(old_path, context=self._context):
+            # Handle directory rename/move
+            logger.debug(f"Renaming directory {old_path} to {new_path}")
 
-                # List all files recursively
-                files = self.nexus_fs.list(old_path, recursive=True, details=True)
+            # Create destination directory explicitly to ensure it shows up
+            try:
+                self.nexus_fs.mkdir(new_path, parents=True, exist_ok=True)
+            except Exception as e:
+                logger.debug(f"mkdir {new_path} failed (may already exist): {e}")
 
-                # Move all files (not directories, as they're implicit in Nexus)
-                for file_info in files:
-                    # Type guard: ensure file_info is a dict (details=True returns dicts)
-                    if not isinstance(file_info, dict):
-                        continue
-                    if not file_info.get("is_directory", False):
-                        src_file = file_info["path"]
-                        # Replace old path prefix with new path prefix
-                        dest_file = src_file.replace(old_path, new_path, 1)
+            # List all files recursively (Issue #1305: pass context)
+            files = self.nexus_fs.list(
+                old_path, recursive=True, details=True, context=self._context
+            )
 
-                        logger.debug(f"  Moving file {src_file} to {dest_file}")
+            # Move all files (not directories, as they're implicit in Nexus)
+            for file_info in files:
+                # Type guard: ensure file_info is a dict (details=True returns dicts)
+                if not isinstance(file_info, dict):
+                    continue
+                if not file_info.get("is_directory", False):
+                    src_file = file_info["path"]
+                    # Replace old path prefix with new path prefix
+                    dest_file = src_file.replace(old_path, new_path, 1)
 
-                        # Metadata-only rename - instant, no content copy!
-                        self.nexus_fs.rename(src_file, dest_file)
+                    logger.debug(f"  Moving file {src_file} to {dest_file}")
 
-                # Delete source directory recursively
-                logger.debug(f"Removing source directory {old_path}")
-                self.nexus_fs.rmdir(old_path, recursive=True)
-            else:
-                # Handle file rename/move using metadata-only operation
-                logger.debug(f"Renaming file {old_path} to {new_path}")
-                # Metadata-only rename - instant, no content copy!
-                self.nexus_fs.rename(old_path, new_path)
+                    # Metadata-only rename - instant, no content copy!
+                    self.nexus_fs.rename(src_file, dest_file)
 
-            # Invalidate caches for both old and new paths
-            self.cache.invalidate_path(old_path)
-            self.cache.invalidate_path(new_path)
+            # Delete source directory recursively
+            logger.debug(f"Removing source directory {old_path}")
+            self.nexus_fs.rmdir(old_path, recursive=True)
+        else:
+            # Handle file rename/move using metadata-only operation
+            logger.debug(f"Renaming file {old_path} to {new_path}")
+            # Metadata-only rename - instant, no content copy!
+            self.nexus_fs.rename(old_path, new_path)
 
-            # Also invalidate parent directories to update listings
-            old_parent = old_path.rsplit("/", 1)[0] or "/"
-            new_parent = new_path.rsplit("/", 1)[0] or "/"
-            self.cache.invalidate_path(old_parent)
-            if old_parent != new_parent:
-                self.cache.invalidate_path(new_parent)
-                # Also invalidate grandparent of destination to show new subdirectories
-                new_grandparent = new_parent.rsplit("/", 1)[0] or "/"
-                if new_grandparent != new_parent:
-                    self.cache.invalidate_path(new_grandparent)
-            if old != old_path:
-                self.cache.invalidate_path(old)
-            if new != new_path:
-                self.cache.invalidate_path(new)
+        # Invalidate caches for both old and new paths
+        self.cache.invalidate_path(old_path)
+        self.cache.invalidate_path(new_path)
 
-            # Issue #1115: Fire rename event
-            if HAS_EVENT_BUS and FileEventType is not None:
-                self._fire_event(FileEventType.FILE_RENAME, new_path, old_path=old_path)
+        # Also invalidate parent directories to update listings
+        old_parent = old_path.rsplit("/", 1)[0] or "/"
+        new_parent = new_path.rsplit("/", 1)[0] or "/"
+        self.cache.invalidate_path(old_parent)
+        if old_parent != new_parent:
+            self.cache.invalidate_path(new_parent)
+            # Also invalidate grandparent of destination to show new subdirectories
+            new_grandparent = new_parent.rsplit("/", 1)[0] or "/"
+            if new_grandparent != new_parent:
+                self.cache.invalidate_path(new_grandparent)
+        if old != old_path:
+            self.cache.invalidate_path(old)
+        if new != new_path:
+            self.cache.invalidate_path(new)
 
-        except FuseOSError:
-            raise
-        except NexusFileNotFoundError:
-            raise FuseOSError(errno.ENOENT) from None
-        except NexusPermissionError as e:
-            logger.error(f"[FUSE-RENAME] Permission denied: {old} -> {new} - {e}")
-            raise FuseOSError(errno.EACCES) from e
-        except Exception as e:
-            _handle_remote_exception(e, "RENAME", old, new_path=new)
+        # Issue #1115: Fire rename event
+        self._fire_event(FileEventType.FILE_RENAME, new_path, old_path=old_path)
 
     # ============================================================
     # File Attribute Modification
     # ============================================================
 
+    @fuse_operation("CHMOD")
     def chmod(self, path: str, mode: int) -> None:
         """Change file mode (permissions).
 
@@ -1091,37 +1167,29 @@ class NexusFUSEOperations(Operations):
         Raises:
             FuseOSError: If chmod fails
         """
-        try:
-            # Parse virtual path (reject virtual views)
-            original_path, view_type = self._parse_virtual_path(path)
-            if view_type:
-                raise FuseOSError(errno.EROFS)
+        # Parse virtual path (reject virtual views)
+        original_path, view_type = self._parse_virtual_path(path)
+        if view_type:
+            raise FuseOSError(errno.EROFS)
 
-            # Extract just the permission bits (mask off file type bits)
-            permission_bits = mode & 0o777
+        # Issue #1305: Pre-flight namespace check (chmod has no context param)
+        self._check_namespace_visible(original_path)
 
-            # Call Nexus chmod
-            self.nexus_fs.chmod(original_path, permission_bits)  # type: ignore[attr-defined]
+        # Extract just the permission bits (mask off file type bits)
+        permission_bits = mode & 0o777
 
-            # Invalidate caches for this path
-            self.cache.invalidate_path(original_path)
-            if path != original_path:
-                self.cache.invalidate_path(path)
+        # Call Nexus chmod
+        self.nexus_fs.chmod(original_path, permission_bits)  # type: ignore[attr-defined]
 
-            # Issue #1115: Fire metadata change event
-            if HAS_EVENT_BUS and FileEventType is not None:
-                self._fire_event(FileEventType.METADATA_CHANGE, original_path)
+        # Invalidate caches for this path
+        self.cache.invalidate_path(original_path)
+        if path != original_path:
+            self.cache.invalidate_path(path)
 
-        except FuseOSError:
-            raise
-        except NexusFileNotFoundError:
-            raise FuseOSError(errno.ENOENT) from None
-        except NexusPermissionError as e:
-            logger.error(f"[FUSE-CHMOD] Permission denied: {path} - {e}")
-            raise FuseOSError(errno.EACCES) from e
-        except Exception as e:
-            _handle_remote_exception(e, "CHMOD", path, mode=oct(mode))
+        # Issue #1115: Fire metadata change event
+        self._fire_event(FileEventType.METADATA_CHANGE, original_path)
 
+    @fuse_operation("CHOWN")
     def chown(self, path: str, uid: int, gid: int) -> None:
         """Change file ownership.
 
@@ -1137,64 +1205,53 @@ class NexusFUSEOperations(Operations):
             On Unix systems, this maps uid/gid to usernames using pwd/grp modules.
             On Windows, this is a no-op as Windows doesn't have uid/gid.
         """
+        # Parse virtual path (reject virtual views)
+        original_path, view_type = self._parse_virtual_path(path)
+        if view_type:
+            raise FuseOSError(errno.EROFS)
+
+        # Issue #1305: Pre-flight namespace check (chown has no context param)
+        self._check_namespace_visible(original_path)
+
+        # Map uid/gid to usernames (Unix-only)
         try:
-            # Parse virtual path (reject virtual views)
-            original_path, view_type = self._parse_virtual_path(path)
-            if view_type:
-                raise FuseOSError(errno.EROFS)
+            import grp
+            import pwd
 
-            # Map uid/gid to usernames (Unix-only)
-            try:
-                import grp
-                import pwd
+            if not self.nexus_fs.exists(original_path):
+                raise FuseOSError(errno.ENOENT)
 
-                # Check file exists (remote filesystems may not have metadata access)
-                if not self.nexus_fs.exists(original_path):
-                    raise FuseOSError(errno.ENOENT)
+            # Map uid to username (if uid != -1, which means "don't change")
+            if uid != -1:
+                try:
+                    owner = pwd.getpwuid(uid).pw_name
+                    self.nexus_fs.chown(original_path, owner)  # type: ignore[attr-defined]
+                except KeyError:
+                    owner = str(uid)
+                    self.nexus_fs.chown(original_path, owner)  # type: ignore[attr-defined]
 
-                # Map uid to username (if uid != -1, which means "don't change")
-                if uid != -1:
-                    try:
-                        owner = pwd.getpwuid(uid).pw_name
-                        self.nexus_fs.chown(original_path, owner)  # type: ignore[attr-defined]
-                    except KeyError:
-                        # uid not found, use numeric string
-                        owner = str(uid)
-                        self.nexus_fs.chown(original_path, owner)  # type: ignore[attr-defined]
+            # Map gid to group name (if gid != -1, which means "don't change")
+            if gid != -1:
+                try:
+                    group = grp.getgrgid(gid).gr_name
+                    self.nexus_fs.chgrp(original_path, group)  # type: ignore[attr-defined]
+                except KeyError:
+                    group = str(gid)
+                    self.nexus_fs.chgrp(original_path, group)  # type: ignore[attr-defined]
 
-                # Map gid to group name (if gid != -1, which means "don't change")
-                if gid != -1:
-                    try:
-                        group = grp.getgrgid(gid).gr_name
-                        self.nexus_fs.chgrp(original_path, group)  # type: ignore[attr-defined]
-                    except KeyError:
-                        # gid not found, use numeric string
-                        group = str(gid)
-                        self.nexus_fs.chgrp(original_path, group)  # type: ignore[attr-defined]
+            # Invalidate caches for this path
+            self.cache.invalidate_path(original_path)
+            if path != original_path:
+                self.cache.invalidate_path(path)
 
-                # Invalidate caches for this path
-                self.cache.invalidate_path(original_path)
-                if path != original_path:
-                    self.cache.invalidate_path(path)
+            # Issue #1115: Fire metadata change event
+            self._fire_event(FileEventType.METADATA_CHANGE, original_path)
 
-                # Issue #1115: Fire metadata change event
-                if HAS_EVENT_BUS and FileEventType is not None:
-                    self._fire_event(FileEventType.METADATA_CHANGE, original_path)
+        except (ModuleNotFoundError, AttributeError):
+            # Windows doesn't have pwd/grp modules - silently ignore
+            pass
 
-            except (ModuleNotFoundError, AttributeError):
-                # Windows doesn't have pwd/grp modules - silently ignore
-                pass
-
-        except FuseOSError:
-            raise
-        except NexusFileNotFoundError:
-            raise FuseOSError(errno.ENOENT) from None
-        except NexusPermissionError as e:
-            logger.error(f"[FUSE-CHOWN] Permission denied: {path} - {e}")
-            raise FuseOSError(errno.EACCES) from e
-        except Exception as e:
-            _handle_remote_exception(e, "CHOWN", path, uid=uid, gid=gid)
-
+    @fuse_operation("TRUNCATE")
     def truncate(self, path: str, length: int, fh: int | None = None) -> None:  # noqa: ARG002
         """Truncate file to specified length.
 
@@ -1206,46 +1263,40 @@ class NexusFUSEOperations(Operations):
         Raises:
             FuseOSError: If truncate fails
         """
-        try:
-            # Parse virtual path (reject virtual views)
-            original_path, view_type = self._parse_virtual_path(path)
-            if view_type:
-                raise FuseOSError(errno.EROFS)
+        # Parse virtual path (reject virtual views)
+        original_path, view_type = self._parse_virtual_path(path)
+        if view_type:
+            raise FuseOSError(errno.EROFS)
 
-            # Read existing content
-            if self.nexus_fs.exists(original_path):
-                raw_content = self.nexus_fs.read(original_path)
-                # Type narrowing: when return_metadata=False (default), result is bytes
-                assert isinstance(raw_content, bytes), "Expected bytes from read()"
-                content = raw_content
-            else:
-                content = b""
+        # A1-B: If called via ftruncate (with fh), auth was at open().
+        # If called directly (no fh), check context.
+        ctx = None if fh is not None else self._context
 
-            # Truncate or pad
-            if length < len(content):
-                content = content[:length]
-            else:
-                content += b"\x00" * (length - len(content))
+        # Read existing content (Issue #1305: pass context)
+        if self.nexus_fs.exists(original_path):
+            raw_content = self.nexus_fs.read(original_path, context=ctx)
+            # Type narrowing: when return_metadata=False (default), result is bytes
+            assert isinstance(raw_content, bytes), "Expected bytes from read()"
+            content = raw_content
+        else:
+            content = b""
 
-            # Write back
-            self.nexus_fs.write(original_path, content)
+        # Truncate or pad
+        if length < len(content):
+            content = content[:length]
+        else:
+            content += b"\x00" * (length - len(content))
 
-            # Invalidate caches for this path
-            self.cache.invalidate_path(original_path)
-            if path != original_path:
-                self.cache.invalidate_path(path)
+        # Write back
+        self.nexus_fs.write(original_path, content, context=ctx)
 
-            # Issue #1115: Fire write event (truncate modifies content)
-            if HAS_EVENT_BUS and FileEventType is not None:
-                self._fire_event(FileEventType.FILE_WRITE, original_path, size=length)
+        # Invalidate caches for this path
+        self.cache.invalidate_path(original_path)
+        if path != original_path:
+            self.cache.invalidate_path(path)
 
-        except FuseOSError:
-            raise
-        except NexusPermissionError as e:
-            logger.error(f"[FUSE-TRUNCATE] Permission denied: {path} - {e}")
-            raise FuseOSError(errno.EACCES) from e
-        except Exception as e:
-            _handle_remote_exception(e, "TRUNCATE", path, length=length)
+        # Issue #1115: Fire write event (truncate modifies content)
+        self._fire_event(FileEventType.FILE_WRITE, original_path, size=length)
 
     def utimens(self, path: str, times: tuple[float, float] | None = None) -> None:
         """Update file access and modification times.
@@ -1283,7 +1334,9 @@ class NexusFUSEOperations(Operations):
         # Use shared virtual view logic
         return parse_virtual_path(path, self.nexus_fs.exists)
 
-    def _get_file_content(self, path: str, view_type: str | None) -> bytes:
+    def _get_file_content(
+        self, path: str, view_type: str | None, *, skip_auth: bool = False
+    ) -> bytes:
         """Get file content with appropriate view transformation.
 
         Cache hierarchy (Issue #1072):
@@ -1291,8 +1344,8 @@ class NexusFUSEOperations(Operations):
             L2: LocalDiskCache (SSD) - 10-50x faster than network
             L3/L4: Backend storage (nexus_fs.read) - network/remote
 
-        Security model:
-            - Permission is checked at open() time via nexus_fs.exists()
+        Security model (A1-B):
+            - Permission is checked at open() time
             - FUSE caches permission decision for the lifetime of the file handle
             - L1/L2 caches are safe because they're per-mount (single user context)
             - Content is keyed by hash (CAS), not path, enabling deduplication
@@ -1300,6 +1353,7 @@ class NexusFUSEOperations(Operations):
         Args:
             path: Original file path
             view_type: View type ("txt", "md", or None for binary)
+            skip_auth: If True, skip context on backend read (auth was at open time)
 
         Returns:
             File content as bytes
@@ -1323,10 +1377,12 @@ class NexusFUSEOperations(Operations):
             if content is not None:
                 logger.info(f"[FUSE-CONTENT] L2 DISK HIT: {path} ({len(content)} bytes)")
             else:
-                # L3/L4: Read from backend filesystem (includes permission check)
+                # L3/L4: Read from backend filesystem
+                # A1-B: skip_auth=True means auth was at open() — pass context=None
+                ctx = None if skip_auth else self._context
                 logger.info(f"[FUSE-CONTENT] L3 BACKEND FETCH: {path}")
                 fetch_start = time.time()
-                raw_content = self.nexus_fs.read(path)
+                raw_content = self.nexus_fs.read(path, context=ctx)
                 fetch_time = time.time() - fetch_start
                 # Type narrowing: when return_metadata=False (default), result is bytes
                 assert isinstance(raw_content, bytes), "Expected bytes from read()"
@@ -1494,17 +1550,8 @@ class NexusFUSEOperations(Operations):
         if hasattr(self.nexus_fs, "get_metadata"):
             metadata_dict = self.nexus_fs.get_metadata(path)
             if metadata_dict:
-                # Convert dict to simple object with attributes
-                class MetadataObj:
-                    def __init__(self, d: dict[str, Any]):
-                        self.path = d.get("path")
-                        self.size = d.get("size")
-                        self.owner = d.get("owner")
-                        self.group = d.get("group")
-                        self.mode = d.get("mode")
-                        self.is_directory = d.get("is_directory")
-
-                return MetadataObj(metadata_dict)
+                # C2-B: Use module-level frozen dataclass instead of inner class
+                return MetadataObj.from_dict(metadata_dict)
             return None
 
         # Fall back to direct metadata access (for local NexusFS)

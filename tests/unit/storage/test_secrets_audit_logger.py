@@ -104,14 +104,24 @@ class TestSecretsAuditLoggerIntegrity:
     def test_compute_record_hash_deterministic(self):
         now = datetime.now(UTC)
         h1 = compute_record_hash(
-            event_type="test", actor_id="alice", provider="google",
-            credential_id=None, token_family_id=None,
-            zone_id="default", ip_address=None, created_at=now,
+            event_type="test",
+            actor_id="alice",
+            provider="google",
+            credential_id=None,
+            token_family_id=None,
+            zone_id="default",
+            ip_address=None,
+            created_at=now,
         )
         h2 = compute_record_hash(
-            event_type="test", actor_id="alice", provider="google",
-            credential_id=None, token_family_id=None,
-            zone_id="default", ip_address=None, created_at=now,
+            event_type="test",
+            actor_id="alice",
+            provider="google",
+            credential_id=None,
+            token_family_id=None,
+            zone_id="default",
+            ip_address=None,
+            created_at=now,
         )
         assert h1 == h2
 
@@ -209,16 +219,10 @@ class TestSecretsAuditLoggerQuery:
         assert cursor2 is None
 
     def test_list_events_with_filters(self, audit_logger):
-        audit_logger.log_event(
-            event_type="credential_created", actor_id="alice", zone_id="zone_a"
-        )
-        audit_logger.log_event(
-            event_type="token_rotated", actor_id="bob", zone_id="zone_b"
-        )
+        audit_logger.log_event(event_type="credential_created", actor_id="alice", zone_id="zone_a")
+        audit_logger.log_event(event_type="token_rotated", actor_id="bob", zone_id="zone_b")
 
-        rows, _ = audit_logger.list_events_cursor(
-            filters={"zone_id": "zone_a"}
-        )
+        rows, _ = audit_logger.list_events_cursor(filters={"zone_id": "zone_a"})
         assert len(rows) == 1
         assert rows[0].actor_id == "alice"
 

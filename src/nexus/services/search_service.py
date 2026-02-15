@@ -16,53 +16,29 @@ import builtins
 import fnmatch
 import logging
 import re
-from concurrent.futures import ThreadPoolExecutor
-from enum import StrEnum
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any, cast
 
 from nexus.core import glob_fast, grep_fast
 from nexus.core.exceptions import PermissionDeniedError
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
+from nexus.search.strategies import (
+    GLOB_RUST_THRESHOLD,
+    GREP_CACHED_TEXT_RATIO,
+    GREP_PARALLEL_THRESHOLD,
+    GREP_PARALLEL_WORKERS,
+    GREP_SEQUENTIAL_THRESHOLD,
+    GREP_ZOEKT_THRESHOLD,
+    GlobStrategy,
+    SearchStrategy,
+)
 from nexus.services.gateway import NexusFSGateway
 from nexus.services.search_semantic import SemanticSearchMixin
 
-# =============================================================================
-# Adaptive Algorithm Selection Configuration (Issue #929)
-# =============================================================================
-
-# Grep strategy thresholds
-GREP_SEQUENTIAL_THRESHOLD = 10  # Below this file count, use sequential
-GREP_PARALLEL_THRESHOLD = 100  # Above this, consider parallel processing
-GREP_ZOEKT_THRESHOLD = 1000  # Above this, prefer Zoekt if available
-GREP_PARALLEL_WORKERS = 4  # Thread pool size for parallel grep
-GREP_CACHED_TEXT_RATIO = 0.8  # Use cached text if > 80% have cached text
-
-# Glob strategy thresholds
-GLOB_RUST_THRESHOLD = 50  # Use Rust acceleration above this file count
-
-
-class SearchStrategy(StrEnum):
-    """Strategy for grep operations (Issue #929).
-
-    Selected at runtime based on file count, cached text ratio, and backends.
-    """
-
-    SEQUENTIAL = "sequential"  # < 10 files - no parallelization overhead
-    CACHED_TEXT = "cached_text"  # > 80% files have pre-parsed text
-    RUST_BULK = "rust_bulk"  # 10-1000 files with Rust available
-    PARALLEL_POOL = "parallel_pool"  # 100-10000 files, parallel processing
-    ZOEKT_INDEX = "zoekt_index"  # > 1000 files with Zoekt index
-
-
-class GlobStrategy(StrEnum):
-    """Strategy for glob operations (Issue #929)."""
-
-    FNMATCH_SIMPLE = "fnmatch_simple"  # Simple patterns without **
-    REGEX_COMPILED = "regex_compiled"  # Complex patterns with **
-    RUST_BULK = "rust_bulk"  # > 50 files with Rust available
-    DIRECTORY_PRUNED = "directory_pruned"  # Pattern has static prefix
-
+# List directory traversal thresholds (Issue #901)
+LIST_PARALLEL_WORKERS = 10  # Thread pool size for parallel directory listing (I/O-bound)
+LIST_PARALLEL_MAX_DEPTH = 100  # Safety limit to prevent infinite traversal (e.g., symlink loops)
 
 # =============================================================================
 # Issue #538: Gitignore-style default exclusion patterns
@@ -529,6 +505,104 @@ class SearchService(SemanticSearchMixin):
                 subject_id = context.user_id
         return list_zone_id, subject_type, subject_id
 
+    def _list_dir_parallel(
+        self,
+        backend: Any,
+        root_path: str,
+        backend_path: str,
+        context: Any,
+        recursive: bool = True,
+    ) -> builtins.list[str]:
+        """Parallel directory traversal using ThreadPoolExecutor (Issue #901).
+
+        Uses BFS with batched parallel I/O for recursive directory listing.
+        For non-recursive listings, performs a single list_dir call.
+
+        Args:
+            backend: Backend instance with list_dir() method
+            root_path: Virtual path prefix (e.g., "/zone/agent/connector/gmail")
+            backend_path: Starting backend-relative path
+            context: OperationContext for authentication
+            recursive: If True, recurse into subdirectories in parallel
+
+        Returns:
+            List of virtual paths (directories have trailing slash stripped)
+        """
+        # Single-level listing: no parallelization needed
+        entries = backend.list_dir(backend_path, context=context)
+        results: builtins.list[str] = []
+
+        if not recursive:
+            for entry in entries:
+                full_path = f"{root_path.rstrip('/')}/{entry}"
+                if entry.endswith("/"):
+                    results.append(full_path.rstrip("/"))
+                else:
+                    results.append(full_path)
+            return results
+
+        # Process root level entries, collecting subdirectories for parallel traversal
+        pending_dirs: builtins.list[tuple[str, str]] = []
+        for entry in entries:
+            full_path = f"{root_path.rstrip('/')}/{entry}"
+            if entry.endswith("/"):
+                results.append(full_path.rstrip("/"))
+                subdir_backend_path = (
+                    f"{backend_path.rstrip('/')}/{entry.rstrip('/')}"
+                    if backend_path
+                    else entry.rstrip("/")
+                )
+                pending_dirs.append((full_path.rstrip("/"), subdir_backend_path))
+            else:
+                results.append(full_path)
+
+        if not pending_dirs:
+            return results
+
+        # BFS with parallel I/O for subdirectories
+        import time as _time_mod
+
+        start_time = _time_mod.time()
+        depth = 0
+
+        with ThreadPoolExecutor(max_workers=LIST_PARALLEL_WORKERS) as executor:
+            while pending_dirs and depth < LIST_PARALLEL_MAX_DEPTH:
+                depth += 1
+                futures = {
+                    executor.submit(backend.list_dir, bp, context=context): (vp, bp)
+                    for vp, bp in pending_dirs
+                }
+                pending_dirs = []
+
+                for future in as_completed(futures):
+                    virtual_path, b_path = futures[future]
+                    try:
+                        dir_entries = future.result(timeout=30)
+                        for entry in dir_entries:
+                            full_path = f"{virtual_path.rstrip('/')}/{entry}"
+                            if entry.endswith("/"):
+                                results.append(full_path.rstrip("/"))
+                                subdir_bp = (
+                                    f"{b_path.rstrip('/')}/{entry.rstrip('/')}"
+                                    if b_path
+                                    else entry.rstrip("/")
+                                )
+                                pending_dirs.append((full_path.rstrip("/"), subdir_bp))
+                            else:
+                                results.append(full_path)
+                    except Exception as e:
+                        logger.warning(f"[LIST-PARALLEL] Failed to list '{virtual_path}': {e}")
+
+        if depth >= LIST_PARALLEL_MAX_DEPTH:
+            logger.warning(
+                f"[LIST-PARALLEL] Hit max depth {LIST_PARALLEL_MAX_DEPTH}, truncating traversal"
+            )
+
+        elapsed = _time_mod.time() - start_time
+        logger.debug(f"[LIST-PARALLEL] Completed: {len(results)} entries in {elapsed:.3f}s")
+
+        return results
+
     def _list_dynamic_connector(
         self,
         path: str,
@@ -573,28 +647,14 @@ class SearchService(SemanticSearchMixin):
                 user="anonymous", groups=[], backend_path=route.backend_path
             )
 
-        # Recursive directory listing helper
-        def list_recursive(current_path: str, backend_path: str) -> builtins.list[str]:
-            results: builtins.list[str] = []
-            entries = route.backend.list_dir(backend_path, context=list_context)
-            for entry in entries:
-                full_path = f"{current_path.rstrip('/')}/{entry}"
-                if entry.endswith("/"):
-                    if recursive:
-                        results.append(full_path.rstrip("/"))
-                        subdir_bp = (
-                            f"{backend_path.rstrip('/')}/{entry.rstrip('/')}"
-                            if backend_path
-                            else entry.rstrip("/")
-                        )
-                        results.extend(list_recursive(full_path.rstrip("/"), subdir_bp))
-                    else:
-                        results.append(full_path.rstrip("/"))
-                else:
-                    results.append(full_path)
-            return results
-
-        all_paths = list_recursive(path, route.backend_path)
+        # Issue #901: Parallel directory traversal for 5-10x speedup
+        all_paths = self._list_dir_parallel(
+            backend=route.backend,
+            root_path=path,
+            backend_path=route.backend_path,
+            context=list_context,
+            recursive=recursive,
+        )
 
         # Permission filtering
         if self._enforce_permissions and context:

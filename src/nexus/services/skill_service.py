@@ -1131,7 +1131,7 @@ class SkillService:
         skill_name: str | None = None,
         output_path: str | None = None,
         format: str = "generic",
-        include_dependencies: bool = False,  # noqa: ARG002 - TODO: Implement dependency inclusion
+        include_dependencies: bool = False,  # noqa: ARG002 - reserved for future dependency graph support
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Export a skill to .skill (ZIP) format.

@@ -10,16 +10,43 @@ from __future__ import annotations
 
 import tempfile
 from collections.abc import Generator
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, NamedTuple
 
 import pytest
 
 from nexus import LocalBackend, NexusFS
-from nexus.core.nexus_fs_mounts import MetadataSyncResult, SyncMountContext
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
+
+
+# Backward compat types moved from nexus_fs_mounts (Issue #1387)
+@dataclass
+class SyncMountContext:
+    """Context object for sync_mount operations (backward compatibility)."""
+
+    mount_point: str | None
+    path: str | None = None
+    recursive: bool = True
+    dry_run: bool = False
+    sync_content: bool = True
+    include_patterns: list[str] | None = None
+    exclude_patterns: list[str] | None = None
+    generate_embeddings: bool = False
+    context: Any = None
+    backend: Any = None
+    created_by: str | None = None
+    has_hierarchy: bool = False
+
+
+class MetadataSyncResult(NamedTuple):
+    """Result of metadata sync operation (backward compatibility)."""
+
+    stats: dict[str, Any]
+    files_found_in_backend: set[str]
 
 
 @pytest.fixture

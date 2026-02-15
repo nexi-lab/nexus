@@ -63,6 +63,10 @@ class NexusFUSE:
         cache_config: dict[str, int | bool] | None = None,
         warmup_depth: int = 2,
         warmup_max_files: int = 1000,
+        agent_id: str | None = None,
+        subject_type: str | None = None,
+        owner_id: str | None = None,
+        zone_id: str | None = None,
     ) -> None:
         """Initialize FUSE mount manager.
 
@@ -78,6 +82,14 @@ class NexusFUSE:
                          - enable_metrics: bool (default: False)
             warmup_depth: Directory depth for automatic warmup (default: 2)
             warmup_max_files: Maximum files to warm (default: 1000)
+            agent_id: Optional agent ID for namespace-scoped mounts (Issue #1305).
+                     When set, the mount is scoped to this agent's namespace.
+                     When None, the global view is used (backward compatible).
+            subject_type: Subject type for OperationContext (A4-B: None sentinel).
+                         When None and agent_id is set, defaults to "agent".
+                         Pass explicit value to override (e.g., "service").
+            owner_id: Human owner ID for the agent (defaults to agent_id).
+            zone_id: Zone ID for multi-zone isolation.
 
         Note:
             Issue #1076: Cache warmup runs automatically after mount in background.
@@ -89,6 +101,10 @@ class NexusFUSE:
         self.cache_config = cache_config
         self.warmup_depth = warmup_depth
         self.warmup_max_files = warmup_max_files
+        self._agent_id = agent_id
+        self._subject_type = subject_type
+        self._owner_id = owner_id
+        self._zone_id = zone_id
         self.fuse: FUSE | None = None
         self._mount_thread: threading.Thread | None = None
         self._mounted = False
@@ -129,8 +145,45 @@ class NexusFUSE:
         if list(self.mount_point.iterdir()):
             logger.warning(f"Mount point is not empty: {self.mount_point}")
 
+        # Issue #1305: Build OperationContext for namespace-scoped mounts
+        context = None
+        namespace_manager = None
+        if self._agent_id is not None:
+            from nexus.core.permissions import OperationContext
+
+            # A4-B: Use sentinel default — only override to "agent" when caller
+            # left subject_type at its default value (None sentinel).
+            subject_type = self._subject_type if self._subject_type is not None else "agent"
+
+            context = OperationContext(
+                user=self._owner_id or self._agent_id,
+                agent_id=self._agent_id,
+                subject_type=subject_type,
+                subject_id=self._agent_id,
+                zone_id=self._zone_id,
+                groups=[],
+            )
+            logger.info(
+                f"[FUSE] Namespace-scoped mount: agent_id={self._agent_id}, "
+                f"subject_type={subject_type}, zone_id={self._zone_id}"
+            )
+
+            # A2-B: Try to obtain NamespaceManager for direct visibility checks
+            try:
+                enforcer = getattr(self.nexus_fs, "_permission_enforcer", None)
+                if enforcer is not None:
+                    namespace_manager = getattr(enforcer, "namespace_manager", None)
+            except Exception:
+                pass  # Not available — fallback to is_directory() proxy
+
         # Create FUSE operations
-        operations = NexusFUSEOperations(self.nexus_fs, self.mode, self.cache_config)
+        operations = NexusFUSEOperations(
+            self.nexus_fs,
+            self.mode,
+            self.cache_config,
+            context=context,
+            namespace_manager=namespace_manager,
+        )
 
         # Issue #1115: Set up event loop for async event dispatch
         # FUSE operations are synchronous, but event dispatch is async.
@@ -367,6 +420,10 @@ def mount_nexus(
     cache_config: dict[str, int | bool] | None = None,
     warmup_depth: int = 2,
     warmup_max_files: int = 1000,
+    agent_id: str | None = None,
+    subject_type: str | None = None,
+    owner_id: str | None = None,
+    zone_id: str | None = None,
 ) -> NexusFUSE:
     """Convenience function to mount Nexus filesystem.
 
@@ -385,6 +442,10 @@ def mount_nexus(
                      - enable_metrics: bool (default: False)
         warmup_depth: Directory depth for automatic warmup (default: 2)
         warmup_max_files: Maximum files to warm (default: 1000)
+        agent_id: Optional agent ID for namespace-scoped mounts (Issue #1305)
+        subject_type: Subject type for OperationContext (None → "agent" when agent_id set)
+        owner_id: Human owner ID for the agent
+        zone_id: Zone ID for multi-zone isolation
 
     Returns:
         NexusFUSE instance
@@ -404,13 +465,9 @@ def mount_nexus(
         >>> # cat /mnt/nexus/file.xlsx → binary content
         >>> # cat /mnt/nexus/file_parsed.xlsx.md → parsed markdown
         >>>
-        >>> # Custom cache configuration
-        >>> cache_config = {
-        ...     "attr_cache_size": 2048,
-        ...     "attr_cache_ttl": 120,
-        ...     "enable_metrics": True
-        ... }
-        >>> fuse = mount_nexus(nx, "/mnt/nexus", cache_config=cache_config, foreground=False)
+        >>> # Namespace-scoped mount for an agent (Issue #1305)
+        >>> fuse = mount_nexus(nx, "/mnt/nexus", agent_id="agent_001", foreground=False)
+        >>> # Agent only sees paths it has been granted access to
     """
     # Parse mode
     mode_enum = MountMode(mode.lower())
@@ -423,6 +480,10 @@ def mount_nexus(
         cache_config=cache_config,
         warmup_depth=warmup_depth,
         warmup_max_files=warmup_max_files,
+        agent_id=agent_id,
+        subject_type=subject_type,
+        owner_id=owner_id,
+        zone_id=zone_id,
     )
     fuse.mount(foreground=foreground, allow_other=allow_other, debug=debug)
 

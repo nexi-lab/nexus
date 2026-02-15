@@ -15,12 +15,16 @@ if TYPE_CHECKING:
     from fastapi import APIRouter
 
 
+__all__ = ["create_a2a_router"]
+
+
 def create_a2a_router(
     *,
     nexus_fs: Any = None,
     config: Any = None,
     base_url: str | None = None,
     auth_required: bool = False,
+    auth_fn: Any = None,
     data_dir: str | None = None,
 ) -> APIRouter:
     """Create the A2A protocol FastAPI router.
@@ -32,6 +36,8 @@ def create_a2a_router(
             If None, defaults to "http://localhost:2026".
         auth_required: When True, all A2A operational endpoints
             require a valid Authorization header.
+        auth_fn: Optional async callback ``(Request) -> dict | None``
+            for authentication.  Injected by the server layer.
         data_dir: Server data directory.  When provided, A2A tasks
             are persisted as JSON files under ``{data_dir}/a2a/tasks/``.
             When None, tasks are stored in-memory only.
@@ -57,4 +63,5 @@ def create_a2a_router(
         base_url=base_url,
         task_manager=task_manager,
         auth_required=auth_required,
+        auth_fn=auth_fn,
     )

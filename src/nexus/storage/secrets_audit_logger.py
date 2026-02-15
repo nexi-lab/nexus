@@ -215,10 +215,14 @@ class SecretsAuditLogger:
         """Fetch matching events (for export), capped at ``limit``."""
         session = self._session_factory()
         try:
-            stmt = select(SecretsAuditLogModel).order_by(
-                SecretsAuditLogModel.created_at.desc(),
-                SecretsAuditLogModel.id.desc(),
-            ).limit(limit)
+            stmt = (
+                select(SecretsAuditLogModel)
+                .order_by(
+                    SecretsAuditLogModel.created_at.desc(),
+                    SecretsAuditLogModel.id.desc(),
+                )
+                .limit(limit)
+            )
             if filters:
                 stmt = self._query.apply_filters(stmt, filters=filters)
             return list(session.execute(stmt).scalars())

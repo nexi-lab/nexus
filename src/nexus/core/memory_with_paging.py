@@ -149,6 +149,7 @@ class MemoryWithPaging(Memory):
         relationship_types: list[str] | None = None,
         store_to_graph: bool = False,
         valid_at: Any = None,
+        classify_stability: bool = True,  # #1191: Auto-classify temporal stability
         auto_page: bool = True,  # Memory paging specific parameter
     ) -> str:
         """Store memory with automatic paging.
@@ -175,6 +176,7 @@ class MemoryWithPaging(Memory):
             relationship_types: Custom relationship types
             store_to_graph: Store entities/relationships to graph tables
             valid_at: When fact became valid in real world
+            classify_stability: Auto-classify temporal stability (default: True)
             auto_page: Automatically page to main context (default: True)
 
         Returns:
@@ -203,6 +205,7 @@ class MemoryWithPaging(Memory):
             relationship_types=relationship_types,
             store_to_graph=store_to_graph,
             valid_at=valid_at,
+            classify_stability=classify_stability,
         )
 
         # Add to paging system if enabled

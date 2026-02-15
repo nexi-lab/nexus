@@ -36,13 +36,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from nexus.constants import DEFAULT_ZOEKT_URL
+
 if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
 
 # Zoekt configuration from environment
-ZOEKT_URL = os.getenv("ZOEKT_URL", "http://localhost:6070")
+ZOEKT_URL = os.getenv("ZOEKT_URL", DEFAULT_ZOEKT_URL)
 ZOEKT_ENABLED = os.getenv("ZOEKT_ENABLED", "false").lower() == "true"
 ZOEKT_TIMEOUT = float(os.getenv("ZOEKT_TIMEOUT", "10.0"))  # seconds
 

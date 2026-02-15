@@ -189,6 +189,19 @@ def create_nexus_services(
         enable_tiger_cache=enable_tiger_cache,
     )
 
+    # --- Circuit Breaker for ReBAC DB Resilience (Issue #726) ---
+    from nexus.services.permissions.circuit_breaker import AsyncCircuitBreaker, CircuitBreakerConfig
+
+    rebac_circuit_breaker = AsyncCircuitBreaker(
+        name="rebac_db",
+        config=CircuitBreakerConfig(
+            failure_threshold=5,
+            success_threshold=3,
+            reset_timeout=30.0,
+            failure_window=60.0,
+        ),
+    )
+
     # --- Directory Visibility Cache ---
     from nexus.services.permissions.dir_visibility_cache import DirectoryVisibilityCache
 
@@ -445,6 +458,7 @@ def create_nexus_services(
         "chunked_upload_service": chunked_upload_service,
         "manifest_resolver": manifest_resolver,
         "manifest_metrics": manifest_metrics,
+        "rebac_circuit_breaker": rebac_circuit_breaker,
     }
 
     return result
@@ -546,6 +560,7 @@ def create_nexus_fs(
         "chunked_upload_service",
         "manifest_resolver",
         "manifest_metrics",
+        "rebac_circuit_breaker",
     ):
         val = services.pop(key, None)
         if val is not None:
@@ -584,5 +599,10 @@ def create_nexus_fs(
     )
 
     nx._service_extras = service_extras
+
+    # Wire circuit breaker into ReBACService (Issue #726)
+    cb = service_extras.get("rebac_circuit_breaker")
+    if cb and hasattr(nx, "rebac_service"):
+        nx.rebac_service._circuit_breaker = cb
 
     return nx

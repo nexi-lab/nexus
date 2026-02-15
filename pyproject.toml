@@ -140,6 +140,11 @@ mobile = [
     "llama-cpp-python>=0.2.0",
 ]
 
+sentry = [
+    # Sentry error tracking and performance monitoring (Issue #759)
+    "sentry-sdk[fastapi]>=2.0.0",
+]
+
 dev = [
     # Testing
     "pytest>=9.0.2",

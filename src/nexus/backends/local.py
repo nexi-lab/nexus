@@ -76,6 +76,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
             type=ArgType.PATH,
             description="Root directory for storage",
             required=True,
+            config_key="data_dir",
         ),
     }
 

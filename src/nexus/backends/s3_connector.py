@@ -89,6 +89,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
             type=ArgType.STRING,
             description="S3 bucket name",
             required=True,
+            config_key="bucket",
         ),
         "region_name": ConnectionArg(
             type=ArgType.STRING,

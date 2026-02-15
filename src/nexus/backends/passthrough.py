@@ -91,6 +91,7 @@ class PassthroughBackend(Backend):
             type=ArgType.PATH,
             description="Base directory for storage (pointers/ and cas/ subdirs)",
             required=True,
+            config_key="data_dir",
         ),
     }
 

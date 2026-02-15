@@ -59,10 +59,7 @@ class WriteBackMetrics:
                 "changes_failed": self._changes_failed,
                 "conflicts_detected": self._conflicts_detected,
                 "conflicts_auto_resolved": self._conflicts_auto_resolved,
-                "per_backend": {
-                    name: dict(counts)
-                    for name, counts in self._per_backend.items()
-                },
+                "per_backend": {name: dict(counts) for name, counts in self._per_backend.items()},
             }
 
     def reset(self) -> None:

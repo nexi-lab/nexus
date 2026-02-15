@@ -107,9 +107,7 @@ class WriteBackService:
         self._semaphores: dict[str, asyncio.Semaphore] = {}
         self._metrics = WriteBackMetrics()
         # Pre-built system context template — avoids UUID generation per-operation
-        self._system_ctx = OperationContext(
-            user="system", groups=[], is_system=True
-        )
+        self._system_ctx = OperationContext(user="system", groups=[], is_system=True)
         self._running = False
         self._poll_task: asyncio.Task[None] | None = None
         self._subscribe_task: asyncio.Task[None] | None = None
@@ -456,7 +454,8 @@ class WriteBackService:
             case _:
                 logger.warning(
                     "[WRITE_BACK] Unhandled resolution outcome %s on %s, skipping",
-                    outcome, entry.path,
+                    outcome,
+                    entry.path,
                 )
                 return False
 
@@ -516,7 +515,9 @@ class WriteBackService:
         elif hasattr(backend, "delete_content"):
             result = await asyncio.to_thread(backend.delete_content, backend_path, ctx)
         else:
-            raise RuntimeError(f"Backend {type(backend).__name__} supports neither delete nor delete_content")
+            raise RuntimeError(
+                f"Backend {type(backend).__name__} supports neither delete nor delete_content"
+            )
         if hasattr(result, "success") and not result.success:
             raise RuntimeError(f"Backend delete failed: {getattr(result, 'error', 'unknown')}")
 

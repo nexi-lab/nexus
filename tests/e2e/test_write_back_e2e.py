@@ -149,9 +149,7 @@ def gateway_with_local(local_backend):
 
 
 @pytest.fixture
-def write_back_service(
-    gateway_with_local, mock_event_bus, db_session_factory
-) -> WriteBackService:
+def write_back_service(gateway_with_local, mock_event_bus, db_session_factory) -> WriteBackService:
     """WriteBackService wired to real local backend."""
     # Stores expect a gateway-like object with session_factory attribute
     gateway_with_local.session_factory = db_session_factory
@@ -178,9 +176,7 @@ class TestWriteBackE2ERoundTrip:
     """Full round-trip: NexusFS write -> backlog -> backend push -> verify file."""
 
     @pytest.mark.asyncio
-    async def test_write_round_trip(
-        self, write_back_service, backend_dir: Path
-    ) -> None:
+    async def test_write_round_trip(self, write_back_service, backend_dir: Path) -> None:
         """Write through NexusFS, process pending, verify file on disk."""
         service = write_back_service
 
@@ -227,9 +223,7 @@ class TestWriteBackE2ERoundTrip:
         assert FileEventType.SYNC_TO_BACKEND_COMPLETED in event_types
 
     @pytest.mark.asyncio
-    async def test_delete_round_trip(
-        self, write_back_service, backend_dir: Path
-    ) -> None:
+    async def test_delete_round_trip(self, write_back_service, backend_dir: Path) -> None:
         """Write a file, then delete through write-back, verify removal."""
         service = write_back_service
 
@@ -281,9 +275,7 @@ class TestWriteBackE2ERoundTrip:
         assert (backend_dir / "subdir").is_dir()
 
     @pytest.mark.asyncio
-    async def test_metrics_record_failure(
-        self, write_back_service, gateway_with_local
-    ) -> None:
+    async def test_metrics_record_failure(self, write_back_service, gateway_with_local) -> None:
         """Failed backend writes should increment failure counter."""
         service = write_back_service
 

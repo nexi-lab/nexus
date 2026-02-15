@@ -5,7 +5,7 @@
 #
 # Kernel layer (always running):
 #   - 3-node Raft cluster: 2 full NexusFS nodes + 1 lightweight witness
-#   - PostgreSQL 18 (tuned: WAL archiving, pgvector HNSW, async I/O)
+#   - PostgreSQL 16 (tuned: WAL archiving, pgvector HNSW)
 #   - Dragonfly CacheStore (embedding cache, Tiger Cache, EventBus)
 #
 # Application layer (always running):
@@ -63,13 +63,13 @@
 
 services:
   # ==========================================================================
-  # PostgreSQL 18 — Shared RecordStore for all NexusFS nodes
+  # PostgreSQL 16 — Shared RecordStore for all NexusFS nodes
   #
-  # Tuning: WAL archiving, pgvector HNSW, pg_stat_statements, async I/O
+  # Tuning: WAL archiving, pgvector HNSW, pg_stat_statements
   # See: docs/performance/vector-search-tuning.md
   # ==========================================================================
   postgres:
-    image: postgres:18-alpine
+    image: postgres:16-alpine
     container_name: nexus-cluster-postgres
     hostname: postgres
     restart: unless-stopped
@@ -77,10 +77,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-nexus}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus}
-    # PostgreSQL 18 optimizations:
-    # - io_method=worker: Async I/O for 2-3x I/O performance
+    # PostgreSQL 16 optimizations:
     # - effective_io_concurrency=16: Concurrent I/O requests (tuned for SSD)
-    # - enable_self_join_elimination=on: Query optimizer improvement
     # - wal_compression=lz4: 30-50% WAL size reduction with fast compression
     # pgvector HNSW tuning (Issue #1004):
     # - maintenance_work_mem=2GB: Faster index builds for 100K+ vectors
@@ -90,11 +88,8 @@ services:
       postgres
       -c shared_preload_libraries=pg_stat_statements
       -c pg_stat_statements.track=all
-      -c io_method=worker
       -c effective_io_concurrency=16
       -c maintenance_io_concurrency=16
-      -c enable_self_join_elimination=on
-      -c enable_distinct_reordering=on
       -c wal_compression=lz4
       -c archive_mode=on
       -c archive_command='test ! -f /var/lib/postgresql/wal_archive/%f && cp %p /var/lib/postgresql/wal_archive/%f'

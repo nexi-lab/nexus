@@ -312,7 +312,7 @@ class ToolNamespaceMiddleware(Middleware):
         """
         if context.fastmcp_context is not None:
             try:
-                zone_id = context.fastmcp_context.get_state("zone_id")
+                zone_id: str | None = context.fastmcp_context.get_state("zone_id")
                 if zone_id:
                     return zone_id
             except Exception:

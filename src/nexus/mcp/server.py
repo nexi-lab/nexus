@@ -283,7 +283,8 @@ def create_mcp_server(
         if subject is None:
             return None  # No subject → no filtering
 
-        return tool_namespace_middleware._get_visible_tools(subject)
+        result: frozenset[str] = tool_namespace_middleware._get_visible_tools(subject)
+        return result
 
     # =========================================================================
     # FILE OPERATIONS TOOLS

@@ -70,7 +70,7 @@ def tool_error(
 # ---------------------------------------------------------------------------
 
 
-def handle_tool_errors(operation: str):
+def handle_tool_errors(operation: str) -> Any:
     """Decorator that wraps MCP tool functions with standard error handling.
 
     Catches common exceptions and returns standardized error responses
@@ -107,7 +107,7 @@ def handle_tool_errors(operation: str):
         @functools.wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> str:
             try:
-                return fn(*args, **kwargs)
+                return fn(*args, **kwargs)  # type: ignore[no-any-return]
             except FileNotFoundError as exc:
                 path = _extract_path_hint(args, kwargs)
                 hint = f" at '{path}'" if path else ""

@@ -8,13 +8,16 @@ from __future__ import annotations
 import json
 import logging
 import shlex
+from typing import Literal
 
 from nexus.validation.models import ValidationError, ValidatorConfig
 from nexus.validation.parsers.base import Validator
 
 logger = logging.getLogger(__name__)
 
-_CLIPPY_LEVEL_MAP = {
+_Severity = Literal["error", "warning", "info"]
+
+_CLIPPY_LEVEL_MAP: dict[str, _Severity] = {
     "error": "error",
     "warning": "warning",
     "note": "info",
@@ -38,7 +41,7 @@ class CargoClippyValidator(Validator):
         return f"cd {shlex.quote(workspace_path)} && cargo clippy --message-format json 2>&1"
 
     def parse_output(
-        self, stdout: str, stderr: str, exit_code: int
+        self, stdout: str, stderr: str, exit_code: int  # noqa: ARG002
     ) -> list[ValidationError]:
         errors: list[ValidationError] = []
 
@@ -93,7 +96,7 @@ class CargoClippyValidator(Validator):
                     file=file_name,
                     line=line_no,
                     column=column,
-                    severity=severity,  # type: ignore[arg-type]
+                    severity=severity,
                     message=msg_text,
                     rule=rule,
                     fix_available=suggestion is not None,

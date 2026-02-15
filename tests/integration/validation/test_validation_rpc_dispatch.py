@@ -9,17 +9,16 @@ from __future__ import annotations
 
 import dataclasses
 
-import pytest
-
 from nexus.server.protocol import METHOD_PARAMS, SandboxValidateParams
 from nexus.validation.models import (
     ValidationError,
-    ValidationPipelineConfig,
     ValidationResult,
     ValidatorConfig,
 )
-from nexus.validation.runner import ValidationRunner
-from nexus.validation.script_builder import build_simple_validation_script, parse_simple_script_output
+from nexus.validation.script_builder import (
+    build_simple_validation_script,
+    parse_simple_script_output,
+)
 
 
 class TestSandboxValidateProtocol:
@@ -165,7 +164,7 @@ class TestPerformanceCharacteristics:
                 big_output += f"line {j} of validator {i}\n"
             big_output += "===VALIDATOR_STDERR===\n"
             big_output += f"stderr for v{i}\n"
-            big_output += f"===VALIDATOR_EXIT===0===\n"
+            big_output += "===VALIDATOR_EXIT===0===\n"
             big_output += "===VALIDATOR_END===\n"
 
         start = time.monotonic()
@@ -189,7 +188,7 @@ class TestPerformanceCharacteristics:
 
     def test_detection_single_ls_call(self):
         """Detection uses exactly one ls command."""
-        from unittest.mock import AsyncMock, call
+        from unittest.mock import AsyncMock
 
         from nexus.sandbox.sandbox_provider import CodeExecutionResult
         from nexus.validation.detector import detect_project_validators

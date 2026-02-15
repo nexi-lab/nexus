@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError as PydanticValidationError
 
 from nexus.validation.models import (
     ValidationError,
@@ -40,7 +41,7 @@ class TestValidationError:
         err = ValidationError(
             file="a.py", line=1, column=1, severity="info", message="msg"
         )
-        with pytest.raises(Exception):
+        with pytest.raises(PydanticValidationError):
             err.line = 2  # type: ignore[misc]
 
 
@@ -90,15 +91,15 @@ class TestValidatorConfig:
         assert config2.name == "my_lint"
 
     def test_name_rejects_shell_metacharacters(self):
-        with pytest.raises(Exception):
+        with pytest.raises(PydanticValidationError):
             ValidatorConfig(name="test'; rm -rf /", command="echo")
 
     def test_name_rejects_empty(self):
-        with pytest.raises(Exception):
+        with pytest.raises(PydanticValidationError):
             ValidatorConfig(name="", command="echo")
 
     def test_name_rejects_spaces(self):
-        with pytest.raises(Exception):
+        with pytest.raises(PydanticValidationError):
             ValidatorConfig(name="bad name", command="echo")
 
     def test_timeout_valid_range(self):
@@ -108,15 +109,15 @@ class TestValidatorConfig:
         assert config2.timeout == 300
 
     def test_timeout_rejects_zero(self):
-        with pytest.raises(Exception):
+        with pytest.raises(PydanticValidationError):
             ValidatorConfig(name="ruff", command="ruff", timeout=0)
 
     def test_timeout_rejects_negative(self):
-        with pytest.raises(Exception):
+        with pytest.raises(PydanticValidationError):
             ValidatorConfig(name="ruff", command="ruff", timeout=-1)
 
     def test_timeout_rejects_too_large(self):
-        with pytest.raises(Exception):
+        with pytest.raises(PydanticValidationError):
             ValidatorConfig(name="ruff", command="ruff", timeout=301)
 
 

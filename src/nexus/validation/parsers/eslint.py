@@ -8,14 +8,17 @@ from __future__ import annotations
 import json
 import logging
 import shlex
+from typing import Literal
 
 from nexus.validation.models import ValidationError, ValidatorConfig
 from nexus.validation.parsers.base import Validator
 
 logger = logging.getLogger(__name__)
 
+_Severity = Literal["error", "warning", "info"]
+
 # ESLint severity: 1=warning, 2=error
-_ESLINT_SEVERITY_MAP = {
+_ESLINT_SEVERITY_MAP: dict[int, _Severity] = {
     1: "warning",
     2: "error",
 }
@@ -37,7 +40,7 @@ class ESLintValidator(Validator):
         return f"cd {shlex.quote(workspace_path)} && npx eslint --format json ."
 
     def parse_output(
-        self, stdout: str, stderr: str, exit_code: int
+        self, stdout: str, stderr: str, exit_code: int  # noqa: ARG002
     ) -> list[ValidationError]:
         if not stdout.strip():
             return []
@@ -74,7 +77,7 @@ class ESLintValidator(Validator):
                         file=file_path,
                         line=msg.get("line", 0),
                         column=msg.get("column", 0),
-                        severity=severity,  # type: ignore[arg-type]
+                        severity=severity,
                         message=msg.get("message", ""),
                         rule=msg.get("ruleId"),
                         fix_available=fix is not None,

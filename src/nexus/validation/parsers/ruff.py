@@ -31,7 +31,7 @@ class RuffValidator(Validator):
         return f"cd {shlex.quote(workspace_path)} && ruff check --output-format json ."
 
     def parse_output(
-        self, stdout: str, stderr: str, exit_code: int
+        self, stdout: str, stderr: str, exit_code: int  # noqa: ARG002
     ) -> list[ValidationError]:
         if not stdout.strip():
             return []

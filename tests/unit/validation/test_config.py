@@ -5,8 +5,6 @@ from __future__ import annotations
 import os
 import tempfile
 
-import pytest
-
 from nexus.validation.config import ValidatorConfigLoader, _parse_yaml_content
 from nexus.validation.models import ValidationPipelineConfig
 

@@ -19,7 +19,7 @@ class _GenericValidator(BaseValidator):
     """Fallback validator for unknown tools — returns no parsed errors."""
 
     def parse_output(
-        self, stdout: str, stderr: str, exit_code: int
+        self, stdout: str, stderr: str, exit_code: int  # noqa: ARG002
     ) -> list[ValidationError]:
         return []
 

@@ -355,7 +355,7 @@ class SandboxManager:
         code: str,
         timeout: int = 300,
         as_script: bool = False,
-        auto_validate: bool | None = None,
+        auto_validate: bool | None = None,  # noqa: ARG002
     ) -> CodeExecutionResult:
         """Run code in sandbox.
 

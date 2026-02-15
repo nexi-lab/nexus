@@ -46,6 +46,14 @@ datasources:
         tags:
           - key: "service.name"
             value: "compose_service"
+      tracesToProfiles:
+        datasourceUid: pyroscope
+        tags:
+          - key: "service.name"
+            value: "service_name"
+        profileTypeId: "process_cpu:cpu:nanoseconds:cpu:nanoseconds"
+        customQuery: true
+        query: '{service_name="${__span.tags["service.name"]}"}'
       nodeGraph:
         enabled: true
       tracesToMetrics:
@@ -53,3 +61,11 @@ datasources:
         tags:
           - key: "service.name"
             value: "job"
+
+  # ── Pyroscope ────────────────────────────────────────────────────────────
+  - name: Pyroscope
+    uid: pyroscope
+    type: grafana-pyroscope-datasource
+    access: proxy
+    url: http://pyroscope:4040
+    editable: false

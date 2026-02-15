@@ -185,11 +185,11 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "nexus.services.rebac_service.ReBACService",
         False,  # Many methods are stubs
     ),
-    # ── Not yet extracted (expect fail) ────────────────────────────────
+    # ── ShareLinkService extracted (Issue #1387) ────────────────────────
     (
         "ShareLinkProtocol",
         "nexus.services.protocols.share_link",
-        "nexus.core.nexus_fs_share_links.NexusFSShareLinksMixin",
+        "nexus.services.share_link_service.ShareLinkService",
         True,  # Method names match (async/sync checked separately)
     ),
     (

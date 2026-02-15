@@ -143,11 +143,21 @@ mobile = [
     "llama-cpp-python>=0.2.0",
 ]
 
+sandbox-monty = [
+    # Pydantic Monty — lightweight in-process Python sandbox (Issue #1316)
+    "pydantic-monty>=0.0.4",
+]
+
 sentry = [
     # Sentry error tracking and performance monitoring (Issue #759)
     "sentry-sdk[fastapi]>=2.0.0",
 ]
 
+profiling = [
+    # Pyroscope continuous profiling (Issue #763)
+    "pyroscope-io>=0.8.16",
+    "pyroscope-otel",
+]
 dev = [
     # Testing
     "pytest>=9.0.2",
@@ -198,6 +208,10 @@ fuse = [
 postgres = [
     # PostgreSQL support
     "psycopg2-binary>=2.9.9",  # PostgreSQL adapter
+]
+
+cloud-sql = [
+    "cloud-sql-python-connector[asyncpg]>=1.14.0",
 ]
 
 semantic-search = [
@@ -297,6 +311,7 @@ markers = [
     "benchmark: marks tests as benchmarks",
     "evaluation: marks tests as LLM evaluation tests (requires ANTHROPIC_API_KEY)",
     "quarantine: Tests that are flaky or timing-dependent (deselected by default in CI)",
+    "postgres: marks tests that require a running PostgreSQL instance (Issue #1299)",
 ]
 
 [tool.coverage.run]

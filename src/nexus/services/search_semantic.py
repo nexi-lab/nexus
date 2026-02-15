@@ -42,6 +42,21 @@ class SemanticSearchMixin:
         - _async_index_documents: Async bulk indexing helper
     """
 
+    @property
+    def _has_search_engine(self) -> bool:
+        """Check if either async or sync search engine is available."""
+        has_async = hasattr(self, "_async_search") and self._async_search is not None
+        has_sync = hasattr(self, "_semantic_search") and self._semantic_search is not None
+        return has_async or has_sync
+
+    def _require_search_engine(self) -> None:
+        """Raise ValueError if no search engine is initialized."""
+        if not self._has_search_engine:
+            raise ValueError(
+                "Semantic search is not initialized. "
+                "Initialize with: await search.initialize_semantic_search()"
+            )
+
     # Type hints for attributes provided by SearchService.__init__
     _semantic_search: SemanticSearch | None
     _async_search: AsyncSemanticSearch | None
@@ -197,18 +212,10 @@ class SemanticSearchMixin:
             ValueError: If semantic search is not initialized
             PermissionDeniedError: If user lacks read permission
         """
-        # Check if either async or sync search is initialized
-        has_async = hasattr(self, "_async_search") and self._async_search is not None
-        has_sync = hasattr(self, "_semantic_search") and self._semantic_search is not None
-
-        if not has_async and not has_sync:
-            raise ValueError(
-                "Semantic search is not initialized. "
-                "Initialize with: await search.initialize_semantic_search()"
-            )
+        self._require_search_engine()
 
         # Use async search for non-blocking DB operations (high throughput)
-        if has_async:
+        if self._async_search is not None:
             assert self._async_search is not None  # Type guard for mypy
             results = await self._async_search.search(
                 query=query,
@@ -232,7 +239,7 @@ class SemanticSearchMixin:
             ]
 
         # Fallback to sync search (requires NexusFS integration)
-        if has_sync and self._semantic_search is not None:
+        if self._semantic_search is not None:
             sync_results = await self._semantic_search.search(
                 query=query,
                 path=path,
@@ -285,18 +292,10 @@ class SemanticSearchMixin:
         Raises:
             ValueError: If semantic search is not initialized
         """
-        # Check if either async or sync search is initialized
-        has_async = hasattr(self, "_async_search") and self._async_search is not None
-        has_sync = hasattr(self, "_semantic_search") and self._semantic_search is not None
-
-        if not has_async and not has_sync:
-            raise ValueError(
-                "Semantic search is not initialized. "
-                "Initialize with: await search.initialize_semantic_search()"
-            )
+        self._require_search_engine()
 
         # Use async indexing for high throughput
-        if has_async:
+        if self._async_search is not None:
             assert self._async_search is not None  # Type guard for mypy
             return await self._async_index_documents(path, recursive)
 
@@ -341,23 +340,15 @@ class SemanticSearchMixin:
         Raises:
             ValueError: If semantic search is not initialized
         """
-        # Check if either async or sync search is initialized
-        has_async = hasattr(self, "_async_search") and self._async_search is not None
-        has_sync = hasattr(self, "_semantic_search") and self._semantic_search is not None
-
-        if not has_async and not has_sync:
-            raise ValueError(
-                "Semantic search is not initialized. "
-                "Initialize with: await search.initialize_semantic_search()"
-            )
+        self._require_search_engine()
 
         # Prefer async search
-        if has_async:
+        if self._async_search is not None:
             assert self._async_search is not None  # Type guard for mypy
             return await self._async_search.get_stats()
 
         # Fallback to sync search
-        if has_sync and self._semantic_search is not None:
+        if self._semantic_search is not None:
             return await self._semantic_search.get_index_stats()
 
         # Should not reach here

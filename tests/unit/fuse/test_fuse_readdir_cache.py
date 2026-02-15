@@ -43,7 +43,9 @@ def test_readdir_caches_file_attributes(mock_nexus_fs):
     fuse_ops.readdir("/workspace")
 
     # Verify list was called once with details=True
-    mock_nexus_fs.list.assert_called_once_with("/workspace", recursive=False, details=True)
+    mock_nexus_fs.list.assert_called_once_with(
+        "/workspace", recursive=False, details=True, context=None
+    )
 
     # Reset call counts
     mock_nexus_fs.list.reset_mock()

@@ -451,6 +451,10 @@ class TestMountNexusFunction:
             cache_config=None,
             warmup_depth=2,
             warmup_max_files=1000,
+            agent_id=None,
+            subject_type=None,
+            owner_id=None,
+            zone_id=None,
         )
 
         # Should have called mount
@@ -486,6 +490,10 @@ class TestMountNexusFunction:
             cache_config=cache_config,
             warmup_depth=2,
             warmup_max_files=1000,
+            agent_id=None,
+            subject_type=None,
+            owner_id=None,
+            zone_id=None,
         )
 
         # Should have called mount with correct params

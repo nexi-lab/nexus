@@ -26,11 +26,11 @@ version: '3.8'
 
 services:
   # ============================================
-  # PostgreSQL Database (PostgreSQL 18)
-  # Features: Async I/O, Skip Scan, UUIDv7, OLD/NEW RETURNING
+  # PostgreSQL Database (PostgreSQL 16)
+  # PostgreSQL 16 — matches Cloud SQL production
   # ============================================
   postgres:
-    image: postgres:18-alpine
+    image: postgres:16-alpine
     container_name: nexus-postgres
     restart: unless-stopped
     environment:
@@ -38,7 +38,7 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus}
     volumes:
-      # PostgreSQL 18 default PGDATA: /var/lib/postgresql/data
+      # PostgreSQL data directory
       - postgres-data:/var/lib/postgresql/data
       # WAL archive for point-in-time recovery (Issue #998)
       - postgres-wal-archive:/var/lib/postgresql/wal_archive
@@ -46,10 +46,8 @@ services:
       - ../postgres-init/01-pg-stat-statements.sql:/docker-entrypoint-initdb.d/01-pg-stat-statements.sql:ro
       - ../postgres-init/02-wal-archiving.sql:/docker-entrypoint-initdb.d/02-wal-archiving.sql:ro
       - ../postgres-init/03-monitoring-user.sql:/docker-entrypoint-initdb.d/03-monitoring-user.sql:ro
-    # PostgreSQL 18 optimizations:
-    # - io_method=worker: Async I/O for 2-3x I/O performance
+    # PostgreSQL 16 optimizations:
     # - effective_io_concurrency=16: Concurrent I/O requests (tuned for SSD)
-    # - enable_self_join_elimination=on: Query optimizer improvement
     # - wal_compression=lz4: 30-50% WAL size reduction with fast compression
     # pgvector HNSW tuning (Issue #1004):
     # - maintenance_work_mem=2GB: Faster index builds for 100K+ vectors
@@ -60,11 +58,8 @@ services:
       postgres
       -c shared_preload_libraries=pg_stat_statements
       -c pg_stat_statements.track=all
-      -c io_method=worker
       -c effective_io_concurrency=16
       -c maintenance_io_concurrency=16
-      -c enable_self_join_elimination=on
-      -c enable_distinct_reordering=on
       -c wal_compression=lz4
       -c archive_mode=on
       -c archive_command='test ! -f /var/lib/postgresql/wal_archive/%f && cp %p /var/lib/postgresql/wal_archive/%f'

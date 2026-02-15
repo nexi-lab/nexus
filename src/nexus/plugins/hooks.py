@@ -1,8 +1,11 @@
 """Plugin hooks system for lifecycle events."""
 
+import logging
 from collections.abc import Callable
 from enum import StrEnum
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 class HookType(StrEnum):
@@ -56,6 +59,19 @@ class PluginHooks:
 
         self._hooks[hook_type] = [(p, h) for p, h in self._hooks[hook_type] if h != handler]
 
+    def has_handlers(self, hook_type: HookType) -> bool:
+        """Check if any handlers are registered for a hook type.
+
+        Fast-path check to skip hook dispatch when no plugins are installed.
+
+        Args:
+            hook_type: Type of hook to check
+
+        Returns:
+            True if at least one handler is registered
+        """
+        return bool(self._hooks.get(hook_type))
+
     async def execute(self, hook_type: HookType, context: dict[str, Any]) -> dict[str, Any] | None:
         """Execute all handlers for a hook type.
 
@@ -66,7 +82,7 @@ class PluginHooks:
         Returns:
             Modified context or None if hook execution should stop
         """
-        if hook_type not in self._hooks:
+        if not self.has_handlers(hook_type):
             return context
 
         for _priority, handler in self._hooks[hook_type]:
@@ -76,9 +92,8 @@ class PluginHooks:
                     # Handler returned None - stop execution
                     return None
                 context = result
-            except Exception as e:
-                # Log error but continue with other hooks
-                print(f"Hook {hook_type} handler {handler} failed: {e}")
+            except Exception:
+                logger.exception("Hook %s handler %s failed", hook_type, handler)
                 continue
 
         return context

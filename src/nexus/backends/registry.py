@@ -33,6 +33,7 @@ Inspired by:
 
 from __future__ import annotations
 
+import inspect
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -112,9 +113,18 @@ class ConnectionArg:
     env_var: str | None = None
     """Environment variable to read from if not provided."""
 
+    config_key: str | None = None
+    """External config key that maps to this constructor param.
+
+    When set, this is the key used in backend_config dicts (e.g., ``"bucket"``
+    maps to constructor param ``bucket_name``).  When ``None``, the
+    CONNECTION_ARGS dict key is used as both config key and param name
+    (identity mapping).
+    """
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for serialization."""
-        return {
+        result = {
             "type": self.type.value,
             "description": self.description,
             "required": self.required,
@@ -122,6 +132,9 @@ class ConnectionArg:
             "secret": self.secret,
             "env_var": self.env_var,
         }
+        if self.config_key is not None:
+            result["config_key"] = self.config_key
+        return result
 
 
 @dataclass
@@ -145,6 +158,12 @@ class ConnectorInfo:
 
     user_scoped: bool = False
     """Whether this connector requires per-user OAuth credentials."""
+
+    config_mapping: dict[str, str] = field(default_factory=dict)
+    """Derived mapping from external config keys to constructor param names.
+
+    Auto-populated at registration time by :func:`derive_config_mapping`.
+    """
 
     @property
     def connection_args(self) -> dict[str, ConnectionArg]:
@@ -170,6 +189,47 @@ class ConnectorInfo:
             List of argument names that should be masked.
         """
         return [name for name, arg in self.connection_args.items() if arg.secret]
+
+
+def derive_config_mapping(connector_class: type[Backend]) -> dict[str, str]:
+    """Auto-derive config key -> constructor param mapping from CONNECTION_ARGS.
+
+    For each ``(param_name, connection_arg)`` in ``CONNECTION_ARGS``:
+
+    * If ``connection_arg.config_key`` is set: ``config_key -> param_name``
+    * Otherwise: ``param_name -> param_name`` (identity mapping)
+
+    Args:
+        connector_class: A backend class with an optional ``CONNECTION_ARGS``
+            class attribute.
+
+    Returns:
+        Mapping from external config keys to constructor parameter names.
+
+    Raises:
+        ValueError: If a mapped parameter name does not exist in the
+            connector's ``__init__`` signature.
+    """
+    connection_args: dict[str, ConnectionArg] = getattr(connector_class, "CONNECTION_ARGS", {})
+    if not connection_args:
+        return {}
+
+    # Validate against __init__ signature
+    sig = inspect.signature(connector_class.__init__)
+    valid_params = set(sig.parameters.keys()) - {"self"}
+
+    mapping: dict[str, str] = {}
+    for param_name, arg in connection_args.items():
+        if param_name not in valid_params:
+            raise ValueError(
+                f"{connector_class.__name__}: CONNECTION_ARGS key '{param_name}' "
+                f"does not match any __init__ parameter. "
+                f"Valid params: {sorted(valid_params)}"
+            )
+        config_key = arg.config_key if arg.config_key is not None else param_name
+        mapping[config_key] = param_name
+
+    return mapping
 
 
 class ConnectorRegistry:
@@ -229,6 +289,8 @@ class ConnectorRegistry:
             # Default to False for property, will be checked at instance level
             user_scoped = False
 
+        config_mapping = derive_config_mapping(connector_class)
+
         info = ConnectorInfo(
             name=name,
             connector_class=connector_class,
@@ -236,6 +298,7 @@ class ConnectorRegistry:
             category=category,
             requires=requires or [],
             user_scoped=user_scoped,
+            config_mapping=config_mapping,
         )
         cls._base.register(name, info, allow_overwrite=True)
 
@@ -383,57 +446,6 @@ def register_connector(
     return decorator
 
 
-# Config key mappings for each connector type
-# Maps backend_config keys to constructor parameter names
-_CONFIG_MAPPINGS: dict[str, dict[str, str]] = {
-    "local": {
-        "data_dir": "root_path",
-    },
-    "passthrough": {
-        "data_dir": "base_path",
-    },
-    "gcs": {
-        "bucket": "bucket_name",
-        "project_id": "project_id",
-        "credentials_path": "credentials_path",
-    },
-    "gcs_connector": {
-        "bucket": "bucket_name",
-        "project_id": "project_id",
-        "prefix": "prefix",
-        "credentials_path": "credentials_path",
-        "access_token": "access_token",
-        "session_factory": "session_factory",
-    },
-    "s3_connector": {
-        "bucket": "bucket_name",
-        "region_name": "region_name",
-        "prefix": "prefix",
-        "credentials_path": "credentials_path",
-        "access_key_id": "access_key_id",
-        "secret_access_key": "secret_access_key",
-        "session_token": "session_token",
-    },
-    "gdrive_connector": {
-        "token_manager_db": "token_manager_db",
-        "root_folder": "root_folder",
-        "user_email": "user_email",
-    },
-    "x_connector": {
-        "token_manager_db": "token_manager_db",
-        "user_email": "user_email",
-        "cache_ttl": "cache_ttl",
-        "cache_dir": "cache_dir",
-    },
-    "hn_connector": {
-        "cache_ttl": "cache_ttl",
-        "stories_per_feed": "stories_per_feed",
-        "include_comments": "include_comments",
-        "session_factory": "session_factory",
-    },
-}
-
-
 def _ensure_optional_backends_registered() -> None:
     """Ensure optional backends are registered (lazy loading)."""
     from nexus.backends import _register_optional_backends
@@ -494,10 +506,11 @@ def create_connector_from_config(name: str, backend_config: dict[str, Any]) -> B
     """
     # Ensure optional backends are registered on first use
     _ensure_optional_backends_registered()
-    connector_cls = ConnectorRegistry.get(name)
+    info = ConnectorRegistry.get_info(name)
+    connector_cls = info.connector_class
 
-    # Get config mapping for this connector type
-    mapping = _CONFIG_MAPPINGS.get(name, {})
+    # Get auto-derived config mapping from ConnectorInfo
+    mapping = info.config_mapping
 
     # Build constructor kwargs by mapping config keys
     kwargs: dict[str, Any] = {}

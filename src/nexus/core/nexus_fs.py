@@ -7356,7 +7356,9 @@ class NexusFS(  # type: ignore[misc]
                     if self.exists(file_path):
                         # Read file to get actual columns
                         raw = self.read(file_path)
-                        text_content: str = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+                        text_content: str = (
+                            raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+                        )
 
                         try:
                             import io

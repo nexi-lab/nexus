@@ -5,7 +5,7 @@ to work with FastAPI and async database operations.
 
 Example:
     from nexus.rebac.async_permissions import AsyncPermissionEnforcer
-    from nexus.rebac.async_rebac_manager import AsyncReBACManager
+    from nexus.rebac.async_manager import AsyncReBACManager
 
     enforcer = AsyncPermissionEnforcer(async_rebac_manager)
 
@@ -24,7 +24,7 @@ from nexus.core.permissions import OperationContext, Permission, check_stale_ses
 from nexus.rebac.utils.zone import normalize_zone_id
 
 if TYPE_CHECKING:
-    from nexus.rebac.async_rebac_manager import AsyncReBACManager
+    from nexus.rebac.async_manager import AsyncReBACManager
     from nexus.rebac.namespace_manager import NamespaceManager
 
 logger = logging.getLogger(__name__)

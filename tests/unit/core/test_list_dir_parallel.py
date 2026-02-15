@@ -8,21 +8,15 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from nexus.core.nexus_fs_search import (
+from nexus.services.search_service import (
     LIST_PARALLEL_MAX_DEPTH,
     LIST_PARALLEL_WORKERS,
-    NexusFSSearchMixin,
+    SearchService,
 )
 
 
-class FakeSearchMixin(NexusFSSearchMixin):
-    """Minimal concrete class to test _list_dir_parallel."""
-
-    pass
-
-
-def _make_mixin() -> FakeSearchMixin:
-    return FakeSearchMixin()
+def _make_mixin() -> SearchService:
+    return SearchService.__new__(SearchService)
 
 
 def _make_backend(tree: dict[str, list[str]]) -> MagicMock:

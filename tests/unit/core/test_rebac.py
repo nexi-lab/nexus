@@ -863,13 +863,22 @@ def test_dynamic_viewer_column_config(rebac_manager):
     assert tuple_id is not None, "Should create dynamic_viewer tuple"
 
     # Verify the tuple was created by listing
-    from nexus.services.permissions.nexus_fs_rebac import NexusFSReBACMixin
+    from nexus.core.nexus_fs import NexusFS
 
     # Create a minimal mock that has the required attributes
-    class MockNexusFS(NexusFSReBACMixin):
+    class MockNexusFS:
         def __init__(self, rebac_manager):
             self._rebac_manager = rebac_manager
             self._enforce_permissions = False
+
+        _require_rebac = NexusFS._require_rebac  # type: ignore[assignment]
+        rebac_create = NexusFS.rebac_create
+        rebac_check = NexusFS.rebac_check
+        rebac_list_tuples = NexusFS.rebac_list_tuples
+        rebac_delete = NexusFS.rebac_delete
+        get_dynamic_viewer_config = NexusFS.get_dynamic_viewer_config
+        apply_dynamic_viewer_filter = NexusFS.apply_dynamic_viewer_filter
+        read_with_dynamic_viewer = NexusFS.read_with_dynamic_viewer
 
     mock_fs = MockNexusFS(rebac_manager)
     tuples = mock_fs.rebac_list_tuples(
@@ -907,13 +916,17 @@ def test_dynamic_viewer_aggregation_single_value(rebac_manager):
 
     assert tuple_id is not None
 
-    # Verify retrieval
-    from nexus.services.permissions.nexus_fs_rebac import NexusFSReBACMixin
+    # Verify retrieval via NexusFS delegation method bound to mock
+    from nexus.core.nexus_fs import NexusFS
 
-    class MockNexusFS(NexusFSReBACMixin):
+    class MockNexusFS:
         def __init__(self, rebac_manager):
             self._rebac_manager = rebac_manager
             self._enforce_permissions = False
+
+        _require_rebac = NexusFS._require_rebac
+        rebac_list_tuples = NexusFS.rebac_list_tuples
+        get_dynamic_viewer_config = NexusFS.get_dynamic_viewer_config
 
     mock_fs = MockNexusFS(rebac_manager)
     config = mock_fs.get_dynamic_viewer_config(
@@ -928,12 +941,16 @@ def test_dynamic_viewer_aggregation_single_value(rebac_manager):
 
 def test_dynamic_viewer_no_config_returns_none(rebac_manager):
     """Test that get_dynamic_viewer_config returns None when no config exists."""
-    from nexus.services.permissions.nexus_fs_rebac import NexusFSReBACMixin
+    from nexus.core.nexus_fs import NexusFS
 
-    class MockNexusFS(NexusFSReBACMixin):
+    class MockNexusFS:
         def __init__(self, rebac_manager):
             self._rebac_manager = rebac_manager
             self._enforce_permissions = False
+
+        _require_rebac = NexusFS._require_rebac
+        rebac_list_tuples = NexusFS.rebac_list_tuples
+        get_dynamic_viewer_config = NexusFS.get_dynamic_viewer_config
 
     mock_fs = MockNexusFS(rebac_manager)
     config = mock_fs.get_dynamic_viewer_config(

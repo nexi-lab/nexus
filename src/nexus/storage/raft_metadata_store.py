@@ -218,14 +218,12 @@ class RaftMetadataStore(FileMetadataProtocol):
         self,
         prefix: str = "",
         recursive: bool = True,
-        accessible_int_ids: set[int] | None = None,
     ) -> list[FileMetadata]:
         """List metadata entries from the embedded sled engine.
 
         Args:
             prefix: Path prefix to filter by
             recursive: If True, include all nested files
-            accessible_int_ids: Optional set of accessible file int_ids for filtering
 
         Returns:
             List of file metadata
@@ -236,16 +234,12 @@ class RaftMetadataStore(FileMetadataProtocol):
             # Skip extended attribute keys (format: "meta:{path}:{key}")
             if path.startswith("meta:"):
                 continue
-            metadata = _deserialize_metadata(data)
             if not recursive:
-                # Filter to direct children only
+                # Filter to direct children only — before expensive deserialization
                 rel_path = path[len(prefix) :].lstrip("/")
                 if "/" in rel_path:
                     continue
-            # Filter by accessible_int_ids if provided
-            if accessible_int_ids is not None:
-                if metadata.int_id is None or metadata.int_id not in accessible_int_ids:
-                    continue
+            metadata = _deserialize_metadata(data)
             result.append(metadata)
         return result
 
@@ -443,18 +437,28 @@ class RaftMetadataStore(FileMetadataProtocol):
     ) -> list[FileMetadata]:
         """List all files with given path prefix.
 
+        RaftMetadataStore is zone-local: each zone has its own sled database,
+        so zone_id filtering is inherent to the store instance.
+
         Args:
             prefix: Path prefix to filter by
             recursive: If True, include all nested files
-            zone_id: Zone ID (ignored - store is zone-local)
-            accessible_int_ids: Optional set of accessible file int_ids for filtering
+            zone_id: Accepted for API consistency (filtering is inherent)
+            accessible_int_ids: Deprecated — filtering moved to service layer
 
         Returns:
             List of file metadata
         """
-        # Note: zone_id is ignored since RaftMetadataStore is zone-local
+        # RaftMetadataStore is zone-local: each zone has its own sled database.
+        # zone_id parameter accepted for API consistency but filtering is inherent.
+        # RaftMetadataStore is zone-local. Non-zoned stores serve the "default" zone,
+        # so zone_id="default" is always allowed. Only assert on specific zone_ids.
+        if zone_id is not None and zone_id != "default":
+            assert self._zone_id is not None, (
+                f"zone_id filter '{zone_id}' passed to a non-zone-scoped store"
+            )
         if self._has_engine:
-            return self._list_engine(prefix, recursive, accessible_int_ids)
+            return self._list_engine(prefix, recursive)
         else:
             raise NotImplementedError("Remote mode requires async. Use list_async() instead.")
 
@@ -466,22 +470,20 @@ class RaftMetadataStore(FileMetadataProtocol):
     ) -> Iterator[FileMetadata]:
         """Iterate over file metadata matching prefix.
 
+        RaftMetadataStore is zone-local: each zone has its own sled database,
+        so zone_id filtering is inherent to the store instance.
+
         Memory-efficient alternative to list(). Yields results one at a time
         instead of materializing the full result list.
-
-        The underlying sled store returns all matching entries at once, but this
-        generator lets callers avoid accumulating all results into a second list.
 
         Args:
             prefix: Path prefix to filter by
             recursive: If True, include all nested files
-            **kwargs: Accepts zone_id (ignored) and accessible_int_ids for filtering
+            **kwargs: Accepts zone_id for API consistency (ignored — store is zone-local)
 
         Yields:
             FileMetadata entries matching the prefix
         """
-        accessible_int_ids: set[int] | None = kwargs.get("accessible_int_ids")
-
         if self._has_engine:
             entries = self._engine.list_metadata(prefix)
             for path, data in entries:
@@ -494,10 +496,6 @@ class RaftMetadataStore(FileMetadataProtocol):
                     if "/" in rel_path:
                         continue
                 metadata = _deserialize_metadata(data)
-                # Filter by accessible_int_ids if provided
-                if accessible_int_ids is not None:
-                    if metadata.int_id is None or metadata.int_id not in accessible_int_ids:
-                        continue
                 yield metadata
         else:
             raise NotImplementedError("Remote mode requires async. Use list_async() instead.")
@@ -512,9 +510,19 @@ class RaftMetadataStore(FileMetadataProtocol):
     ) -> PaginatedResult:
         """List files with cursor-based pagination.
 
+        RaftMetadataStore is zone-local: each zone has its own sled database,
+        so zone_id filtering is inherent to the store instance.
+
         Uses list_iter() to avoid loading all entries into memory.
         Memory usage is O(limit) instead of O(total).
         """
+        # RaftMetadataStore is zone-local: zone_id accepted for API consistency.
+        # RaftMetadataStore is zone-local. Non-zoned stores serve the "default" zone,
+        # so zone_id="default" is always allowed. Only assert on specific zone_ids.
+        if zone_id is not None and zone_id != "default":
+            assert self._zone_id is not None, (
+                f"zone_id filter '{zone_id}' passed to a non-zone-scoped store"
+            )
         from itertools import islice
 
         # Decode cursor if it's base64-encoded
@@ -535,7 +543,7 @@ class RaftMetadataStore(FileMetadataProtocol):
                 cursor_path = cursor
 
         # Stream through entries, skipping past cursor
-        items_iter = self.list_iter(prefix, recursive)
+        items_iter = self.list_iter(prefix, recursive, zone_id=zone_id)
 
         if cursor_path:
             # Skip entries up to and including cursor position
@@ -1058,14 +1066,24 @@ class RaftMetadataStore(FileMetadataProtocol):
     ) -> list[FileMetadata]:
         """List all files with given path prefix (async).
 
+        RaftMetadataStore is zone-local: each zone has its own sled database,
+        so zone_id filtering is inherent to the store instance.
+
         Args:
             prefix: Path prefix to filter by
             recursive: If True, include all nested files
-            zone_id: Zone ID (ignored - store is zone-local)
+            zone_id: Accepted for API consistency (filtering is inherent)
 
         Returns:
             List of file metadata
         """
+        # RaftMetadataStore is zone-local: zone_id accepted for API consistency.
+        # RaftMetadataStore is zone-local. Non-zoned stores serve the "default" zone,
+        # so zone_id="default" is always allowed. Only assert on specific zone_ids.
+        if zone_id is not None and zone_id != "default":
+            assert self._zone_id is not None, (
+                f"zone_id filter '{zone_id}' passed to a non-zone-scoped store"
+            )
         if self._has_engine:
             return self._list_engine(prefix, recursive)
         else:

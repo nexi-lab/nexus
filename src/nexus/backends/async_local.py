@@ -243,7 +243,7 @@ class AsyncLocalBackend(Backend):
 
     # === Content Write Operations ===
 
-    async def write_content(
+    async def write_content(  # type: ignore[override]  # async override
         self, content: bytes, context: "OperationContext | None" = None
     ) -> HandlerResponse[str]:
         """
@@ -292,7 +292,7 @@ class AsyncLocalBackend(Backend):
 
     # === Content Read Operations ===
 
-    async def read_content(
+    async def read_content(  # type: ignore[override]  # async override
         self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[bytes]:
         """
@@ -355,7 +355,7 @@ class AsyncLocalBackend(Backend):
 
     # === Batch Read Operations ===
 
-    async def batch_read_content(
+    async def batch_read_content(  # type: ignore[override]  # async override
         self, content_hashes: list[str], context: "OperationContext | None" = None
     ) -> dict[str, bytes | None]:
         """
@@ -405,7 +405,7 @@ class AsyncLocalBackend(Backend):
 
     # === Content Delete Operations ===
 
-    async def delete_content(
+    async def delete_content(  # type: ignore[override]  # async override
         self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[None]:
         """
@@ -457,7 +457,7 @@ class AsyncLocalBackend(Backend):
 
     # === Content Existence/Size Operations ===
 
-    async def content_exists(
+    async def content_exists(  # type: ignore[override]  # async override
         self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[bool]:
         """
@@ -485,7 +485,7 @@ class AsyncLocalBackend(Backend):
             path=content_hash,
         )
 
-    async def get_content_size(
+    async def get_content_size(  # type: ignore[override]  # async override
         self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[int]:
         """
@@ -528,7 +528,7 @@ class AsyncLocalBackend(Backend):
 
         return await asyncio.to_thread(_get_size)
 
-    async def get_ref_count(
+    async def get_ref_count(  # type: ignore[override]  # async override
         self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[int]:
         """
@@ -627,7 +627,7 @@ class AsyncLocalBackend(Backend):
         for chunk in chunks:
             yield chunk
 
-    async def stream_range(
+    async def stream_range(  # type: ignore[override]  # async override
         self,
         content_hash: str,
         start: int,
@@ -685,7 +685,7 @@ class AsyncLocalBackend(Backend):
         for chunk in chunks:
             yield chunk
 
-    async def write_stream(
+    async def write_stream(  # type: ignore[override]  # async override
         self,
         chunks: AsyncIterator[bytes],
         context: "OperationContext | None" = None,
@@ -714,7 +714,7 @@ class AsyncLocalBackend(Backend):
 
     # === Directory Operations ===
 
-    async def mkdir(
+    async def mkdir(  # type: ignore[override]  # async override
         self,
         path: str,
         parents: bool = False,
@@ -766,7 +766,7 @@ class AsyncLocalBackend(Backend):
 
         return await asyncio.to_thread(_mkdir)
 
-    async def is_directory(
+    async def is_directory(  # type: ignore[override]  # async override
         self, path: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[bool]:
         """
@@ -794,7 +794,7 @@ class AsyncLocalBackend(Backend):
             path=path,
         )
 
-    async def rmdir(
+    async def rmdir(  # type: ignore[override]  # async override
         self,
         path: str,
         recursive: bool = False,
@@ -856,7 +856,7 @@ class AsyncLocalBackend(Backend):
 
         return await asyncio.to_thread(_rmdir)
 
-    async def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
+    async def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:  # type: ignore[override]  # async override
         """
         List directory contents asynchronously.
 

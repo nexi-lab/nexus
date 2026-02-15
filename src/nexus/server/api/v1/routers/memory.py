@@ -243,6 +243,7 @@ async def memory_store(
             extract_relationships=body.get("extract_relationships", False),
             relationship_types=body.get("relationship_types"),
             store_to_graph=body.get("store_to_graph", False),  # #1039
+            detect_evolution=body.get("detect_evolution", False),  # #1190
             context=context,
         )
 

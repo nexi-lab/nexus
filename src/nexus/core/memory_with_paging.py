@@ -150,6 +150,7 @@ class MemoryWithPaging(Memory):
         store_to_graph: bool = False,
         valid_at: Any = None,
         classify_stability: bool = True,  # #1191: Auto-classify temporal stability
+        detect_evolution: bool = False,  # #1190: Detect evolution relationships
         auto_page: bool = True,  # Memory paging specific parameter
     ) -> str:
         """Store memory with automatic paging.
@@ -206,6 +207,7 @@ class MemoryWithPaging(Memory):
             store_to_graph=store_to_graph,
             valid_at=valid_at,
             classify_stability=classify_stability,
+            detect_evolution=detect_evolution,
         )
 
         # Add to paging system if enabled

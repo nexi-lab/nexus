@@ -30,6 +30,7 @@ class MemoryStoreRequest(ApiModel):
     store_to_graph: bool = Field(False, description="Store entities to knowledge graph")
     valid_at: str | None = Field(None, description="When fact became valid (ISO-8601)")
     classify_stability: bool = Field(True, description="Auto-classify temporal stability")
+    detect_evolution: bool = Field(False, description="Detect evolution relationships (#1190)")
     metadata: dict[str, Any] | None = Field(None, description="Additional metadata")
 
 
@@ -118,6 +119,11 @@ class MemoryResponse(ApiModel):
     temporal_stability: str | None = None
     stability_confidence: float | None = None
     estimated_ttl_days: int | None = None
+    supersedes_id: str | None = None
+    superseded_by_id: str | None = None
+    extends_ids: str | None = None
+    extended_by_ids: str | None = None
+    derived_from_ids: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
 

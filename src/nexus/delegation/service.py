@@ -31,6 +31,7 @@ from nexus.delegation.models import DelegationMode, DelegationRecord, Delegation
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
 
+    from nexus.core.agent_registry import AgentRegistry
     from nexus.services.permissions.entity_registry import EntityRegistry
     from nexus.services.permissions.namespace_manager import NamespaceManager
     from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
@@ -54,11 +55,13 @@ class DelegationService:
         rebac_manager: EnhancedReBACManager,
         namespace_manager: NamespaceManager | None = None,
         entity_registry: EntityRegistry | None = None,
+        agent_registry: AgentRegistry | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._rebac_manager = rebac_manager
         self._namespace_manager = namespace_manager
         self._entity_registry = entity_registry
+        self._agent_registry: AgentRegistry | None = agent_registry
         logger.info("[DelegationService] Initialized")
 
     def delegate(
@@ -130,15 +133,14 @@ class DelegationService:
         )
 
         # 5. Register worker agent (UNKNOWN state, no API key yet)
-        from nexus.core.agents import register_agent
-
-        register_agent(
-            user_id=coordinator_owner_id,
+        if self._agent_registry is None:
+            raise DelegationError("agent_registry is required for DelegationService")
+        self._agent_registry.register(
             agent_id=worker_id,
-            name=worker_name,
+            owner_id=coordinator_owner_id,
             zone_id=zone_id,
+            name=worker_name,
             metadata={"delegated_by": coordinator_agent_id},
-            entity_registry=self._entity_registry,
         )
 
         try:
@@ -180,9 +182,7 @@ class DelegationService:
 
         except Exception:
             # Cleanup: unregister agent on failure (no key exists yet)
-            from nexus.core.agents import unregister_agent
-
-            unregister_agent(worker_id, entity_registry=self._entity_registry)
+            self._agent_registry.unregister(worker_id)
             raise
 
         logger.info(
@@ -226,9 +226,9 @@ class DelegationService:
         self._revoke_worker_api_key(record.agent_id)
 
         # 3. Unregister agent entity
-        from nexus.core.agents import unregister_agent
-
-        unregister_agent(record.agent_id, entity_registry=self._entity_registry)
+        if self._agent_registry is None:
+            raise DelegationError("agent_registry is required for DelegationService")
+        self._agent_registry.unregister(record.agent_id)
 
         # 4. Delete delegation record
         self._delete_delegation_record(delegation_id)

@@ -63,6 +63,9 @@ def _get_delegation_service() -> Any:
     entity_registry = getattr(state, "entity_registry", None) or getattr(
         getattr(state, "nexus_fs", None), "_entity_registry", None
     )
+    agent_registry = getattr(state, "agent_registry", None) or getattr(
+        getattr(state, "nexus_fs", None), "_agent_registry", None
+    )
 
     from nexus.delegation.service import DelegationService
 
@@ -71,6 +74,7 @@ def _get_delegation_service() -> Any:
         rebac_manager=rebac_manager,
         namespace_manager=namespace_manager,
         entity_registry=entity_registry,
+        agent_registry=agent_registry,
     )
     state._delegation_service = service
     return service

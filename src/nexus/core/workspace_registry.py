@@ -261,10 +261,9 @@ class WorkspaceRegistry:
                 )
 
             # Validate agent ownership
-            if agent_id and user_id and hasattr(self, "entity_registry") and self.entity_registry:
-                from nexus.core.agents import validate_agent_ownership
-
-                if not validate_agent_ownership(agent_id, user_id, self.entity_registry):
+            if agent_id and user_id:
+                _agent_reg = getattr(self, "_agent_registry", None)
+                if _agent_reg is not None and not _agent_reg.validate_ownership(agent_id, user_id):
                     raise PermissionError(f"Agent {agent_id} not owned by {user_id}")
 
         # Calculate expiry
@@ -525,10 +524,9 @@ class WorkspaceRegistry:
                 zone_id = getattr(context, "zone_id", None)
 
             # Validate agent ownership
-            if agent_id and user_id and hasattr(self, "entity_registry") and self.entity_registry:
-                from nexus.core.agents import validate_agent_ownership
-
-                if not validate_agent_ownership(agent_id, user_id, self.entity_registry):
+            if agent_id and user_id:
+                _agent_reg = getattr(self, "_agent_registry", None)
+                if _agent_reg is not None and not _agent_reg.validate_ownership(agent_id, user_id):
                     raise PermissionError(f"Agent {agent_id} not owned by {user_id}")
 
         # Calculate expiry

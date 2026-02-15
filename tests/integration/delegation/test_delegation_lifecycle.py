@@ -11,6 +11,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from nexus.core.agent_registry import AgentRegistry
 from nexus.delegation.derivation import derive_grants
 from nexus.delegation.errors import (
     DelegationChainError,
@@ -67,12 +68,22 @@ def entity_registry(engine):
 
 
 @pytest.fixture()
-def delegation_service(session_factory, rebac_manager, entity_registry):
+def agent_registry(session_factory, entity_registry):
+    """Create an AgentRegistry with entity_registry bridge."""
+    return AgentRegistry(
+        session_factory=session_factory,
+        entity_registry=entity_registry,
+    )
+
+
+@pytest.fixture()
+def delegation_service(session_factory, rebac_manager, entity_registry, agent_registry):
     """Create a DelegationService with real dependencies (no namespace manager)."""
     return DelegationService(
         session_factory=session_factory,
         rebac_manager=rebac_manager,
         entity_registry=entity_registry,
+        agent_registry=agent_registry,
     )
 
 
@@ -384,3 +395,50 @@ class TestSharedModeIntegration:
 
         assert result.worker_agent_id == "worker_shared"
         assert result.delegation_mode == DelegationMode.SHARED
+
+
+class TestDelegationLifecycleWithAgentRegistry:
+    """Tests verifying that delegation flows use AgentRegistry for lifecycle tracking."""
+
+    def test_worker_registered_in_agent_registry(
+        self, delegation_service, entity_registry, rebac_manager, agent_registry
+    ):
+        """Worker created via delegation is registered in AgentRegistry."""
+        _register_coordinator(entity_registry, rebac_manager)
+
+        delegation_service.delegate(
+            coordinator_agent_id="coordinator_1",
+            coordinator_owner_id="alice",
+            worker_id="worker_lifecycle_ar",
+            worker_name="Worker Lifecycle AR",
+            delegation_mode=DelegationMode.COPY,
+        )
+
+        # Verify worker exists in AgentRegistry
+        record = agent_registry.get("worker_lifecycle_ar")
+        assert record is not None
+        assert record.owner_id == "alice"
+        assert record.name == "Worker Lifecycle AR"
+
+    def test_revoke_removes_from_agent_registry(
+        self, delegation_service, entity_registry, rebac_manager, agent_registry
+    ):
+        """Revoking delegation removes worker from AgentRegistry."""
+        _register_coordinator(entity_registry, rebac_manager)
+
+        result = delegation_service.delegate(
+            coordinator_agent_id="coordinator_1",
+            coordinator_owner_id="alice",
+            worker_id="worker_revoke_ar",
+            worker_name="Worker Revoke AR",
+            delegation_mode=DelegationMode.COPY,
+        )
+
+        # Worker exists in AgentRegistry
+        assert agent_registry.get("worker_revoke_ar") is not None
+
+        # Revoke
+        delegation_service.revoke_delegation(result.delegation_id)
+
+        # Worker removed from AgentRegistry
+        assert agent_registry.get("worker_revoke_ar") is None

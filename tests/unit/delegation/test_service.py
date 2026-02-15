@@ -66,29 +66,46 @@ def mock_entity_registry():
 
 
 @pytest.fixture()
-def service(mock_session_factory, mock_rebac_manager, mock_namespace_manager, mock_entity_registry):
+def mock_agent_registry():
+    """Create a mock agent registry."""
+    registry = MagicMock()
+    record = MagicMock()
+    record.agent_id = "worker_1"
+    record.owner_id = "alice"
+    registry.register.return_value = record
+    registry.unregister.return_value = True
+    return registry
+
+
+@pytest.fixture()
+def service(
+    mock_session_factory,
+    mock_rebac_manager,
+    mock_namespace_manager,
+    mock_entity_registry,
+    mock_agent_registry,
+):
     """Create a DelegationService with all mocked dependencies."""
     return DelegationService(
         session_factory=mock_session_factory,
         rebac_manager=mock_rebac_manager,
         namespace_manager=mock_namespace_manager,
         entity_registry=mock_entity_registry,
+        agent_registry=mock_agent_registry,
     )
 
 
 class TestDelegateCopyMode:
-    @patch("nexus.core.agents.register_agent")
     @patch("nexus.server.auth.database_key.DatabaseAPIKeyAuth.create_key")
     def test_happy_path(
         self,
         mock_create_key,
-        mock_register,
         service,
+        mock_agent_registry,
         mock_rebac_manager,
     ):
         """Copy mode delegation creates worker with parent's grants."""
         mock_create_key.return_value = ("key_id_1", "sk-test-key")
-        mock_register.return_value = {"agent_id": "worker_1"}
 
         result = service.delegate(
             coordinator_agent_id="coordinator_1",
@@ -107,26 +124,22 @@ class TestDelegateCopyMode:
         assert result.expires_at is not None
         assert result.mount_table == ["/workspace"]
 
-        # Verify register_agent was called
-        mock_register.assert_called_once()
+        # Verify agent_registry.register was called
+        mock_agent_registry.register.assert_called_once()
 
         # Verify ReBAC tuples were created
         mock_rebac_manager.rebac_write_batch.assert_called_once()
 
 
 class TestDelegateCleanMode:
-    @patch("nexus.core.agents.register_agent")
     @patch("nexus.server.auth.database_key.DatabaseAPIKeyAuth.create_key")
     def test_happy_path(
         self,
         mock_create_key,
-        mock_register,
         service,
-        mock_rebac_manager,
     ):
         """Clean mode with valid add_grants creates worker."""
         mock_create_key.return_value = ("key_id_1", "sk-test-key")
-        mock_register.return_value = {"agent_id": "worker_1"}
 
         result = service.delegate(
             coordinator_agent_id="coordinator_1",
@@ -143,17 +156,14 @@ class TestDelegateCleanMode:
 
 
 class TestDelegateSharedMode:
-    @patch("nexus.core.agents.register_agent")
     @patch("nexus.server.auth.database_key.DatabaseAPIKeyAuth.create_key")
     def test_happy_path(
         self,
         mock_create_key,
-        mock_register,
         service,
     ):
         """Shared mode creates worker with all parent grants."""
         mock_create_key.return_value = ("key_id_1", "sk-test-key")
-        mock_register.return_value = {"agent_id": "worker_1"}
 
         result = service.delegate(
             coordinator_agent_id="coordinator_1",
@@ -168,16 +178,12 @@ class TestDelegateSharedMode:
 
 
 class TestAntiEscalation:
-    @patch("nexus.core.agents.register_agent")
     def test_clean_mode_escalation_rejected(
         self,
-        mock_register,
         service,
     ):
         """Clean mode rejects grants not held by parent."""
         from nexus.delegation.errors import EscalationError
-
-        mock_register.return_value = {"agent_id": "worker_1"}
 
         with pytest.raises(EscalationError):
             service.delegate(
@@ -253,10 +259,13 @@ class TestDelegationChain:
 
         session.query.return_value.filter.return_value.first.return_value = existing_delegation
 
+        mock_agent_registry = MagicMock()
+
         service = DelegationService(
             session_factory=mock_session_factory,
             rebac_manager=mock_rebac_manager,
             entity_registry=mock_entity_registry,
+            agent_registry=mock_agent_registry,
         )
 
         with pytest.raises(DelegationChainError, match="cannot delegate"):
@@ -270,11 +279,10 @@ class TestDelegationChain:
 
 
 class TestRevokeDelegation:
-    @patch("nexus.core.agents.unregister_agent")
     def test_revoke_existing(
         self,
-        mock_unregister,
         service,
+        mock_agent_registry,
         mock_session_factory,
     ):
         """Revoking an existing delegation succeeds."""
@@ -301,6 +309,9 @@ class TestRevokeDelegation:
 
         result = service.revoke_delegation("del_1")
         assert result is True
+
+        # Verify agent_registry.unregister was called
+        mock_agent_registry.unregister.assert_called_once_with(record.agent_id)
 
     def test_revoke_nonexistent(self, service, mock_session_factory):
         """Revoking a non-existent delegation raises error."""

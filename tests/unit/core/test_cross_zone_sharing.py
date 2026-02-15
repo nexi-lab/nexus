@@ -267,7 +267,7 @@ class TestCrossZoneSharingRevoke:
     def test_revoke_cross_zone_share(self, zone_aware_manager):
         """Test revoking a cross-zone share."""
         # Create cross-zone share
-        tuple_id = zone_aware_manager.rebac_write(
+        write_result = zone_aware_manager.rebac_write(
             subject=("user", "bob@partner.com"),
             relation="shared-viewer",
             object=("file", "/project/doc.txt"),
@@ -275,6 +275,8 @@ class TestCrossZoneSharingRevoke:
             subject_zone_id="partner-zone",
             object_zone_id="acme-zone",
         )
+        # EnhancedReBACManager.rebac_write returns WriteResult, extract tuple_id
+        tuple_id = write_result.tuple_id if hasattr(write_result, "tuple_id") else write_result
 
         # Verify share exists
         result = zone_aware_manager.rebac_check(

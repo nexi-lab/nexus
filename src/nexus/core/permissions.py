@@ -250,6 +250,55 @@ class OperationContext:
         self.track_reads = False
 
 
+def check_stale_session(agent_registry: Any, context: OperationContext) -> None:
+    """Check for stale agent sessions and raise if the session is outdated.
+
+    Compares the agent_generation from the JWT token (stored in context) against
+    the current generation in the agent registry (DB). A mismatch means a newer
+    session has superseded this one.
+
+    Issue #1240 / #1445: Shared helper used by both sync and async enforcers.
+
+    Args:
+        agent_registry: AgentRegistry instance (or None to skip check).
+        context: Operation context with agent_generation from JWT claims.
+
+    Raises:
+        StaleSessionError: If the session generation is stale or the agent
+            record no longer exists (deleted agent with valid JWT).
+    """
+    if (
+        agent_registry is None
+        or context.agent_generation is None
+        or context.subject_type != "agent"
+    ):
+        return
+
+    agent_id = context.agent_id or context.subject_id
+    if not agent_id:
+        logger.warning("[STALE-SESSION] No agent_id in context, skipping check")
+        return
+
+    current_record = agent_registry.get(agent_id)
+
+    from nexus.core.exceptions import StaleSessionError
+
+    # Issue #1445: Agent deleted but JWT still valid → stale session
+    if current_record is None:
+        raise StaleSessionError(
+            agent_id,
+            f"Agent '{agent_id}' no longer exists (session generation "
+            f"{context.agent_generation} is stale)",
+        )
+
+    if current_record.generation != context.agent_generation:
+        raise StaleSessionError(
+            agent_id,
+            f"Session generation {context.agent_generation} is stale "
+            f"(current: {current_record.generation})",
+        )
+
+
 class PermissionEnforcer:
     """Pure ReBAC permission enforcement for Nexus filesystem (v0.6.0+).
 
@@ -750,27 +799,8 @@ class PermissionEnforcer:
                     message="Path not found",  # Intentionally vague — path is invisible
                 )
 
-        # Issue #1240: Stale-session detection (Agent OS Phase 1)
-        # If an agent's session generation doesn't match the current DB generation,
-        # a newer session has superseded this one → reject with 409 Conflict.
-        if (
-            self.agent_registry is not None
-            and context.agent_generation is not None
-            and context.subject_type == "agent"
-        ):
-            agent_id = context.agent_id or context.subject_id
-            if not agent_id:
-                logger.warning("[STALE-SESSION] No agent_id in context, skipping check")
-            elif (
-                current_record := self.agent_registry.get(agent_id)
-            ) and current_record.generation != context.agent_generation:
-                from nexus.core.exceptions import StaleSessionError
-
-                raise StaleSessionError(
-                    agent_id,
-                    f"Session generation {context.agent_generation} is stale "
-                    f"(current: {current_record.generation})",
-                )
+        # Issue #1240 / #1445: Stale-session detection (Agent OS Phase 1)
+        check_stale_session(self.agent_registry, context)
 
         # Normal ReBAC check
         return self._check_rebac(path, permission, context)

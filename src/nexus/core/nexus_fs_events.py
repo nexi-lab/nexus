@@ -73,6 +73,8 @@ class NexusFSEventsMixin:
             self, context: OperationContext | dict[Any, Any] | None
         ) -> tuple[str | None, str | None, bool]: ...
 
+        def _get_zone_revision(self) -> int: ...
+
     def _is_same_box(self) -> bool:
         """Check if we're in same-box mode (local file watching available).
 
@@ -663,12 +665,8 @@ class NexusFSEventsMixin:
         if read_set_cache is not None:
             revision = self._get_zone_revision()
             zone_id = getattr(self, "zone_id", None)
-            count = read_set_cache.invalidate_for_write(
-                virtual_path, revision, zone_id=zone_id
-            )
-            logger.debug(
-                f"Cache invalidated (read-set): {virtual_path} ({count} entries)"
-            )
+            count = read_set_cache.invalidate_for_write(virtual_path, revision, zone_id=zone_id)
+            logger.debug(f"Cache invalidated (read-set): {virtual_path} ({count} entries)")
         else:
             cache.invalidate_path(virtual_path)
             logger.debug(f"Cache invalidated: {virtual_path}")

@@ -24,7 +24,9 @@ def nexus_fs(isolated_db, tmp_path):
     """Create a NexusFS instance for testing."""
     backend = LocalBackend(str(tmp_path / "data"))
     metadata_store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", ""))
-    nx = NexusFS(backend=backend, metadata_store=metadata_store, permissions=PermissionConfig(enforce=False))
+    nx = NexusFS(
+        backend=backend, metadata_store=metadata_store, permissions=PermissionConfig(enforce=False)
+    )
     yield nx
     nx.close()
 

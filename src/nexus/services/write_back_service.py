@@ -15,12 +15,15 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import logging
 import posixpath
+import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.event_bus import FileEvent, FileEventType
+from nexus.core.permissions import OperationContext
 from nexus.services.conflict_resolution import (
     ConflictAbortError,
     ConflictContext,
@@ -31,6 +34,7 @@ from nexus.services.conflict_resolution import (
     detect_conflict,
     resolve_conflict,
 )
+from nexus.services.write_back_metrics import WriteBackMetrics
 
 if TYPE_CHECKING:
     from nexus.core.event_bus import EventBusBase
@@ -101,6 +105,11 @@ class WriteBackService:
 
         # Per-backend semaphores for rate limiting
         self._semaphores: dict[str, asyncio.Semaphore] = {}
+        self._metrics = WriteBackMetrics()
+        # Pre-built system context template — avoids UUID generation per-operation
+        self._system_ctx = OperationContext(
+            user="system", groups=[], is_system=True
+        )
         self._running = False
         self._poll_task: asyncio.Task[None] | None = None
         self._subscribe_task: asyncio.Task[None] | None = None
@@ -211,6 +220,7 @@ class WriteBackService:
             try:
                 await self._write_back_single(entry)
                 self._backlog_store.mark_completed(entry.id)
+                self._metrics.record_push(entry.backend_name)
                 # Publish success event
                 await self._event_bus.publish(
                     FileEvent(
@@ -222,6 +232,7 @@ class WriteBackService:
             except ConflictAbortError as e:
                 logger.warning(f"[WRITE_BACK] Conflict ABORT on {entry.path}: {e}")
                 self._backlog_store.mark_failed(entry.id, str(e))
+                self._metrics.record_failure(entry.backend_name)
                 await self._event_bus.publish(
                     FileEvent(
                         type=FileEventType.SYNC_TO_BACKEND_FAILED,
@@ -232,6 +243,7 @@ class WriteBackService:
             except Exception as e:
                 logger.warning(f"[WRITE_BACK] Failed to write-back {entry.path}: {e}")
                 self._backlog_store.mark_failed(entry.id, str(e))
+                self._metrics.record_failure(entry.backend_name)
                 await self._event_bus.publish(
                     FileEvent(
                         type=FileEventType.SYNC_TO_BACKEND_FAILED,
@@ -290,8 +302,17 @@ class WriteBackService:
         # Get current backend file info for conflict detection
         backend_file_info = None
         if hasattr(backend, "get_file_info"):
-            with contextlib.suppress(Exception):
-                backend_file_info = await asyncio.to_thread(backend.get_file_info, backend_path)
+            try:
+                result = await asyncio.to_thread(backend.get_file_info, backend_path)
+                # Unwrap HandlerResponse if needed
+                if hasattr(result, "data") and hasattr(result, "success"):
+                    backend_file_info = result.data if result.success else None
+                else:
+                    backend_file_info = result
+            except FileNotFoundError:
+                pass  # File doesn't exist on backend yet — no conflict
+            except Exception as exc:
+                logger.debug("[WRITE_BACK] get_file_info failed for %s: %s", backend_path, exc)
 
         if backend_file_info is not None and last_synced is not None:
             # Get Nexus file info for comparison
@@ -332,7 +353,8 @@ class WriteBackService:
         if content is None:
             raise RuntimeError(f"Failed to read content for {entry.path}")
 
-        result = await asyncio.to_thread(backend.write_content, content)
+        op_ctx = dataclasses.replace(self._system_ctx, backend_path=backend_path)
+        result = await asyncio.to_thread(backend.write_content, content, op_ctx)
         if hasattr(result, "success") and not result.success:
             raise RuntimeError(f"Backend write failed: {getattr(result, 'error', 'unknown')}")
 
@@ -365,6 +387,10 @@ class WriteBackService:
             ConflictAbortError: If ABORT strategy is applied
         """
         outcome = resolve_conflict(ctx, strategy)
+
+        # Record conflict metric (auto-resolved unless ABORT)
+        auto_resolved = outcome != ResolutionOutcome.ABORT
+        self._metrics.record_conflict(entry.backend_name, auto_resolved=auto_resolved)
 
         # Publish conflict event
         await self._event_bus.publish(
@@ -427,6 +453,12 @@ class WriteBackService:
                 )
                 self._create_conflict_copy(entry.path, conflict_copy_path)  # type: ignore[arg-type]
                 return True
+            case _:
+                logger.warning(
+                    "[WRITE_BACK] Unhandled resolution outcome %s on %s, skipping",
+                    outcome, entry.path,
+                )
+                return False
 
     def _resolve_strategy(self, mount_info: dict[str, Any]) -> ConflictStrategy:
         """Resolve the conflict strategy for a mount.
@@ -470,15 +502,21 @@ class WriteBackService:
     @staticmethod
     def _make_conflict_id() -> str:
         """Generate a UUID for a conflict record."""
-        import uuid
-
         return str(uuid.uuid4())
 
     async def _handle_delete(self, backend: Any, backend_path: str) -> None:
-        """Handle deletion of a file on the backend."""
-        if not hasattr(backend, "delete_content"):
-            raise RuntimeError(f"Backend {type(backend).__name__} does not support delete_content")
-        result = await asyncio.to_thread(backend.delete_content, backend_path)
+        """Handle deletion of a file on the backend.
+
+        Tries path-based delete() first (connector backends like local_connector),
+        falling back to delete_content() for CAS backends.
+        """
+        ctx = dataclasses.replace(self._system_ctx, backend_path=backend_path)
+        if hasattr(backend, "delete"):
+            result = await asyncio.to_thread(backend.delete, backend_path, ctx)
+        elif hasattr(backend, "delete_content"):
+            result = await asyncio.to_thread(backend.delete_content, backend_path, ctx)
+        else:
+            raise RuntimeError(f"Backend {type(backend).__name__} supports neither delete nor delete_content")
         if hasattr(result, "success") and not result.success:
             raise RuntimeError(f"Backend delete failed: {getattr(result, 'error', 'unknown')}")
 
@@ -486,7 +524,8 @@ class WriteBackService:
         """Handle directory creation on the backend."""
         if not hasattr(backend, "mkdir"):
             raise RuntimeError(f"Backend {type(backend).__name__} does not support mkdir")
-        result = await asyncio.to_thread(backend.mkdir, backend_path)
+        ctx = dataclasses.replace(self._system_ctx, backend_path=backend_path)
+        result = await asyncio.to_thread(backend.mkdir, backend_path, context=ctx)
         if hasattr(result, "success") and not result.success:
             raise RuntimeError(f"Backend mkdir failed: {getattr(result, 'error', 'unknown')}")
 
@@ -528,7 +567,23 @@ class WriteBackService:
             "max_concurrent_per_backend": self._max_concurrent,
             "poll_interval_seconds": self._poll_interval,
             "backlog_stats": self._backlog_store.get_stats(),
+            "metrics": self._metrics.snapshot(),
         }
+
+    def get_mount_for_path(self, path: str) -> dict[str, Any] | None:
+        """Resolve mount info for a virtual path (public API for push endpoint)."""
+        return self._gw.get_mount_for_path(path)
+
+    def get_metrics_snapshot(self) -> dict[str, Any]:
+        """Return a thread-safe copy of write-back metrics."""
+        return self._metrics.snapshot()
+
+    async def push_mount(self, backend_name: str, zone_id: str) -> None:
+        """Trigger an immediate push for a specific backend/zone pair.
+
+        Processes all pending backlog entries for the given backend and zone.
+        """
+        await self._process_pending(backend_name, zone_id)
 
     @staticmethod
     def _event_to_operation(event_type: FileEventType) -> str | None:

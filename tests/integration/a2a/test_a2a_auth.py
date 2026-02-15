@@ -9,7 +9,7 @@ Reference: https://a2a-protocol.org/latest/topics/enterprise-ready/
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+from typing import Any
 
 import pytest
 from fastapi import FastAPI
@@ -24,50 +24,36 @@ from nexus.a2a.router import build_router
 
 @pytest.fixture
 def app_with_auth() -> FastAPI:
-    """Create a FastAPI app with auth provider configured."""
+    """Create a FastAPI app with auth_required=True."""
     app = FastAPI()
-    router = build_router(base_url="http://testserver")
+    router = build_router(base_url="http://testserver", auth_required=True)
     app.include_router(router)
-
-    # Mock _fastapi_app.state to simulate auth being enabled
-    from nexus.server import fastapi_server
-
-    # Store original values
-    original_api_key = getattr(fastapi_server._fastapi_app.state, "api_key", None)
-    original_auth_provider = getattr(fastapi_server._fastapi_app.state, "auth_provider", None)
-
-    # Set mock auth provider to enable auth enforcement
-    mock_auth_provider = AsyncMock()
-    fastapi_server._fastapi_app.state.auth_provider = mock_auth_provider
-
-    yield app
-
-    # Restore original values
-    fastapi_server._fastapi_app.state.api_key = original_api_key
-    fastapi_server._fastapi_app.state.auth_provider = original_auth_provider
+    return app
 
 
 @pytest.fixture
 def app_no_auth() -> FastAPI:
     """Create a FastAPI app without auth (open mode)."""
     app = FastAPI()
-    router = build_router(base_url="http://testserver")
+    router = build_router(base_url="http://testserver", auth_required=False)
     app.include_router(router)
+    return app
 
-    # Ensure _fastapi_app.state has no auth
-    from nexus.server import fastapi_server
 
-    original_api_key = getattr(fastapi_server._fastapi_app.state, "api_key", None)
-    original_auth_provider = getattr(fastapi_server._fastapi_app.state, "auth_provider", None)
 
-    fastapi_server._fastapi_app.state.api_key = None
-    fastapi_server._fastapi_app.state.auth_provider = None
-
-    yield app
-
-    # Restore
-    fastapi_server._fastapi_app.state.api_key = original_api_key
-    fastapi_server._fastapi_app.state.auth_provider = original_auth_provider
+def _rpc_body(
+    method: str,
+    params: dict[str, Any] | None = None,
+    request_id: str = "test-1",
+) -> dict[str, Any]:
+    body: dict[str, Any] = {
+        "jsonrpc": "2.0",
+        "method": method,
+        "id": request_id,
+    }
+    if params is not None:
+        body["params"] = params
+    return body
 
 
 # ======================================================================
@@ -94,17 +80,15 @@ class TestAuthEnforcement:
         """POST /a2a requires auth when server has auth enabled."""
         client = TestClient(app_with_auth)
 
-        body = {
-            "jsonrpc": "2.0",
-            "method": "a2a.tasks.send",
-            "params": {
+        body = _rpc_body(
+            "a2a.tasks.send",
+            {
                 "message": {
                     "role": "user",
                     "parts": [{"type": "text", "text": "hello"}],
                 }
             },
-            "id": "test-1",
-        }
+        )
 
         # No Authorization header
         response = client.post("/a2a", json=body)
@@ -120,17 +104,16 @@ class TestAuthEnforcement:
         """POST /a2a works without auth when server has no auth configured."""
         client = TestClient(app_no_auth)
 
-        body = {
-            "jsonrpc": "2.0",
-            "method": "a2a.tasks.send",
-            "params": {
+        body = _rpc_body(
+            "a2a.tasks.send",
+            {
                 "message": {
                     "role": "user",
                     "parts": [{"type": "text", "text": "hello"}],
                 }
             },
-            "id": "test-2",
-        }
+            request_id="test-2",
+        )
 
         # No Authorization header, but should work in open mode
         response = client.post("/a2a", json=body)
@@ -146,17 +129,16 @@ class TestAuthEnforcement:
         """Streaming methods require auth when server has auth enabled."""
         client = TestClient(app_with_auth)
 
-        body = {
-            "jsonrpc": "2.0",
-            "method": "a2a.tasks.sendStreamingMessage",
-            "params": {
+        body = _rpc_body(
+            "a2a.tasks.sendStreamingMessage",
+            {
                 "message": {
                     "role": "user",
                     "parts": [{"type": "text", "text": "stream"}],
                 }
             },
-            "id": "test-3",
-        }
+            request_id="test-3",
+        )
 
         # No Authorization header
         response = client.post("/a2a", json=body)
@@ -178,13 +160,7 @@ class TestAuthEnforcement:
         ]
 
         for method, params in methods_to_test:
-            body = {
-                "jsonrpc": "2.0",
-                "method": method,
-                "params": params,
-                "id": f"test-{method}",
-            }
-
+            body = _rpc_body(method, params, request_id=f"test-{method}")
             response = client.post("/a2a", json=body)
 
             # All should require auth
@@ -198,12 +174,11 @@ class TestAuthBestPractices:
         """401 responses include WWW-Authenticate header per OAuth 2.0 spec."""
         client = TestClient(app_with_auth)
 
-        body = {
-            "jsonrpc": "2.0",
-            "method": "a2a.tasks.send",
-            "params": {"message": {"role": "user", "parts": []}},
-            "id": "test-www-auth",
-        }
+        body = _rpc_body(
+            "a2a.tasks.send",
+            {"message": {"role": "user", "parts": []}},
+            request_id="test-www-auth",
+        )
 
         response = client.post("/a2a", json=body)
 
@@ -216,12 +191,11 @@ class TestAuthBestPractices:
         """401 error includes helpful message for debugging."""
         client = TestClient(app_with_auth)
 
-        body = {
-            "jsonrpc": "2.0",
-            "method": "a2a.tasks.send",
-            "params": {"message": {"role": "user", "parts": []}},
-            "id": "test-msg",
-        }
+        body = _rpc_body(
+            "a2a.tasks.send",
+            {"message": {"role": "user", "parts": []}},
+            request_id="test-msg",
+        )
 
         response = client.post("/a2a", json=body)
 

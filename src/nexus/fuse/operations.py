@@ -12,6 +12,7 @@ import functools
 import logging
 import os
 import stat
+import threading
 import time
 from collections.abc import Callable
 from contextlib import suppress
@@ -214,6 +215,7 @@ class NexusFUSEOperations(Operations):
         self._namespace_manager = namespace_manager
         self.fd_counter = 0
         self.open_files: dict[int, dict[str, Any]] = {}
+        self._files_lock = threading.RLock()
 
         # Initialize cache manager
         cache_config = cache_config or {}
@@ -251,6 +253,7 @@ class NexusFUSEOperations(Operations):
         self._dir_cache: _TTLCache[str | tuple[str, str, str], list[str]] = _TTLCache(
             maxsize=1024, ttl=dir_cache_ttl
         )
+        self._dir_cache_lock = threading.RLock()
 
         # Initialize readahead manager for sequential read optimization (Issue #1073)
         # Proactively prefetches data to warm L1/L2 caches
@@ -602,7 +605,8 @@ class NexusFUSEOperations(Operations):
         # Check readdir cache first (fast path, P2-B: TTLCache handles expiry)
         # Issue #1305: Use context-aware key so different agents get isolated caches
         cache_key = self._dir_cache_key(path)
-        cached_entries = self._dir_cache.get(cache_key)
+        with self._dir_cache_lock:
+            cached_entries = self._dir_cache.get(cache_key)
         if cached_entries is not None:
             logger.info(
                 f"[FUSE-PERF] readdir CACHE HIT: path={path}, {len(cached_entries)} entries"
@@ -702,7 +706,8 @@ class NexusFUSEOperations(Operations):
         )
 
         # Cache the result for subsequent calls (P2-B: TTLCache, context-aware key)
-        self._dir_cache[cache_key] = entries
+        with self._dir_cache_lock:
+            self._dir_cache[cache_key] = entries
 
         return entries
 
@@ -752,17 +757,18 @@ class NexusFUSEOperations(Operations):
             if not self.nexus_fs.exists(original_path):
                 raise FuseOSError(errno.ENOENT)
 
-        # Generate file descriptor
-        self.fd_counter += 1
-        fd = self.fd_counter
+        # Generate file descriptor (thread-safe: Issue #1563)
+        with self._files_lock:
+            self.fd_counter += 1
+            fd = self.fd_counter
 
-        # Store file info — A1-B: record that auth was checked at open time
-        self.open_files[fd] = {
-            "path": original_path,
-            "view_type": view_type,
-            "flags": flags,
-            "auth_verified": self._context is not None,
-        }
+            # Store file info — A1-B: record that auth was checked at open time
+            self.open_files[fd] = {
+                "path": original_path,
+                "view_type": view_type,
+                "flags": flags,
+                "auth_verified": self._context is not None,
+            }
 
         # Trigger prefetch-on-open for readahead (Issue #1073)
         # This starts fetching file content in parallel before first read
@@ -807,8 +813,9 @@ class NexusFUSEOperations(Operations):
         Raises:
             FuseOSError: If file not found or read error
         """
-        # Get file info from handle
-        file_info = self.open_files.get(fh)
+        # Get file info from handle (thread-safe: Issue #1563)
+        with self._files_lock:
+            file_info = self.open_files.get(fh)
         if not file_info:
             raise FuseOSError(errno.EBADF)
 
@@ -851,8 +858,9 @@ class NexusFUSEOperations(Operations):
         Raises:
             FuseOSError: If write fails or path is read-only
         """
-        # Get file info from handle
-        file_info = self.open_files.get(fh)
+        # Get file info from handle (thread-safe: Issue #1563)
+        with self._files_lock:
+            file_info = self.open_files.get(fh)
         if not file_info:
             raise FuseOSError(errno.EBADF)
 
@@ -916,8 +924,9 @@ class NexusFUSEOperations(Operations):
         if self._readahead:
             self._readahead.on_release(fh)
 
-        # Remove from open files
-        self.open_files.pop(fh, None)
+        # Remove from open files (thread-safe: Issue #1563)
+        with self._files_lock:
+            self.open_files.pop(fh, None)
 
     # ============================================================
     # File/Directory Creation and Deletion
@@ -960,17 +969,18 @@ class NexusFUSEOperations(Operations):
         if path != original_path:
             self.cache.invalidate_path(path)
 
-        # Generate file descriptor
-        self.fd_counter += 1
-        fd = self.fd_counter
+        # Generate file descriptor (thread-safe: Issue #1563)
+        with self._files_lock:
+            self.fd_counter += 1
+            fd = self.fd_counter
 
-        # Store file info — A1-B: auth verified at create time
-        self.open_files[fd] = {
-            "path": original_path,
-            "view_type": None,
-            "flags": os.O_RDWR,
-            "auth_verified": self._context is not None,
-        }
+            # Store file info — A1-B: auth verified at create time
+            self.open_files[fd] = {
+                "path": original_path,
+                "view_type": None,
+                "flags": os.O_RDWR,
+                "auth_verified": self._context is not None,
+            }
 
         # Issue #1115: Fire create event (file_write with size=0)
         if HAS_EVENT_BUS and FileEventType is not None:

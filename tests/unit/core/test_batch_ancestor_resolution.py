@@ -56,7 +56,7 @@ def _ctx(user: str = "alice", zone_id: str = "default") -> OperationContext:
 
 
 class TestCheckRebacAdaptive:
-    """Verify the depth-based routing: depth <= 2 -> sequential, depth > 2 -> batched."""
+    """Verify the depth-based routing: depth <= 3 -> sequential, depth > 3 -> batched."""
 
     def test_root_path_uses_sequential(self):
         """Root '/' has depth 0 -> sequential."""
@@ -97,8 +97,8 @@ class TestCheckRebacAdaptive:
             seq.assert_called_once()
             bat.assert_not_called()
 
-    def test_depth_3_uses_batched(self):
-        """'/workspace/projects/file.txt' has depth 3 -> batched."""
+    def test_depth_3_uses_sequential(self):
+        """'/workspace/projects/file.txt' has depth 3 -> sequential."""
         mgr = _make_rebac_manager()
         enforcer = _make_enforcer(rebac_manager=mgr)
 
@@ -107,6 +107,19 @@ class TestCheckRebacAdaptive:
             patch.object(enforcer, "_check_rebac_batched", return_value=True) as bat,
         ):
             enforcer._check_rebac("/workspace/projects/file.txt", Permission.READ, _ctx())
+            seq.assert_called_once()
+            bat.assert_not_called()
+
+    def test_depth_4_uses_batched(self):
+        """'/workspace/projects/src/file.txt' has depth 4 -> batched."""
+        mgr = _make_rebac_manager()
+        enforcer = _make_enforcer(rebac_manager=mgr)
+
+        with (
+            patch.object(enforcer, "_check_rebac_sequential", return_value=True) as seq,
+            patch.object(enforcer, "_check_rebac_batched", return_value=True) as bat,
+        ):
+            enforcer._check_rebac("/workspace/projects/src/file.txt", Permission.READ, _ctx())
             bat.assert_called_once()
             seq.assert_not_called()
 
@@ -117,7 +130,7 @@ class TestCheckRebacAdaptive:
 
 
 class TestCheckRebacSequential:
-    """Sequential path for shallow paths (depth <= 2)."""
+    """Sequential path for shallow paths (depth <= 3)."""
 
     def test_direct_permission_granted(self):
         """Direct rebac_check on the path itself returns True."""
@@ -234,7 +247,7 @@ class TestCheckRebacSequential:
 
 
 class TestCheckRebacBatched:
-    """Batch path for deep paths (depth > 2)."""
+    """Batch path for deep paths (depth > 3)."""
 
     def test_direct_permission_found_in_batch_results(self):
         """Direct permission on the target path is resolved via bulk call."""

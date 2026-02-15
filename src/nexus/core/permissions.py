@@ -871,11 +871,12 @@ class PermissionEnforcer:
         # one file inside it. This is handled by _has_descendant_access in the listing code.
 
         # Issue #899: Adaptive batch vs sequential ancestor resolution.
-        # For shallow paths (depth <= 2), sequential is fine (1-2 queries).
+        # For shallow paths (depth <= 3), sequential is fine (1-3 queries).
         # For deeper paths, batch all checks into one rebac_check_bulk() call.
+        # Threshold 3 avoids rebac_check_bulk SQLite race on some platforms.
         depth = object_id.count("/") if object_id else 0
 
-        if depth <= 2 or permission_name not in ("read", "write", "traverse"):
+        if depth <= 3 or permission_name not in ("read", "write", "traverse"):
             return self._check_rebac_sequential(
                 subject, permission_name, object_type, object_id, zone_id
             )
@@ -890,7 +891,7 @@ class PermissionEnforcer:
         object_id: str,
         zone_id: str,
     ) -> bool:
-        """Sequential permission check for shallow paths (depth <= 2).
+        """Sequential permission check for shallow paths (depth <= 3).
 
         Performs direct check, TRAVERSE implication, boundary cache lookup,
         and parent walk one level at a time. Efficient when only 1-2 parents.

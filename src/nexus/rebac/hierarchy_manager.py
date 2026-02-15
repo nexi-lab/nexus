@@ -1,0 +1,543 @@
+"""
+Directory Hierarchy Manager (P0-3 Implementation)
+
+Automatically creates parent relationship tuples for directory inheritance.
+This enables filesystem-like permission inheritance where granting access
+to a directory automatically grants access to all children.
+
+Usage:
+    from nexus.rebac.hierarchy_manager import HierarchyManager
+
+    manager = HierarchyManager(rebac_manager, enable_inheritance=True)
+
+    # Automatically creates parent tuples when writing files
+    manager.ensure_parent_tuples("/workspace/sales/report.pdf", zone_id="org_123")
+
+    # Now granting access to directory works:
+    # rebac.write(("user", "alice"), "owner", ("file", "/workspace/sales"))
+    # alice can now access /workspace/sales/report.pdf via parent_owner relation
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING
+
+from nexus.core.path_utils import get_ancestors, get_parent, get_parent_chain
+
+logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from nexus.rebac.rebac_manager_enhanced import EnhancedReBACManager
+
+
+class HierarchyManager:
+    """Manages directory hierarchy relationships for permission inheritance (P0-3).
+
+    Automatically creates parent relationship tuples when files/directories
+    are created, enabling directory-level permission grants to propagate
+    to all children.
+
+    Behavior:
+    - Creates ("file", child_path) --parent--> ("file", parent_path) tuples
+    - Integrates with namespace's parent_owner and parent_viewer relations
+    - Batches operations for efficiency
+    - Idempotent: safe to call multiple times
+    """
+
+    def __init__(
+        self,
+        rebac_manager: EnhancedReBACManager,
+        enable_inheritance: bool = True,
+    ):
+        """Initialize hierarchy manager.
+
+        Args:
+            rebac_manager: ReBAC manager for creating tuples
+            enable_inheritance: Enable automatic parent tuple creation
+        """
+        self.rebac_manager = rebac_manager
+        self.enable_inheritance = enable_inheritance
+
+    def ensure_parent_tuples(
+        self,
+        path: str,
+        zone_id: str | None = None,
+    ) -> int:
+        """Ensure parent relationship tuples exist for path (P0-3).
+
+        Creates parent tuples for the entire path hierarchy:
+        /a/b/c.txt creates:
+        - (file:/a/b/c.txt) --parent--> (file:/a/b)
+        - (file:/a/b) --parent--> (file:/a)
+
+        Args:
+            path: File or directory path
+            zone_id: Zone ID for tuple scoping
+
+        Returns:
+            Number of parent tuples created
+        """
+        if not self.enable_inheritance:
+            return 0
+
+        if not path or path == "/":
+            return 0
+
+        chain = get_parent_chain(path)
+        if not chain:
+            # Root-level file, no parent
+            return 0
+
+        created_count = 0
+
+        # Create parent chain from leaf to root
+        # Example: /a/b/c.txt
+        # - /a/b/c.txt -> /a/b
+        # - /a/b -> /a
+        for child_path, parent_path in chain:
+            # Check if parent tuple already exists
+            if self._has_parent_tuple(child_path, parent_path, zone_id):
+                # Parent tuple exists, assume rest of chain exists too
+                break
+
+            # Create parent tuple
+            self._create_parent_tuple(child_path, parent_path, zone_id)
+            created_count += 1
+
+        # If we created any parent tuples, we need to invalidate related caches
+        # The cache invalidation in rebac_write only invalidates direct relationships,
+        # but parent tuples affect descendant permissions through inheritance
+        if created_count > 0:
+            # Clear cache for the entire path hierarchy to ensure fresh permission checks
+            self._invalidate_cache_for_path_hierarchy(path)
+
+        return created_count
+
+    def _has_parent_tuple(
+        self,
+        child_path: str,
+        parent_path: str,
+        zone_id: str | None,
+    ) -> bool:
+        """Check if parent tuple already exists.
+
+        Checks for: (child) --[parent]--> (parent)
+
+        Args:
+            child_path: Child file path
+            parent_path: Parent directory path
+            zone_id: Zone ID for tuple scoping
+
+        Returns:
+            True if parent tuple exists
+        """
+        # Use ReBAC manager to check for existing tuple
+        # We need to query the database directly since rebac_check
+        # would recursively check, not just look for direct tuple
+
+        from nexus.core.rebac import Entity
+
+        child_entity = Entity("file", child_path)
+        parent_entity = Entity("file", parent_path)
+
+        # BUGFIX: Check child -> parent direction (child is subject, parent is object)
+        # This matches _create_parent_tuple which creates (child, "parent", parent)
+        # BUGFIX: Pass zone_id to ensure proper scoping and prevent duplicate tuples
+        return self.rebac_manager._has_direct_relation(
+            subject=child_entity,
+            relation="parent",
+            obj=parent_entity,
+            zone_id=zone_id,
+        )
+
+    def _create_parent_tuple(
+        self,
+        child_path: str,
+        parent_path: str,
+        zone_id: str | None,
+    ) -> None:
+        """Create parent relationship tuple.
+
+        Creates: (child) --[parent]--> (parent)
+        Semantic: "child's parent is parent_path"
+        This enables parent permissions to flow down to children via tupleToUserset.
+
+        Args:
+            child_path: Child file path
+            parent_path: Parent directory path
+            zone_id: Zone ID
+        """
+        # Check if rebac_manager supports zone_id parameter
+        # (EnhancedReBACManager does, basic ReBACManager doesn't)
+        if hasattr(self.rebac_manager, "rebac_write") and zone_id:
+            try:
+                # Try zone-aware write
+                # IMPORTANT: child is SUBJECT, parent is OBJECT (child -> parent direction)
+                # Semantic: "child_path's parent is parent_path"
+                self.rebac_manager.rebac_write(
+                    subject=("file", child_path),
+                    relation="parent",
+                    object=("file", parent_path),
+                    zone_id=zone_id,
+                )
+            except TypeError:
+                # Fallback for basic ReBACManager (no zone_id support)
+                self.rebac_manager.rebac_write(
+                    subject=("file", child_path),
+                    relation="parent",
+                    object=("file", parent_path),
+                )
+        else:
+            # Basic ReBACManager
+            self.rebac_manager.rebac_write(
+                subject=("file", child_path),
+                relation="parent",
+                object=("file", parent_path),
+            )
+
+    def _invalidate_cache_for_path_hierarchy(self, path: str) -> None:
+        """Invalidate cache for path, all ancestor paths, AND all descendant paths.
+
+        When parent tuples are created, cached permission checks for descendant
+        paths may become invalid. This method clears cache for the entire hierarchy.
+
+        Args:
+            path: File or directory path
+        """
+        # Get connection to cache database
+        conn = self.rebac_manager._get_connection()
+        try:
+            cursor = self.rebac_manager._create_cursor(conn)
+
+            # Build list of all paths to invalidate (ancestors + exact + descendants via LIKE)
+            # Ancestors: /a/b/c -> [/a/b/c, /a/b, /a]
+            ancestor_paths = list(get_ancestors(path))
+
+            # Invalidate cache for all ancestor paths (exact matches)
+            for ancestor_path in ancestor_paths:
+                cursor.execute(
+                    self.rebac_manager._fix_sql_placeholders(
+                        """
+                        DELETE FROM rebac_check_cache
+                        WHERE object_type = 'file' AND object_id = ?
+                        """
+                    ),
+                    (ancestor_path,),
+                )
+
+            # CRITICAL FIX: Also invalidate cache for all DESCENDANT paths
+            # When parent tuples are created for /a/b, all cached checks for /a/b/c, /a/b/c/d, etc.
+            # must be invalidated because they can now inherit permissions from /a/b
+            cursor.execute(
+                self.rebac_manager._fix_sql_placeholders(
+                    """
+                    DELETE FROM rebac_check_cache
+                    WHERE object_type = 'file' AND object_id LIKE ?
+                    """
+                ),
+                (path + "/%",),
+            )
+
+            conn.commit()
+        finally:
+            self.rebac_manager._close_connection(conn)
+
+    def _invalidate_cache_for_path_hierarchy_bulk(self, paths: list[str]) -> None:
+        """Invalidate cache for multiple paths in bulk (optimized).
+
+        This is much more efficient than calling _invalidate_cache_for_path_hierarchy()
+        for each path individually because it uses a single DELETE query with IN clause.
+
+        Args:
+            paths: List of file/directory paths to invalidate
+        """
+        if not paths:
+            return
+
+        # Get connection to cache database
+        conn = self.rebac_manager._get_connection()
+        try:
+            cursor = self.rebac_manager._create_cursor(conn)
+
+            # Collect all paths to invalidate (ancestors + exact + descendants)
+            all_invalidate_paths: set[str] = set()
+
+            for path in paths:
+                # Add ancestors: /a/b/c -> [/a/b/c, /a/b, /a]
+                all_invalidate_paths.update(get_ancestors(path))
+
+            # Convert to list for SQL query
+            paths_list = list(all_invalidate_paths)
+
+            # Bulk DELETE for exact path matches using IN clause
+            if paths_list:
+                placeholders = ", ".join("?" * len(paths_list))
+                cursor.execute(
+                    self.rebac_manager._fix_sql_placeholders(
+                        f"""
+                        DELETE FROM rebac_check_cache
+                        WHERE object_type = 'file' AND object_id IN ({placeholders})
+                        """
+                    ),
+                    paths_list,
+                )
+
+            # Also invalidate descendants using LIKE (one query per original path)
+            # Note: Can't easily combine LIKE queries, but this is still much better
+            # than the previous approach which did multiple queries per path
+            for path in paths:
+                cursor.execute(
+                    self.rebac_manager._fix_sql_placeholders(
+                        """
+                        DELETE FROM rebac_check_cache
+                        WHERE object_type = 'file' AND object_id LIKE ?
+                        """
+                    ),
+                    (path + "/%",),
+                )
+
+            conn.commit()
+        finally:
+            self.rebac_manager._close_connection(conn)
+
+    def remove_parent_tuples(
+        self,
+        path: str,
+        zone_id: str | None = None,
+    ) -> int:
+        """Remove parent relationship tuples for path.
+
+        Used when deleting files/directories to clean up graph.
+
+        Args:
+            path: File or directory path
+            zone_id: Zone ID
+
+        Returns:
+            Number of parent tuples removed
+        """
+        if not self.enable_inheritance:
+            return 0
+
+        removed_count = 0
+
+        # Find all tuples where this path is the subject (child)
+        # and relation is "parent"
+        # This requires querying the database directly
+
+        conn = self.rebac_manager._get_connection()
+        try:
+            cursor = self.rebac_manager._create_cursor(conn)
+
+            if zone_id:
+                # Zone-aware query
+                cursor.execute(
+                    self.rebac_manager._fix_sql_placeholders(
+                        """
+                        SELECT tuple_id
+                        FROM rebac_tuples
+                        WHERE subject_type = ? AND subject_id = ?
+                          AND relation = ?
+                          AND zone_id = ?
+                        """
+                    ),
+                    ("file", path, "parent", zone_id),
+                )
+            else:
+                # Non-zone query
+                cursor.execute(
+                    self.rebac_manager._fix_sql_placeholders(
+                        """
+                        SELECT tuple_id
+                        FROM rebac_tuples
+                        WHERE subject_type = ? AND subject_id = ?
+                          AND relation = ?
+                        """
+                    ),
+                    ("file", path, "parent"),
+                )
+
+            tuple_ids = []
+            for row in cursor.fetchall():
+                tuple_ids.append(row["tuple_id"])
+        finally:
+            self.rebac_manager._close_connection(conn)
+
+        # Delete each tuple (outside connection context to avoid nested connections)
+        for tuple_id in tuple_ids:
+            self.rebac_manager.rebac_delete(tuple_id)
+            removed_count += 1
+
+        return removed_count
+
+    def rebuild_hierarchy(
+        self,
+        paths: list[str],
+        zone_id: str | None = None,
+    ) -> int:
+        """Rebuild parent tuples for a list of paths (batch operation).
+
+        Useful for:
+        - Initial migration to enable directory inheritance
+        - Fixing broken parent relationships
+
+        Args:
+            paths: List of file/directory paths
+            zone_id: Zone ID for all paths
+
+        Returns:
+            Total number of parent tuples created
+        """
+        if not self.enable_inheritance:
+            return 0
+
+        total_created = 0
+
+        for path in paths:
+            created = self.ensure_parent_tuples(path, zone_id)
+            total_created += created
+
+        return total_created
+
+    def ensure_parent_tuples_batch(
+        self,
+        paths: list[str],
+        zone_id: str | None = None,
+        batch_size: int = 1000,
+    ) -> int:
+        """Ensure parent tuples exist for multiple paths (batch operation).
+
+        This is much more efficient than calling ensure_parent_tuples()
+        individually because it uses a single database transaction per batch.
+
+        Args:
+            paths: List of file/directory paths
+            zone_id: Zone ID for all paths
+            batch_size: Maximum tuples to process per batch (default: 1000)
+
+        Returns:
+            Total number of parent tuples created
+
+        Example:
+            >>> manager.ensure_parent_tuples_batch([
+            ...     "/workspace/file1.txt",
+            ...     "/workspace/subdir/file2.txt",
+            ... ], zone_id="org_123")
+            4  # Created 4 parent tuples total
+        """
+        if not self.enable_inheritance:
+            return 0
+
+        if not paths:
+            return 0
+
+        # Step 1: Compute all parent tuples needed
+        all_tuples: list[tuple[str, str]] = []  # (child_path, parent_path)
+        for path in paths:
+            if not path or path == "/":
+                continue
+            chain = get_parent_chain(path)
+            all_tuples.extend(chain)
+
+        if not all_tuples:
+            return 0
+
+        # Step 2: Deduplicate (same tuple might be needed by multiple files)
+        unique_tuples = list(set(all_tuples))
+
+        # Step 3: Batch process using rebac_write_batch with progress logging
+        total_created = 0
+        total_batches = (len(unique_tuples) + batch_size - 1) // batch_size
+
+        for batch_idx, i in enumerate(range(0, len(unique_tuples), batch_size), start=1):
+            batch = unique_tuples[i : i + batch_size]
+            batch_end = min(i + batch_size, len(unique_tuples))
+
+            # Log progress for large operations (only if multiple batches)
+            if total_batches > 1:
+                logger.info(
+                    f"[HIERARCHY] Processing batch {batch_idx}/{total_batches}: "
+                    f"tuples {i + 1}-{batch_end} of {len(unique_tuples)}"
+                )
+
+            created = self._create_parent_tuples_batch(batch, zone_id)
+            total_created += created
+
+            # Log batch completion for large operations
+            if total_batches > 1:
+                logger.info(
+                    f"[HIERARCHY] Batch {batch_idx}/{total_batches} complete: "
+                    f"created {created} tuples (total: {total_created}/{len(unique_tuples)} processed)"
+                )
+
+        # Step 4: Batch cache invalidation (optimized bulk DELETE)
+        if total_created > 0:
+            # Invalidate cache for all affected paths in a single operation
+            self._invalidate_cache_for_path_hierarchy_bulk(list(set(paths)))
+
+        return total_created
+
+    def _create_parent_tuples_batch(
+        self,
+        tuples: list[tuple[str, str]],  # (child_path, parent_path)
+        zone_id: str | None = None,
+    ) -> int:
+        """Create multiple parent tuples in a single transaction.
+
+        Args:
+            tuples: List of (child_path, parent_path) tuples to create
+            zone_id: Zone ID
+
+        Returns:
+            Number of tuples created (excluding duplicates)
+        """
+        if not tuples:
+            return 0
+
+        # Convert to format expected by rebac_write_batch
+        rebac_tuples = [
+            {
+                "subject": ("file", child_path),
+                "relation": "parent",
+                "object": ("file", parent_path),
+                "zone_id": zone_id,
+            }
+            for child_path, parent_path in tuples
+        ]
+
+        # Use ReBAC manager's bulk insert method
+        return self.rebac_manager.rebac_write_batch(rebac_tuples)
+
+    def get_parent_path(self, path: str) -> str | None:
+        """Get parent directory path.
+
+        Args:
+            path: File or directory path
+
+        Returns:
+            Parent path or None if root
+        """
+        return get_parent(path)
+
+    def get_all_parents(self, path: str) -> list[str]:
+        """Get all parent paths in hierarchy order.
+
+        Args:
+            path: File or directory path
+
+        Returns:
+            List of parent paths from immediate parent to root
+            Example: /a/b/c.txt -> ["/a/b", "/a"]
+        """
+        parents = []
+        current = path
+
+        while True:
+            parent = self.get_parent_path(current)
+            if not parent or parent == "/":
+                break
+            parents.append(parent)
+            current = parent
+
+        return parents

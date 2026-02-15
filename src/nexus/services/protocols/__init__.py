@@ -41,6 +41,7 @@ from nexus.services.protocols.hook_engine import (
     HookSpec,
 )
 from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol, NamespaceMount
+from nexus.services.protocols.rebac import ReBACBrickProtocol
 from nexus.services.protocols.scheduler import AgentRequest, SchedulerProtocol
 from nexus.services.protocols.search import SearchBrickProtocol
 
@@ -69,6 +70,7 @@ __all__ = [
     "PRE_MKDIR",
     "PRE_READ",
     "PRE_WRITE",
+    "ReBACBrickProtocol",
     "SchedulerProtocol",
     "SearchBrickProtocol",
 ]

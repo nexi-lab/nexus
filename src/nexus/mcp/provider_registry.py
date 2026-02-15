@@ -383,12 +383,7 @@ class MCPProviderRegistry(BaseRegistry[ProviderConfig]):
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        data = {
-            "providers": {
-                name: config.to_dict()
-                for name, config in self.list_providers()
-            }
-        }
+        data = {"providers": {name: config.to_dict() for name, config in self.list_providers()}}
 
         with open(path, "w") as f:
             yaml.dump(data, f, default_flow_style=False, sort_keys=False)

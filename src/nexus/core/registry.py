@@ -100,9 +100,7 @@ class BaseRegistry(Generic[T]):
             if key in self._items:
                 return self._items[key]
             available = ", ".join(sorted(self._items))
-        raise KeyError(
-            f"{self._name}: {key!r} not found.  Available: [{available}]"
-        )
+        raise KeyError(f"{self._name}: {key!r} not found.  Available: [{available}]")
 
     def list_names(self) -> list[str]:
         """Sorted list of registered keys."""
@@ -150,11 +148,7 @@ class BaseRegistry(Generic[T]):
                 continue
 
             for attr_name, obj in inspect.getmembers(module, inspect.isclass):
-                if (
-                    issubclass(obj, base_class)
-                    and obj is not base_class
-                    and obj.__module__ == fqn
-                ):
+                if issubclass(obj, base_class) and obj is not base_class and obj.__module__ == fqn:
                     try:
                         instance = obj()
                         self.register(_key_fn(obj), instance, allow_overwrite=True)  # type: ignore[arg-type]
@@ -187,6 +181,7 @@ class BaseRegistry(Generic[T]):
 # ---------------------------------------------------------------------------
 # BrickRegistry -- BaseRegistry + mandatory Protocol validation
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class BrickInfo:
@@ -239,6 +234,7 @@ class BrickRegistry(BaseRegistry[BrickInfo]):
 # Protocol validation helper
 # ---------------------------------------------------------------------------
 
+
 def _validate_protocol_compliance(obj: Any, protocol: type) -> None:
     """Ensure *obj* (class or instance) satisfies *protocol*.
 
@@ -255,9 +251,7 @@ def _validate_protocol_compliance(obj: Any, protocol: type) -> None:
         # the class object itself (checking for method descriptors).
         # For instances, it checks the instance's type.
         if not isinstance(obj, protocol):
-            raise TypeError(
-                f"{obj!r} does not satisfy protocol {protocol.__name__}"
-            )
+            raise TypeError(f"{obj!r} does not satisfy protocol {protocol.__name__}")
         return
 
     # Slow path: attribute-level checking
@@ -265,11 +259,7 @@ def _validate_protocol_compliance(obj: Any, protocol: type) -> None:
     attrs = getattr(protocol, "__protocol_attrs__", None)
     if attrs is None:
         # Fallback: gather non-dunder methods/properties from the protocol
-        attrs = {
-            name
-            for name, _ in inspect.getmembers(protocol)
-            if not name.startswith("_")
-        }
+        attrs = {name for name, _ in inspect.getmembers(protocol) if not name.startswith("_")}
 
     target = obj if isinstance(obj, type) else type(obj)
     missing = [a for a in attrs if not hasattr(target, a)]

@@ -20,6 +20,7 @@ from nexus.mcp.provider_registry import (
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def registry() -> MCPProviderRegistry:
     return MCPProviderRegistry()
@@ -50,8 +51,8 @@ def sample_providers() -> dict[str, ProviderConfig]:
 # Construction
 # ---------------------------------------------------------------------------
 
-class TestInit:
 
+class TestInit:
     def test_empty_init(self, registry: MCPProviderRegistry) -> None:
         assert len(registry) == 0
         assert registry.list_providers() == []
@@ -67,8 +68,8 @@ class TestInit:
 # get / add / remove
 # ---------------------------------------------------------------------------
 
-class TestGetAddRemove:
 
+class TestGetAddRemove:
     def test_get_existing(self, sample_providers: dict) -> None:
         reg = MCPProviderRegistry(providers=sample_providers)
         gh = reg.get("github")
@@ -79,9 +80,7 @@ class TestGetAddRemove:
         assert registry.get("nope") is None
 
     def test_add_provider(self, registry: MCPProviderRegistry) -> None:
-        cfg = ProviderConfig(
-            name="test", type=ProviderType.LOCAL, display_name="Test"
-        )
+        cfg = ProviderConfig(name="test", type=ProviderType.LOCAL, display_name="Test")
         registry.add_provider(cfg)
         assert registry.get("test") is cfg
 
@@ -99,8 +98,8 @@ class TestGetAddRemove:
 # Listing / filtering
 # ---------------------------------------------------------------------------
 
-class TestListing:
 
+class TestListing:
     def test_list_providers(self, sample_providers: dict) -> None:
         reg = MCPProviderRegistry(providers=sample_providers)
         items = reg.list_providers()
@@ -125,8 +124,8 @@ class TestListing:
 # Builtin defaults
 # ---------------------------------------------------------------------------
 
-class TestBuiltinDefaults:
 
+class TestBuiltinDefaults:
     def test_with_builtin_defaults(self) -> None:
         reg = MCPProviderRegistry.with_builtin_defaults()
         names = [n for n, _ in reg.list_providers()]
@@ -141,8 +140,8 @@ class TestBuiltinDefaults:
 # YAML round-trip
 # ---------------------------------------------------------------------------
 
-class TestYaml:
 
+class TestYaml:
     def test_from_yaml(self, tmp_path: Path) -> None:
         yaml_content = {
             "providers": {
@@ -215,8 +214,8 @@ class TestYaml:
 # load_default fallback chain
 # ---------------------------------------------------------------------------
 
-class TestLoadDefault:
 
+class TestLoadDefault:
     def test_load_default_returns_registry(self) -> None:
         reg = MCPProviderRegistry.load_default()
         # Should return some registry (either from yaml or builtin defaults)
@@ -244,8 +243,8 @@ class TestLoadDefault:
 # Dataclass construction
 # ---------------------------------------------------------------------------
 
-class TestDataclasses:
 
+class TestDataclasses:
     def test_provider_config_from_dict(self) -> None:
         data = {
             "type": "klavis",

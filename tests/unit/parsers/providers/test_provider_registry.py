@@ -14,6 +14,7 @@ from nexus.parsers.types import ParseResult
 # Test helpers
 # ---------------------------------------------------------------------------
 
+
 class StubProvider(ParseProvider):
     """Minimal concrete ParseProvider for testing."""
 
@@ -59,8 +60,8 @@ def registry() -> ProviderRegistry:
 # Registration
 # ---------------------------------------------------------------------------
 
-class TestRegister:
 
+class TestRegister:
     def test_register_provider(self, registry: ProviderRegistry) -> None:
         p = StubProvider("test_prov")
         registry.register(p)
@@ -90,8 +91,8 @@ class TestRegister:
 # Provider selection
 # ---------------------------------------------------------------------------
 
-class TestGetProvider:
 
+class TestGetProvider:
     def test_by_file_path(self, registry: ProviderRegistry) -> None:
         pdf = StubProvider("pdf", formats=[".pdf"])
         txt = StubProvider("txt", formats=[".txt"])
@@ -112,7 +113,6 @@ class TestGetProvider:
 
 
 class TestGetProviderByName:
-
     def test_found(self, registry: ProviderRegistry) -> None:
         p = StubProvider("myp")
         registry.register(p)
@@ -126,8 +126,8 @@ class TestGetProviderByName:
 # Parse delegation
 # ---------------------------------------------------------------------------
 
-class TestParse:
 
+class TestParse:
     @pytest.mark.asyncio
     async def test_parse_auto_select(self, registry: ProviderRegistry) -> None:
         p = StubProvider("txt", formats=[".txt"])
@@ -158,8 +158,8 @@ class TestParse:
 # Listing / formats
 # ---------------------------------------------------------------------------
 
-class TestListing:
 
+class TestListing:
     def test_get_all_providers(self, registry: ProviderRegistry) -> None:
         a = StubProvider("a")
         b = StubProvider("b")
@@ -182,8 +182,8 @@ class TestListing:
 # Clear / repr
 # ---------------------------------------------------------------------------
 
-class TestClearRepr:
 
+class TestClearRepr:
     def test_clear(self, registry: ProviderRegistry) -> None:
         registry.register(StubProvider("x"))
         registry.clear()
@@ -201,8 +201,8 @@ class TestClearRepr:
 # Auto-discover (with mocked env)
 # ---------------------------------------------------------------------------
 
-class TestAutoDiscover:
 
+class TestAutoDiscover:
     def test_auto_discover_markitdown(self, registry: ProviderRegistry) -> None:
         try:
             import markitdown  # noqa: F401

@@ -45,7 +45,6 @@ class TestRegisterAndGet:
 
 
 class TestUnregister:
-
     def test_unregister_returns_item(self) -> None:
         reg: BaseRegistry[str] = BaseRegistry("s")
         reg.register("k", "v")
@@ -58,7 +57,6 @@ class TestUnregister:
 
 
 class TestListAndIteration:
-
     def test_list_names_sorted(self) -> None:
         reg: BaseRegistry[int] = BaseRegistry("nums")
         reg.register("c", 3)
@@ -80,7 +78,6 @@ class TestListAndIteration:
 
 
 class TestClearLenContains:
-
     def test_clear(self) -> None:
         reg: BaseRegistry[int] = BaseRegistry("nums")
         reg.register("a", 1)
@@ -103,7 +100,6 @@ class TestClearLenContains:
 
 
 class TestRepr:
-
     def test_repr(self) -> None:
         reg: BaseRegistry[int] = BaseRegistry("my_reg")
         reg.register("x", 1)
@@ -114,7 +110,6 @@ class TestRepr:
 
 
 class TestProtocolValidation:
-
     def test_register_with_protocol_passes(self) -> None:
         from typing import Protocol, runtime_checkable
 
@@ -148,7 +143,6 @@ class TestProtocolValidation:
 
 
 class TestDiscoverFromPackage:
-
     def test_discover_parsers(self) -> None:
         from nexus.parsers.base import Parser
 

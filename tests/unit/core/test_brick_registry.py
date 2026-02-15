@@ -27,7 +27,6 @@ def registry() -> BrickRegistry:
 
 
 class TestRegisterBrick:
-
     def test_register_compliant(self, registry: BrickRegistry) -> None:
         registry.register_brick("hello", HelloBrick, Greetable)
         info = registry.get_or_raise("hello")
@@ -58,7 +57,6 @@ class TestRegisterBrick:
 
 
 class TestListByProtocol:
-
     def test_filter(self, registry: BrickRegistry) -> None:
         @runtime_checkable
         class Other(Protocol):
@@ -77,7 +75,6 @@ class TestListByProtocol:
 
 
 class TestGetBrickClass:
-
     def test_get_brick_class(self, registry: BrickRegistry) -> None:
         registry.register_brick("hello", HelloBrick, Greetable)
         assert registry.get_brick_class("hello") is HelloBrick
@@ -88,7 +85,6 @@ class TestGetBrickClass:
 
 
 class TestBrickInfoFrozen:
-
     def test_frozen_attribute(self) -> None:
         info = BrickInfo(name="x", brick_cls=HelloBrick, protocol=Greetable)
         with pytest.raises(AttributeError):

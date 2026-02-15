@@ -27,7 +27,6 @@ from nexus.mcp.profiles import (
     revoke_tools_by_tuple_ids,
 )
 
-
 # ---------------------------------------------------------------------------
 # ToolProfile data model
 # ---------------------------------------------------------------------------
@@ -246,8 +245,9 @@ default_profile: minimal
     def test_load_from_yaml_malformed(self, tmp_path: Path):
         config_file = tmp_path / "bad.yaml"
         config_file.write_text("not: [valid: yaml: {{")
-        # yaml.scanner.ScannerError or yaml.parser.ParserError
-        with pytest.raises(Exception):
+        import yaml
+
+        with pytest.raises(yaml.YAMLError):
             load_profiles(config_file)
 
 

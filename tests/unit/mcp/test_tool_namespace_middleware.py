@@ -10,17 +10,15 @@ Tests cover:
 
 from __future__ import annotations
 
-import asyncio
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.mcp.middleware import ToolNamespaceMiddleware, _text_content
-
+from nexus.mcp.middleware import ToolNamespaceMiddleware
 
 # ---------------------------------------------------------------------------
 # Test helpers

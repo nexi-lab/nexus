@@ -12,16 +12,12 @@ from __future__ import annotations
 import inspect
 import logging
 from typing import Any
-from unittest.mock import MagicMock
-
-import pytest
 
 from nexus.mcp.tool_utils import (
     _extract_path_hint,
     handle_tool_errors,
     tool_error,
 )
-
 
 # ---------------------------------------------------------------------------
 # tool_error()

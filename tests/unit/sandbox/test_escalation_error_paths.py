@@ -79,7 +79,7 @@ class TestHandleEscalationErrorPaths:
         mgr = SandboxManager(session_factory=session_factory)
         # Only e2b available — escalation from e2b has no next tier
         mock_e2b = AsyncMock(spec=SandboxProvider)
-        mgr.providers["e2b"] = mock_e2b
+        mgr.providers = {"e2b": mock_e2b}
         mgr.wire_router()
 
         exc = EscalationNeeded(reason="e2b failed too", suggested_tier=None)
@@ -92,7 +92,7 @@ class TestHandleEscalationErrorPaths:
     ) -> None:
         """Escalation creates temp sandbox, runs code, and destroys it."""
         mgr = SandboxManager(session_factory=session_factory)
-        mgr.providers["docker"] = mock_docker
+        mgr.providers = {"docker": mock_docker}
         mgr.wire_router()
 
         result = await mgr._handle_escalation(
@@ -111,7 +111,7 @@ class TestHandleEscalationErrorPaths:
         """If destroy fails, warning is logged but result is still returned."""
         mock_docker.destroy.side_effect = RuntimeError("cleanup failed")
         mgr = SandboxManager(session_factory=session_factory)
-        mgr.providers["docker"] = mock_docker
+        mgr.providers = {"docker": mock_docker}
         mgr.wire_router()
 
         with patch("nexus.sandbox.sandbox_manager.logger") as mock_logger:
@@ -138,19 +138,13 @@ class TestHandleEscalationErrorPaths:
         mock_e2b.destroy.return_value = None
 
         mgr = SandboxManager(session_factory=session_factory)
-        mgr.providers["e2b"] = mock_e2b
-        # No docker provider — but suggested_tier="docker" won't be found,
-        # so it falls through to get_next_tier which also has no docker
+        # Replace all auto-discovered providers with only our mocks
+        mock_monty = AsyncMock(spec=SandboxProvider)
+        mgr.providers = {"e2b": mock_e2b, "monty": mock_monty}
         mgr.wire_router()
 
-        # Escalation suggests "docker" but only e2b exists → falls to get_next_tier
+        # Escalation suggests "docker" but only e2b+monty exist → falls to get_next_tier
         exc = EscalationNeeded(reason="need docker", suggested_tier="docker")
-        # From monty → next is docker (missing) → next is e2b
-        # But monty is not in providers either, so get_next_tier("monty") should find e2b
-        # Actually we need monty provider too for this to work
-        mock_monty = AsyncMock(spec=SandboxProvider)
-        mgr.providers["monty"] = mock_monty
-        mgr.wire_router()  # Re-wire with new providers
 
         result = await mgr._handle_escalation(
             exc, "monty", "python", "import os", 30, False, "agent-1"

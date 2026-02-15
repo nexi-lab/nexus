@@ -441,6 +441,69 @@ pub fn build_trigram_index(file_paths: Vec<String>, output_path: &str) -> PyResu
     Ok(())
 }
 
+/// Build a trigram index from (path, content) pairs without disk I/O.
+///
+/// This is used when the caller already has file content in memory
+/// (e.g., from NexusFS CAS backend where files are content-addressed).
+#[pyfunction]
+#[pyo3(signature = (entries, output_path))]
+pub fn build_trigram_index_from_entries(
+    entries: Vec<(String, Vec<u8>)>,
+    output_path: &str,
+) -> PyResult<()> {
+    let mut builder = TrigramIndexBuilder::new();
+
+    for (path, content) in &entries {
+        builder.add_file(path, content);
+    }
+
+    let bytes = write_index(&builder).map_err(|e| {
+        pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to build index: {}", e))
+    })?;
+
+    let mut file = File::create(output_path).map_err(|e| {
+        pyo3::exceptions::PyIOError::new_err(format!("Failed to create index file: {}", e))
+    })?;
+    file.write_all(&bytes).map_err(|e| {
+        pyo3::exceptions::PyIOError::new_err(format!("Failed to write index: {}", e))
+    })?;
+
+    // Invalidate cache for this path.
+    let path = PathBuf::from(output_path);
+    let mut cache = INDEX_CACHE.write();
+    cache.remove(&path);
+
+    Ok(())
+}
+
+/// Return candidate file paths from the trigram index without verification.
+///
+/// This is used when the caller will verify candidates itself (e.g., by
+/// reading content through NexusFS rather than direct file I/O).
+#[pyfunction]
+#[pyo3(signature = (index_path, pattern, ignore_case=false))]
+pub fn trigram_search_candidates(
+    index_path: &str,
+    pattern: &str,
+    ignore_case: bool,
+) -> PyResult<Vec<String>> {
+    let path = PathBuf::from(index_path);
+    let reader = get_cached_reader(&path).map_err(|e| {
+        pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to open index: {}", e))
+    })?;
+
+    let candidate_ids = reader.search_candidates(pattern, ignore_case).map_err(|e| {
+        pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to search index: {}", e))
+    })?;
+
+    let paths: Vec<String> = candidate_ids
+        .iter()
+        .filter_map(|&id| reader.get_file_path(id).map(|p| p.to_string()))
+        .collect();
+
+    Ok(paths)
+}
+
 /// Search using trigram index. Returns list of match dicts.
 #[pyfunction]
 #[pyo3(signature = (index_path, pattern, ignore_case=false, max_results=1000))]

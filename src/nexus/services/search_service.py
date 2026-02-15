@@ -1700,6 +1700,7 @@ class SearchService(SemanticSearchMixin):
                 ignore_case=ignore_case,
                 max_results=max_results,
                 zone_id=zone_id,
+                context=context,
             )
             if trigram_results is not None:
                 return trigram_results
@@ -1952,8 +1953,12 @@ class SearchService(SemanticSearchMixin):
         ignore_case: bool,
         max_results: int,
         zone_id: str,
+        context: Any = None,
     ) -> builtins.list[dict[str, Any]] | None:
         """Try trigram index for accelerated grep (Issue #954).
+
+        Uses trigram index for O(1) candidate lookup, then verifies candidates
+        by reading content through NexusFS (supporting CAS backends).
 
         Returns None if trigram index is not available or on error,
         allowing fallback to other strategies.
@@ -1965,21 +1970,59 @@ class SearchService(SemanticSearchMixin):
         if not os.path.isfile(index_path):
             return None
 
-        results = trigram_fast.grep(
+        # Phase 1: Get candidate file paths from trigram index (sub-ms).
+        candidates = trigram_fast.search_candidates(
             index_path=index_path,
             pattern=pattern,
             ignore_case=ignore_case,
-            max_results=max_results,
         )
 
-        if results is None:
-            logger.warning("[GREP] Trigram search failed, falling back")
+        if candidates is None:
+            logger.warning("[GREP] Trigram candidate search failed, falling back")
             return None
 
+        if not candidates:
+            logger.debug("[GREP] Issue #954: Trigram index found 0 candidates for zone=%s", zone_id)
+            return []
+
         logger.debug(
-            f"[GREP] Issue #954: Trigram index returned {len(results)} matches "
-            f"for zone={zone_id}"
+            "[GREP] Issue #954: Trigram index found %d candidates for zone=%s",
+            len(candidates), zone_id,
         )
+
+        # Phase 2: Verify candidates by reading content through NexusFS.
+        flags = re.IGNORECASE if ignore_case else 0
+        try:
+            regex = re.compile(pattern, flags)
+        except re.error:
+            return None
+
+        results: builtins.list[dict[str, Any]] = []
+        for file_path in candidates:
+            if len(results) >= max_results:
+                break
+            try:
+                content = self._read(file_path, context=context)
+                if not isinstance(content, bytes):
+                    continue
+                try:
+                    text = content.decode("utf-8")
+                except UnicodeDecodeError:
+                    continue
+                for line_num, line in enumerate(text.splitlines(), start=1):
+                    if len(results) >= max_results:
+                        break
+                    match_obj = regex.search(line)
+                    if match_obj:
+                        results.append({
+                            "file": file_path,
+                            "line": line_num,
+                            "content": line,
+                            "match": match_obj.group(0),
+                        })
+            except Exception:
+                continue
+
         return results
 
     def build_trigram_index_for_zone(
@@ -1988,6 +2031,9 @@ class SearchService(SemanticSearchMixin):
         context: Any = None,
     ) -> dict[str, Any]:
         """Build trigram index for all files in a zone (Issue #954).
+
+        Reads file content through NexusFS (supporting CAS backends) and
+        builds the index using (virtual_path, content) pairs.
 
         Args:
             zone_id: Zone identifier.
@@ -2005,7 +2051,19 @@ class SearchService(SemanticSearchMixin):
         index_path = trigram_fast.get_index_path(zone_id)
         os.makedirs(os.path.dirname(index_path), exist_ok=True)
 
-        success = trigram_fast.build_index(files, index_path)
+        # Read content through NexusFS and build index from (path, content) pairs.
+        # This works with any backend (CAS, S3, etc.) since we read through the
+        # NexusFS abstraction rather than directly from disk.
+        entries: builtins.list[tuple[str, bytes]] = []
+        for file_path in files:
+            try:
+                content = self._read(file_path, context=context)
+                if isinstance(content, bytes):
+                    entries.append((file_path, content))
+            except Exception:
+                continue  # Skip unreadable files.
+
+        success = trigram_fast.build_index_from_entries(entries, index_path)
         if not success:
             return {"status": "error", "reason": "Index build failed"}
 

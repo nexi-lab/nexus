@@ -152,9 +152,14 @@ class TestTrigramFallback:
         service._gw = None
         service._permission_enforcer = None
 
+        def _mock_read(path, context=None):
+            """Read from real filesystem for integration test."""
+            with open(path, "rb") as f:
+                return f.read()
+
         with patch.object(
             trigram_fast, "get_index_path", return_value=built_index
-        ):
+        ), patch.object(service, "_read", side_effect=_mock_read):
             result = service._try_grep_with_trigram(
                 pattern="hello",
                 ignore_case=False,

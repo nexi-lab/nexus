@@ -22,23 +22,29 @@ logger = logging.getLogger(__name__)
 # Try to import Rust extension
 TRIGRAM_AVAILABLE = False
 _build_trigram_index: Callable[..., None] | None = None
+_build_trigram_index_from_entries: Callable[..., None] | None = None
 _trigram_grep: Callable[..., list[dict[str, Any]]] | None = None
+_trigram_search_candidates: Callable[..., list[str]] | None = None
 _trigram_index_stats: Callable[..., dict[str, Any]] | None = None
 _invalidate_trigram_cache: Callable[..., None] | None = None
 
 try:
     from nexus._nexus_fast import build_trigram_index as _build_trigram_index  # type: ignore[no-redef]
+    from nexus._nexus_fast import build_trigram_index_from_entries as _build_trigram_index_from_entries  # type: ignore[no-redef]
     from nexus._nexus_fast import invalidate_trigram_cache as _invalidate_trigram_cache  # type: ignore[no-redef]
     from nexus._nexus_fast import trigram_grep as _trigram_grep  # type: ignore[no-redef]
     from nexus._nexus_fast import trigram_index_stats as _trigram_index_stats  # type: ignore[no-redef]
+    from nexus._nexus_fast import trigram_search_candidates as _trigram_search_candidates  # type: ignore[no-redef]
 
     TRIGRAM_AVAILABLE = True
 except ImportError:
     try:
         from nexus_fast import build_trigram_index as _build_trigram_index  # type: ignore[no-redef]
+        from nexus_fast import build_trigram_index_from_entries as _build_trigram_index_from_entries  # type: ignore[no-redef]
         from nexus_fast import invalidate_trigram_cache as _invalidate_trigram_cache  # type: ignore[no-redef]
         from nexus_fast import trigram_grep as _trigram_grep  # type: ignore[no-redef]
         from nexus_fast import trigram_index_stats as _trigram_index_stats  # type: ignore[no-redef]
+        from nexus_fast import trigram_search_candidates as _trigram_search_candidates  # type: ignore[no-redef]
 
         TRIGRAM_AVAILABLE = True
     except ImportError:
@@ -86,7 +92,10 @@ def build_index(
     file_paths: list[str],
     output_path: str,
 ) -> bool:
-    """Build a trigram index from files and write to output_path.
+    """Build a trigram index from real filesystem paths.
+
+    The Rust builder reads file content from disk at each path.
+    Use build_index_from_entries() when content is already in memory.
 
     Args:
         file_paths: List of absolute file paths to index.
@@ -106,13 +115,44 @@ def build_index(
         return False
 
 
+def build_index_from_entries(
+    entries: list[tuple[str, bytes]],
+    output_path: str,
+) -> bool:
+    """Build a trigram index from (path, content) pairs without disk I/O.
+
+    Use this when file content is already in memory (e.g., read through
+    NexusFS CAS backend). The paths stored in the index are the virtual
+    paths, not disk paths.
+
+    Args:
+        entries: List of (virtual_path, content_bytes) tuples.
+        output_path: Where to write the index file.
+
+    Returns:
+        True on success, False if Rust extension unavailable or error.
+    """
+    if not TRIGRAM_AVAILABLE or _build_trigram_index_from_entries is None:
+        return False
+
+    try:
+        _build_trigram_index_from_entries(entries, output_path)
+        return True
+    except Exception:
+        logger.warning("Failed to build trigram index from entries at %s", output_path, exc_info=True)
+        return False
+
+
 def grep(
     index_path: str,
     pattern: str,
     ignore_case: bool = False,
     max_results: int = 1000,
 ) -> list[dict[str, Any]] | None:
-    """Search using trigram index.
+    """Search using trigram index with full file verification.
+
+    Only works when indexed paths are real filesystem paths.
+    For NexusFS virtual paths, use search_candidates() + Python verification.
 
     Args:
         index_path: Path to the trigram index file.
@@ -134,6 +174,39 @@ def grep(
         return result
     except Exception:
         logger.warning("Trigram grep failed for pattern %r on %s", pattern, index_path, exc_info=True)
+        return None
+
+
+def search_candidates(
+    index_path: str,
+    pattern: str,
+    ignore_case: bool = False,
+) -> list[str] | None:
+    """Get candidate file paths from trigram index without verification.
+
+    Returns file paths that MAY match the pattern based on trigram analysis.
+    The caller is responsible for verifying candidates by reading content
+    (e.g., through NexusFS).
+
+    Args:
+        index_path: Path to the trigram index file.
+        pattern: Search pattern (literal or regex).
+        ignore_case: Whether to ignore case.
+
+    Returns:
+        List of candidate file paths (virtual paths stored during build).
+        Returns None if Rust extension unavailable or on error.
+    """
+    if not TRIGRAM_AVAILABLE or _trigram_search_candidates is None:
+        return None
+
+    try:
+        return _trigram_search_candidates(index_path, pattern, ignore_case)
+    except Exception:
+        logger.warning(
+            "Trigram candidate search failed for pattern %r on %s",
+            pattern, index_path, exc_info=True,
+        )
         return None
 
 

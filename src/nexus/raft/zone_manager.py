@@ -50,6 +50,15 @@ class ZoneManager:
 
         # Mount zone-beta under /shared in zone-alpha
         mgr.mount("alpha", "/shared", "beta")
+
+    Lifecycle:
+        bootstrap() → bootstrap_static() → ensure_topology()
+
+        ensure_topology() is the shared readiness gate for both:
+        - Static (Day 1): called by health check after initial leader election
+        - Dynamic (Recovery): called after campaign() + wait_for_leader()
+
+        All state changes use standard Raft operations (is_leader + propose).
     """
 
     def __init__(
@@ -84,22 +93,23 @@ class ZoneManager:
         self._tls_cert_path = tls_cert_path
         self._tls_key_path = tls_key_path
         self._tls_ca_path = tls_ca_path
+        self._pending_mounts: dict[str, str] | None = None
+        self._topology_initialized = False
 
     def bootstrap(
         self,
         root_zone_id: str = ROOT_ZONE_ID,
         peers: list[str] | None = None,
     ) -> RaftMetadataStore:
-        """Bootstrap this node's root zone with a "/" entry.
+        """Bootstrap this node's root zone Raft group.
 
-        Idempotent — safe to call on every startup. If the root zone
-        already exists and has a "/" entry, returns the existing store
-        without modification.
+        Creates the Raft group with ConfState (standard raft-rs bootstrap).
+        Does NOT write any data — the root "/" entry and mount topology
+        are created via normal Raft proposals after leader election.
+        This follows the standard Raft contract: all state changes go
+        through committed log entries.
 
-        This is the first tier of the zone lifecycle:
-          1. bootstrap()    → root zone + "/" (i_links_count=1, self-ref)
-          2. create_zone()  → Raft group + redb only, no "/"
-          3. mount()        → DT_MOUNT + i_links_count++ (lazy "/" if needed)
+        Idempotent — safe to call on every startup.
 
         Args:
             root_zone_id: Zone ID for this node's root zone.
@@ -113,29 +123,14 @@ class ZoneManager:
         # Check if root zone already exists
         store = self.get_store(root_zone_id)
         if store is not None:
-            root = store.get("/")
-            if root is not None:
-                logger.info("Node bootstrap: root zone '%s' already exists", root_zone_id)
-                return store
+            logger.info("Node bootstrap: root zone '%s' already exists", root_zone_id)
+            return store
 
-        # Create root zone if it doesn't exist yet
-        if store is None:
-            store = self.create_zone(root_zone_id, peers=peers)
-
-        # Write root "/" entry with i_links_count=1 (node's self-reference)
-        root_entry = FileMetadata(
-            path="/",
-            backend_name="virtual",
-            physical_path="",
-            size=0,
-            entry_type=DT_DIR,
-            zone_id=root_zone_id,
-            i_links_count=1,
-        )
-        store.put(root_entry)
+        # Create root zone Raft group (ConfState bootstrap only, no data writes)
+        store = self.create_zone(root_zone_id, peers=peers)
 
         logger.info(
-            "Node bootstrap: root zone '%s' created with '/' (i_links_count=1)",
+            "Node bootstrap: root zone '%s' Raft group created (awaiting leader election)",
             root_zone_id,
         )
         return store
@@ -577,16 +572,17 @@ class ZoneManager:
         peers: list[str],
         mounts: dict[str, str] | None = None,
     ) -> None:
-        """Static Day-1 cluster formation: create zones with known peers and apply mounts.
+        """Static Day-1 cluster formation: create Raft groups for all zones.
 
         All nodes in the cluster call this with identical parameters during
-        startup. Each node creates Raft groups locally for every zone with
-        the full peer list. Mount topology writes (DT_DIR, DT_MOUNT) go
-        through Raft consensus — only the elected leader commits them;
-        followers receive the entries via log replication.
+        startup. Each node creates Raft groups locally (ConfState bootstrap)
+        for every zone with the full peer list.
 
-        Idempotent — safe to call on every startup. Skips zones and mounts
-        that already exist.
+        This is Phase 1 only — Raft group creation is local, no consensus.
+        Mount topology (Phase 2) is deferred to ensure_topology(), which
+        runs after leader election via the server health check lifecycle.
+
+        Idempotent — safe to call on every startup. Skips existing zones.
 
         For Day 2+ dynamic membership changes (adding/removing nodes at
         runtime), see expand_zone() [tracked, not yet implemented].
@@ -596,9 +592,9 @@ class ZoneManager:
                 Root zone must already exist via bootstrap().
             peers: Peer addresses shared by all zones ("id@host:port" format).
                 Every zone uses the same Raft group membership.
-            mounts: Global path → target zone mapping
+            mounts: Stored for deferred application by ensure_topology().
+                Global path → target zone mapping
                 (e.g., {"/corp": "corp", "/corp/engineering": "corp-eng"}).
-                Processed in path-depth order (parents before children).
 
         Raises:
             RuntimeError: If bootstrap() has not been called first.
@@ -615,18 +611,140 @@ class ZoneManager:
                 continue
             self.create_zone(zone_id, peers=peers)
 
-        if not mounts:
-            return
+        # Store pending mounts for deferred application after leader election
+        if mounts:
+            self._pending_mounts = mounts
 
-        # Phase 2: Apply mount topology (requires Raft consensus)
-        self._apply_mounts(mounts)
+    def ensure_topology(self) -> bool:
+        """Ensure root "/" and mount topology exist via standard Raft proposals.
+
+        Shared readiness gate for both static and dynamic paths:
+
+        - **Static (Day 1)**: Called by server health check after initial
+          leader election. Leader creates root "/" + mounts via normal Raft
+          proposals; followers receive them via log replication.
+
+        - **Dynamic (Recovery)**: Called after campaign() + wait_for_leader()
+          re-elects a leader. Validates persisted topology (idempotent no-op
+          when data survived in Raft snapshots/redb).
+
+        All operations use standard Raft: is_leader() + propose(). No custom
+        algorithms. Idempotent — safe to call repeatedly on any node.
+
+        Returns:
+            True if topology is fully ready (root "/" + all mounts exist on
+            this node), False if still waiting for leader election or
+            log replication.
+        """
+        if self._topology_initialized:
+            return True
+
+        if not self._root_zone_id:
+            return False
+
+        root_store = self.get_store(self._root_zone_id)
+        if root_store is None:
+            return False
+
+        # Check if root "/" exists on this node (replicated or persisted)
+        root = root_store.get("/")
+        if root is None:
+            # Root missing — leader needs to create it
+            return self._try_apply_topology(root_store)
+
+        # Root exists — verify pending mounts if any
+        if self._pending_mounts and not self._all_mounts_ready():
+            # Some mounts missing — leader needs to apply them.
+            # Followers wait for replication.
+            return self._try_apply_topology(root_store)
+
+        # All topology in place — works for both:
+        # - Static: leader created, followers received via replication
+        # - Dynamic: data persisted in Raft snapshots across restart
+        self._pending_mounts = None
+        self._topology_initialized = True
+        return True
+
+    def _all_mounts_ready(self) -> bool:
+        """Check if all pending mounts have been applied on this node.
+
+        Uses target zone's i_links_count as mount indicator: mount() always
+        calls _increment_links() on the target zone. If i_links_count >= 1,
+        the mount was applied and replicated to this node.
+
+        This avoids complex zone-aware path resolution — works correctly
+        for both top-level (/corp) and nested (/corp/engineering) mounts,
+        and on both leader and follower nodes.
+        """
+        if not self._pending_mounts:
+            return True
+        for target_zone_id in self._pending_mounts.values():
+            target_store = self.get_store(target_zone_id)
+            if target_store is None:
+                return False
+            target_root = target_store.get("/")
+            if target_root is None or target_root.i_links_count < 1:
+                return False
+        return True
+
+    def _try_apply_topology(self, root_store: RaftMetadataStore) -> bool:
+        """Create root "/" and apply mount topology via standard Raft proposals.
+
+        Only succeeds if this node is the Raft leader for the root zone.
+        Followers return False and wait for log replication.
+
+        Idempotent — skips existing root and mounts.
+
+        Returns:
+            True if topology was created/exists, False if not leader or
+            leadership changed during application.
+        """
+        # Standard Raft: only leader can propose
+        try:
+            engine = root_store._engine  # noqa: SLF001
+            if engine is None or not hasattr(engine, "is_leader") or not engine.is_leader():
+                return False
+        except Exception:
+            return False
+
+        try:
+            # Create root "/" via normal Raft proposal (idempotent)
+            root = root_store.get("/")
+            if root is None:
+                root_entry = FileMetadata(
+                    path="/",
+                    backend_name="virtual",
+                    physical_path="",
+                    size=0,
+                    entry_type=DT_DIR,
+                    zone_id=self._root_zone_id,
+                    i_links_count=1,
+                )
+                root_store.put(root_entry)
+                logger.info(
+                    "Leader: created root '/' in zone '%s' via Raft consensus",
+                    self._root_zone_id,
+                )
+
+            # Apply mount topology via normal Raft proposals (idempotent)
+            if self._pending_mounts:
+                self._apply_mounts(self._pending_mounts)
+                self._pending_mounts = None
+
+            self._topology_initialized = True
+            return True
+
+        except RuntimeError as e:
+            # "not leader" — leadership may have changed during writes
+            logger.debug("Topology creation deferred: %s", e)
+            return False
 
     def _apply_mounts(self, mounts: dict[str, str]) -> None:
-        """Apply mount topology: create directories and DT_MOUNT entries.
+        """Apply mount topology via normal Raft proposals (leader only).
 
-        Writes go through Raft consensus. On follower nodes, proposals are
-        either forwarded to the leader or committed once the leader is
-        elected. This is standard Raft behavior — not a retry loop.
+        Called by ensure_topology() after leader election. Writes go through
+        Raft consensus — only the leader proposes; followers receive via
+        log replication. This follows the standard Raft contract.
 
         Mounts are specified as global paths (e.g., "/corp/engineering")
         and resolved to the correct parent zone via longest-prefix matching
@@ -664,7 +782,7 @@ class ZoneManager:
                 )
                 continue
 
-            # Check if already mounted
+            # Check if already mounted (idempotent)
             existing = parent_store.get(local_path)
             if existing is not None and existing.is_mount:
                 logger.debug("Mount '%s' already exists, skipping", global_path)
@@ -683,12 +801,12 @@ class ZoneManager:
                 )
                 parent_store.put(dir_entry)
 
-            # Mount
+            # Mount (standard Raft proposal — DT_MOUNT + i_links_count)
             self.mount(parent_zone, local_path, target_zone_id)
             active_mounts[global_path] = target_zone_id
 
         logger.info(
-            "Static topology applied: %d mounts",
+            "Static topology applied: %d mounts via Raft consensus",
             len(active_mounts),
         )
 

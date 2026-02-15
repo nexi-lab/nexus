@@ -267,8 +267,12 @@ services:
     hostname: nexus-2
     restart: unless-stopped
     depends_on:
-      nexus-1:
+      postgres:
         condition: service_healthy
+      dragonfly:
+        condition: service_healthy
+      nexus-1:
+        condition: service_started
     environment:
       NEXUS_HOST: 0.0.0.0
       NEXUS_PORT: 2026

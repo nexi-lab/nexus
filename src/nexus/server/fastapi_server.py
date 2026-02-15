@@ -1489,17 +1489,33 @@ def _register_routes(app: FastAPI) -> None:
     # Health check (exempt from rate limiting - must always be accessible)
     @app.get("/health", response_model=HealthResponse)
     @limiter.exempt
-    async def health_check() -> HealthResponse:
+    async def health_check() -> HealthResponse | Any:
         # Include configuration status for debugging
         enforce_permissions = None
         enforce_zone_isolation = None
         has_auth = None
 
-        if _fastapi_app.state.nexus_fs:
-            enforce_permissions = getattr(_fastapi_app.state.nexus_fs, "_enforce_permissions", None)
-            enforce_zone_isolation = getattr(
-                _fastapi_app.state.nexus_fs, "_enforce_zone_isolation", None
-            )
+        nx_fs = _fastapi_app.state.nexus_fs
+        if nx_fs:
+            enforce_permissions = getattr(nx_fs, "_enforce_permissions", None)
+            enforce_zone_isolation = getattr(nx_fs, "_enforce_zone_isolation", None)
+
+            # Federation mode: ensure topology is initialized (standard Raft lifecycle).
+            # The leader creates root "/" + mount topology via Raft consensus.
+            # Followers receive them via log replication. Docker health check
+            # acts as the readiness gate — returns 503 until topology is ready.
+            zone_mgr = getattr(nx_fs, "_zone_mgr", None)
+            if zone_mgr is not None and not zone_mgr.ensure_topology():
+                from fastapi.responses import JSONResponse
+
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "status": "starting",
+                        "service": "nexus-rpc",
+                        "detail": "Waiting for Raft leader election and topology initialization",
+                    },
+                )
 
         # Check if authentication is configured
         has_auth = bool(_fastapi_app.state.api_key or _fastapi_app.state.auth_provider)

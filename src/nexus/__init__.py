@@ -379,6 +379,10 @@ def connect(
     # Store config for OAuth factory and other components that need it
     nx_fs._config = cfg
 
+    # Store zone manager for federation topology initialization (health check)
+    if cfg.mode == "federation":
+        nx_fs._zone_mgr = zone_mgr
+
     return nx_fs
 
 

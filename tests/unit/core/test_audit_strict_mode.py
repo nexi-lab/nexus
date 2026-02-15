@@ -19,6 +19,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.core.config import KernelServices, ParseConfig, PermissionConfig
 from nexus.core.exceptions import AuditLogError
 from tests.helpers.in_memory_metadata_store import InMemoryFileMetadataStore
 
@@ -39,10 +40,9 @@ def _make_nx(
     return NexusFS(
         backend=LocalBackend(str(temp_dir / "data")),
         metadata_store=InMemoryFileMetadataStore(),
-        enforce_permissions=False,
-        auto_parse=False,
-        audit_strict_mode=audit_strict_mode,
-        write_observer=write_observer,
+        permissions=PermissionConfig(enforce=False, audit_strict_mode=audit_strict_mode),
+        parsing=ParseConfig(auto_parse=False),
+        services=KernelServices(write_observer=write_observer),
     )
 
 

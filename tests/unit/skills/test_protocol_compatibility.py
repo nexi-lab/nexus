@@ -12,6 +12,7 @@ import inspect
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.core.config import PermissionConfig
 from nexus.core.filesystem import NexusFilesystem as NexusFilesystemABC
 from nexus.skills.protocols import NexusFilesystem as NexusFilesystemProtocol
 
@@ -132,7 +133,7 @@ def test_nexus_fs_satisfies_protocol() -> None:
         nx = NexusFS(
             backend=LocalBackend(tmpdir),
             metadata_store=metadata_store,
-            audit_strict_mode=False,
+            permissions=PermissionConfig(audit_strict_mode=False),
         )
 
         # Verify nx satisfies the Protocol
@@ -176,7 +177,7 @@ def test_protocol_runtime_checkable() -> None:
         nx = NexusFS(
             backend=LocalBackend(tmpdir),
             metadata_store=metadata_store,
-            audit_strict_mode=False,
+            permissions=PermissionConfig(audit_strict_mode=False),
         )
 
         # Protocol should support isinstance() check

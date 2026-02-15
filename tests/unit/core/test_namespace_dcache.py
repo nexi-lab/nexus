@@ -18,7 +18,7 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy import create_engine
 
-from nexus.rebac.namespace_manager import NamespaceManager
+from nexus.services.permissions.namespace_manager import NamespaceManager
 from nexus.storage.models import Base
 
 # ---------------------------------------------------------------------------
@@ -37,7 +37,7 @@ def engine():
 @pytest.fixture
 def enhanced_rebac_manager(engine):
     """Create an EnhancedReBACManager for testing."""
-    from nexus.rebac.manager import EnhancedReBACManager
+    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
     manager = EnhancedReBACManager(
         engine=engine,
@@ -55,7 +55,7 @@ def namespace_manager(enhanced_rebac_manager):
         rebac_manager=enhanced_rebac_manager,
         cache_maxsize=100,
         cache_ttl=60,
-        revision_window=2,  # Small window so revision changes are easy to trigger
+        revision_window=5,  # Window of 5: single write stays in same bucket
         dcache_maxsize=1000,
         dcache_positive_ttl=300,
         dcache_negative_ttl=60,

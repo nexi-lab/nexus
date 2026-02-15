@@ -1032,7 +1032,8 @@ class PermissionEnforcer:
             checks.append((subject, "write", (object_type, object_id)))
 
         # All ancestor checks for permission inheritance
-        for ancestor in ancestors:
+        # get_ancestors() excludes root "/", so add it explicitly
+        for ancestor in (*ancestors, "/"):
             if ancestor != object_id:
                 checks.append((subject, permission_name, (object_type, ancestor)))
                 # TRAVERSE implication also applies to ancestors

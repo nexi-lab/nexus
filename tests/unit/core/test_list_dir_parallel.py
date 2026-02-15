@@ -8,21 +8,22 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from nexus.core.nexus_fs_search import (
+from nexus.services.search_service import (
     LIST_PARALLEL_MAX_DEPTH,
     LIST_PARALLEL_WORKERS,
-    NexusFSSearchMixin,
+    SearchService,
 )
 
 
-class FakeSearchMixin(NexusFSSearchMixin):
-    """Minimal concrete class to test _list_dir_parallel."""
-
-    pass
-
-
-def _make_mixin() -> FakeSearchMixin:
-    return FakeSearchMixin()
+def _make_service() -> SearchService:
+    """Create a minimal SearchService for testing _list_dir_parallel."""
+    return SearchService(
+        metadata_store=MagicMock(),
+        permission_enforcer=None,
+        router=MagicMock(),
+        rebac_manager=None,
+        enforce_permissions=False,
+    )
 
 
 def _make_backend(tree: dict[str, list[str]]) -> MagicMock:
@@ -49,11 +50,11 @@ class TestListDirParallelFlat:
 
     def test_flat_directory_returns_all_files(self) -> None:
         """Flat directory with only files should return all entries."""
-        mixin = _make_mixin()
+        svc = _make_service()
         backend = _make_backend({"": ["a.txt", "b.txt", "c.txt"]})
         ctx = MagicMock()
 
-        result = mixin._list_dir_parallel(
+        result = svc._list_dir_parallel(
             backend=backend, root_path="/mount", backend_path="", context=ctx
         )
 
@@ -63,11 +64,11 @@ class TestListDirParallelFlat:
 
     def test_flat_directory_with_dirs_non_recursive(self) -> None:
         """Non-recursive listing should include dirs but not recurse."""
-        mixin = _make_mixin()
+        svc = _make_service()
         backend = _make_backend({"": ["file.txt", "subdir/"]})
         ctx = MagicMock()
 
-        result = mixin._list_dir_parallel(
+        result = svc._list_dir_parallel(
             backend=backend,
             root_path="/mount",
             backend_path="",
@@ -85,7 +86,7 @@ class TestListDirParallelDeepTree:
 
     def test_three_level_tree(self) -> None:
         """Three-level tree should return all entries at all levels."""
-        mixin = _make_mixin()
+        svc = _make_service()
         backend = _make_backend(
             {
                 "": ["root.txt", "level1/"],
@@ -96,7 +97,7 @@ class TestListDirParallelDeepTree:
         )
         ctx = MagicMock()
 
-        result = mixin._list_dir_parallel(
+        result = svc._list_dir_parallel(
             backend=backend, root_path="/mount", backend_path="", context=ctx
         )
 
@@ -117,7 +118,7 @@ class TestListDirParallelDeepTree:
 
     def test_wide_tree_multiple_subdirs(self) -> None:
         """Wide tree with multiple subdirectories at same level."""
-        mixin = _make_mixin()
+        svc = _make_service()
         backend = _make_backend(
             {
                 "": ["dir_a/", "dir_b/", "dir_c/"],
@@ -129,7 +130,7 @@ class TestListDirParallelDeepTree:
         )
         ctx = MagicMock()
 
-        result = mixin._list_dir_parallel(
+        result = svc._list_dir_parallel(
             backend=backend, root_path="/root", backend_path="", context=ctx
         )
 
@@ -154,7 +155,7 @@ class TestListDirParallelErrorHandling:
 
     def test_single_subdirectory_failure(self) -> None:
         """When one subdirectory fails, other results are still returned."""
-        mixin = _make_mixin()
+        svc = _make_service()
 
         call_count = {"n": 0}
 
@@ -172,7 +173,7 @@ class TestListDirParallelErrorHandling:
         backend.list_dir = MagicMock(side_effect=list_dir)
         ctx = MagicMock()
 
-        result = mixin._list_dir_parallel(
+        result = svc._list_dir_parallel(
             backend=backend, root_path="/mount", backend_path="", context=ctx
         )
 
@@ -191,11 +192,11 @@ class TestListDirParallelEdgeCases:
 
     def test_empty_directory(self) -> None:
         """Empty directory should return empty list."""
-        mixin = _make_mixin()
+        svc = _make_service()
         backend = _make_backend({"": []})
         ctx = MagicMock()
 
-        result = mixin._list_dir_parallel(
+        result = svc._list_dir_parallel(
             backend=backend, root_path="/mount", backend_path="", context=ctx
         )
 
@@ -203,11 +204,11 @@ class TestListDirParallelEdgeCases:
 
     def test_empty_subdirectory(self) -> None:
         """Subdirectory with no contents should still appear in results."""
-        mixin = _make_mixin()
+        svc = _make_service()
         backend = _make_backend({"": ["empty_dir/"], "empty_dir": []})
         ctx = MagicMock()
 
-        result = mixin._list_dir_parallel(
+        result = svc._list_dir_parallel(
             backend=backend, root_path="/mount", backend_path="", context=ctx
         )
 
@@ -215,7 +216,7 @@ class TestListDirParallelEdgeCases:
 
     def test_backend_path_non_empty(self) -> None:
         """Backend path should be correctly concatenated for subdirs."""
-        mixin = _make_mixin()
+        svc = _make_service()
         backend = _make_backend(
             {
                 "start": ["sub/"],
@@ -224,7 +225,7 @@ class TestListDirParallelEdgeCases:
         )
         ctx = MagicMock()
 
-        result = mixin._list_dir_parallel(
+        result = svc._list_dir_parallel(
             backend=backend,
             root_path="/mount",
             backend_path="start",
@@ -239,7 +240,7 @@ class TestListDirParallelEdgeCases:
 
     def test_max_depth_guard_prevents_infinite_traversal(self) -> None:
         """BFS should stop at LIST_PARALLEL_MAX_DEPTH to prevent infinite loops."""
-        mixin = _make_mixin()
+        svc = _make_service()
 
         # Create a backend that always returns a subdirectory (simulating a loop)
         def infinite_list_dir(path: str, context: object = None) -> list[str]:
@@ -249,7 +250,7 @@ class TestListDirParallelEdgeCases:
         backend.list_dir = MagicMock(side_effect=infinite_list_dir)
         ctx = MagicMock()
 
-        result = mixin._list_dir_parallel(
+        result = svc._list_dir_parallel(
             backend=backend, root_path="/mount", backend_path="", context=ctx
         )
 

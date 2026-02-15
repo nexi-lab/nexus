@@ -26,11 +26,11 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.core.read_set import ReadSet
-    from nexus.services.permissions.hotspot_detector import HotspotDetector
-    from nexus.services.permissions.namespace_manager import NamespaceManager
-    from nexus.services.permissions.permission_boundary_cache import PermissionBoundaryCache
-    from nexus.services.permissions.permissions_enhanced import AuditStore
-    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.hotspot_detector import HotspotDetector
+    from nexus.rebac.namespace_manager import NamespaceManager
+    from nexus.rebac.permission_boundary_cache import PermissionBoundaryCache
+    from nexus.rebac.permissions_enhanced import AuditStore
+    from nexus.services.protocols.rebac import ReBACBrickProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -326,7 +326,7 @@ class PermissionEnforcer:
         self,
         metadata_store: Any = None,
         acl_store: Any | None = None,  # Deprecated, kept for backward compatibility
-        rebac_manager: EnhancedReBACManager | None = None,
+        rebac_manager: ReBACBrickProtocol | None = None,
         entity_registry: Any = None,  # Entity registry (reserved for future use)
         router: Any = None,  # PathRouter for backend object type resolution
         # P0-4: Enhanced features
@@ -365,7 +365,7 @@ class PermissionEnforcer:
             agent_registry: AgentRegistry for stale-session detection (Issue #1240)
         """
         self.metadata_store = metadata_store
-        self.rebac_manager: EnhancedReBACManager | None = rebac_manager
+        self.rebac_manager: ReBACBrickProtocol | None = rebac_manager
         self.entity_registry = entity_registry  # v0.5.0 ACE
         self.router = router  # For backend object type resolution
 
@@ -389,7 +389,7 @@ class PermissionEnforcer:
             logger.info("[PermissionEnforcer] Using provided boundary cache")
         elif enable_boundary_cache:
             # Lazy import to avoid circular dependencies
-            from nexus.services.permissions.permission_boundary_cache import PermissionBoundaryCache
+            from nexus.rebac.permission_boundary_cache import PermissionBoundaryCache
 
             self._boundary_cache = PermissionBoundaryCache()
             logger.info("[PermissionEnforcer] Boundary cache ENABLED (50k entries, 300s TTL)")
@@ -415,7 +415,7 @@ class PermissionEnforcer:
             logger.info("[PermissionEnforcer] Using provided hotspot detector")
         elif enable_hotspot_tracking:
             # Lazy import to avoid circular dependencies
-            from nexus.services.permissions.hotspot_detector import HotspotDetector
+            from nexus.rebac.hotspot_detector import HotspotDetector
 
             self._hotspot_detector = HotspotDetector()
             logger.info("[PermissionEnforcer] Hotspot tracking ENABLED (5min window, 50 threshold)")
@@ -729,7 +729,7 @@ class PermissionEnforcer:
                 return self._check_rebac(path, permission, context)
 
             # Import AdminCapability here to avoid circular imports
-            from nexus.services.permissions.permissions_enhanced import AdminCapability
+            from nexus.rebac.permissions_enhanced import AdminCapability
 
             # P0-4: Zone boundary check (security fix for issue #819)
             # Extract zone from path (format: /zone/{zone_id}/...)
@@ -1064,7 +1064,7 @@ class PermissionEnforcer:
 
         from datetime import UTC, datetime
 
-        from nexus.services.permissions.permissions_enhanced import AuditLogEntry
+        from nexus.rebac.permissions_enhanced import AuditLogEntry
 
         entry = AuditLogEntry(
             timestamp=datetime.now(UTC).isoformat(),
@@ -1094,7 +1094,7 @@ class PermissionEnforcer:
 
         from datetime import UTC, datetime
 
-        from nexus.services.permissions.permissions_enhanced import AuditLogEntry
+        from nexus.rebac.permissions_enhanced import AuditLogEntry
 
         entry = AuditLogEntry(
             timestamp=datetime.now(UTC).isoformat(),

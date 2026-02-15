@@ -372,28 +372,35 @@ class TestSubjectExtraction:
         assert subject is None
 
 
-class TestZoneIdExtraction:
-    def test_extract_zone_id_from_context(self):
-        mw = make_middleware(zone_id="default-zone")
-        ctx = FakeMiddlewareContext(
-            fastmcp_context=FakeContext({"zone_id": "org-42"}),
-        )
-        zone_id = mw._extract_zone_id(ctx)  # type: ignore[arg-type]
-        assert zone_id == "org-42"
+class TestResolveVisibleTools:
+    """Tests for the public resolve_visible_tools() API (#1A DRY fix)."""
 
-    def test_extract_zone_id_falls_back_to_default(self):
-        mw = make_middleware(zone_id="default-zone")
-        ctx = FakeMiddlewareContext(
-            fastmcp_context=FakeContext({}),
-        )
-        zone_id = mw._extract_zone_id(ctx)  # type: ignore[arg-type]
-        assert zone_id == "default-zone"
+    def test_returns_visible_tools_for_subject(self):
+        mw = make_middleware(granted_tools=["nexus_read_file", "nexus_list_files"])
+        ctx = FakeContext({"subject_type": "agent", "subject_id": "A"})
+        result = mw.resolve_visible_tools(ctx)
+        assert result == frozenset(["nexus_read_file", "nexus_list_files"])
 
-    def test_extract_zone_id_no_context_returns_default(self):
-        mw = make_middleware(zone_id="default-zone")
-        ctx = FakeMiddlewareContext(fastmcp_context=None)
-        zone_id = mw._extract_zone_id(ctx)  # type: ignore[arg-type]
-        assert zone_id == "default-zone"
+    def test_returns_none_for_none_ctx(self):
+        mw = make_middleware(granted_tools=["nexus_read_file"])
+        assert mw.resolve_visible_tools(None) is None
+
+    def test_returns_none_for_no_subject(self):
+        mw = make_middleware(granted_tools=["nexus_read_file"])
+        ctx = FakeContext({})
+        assert mw.resolve_visible_tools(ctx) is None
+
+    def test_falls_back_to_api_key(self):
+        mw = make_middleware(granted_tools=["nexus_read_file"])
+        ctx = FakeContext({"api_key": "sk-test"})
+        result = mw.resolve_visible_tools(ctx)
+        assert result is not None
+        assert "nexus_read_file" in result
+
+    def test_ctx_without_get_state_returns_none(self):
+        mw = make_middleware(granted_tools=["nexus_read_file"])
+        result = mw.resolve_visible_tools("not-a-context")  # type: ignore[arg-type]
+        assert result is None
 
 
 # ---------------------------------------------------------------------------

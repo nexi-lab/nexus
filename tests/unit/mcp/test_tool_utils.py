@@ -150,6 +150,16 @@ class TestHandleToolErrors:
         assert result.startswith("Error:")
         assert "not found" in result.lower()
 
+    def test_rejects_async_functions(self):
+        """#7B: Decorating an async function should raise TypeError."""
+        import pytest
+
+        with pytest.raises(TypeError, match="cannot wrap async function"):
+
+            @handle_tool_errors("async op")
+            async def my_async_tool(path: str) -> str:
+                return "ok"
+
 
 # ---------------------------------------------------------------------------
 # _extract_path_hint()

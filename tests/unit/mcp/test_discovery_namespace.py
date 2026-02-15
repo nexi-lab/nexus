@@ -55,9 +55,26 @@ def mock_nx():
 @pytest.fixture
 def mock_middleware():
     """Mock ToolNamespaceMiddleware with configurable visible tools."""
+    visible = frozenset({"nexus_read_file", "nexus_write_file"})
+
+    def _resolve(ctx):
+        """Return None for no-ctx/no-subject, frozenset for subjects."""
+        if ctx is None:
+            return None
+        if not hasattr(ctx, "get_state"):
+            return None
+        try:
+            st = ctx.get_state("subject_type")
+            si = ctx.get_state("subject_id")
+            if st and si:
+                return visible
+        except Exception:
+            pass
+        return None
+
     mw = Mock()
-    # Default: only nexus_read_file and nexus_write_file are visible
-    mw._get_visible_tools = Mock(return_value=frozenset({"nexus_read_file", "nexus_write_file"}))
+    mw.resolve_visible_tools = Mock(side_effect=_resolve)
+    mw._get_visible_tools = Mock(return_value=visible)
     return mw
 
 
@@ -149,7 +166,7 @@ class TestListServersNamespace:
     def test_servers_still_listed_even_with_zero_visible(self, mock_nx):
         """Servers appear even if all their tools are filtered out."""
         mw = Mock()
-        mw._get_visible_tools = Mock(return_value=frozenset())  # No tools visible
+        mw.resolve_visible_tools = Mock(return_value=frozenset())  # No tools visible
 
         server = create_mcp_server(nx=mock_nx, tool_namespace_middleware=mw)
         tool_fn = get_tool(server, "nexus_discovery_list_servers")
@@ -242,7 +259,7 @@ class TestLoadToolsNamespace:
     def test_all_invisible_none_loaded(self, mock_nx):
         """When all requested tools are invisible, none are loaded."""
         mw = Mock()
-        mw._get_visible_tools = Mock(return_value=frozenset())
+        mw.resolve_visible_tools = Mock(return_value=frozenset())
 
         server = create_mcp_server(nx=mock_nx, tool_namespace_middleware=mw)
         tool_fn = get_tool(server, "nexus_discovery_load_tools")

@@ -20,6 +20,7 @@ References:
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import logging
 from typing import Any
@@ -104,6 +105,12 @@ def handle_tool_errors(operation: str) -> Any:
     """
 
     def decorator(fn: Any) -> Any:
+        if asyncio.iscoroutinefunction(fn):
+            raise TypeError(
+                f"@handle_tool_errors cannot wrap async function '{fn.__name__}'. "
+                "All MCP tools must be synchronous."
+            )
+
         @functools.wraps(fn)
         def wrapper(*args: Any, **kwargs: Any) -> str:
             try:

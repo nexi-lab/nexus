@@ -268,8 +268,8 @@ class ToolNamespaceMiddleware(Middleware):
     ) -> tuple[str, str] | None:
         """Extract subject identity from middleware context.
 
-        Tries FastMCP context state (set by APIKeyExtractionMiddleware),
-        then falls back to None (no filtering).
+        Delegates to ``_extract_subject_from_ctx`` using the middleware
+        context's ``fastmcp_context``.
 
         Args:
             context: FastMCP middleware context.
@@ -279,45 +279,66 @@ class ToolNamespaceMiddleware(Middleware):
         """
         if context.fastmcp_context is None:
             return None
+        return self._extract_subject_from_ctx(context.fastmcp_context)
+
+    # ------------------------------------------------------------------
+    # Public API for discovery tools (#1A DRY fix)
+    # ------------------------------------------------------------------
+
+    def resolve_visible_tools(self, ctx: Any) -> frozenset[str] | None:
+        """Resolve visible tool names from a FastMCP Context.
+
+        Extracts subject identity from the context and returns the
+        cached tool set. Used by discovery tools to filter results
+        without duplicating subject extraction logic.
+
+        Args:
+            ctx: FastMCP Context object (with ``get_state()``), or None.
+
+        Returns:
+            frozenset of visible tool names, or None if no subject
+            could be extracted (backward compat → no filtering).
+        """
+        if ctx is None:
+            return None
+
+        subject = self._extract_subject_from_ctx(ctx)
+        if subject is None:
+            return None
+
+        return self._get_visible_tools(subject)
+
+    def _extract_subject_from_ctx(self, ctx: Any) -> tuple[str, str] | None:
+        """Extract subject identity from a FastMCP Context.
+
+        Shared logic used by both middleware hooks (via ``_extract_subject``)
+        and discovery tools (via ``resolve_visible_tools``).
+
+        Args:
+            ctx: Object with ``get_state(key)`` method.
+
+        Returns:
+            (subject_type, subject_id) tuple, or None.
+        """
+        if not hasattr(ctx, "get_state"):
+            return None
 
         try:
-            subject_type = context.fastmcp_context.get_state("subject_type")
-            subject_id = context.fastmcp_context.get_state("subject_id")
+            subject_type = ctx.get_state("subject_type")
+            subject_id = ctx.get_state("subject_id")
             if subject_type and subject_id:
                 return (subject_type, subject_id)
         except Exception:
             pass
 
-        # Fallback: try API key as subject_id
         try:
-            api_key = context.fastmcp_context.get_state("api_key")
+            api_key = ctx.get_state("api_key")
             if api_key:
                 return ("api_key", api_key)
         except Exception:
             pass
 
         return None
-
-    def _extract_zone_id(
-        self,
-        context: MiddlewareContext[Any],
-    ) -> str | None:
-        """Extract zone ID from context state, falling back to default.
-
-        Args:
-            context: FastMCP middleware context.
-
-        Returns:
-            Zone ID string, or the middleware's default zone_id.
-        """
-        if context.fastmcp_context is not None:
-            try:
-                zone_id: str | None = context.fastmcp_context.get_state("zone_id")
-                if zone_id:
-                    return zone_id
-            except Exception:
-                pass
-        return self._zone_id
 
     # ------------------------------------------------------------------
     # Cache management

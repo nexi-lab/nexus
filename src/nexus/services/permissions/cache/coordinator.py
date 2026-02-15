@@ -22,7 +22,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, MutableMapping
 
     from nexus.services.permissions.cache.boundary import PermissionBoundaryCache
     from nexus.services.permissions.cache.iterator import IteratorCache
@@ -73,7 +73,7 @@ class CacheCoordinator:
         l1_cache: ReBACPermissionCache | None = None,
         boundary_cache: PermissionBoundaryCache | None = None,
         iterator_cache: IteratorCache | None = None,
-        zone_graph_cache: dict[str, Any] | None = None,
+        zone_graph_cache: MutableMapping[str, Any] | None = None,
     ) -> None:
         """Initialize the coordinator.
 

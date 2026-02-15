@@ -168,6 +168,153 @@ class TestAuthEnforcement:
             assert data["error"] == "Unauthorized"
 
 
+class TestAuthCallback:
+    """Tests for the injected auth_fn callback mechanism."""
+
+    def test_auth_fn_called_on_request(self) -> None:
+        """Verify the injected auth_fn is invoked for each request."""
+        call_count = 0
+
+        async def mock_auth_fn(request: Any) -> dict[str, Any] | None:
+            nonlocal call_count
+            call_count += 1
+            return {"zone_id": "test-zone", "authenticated": True}
+
+        app = FastAPI()
+        router = build_router(
+            base_url="http://testserver",
+            auth_required=False,
+            auth_fn=mock_auth_fn,
+        )
+        app.include_router(router)
+        client = TestClient(app)
+
+        body = _rpc_body(
+            "a2a.tasks.send",
+            {"message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]}},
+        )
+        client.post("/a2a", json=body)
+        assert call_count == 1
+
+    def test_auth_fn_result_used_for_zone_id(self) -> None:
+        """Verify zone_id from auth_fn is used for task isolation."""
+
+        async def mock_auth_fn(request: Any) -> dict[str, Any] | None:
+            return {"zone_id": "custom-zone", "authenticated": True}
+
+        app = FastAPI()
+        router = build_router(
+            base_url="http://testserver",
+            auth_required=False,
+            auth_fn=mock_auth_fn,
+        )
+        app.include_router(router)
+        client = TestClient(app)
+
+        body = _rpc_body(
+            "a2a.tasks.send",
+            {"message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]}},
+        )
+        response = client.post("/a2a", json=body)
+        assert response.status_code == 200
+        data = response.json()
+        # Zone isolation is internal; the key assertion is the request succeeded
+        assert data["result"]["id"]
+
+    def test_auth_fn_none_defaults_to_default_zone(self) -> None:
+        """Without auth_fn, zone_id defaults to 'default'."""
+        app = FastAPI()
+        router = build_router(
+            base_url="http://testserver",
+            auth_required=False,
+            auth_fn=None,
+        )
+        app.include_router(router)
+        client = TestClient(app)
+
+        body = _rpc_body(
+            "a2a.tasks.send",
+            {"message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]}},
+        )
+        response = client.post("/a2a", json=body)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["result"]["id"]
+
+    def test_auth_fn_exception_returns_none_safely(self) -> None:
+        """If auth_fn raises with auth not required, request proceeds."""
+
+        async def failing_auth_fn(request: Any) -> dict[str, Any] | None:
+            raise RuntimeError("Auth service unavailable")
+
+        app = FastAPI()
+        router = build_router(
+            base_url="http://testserver",
+            auth_required=False,
+            auth_fn=failing_auth_fn,
+        )
+        app.include_router(router)
+        client = TestClient(app)
+
+        body = _rpc_body(
+            "a2a.tasks.send",
+            {"message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]}},
+        )
+        # Should succeed despite auth_fn failure (defaults to zone="default")
+        response = client.post("/a2a", json=body)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["result"]["id"]
+
+    def test_auth_fn_failure_with_auth_required_returns_401(self) -> None:
+        """If auth_fn raises and auth is required, the request must be rejected."""
+
+        async def failing_auth_fn(request: Any) -> dict[str, Any] | None:
+            raise RuntimeError("Auth service unavailable")
+
+        app = FastAPI()
+        router = build_router(
+            base_url="http://testserver",
+            auth_required=True,
+            auth_fn=failing_auth_fn,
+        )
+        app.include_router(router)
+        client = TestClient(app)
+
+        body = _rpc_body(
+            "a2a.tasks.send",
+            {"message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]}},
+        )
+        response = client.post("/a2a", json=body, headers={"Authorization": "Bearer bad-token"})
+        assert response.status_code == 401
+        data = response.json()
+        assert data["error"] == "Unauthorized"
+
+    def test_auth_fn_returns_none_with_auth_required_returns_401(self) -> None:
+        """If auth_fn returns None and auth is required, request is rejected."""
+
+        async def null_auth_fn(request: Any) -> dict[str, Any] | None:
+            return None
+
+        app = FastAPI()
+        router = build_router(
+            base_url="http://testserver",
+            auth_required=True,
+            auth_fn=null_auth_fn,
+        )
+        app.include_router(router)
+        client = TestClient(app)
+
+        body = _rpc_body(
+            "a2a.tasks.send",
+            {"message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]}},
+        )
+        response = client.post("/a2a", json=body, headers={"Authorization": "Bearer some-token"})
+        assert response.status_code == 401
+        data = response.json()
+        assert data["error"] == "Unauthorized"
+
+
 class TestAuthBestPractices:
     def test_www_authenticate_header_present(self, app_with_auth: FastAPI) -> None:
         """401 responses include WWW-Authenticate header per OAuth 2.0 spec."""

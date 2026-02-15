@@ -6305,7 +6305,7 @@ class NexusFS(  # type: ignore[misc]
         return result
 
     @rpc_expose(description="Validate code in sandbox")
-    async def sandbox_validate(
+    async def sandbox_validate(  # type: ignore[override]
         self,
         sandbox_id: str,
         workspace_path: str = "/workspace",

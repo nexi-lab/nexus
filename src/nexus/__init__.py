@@ -291,7 +291,6 @@ def connect(
     # Create metadata store based on mode
     metadata_store: FileMetadataProtocol
     if cfg.mode == "federation":
-        # Federation: single-node bootstrap, multi-node via public APIs later.
         try:
             from nexus.raft import ZoneAwareMetadataStore
             from nexus.raft.zone_manager import ZoneManager
@@ -305,9 +304,15 @@ def connect(
         bind_addr = os.environ.get("NEXUS_BIND_ADDR", "0.0.0.0:2126")
         zones_dir = os.environ.get("NEXUS_DATA_DIR", str(Path(metadata_path).parent / "zones"))
         zone_mgr = ZoneManager(node_id=node_id, base_path=zones_dir, bind_addr=bind_addr)
-        zone_mgr.bootstrap()  # single-node, Raft self-elects leader
 
-        # Optional zone topology from env vars (idempotent)
+        # Parse peer addresses for multi-node Raft groups
+        peers_str = os.environ.get("NEXUS_PEERS", "")
+        peers = [p.strip() for p in peers_str.split(",") if p.strip()] if peers_str else []
+
+        # Bootstrap root zone (with peers for multi-node, without for single-node)
+        zone_mgr.bootstrap(peers=peers if peers else None)
+
+        # Static Day-1 topology from env vars (idempotent)
         zones_str = os.environ.get("NEXUS_FEDERATION_ZONES", "")
         mounts_str = os.environ.get("NEXUS_FEDERATION_MOUNTS", "")
         if zones_str:
@@ -317,7 +322,7 @@ def connect(
                 for pair in mounts_str.split(","):
                     path, zone_id = pair.strip().split("=", 1)
                     mounts[path.strip()] = zone_id.strip()
-            zone_mgr.init_topology(zones=zones, mounts=mounts)
+            zone_mgr.bootstrap_static(zones=zones, peers=peers, mounts=mounts)
 
         metadata_store = ZoneAwareMetadataStore.from_zone_manager(zone_mgr)
     else:
@@ -376,6 +381,10 @@ def connect(
 
     # Store config for OAuth factory and other components that need it
     nx_fs._config = cfg
+
+    # Store zone manager for federation topology initialization (health check)
+    if cfg.mode == "federation":
+        nx_fs._zone_mgr = zone_mgr
 
     return nx_fs
 

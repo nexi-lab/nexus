@@ -26,6 +26,7 @@ from typing import Any
 
 from nexus.sandbox.sandbox_provider import (
     CodeExecutionResult,
+    EscalationNeeded,
     ExecutionTimeoutError,
     SandboxInfo,
     SandboxNotFoundError,
@@ -333,14 +334,19 @@ class MontySandboxProvider(SandboxProvider):
         except MontyRuntimeError as e:
             elapsed = time.monotonic() - start_time
             stderr = str(e)
-            exit_code = 1
             # Distinguish timeout from other runtime errors
             if "time limit" in stderr.lower() or "timeout" in stderr.lower():
                 raise ExecutionTimeoutError(f"Code execution timed out after {elapsed:.1f}s") from e
+            # Detect import/module errors that signal need for escalation
+            if self._is_escalation_error(stderr):
+                raise EscalationNeeded(
+                    reason=f"Monty cannot handle: {stderr[:200]}",
+                    suggested_tier="docker",
+                ) from e
             return CodeExecutionResult(
                 stdout="".join(stdout_parts),
                 stderr=f"Runtime error:\n{stderr}",
-                exit_code=exit_code,
+                exit_code=1,
                 execution_time=elapsed,
             )
 
@@ -536,6 +542,28 @@ class MontySandboxProvider(SandboxProvider):
                 )
 
         return progress.output
+
+    # Patterns in runtime error messages that indicate escalation is needed.
+    # These are specifically for ModuleNotFoundError / ImportError — not
+    # generic NameErrors which are genuine code bugs.
+    _ESCALATION_PATTERNS = (
+        "modulenotfounderror",
+        "no module named",
+        "importerror",
+        "cannot import name",
+        "filenotfounderror",
+        "permissionerror: [errno",
+    )
+
+    def _is_escalation_error(self, stderr: str) -> bool:
+        """Check if a runtime error indicates need for escalation.
+
+        Returns True for errors caused by missing module imports or filesystem
+        access — things Monty fundamentally cannot do.
+        Returns False for genuine code bugs (NameError, ZeroDivision, TypeError, etc.).
+        """
+        lower = stderr.lower()
+        return any(pattern in lower for pattern in self._ESCALATION_PATTERNS)
 
     @staticmethod
     def _build_type_stubs(

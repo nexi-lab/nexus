@@ -9,7 +9,7 @@ cache invalidation by tracking which resources each cache entry depends on.
 import threading
 
 from nexus.core.read_set import AccessType, ReadSet, ReadSetRegistry
-from nexus.storage.cache import MetadataCache, _CACHE_MISS
+from nexus.storage.cache import _CACHE_MISS, MetadataCache
 from nexus.storage.read_set_cache import ReadSetAwareCache
 
 

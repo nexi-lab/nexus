@@ -258,10 +258,11 @@ class AsyncLocalBackend:
         content_hash = await asyncio.to_thread(self._compute_hash, content)
 
         assert self._cas is not None  # noqa: S101
+        cas = self._cas
 
         def _store() -> HandlerResponse[str]:
             try:
-                self._cas.store(content_hash, content)  # type: ignore[union-attr]
+                cas.store(content_hash, content)
 
                 # Add to cache
                 if self.content_cache is not None:
@@ -417,6 +418,7 @@ class AsyncLocalBackend:
         content_path = self._hash_to_path(content_hash)
 
         assert self._cas is not None  # noqa: S101
+        cas = self._cas
 
         def _delete() -> HandlerResponse[None]:
             if not content_path.exists():
@@ -428,7 +430,7 @@ class AsyncLocalBackend:
                 )
 
             try:
-                self._cas.release(content_hash)  # type: ignore[union-attr]
+                cas.release(content_hash)
 
                 return HandlerResponse.ok(
                     data=None,
@@ -545,10 +547,11 @@ class AsyncLocalBackend:
             )
 
         assert self._cas is not None  # noqa: S101
+        cas = self._cas
 
         def _read_ref() -> HandlerResponse[int]:
             try:
-                meta = self._cas.read_meta(content_hash)  # type: ignore[union-attr]
+                meta = cas.read_meta(content_hash)
                 return HandlerResponse.ok(
                     data=meta.ref_count,
                     execution_time_ms=(time.perf_counter() - start_time) * 1000,

@@ -19,7 +19,7 @@ import uuid
 import pytest
 from sqlalchemy import create_engine, text
 
-from nexus.services.permissions.rebac_manager import ReBACManager
+from nexus.rebac.manager import ReBACManager
 from nexus.storage.models import Base
 
 

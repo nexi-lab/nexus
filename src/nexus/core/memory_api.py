@@ -19,8 +19,8 @@ from sqlalchemy.orm import Session
 from nexus.core.memory_router import MemoryViewRouter
 from nexus.core.permissions import OperationContext, Permission
 from nexus.core.temporal import parse_datetime, validate_temporal_params
-from nexus.services.permissions.entity_registry import EntityRegistry
-from nexus.services.permissions.memory_permission_enforcer import MemoryPermissionEnforcer
+from nexus.rebac.entity_registry import EntityRegistry
+from nexus.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
 
 # Importance decay configuration (Issue #1030)
 DEFAULT_DECAY_FACTOR = 0.95  # 5% decay per day
@@ -122,7 +122,7 @@ class Memory:
         # Initialize ReBAC manager for permission checks
         from sqlalchemy import Engine
 
-        from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+        from nexus.rebac.manager import EnhancedReBACManager
 
         bind = session.get_bind()
         assert isinstance(bind, Engine), "Expected Engine, got Connection"
@@ -334,7 +334,7 @@ class Memory:
         person_refs_str = None
 
         if extract_entities and text_content:
-            from nexus.services.permissions.entity_extractor import EntityExtractor
+            from nexus.rebac.entity_extractor import EntityExtractor
 
             extractor = EntityExtractor(use_spacy=False)
             entities = extractor.extract(text_content)

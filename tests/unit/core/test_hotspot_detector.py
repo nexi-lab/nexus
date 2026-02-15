@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.services.permissions.hotspot_detector import (
+from nexus.rebac.hotspot_detector import (
     HotspotConfig,
     HotspotDetector,
     HotspotEntry,

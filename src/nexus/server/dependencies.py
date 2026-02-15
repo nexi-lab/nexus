@@ -250,7 +250,7 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
     # Admin capabilities
     admin_capabilities = set()
     if is_admin:
-        from nexus.services.permissions.permissions_enhanced import AdminCapability
+        from nexus.rebac.permissions_enhanced import AdminCapability
 
         admin_capabilities = {
             AdminCapability.READ_ALL,

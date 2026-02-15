@@ -15,7 +15,7 @@ import time
 import pytest
 
 from nexus.cache.persistent_view_postgres import PostgresPersistentViewStore
-from nexus.services.permissions.namespace_manager import NamespaceManager
+from nexus.rebac.namespace_manager import NamespaceManager
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 
@@ -30,7 +30,7 @@ def record_store():
 @pytest.fixture
 def rebac_manager(record_store):
     """Create an EnhancedReBACManager with 100 grants."""
-    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.manager import EnhancedReBACManager
 
     manager = EnhancedReBACManager(
         engine=record_store.engine,

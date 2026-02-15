@@ -14,7 +14,7 @@ from nexus.core.response import HandlerResponse
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
-    from nexus.services.permissions.permissions_enhanced import EnhancedOperationContext
+    from nexus.rebac.permissions_enhanced import EnhancedOperationContext
 
 
 @dataclass

@@ -141,7 +141,7 @@ class ReBACService:
 
         # Issue #702: Propagate OTel context to worker thread so spans are
         # children of the async caller's span.
-        from nexus.services.permissions.rebac_tracing import propagate_otel_context
+        from nexus.rebac.rebac_tracing import propagate_otel_context
 
         fn_with_ctx = propagate_otel_context(fn)
 
@@ -451,7 +451,7 @@ class ReBACService:
             # Issue #1081: Build consistency requirement from API params
             consistency = None
             if consistency_mode or min_revision is not None:
-                from nexus.services.permissions.rebac_manager_enhanced import (
+                from nexus.rebac.manager import (
                     ConsistencyMode,
                     ConsistencyRequirement,
                 )
@@ -685,7 +685,7 @@ class ReBACService:
         # Issue #702: Wrap batch check in a summary span
         import time as _time
 
-        from nexus.services.permissions.rebac_tracing import (
+        from nexus.rebac.rebac_tracing import (
             record_batch_result,
             start_batch_check_span,
         )

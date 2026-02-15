@@ -31,9 +31,9 @@ from nexus.delegation.models import DelegationMode, DelegationRecord, Delegation
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
 
-    from nexus.services.permissions.entity_registry import EntityRegistry
-    from nexus.services.permissions.namespace_manager import NamespaceManager
-    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.entity_registry import EntityRegistry
+    from nexus.rebac.namespace_manager import NamespaceManager
+    from nexus.rebac.manager import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
 
@@ -486,7 +486,7 @@ class DelegationService:
         instead of N individual rebac_delete() calls.
         """
         try:
-            from nexus.services.permissions.utils.zone import normalize_zone_id
+            from nexus.rebac.utils.zone import normalize_zone_id
 
             normalized_zone = normalize_zone_id(zone_id)
             now = datetime.now(UTC).isoformat()

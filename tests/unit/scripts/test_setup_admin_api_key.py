@@ -111,7 +111,7 @@ class TestSetupAdminAPIKey:
 
     def test_setup_admin_api_key_registers_user(self, engine, session_factory, database_url):
         """Test that setup_admin_api_key registers user in entity registry."""
-        from nexus.services.permissions.entity_registry import EntityRegistry
+        from nexus.rebac.entity_registry import EntityRegistry
 
         admin_key = "sk-admin_register_test"
         # Use explicit zone_id and user_id to avoid test pollution from parallel tests
@@ -172,7 +172,7 @@ class TestSetupAdminAPIKey:
 
     def test_setup_admin_api_key_handles_existing_user(self, engine, session_factory, database_url):
         """Test that setup_admin_api_key handles existing user gracefully."""
-        from nexus.services.permissions.entity_registry import EntityRegistry
+        from nexus.rebac.entity_registry import EntityRegistry
 
         admin_key = "sk-existing_user_test"
 

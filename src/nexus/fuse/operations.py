@@ -55,7 +55,7 @@ if TYPE_CHECKING:
     from nexus.core.filesystem import NexusFilesystem
     from nexus.core.permissions import OperationContext
     from nexus.fuse.mount import MountMode
-    from nexus.services.permissions.namespace_manager import NamespaceManager
+    from nexus.rebac.namespace_manager import NamespaceManager
 
 # Import remote exceptions for better error handling (may not be available in all contexts)
 try:

@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from nexus_fast import BloomFilter
 
     from nexus.core.permissions import OperationContext
-    from nexus.services.permissions.permissions_enhanced import EnhancedOperationContext
+    from nexus.rebac.permissions_enhanced import EnhancedOperationContext
 
 logger = logging.getLogger(__name__)
 

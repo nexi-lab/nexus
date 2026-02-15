@@ -299,7 +299,7 @@ def create_nexus_services(
     session_factory = record_store.session_factory
 
     # --- ReBAC Manager ---
-    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.manager import EnhancedReBACManager
 
     rebac_manager = EnhancedReBACManager(
         engine=engine,
@@ -311,7 +311,7 @@ def create_nexus_services(
     )
 
     # --- Circuit Breaker for ReBAC DB Resilience (Issue #726) ---
-    from nexus.services.permissions.circuit_breaker import AsyncCircuitBreaker, CircuitBreakerConfig
+    from nexus.rebac.circuit_breaker import AsyncCircuitBreaker, CircuitBreakerConfig
 
     rebac_circuit_breaker = AsyncCircuitBreaker(
         name="rebac_db",
@@ -324,7 +324,7 @@ def create_nexus_services(
     )
 
     # --- Directory Visibility Cache ---
-    from nexus.services.permissions.dir_visibility_cache import DirectoryVisibilityCache
+    from nexus.rebac.dir_visibility_cache import DirectoryVisibilityCache
 
     dir_visibility_cache = DirectoryVisibilityCache(
         tiger_cache=getattr(rebac_manager, "_tiger_cache", None),
@@ -339,12 +339,12 @@ def create_nexus_services(
     )
 
     # --- Audit Store ---
-    from nexus.services.permissions.permissions_enhanced import AuditStore
+    from nexus.rebac.permissions_enhanced import AuditStore
 
     audit_store = AuditStore(engine=engine)
 
     # --- Entity Registry ---
-    from nexus.services.permissions.entity_registry import EntityRegistry
+    from nexus.rebac.entity_registry import EntityRegistry
 
     entity_registry = EntityRegistry(session_factory)
 
@@ -363,7 +363,7 @@ def create_nexus_services(
     )
 
     # --- Hierarchy Manager ---
-    from nexus.services.permissions.hierarchy_manager import HierarchyManager
+    from nexus.rebac.hierarchy_manager import HierarchyManager
 
     hierarchy_manager = HierarchyManager(
         rebac_manager=rebac_manager,
@@ -371,7 +371,7 @@ def create_nexus_services(
     )
 
     # --- Deferred Permission Buffer ---
-    from nexus.services.permissions.deferred_permission_buffer import DeferredPermissionBuffer
+    from nexus.rebac.deferred_permission_buffer import DeferredPermissionBuffer
 
     deferred_permission_buffer = None
     if enable_deferred_permissions:

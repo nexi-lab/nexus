@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
-    from nexus.services.permissions.entity_registry import EntityRegistry
+    from nexus.rebac.entity_registry import EntityRegistry
 
 
 def register_agent(

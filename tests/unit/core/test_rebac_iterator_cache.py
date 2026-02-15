@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from nexus.services.permissions.rebac_iterator_cache import (
+from nexus.rebac.rebac_iterator_cache import (
     CachedResult,
     CursorExpiredError,
     IteratorCache,

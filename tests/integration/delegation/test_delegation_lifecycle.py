@@ -21,8 +21,8 @@ from nexus.delegation.errors import (
 )
 from nexus.delegation.models import DelegationMode
 from nexus.delegation.service import DelegationService
-from nexus.services.permissions.entity_registry import EntityRegistry
-from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+from nexus.rebac.entity_registry import EntityRegistry
+from nexus.rebac.manager import EnhancedReBACManager
 from nexus.storage.models import Base
 
 # ---------------------------------------------------------------------------

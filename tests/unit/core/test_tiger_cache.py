@@ -14,8 +14,8 @@ import pytest
 from pyroaring import BitMap as RoaringBitmap
 from sqlalchemy import create_engine, text
 
-from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
-from nexus.services.permissions.tiger_cache import (
+from nexus.rebac.manager import EnhancedReBACManager
+from nexus.rebac.tiger_cache import (
     TigerCache,
     TigerResourceMap,
 )

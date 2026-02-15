@@ -14,7 +14,7 @@ import pytest
 from sqlalchemy import create_engine
 
 from nexus.core.rebac import CROSS_ZONE_ALLOWED_RELATIONS
-from nexus.services.permissions.rebac_manager_zone_aware import (
+from nexus.rebac.manager import (
     ZoneAwareReBACManager,
     ZoneIsolationError,
 )
@@ -360,7 +360,7 @@ class TestCrossZoneRustPathFix:
     @pytest.fixture
     def enhanced_manager(self, engine):
         """Create an enhanced ReBAC manager that has _fetch_tuples_for_rust."""
-        from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+        from nexus.rebac.manager import EnhancedReBACManager
 
         manager = EnhancedReBACManager(
             engine=engine,

@@ -21,7 +21,7 @@ import pytest_asyncio
 from nexus.core.async_nexus_fs import AsyncNexusFS
 from nexus.core.exceptions import NexusPermissionError
 from nexus.core.permissions import OperationContext
-from nexus.services.permissions.async_permissions import AsyncPermissionEnforcer
+from nexus.rebac.async_permissions import AsyncPermissionEnforcer
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 # === Fixtures ===

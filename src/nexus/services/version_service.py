@@ -28,8 +28,8 @@ if TYPE_CHECKING:
     from nexus.core._metadata_generated import FileMetadataProtocol
     from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter
-    from nexus.services.permissions.async_permissions import AsyncPermissionEnforcer
-    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.async_permissions import AsyncPermissionEnforcer
+    from nexus.rebac.manager import EnhancedReBACManager
 
 
 class VersionService:

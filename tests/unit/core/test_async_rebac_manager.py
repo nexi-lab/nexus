@@ -1,132 +1,76 @@
-"""Tests for AsyncReBACManager.
+"""Tests for AsyncReBACManager (thin asyncio.to_thread wrapper).
 
-These tests verify async ReBAC manager functionality.
+These tests verify the async facade correctly delegates to the sync manager.
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nexus.services.permissions.async_rebac_manager import (
-    AsyncReBACManager,
-    create_async_engine_from_url,
-)
+from nexus.rebac.async_manager import AsyncReBACManager
 
 
 class TestAsyncReBACManager:
     """Test AsyncReBACManager functionality."""
 
     @pytest.fixture
-    def mock_engine(self) -> MagicMock:
-        """Create mock async engine."""
-        engine = MagicMock()
-        engine.url = "sqlite+aiosqlite:///test.db"
-        return engine
-
-    def test_init_with_defaults(self, mock_engine: MagicMock) -> None:
-        """Test manager initialization with default params."""
-        manager = AsyncReBACManager(mock_engine)
-        assert manager.engine == mock_engine
-        assert manager.cache_ttl_seconds == 300
-        assert manager.max_depth == 50
-        assert manager._l1_cache is not None
-
-    def test_init_without_l1_cache(self, mock_engine: MagicMock) -> None:
-        """Test manager initialization without L1 cache."""
-        manager = AsyncReBACManager(mock_engine, enable_l1_cache=False)
-        assert manager._l1_cache is None
-
-    def test_init_with_custom_params(self, mock_engine: MagicMock) -> None:
-        """Test manager initialization with custom params."""
-        manager = AsyncReBACManager(
-            engine=mock_engine,
-            cache_ttl_seconds=600,
-            max_depth=100,
-            l1_cache_size=5000,
-            l1_cache_ttl=120,
-        )
-        assert manager.cache_ttl_seconds == 600
-        assert manager.max_depth == 100
-
-    def test_is_postgresql_false(self, mock_engine: MagicMock) -> None:
-        """Test PostgreSQL detection for SQLite."""
-        manager = AsyncReBACManager(mock_engine)
-        assert manager._is_postgresql() is False
-
-    def test_is_postgresql_true(self) -> None:
-        """Test PostgreSQL detection for PostgreSQL."""
-        engine = MagicMock()
-        engine.url = "postgresql+asyncpg://localhost/test"
-        manager = AsyncReBACManager(engine)
-        assert manager._is_postgresql() is True
-
-    def test_get_namespace_not_loaded(self, mock_engine: MagicMock) -> None:
-        """Test getting namespace before loading returns None."""
-        manager = AsyncReBACManager(mock_engine)
-        assert manager.get_namespace("file") is None
-
-    def test_get_l1_cache_stats_with_cache(self, mock_engine: MagicMock) -> None:
-        """Test getting L1 cache stats when cache is enabled."""
-        manager = AsyncReBACManager(mock_engine, enable_l1_cache=True)
-        stats = manager.get_l1_cache_stats()
-        # Stats should have max_size key (from ReBACPermissionCache.get_stats())
-        assert isinstance(stats, dict)
-        assert "max_size" in stats
-
-    def test_get_l1_cache_stats_without_cache(self, mock_engine: MagicMock) -> None:
-        """Test getting L1 cache stats when cache is disabled."""
-        manager = AsyncReBACManager(mock_engine, enable_l1_cache=False)
-        stats = manager.get_l1_cache_stats()
-        assert stats == {}
-
-
-class TestCreateAsyncEngineFromUrl:
-    """Test create_async_engine_from_url function."""
-
-    def test_postgresql_url(self) -> None:
-        """Test creating engine from PostgreSQL URL."""
-        url = "postgresql://user/pass@localhost/db"
-        engine = create_async_engine_from_url(url)
-        assert "asyncpg" in str(engine.url)
-
-    def test_sqlite_url(self) -> None:
-        """Test creating engine from SQLite URL."""
-        url = "sqlite:///test.db"
-        engine = create_async_engine_from_url(url)
-        assert "aiosqlite" in str(engine.url)
-
-
-class TestAsyncReBACManagerCacheOps:
-    """Test cache operations in AsyncReBACManager."""
+    def mock_sync_manager(self) -> MagicMock:
+        """Create mock sync ReBACManager."""
+        manager = MagicMock()
+        manager.engine = MagicMock()
+        manager.enforce_zone_isolation = True
+        return manager
 
     @pytest.fixture
-    def manager_with_cache(self) -> AsyncReBACManager:
-        """Create manager with L1 cache enabled."""
-        engine = MagicMock()
-        engine.url = "sqlite+aiosqlite:///test.db"
-        return AsyncReBACManager(engine, enable_l1_cache=True)
+    def async_manager(self, mock_sync_manager: MagicMock) -> AsyncReBACManager:
+        """Create AsyncReBACManager wrapping mock sync manager."""
+        return AsyncReBACManager(mock_sync_manager)
 
-    def test_l1_cache_direct_get_miss(self, manager_with_cache: AsyncReBACManager) -> None:
-        """Test L1 cache miss using direct cache access."""
-        assert manager_with_cache._l1_cache is not None
-        # Cache uses positional args: subject_type, subject_id, permission, object_type, object_id, zone_id
-        result = manager_with_cache._l1_cache.get(
-            "user", "alice", "read", "file", "/test.txt", "default"
-        )
-        # Cache miss returns None
-        assert result is None
+    def test_init(self, async_manager: AsyncReBACManager, mock_sync_manager: MagicMock) -> None:
+        """Test initialization wraps sync manager."""
+        assert async_manager._sync is mock_sync_manager
 
-    def test_l1_cache_direct_set_and_get(self, manager_with_cache: AsyncReBACManager) -> None:
-        """Test L1 cache set and get using direct cache access."""
-        assert manager_with_cache._l1_cache is not None
+    def test_engine_property(
+        self, async_manager: AsyncReBACManager, mock_sync_manager: MagicMock
+    ) -> None:
+        """Test engine property delegates to sync manager."""
+        assert async_manager.engine is mock_sync_manager.engine
 
-        # Set cache entry (positional args: subject_type, subject_id, permission, object_type, object_id, result, zone_id)
-        manager_with_cache._l1_cache.set(
-            "user", "alice", "read", "file", "/test.txt", True, "default"
-        )
+    def test_enforce_zone_isolation_property(
+        self, async_manager: AsyncReBACManager, mock_sync_manager: MagicMock
+    ) -> None:
+        """Test enforce_zone_isolation delegates to sync manager."""
+        assert async_manager.enforce_zone_isolation is mock_sync_manager.enforce_zone_isolation
 
-        # Should hit cache now
-        result = manager_with_cache._l1_cache.get(
-            "user", "alice", "read", "file", "/test.txt", "default"
-        )
-        assert result is True
+    @pytest.mark.asyncio
+    async def test_rebac_check_delegates(
+        self, async_manager: AsyncReBACManager, mock_sync_manager: MagicMock
+    ) -> None:
+        """Test rebac_check delegates to sync manager via to_thread."""
+        mock_sync_manager.rebac_check.return_value = True
+        with patch("nexus.rebac.async_manager.asyncio.to_thread", return_value=True) as mock_thread:
+            result = await async_manager.rebac_check(
+                ("user", "alice"), "read", ("file", "/test.txt")
+            )
+            assert result is True
+            mock_thread.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_rebac_delete_delegates(
+        self, async_manager: AsyncReBACManager, mock_sync_manager: MagicMock
+    ) -> None:
+        """Test rebac_delete delegates to sync manager via to_thread."""
+        mock_sync_manager.rebac_delete.return_value = True
+        with patch("nexus.rebac.async_manager.asyncio.to_thread", return_value=True) as mock_thread:
+            result = await async_manager.rebac_delete("tuple-123")
+            assert result is True
+            mock_thread.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_close_delegates(
+        self, async_manager: AsyncReBACManager, mock_sync_manager: MagicMock
+    ) -> None:
+        """Test close delegates to sync manager via to_thread."""
+        with patch("nexus.rebac.async_manager.asyncio.to_thread", return_value=None) as mock_thread:
+            await async_manager.close()
+            mock_thread.assert_called_once()

@@ -389,7 +389,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                     # P0-4: Grant zone-scoped admin capabilities to admin users
                     admin_capabilities = set()
                     if result.is_admin:
-                        from nexus.services.permissions.permissions_enhanced import AdminCapability
+                        from nexus.rebac.permissions_enhanced import AdminCapability
 
                         # Grant zone-scoped admin capabilities for full zone access
                         # ReBAC enforces zone isolation, so these capabilities are automatically
@@ -491,7 +491,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         from datetime import timedelta
 
         from nexus.server.auth.database_key import DatabaseAPIKeyAuth
-        from nexus.services.permissions.entity_registry import EntityRegistry
+        from nexus.rebac.entity_registry import EntityRegistry
 
         if not self.auth_provider or not hasattr(self.auth_provider, "session_factory"):
             raise RuntimeError("Database auth provider not configured")

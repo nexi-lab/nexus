@@ -1240,7 +1240,7 @@ def serve(
             from sqlalchemy.orm import sessionmaker
 
             from nexus.server.auth.database_key import DatabaseAPIKeyAuth
-            from nexus.services.permissions.entity_registry import EntityRegistry
+            from nexus.rebac.entity_registry import EntityRegistry
 
             engine = create_engine(db_url)
             Session = sessionmaker(bind=engine)
@@ -1302,7 +1302,7 @@ def serve(
                             raise
 
                     # Grant admin user ownership
-                    from nexus.services.permissions.rebac_manager_enhanced import (
+                    from nexus.rebac.manager import (
                         EnhancedReBACManager,
                     )
 

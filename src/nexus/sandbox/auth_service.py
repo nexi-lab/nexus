@@ -28,7 +28,7 @@ if TYPE_CHECKING:
     from nexus.core.agent_registry import AgentRegistry
     from nexus.sandbox.events import AgentEventLog
     from nexus.sandbox.sandbox_manager import SandboxManager
-    from nexus.services.permissions.namespace_manager import NamespaceManager
+    from nexus.rebac.namespace_manager import NamespaceManager
 
 logger = logging.getLogger(__name__)
 

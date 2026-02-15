@@ -31,7 +31,7 @@ from nexus.mcp.profiles import (
     revoke_tools_by_tuple_ids,
 )
 from nexus.mcp.server import create_mcp_server
-from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+from nexus.rebac.manager import EnhancedReBACManager
 from nexus.storage.models import Base
 
 logger = logging.getLogger(__name__)

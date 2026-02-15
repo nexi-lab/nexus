@@ -185,7 +185,7 @@ def _build_startup_script(port: int, data_dir: str) -> str:
         factory.create_auth_provider = _patched
 
         # Disable namespace cache for deterministic tests
-        import nexus.services.permissions.namespace_manager as ns_mod
+        import nexus.rebac.namespace_manager as ns_mod
         _OrigNS = ns_mod.NamespaceManager
         class _NoCacheNS(_OrigNS):
             def __init__(self, **kwargs):

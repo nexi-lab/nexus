@@ -45,7 +45,7 @@ def temp_dir() -> Generator[Path, None, None]:
 @pytest.fixture
 def mock_rebac() -> MagicMock:
     """Create a mock ReBAC manager."""
-    from nexus.services.permissions.rebac_manager_enhanced import WriteResult
+    from nexus.rebac.manager import WriteResult
 
     rebac = MagicMock()
     rebac.rebac_check = MagicMock(return_value=True)

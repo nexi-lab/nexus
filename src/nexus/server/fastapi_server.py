@@ -283,7 +283,7 @@ async def lifespan(_app: FastAPI) -> Any:
     # Initialize async ReBAC manager if database URL provided
     if _app.state.database_url:
         try:
-            from nexus.services.permissions.async_rebac_manager import (
+            from nexus.rebac.async_manager import (
                 AsyncReBACManager,
                 create_async_engine_from_url,
             )
@@ -295,7 +295,7 @@ async def lifespan(_app: FastAPI) -> Any:
             # Issue #940: Initialize AsyncNexusFS with permission enforcement
             try:
                 from nexus.core.async_nexus_fs import AsyncNexusFS
-                from nexus.services.permissions.async_permissions import AsyncPermissionEnforcer
+                from nexus.rebac.async_permissions import AsyncPermissionEnforcer
 
                 backend_root = os.getenv("NEXUS_BACKEND_ROOT", ".nexus-data/backend")
                 tenant_id = os.getenv("NEXUS_TENANT_ID", "default")
@@ -311,7 +311,7 @@ async def lifespan(_app: FastAPI) -> Any:
                 if enforce_permissions and hasattr(_app.state, "nexus_fs"):
                     sync_rebac = getattr(_app.state.nexus_fs, "_rebac_manager", None)
                     if sync_rebac:
-                        from nexus.services.permissions.namespace_factory import (
+                        from nexus.rebac.namespace_factory import (
                             create_namespace_manager,
                         )
 
@@ -626,7 +626,7 @@ async def lifespan(_app: FastAPI) -> Any:
                 # Start DirectoryGrantExpander worker for large directory grants (Leopard-style)
                 # This processes pending directory grants asynchronously in background
                 try:
-                    from nexus.services.permissions.tiger_cache import DirectoryGrantExpander
+                    from nexus.rebac.tiger_cache import DirectoryGrantExpander
 
                     expander = DirectoryGrantExpander(
                         engine=_app.state.nexus_fs._rebac_manager.engine,
@@ -891,7 +891,7 @@ async def lifespan(_app: FastAPI) -> Any:
                 sync_rebac = getattr(_app.state.nexus_fs, "_rebac_manager", None)
                 if sync_rebac:
                     try:
-                        from nexus.services.permissions.namespace_factory import (
+                        from nexus.rebac.namespace_factory import (
                             create_namespace_manager,
                         )
 
@@ -1605,7 +1605,7 @@ def _register_routes(app: FastAPI) -> None:
         if has_rebac:
             cb = getattr(_fastapi_app.state, "rebac_circuit_breaker", None)
             if cb:
-                from nexus.services.permissions.circuit_breaker import CircuitState
+                from nexus.rebac.circuit_breaker import CircuitState
 
                 cb_state = cb.state
                 if cb_state == CircuitState.CLOSED:
@@ -3327,7 +3327,7 @@ def _handle_admin_create_key(params: Any, context: Any) -> dict[str, Any]:
     from datetime import timedelta
 
     from nexus.server.auth.database_key import DatabaseAPIKeyAuth
-    from nexus.services.permissions.entity_registry import EntityRegistry
+    from nexus.rebac.entity_registry import EntityRegistry
 
     _require_admin(context)
 

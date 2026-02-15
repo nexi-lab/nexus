@@ -13,7 +13,7 @@ import pytest
 from sqlalchemy.exc import InterfaceError, OperationalError
 
 from nexus.core.exceptions import CircuitOpenError
-from nexus.services.permissions.circuit_breaker import (
+from nexus.rebac.circuit_breaker import (
     AsyncCircuitBreaker,
     CircuitBreakerConfig,
     CircuitState,

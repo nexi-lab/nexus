@@ -124,7 +124,7 @@ def __getattr__(name: str) -> Any:
 # Import lazily to avoid circular imports and missing dependencies
 def get_async_rebac_manager() -> type:
     """Get AsyncReBACManager class (lazy import)."""
-    from nexus.services.permissions.async_rebac_manager import AsyncReBACManager
+    from nexus.rebac.async_manager import AsyncReBACManager
 
     return AsyncReBACManager
 

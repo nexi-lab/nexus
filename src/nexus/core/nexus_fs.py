@@ -24,12 +24,12 @@ if TYPE_CHECKING:
     from nexus.core.permissions import PermissionEnforcer
     from nexus.core.workspace_manager import WorkspaceManager
     from nexus.core.workspace_registry import WorkspaceRegistry
-    from nexus.services.permissions.deferred_permission_buffer import DeferredPermissionBuffer
-    from nexus.services.permissions.dir_visibility_cache import DirectoryVisibilityCache
-    from nexus.services.permissions.entity_registry import EntityRegistry
-    from nexus.services.permissions.hierarchy_manager import HierarchyManager
-    from nexus.services.permissions.permissions_enhanced import AuditStore
-    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.deferred_permission_buffer import DeferredPermissionBuffer
+    from nexus.rebac.dir_visibility_cache import DirectoryVisibilityCache
+    from nexus.rebac.entity_registry import EntityRegistry
+    from nexus.rebac.hierarchy_manager import HierarchyManager
+    from nexus.rebac.permissions_enhanced import AuditStore
+    from nexus.rebac.manager import EnhancedReBACManager
 from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol
 from nexus.core.cache_store import CacheStoreABC, NullCacheStore
 from nexus.core.export_import import (
@@ -961,7 +961,7 @@ class NexusFS(  # type: ignore[misc]
             >>> results = nx.memory.query(memory_type="preference")
         """
         if self._memory_api is None:
-            from nexus.services.permissions.entity_registry import EntityRegistry
+            from nexus.rebac.entity_registry import EntityRegistry
 
             # Get or create entity registry (v0.5.0: Pass SessionFactory instead of Session)
             if self._entity_registry is None:
@@ -1109,7 +1109,7 @@ class NexusFS(  # type: ignore[misc]
             Memory API instance
         """
         from nexus.core.memory_api import Memory
-        from nexus.services.permissions.entity_registry import EntityRegistry
+        from nexus.rebac.entity_registry import EntityRegistry
 
         # Get or create entity registry
         if self._entity_registry is None:
@@ -1313,7 +1313,7 @@ class NexusFS(  # type: ignore[misc]
         # P0-4: Zone boundary security check (Issue #819)
         # Even admins need zone boundary checks (unless they have MANAGE_ZONES capability)
         if ctx.is_admin and self._permission_enforcer:
-            from nexus.services.permissions.permissions_enhanced import AdminCapability
+            from nexus.rebac.permissions_enhanced import AdminCapability
 
             # Extract zone from path (format: /zone/{zone_id}/...)
             path_zone_id = None
@@ -4013,7 +4013,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Ensure EntityRegistry is initialized
         if not self._entity_registry:
-            from nexus.services.permissions.entity_registry import EntityRegistry
+            from nexus.rebac.entity_registry import EntityRegistry
 
             self._entity_registry = EntityRegistry(self.SessionLocal)
 
@@ -4305,7 +4305,7 @@ class NexusFS(  # type: ignore[misc]
             ...     print(f"{agent['agent_id']}: {agent['name']}")
         """
         if not self._entity_registry:
-            from nexus.services.permissions.entity_registry import EntityRegistry
+            from nexus.rebac.entity_registry import EntityRegistry
 
             self._entity_registry = EntityRegistry(self.SessionLocal)
 
@@ -4408,7 +4408,7 @@ class NexusFS(  # type: ignore[misc]
             ...         print(f"Has API key: {agent['api_key'][:10]}...")
         """
         if not self._entity_registry:
-            from nexus.services.permissions.entity_registry import EntityRegistry
+            from nexus.rebac.entity_registry import EntityRegistry
 
             self._entity_registry = EntityRegistry(self.SessionLocal)
 
@@ -4596,7 +4596,7 @@ class NexusFS(  # type: ignore[misc]
             ...     print("Agent deleted")
         """
         if not self._entity_registry:
-            from nexus.services.permissions.entity_registry import EntityRegistry
+            from nexus.rebac.entity_registry import EntityRegistry
 
             self._entity_registry = EntityRegistry(self.SessionLocal)
 
@@ -4950,7 +4950,7 @@ class NexusFS(  # type: ignore[misc]
 
         # Initialize entity registry
         if not self._entity_registry:
-            from nexus.services.permissions.entity_registry import EntityRegistry
+            from nexus.rebac.entity_registry import EntityRegistry
 
             self._entity_registry = EntityRegistry(self.SessionLocal)
 
@@ -7493,7 +7493,7 @@ class NexusFS(  # type: ignore[misc]
         Returns:
             True if user has READ on any descendant, False otherwise
         """
-        from nexus.services.permissions.utils.zone import normalize_zone_id
+        from nexus.rebac.utils.zone import normalize_zone_id
 
         # Normalize path prefix for matching
         prefix = path if path.endswith("/") else path + "/"
@@ -8849,7 +8849,7 @@ class NexusFS(  # type: ignore[misc]
                 "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
-        from nexus.services.permissions.rebac_iterator_cache import CursorExpiredError
+        from nexus.rebac.rebac_iterator_cache import CursorExpiredError
 
         # Map relation back to permission level
         relation_to_level = {
@@ -8978,7 +8978,7 @@ class NexusFS(  # type: ignore[misc]
                 "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
-        from nexus.services.permissions.rebac_iterator_cache import CursorExpiredError
+        from nexus.rebac.rebac_iterator_cache import CursorExpiredError
 
         # Map relation back to permission level
         relation_to_level = {
@@ -9426,7 +9426,7 @@ class NexusFS(  # type: ignore[misc]
         """
         from sqlalchemy.exc import OperationalError
 
-        from nexus.services.permissions.utils.zone import normalize_zone_id
+        from nexus.rebac.utils.zone import normalize_zone_id
 
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
@@ -9543,7 +9543,7 @@ class NexusFS(  # type: ignore[misc]
         """
         from sqlalchemy.exc import OperationalError
 
-        from nexus.services.permissions.utils.zone import normalize_zone_id
+        from nexus.rebac.utils.zone import normalize_zone_id
 
         if not hasattr(self, "_rebac_manager"):
             return 0

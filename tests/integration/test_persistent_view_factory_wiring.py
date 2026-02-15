@@ -18,9 +18,9 @@ from __future__ import annotations
 import pytest
 
 from nexus.cache.persistent_view_postgres import PostgresPersistentViewStore
-from nexus.services.permissions.namespace_factory import create_namespace_manager
-from nexus.services.permissions.namespace_manager import MountEntry
-from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+from nexus.rebac.namespace_factory import create_namespace_manager
+from nexus.rebac.namespace_manager import MountEntry
+from nexus.rebac.manager import EnhancedReBACManager
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
 # ---------------------------------------------------------------------------

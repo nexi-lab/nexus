@@ -615,8 +615,8 @@ class TestNamespaceE2E:
 
     def test_namespace_manager_with_postgres(self, pg_engine):
         """NamespaceManager works with PostgreSQL-backed ReBAC."""
-        from nexus.services.permissions.namespace_manager import NamespaceManager
-        from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+        from nexus.rebac.namespace_manager import NamespaceManager
+        from nexus.rebac.manager import EnhancedReBACManager
 
         rebac = EnhancedReBACManager(engine=pg_engine, cache_ttl_seconds=5, max_depth=10)
         tuple_ids: list[str] = []

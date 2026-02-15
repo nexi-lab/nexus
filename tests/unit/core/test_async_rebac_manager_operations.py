@@ -30,7 +30,7 @@ import pytest_asyncio
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
-from nexus.services.permissions.async_rebac_manager import AsyncReBACManager
+from nexus.rebac.async_manager import AsyncReBACManager
 
 
 @pytest_asyncio.fixture

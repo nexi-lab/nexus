@@ -108,7 +108,7 @@ if TYPE_CHECKING:
     from nexus.core._metadata_generated import FileMetadataProtocol
     from nexus.core.permissions import OperationContext, PermissionEnforcer
     from nexus.core.router import PathRouter
-    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.manager import EnhancedReBACManager
 
 
 class SearchService(SemanticSearchMixin):
@@ -1283,7 +1283,7 @@ class SearchService(SemanticSearchMixin):
             return []
 
         from nexus.core.memory_router import MemoryViewRouter
-        from nexus.services.permissions.entity_registry import EntityRegistry
+        from nexus.rebac.entity_registry import EntityRegistry
 
         parts = [p for p in path.split("/") if p]
         session = self._gw_session_factory()

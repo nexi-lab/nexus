@@ -16,7 +16,7 @@ from nexus import LocalBackend, NexusFS
 from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.server.auth.user_helpers import add_user_to_zone
-from nexus.services.permissions.permissions_enhanced import AdminCapability
+from nexus.rebac.permissions_enhanced import AdminCapability
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 

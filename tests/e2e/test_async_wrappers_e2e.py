@@ -30,7 +30,7 @@ from nexus.core.router import PathNotMountedError, PathRouter
 from nexus.plugins.async_hooks import AsyncHookEngine
 from nexus.plugins.hooks import PluginHooks
 from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
-from nexus.services.permissions.async_namespace_manager import AsyncNamespaceManager
+from nexus.rebac.async_namespace_manager import AsyncNamespaceManager
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from nexus.services.protocols.hook_engine import (
     HookContext,
@@ -389,7 +389,7 @@ class TestServerWiring:
         assert AsyncAgentRegistry is not None
 
     def test_async_namespace_manager_import(self) -> None:
-        from nexus.services.permissions.async_namespace_manager import AsyncNamespaceManager
+        from nexus.rebac.async_namespace_manager import AsyncNamespaceManager
 
         assert AsyncNamespaceManager is not None
 
@@ -487,7 +487,7 @@ class TestServerLifespanWiring:
         from nexus.plugins.async_hooks import AsyncHookEngine
         from nexus.plugins.hooks import PluginHooks
         from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
-        from nexus.services.permissions.async_namespace_manager import AsyncNamespaceManager
+        from nexus.rebac.async_namespace_manager import AsyncNamespaceManager
         from nexus.services.protocols.hook_engine import HookEngineProtocol
         from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
         from nexus.services.routing.async_router import AsyncVFSRouter

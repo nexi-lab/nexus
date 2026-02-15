@@ -133,12 +133,12 @@ from nexus.core.permissions import OperationContext, PermissionEnforcer
 from nexus.core.rebac import WILDCARD_SUBJECT, Entity, ReBACTuple
 from nexus.core.router import NamespaceConfig
 from nexus.remote import RemoteNexusFS
-from nexus.services.permissions.rebac_manager_enhanced import (
+from nexus.rebac.manager import (
     CheckResult,
     ConsistencyLevel,
     GraphLimitExceeded,
 )
-from nexus.services.permissions.rebac_manager_enhanced import (
+from nexus.rebac.manager import (
     EnhancedReBACManager as ReBACManager,
 )
 from nexus.skills import (

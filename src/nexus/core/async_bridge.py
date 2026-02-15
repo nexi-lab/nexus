@@ -30,7 +30,7 @@ from concurrent.futures import Future
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.services.permissions.async_rebac_manager import AsyncReBACManager
+    from nexus.rebac.async_manager import AsyncReBACManager
 
 logger = logging.getLogger(__name__)
 
@@ -144,7 +144,7 @@ class AsyncReBACBridge:
 
     async def _init_manager(self) -> None:
         """Initialize the async ReBAC manager."""
-        from nexus.services.permissions.async_rebac_manager import (
+        from nexus.rebac.async_manager import (
             AsyncReBACManager,
             create_async_engine_from_url,
         )

@@ -1,0 +1,16 @@
+{
+    "name": "trigram-test",
+    "version": "1.0.0",
+    "description": "Test configuration for trigram index",
+    "settings": {
+        "max_file_size": 1073741824,
+        "parallel_threshold": 10,
+        "binary_detection": true
+    },
+    "patterns": [
+        "*.py",
+        "*.rs",
+        "*.js",
+        "*.txt"
+    ]
+}

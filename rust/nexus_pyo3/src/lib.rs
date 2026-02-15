@@ -10,6 +10,7 @@ mod lock;
 mod rebac;
 mod search;
 mod simd;
+mod trigram;
 
 use pyo3::prelude::*;
 
@@ -58,6 +59,11 @@ fn nexus_fast(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(hash::hash_content_py, m)?)?;
     m.add_function(wrap_pyfunction!(hash::hash_content_smart_py, m)?)?;
     m.add_function(wrap_pyfunction!(hash::hash_bytes, m)?)?;
+    // Trigram Index
+    m.add_function(wrap_pyfunction!(trigram::build_trigram_index, m)?)?;
+    m.add_function(wrap_pyfunction!(trigram::trigram_grep, m)?)?;
+    m.add_function(wrap_pyfunction!(trigram::trigram_index_stats, m)?)?;
+    m.add_function(wrap_pyfunction!(trigram::invalidate_trigram_cache, m)?)?;
     // Classes
     m.add_class::<bloom::BloomFilter>()?;
     m.add_class::<cache::L1MetadataCache>()?;

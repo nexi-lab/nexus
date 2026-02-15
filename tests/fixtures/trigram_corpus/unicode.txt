@@ -1,0 +1,8 @@
+Unicode Test Content
+日本語テスト
+中文测试内容
+한국어 테스트
+Ünïcödé with diacritics
+emoji test: no emoji here, just text
+Кириллица и другие символы
+العربية اختبار

@@ -674,3 +674,127 @@ class TestHybridSearchFusionBenchmarks:
 
         result = benchmark(fuse)
         assert len(result) == 100
+
+
+# =============================================================================
+# TRIGRAM INDEX BENCHMARKS (Issue #954)
+# =============================================================================
+
+
+@pytest.mark.benchmark_hash
+class TestTrigramBenchmarks:
+    """Benchmarks for trigram index build and search operations (Issue #954)."""
+
+    @pytest.fixture(autouse=True)
+    def setup_trigram_files(self, tmp_path):
+        """Create temporary files for trigram benchmarks."""
+        self.tmp_path = tmp_path
+
+        # Create 1K files with varying content
+        self.file_paths_1k = []
+        for i in range(1000):
+            content = generate_log_content(100)
+            file_path = tmp_path / f"file_{i:04d}.log"
+            file_path.write_bytes(content)
+            self.file_paths_1k.append(str(file_path))
+
+        # Create 100 code files
+        self.code_files = []
+        for i in range(100):
+            content = generate_code_content(200)
+            file_path = tmp_path / f"code_{i:04d}.py"
+            file_path.write_bytes(content)
+            self.code_files.append(str(file_path))
+
+    def test_trigram_build_1k_files(self, benchmark):
+        """Benchmark building trigram index from 1K files."""
+        from nexus.core import trigram_fast
+
+        if not trigram_fast.is_available():
+            pytest.skip("Trigram index not available")
+
+        idx_path = str(self.tmp_path / "bench_1k.trgm")
+
+        def build():
+            trigram_fast.build_index(self.file_paths_1k, idx_path)
+
+        benchmark(build)
+
+        stats = trigram_fast.get_stats(idx_path)
+        assert stats is not None
+        print(
+            f"\n[INFO] 1K files index: {stats['file_count']} files, "
+            f"{stats['trigram_count']} trigrams, "
+            f"{stats['index_size_bytes'] / 1024:.1f} KB"
+        )
+
+    def test_trigram_search_literal(self, benchmark):
+        """Benchmark trigram search for literal pattern."""
+        from nexus.core import trigram_fast
+
+        if not trigram_fast.is_available():
+            pytest.skip("Trigram index not available")
+
+        idx_path = str(self.tmp_path / "bench_search.trgm")
+        trigram_fast.build_index(self.file_paths_1k, idx_path)
+
+        def search():
+            return trigram_fast.grep(idx_path, "ERROR", max_results=1000)
+
+        result = benchmark(search)
+        assert result is not None
+        print(f"\n[INFO] Trigram literal search: {len(result)} matches")
+
+    def test_trigram_search_regex(self, benchmark):
+        """Benchmark trigram search for regex pattern."""
+        from nexus.core import trigram_fast
+
+        if not trigram_fast.is_available():
+            pytest.skip("Trigram index not available")
+
+        idx_path = str(self.tmp_path / "bench_regex.trgm")
+        trigram_fast.build_index(self.code_files, idx_path)
+
+        def search():
+            return trigram_fast.grep(idx_path, r"def\s+\w+", max_results=1000)
+
+        result = benchmark(search)
+        assert result is not None
+        print(f"\n[INFO] Trigram regex search: {len(result)} matches")
+
+    def test_trigram_search_no_match(self, benchmark):
+        """Benchmark trigram search for non-matching pattern."""
+        from nexus.core import trigram_fast
+
+        if not trigram_fast.is_available():
+            pytest.skip("Trigram index not available")
+
+        idx_path = str(self.tmp_path / "bench_nomatch.trgm")
+        trigram_fast.build_index(self.file_paths_1k, idx_path)
+
+        def search():
+            return trigram_fast.grep(
+                idx_path, "xyzzy_nonexistent_12345", max_results=1000
+            )
+
+        result = benchmark(search)
+        assert result is not None
+        assert len(result) == 0
+        print("\n[INFO] Trigram no-match: 0 results (fast rejection)")
+
+    def test_trigram_vs_mmap_grep(self, benchmark):
+        """Compare trigram index search vs mmap grep."""
+        from nexus.core import trigram_fast
+
+        if not trigram_fast.is_available():
+            pytest.skip("Trigram index not available")
+
+        idx_path = str(self.tmp_path / "bench_compare.trgm")
+        trigram_fast.build_index(self.file_paths_1k, idx_path)
+
+        def search_trigram():
+            return trigram_fast.grep(idx_path, "ERROR", max_results=1000)
+
+        result = benchmark(search_trigram)
+        assert result is not None
+        print(f"\n[INFO] Trigram search: {len(result)} matches")

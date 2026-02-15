@@ -166,7 +166,7 @@ class TestRevisionCacheIntegration:
     def test_delete_increments_revision(self, manager, test_zone):
         """Verify delete operations increment revision."""
         # First write a tuple
-        tuple_id = manager.rebac_write(
+        result = manager.rebac_write(
             subject=("agent", "alice"),
             relation="viewer",
             object=("file", "/doc.txt"),
@@ -176,7 +176,7 @@ class TestRevisionCacheIntegration:
         initial = manager._get_zone_revision(test_zone)
 
         # Delete it
-        manager.rebac_delete(tuple_id)
+        manager.rebac_delete(result.tuple_id)
 
         # Revision should be incremented
         assert manager._get_zone_revision(test_zone) == initial + 1

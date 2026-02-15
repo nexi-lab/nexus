@@ -9465,13 +9465,13 @@ class NexusFS(  # type: ignore[misc]
                     continue
 
                 # Create TRAVERSE permission
-                tuple_id = self._require_rebac.rebac_write(
+                write_result = self._require_rebac.rebac_write(
                     subject=subject,
                     relation="traverser-of",
                     object=("file", dir_path),
                     zone_id=effective_zone_id,
                 )
-                tuple_ids.append(tuple_id)
+                tuple_ids.append(write_result.tuple_id)
             except (RuntimeError, ValueError, OperationalError) as e:
                 logger.warning(f"Failed to grant TRAVERSE on {dir_path}: {e}")
 

@@ -21,7 +21,10 @@ References:
 
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from nexus.rebac.types import WriteResult
 
 
 @runtime_checkable
@@ -55,7 +58,7 @@ class PermissionProtocol(Protocol):
         expires_at: Any | None = None,
         conditions: dict[str, Any] | None = None,
         zone_id: str | None = None,
-    ) -> Any: ...
+    ) -> WriteResult: ...
 
     def rebac_delete(self, tuple_id: str) -> bool: ...
 

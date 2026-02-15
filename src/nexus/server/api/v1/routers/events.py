@@ -1,9 +1,10 @@
-"""Events API router (Issue #1116, #1117, #1288).
+"""Events API router (Issue #1116, #1117, #1241, #1288).
 
-Provides real-time event streaming and long-polling watch endpoints:
+Provides real-time event streaming, long-polling watch, and event log queries:
 - WS  /ws/events/{subscription_id}  -- real-time events via WebSocket
 - WS  /ws/events                    -- all zone events (no subscription filter)
 - GET /api/watch                    -- long-polling watch for file changes
+- GET /api/v1/events               -- query event log (transactional outbox, #1241)
 
 WebSocket endpoints access services via ``websocket.app.state`` directly
 because FastAPI ``Depends()`` is not supported on WebSocket routes.
@@ -15,9 +16,18 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from fastapi import status as http_status
 
 from nexus.core.exceptions import NexusFileNotFoundError, NexusPermissionError
@@ -163,3 +173,82 @@ async def watch_for_changes(
     except Exception as e:
         logger.error("Watch error for %s: %s", path, e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Watch error: {e}") from e
+
+
+# =============================================================================
+# Event log query endpoint (Issue #1241 — Transactional Outbox)
+# =============================================================================
+
+
+@router.get("/api/v1/events", tags=["events"])
+async def list_events(
+    request: Request,
+    zone_id: str | None = Query(None, description="Filter by zone ID"),
+    since: datetime | None = Query(None, description="Events after this time (ISO-8601)"),
+    until: datetime | None = Query(None, description="Events before this time (ISO-8601)"),
+    path_prefix: str | None = Query(None, description="Filter by path prefix (wildcard *)"),
+    agent_id: str | None = Query(None, description="Filter by agent ID"),
+    operation_type: str | None = Query(None, description="Filter by operation type"),
+    limit: int = Query(50, ge=1, le=1000, description="Maximum results"),
+    cursor: str | None = Query(None, description="Cursor from previous response"),
+    _auth_result: dict[str, Any] | None = Depends(get_auth_result),
+) -> dict[str, Any]:
+    """Query the operation log / event history (Issue #1241).
+
+    Thin adapter over ``OperationLogger.list_operations_cursor()`` with
+    cursor-based pagination, zone/agent/path/time filters.
+
+    Events are written transactionally alongside VFS operations and
+    delivered asynchronously by the ``EventDeliveryWorker``.
+    """
+    from nexus.storage.operation_logger import OperationLogger
+
+    # Get session factory from NexusFS (canonical pattern — see fastapi_server.py)
+    nexus_fs = getattr(request.app.state, "nexus_fs", None)
+    session_factory = getattr(nexus_fs, "SessionLocal", None) if nexus_fs else None
+    if session_factory is None or not callable(session_factory):
+        raise HTTPException(status_code=503, detail="Database not configured")
+
+    # Default zone from auth
+    effective_zone = zone_id
+    if effective_zone is None and _auth_result:
+        effective_zone = _auth_result.get("zone_id")
+
+    try:
+        with session_factory() as session:
+            op_logger = OperationLogger(session=session)
+            operations, next_cursor = op_logger.list_operations_cursor(
+                zone_id=effective_zone,
+                agent_id=agent_id,
+                operation_type=operation_type,
+                path_pattern=path_prefix,
+                since=since,
+                until=until,
+                limit=limit,
+                cursor=cursor,
+            )
+
+            events = [
+                {
+                    "event_id": op.operation_id,
+                    "type": op.operation_type,
+                    "path": op.path,
+                    "new_path": op.new_path,
+                    "zone_id": op.zone_id,
+                    "agent_id": op.agent_id,
+                    "status": op.status,
+                    "delivered": op.delivered,
+                    "timestamp": op.created_at.isoformat() if op.created_at else None,
+                }
+                for op in operations
+            ]
+
+        return {
+            "events": events,
+            "next_cursor": next_cursor,
+            "has_more": next_cursor is not None,
+        }
+
+    except Exception as e:
+        logger.error("Event log query error: %s", e, exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to query events") from e

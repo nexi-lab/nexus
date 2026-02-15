@@ -5,7 +5,7 @@ to RecordStoreABC's session factory.  All SQL access goes through
 SQLAlchemy ORM (``IPCMessageModel``) — no raw asyncpg or SQL strings.
 
 Architecture layer: **Service** (consumes RecordStoreABC, not a pillar driver).
-Same pattern as ``PGEventLog`` in ``services/event_log/pg_backend.py``.
+Same pattern as the former ``PGEventLog`` (removed in Issue #1241).
 
 Issue: #1243, #1469
 """

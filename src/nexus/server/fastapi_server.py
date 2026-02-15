@@ -1149,6 +1149,16 @@ async def lifespan(_app: FastAPI) -> Any:
         from nexus.server.subscriptions import set_subscription_manager
 
         set_subscription_manager(None)
+    # Stop WriteBuffer to drain pending events before closing kernel (Issue #1370)
+    if _app.state.nexus_fs:
+        _wo = getattr(_app.state.nexus_fs, "_write_observer", None)
+        if _wo is not None and hasattr(_wo, "stop"):
+            try:
+                _wo.stop()
+                logger.info("WriteBuffer stopped")
+            except Exception as e:
+                logger.warning(f"Error stopping WriteBuffer: {e}")
+
     if _app.state.nexus_fs and hasattr(_app.state.nexus_fs, "close"):
         _app.state.nexus_fs.close()
 
@@ -1424,6 +1434,18 @@ def create_app(
             REGISTRY.register(QueryObserverCollector(obs_sub.observer))
     except Exception:
         pass
+
+    # Register WriteBuffer → Prometheus collector bridge (Issue #1370)
+    try:
+        from prometheus_client import REGISTRY
+
+        from nexus.server.wb_metrics_collector import WriteBufferCollector
+
+        _wo = nexus_fs._write_observer
+        if _wo is not None and hasattr(_wo, "metrics"):
+            REGISTRY.register(WriteBufferCollector(_wo))
+    except Exception as e:
+        logger.debug("WriteBuffer metrics collector not registered: %s", e)
 
     # Instrument FastAPI with OpenTelemetry (Issue #764)
     try:

@@ -105,6 +105,11 @@ class WriteBuffer:
         self._total_enqueued = 0
         self._total_flushed = 0
         self._total_failed = 0
+        self._total_retries = 0
+        self._flush_count = 0
+        self._flush_duration_sum = 0.0
+        self._flush_batch_size_sum = 0
+        self._enqueued_by_type: dict[str, int] = {"write": 0, "delete": 0, "rename": 0}
 
     def start(self) -> None:
         """Start the background flush thread."""
@@ -153,14 +158,20 @@ class WriteBuffer:
             return len(self._buffer)
 
     @property
-    def metrics(self) -> dict[str, int]:
-        """Return buffer metrics."""
-        return {
-            "total_enqueued": self._total_enqueued,
-            "total_flushed": self._total_flushed,
-            "total_failed": self._total_failed,
-            "pending": self.pending_count,
-        }
+    def metrics(self) -> dict[str, int | float | dict[str, int]]:
+        """Return a consistent snapshot of buffer metrics."""
+        with self._lock:
+            return {
+                "total_enqueued": self._total_enqueued,
+                "total_flushed": self._total_flushed,
+                "total_failed": self._total_failed,
+                "total_retries": self._total_retries,
+                "pending": len(self._buffer),
+                "flush_count": self._flush_count,
+                "flush_duration_sum": self._flush_duration_sum,
+                "flush_batch_size_sum": self._flush_batch_size_sum,
+                "enqueued_by_type": dict(self._enqueued_by_type),
+            }
 
     # -- Enqueue methods (called from hot path) ----------------------------
 
@@ -238,6 +249,9 @@ class WriteBuffer:
         with self._lock:
             self._buffer.append(event)
             self._total_enqueued += 1
+            self._enqueued_by_type[event.event_type.value] = (
+                self._enqueued_by_type.get(event.event_type.value, 0) + 1
+            )
             buffer_size = len(self._buffer)
 
         if buffer_size >= self._max_buffer_size:
@@ -265,6 +279,7 @@ class WriteBuffer:
         from nexus.storage.operation_logger import OperationLogger
         from nexus.storage.version_recorder import VersionRecorder
 
+        t0 = time.monotonic()
         try:
             with self._session_factory() as session:
                 op_logger = OperationLogger(session)
@@ -310,11 +325,18 @@ class WriteBuffer:
                         )
 
                 session.commit()
-                self._total_flushed += len(events)
-                logger.debug("WriteBuffer flushed %d events", len(events))
+                duration = time.monotonic() - t0
+                with self._lock:
+                    self._total_flushed += len(events)
+                    self._flush_count += 1
+                    self._flush_duration_sum += duration
+                    self._flush_batch_size_sum += len(events)
+                logger.debug("WriteBuffer flushed %d events in %.3fs", len(events), duration)
 
         except Exception as e:
             if attempt < self._max_retries:
+                with self._lock:
+                    self._total_retries += 1
                 wait = 0.1 * (2**attempt)  # 100ms, 200ms, 400ms
                 logger.warning(
                     "WriteBuffer flush failed (attempt %d/%d, retry in %.1fs): %s",
@@ -326,7 +348,8 @@ class WriteBuffer:
                 time.sleep(wait)
                 self._process_events(events, attempt=attempt + 1)
             else:
-                self._total_failed += len(events)
+                with self._lock:
+                    self._total_failed += len(events)
                 logger.error(
                     "WriteBuffer flush FAILED after %d retries, dropping %d events: %s",
                     self._max_retries,

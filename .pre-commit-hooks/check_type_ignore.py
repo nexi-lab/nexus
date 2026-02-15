@@ -6,9 +6,9 @@ This ensures we don't add new type suppressions while working to eliminate
 the existing 531 type: ignore comments during Phase 3.
 
 Strategy:
-- Block ALL new type: ignore comments in modified files
+- Block only TRULY NEW type: ignore comments (not in HEAD version)
 - Allow existing suppressions to remain (will be fixed in Phase 3)
-- Track baseline count to ensure it never increases
+- Compare against HEAD to avoid false positives from large diffs
 """
 
 import re
@@ -19,6 +19,26 @@ from pathlib import Path
 # Pattern to match type: ignore comments (not in strings)
 # Only matches when it appears as an actual comment, not in string literals
 TYPE_IGNORE_PATTERN = re.compile(r"#\s*type:\s*ignore(?!\s*comments)")
+
+
+def _get_head_type_ignores(file_path: Path) -> set[str]:
+    """Get all type: ignore lines from the HEAD version of a file.
+
+    Returns a set of stripped line contents (for content-based comparison).
+    """
+    try:
+        result = subprocess.run(
+            ["git", "show", f"HEAD:{file_path}"],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return {
+            line.strip() for line in result.stdout.split("\n") if TYPE_IGNORE_PATTERN.search(line)
+        }
+    except (subprocess.CalledProcessError, Exception):
+        # File is new or git command failed — no pre-existing ignores
+        return set()
 
 
 def get_git_diff_added_lines(file_path: Path) -> list[tuple[int, str]]:
@@ -73,6 +93,9 @@ def check_file_for_new_type_ignores(file_path: Path) -> list[tuple[int, str]]:
     """
     Check if file has new type: ignore comments in added lines.
 
+    Compares against HEAD to distinguish truly new type: ignore comments
+    from pre-existing ones that appear as "added" due to large diffs.
+
     Lines with '# type: ignore' can be allowed by adding '# allowed' at the end:
     Example: token_manager = self._get_token_manager()  # type: ignore[attr-defined]  # allowed
 
@@ -80,14 +103,20 @@ def check_file_for_new_type_ignores(file_path: Path) -> list[tuple[int, str]]:
         List of (line_number, line_content) tuples for violations
     """
     added_lines = get_git_diff_added_lines(file_path)
+    head_ignores = _get_head_type_ignores(file_path)
     violations = []
 
     for line_num, line_content in added_lines:
+        # Skip lines without type: ignore
+        if not TYPE_IGNORE_PATTERN.search(line_content):
+            continue
         # Allow if line ends with '# allowed' marker
-        if TYPE_IGNORE_PATTERN.search(line_content) and not re.search(
-            r"#\s*allowed\s*$", line_content, re.IGNORECASE
-        ):
-            violations.append((line_num, line_content.strip()))
+        if re.search(r"#\s*allowed\s*$", line_content, re.IGNORECASE):
+            continue
+        # Allow if this exact line already existed at HEAD (pre-existing)
+        if line_content.strip() in head_ignores:
+            continue
+        violations.append((line_num, line_content.strip()))
 
     return violations
 

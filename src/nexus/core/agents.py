@@ -15,11 +15,9 @@ See: docs/design/AGENT_IDENTITY_AND_SESSIONS.md
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from sqlalchemy.orm import Session
-
     from nexus.services.permissions.entity_registry import EntityRegistry
 
 
@@ -93,62 +91,6 @@ def register_agent(
         "metadata": metadata or {},
         "created_at": datetime.now(UTC).isoformat(),
     }
-
-
-def create_agent_with_api_key(
-    session: Session,
-    user_id: str,
-    agent_id: str,
-    name: str,
-    expires_at: datetime | None = None,
-    entity_registry: EntityRegistry | None = None,
-    **kwargs: Any,
-) -> tuple[dict, str]:
-    """Convenience: Register agent + create API key.
-
-    ONLY use if you want agent to authenticate independently.
-    Most agents should use register_agent() and user's auth.
-
-    Args:
-        session: Database session
-        user_id: Owner
-        agent_id: Agent identifier
-        name: Human-readable name
-        expires_at: Optional TTL for API key (None = permanent)
-        entity_registry: Registry for relationships
-        **kwargs: Additional args for register_agent()
-
-    Returns:
-        (agent_info, raw_api_key)
-
-    Examples:
-        >>> # Create agent with temporary API key (1 hour)
-        >>> agent, key = create_agent_with_api_key(
-        ...     session,
-        ...     user_id="alice",
-        ...     agent_id="agent_task",
-        ...     name="Task Agent",
-        ...     expires_at=datetime.now(UTC) + timedelta(hours=1)
-        ... )
-        >>> # Agent authenticates with its own key
-        >>> # Authorization: Bearer <agent_key>
-    """
-    # 1. Register agent
-    agent = register_agent(user_id, agent_id, name, entity_registry=entity_registry, **kwargs)
-
-    # 2. Create API key (provider-specific)
-    from nexus.server.auth.database_key import DatabaseAPIKeyAuth
-
-    key_id, raw_key = DatabaseAPIKeyAuth.create_key(
-        session,
-        user_id=user_id,
-        name=name,
-        subject_type="agent",
-        subject_id=agent_id,
-        expires_at=expires_at,
-    )
-
-    return agent, raw_key
 
 
 def unregister_agent(agent_id: str, entity_registry: EntityRegistry | None = None) -> bool:

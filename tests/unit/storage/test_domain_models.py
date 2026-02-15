@@ -230,16 +230,16 @@ class TestOAuthCredentialModel:
         )
         assert cred.is_valid() is False
 
-    def test_validate_invalid_provider(self) -> None:
+    def test_validate_unknown_provider_accepted(self) -> None:
+        """Provider name validation moved to OAuthProviderFactory (Issue #997)."""
         from nexus.storage.models.auth import OAuthCredentialModel
 
         cred = OAuthCredentialModel(
-            provider="invalid",
+            provider="unknown_provider",
             user_email="a@b.com",
             encrypted_access_token="enc",
         )
-        with pytest.raises(Exception, match="provider must be one of"):
-            cred.validate()
+        cred.validate()  # should not raise — provider validation is at service layer
 
     def test_validate_invalid_scopes(self) -> None:
         from nexus.storage.models.auth import OAuthCredentialModel

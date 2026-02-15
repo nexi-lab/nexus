@@ -40,6 +40,9 @@ def get_rpc_exposed_methods(cls):
 def get_remote_methods(cls):
     """Get all public methods from RemoteNexusFS.
 
+    Includes both explicitly defined methods and methods available
+    via __getattr__ dynamic dispatch (RPCProxyBase pattern, Issue #1289).
+
     Returns:
         dict: Mapping of method name to method object
     """
@@ -53,6 +56,22 @@ def get_remote_methods(cls):
                 methods[name] = attr
         except Exception:
             continue
+
+    # Also include methods dispatchable via __getattr__ (RPCProxyBase pattern).
+    # The proxy auto-dispatches any public method not starting with '_' by
+    # calling _call_rpc(method_name, params). All @rpc_expose methods are
+    # effectively available on RemoteNexusFS via this mechanism.
+    try:
+        from nexus.remote.rpc_proxy import RPCProxyBase
+
+        if issubclass(cls, RPCProxyBase):
+            exposed = get_rpc_exposed_methods(NexusFS)
+            for name, method in exposed.items():
+                if name not in methods:
+                    methods[name] = method
+    except ImportError:
+        pass
+
     return methods
 
 

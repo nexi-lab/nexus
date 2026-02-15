@@ -208,7 +208,7 @@ def get_filesystem(
             # Use remote server connection
             from nexus.remote import RemoteNexusFS
 
-            return RemoteNexusFS(
+            return RemoteNexusFS(  # type: ignore[return-value]  # virtual subclass of NexusFilesystem
                 server_url=backend_config.remote_url,
                 api_key=backend_config.remote_api_key,
             )
@@ -423,7 +423,7 @@ def get_default_filesystem() -> NexusFilesystem:
             # Use remote server connection
             from nexus.remote import RemoteNexusFS
 
-            return RemoteNexusFS(
+            return RemoteNexusFS(  # type: ignore[return-value]  # virtual subclass of NexusFilesystem
                 server_url=remote_url,
                 api_key=os.environ.get("NEXUS_API_KEY"),
             )

@@ -119,7 +119,7 @@ def create_mcp_server(
         if remote_url:
             from nexus.remote import RemoteNexusFS
 
-            nx = RemoteNexusFS(remote_url, api_key=api_key)
+            nx = RemoteNexusFS(remote_url, api_key=api_key)  # type: ignore[assignment]  # virtual subclass of NexusFilesystem
         else:
             from nexus import connect
 
@@ -176,7 +176,7 @@ def create_mcp_server(
 
         new_nx = RemoteNexusFS(_remote_url, api_key=request_api_key)
         _connection_cache[request_api_key] = new_nx
-        return new_nx
+        return new_nx  # type: ignore[return-value]  # virtual subclass of NexusFilesystem
 
     # Create FastMCP server
     mcp = FastMCP(name)

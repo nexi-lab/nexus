@@ -19,7 +19,7 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any, cast
 from urllib.parse import urljoin
 
 import httpx
@@ -36,14 +36,6 @@ from nexus.core.exceptions import (
 from nexus.core.filesystem import NexusFilesystem
 from nexus.remote.base_client import BaseRemoteNexusFS
 from nexus.remote.rpc_proxy import RPCProxyBase
-
-# TYPE_CHECKING trick: mypy sees NexusFilesystem in MRO for type compatibility,
-# but at runtime we use virtual subclass registration so abstract methods don't
-# shadow __getattr__-based dispatch.
-if TYPE_CHECKING:
-    _AsyncNexusFSBase = NexusFilesystem
-else:
-    _AsyncNexusFSBase = object
 from nexus.server.protocol import (
     RPCRequest,
     RPCResponse,
@@ -60,7 +52,7 @@ from .client import (
 logger = logging.getLogger(__name__)
 
 
-class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS, _AsyncNexusFSBase):
+class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
     """Async remote Nexus filesystem client.
 
     Uses httpx.AsyncClient for non-blocking HTTP calls. Trivial methods

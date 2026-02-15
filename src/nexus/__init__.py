@@ -328,7 +328,7 @@ def connect(
             timeout = int(cfg.timeout) if hasattr(cfg, "timeout") else 30
             connect_timeout = int(cfg.connect_timeout) if hasattr(cfg, "connect_timeout") else 5
 
-            return RemoteNexusFS(
+            return RemoteNexusFS(  # type: ignore[return-value]  # virtual subclass of NexusFilesystem
                 server_url=server_url,
                 api_key=api_key,
                 timeout=timeout,

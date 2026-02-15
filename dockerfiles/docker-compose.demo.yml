@@ -194,6 +194,11 @@ services:
       # Tiger Cache - materialized permissions cache
       # Set to 'true' to enable Tiger Cache (disabled by default for simpler debugging)
       NEXUS_ENABLE_TIGER_CACHE: ${NEXUS_ENABLE_TIGER_CACHE:-false}
+
+      # Event bus backend (Issue #1331)
+      # "redis" = Dragonfly pub/sub (legacy), "nats" = NATS JetStream (durable)
+      NEXUS_EVENT_BUS_BACKEND: ${NEXUS_EVENT_BUS_BACKEND:-redis}
+      NEXUS_NATS_URL: ${NEXUS_NATS_URL:-nats://nats:4222}
     volumes:
       # Persistent data directory (local backend) - shared with local development
       - ../nexus-data:/app/data
@@ -440,6 +445,35 @@ services:
       - nexus-network
 
   # ============================================
+  # NATS JetStream - Durable Event Bus (Issue #1331)
+  # Replaces Dragonfly pub/sub for event delivery.
+  # Provides: durable streams, replay, consumer groups, exactly-once semantics.
+  # ============================================
+  nats:
+    image: nats:2.10-alpine
+    container_name: nexus-nats
+    restart: unless-stopped
+    command: ["--jetstream", "--store_dir=/data", "-m", "8222"]
+    ports:
+      - "${NATS_PORT:-4222}:4222"
+      - "${NATS_MONITOR_PORT:-8222}:8222"
+    volumes:
+      - nats-data:/data
+    healthcheck:
+      test: ["CMD", "sh", "-c", "wget -q --spider http://localhost:8222/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+    networks:
+      - nexus-network
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ============================================
   # DragonflyDB - High-Performance Cache (Issue #950)
   # Redis-compatible in-memory cache for:
   # - Embedding cache (reduces API calls by 90%)
@@ -531,6 +565,8 @@ volumes:
   postgres-wal-archive:
     driver: local
   dragonfly-data:
+    driver: local
+  nats-data:
     driver: local
   # nexus-data: Using local directory ./nexus-data instead of Docker volume
   # This allows sharing data between Docker and local development

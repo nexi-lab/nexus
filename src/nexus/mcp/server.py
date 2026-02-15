@@ -809,9 +809,7 @@ def create_mcp_server(
             from nexus.core.sync_bridge import run_sync
 
             fetch_limit = offset + limit * 2
-            all_results = run_sync(
-                nx_instance.semantic_search(query, path="/", limit=fetch_limit)
-            )
+            all_results = run_sync(nx_instance.semantic_search(query, path="/", limit=fetch_limit))
         except Exception as e:
             if "not initialized" in str(e).lower():
                 return tool_error("unavailable", "Semantic search not available (not initialized).")
@@ -977,7 +975,9 @@ def create_mcp_server(
         try:
             input_dict = json.loads(inputs) if inputs else {}
         except json.JSONDecodeError:
-            return tool_error("invalid_input", "Invalid JSON in inputs parameter. Provide valid JSON string.")
+            return tool_error(
+                "invalid_input", "Invalid JSON in inputs parameter. Provide valid JSON string."
+            )
 
         result = nx_instance.workflows.execute(name, **input_dict)
         return json.dumps(result, indent=2)
@@ -1004,9 +1004,7 @@ def create_mcp_server(
         output_parts.append(f"Execution time: {exec_time:.3f}s")
 
         return (
-            "\n\n".join(output_parts)
-            if output_parts
-            else "Code executed successfully (no output)"
+            "\n\n".join(output_parts) if output_parts else "Code executed successfully (no output)"
         )
 
     # Check if sandbox support is available (use default connection for check)
@@ -1171,9 +1169,7 @@ def create_mcp_server(
             "openWorldHint": True,
         }
     )
-    def nexus_discovery_search_tools(
-        query: str, top_k: int = 5, ctx: Context | None = None
-    ) -> str:
+    def nexus_discovery_search_tools(query: str, top_k: int = 5, ctx: Context | None = None) -> str:
         """Search for MCP tools by query.
 
         Returns relevant tools ranked by BM25 score. Use this to find
@@ -1253,9 +1249,7 @@ def create_mcp_server(
             "openWorldHint": True,
         }
     )
-    def nexus_discovery_get_tool_details(
-        tool_name: str, ctx: Context | None = None
-    ) -> str:
+    def nexus_discovery_get_tool_details(tool_name: str, ctx: Context | None = None) -> str:
         """Get detailed information about a specific tool.
 
         Returns the full input schema and description. Use this after
@@ -1293,9 +1287,7 @@ def create_mcp_server(
             "openWorldHint": True,
         }
     )
-    def nexus_discovery_load_tools(
-        tool_names: list[str], ctx: Context | None = None
-    ) -> str:
+    def nexus_discovery_load_tools(tool_names: list[str], ctx: Context | None = None) -> str:
         """Load specified tools into the active context.
 
         After loading, these tools become available for direct use.

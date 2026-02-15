@@ -49,10 +49,12 @@ class TestToolProfile:
             tools=frozenset(["nexus_read_file", "nexus_write_file"]),
         )
         paths = profile.tool_paths()
-        assert paths == frozenset([
-            "/tools/nexus_read_file",
-            "/tools/nexus_write_file",
-        ])
+        assert paths == frozenset(
+            [
+                "/tools/nexus_read_file",
+                "/tools/nexus_write_file",
+            ]
+        )
 
     def test_empty_profile(self):
         profile = ToolProfile(name="empty", tools=frozenset())

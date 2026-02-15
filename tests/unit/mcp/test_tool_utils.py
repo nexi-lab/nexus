@@ -170,7 +170,4 @@ class TestExtractPathHint:
         assert _extract_path_hint((), {}) is None
 
     def test_kwargs_takes_precedence(self):
-        assert (
-            _extract_path_hint(("/arg_path",), {"path": "/kwarg_path"})
-            == "/kwarg_path"
-        )
+        assert _extract_path_hint(("/arg_path",), {"path": "/kwarg_path"}) == "/kwarg_path"

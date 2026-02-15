@@ -75,27 +75,31 @@ def mock_nx():
     nx.is_directory = Mock(return_value=False)
     nx.mkdir = Mock()
     nx.rmdir = Mock()
-    nx.edit = Mock(return_value={"success": True, "diff": "", "applied_count": 0, "matches": [], "errors": []})
+    nx.edit = Mock(
+        return_value={"success": True, "diff": "", "applied_count": 0, "matches": [], "errors": []}
+    )
     return nx
 
 
 @pytest.fixture
 def profiles():
     """Test profile config with two profiles."""
-    return load_profiles_from_dict({
-        "profiles": {
-            "reader": {
-                "description": "Read-only",
-                "tools": ["nexus_read_file", "nexus_list_files", "nexus_file_info"],
+    return load_profiles_from_dict(
+        {
+            "profiles": {
+                "reader": {
+                    "description": "Read-only",
+                    "tools": ["nexus_read_file", "nexus_list_files", "nexus_file_info"],
+                },
+                "writer": {
+                    "extends": "reader",
+                    "description": "Read-write",
+                    "tools": ["nexus_write_file", "nexus_edit_file", "nexus_delete_file"],
+                },
             },
-            "writer": {
-                "extends": "reader",
-                "description": "Read-write",
-                "tools": ["nexus_write_file", "nexus_edit_file", "nexus_delete_file"],
-            },
-        },
-        "default_profile": "reader",
-    })
+            "default_profile": "reader",
+        }
+    )
 
 
 def _get_tool(server, name):
@@ -110,9 +114,7 @@ def _get_tool(server, name):
 class TestTwoAgentsDifferentProfiles:
     """Two agents with different profiles see different tools."""
 
-    def test_reader_agent_sees_only_read_tools(
-        self, rebac_manager, middleware, profiles
-    ):
+    def test_reader_agent_sees_only_read_tools(self, rebac_manager, middleware, profiles):
         """Agent with 'reader' profile sees only read tools."""
         reader_profile = profiles.get_profile("reader")
         grant_tools_for_profile(
@@ -128,9 +130,7 @@ class TestTwoAgentsDifferentProfiles:
         assert "nexus_write_file" not in visible
         assert "nexus_edit_file" not in visible
 
-    def test_writer_agent_sees_read_and_write_tools(
-        self, rebac_manager, middleware, profiles
-    ):
+    def test_writer_agent_sees_read_and_write_tools(self, rebac_manager, middleware, profiles):
         """Agent with 'writer' profile sees read + write tools (inheritance)."""
         writer_profile = profiles.get_profile("writer")
         grant_tools_for_profile(
@@ -148,9 +148,7 @@ class TestTwoAgentsDifferentProfiles:
         assert "nexus_edit_file" in visible
         assert "nexus_delete_file" in visible
 
-    def test_agents_see_different_tool_sets(
-        self, rebac_manager, middleware, profiles
-    ):
+    def test_agents_see_different_tool_sets(self, rebac_manager, middleware, profiles):
         """Different agents see different tool sets simultaneously."""
         reader_profile = profiles.get_profile("reader")
         writer_profile = profiles.get_profile("writer")
@@ -208,9 +206,7 @@ class TestGrantRevocation:
 class TestDiscoveryEndToEnd:
     """Full flow: grant profile → discovery tools filter correctly."""
 
-    def test_search_tools_filtered_by_profile(
-        self, rebac_manager, middleware, mock_nx, profiles
-    ):
+    def test_search_tools_filtered_by_profile(self, rebac_manager, middleware, mock_nx, profiles):
         """nexus_discovery_search_tools returns only visible tools."""
         reader_profile = profiles.get_profile("reader")
         grant_tools_for_profile(
@@ -223,10 +219,12 @@ class TestDiscoveryEndToEnd:
         tool_fn = _get_tool(server, "nexus_discovery_search_tools")
 
         ctx = Mock()
-        ctx.get_state = Mock(side_effect=lambda key: {
-            "subject_type": "agent",
-            "subject_id": "agent-disco",
-        }.get(key))
+        ctx.get_state = Mock(
+            side_effect=lambda key: {
+                "subject_type": "agent",
+                "subject_id": "agent-disco",
+            }.get(key)
+        )
 
         result = json.loads(tool_fn.fn(query="file", top_k=20, ctx=ctx))
 
@@ -251,10 +249,12 @@ class TestDiscoveryEndToEnd:
         tool_fn = _get_tool(server, "nexus_discovery_get_tool_details")
 
         ctx = Mock()
-        ctx.get_state = Mock(side_effect=lambda key: {
-            "subject_type": "agent",
-            "subject_id": "agent-details",
-        }.get(key))
+        ctx.get_state = Mock(
+            side_effect=lambda key: {
+                "subject_type": "agent",
+                "subject_id": "agent-details",
+            }.get(key)
+        )
 
         # Visible tool → found
         result = json.loads(tool_fn.fn(tool_name="nexus_read_file", ctx=ctx))

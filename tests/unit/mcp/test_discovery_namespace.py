@@ -46,7 +46,9 @@ def mock_nx():
     nx.is_directory = Mock(return_value=False)
     nx.mkdir = Mock()
     nx.rmdir = Mock()
-    nx.edit = Mock(return_value={"success": True, "diff": "", "applied_count": 0, "matches": [], "errors": []})
+    nx.edit = Mock(
+        return_value={"success": True, "diff": "", "applied_count": 0, "matches": [], "errors": []}
+    )
     return nx
 
 
@@ -55,9 +57,7 @@ def mock_middleware():
     """Mock ToolNamespaceMiddleware with configurable visible tools."""
     mw = Mock()
     # Default: only nexus_read_file and nexus_write_file are visible
-    mw._get_visible_tools = Mock(
-        return_value=frozenset({"nexus_read_file", "nexus_write_file"})
-    )
+    mw._get_visible_tools = Mock(return_value=frozenset({"nexus_read_file", "nexus_write_file"}))
     return mw
 
 
@@ -65,10 +65,12 @@ def mock_middleware():
 def mock_ctx():
     """Mock FastMCP Context with subject state."""
     ctx = Mock()
-    ctx.get_state = Mock(side_effect=lambda key: {
-        "subject_type": "agent",
-        "subject_id": "agent-1",
-    }.get(key))
+    ctx.get_state = Mock(
+        side_effect=lambda key: {
+            "subject_type": "agent",
+            "subject_id": "agent-1",
+        }.get(key)
+    )
     return ctx
 
 
@@ -109,9 +111,7 @@ class TestSearchToolsNamespace:
         # Should have many tools (all bootstrapped Nexus tools)
         assert result["count"] > 2
 
-    def test_over_fetches_to_compensate_for_filtering(
-        self, server_with_namespace, mock_ctx
-    ):
+    def test_over_fetches_to_compensate_for_filtering(self, server_with_namespace, mock_ctx):
         """When namespace is active, search over-fetches to get enough results."""
         tool_fn = get_tool(server_with_namespace, "nexus_discovery_search_tools")
         # Request top_k=1, but the over-fetch should still find visible tools
@@ -128,9 +128,7 @@ class TestSearchToolsNamespace:
 
 
 class TestListServersNamespace:
-    def test_tool_counts_filtered_by_namespace(
-        self, server_with_namespace, mock_ctx
-    ):
+    def test_tool_counts_filtered_by_namespace(self, server_with_namespace, mock_ctx):
         """Tool counts reflect only visible tools, not all indexed tools."""
         tool_fn = get_tool(server_with_namespace, "nexus_discovery_list_servers")
         result = json.loads(tool_fn.fn(ctx=mock_ctx))
@@ -148,9 +146,7 @@ class TestListServersNamespace:
         # Should have many tools
         assert result["total_tools"] > 2
 
-    def test_servers_still_listed_even_with_zero_visible(
-        self, mock_nx
-    ):
+    def test_servers_still_listed_even_with_zero_visible(self, mock_nx):
         """Servers appear even if all their tools are filtered out."""
         mw = Mock()
         mw._get_visible_tools = Mock(return_value=frozenset())  # No tools visible
@@ -159,10 +155,12 @@ class TestListServersNamespace:
         tool_fn = get_tool(server, "nexus_discovery_list_servers")
 
         ctx = Mock()
-        ctx.get_state = Mock(side_effect=lambda key: {
-            "subject_type": "agent",
-            "subject_id": "agent-2",
-        }.get(key))
+        ctx.get_state = Mock(
+            side_effect=lambda key: {
+                "subject_type": "agent",
+                "subject_id": "agent-2",
+            }.get(key)
+        )
 
         result = json.loads(tool_fn.fn(ctx=ctx))
 
@@ -202,9 +200,7 @@ class TestGetToolDetailsNamespace:
     def test_truly_nonexistent_tool_no_namespace(self, server_without_namespace):
         """Tool not in index (no namespace active) still returns 'not found'."""
         tool_fn = get_tool(server_without_namespace, "nexus_discovery_get_tool_details")
-        result = json.loads(
-            tool_fn.fn(tool_name="nonexistent_tool_xyz", ctx=None)
-        )
+        result = json.loads(tool_fn.fn(tool_name="nonexistent_tool_xyz", ctx=None))
 
         assert result["found"] is False
         assert "not found" in result["error"]
@@ -216,9 +212,7 @@ class TestGetToolDetailsNamespace:
 
 
 class TestLoadToolsNamespace:
-    def test_invisible_tool_reported_as_not_found(
-        self, server_with_namespace, mock_ctx
-    ):
+    def test_invisible_tool_reported_as_not_found(self, server_with_namespace, mock_ctx):
         """Invisible tools go to not_found list, not loaded."""
         tool_fn = get_tool(server_with_namespace, "nexus_discovery_load_tools")
         result = json.loads(
@@ -254,10 +248,12 @@ class TestLoadToolsNamespace:
         tool_fn = get_tool(server, "nexus_discovery_load_tools")
 
         ctx = Mock()
-        ctx.get_state = Mock(side_effect=lambda key: {
-            "subject_type": "agent",
-            "subject_id": "agent-3",
-        }.get(key))
+        ctx.get_state = Mock(
+            side_effect=lambda key: {
+                "subject_type": "agent",
+                "subject_id": "agent-3",
+            }.get(key)
+        )
 
         result = json.loads(
             tool_fn.fn(

@@ -108,9 +108,7 @@ class TestOnListTools:
         ]
 
         ctx = FakeMiddlewareContext(
-            fastmcp_context=FakeContext(
-                {"subject_type": "agent", "subject_id": "A"}
-            ),
+            fastmcp_context=FakeContext({"subject_type": "agent", "subject_id": "A"}),
             method="tools/list",
         )
 
@@ -127,9 +125,7 @@ class TestOnListTools:
 
         all_tools = [FakeTool(name="nexus_read_file")]
         ctx = FakeMiddlewareContext(
-            fastmcp_context=FakeContext(
-                {"subject_type": "agent", "subject_id": "A"}
-            ),
+            fastmcp_context=FakeContext({"subject_type": "agent", "subject_id": "A"}),
         )
 
         async def call_next(context: Any) -> Sequence[Any]:
@@ -145,9 +141,7 @@ class TestOnListTools:
 
         all_tools = [FakeTool(name=t) for t in tools]
         ctx = FakeMiddlewareContext(
-            fastmcp_context=FakeContext(
-                {"subject_type": "agent", "subject_id": "A"}
-            ),
+            fastmcp_context=FakeContext({"subject_type": "agent", "subject_id": "A"}),
         )
 
         async def call_next(context: Any) -> Sequence[Any]:
@@ -176,9 +170,7 @@ class TestOnListTools:
 
         all_tools = [FakeTool(name="nexus_read_file"), FakeTool(name="nexus_write_file")]
         ctx = FakeMiddlewareContext(
-            fastmcp_context=FakeContext(
-                {"subject_type": "agent", "subject_id": "A"}
-            ),
+            fastmcp_context=FakeContext({"subject_type": "agent", "subject_id": "A"}),
         )
 
         async def call_next(context: Any) -> Sequence[Any]:
@@ -200,9 +192,7 @@ class TestOnCallTool:
 
         ctx = FakeMiddlewareContext(
             message=FakeCallToolParams(name="nexus_read_file"),
-            fastmcp_context=FakeContext(
-                {"subject_type": "agent", "subject_id": "A"}
-            ),
+            fastmcp_context=FakeContext({"subject_type": "agent", "subject_id": "A"}),
         )
 
         expected_result = MagicMock()
@@ -219,9 +209,7 @@ class TestOnCallTool:
 
         ctx = FakeMiddlewareContext(
             message=FakeCallToolParams(name="nexus_python"),
-            fastmcp_context=FakeContext(
-                {"subject_type": "agent", "subject_id": "A"}
-            ),
+            fastmcp_context=FakeContext({"subject_type": "agent", "subject_id": "A"}),
         )
 
         async def call_next(context: Any) -> Any:
@@ -240,9 +228,7 @@ class TestOnCallTool:
 
         ctx = FakeMiddlewareContext(
             message=FakeCallToolParams(name="nexus_python"),
-            fastmcp_context=FakeContext(
-                {"subject_type": "agent", "subject_id": "A"}
-            ),
+            fastmcp_context=FakeContext({"subject_type": "agent", "subject_id": "A"}),
         )
 
         async def call_next(context: Any) -> Any:
@@ -285,9 +271,7 @@ class TestCacheBehavior:
         mw = make_middleware(granted_tools=["nexus_read_file"])
 
         ctx = FakeMiddlewareContext(
-            fastmcp_context=FakeContext(
-                {"subject_type": "agent", "subject_id": "A"}
-            ),
+            fastmcp_context=FakeContext({"subject_type": "agent", "subject_id": "A"}),
         )
 
         async def call_next(context: Any) -> Sequence[Any]:
@@ -312,9 +296,7 @@ class TestCacheBehavior:
         mw = ToolNamespaceMiddleware(rebac_manager=rebac, revision_window=10)
 
         ctx = FakeMiddlewareContext(
-            fastmcp_context=FakeContext(
-                {"subject_type": "agent", "subject_id": "A"}
-            ),
+            fastmcp_context=FakeContext({"subject_type": "agent", "subject_id": "A"}),
         )
 
         async def call_next(context: Any) -> Sequence[Any]:
@@ -362,9 +344,7 @@ class TestSubjectExtraction:
     def test_extract_from_state(self):
         mw = make_middleware()
         ctx = FakeMiddlewareContext(
-            fastmcp_context=FakeContext(
-                {"subject_type": "agent", "subject_id": "bot-1"}
-            ),
+            fastmcp_context=FakeContext({"subject_type": "agent", "subject_id": "bot-1"}),
         )
         subject = mw._extract_subject(ctx)  # type: ignore[arg-type]
         assert subject == ("agent", "bot-1")
@@ -427,9 +407,7 @@ class TestMetrics:
         mw = make_middleware(granted_tools=["nexus_read_file"])
 
         ctx = FakeMiddlewareContext(
-            fastmcp_context=FakeContext(
-                {"subject_type": "agent", "subject_id": "A"}
-            ),
+            fastmcp_context=FakeContext({"subject_type": "agent", "subject_id": "A"}),
         )
 
         async def call_next(context: Any) -> Sequence[Any]:
@@ -468,9 +446,7 @@ class TestPerformance:
 
         all_tools = [FakeTool(name=t) for t in tools]
         ctx = FakeMiddlewareContext(
-            fastmcp_context=FakeContext(
-                {"subject_type": "agent", "subject_id": "A"}
-            ),
+            fastmcp_context=FakeContext({"subject_type": "agent", "subject_id": "A"}),
         )
 
         async def call_next(context: Any) -> Sequence[Any]:
@@ -504,9 +480,7 @@ class TestErrorHandling:
         mw = ToolNamespaceMiddleware(rebac_manager=rebac)
 
         ctx = FakeMiddlewareContext(
-            fastmcp_context=FakeContext(
-                {"subject_type": "agent", "subject_id": "A"}
-            ),
+            fastmcp_context=FakeContext({"subject_type": "agent", "subject_id": "A"}),
         )
 
         async def call_next(context: Any) -> Sequence[Any]:

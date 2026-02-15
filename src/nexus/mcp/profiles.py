@@ -136,8 +136,7 @@ def resolve_inheritance(
 
         if name not in raw_profiles:
             raise ProfileNotFoundError(
-                f"Profile '{name}' not found. "
-                f"Available profiles: {sorted(raw_profiles.keys())}"
+                f"Profile '{name}' not found. Available profiles: {sorted(raw_profiles.keys())}"
             )
 
         if name in visiting:

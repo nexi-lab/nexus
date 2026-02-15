@@ -78,8 +78,8 @@ class ToolNamespaceMiddleware(Middleware):
         self._enabled = enabled
 
         # Cache: (subject_type, subject_id, zone_id, revision_bucket) → frozenset[tool_name]
-        self._tool_cache: TTLCache[tuple[str, str, str | None, int], frozenset[str]] = (
-            TTLCache(maxsize=cache_maxsize, ttl=cache_ttl)
+        self._tool_cache: TTLCache[tuple[str, str, str | None, int], frozenset[str]] = TTLCache(
+            maxsize=cache_maxsize, ttl=cache_ttl
         )
         self._lock = threading.Lock()
 
@@ -229,7 +229,7 @@ class ToolNamespaceMiddleware(Middleware):
         for _obj_type, obj_id in objects:
             if obj_id.startswith(TOOL_PATH_PREFIX):
                 # Extract tool name from path: "/tools/nexus_read_file" → "nexus_read_file"
-                tool_name = obj_id[len(TOOL_PATH_PREFIX):]
+                tool_name = obj_id[len(TOOL_PATH_PREFIX) :]
                 if tool_name:
                     tool_names.add(tool_name)
 
@@ -336,8 +336,7 @@ class ToolNamespaceMiddleware(Middleware):
             else:
                 # Remove all entries for this subject (any zone/revision)
                 keys_to_remove = [
-                    k for k in self._tool_cache
-                    if k[0] == subject[0] and k[1] == subject[1]
+                    k for k in self._tool_cache if k[0] == subject[0] and k[1] == subject[1]
                 ]
                 for k in keys_to_remove:
                     self._tool_cache.pop(k, None)

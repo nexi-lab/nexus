@@ -35,6 +35,7 @@ from nexus.services.permissions.rebac_fast import (
     check_permissions_bulk_with_fallback,
     is_rust_available,
 )
+from nexus.services.permissions.tuples.repository import TupleRepository
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -109,6 +110,9 @@ class ReBACManager:
         self._namespaces_initialized = False  # Track if default namespaces were initialized
         self._tuple_version: int = 0  # Track tuple changes for Rust graph cache invalidation
 
+        # Issue #1459: Compose TupleRepository for data access delegation
+        self._repo = TupleRepository(engine)
+
         # Deprecation warning for direct ReBACManager instantiation (Phase 2 Task 2.3)
         # Only warn if instantiated directly (not via subclass inheritance)
         if type(self).__name__ == "ReBACManager":
@@ -157,257 +161,49 @@ class ReBACManager:
 
         self.SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
-        # Track DBAPI to SQLAlchemy connection mapping for proper cleanup
-        # (sqlite3.Connection in Python 3.13+ doesn't allow setting arbitrary attributes)
-        self._conn_map: dict[int, Any] = {}
-
-        # PostgreSQL version cache for feature detection
-        self._pg_version: int | None = None
+        # Backward-compat aliases for code accessing _conn_map / _pg_version directly
+        self._conn_map = self._repo._conn_map
+        self._pg_version = self._repo._pg_version
 
     def _get_connection(self) -> Any:
         """Get a DBAPI connection from the pool.
 
-        Uses engine.connect() which properly goes through the connection pool
-        and respects pool_pre_ping for automatic stale connection detection.
-
-        Note: Caller is responsible for closing the connection.
-        Prefer using _connection() context manager when possible.
-
-        Returns:
-            DBAPI connection object
+        Delegates to TupleRepository (Issue #1459).
         """
-        # Use engine.connect() instead of raw_connection() to leverage pool_pre_ping
-        sa_conn = self.engine.connect()
-        # Store the SQLAlchemy connection in a mapping dict for proper cleanup
-        # (sqlite3.Connection in Python 3.13+ doesn't allow setting arbitrary attributes)
-        dbapi_conn = sa_conn.connection.dbapi_connection
-        self._conn_map[id(dbapi_conn)] = sa_conn
-        return dbapi_conn
+        return self._repo.get_connection()
 
     def _close_connection(self, conn: Any) -> None:
         """Close a connection obtained from _get_connection().
 
-        Args:
-            conn: DBAPI connection to close
+        Delegates to TupleRepository (Issue #1459).
         """
-        import contextlib
-
-        # Close via SQLAlchemy connection if available (returns to pool properly)
-        conn_id = id(conn)
-        if conn_id in self._conn_map:
-            with contextlib.suppress(Exception):
-                self._conn_map[conn_id].close()
-            # Remove from mapping
-            self._conn_map.pop(conn_id, None)
-        else:
-            # Fallback to direct close
-            with contextlib.suppress(Exception):
-                conn.close()
+        self._repo.close_connection(conn)
 
     @property
     def supports_old_new_returning(self) -> bool:
         """Check if database supports OLD/NEW in RETURNING clauses.
 
-        PostgreSQL 18+ supports OLD/NEW aliases in RETURNING clauses for
-        UPDATE, DELETE, and MERGE statements. This allows capturing both
-        before and after values in a single query, eliminating round-trips.
-
-        Returns:
-            True if PostgreSQL 18+, False otherwise (SQLite, older PostgreSQL)
+        Delegates to TupleRepository (Issue #1459).
         """
-        if self.engine.dialect.name != "postgresql":
-            return False
-
-        # Check PostgreSQL version (cached after first check)
-        if self._pg_version is None:
-            try:
-                from sqlalchemy import text
-
-                with self.engine.connect() as conn:
-                    result = conn.execute(text("SELECT version()"))
-                    version_str = result.scalar()
-                    # Extract major version number (e.g., "PostgreSQL 18.1" -> 18)
-                    import re
-
-                    match = re.search(r"PostgreSQL (\d+)", version_str or "")
-                    self._pg_version = int(match.group(1)) if match else 0
-            except Exception:
-                self._pg_version = 0
-
-        return self._pg_version >= 18
+        return self._repo.supports_old_new_returning
 
     def _get_zone_revision(self, zone_id: str | None, conn: Any | None = None) -> int:
-        """Get current revision for a zone (read-only, no increment).
-
-        Used for revision-based cache key generation (Issue #909).
-        This replaces the broken time-bucket quantization with logical revisions.
-
-        Args:
-            zone_id: Zone ID (defaults to "default")
-            conn: Optional database connection to reuse
-
-        Returns:
-            Current revision number (0 if zone has no writes yet)
-        """
-        effective_zone = zone_id or "default"
-        should_close = conn is None
-        if conn is None:
-            conn = self._get_connection()
-        try:
-            cursor = self._create_cursor(conn)
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    "SELECT current_version FROM rebac_version_sequences WHERE zone_id = ?"
-                ),
-                (effective_zone,),
-            )
-            row = cursor.fetchone()
-            return int(row["current_version"]) if row else 0
-        finally:
-            if should_close:
-                self._close_connection(conn)
+        """Get current revision for a zone. Delegates to TupleRepository (Issue #1459)."""
+        return self._repo.get_zone_revision(zone_id, conn)
 
     def _increment_zone_revision(self, zone_id: str | None, conn: Any) -> int:
-        """Increment and return the new revision for a zone.
-
-        Called after successful write operations (write, delete, batch).
-        Uses atomic DB operations for distributed consistency (Issue #909).
-
-        This enables revision-based cache quantization:
-        - Cache keys include revision bucket instead of time bucket
-        - Multiple instances share cache entries within same revision window
-        - Based on SpiceDB/Google Zanzibar quantization approach
-
-        Args:
-            zone_id: Zone ID (defaults to "default")
-            conn: Database connection (reuse existing transaction)
-
-        Returns:
-            New revision number after increment
-        """
-        effective_zone = zone_id or "default"
-        cursor = self._create_cursor(conn)
-
-        if self.engine.dialect.name == "postgresql":
-            # Atomic upsert with RETURNING
-            cursor.execute(
-                """
-                INSERT INTO rebac_version_sequences (zone_id, current_version, updated_at)
-                VALUES (%s, 1, NOW())
-                ON CONFLICT (zone_id)
-                DO UPDATE SET current_version = rebac_version_sequences.current_version + 1,
-                              updated_at = NOW()
-                RETURNING current_version
-                """,
-                (effective_zone,),
-            )
-            row = cursor.fetchone()
-            return int(row["current_version"]) if row else 1
-        else:
-            # SQLite: Two-step increment
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    "SELECT current_version FROM rebac_version_sequences WHERE zone_id = ?"
-                ),
-                (effective_zone,),
-            )
-            row = cursor.fetchone()
-
-            if row:
-                new_version = row["current_version"] + 1
-                cursor.execute(
-                    self._fix_sql_placeholders(
-                        """
-                        UPDATE rebac_version_sequences
-                        SET current_version = ?, updated_at = ?
-                        WHERE zone_id = ?
-                        """
-                    ),
-                    (new_version, datetime.now(UTC).isoformat(), effective_zone),
-                )
-            else:
-                # First version for this zone
-                new_version = 1
-                cursor.execute(
-                    self._fix_sql_placeholders(
-                        """
-                        INSERT INTO rebac_version_sequences (zone_id, current_version, updated_at)
-                        VALUES (?, ?, ?)
-                        """
-                    ),
-                    (effective_zone, new_version, datetime.now(UTC).isoformat()),
-                )
-
-            return int(new_version)
+        """Increment and return the new revision. Delegates to TupleRepository (Issue #1459)."""
+        return self._repo.increment_zone_revision(zone_id, conn)
 
     @contextmanager
     def _connection(self) -> Any:
-        """Context manager for database connections.
-
-        Uses engine.connect() which properly goes through the connection pool
-        and respects pool_pre_ping for automatic stale connection detection.
-
-        Usage:
-            with self._connection() as conn:
-                cursor = self._create_cursor(conn)
-                cursor.execute(...)
-                conn.commit()
-        """
-        from sqlalchemy import text
-
-        # Use engine.connect() instead of raw_connection() to leverage pool_pre_ping
-        # This automatically detects and replaces stale connections
-        with self.engine.connect() as sa_conn:
-            # Fix PostgreSQL prepared statement performance issue (#683)
-            # Force custom plans for timestamp-based queries to avoid generic plan degradation
-            if self.engine.dialect.name == "postgresql":
-                sa_conn.execute(text("SET plan_cache_mode = 'force_custom_plan'"))
-
-            # Get the underlying DBAPI connection for cursor-based operations
-            # This maintains compatibility with existing cursor.execute() code
-            dbapi_conn = sa_conn.connection.dbapi_connection
-            try:
-                yield dbapi_conn
-                sa_conn.commit()
-            except Exception:
-                sa_conn.rollback()
-                raise
+        """Context manager for database connections. Delegates to TupleRepository (Issue #1459)."""
+        with self._repo.connection() as conn:
+            yield conn
 
     def _create_cursor(self, conn: Any) -> Any:
-        """Create a cursor with appropriate cursor factory for the database type.
-
-        For PostgreSQL: Uses RealDictCursor to return dict-like rows
-        For SQLite: Ensures Row factory is set for dict-like access
-
-        Args:
-            conn: DB-API connection object
-
-        Returns:
-            Database cursor
-        """
-        # Detect database type based on underlying DBAPI connection
-        # SQLAlchemy wraps connections in _ConnectionFairy, need to check dbapi_connection
-        actual_conn = conn.dbapi_connection if hasattr(conn, "dbapi_connection") else conn
-        conn_module = type(actual_conn).__module__
-
-        # Check if this is a PostgreSQL connection (psycopg2)
-        if "psycopg2" in conn_module:
-            try:
-                import psycopg2.extras
-
-                return conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-            except (ImportError, AttributeError):
-                return conn.cursor()
-        elif "sqlite3" in conn_module:
-            # SQLite: Ensure Row factory is set for dict-like access
-            import sqlite3
-
-            if not hasattr(actual_conn, "row_factory") or actual_conn.row_factory is None:
-                actual_conn.row_factory = sqlite3.Row
-            return conn.cursor()
-        else:
-            # Other database - use default cursor
-            return conn.cursor()
+        """Create a cursor with appropriate cursor factory. Delegates to TupleRepository (Issue #1459)."""
+        return self._repo.create_cursor(conn)
 
     def _ensure_namespaces_initialized(self) -> None:
         """Ensure default namespaces are initialized (called before first ReBAC operation)."""
@@ -433,158 +229,17 @@ class ReBACManager:
                     logger.debug(traceback.format_exc())
 
     def _fix_sql_placeholders(self, sql: str) -> str:
-        """Convert SQLite ? placeholders to PostgreSQL %s if needed.
-
-        Args:
-            sql: SQL query with ? placeholders
-
-        Returns:
-            SQL query with appropriate placeholders for the database dialect
-        """
-        dialect_name = self.engine.dialect.name
-        if dialect_name == "postgresql":
-            return sql.replace("?", "%s")
-        return sql
+        """Convert SQLite ? placeholders to PostgreSQL %s. Delegates to TupleRepository (Issue #1459)."""
+        return self._repo.fix_sql_placeholders(sql)
 
     def _would_create_cycle_with_conn(
         self, conn: Any, subject: Entity, object_entity: Entity, zone_id: str | None
     ) -> bool:
         """Check if creating a parent relation would create a cycle.
 
-        A cycle exists if object is already an ancestor of subject.
-        Example cycle: A -> B -> C -> A (would be created by adding A->parent->C)
-
-        Uses a recursive CTE for efficient single-query cycle detection.
-        This is 5-8x faster than iterative BFS for deep hierarchies.
-
-        Args:
-            subject: The child node (e.g., file A)
-            object_entity: The parent node (e.g., file B)
-            zone_id: Optional zone ID for isolation
-
-        Returns:
-            True if adding this relation would create a cycle, False otherwise
+        Delegates to TupleRepository (Issue #1459).
         """
-        logger.debug(
-            f"CYCLE CHECK: Want to create {subject.entity_type}:{subject.entity_id} -> parent -> "
-            f"{object_entity.entity_type}:{object_entity.entity_id}"
-        )
-
-        cursor = self._create_cursor(conn)
-
-        # Use recursive CTE to find all ancestors of object_entity in a single query
-        # If subject is among the ancestors, adding subject->parent->object would create a cycle
-        #
-        # The CTE traverses: object_entity -> parent -> grandparent -> ... -> root
-        # and checks if subject appears anywhere in that chain
-        #
-        # MAX_DEPTH prevents infinite loops in case of existing cycles in data
-
-        max_depth = 50  # Same limit as GraphLimits.MAX_DEPTH
-
-        if self.engine.dialect.name == "postgresql":
-            # PostgreSQL syntax
-            query = """
-                WITH RECURSIVE ancestors AS (
-                    -- Base case: start from the proposed parent (object_entity)
-                    SELECT
-                        object_type as ancestor_type,
-                        object_id as ancestor_id,
-                        1 as depth
-                    FROM rebac_tuples
-                    WHERE subject_type = %s
-                      AND subject_id = %s
-                      AND relation = 'parent'
-                      AND (zone_id = %s OR (zone_id IS NULL AND %s IS NULL))
-
-                    UNION ALL
-
-                    -- Recursive case: find parents of current ancestors
-                    SELECT
-                        t.object_type,
-                        t.object_id,
-                        a.depth + 1
-                    FROM rebac_tuples t
-                    INNER JOIN ancestors a
-                        ON t.subject_type = a.ancestor_type
-                        AND t.subject_id = a.ancestor_id
-                    WHERE t.relation = 'parent'
-                      AND (t.zone_id = %s OR (t.zone_id IS NULL AND %s IS NULL))
-                      AND a.depth < %s
-                )
-                SELECT 1 FROM ancestors
-                WHERE ancestor_type = %s AND ancestor_id = %s
-                LIMIT 1
-            """
-            params = (
-                object_entity.entity_type,
-                object_entity.entity_id,
-                zone_id,
-                zone_id,
-                zone_id,
-                zone_id,
-                max_depth,
-                subject.entity_type,
-                subject.entity_id,
-            )
-        else:
-            # SQLite syntax (supports recursive CTEs since 3.8.3)
-            query = """
-                WITH RECURSIVE ancestors AS (
-                    -- Base case: start from the proposed parent (object_entity)
-                    SELECT
-                        object_type as ancestor_type,
-                        object_id as ancestor_id,
-                        1 as depth
-                    FROM rebac_tuples
-                    WHERE subject_type = ?
-                      AND subject_id = ?
-                      AND relation = 'parent'
-                      AND (zone_id = ? OR (zone_id IS NULL AND ? IS NULL))
-
-                    UNION ALL
-
-                    -- Recursive case: find parents of current ancestors
-                    SELECT
-                        t.object_type,
-                        t.object_id,
-                        a.depth + 1
-                    FROM rebac_tuples t
-                    INNER JOIN ancestors a
-                        ON t.subject_type = a.ancestor_type
-                        AND t.subject_id = a.ancestor_id
-                    WHERE t.relation = 'parent'
-                      AND (t.zone_id = ? OR (t.zone_id IS NULL AND ? IS NULL))
-                      AND a.depth < ?
-                )
-                SELECT 1 FROM ancestors
-                WHERE ancestor_type = ? AND ancestor_id = ?
-                LIMIT 1
-            """
-            params = (
-                object_entity.entity_type,
-                object_entity.entity_id,
-                zone_id,
-                zone_id,
-                zone_id,
-                zone_id,
-                max_depth,
-                subject.entity_type,
-                subject.entity_id,
-            )
-
-        cursor.execute(query, params)
-        result = cursor.fetchone()
-
-        if result:
-            logger.warning(
-                f"Cycle detected: {subject.entity_type}:{subject.entity_id} is an ancestor of "
-                f"{object_entity.entity_type}:{object_entity.entity_id}. Cannot create parent relation."
-            )
-            return True
-
-        logger.debug("  No cycle detected")
-        return False
+        return self._repo.would_create_cycle(conn, subject, object_entity, zone_id)
 
     def _initialize_default_namespaces_with_conn(self, conn: Any) -> None:
         """Initialize default namespace configurations with given connection."""
@@ -983,31 +638,8 @@ class ReBACManager:
         subject_zone_id: str | None,
         object_zone_id: str | None,
     ) -> None:
-        """Validate cross-zone relationships (P0-4).
-
-        Prevents cross-zone relationship tuples for security.
-
-        Args:
-            zone_id: Tuple zone ID
-            subject_zone_id: Subject's zone ID (optional)
-            object_zone_id: Object's zone ID (optional)
-
-        Raises:
-            ValueError: If cross-zone relationship is detected
-        """
-        # If tuple has a zone_id, validate subject's zone matches (if provided)
-        if zone_id is not None and subject_zone_id is not None and subject_zone_id != zone_id:
-            raise ValueError(
-                f"Cross-zone relationship not allowed: subject zone '{subject_zone_id}' "
-                f"!= tuple zone '{zone_id}'"
-            )
-
-        # If tuple has a zone_id, validate object's zone matches (if provided)
-        if zone_id is not None and object_zone_id is not None and object_zone_id != zone_id:
-            raise ValueError(
-                f"Cross-zone relationship not allowed: object zone '{object_zone_id}' "
-                f"!= tuple zone '{zone_id}'"
-            )
+        """Validate cross-zone relationships. Delegates to TupleRepository (Issue #1459)."""
+        TupleRepository.validate_cross_zone(zone_id, subject_zone_id, object_zone_id)
 
     def rebac_write_batch(
         self,
@@ -1315,84 +947,8 @@ class ReBACManager:
         cursor: Any,
         parsed_tuples: list[dict[str, Any]],
     ) -> set[tuple]:
-        """Check which tuples already exist (bulk query).
-
-        Args:
-            cursor: Database cursor
-            parsed_tuples: List of parsed tuple dicts
-
-        Returns:
-            Set of (subject, relation, object, zone_id) tuples that exist
-            where subject is (type, id, relation) and object is (type, id)
-        """
-        if not parsed_tuples:
-            return set()
-
-        # Chunk queries to avoid "expression tree too large" error in SQLite
-        # SQLite has max depth of ~1000, so use chunks of 100 tuples (900 params each)
-        CHUNK_SIZE = 100
-        existing = set()
-
-        for chunk_start in range(0, len(parsed_tuples), CHUNK_SIZE):
-            chunk = parsed_tuples[chunk_start : chunk_start + CHUNK_SIZE]
-
-            # Build WHERE clause with OR conditions for each tuple
-            # This works for both SQLite and PostgreSQL
-            conditions = []
-            params: list[Any] = []
-
-            for pt in chunk:
-                conditions.append(
-                    "(subject_type = ? AND subject_id = ? AND "
-                    "(subject_relation = ? OR (subject_relation IS NULL AND ? IS NULL)) AND "
-                    "relation = ? AND object_type = ? AND object_id = ? AND "
-                    "(zone_id = ? OR (zone_id IS NULL AND ? IS NULL)))"
-                )
-                params.extend(
-                    [
-                        pt["subject_type"],
-                        pt["subject_id"],
-                        pt["subject_relation"],
-                        pt["subject_relation"],
-                        pt["relation"],
-                        pt["object_type"],
-                        pt["object_id"],
-                        pt["zone_id"],
-                        pt["zone_id"],
-                    ]
-                )
-
-            query = f"""
-                SELECT subject_type, subject_id, subject_relation, relation,
-                       object_type, object_id, zone_id
-                FROM rebac_tuples
-                WHERE {" OR ".join(conditions)}
-            """
-
-            cursor.execute(self._fix_sql_placeholders(query), params)
-            results = cursor.fetchall()
-
-            for row in results:
-                # Note: sqlite3.Row doesn't have .get(), use try/except or dict conversion
-                try:
-                    subject_relation = row["subject_relation"]
-                except (KeyError, IndexError):
-                    subject_relation = None
-                try:
-                    zone_id = row["zone_id"]
-                except (KeyError, IndexError):
-                    zone_id = None
-
-                existing.add(
-                    (
-                        (row["subject_type"], row["subject_id"], subject_relation),
-                        row["relation"],
-                        (row["object_type"], row["object_id"]),
-                        zone_id,
-                    )
-                )
-
-        return existing
+        """Check which tuples already exist. Delegates to TupleRepository (Issue #1459)."""
+        return self._repo.bulk_check_tuples_exist(cursor, parsed_tuples)
 
     def rebac_delete(self, tuple_id: str) -> bool:
         """Delete a relationship tuple.
@@ -3312,318 +2868,22 @@ class ReBACManager:
     def _find_subject_sets(
         self, relation: str, obj: Entity, zone_id: str | None = None
     ) -> list[tuple[str, str, str]]:
-        """Find all subject sets that have a relation to an object.
-
-        Subject sets are tuples with subject_relation set, like:
-        (group:eng#member, editor-of, file:readme)
-
-        This means "all members of group:eng have editor-of relation to file:readme"
-
-        SECURITY FIX (P0): Enforces zone_id filtering to prevent cross-zone leaks.
-        When zone_id is None, queries for NULL zone_id (single-zone mode).
-
-        Args:
-            relation: Relation type
-            obj: Object entity
-            zone_id: Optional zone ID for multi-zone isolation (None for single-zone)
-
-        Returns:
-            List of (subject_type, subject_id, subject_relation) tuples
-        """
-        with self._connection() as conn:
-            cursor = self._create_cursor(conn)
-
-            # P0 SECURITY FIX: ALWAYS filter by zone_id to prevent cross-zone group membership leaks
-            # When zone_id is None, match NULL zone_id (single-zone mode)
-            if zone_id is None:
-                cursor.execute(
-                    self._fix_sql_placeholders(
-                        """
-                        SELECT subject_type, subject_id, subject_relation
-                        FROM rebac_tuples
-                        WHERE zone_id IS NULL
-                          AND relation = ?
-                          AND object_type = ? AND object_id = ?
-                          AND subject_relation IS NOT NULL
-                          AND (expires_at IS NULL OR expires_at >= ?)
-                        """
-                    ),
-                    (
-                        relation,
-                        obj.entity_type,
-                        obj.entity_id,
-                        datetime.now(UTC).isoformat(),
-                    ),
-                )
-            else:
-                cursor.execute(
-                    self._fix_sql_placeholders(
-                        """
-                        SELECT subject_type, subject_id, subject_relation
-                        FROM rebac_tuples
-                        WHERE zone_id = ?
-                          AND relation = ?
-                          AND object_type = ? AND object_id = ?
-                          AND subject_relation IS NOT NULL
-                          AND (expires_at IS NULL OR expires_at >= ?)
-                        """
-                    ),
-                    (
-                        zone_id,
-                        relation,
-                        obj.entity_type,
-                        obj.entity_id,
-                        datetime.now(UTC).isoformat(),
-                    ),
-                )
-
-            results = []
-            for row in cursor.fetchall():
-                results.append((row["subject_type"], row["subject_id"], row["subject_relation"]))
-            return results
+        """Find all subject sets with a relation to an object. Delegates to TupleRepository."""
+        return self._repo.find_subject_sets(relation, obj, zone_id)
 
     def _find_related_objects(self, obj: Entity, relation: str) -> list[Entity]:
-        """Find all objects related to obj via relation.
-
-        For tupleToUserset traversal, finds objects where: (obj, relation, object)
-        Example: Finding parent of file X means finding tuples where:
-          - subject = file X
-          - relation = "parent"
-          - object = parent directory
-
-        Args:
-            obj: Object entity (the subject of the tuple we're looking for)
-            relation: Relation type (e.g., "parent")
-
-        Returns:
-            List of related object entities (the objects from matching tuples)
-        """
-        logger.debug(
-            f"      🔎 _find_related_objects: Looking for tuples where subject={obj}, relation='{relation}'"
-        )
-
-        with self._connection() as conn:
-            cursor = self._create_cursor(conn)
-
-            # FIXED: Query for tuples where obj is the SUBJECT (not object)
-            # This correctly handles parent relations: (child, "parent", parent)
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    SELECT object_type, object_id
-                    FROM rebac_tuples
-                    WHERE subject_type = ? AND subject_id = ?
-                      AND relation = ?
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                    """
-                ),
-                (
-                    obj.entity_type,
-                    obj.entity_id,
-                    relation,
-                    datetime.now(UTC).isoformat(),
-                ),
-            )
-
-            results = []
-            for row in cursor.fetchall():
-                entity = Entity(row["object_type"], row["object_id"])
-                results.append(entity)
-                logger.debug(f"      ✅ Found related object: {entity}")
-
-            if not results:
-                logger.debug(f"      ❌ No related objects found for ({obj}, '{relation}', ?)")
-            else:
-                logger.debug(f"      📊 Total related objects found: {len(results)}")
-
-            return results
+        """Find all objects related to obj via relation. Delegates to TupleRepository."""
+        return self._repo.find_related_objects(obj, relation)
 
     def _find_subjects_with_relation(self, obj: Entity, relation: str) -> list[Entity]:
-        """Find all subjects that have a relation to obj.
-
-        For group-style tupleToUserset traversal, finds subjects where: (subject, relation, obj)
-        Example: Finding groups with direct_viewer on file X means finding tuples where:
-          - subject = any (typically a group)
-          - relation = "direct_viewer"
-          - object = file X
-
-        This is the reverse of _find_related_objects and is used for group permission
-        inheritance patterns like: group_viewer -> find groups with direct_viewer -> check member.
-
-        Args:
-            obj: Object entity (the object in the tuple)
-            relation: Relation type (e.g., "direct_viewer")
-
-        Returns:
-            List of subject entities (the subjects from matching tuples)
-        """
-        logger.debug(
-            f"      🔎 _find_subjects_with_relation: Looking for tuples where (?, '{relation}', {obj})"
-        )
-
-        with self._connection() as conn:
-            cursor = self._create_cursor(conn)
-
-            # Query for tuples where obj is the OBJECT
-            # This handles group relations: (group, "direct_viewer", file)
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    SELECT subject_type, subject_id
-                    FROM rebac_tuples
-                    WHERE object_type = ? AND object_id = ?
-                      AND relation = ?
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                    """
-                ),
-                (
-                    obj.entity_type,
-                    obj.entity_id,
-                    relation,
-                    datetime.now(UTC).isoformat(),
-                ),
-            )
-
-            results = []
-            for row in cursor.fetchall():
-                entity = Entity(row["subject_type"], row["subject_id"])
-                results.append(entity)
-                logger.debug(f"      ✅ Found subject with relation: {entity}")
-
-            if not results:
-                logger.debug(f"      ❌ No subjects found for (?, '{relation}', {obj})")
-            else:
-                logger.debug(f"      📊 Total subjects found: {len(results)}")
-
-            return results
+        """Find all subjects with a relation to obj. Delegates to TupleRepository."""
+        return self._repo.find_subjects_with_relation(obj, relation)
 
     def _evaluate_conditions(
         self, conditions: dict[str, Any] | None, context: dict[str, Any] | None
     ) -> bool:
-        """Evaluate ABAC conditions against runtime context.
-
-        Supports time windows, IP allowlists, device types, and custom attributes.
-
-        Args:
-            conditions: Conditions stored in tuple (JSON dict)
-            context: Runtime context provided by caller
-
-        Returns:
-            True if conditions are satisfied (or no conditions exist)
-
-        Examples:
-            >>> conditions = {
-            ...     "time_window": {"start": "09:00", "end": "17:00"},
-            ...     "allowed_ips": ["10.0.0.0/8", "192.168.0.0/16"]
-            ... }
-            >>> context = {"time": "14:30", "ip": "10.0.1.5"}
-            >>> self._evaluate_conditions(conditions, context)
-            True
-
-            >>> context = {"time": "20:00", "ip": "10.0.1.5"}
-            >>> self._evaluate_conditions(conditions, context)
-            False  # Outside time window
-        """
-        if not conditions:
-            return True  # No conditions = always allowed
-
-        if not context:
-            logger.warning("ABAC conditions exist but no context provided - DENYING access")
-            return False  # Conditions exist but no context = deny
-
-        # Time window check
-        if "time_window" in conditions:
-            current_time = context.get("time")
-            if not current_time:
-                logger.debug("Time window condition but no 'time' in context - DENY")
-                return False
-
-            start = conditions["time_window"].get("start")
-            end = conditions["time_window"].get("end")
-            if start and end:
-                # Support both ISO8601 and simple HH:MM format
-                # ISO8601: "2025-10-25T14:30:00-07:00"
-                # Simple: "14:30"
-                # For ISO8601, extract time portion; for simple, use as-is
-                try:
-                    if "T" in current_time:  # ISO8601
-                        # Extract time portion: "14:30:00-07:00"
-                        time_part = current_time.split("T")[1]
-                        # Extract just HH:MM:SS or HH:MM
-                        current_time_cmp = time_part.split("-")[0].split("+")[0][:8]
-                    else:  # Simple HH:MM
-                        current_time_cmp = current_time
-
-                    # Normalize start/end too
-                    if "T" in start:
-                        start_cmp = start.split("T")[1].split("-")[0].split("+")[0][:8]
-                    else:
-                        start_cmp = start
-
-                    if "T" in end:
-                        end_cmp = end.split("T")[1].split("-")[0].split("+")[0][:8]
-                    else:
-                        end_cmp = end
-
-                    # String comparison works for HH:MM:SS format
-                    if not (start_cmp <= current_time_cmp <= end_cmp):
-                        logger.debug(
-                            f"Time {current_time_cmp} outside window [{start_cmp}, {end_cmp}] - DENY"
-                        )
-                        return False
-                except (ValueError, IndexError) as e:
-                    logger.warning(f"Failed to parse time format: {e} - DENY")
-                    return False
-
-        # IP allowlist check
-        if "allowed_ips" in conditions:
-            current_ip = context.get("ip")
-            if not current_ip:
-                logger.debug("IP allowlist condition but no 'ip' in context - DENY")
-                return False
-
-            try:
-                import ipaddress
-
-                allowed = False
-                for cidr in conditions["allowed_ips"]:
-                    try:
-                        network = ipaddress.ip_network(cidr, strict=False)
-                        if ipaddress.ip_address(current_ip) in network:
-                            allowed = True
-                            break
-                    except ValueError:
-                        logger.warning(f"Invalid CIDR in allowlist: {cidr}")
-                        continue
-
-                if not allowed:
-                    logger.debug(f"IP {current_ip} not in allowlist - DENY")
-                    return False
-            except ImportError:
-                logger.error("ipaddress module not available - cannot evaluate IP conditions")
-                return False
-
-        # Device type check
-        if "allowed_devices" in conditions:
-            current_device = context.get("device")
-            if current_device not in conditions["allowed_devices"]:
-                logger.debug(
-                    f"Device {current_device} not in allowed list {conditions['allowed_devices']} - DENY"
-                )
-                return False
-
-        # Custom attribute checks
-        if "attributes" in conditions:
-            for key, expected_value in conditions["attributes"].items():
-                actual_value = context.get(key)
-                if actual_value != expected_value:
-                    logger.debug(
-                        f"Attribute {key}: expected {expected_value}, got {actual_value} - DENY"
-                    )
-                    return False
-
-        # All conditions satisfied
-        return True
+        """Evaluate ABAC conditions against runtime context. Delegates to TupleRepository."""
+        return TupleRepository.evaluate_conditions(conditions, context)
 
     def rebac_expand(
         self,
@@ -3770,41 +3030,8 @@ class ReBACManager:
             subjects.add(subj)
 
     def _get_direct_subjects(self, relation: str, obj: Entity) -> list[tuple[str, str]]:
-        """Get all subjects with direct relation to object.
-
-        Args:
-            relation: Relation type
-            obj: Object entity
-
-        Returns:
-            List of (subject_type, subject_id) tuples
-        """
-        with self._connection() as conn:
-            cursor = self._create_cursor(conn)
-
-            # BUGFIX: Use >= instead of > for exact expiration boundary
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    SELECT subject_type, subject_id
-                    FROM rebac_tuples
-                    WHERE relation = ?
-                      AND object_type = ? AND object_id = ?
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                    """
-                ),
-                (
-                    relation,
-                    obj.entity_type,
-                    obj.entity_id,
-                    datetime.now(UTC).isoformat(),
-                ),
-            )
-
-            results = []
-            for row in cursor.fetchall():
-                results.append((row["subject_type"], row["subject_id"]))
-            return results
+        """Get all subjects with direct relation to object. Delegates to TupleRepository."""
+        return self._repo.get_direct_subjects(relation, obj)
 
     def _get_cached_check(
         self, subject: Entity, permission: str, obj: Entity, zone_id: str | None = None

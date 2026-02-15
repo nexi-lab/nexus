@@ -396,10 +396,10 @@ class NamespaceManager:
                     self._dcache_negative.pop(k, None)
 
     def invalidate(self, subject: tuple[str, str]) -> None:
-        """Explicitly invalidate a subject's cached mount table, dcache, and L3 entries.
+        """Explicitly invalidate a subject's cached mount table and dcache entries.
 
-        Clears all three cache layers to ensure immediate consistency after
-        grant/revoke events (Issue #1244 event-driven invalidation).
+        Typically not needed — zone revision quantization handles invalidation
+        automatically. Use this for immediate invalidation when needed.
 
         Args:
             subject: (subject_type, subject_id) tuple to invalidate
@@ -407,16 +407,6 @@ class NamespaceManager:
         with self._lock:
             self._cache.pop(subject, None)
         self.invalidate_dcache(subject)
-        # L3: Clear persistent view to prevent stale L3 hit on next lookup
-        if self._persistent_store is not None:
-            try:
-                self._persistent_store.delete_views(subject[0], subject[1])
-            except Exception:
-                logger.warning(
-                    "[NAMESPACE] Failed to invalidate L3 persistent view for %s:%s",
-                    subject[0],
-                    subject[1],
-                )
 
     def invalidate_all(self) -> None:
         """Clear the entire mount table cache and dcache.
@@ -519,7 +509,7 @@ class NamespaceManager:
             # (sqlite3.OperationalError) and any other DB errors. Returns 0
             # which causes a dcache miss — safe because it triggers a fresh check.
             return 0
-        return revision // self._revision_window  # type: ignore[no-any-return]
+        return revision // self._revision_window
 
     def _get_mount_data(
         self,
@@ -731,4 +721,4 @@ class NamespaceManager:
 
         cached_bucket = cached_revision // self._revision_window
         current_bucket = current_revision // self._revision_window
-        return cached_bucket == current_bucket  # type: ignore[no-any-return]
+        return cached_bucket == current_bucket

@@ -6,7 +6,7 @@ Extends the existing Memory API with automatic paging between:
 - Archival Storage (long-term knowledge)
 
 Usage:
-    >>> from nexus.core.memory_with_paging import MemoryWithPaging
+    >>> from nexus.services.memory.memory_with_paging import MemoryWithPaging
     >>> memory = MemoryWithPaging(session, backend, zone_id="acme", user_id="alice")
     >>> memory.store("Important fact", enable_paging=True)
     >>> results = memory.search_with_paging("query about fact")
@@ -18,8 +18,8 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.memory_api import Memory
 from nexus.core.memory_paging import MemoryPager
+from nexus.services.memory.memory_api import Memory
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session

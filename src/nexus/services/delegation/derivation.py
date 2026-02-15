@@ -18,12 +18,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from nexus.delegation.errors import (
+from nexus.services.delegation.errors import (
     EscalationError,
     InvalidDelegationModeError,
     TooManyGrantsError,
 )
-from nexus.delegation.models import DelegationMode
+from nexus.services.delegation.models import DelegationMode
 
 MAX_DELEGATABLE_GRANTS = 1000
 

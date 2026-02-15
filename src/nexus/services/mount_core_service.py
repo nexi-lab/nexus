@@ -56,13 +56,25 @@ class MountCoreService:
     - No async wrappers
     """
 
-    def __init__(self, gateway: NexusFSGateway):
+    def __init__(
+        self,
+        gateway: NexusFSGateway,
+        persist_service: Any = None,
+        rmdir_fn: Any = None,
+        token_manager_fn: Any = None,
+    ):
         """Initialize mount core service.
 
         Args:
             gateway: NexusFSGateway for NexusFS access
+            persist_service: MountPersistService for saved config ops
+            rmdir_fn: Callback to delete directories (NexusFS.rmdir)
+            token_manager_fn: Callback to get token manager for OAuth revocation
         """
         self._gw = gateway
+        self._persist_service = persist_service
+        self._rmdir_fn = rmdir_fn
+        self._token_manager_fn = token_manager_fn
 
     # =========================================================================
     # Core Mount Operations
@@ -592,3 +604,91 @@ class MountCoreService:
             True if user has permission
         """
         return self._check_permission(mount_point, "read", context)
+
+    # =========================================================================
+    # Connector Lifecycle
+    # =========================================================================
+
+    def delete_connector(
+        self,
+        mount_point: str,
+        revoke_oauth: bool = False,
+        provider: str | None = None,
+        user_email: str | None = None,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Delete a connector completely with bundled operations.
+
+        Combines: deactivate, delete config, optional OAuth revocation, directory cleanup.
+        """
+        result: dict[str, Any] = {
+            "removed": False,
+            "directory_deleted": False,
+            "config_deleted": False,
+            "oauth_revoked": False,
+            "errors": [],
+            "warnings": [],
+        }
+
+        # Step 1: Try to deactivate connector if active (non-fatal)
+        try:
+            remove_result = self.remove_mount(mount_point, context)
+            result["removed"] = remove_result.get("removed", False)
+            result["directory_deleted"] = remove_result.get("removed", False)
+            if remove_result.get("errors"):
+                result["warnings"].extend(remove_result["errors"])
+        except PermissionError:
+            raise
+        except Exception as e:
+            result["warnings"].append(f"Failed to deactivate connector (continuing): {e}")
+
+        # Step 2: Delete saved configuration (FATAL - must succeed)
+        if self._persist_service is None:
+            raise RuntimeError("MountPersistService not available for delete_connector")
+        try:
+            config_deleted = self._persist_service.delete_saved_mount(mount_point)
+            result["config_deleted"] = config_deleted
+        except Exception as e:
+            error_msg = f"Failed to delete connector configuration: {e}"
+            result["errors"].append(error_msg)
+            raise RuntimeError(error_msg) from e
+
+        # Step 3: Optionally revoke OAuth credentials
+        if revoke_oauth:
+            if not provider or not user_email:
+                result["warnings"].append(
+                    "OAuth revocation requested but provider or user_email not provided"
+                )
+            elif self._token_manager_fn is not None:
+                try:
+                    from nexus.core.context_utils import get_zone_id
+                    from nexus.core.sync_bridge import run_sync
+
+                    zone_id = get_zone_id(context)
+                    token_manager = self._token_manager_fn()
+                    revoked = run_sync(
+                        token_manager.revoke_credential(
+                            provider=provider,
+                            user_email=user_email,
+                            zone_id=zone_id,
+                        )
+                    )
+                    result["oauth_revoked"] = revoked
+                except Exception as e:
+                    result["warnings"].append(
+                        f"Failed to revoke OAuth credentials (non-fatal): {e}"
+                    )
+
+        # Step 4: Delete mount point directory
+        if self._rmdir_fn is not None:
+            try:
+                self._rmdir_fn(mount_point, recursive=True, context=context)
+                result["directory_deleted"] = True
+                logger.info(f"Deleted mount point directory: {mount_point}")
+            except Exception as e:
+                result["warnings"].append(
+                    f"Failed to delete mount point directory (non-fatal): {e}"
+                )
+                logger.warning(f"Failed to delete mount point directory {mount_point}: {e}")
+
+        return result

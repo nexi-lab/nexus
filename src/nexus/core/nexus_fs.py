@@ -7355,16 +7355,15 @@ class NexusFS(  # type: ignore[misc]
                     # Check if file exists
                     if self.exists(file_path):
                         # Read file to get actual columns
-                        content = self.read(file_path)
-                        if isinstance(content, bytes):
-                            content = content.decode("utf-8")
+                        raw = self.read(file_path)
+                        text_content: str = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
 
                         try:
                             import io
 
                             import pandas as pd
 
-                            df = pd.read_csv(io.StringIO(content))
+                            df = pd.read_csv(io.StringIO(text_content))
                             actual_columns = set(df.columns)
 
                             # Collect all configured columns
@@ -10944,7 +10943,7 @@ class NexusFS(  # type: ignore[misc]
         limit: int = 50,
         offset: int = 0,
         context: OperationContext | None = None,  # noqa: ARG002
-    ) -> list[dict[str, Any]]:
+    ) -> list[dict[str, Any]]:  # type: ignore[valid-type]
         """List tasks with optional filters."""
         return self.task_queue_service.list_tasks(
             task_type=task_type,

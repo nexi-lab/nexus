@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from nexus.backends.local import LocalBackend
+from nexus.core.config import KernelServices, PermissionConfig
 from nexus.core.nexus_fs import NexusFS
 from nexus.services.version_service import VersionService
 
@@ -38,8 +39,8 @@ def _make_fs(tmp_path: Path, *, enforce_permissions: bool = True) -> NexusFS:
     return NexusFS(
         backend=backend,
         metadata_store=metadata_store,
-        enforce_permissions=enforce_permissions,
-        version_service=version_service,
+        permissions=PermissionConfig(enforce=enforce_permissions),
+        services=KernelServices(version_service=version_service),
     )
 
 

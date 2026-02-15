@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from nexus import LocalBackend, NexusFS
+from nexus.core.config import KernelServices, ParseConfig, PermissionConfig
 from nexus.factory import create_nexus_fs
 from nexus.storage.models import FilePathModel, VersionHistoryModel
 from nexus.storage.operation_logger import OperationLogger
@@ -67,9 +68,9 @@ def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS
             backend=LocalBackend(str(temp_dir / "data")),
             metadata_store=metadata_store,
             record_store=record_store,
-            enforce_permissions=False,
-            auto_parse=False,
-            write_observer=write_observer,
+            permissions=PermissionConfig(enforce=False),
+            parsing=ParseConfig(auto_parse=False),
+            services=KernelServices(write_observer=write_observer),
         )
     else:
         nx = create_nexus_fs(

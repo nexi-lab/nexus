@@ -1,6 +1,7 @@
 """Tests for nexus.factory — service factory wiring.
 
 Issue #1287: Extract NexusFS Domain Services from God Object.
+Issue #1391: Builder Pattern — create_nexus_services returns KernelServices.
 
 Validates that create_nexus_services() and create_nexus_fs() correctly
 create and wire all services together before we start extracting subsystems.
@@ -14,6 +15,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from nexus.backends.local import LocalBackend
+from nexus.core.config import KernelServices, PermissionConfig
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 
@@ -59,8 +61,8 @@ class TestCreateNexusServices:
         mock.database_url = f"sqlite:///{db_file}"
         return mock
 
-    def test_returns_dict(self, deps: dict, tmp_path: Path) -> None:
-        """create_nexus_services() returns a dict."""
+    def test_returns_kernel_services(self, deps: dict, tmp_path: Path) -> None:
+        """create_nexus_services() returns a KernelServices dataclass."""
         from nexus.core.router import PathRouter
         from nexus.factory import create_nexus_services
 
@@ -74,10 +76,10 @@ class TestCreateNexusServices:
             backend=deps["backend"],
             router=router,
         )
-        assert isinstance(result, dict)
+        assert isinstance(result, KernelServices)
 
-    def test_contains_all_expected_keys(self, deps: dict, tmp_path: Path) -> None:
-        """Result dict contains all expected service keys."""
+    def test_contains_all_expected_services(self, deps: dict, tmp_path: Path) -> None:
+        """Result KernelServices has all expected service attributes populated."""
         from nexus.core.router import PathRouter
         from nexus.factory import create_nexus_services
 
@@ -92,7 +94,7 @@ class TestCreateNexusServices:
             router=router,
         )
 
-        expected_keys = {
+        expected_attrs = [
             "rebac_manager",
             "dir_visibility_cache",
             "audit_store",
@@ -108,10 +110,9 @@ class TestCreateNexusServices:
             "observability_subsystem",
             "wallet_provisioner",
             "tool_namespace_middleware",
-        }
-        assert expected_keys.issubset(result.keys()), (
-            f"Missing keys: {expected_keys - result.keys()}"
-        )
+        ]
+        for attr in expected_attrs:
+            assert hasattr(result, attr), f"Missing attribute: {attr}"
 
     def test_no_none_values_for_required_services(self, deps: dict, tmp_path: Path) -> None:
         """Required services should not be None."""
@@ -141,8 +142,8 @@ class TestCreateNexusServices:
             "write_observer",
             "version_service",
         ]
-        for key in always_required:
-            assert result[key] is not None, f"Service '{key}' is None"
+        for attr in always_required:
+            assert getattr(result, attr) is not None, f"Service '{attr}' is None"
 
     def test_version_service_wiring(self, deps: dict, tmp_path: Path) -> None:
         """VersionService receives correct metadata_store and cas_store."""
@@ -160,7 +161,7 @@ class TestCreateNexusServices:
             router=router,
         )
 
-        vs = result["version_service"]
+        vs = result.version_service
         assert vs.metadata == deps["metadata_store"]
         assert vs.cas == deps["backend"]
 
@@ -178,9 +179,9 @@ class TestCreateNexusServices:
             metadata_store=deps["metadata_store"],
             backend=deps["backend"],
             router=router,
-            enable_deferred_permissions=False,
+            permissions=PermissionConfig(enable_deferred=False),
         )
-        assert result["deferred_permission_buffer"] is None
+        assert result.deferred_permission_buffer is None
 
     def test_deferred_permission_buffer_enabled(self, deps: dict, tmp_path: Path) -> None:
         """DeferredPermissionBuffer is created when enabled."""
@@ -196,10 +197,9 @@ class TestCreateNexusServices:
             metadata_store=deps["metadata_store"],
             backend=deps["backend"],
             router=router,
-            enable_deferred_permissions=True,
+            permissions=PermissionConfig(enable_deferred=True),
         )
-        buf = result["deferred_permission_buffer"]
-        assert buf is not None
+        assert result.deferred_permission_buffer is not None
 
     def test_write_buffer_disabled_for_sqlite(self, deps: dict, tmp_path: Path) -> None:
         """WriteBuffer is disabled for SQLite by default."""
@@ -218,7 +218,7 @@ class TestCreateNexusServices:
         )
 
         # SQLite should use synchronous RecordStoreSyncer
-        observer = result["write_observer"]
+        observer = result.write_observer
         assert observer is not None
         assert type(observer).__name__ == "RecordStoreSyncer"
 
@@ -239,7 +239,7 @@ class TestCreateNexusServices:
             enable_write_buffer=True,
         )
 
-        observer = result["write_observer"]
+        observer = result.write_observer
         assert type(observer).__name__ == "BufferedRecordStoreSyncer"
 
 
@@ -259,7 +259,7 @@ class TestCreateNexusFS:
         nx = create_nexus_fs(
             backend=deps["backend"],
             metadata_store=deps["metadata_store"],
-            enforce_permissions=False,
+            permissions=PermissionConfig(enforce=False),
         )
         assert nx is not None
         assert hasattr(nx, "read")
@@ -294,7 +294,7 @@ class TestCreateNexusFS:
             backend=deps["backend"],
             metadata_store=deps["metadata_store"],
             record_store=record_store,
-            enforce_permissions=False,
+            permissions=PermissionConfig(enforce=False),
         )
         assert nx is not None
         assert nx.version_service is not None
@@ -310,7 +310,7 @@ class TestCreateNexusFS:
             backend=deps["backend"],
             metadata_store=deps["metadata_store"],
             record_store=record_store,
-            enforce_permissions=False,
+            permissions=PermissionConfig(enforce=False),
         )
 
         # VersionService gets metadata_store
@@ -328,7 +328,7 @@ class TestCreateNexusFS:
         nx = create_nexus_fs(
             backend=deps["backend"],
             metadata_store=deps["metadata_store"],
-            enforce_permissions=False,
+            permissions=PermissionConfig(enforce=False),
         )
         assert nx.router is not None
 
@@ -340,7 +340,7 @@ class TestCreateNexusFS:
         nx = create_nexus_fs(
             backend=deps["backend"],
             metadata_store=deps["metadata_store"],
-            enforce_permissions=False,
+            permissions=PermissionConfig(enforce=False),
             custom_namespaces=[{"name": "custom"}],
         )
         assert nx.router is not None
@@ -388,7 +388,7 @@ class TestToolNamespaceMiddleware:
             router=router,
         )
 
-        mw = result["tool_namespace_middleware"]
+        mw = result.tool_namespace_middleware
         assert mw is not None
         assert type(mw).__name__ == "ToolNamespaceMiddleware"
 
@@ -409,8 +409,8 @@ class TestToolNamespaceMiddleware:
             router=router,
         )
 
-        mw = result["tool_namespace_middleware"]
-        assert mw._rebac_manager is result["rebac_manager"]
+        mw = result.tool_namespace_middleware
+        assert mw._rebac_manager is result.rebac_manager
 
     def test_middleware_receives_zone_id(self, tmp_path: Path) -> None:
         """Middleware inherits zone_id from factory params."""
@@ -430,7 +430,7 @@ class TestToolNamespaceMiddleware:
             zone_id="test-zone-42",
         )
 
-        mw = result["tool_namespace_middleware"]
+        mw = result.tool_namespace_middleware
         assert mw._zone_id == "test-zone-42"
 
     def test_middleware_metrics_initially_zero(self, tmp_path: Path) -> None:
@@ -450,7 +450,7 @@ class TestToolNamespaceMiddleware:
             router=router,
         )
 
-        mw = result["tool_namespace_middleware"]
+        mw = result.tool_namespace_middleware
         assert mw.metrics["cache_hits"] == 0
         assert mw.metrics["cache_misses"] == 0
         assert mw.metrics["enabled"] is True

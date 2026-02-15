@@ -50,7 +50,7 @@ class MockConnector(CacheConnectorMixin):
         entries = set()
         for f in self.files:
             if f.startswith(prefix):
-                relative = f[len(prefix):]
+                relative = f[len(prefix) :]
                 if "/" not in relative:
                     entries.add(relative)
                 else:

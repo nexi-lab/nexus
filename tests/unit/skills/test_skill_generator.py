@@ -99,6 +99,7 @@ def mock_service_registry():
     SERVICE_REGISTRY.update(original_registry)
     # Reset sync flag so next access re-syncs from ConnectorRegistry
     import nexus.backends.service_map as _sm
+
     _sm._synced = False
 
 

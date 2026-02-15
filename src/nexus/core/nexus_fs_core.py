@@ -3199,8 +3199,12 @@ class NexusFSCoreMixin:
         new_revision = self._increment_zone_revision()
         read_set_cache = getattr(self, "_read_set_cache", None)
         if read_set_cache is not None:
-            read_set_cache.invalidate_for_write(old_path, new_revision, zone_id=zone_id or "default")
-            read_set_cache.invalidate_for_write(new_path, new_revision, zone_id=zone_id or "default")
+            read_set_cache.invalidate_for_write(
+                old_path, new_revision, zone_id=zone_id or "default"
+            )
+            read_set_cache.invalidate_for_write(
+                new_path, new_revision, zone_id=zone_id or "default"
+            )
 
         # Update ReBAC permissions to follow the renamed file/directory
         # This ensures permissions are preserved when files are moved

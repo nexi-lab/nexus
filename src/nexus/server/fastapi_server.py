@@ -257,6 +257,14 @@ async def lifespan(_app: FastAPI) -> Any:
     except ImportError:
         logger.debug("OpenTelemetry not available")
 
+    # Initialize Prometheus metrics (Issue #761)
+    try:
+        from nexus.server.metrics import setup_prometheus
+
+        setup_prometheus()
+    except ImportError:
+        logger.debug("prometheus_client not available")
+
     # Configure thread pool size (Issue #932)
     # Increase from default 40 to prevent thread pool exhaustion under load
     limiter = to_thread.current_default_thread_limiter()
@@ -1365,6 +1373,15 @@ def create_app(
 
     # Initialize OAuth provider if credentials are available
     _initialize_oauth_provider(nexus_fs, auth_provider, database_url)
+
+    # Prometheus metrics middleware and endpoint (Issue #761)
+    try:
+        from nexus.server.metrics import PrometheusMiddleware, metrics_endpoint
+
+        app.add_middleware(PrometheusMiddleware)
+        app.add_route("/metrics", metrics_endpoint, methods=["GET"])
+    except ImportError:
+        pass
 
     # Instrument FastAPI with OpenTelemetry (Issue #764)
     try:

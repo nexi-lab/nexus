@@ -554,16 +554,20 @@ class TestShutdownSentry:
 
 
 # ---------------------------------------------------------------------------
-# _get_version
+# get_nexus_version (moved to nexus.server._version)
 # ---------------------------------------------------------------------------
 
 
 class TestGetVersion:
     def test_returns_version_string(self) -> None:
-        result = sentry._get_version()
+        from nexus.server._version import get_nexus_version
+
+        result = get_nexus_version()
         assert isinstance(result, str)
 
     def test_returns_unknown_on_error(self) -> None:
+        from nexus.server._version import get_nexus_version
+
         with patch("importlib.metadata.version", side_effect=Exception("not installed")):
-            result = sentry._get_version()
+            result = get_nexus_version()
         assert result == "unknown"

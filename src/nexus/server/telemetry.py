@@ -108,14 +108,16 @@ def setup_telemetry(
         _sample_ratio = (
             sample_ratio
             if sample_ratio is not None
-            else float(os.environ.get("OTEL_TRACES_SAMPLER_ARG", "1.0"))
+            else float(os.environ.get("OTEL_TRACES_SAMPLER_ARG", "0.1"))
         )
+
+        from nexus.server._version import get_nexus_version
 
         # Create resource with service info
         resource = Resource.create(
             {
                 "service.name": _service_name,
-                "service.version": _get_version(),
+                "service.version": get_nexus_version(),
                 "deployment.environment": os.environ.get("OTEL_ENVIRONMENT", "development"),
             }
         )
@@ -158,16 +160,6 @@ def setup_telemetry(
     except Exception as e:
         logger.error(f"Failed to initialize OpenTelemetry: {e}")
         return False
-
-
-def _get_version() -> str:
-    """Get Nexus version for resource attributes."""
-    try:
-        from importlib.metadata import version
-
-        return version("nexus-ai-fs")
-    except Exception:
-        return "unknown"
 
 
 def _instrument_libraries() -> None:

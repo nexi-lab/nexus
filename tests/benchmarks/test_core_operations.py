@@ -33,6 +33,7 @@ class TestFileOperationBenchmarks:
 
         benchmark(write_file)
 
+    @pytest.mark.benchmark_ci
     def test_write_small_file(self, benchmark, benchmark_nexus, sample_files):
         """Benchmark writing a small file (1 KB)."""
         nx = benchmark_nexus
@@ -79,6 +80,7 @@ class TestFileOperationBenchmarks:
         result = benchmark(read_file)
         assert len(result) == 13
 
+    @pytest.mark.benchmark_ci
     def test_read_small_file(self, benchmark, populated_nexus):
         """Benchmark reading a small file (1 KB)."""
         nx = populated_nexus
@@ -109,6 +111,7 @@ class TestFileOperationBenchmarks:
         result = benchmark(read_file)
         assert len(result) == 1024 * 1024
 
+    @pytest.mark.benchmark_ci
     def test_read_cached_file(self, benchmark, populated_nexus):
         """Benchmark reading a file that's already in cache."""
         nx = populated_nexus
@@ -122,6 +125,7 @@ class TestFileOperationBenchmarks:
         result = benchmark(read_file)
         assert len(result) == 1024
 
+    @pytest.mark.benchmark_ci
     def test_exists_check(self, benchmark, populated_nexus):
         """Benchmark file existence check."""
         nx = populated_nexus
@@ -176,6 +180,7 @@ class TestGlobBenchmarks:
         result = benchmark(list_dir)
         assert len(result) > 0
 
+    @pytest.mark.benchmark_ci
     def test_list_large_directory(self, benchmark, populated_nexus):
         """Benchmark listing a directory with ~300 items."""
         nx = populated_nexus
@@ -196,6 +201,7 @@ class TestGlobBenchmarks:
         result = benchmark(list_recursive)
         assert len(result) > 100
 
+    @pytest.mark.benchmark_ci
     def test_glob_simple_pattern(self, benchmark, populated_nexus):
         """Benchmark simple glob pattern (*.txt)."""
         nx = populated_nexus
@@ -229,6 +235,31 @@ class TestGlobBenchmarks:
         result = benchmark(glob_files)
         assert len(result) > 0
 
+    @pytest.mark.benchmark_ci
+    def test_list_1k_files(self, benchmark, benchmark_nexus):
+        """Benchmark listing directory with 1000 files."""
+        nx = benchmark_nexus
+        for i in range(1000):
+            nx.write(f"/bench_1k/file_{i:04d}.txt", b"x")
+
+        def list_dir():
+            return nx.list("/bench_1k")
+
+        result = benchmark(list_dir)
+        assert len(result) == 1000
+
+    def test_list_10k_files(self, benchmark, benchmark_nexus):
+        """Benchmark listing directory with 10K files."""
+        nx = benchmark_nexus
+        for i in range(10_000):
+            nx.write(f"/bench_10k/file_{i:05d}.txt", b"x")
+
+        def list_dir():
+            return nx.list("/bench_10k")
+
+        result = benchmark(list_dir)
+        assert len(result) == 10_000
+
     def test_glob_deep_path(self, benchmark, deep_directory_nexus):
         """Benchmark glob in deep directory structure."""
         nx = deep_directory_nexus
@@ -236,7 +267,8 @@ class TestGlobBenchmarks:
         def glob_files():
             return nx.glob("*.txt", "/level_0/level_1/level_2/level_3/level_4")
 
-        benchmark(glob_files)
+        result = benchmark(glob_files)
+        assert result is not None
 
 
 # =============================================================================
@@ -271,6 +303,7 @@ class TestHashingBenchmarks:
         result = benchmark(hash_content)
         assert len(result) == 64
 
+    @pytest.mark.benchmark_ci
     def test_sha256_medium(self, benchmark, sample_files):
         """Benchmark SHA256 hashing of medium content (64 KB)."""
         content = sample_files["medium"]
@@ -362,7 +395,8 @@ class TestMetadataBenchmarks:
         def list_meta():
             return nx.metadata.list("/dir_0/")
 
-        benchmark(list_meta)
+        result = benchmark(list_meta)
+        assert result is not None
 
     def test_list_metadata_large(self, benchmark, populated_nexus):
         """Benchmark listing metadata for large directory."""
@@ -397,6 +431,9 @@ class TestMetadataBenchmarks:
             )
 
         benchmark(set_meta)
+        # Verify the last written value is readable
+        val = nx.metadata.get_file_metadata("/test_small.bin", f"key_{counter[0]}")
+        assert val == f"value_{counter[0]}"
 
     def test_get_file_metadata(self, benchmark, populated_nexus):
         """Benchmark getting file metadata key-value."""
@@ -440,10 +477,11 @@ class TestPermissionBenchmarks:
 
         benchmark(check_perm)
 
+    @pytest.mark.benchmark_ci
     def test_permission_check_bulk_python(self, benchmark, benchmark_nexus):
         """Benchmark bulk permission checking in Python."""
         # Import the Python implementation
-        from nexus.services.permissions.rebac_fast import _check_permissions_bulk_python
+        from nexus.services.permissions.utils.fast import _check_permissions_bulk_python
 
         # Create test data
         checks = [(("user", f"user_{i}"), "read", ("file", f"/file_{i}.txt")) for i in range(100)]
@@ -473,6 +511,7 @@ class TestPermissionBenchmarks:
         result = benchmark(check_bulk)
         assert len(result) == 100
 
+    @pytest.mark.benchmark_ci
     def test_permission_check_bulk_rust(self, benchmark, benchmark_nexus):
         """Benchmark bulk permission checking in Rust (if available)."""
         from nexus.services.permissions.rebac_fast import (
@@ -598,6 +637,7 @@ class TestPathResolutionBenchmarks:
 class TestBulkOperationBenchmarks:
     """Benchmarks for bulk operations."""
 
+    @pytest.mark.benchmark_ci
     def test_write_batch_10(self, benchmark, benchmark_nexus, sample_files):
         """Benchmark writing 10 files in a batch."""
         nx = benchmark_nexus
@@ -624,6 +664,7 @@ class TestBulkOperationBenchmarks:
 
         benchmark(write_batch)
 
+    @pytest.mark.benchmark_ci
     def test_read_bulk_10(self, benchmark, populated_nexus):
         """Benchmark reading 10 files in bulk."""
         nx = populated_nexus
@@ -689,6 +730,7 @@ class TestBlake3HashingBenchmarks:
         result = benchmark(hash_content, content)
         assert len(result) == 64
 
+    @pytest.mark.benchmark_ci
     def test_hash_1mb_content(self, benchmark):
         """Benchmark hashing 1 MB content."""
         from nexus.core.hash_fast import hash_content
@@ -716,6 +758,7 @@ class TestBlake3HashingBenchmarks:
         result = benchmark(hash_content_smart, content)
         assert len(result) == 64
 
+    @pytest.mark.benchmark_ci
     def test_hash_smart_1mb_content(self, benchmark):
         """Benchmark smart hashing 1 MB content (uses sampling)."""
         from nexus.core.hash_fast import hash_content_smart

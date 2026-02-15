@@ -567,6 +567,94 @@ class ZoneManager:
         )
         return new_zone_id
 
+    def init_topology(
+        self,
+        zones: list[str],
+        mounts: dict[str, str],
+    ) -> None:
+        """Initialize zone topology: create zones, directories, and mounts.
+
+        Idempotent — safe to call on every startup. Skips zones and mounts
+        that already exist.
+
+        Mounts are specified as global paths and resolved to the correct
+        parent zone by finding the longest-prefix active mount. Must be
+        processed in path-depth order (shorter paths first).
+
+        Args:
+            zones: Zone IDs to create (e.g., ["corp", "corp-eng"]).
+            mounts: Global path → target zone mapping
+                (e.g., {"/corp": "corp", "/corp/engineering": "corp-eng"}).
+        """
+        if not self._root_zone_id:
+            raise RuntimeError("Must call bootstrap() before init_topology()")
+
+        # Step 1: Create zones (idempotent)
+        for zone_id in zones:
+            if self.get_store(zone_id) is not None:
+                logger.debug("Zone '%s' already exists, skipping", zone_id)
+                continue
+            self.create_zone(zone_id)
+
+        if not mounts:
+            return
+
+        # Step 2: Process mounts in path-depth order (parents before children)
+        sorted_mounts = sorted(mounts.items(), key=lambda x: x[0].count("/"))
+
+        # Track active mounts for nested path resolution
+        active_mounts: dict[str, str] = {}  # global_path → zone_id
+
+        for global_path, target_zone_id in sorted_mounts:
+            # Resolve which zone owns this mount point
+            parent_zone = self._root_zone_id
+            local_path = global_path
+
+            # Find longest-prefix active mount (nested mount resolution)
+            for mount_path in sorted(active_mounts, key=len, reverse=True):
+                if global_path.startswith(mount_path + "/"):
+                    parent_zone = active_mounts[mount_path]
+                    local_path = global_path[len(mount_path) :]
+                    break
+
+            parent_store = self.get_store(parent_zone)
+            if parent_store is None:
+                logger.warning(
+                    "Parent zone '%s' not found for mount '%s', skipping",
+                    parent_zone,
+                    global_path,
+                )
+                continue
+
+            # Check if already mounted
+            existing = parent_store.get(local_path)
+            if existing is not None and existing.is_mount:
+                logger.debug("Mount '%s' already exists, skipping", global_path)
+                active_mounts[global_path] = target_zone_id
+                continue
+
+            # Create directory at mount point if it doesn't exist
+            if existing is None:
+                dir_entry = FileMetadata(
+                    path=local_path,
+                    backend_name="virtual",
+                    physical_path="",
+                    size=0,
+                    entry_type=DT_DIR,
+                    zone_id=parent_zone,
+                )
+                parent_store.put(dir_entry)
+
+            # Mount
+            self.mount(parent_zone, local_path, target_zone_id)
+            active_mounts[global_path] = target_zone_id
+
+        logger.info(
+            "Zone topology initialized: %d zones, %d mounts",
+            len(zones),
+            len(active_mounts),
+        )
+
     def shutdown(self) -> None:
         """Shut down all zones and the gRPC server."""
         self._py_mgr.shutdown()

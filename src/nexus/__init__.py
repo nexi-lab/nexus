@@ -303,6 +303,19 @@ def connect(
         zones_dir = os.environ.get("NEXUS_DATA_DIR", str(Path(metadata_path).parent / "zones"))
         zone_mgr = ZoneManager(node_id=node_id, base_path=zones_dir, bind_addr=bind_addr)
         zone_mgr.bootstrap()  # single-node, Raft self-elects leader
+
+        # Optional zone topology from env vars (idempotent)
+        zones_str = os.environ.get("NEXUS_FEDERATION_ZONES", "")
+        mounts_str = os.environ.get("NEXUS_FEDERATION_MOUNTS", "")
+        if zones_str:
+            zones = [z.strip() for z in zones_str.split(",") if z.strip()]
+            mounts: dict[str, str] = {}
+            if mounts_str:
+                for pair in mounts_str.split(","):
+                    path, zone_id = pair.strip().split("=", 1)
+                    mounts[path.strip()] = zone_id.strip()
+            zone_mgr.init_topology(zones=zones, mounts=mounts)
+
         metadata_store = ZoneAwareMetadataStore.from_zone_manager(zone_mgr)
     else:
         # standalone: single-node embedded Raft (no peers)

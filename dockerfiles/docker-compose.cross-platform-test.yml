@@ -183,7 +183,6 @@ services:
       # --- Raft consensus ---
       NEXUS_NODE_ID: 1
       NEXUS_BIND_ADDR: 0.0.0.0:2126
-      NEXUS_PEERS: "2@http://nexus-2:2126,3@http://witness:2126"
 
       # --- RecordStore (shared PostgreSQL) ---
       NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
@@ -234,8 +233,8 @@ services:
       RUST_LOG: info,nexus_raft=debug
 
       # --- Multi-zone federation (Task #104) ---
-      NEXUS_ZONE_CREATE: "corp,corp-eng,corp-sales,family"
-      NEXUS_MOUNTS: "/corp=corp,/corp/engineering=corp-eng,/corp/sales=corp-sales,/family=family,/family/work=corp"
+      NEXUS_FEDERATION_ZONES: "corp,corp-eng,corp-sales,family"
+      NEXUS_FEDERATION_MOUNTS: "/corp=corp,/corp/engineering=corp-eng,/corp/sales=corp-sales,/family=family,/family/work=corp"
     ports:
       - "${NEXUS_PORT:-2026}:2026"   # HTTP API
       - "2126:2126"                   # Raft gRPC
@@ -279,7 +278,6 @@ services:
 
       NEXUS_NODE_ID: 2
       NEXUS_BIND_ADDR: 0.0.0.0:2126
-      NEXUS_PEERS: "1@http://nexus-1:2126,3@http://witness:2126"
 
       NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
       TOKEN_MANAGER_DB: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
@@ -322,7 +320,8 @@ services:
       RUST_LOG: info,nexus_raft=debug
 
       # --- Multi-zone federation (Task #104) ---
-      NEXUS_ZONE_JOIN: "corp,corp-eng,corp-sales,family"
+      NEXUS_FEDERATION_ZONES: "corp,corp-eng,corp-sales,family"
+      NEXUS_FEDERATION_MOUNTS: "/corp=corp,/corp/engineering=corp-eng,/corp/sales=corp-sales,/family=family,/family/work=corp"
     ports:
       - "2027:2026"   # HTTP API (host:2027 → container:2026)
       - "2127:2126"   # Raft gRPC
@@ -362,7 +361,6 @@ services:
     environment:
       NEXUS_NODE_ID: 3
       NEXUS_BIND_ADDR: 0.0.0.0:2126
-      NEXUS_PEERS: "1@http://nexus-1:2126,2@http://nexus-2:2126"
       NEXUS_DATA_DIR: /home/nexus/data
       RUST_LOG: info,nexus_raft=debug
     ports:

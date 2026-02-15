@@ -900,24 +900,9 @@ class NexusFilesystem(ABC):
         """
         ...
 
-    def sandbox_validate(
-        self,
-        sandbox_id: str,  # noqa: ARG002
-        workspace_path: str = "/workspace",  # noqa: ARG002
-        context: dict | None = None,  # noqa: ARG002
-    ) -> dict[Any, Any]:
-        """Run validation pipeline in a sandbox.
-
-        Args:
-            sandbox_id: Sandbox identifier
-            workspace_path: Workspace root path in sandbox
-            context: Operation context
-
-        Returns:
-            Dict with validations list
-        """
-        return {"validations": []}
-        ...
+    # NOTE: sandbox_validate() removed from kernel ABC — it's a service-level
+    # linting/validation pipeline, not a kernel primitive. The implementation
+    # remains on NexusFS via @rpc_expose for RPC dispatch.
 
     @abstractmethod
     def sandbox_pause(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:

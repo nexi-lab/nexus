@@ -653,3 +653,205 @@ class TestNamespaceManagerDualPath:
         assert ns_manager_dual.is_visible(alice, "/workspace/proj/file.txt", zone) is True
         assert ns_manager_dual.is_visible(alice, "/workspace/proj/other.txt", zone) is True
         assert ns_manager_dual.is_visible(alice, "/workspace/other/file.txt", zone) is False
+
+
+# ---------------------------------------------------------------------------
+# Parametrized edge cases (Issue #1305)
+# ---------------------------------------------------------------------------
+
+
+class TestNamespaceEdgeCases:
+    """Parametrized edge case tests for namespace visibility (Issue #1305).
+
+    These tests verify corner cases that arise when agents have
+    various grant patterns.
+    """
+
+    @pytest.mark.parametrize(
+        "grants,path,expected",
+        [
+            # Zero grants -> everything invisible
+            ([], "/workspace", False),
+            ([], "/workspace/file.txt", False),
+            ([], "/", False),
+            # Single file grant -> parent directory visible, siblings visible
+            (
+                [("/workspace/a.txt",)],
+                "/workspace",
+                True,
+            ),
+            (
+                [("/workspace/a.txt",)],
+                "/workspace/a.txt",
+                True,
+            ),
+            # Single file grant -> unrelated paths invisible
+            (
+                [("/workspace/a.txt",)],
+                "/memory",
+                False,
+            ),
+            (
+                [("/workspace/a.txt",)],
+                "/memory/note.md",
+                False,
+            ),
+            # Multiple grants in different trees -> root visible if children exist
+            (
+                [("/workspace/a.txt",), ("/memory/note.md",)],
+                "/workspace",
+                True,
+            ),
+            (
+                [("/workspace/a.txt",), ("/memory/note.md",)],
+                "/memory",
+                True,
+            ),
+            # Deeply nested grant -> all ancestors visible
+            (
+                [("/a/b/c/d/deep.txt",)],
+                "/a/b/c/d/deep.txt",
+                True,
+            ),
+            (
+                [("/a/b/c/d/deep.txt",)],
+                "/a/b/c/d/other.txt",
+                True,
+            ),
+            (
+                [("/a/b/c/d/deep.txt",)],
+                "/a/b/c/other",
+                False,
+            ),
+        ],
+        ids=[
+            "zero-grants-dir",
+            "zero-grants-file",
+            "zero-grants-root",
+            "file-grant-parent-visible",
+            "file-grant-self-visible",
+            "file-grant-unrelated-dir-invisible",
+            "file-grant-unrelated-file-invisible",
+            "multi-grant-first-tree-visible",
+            "multi-grant-second-tree-visible",
+            "deep-grant-self-visible",
+            "deep-grant-sibling-visible",
+            "deep-grant-uncle-invisible",
+        ],
+    )
+    def test_namespace_edge_cases(
+        self, enhanced_rebac_manager, grants, path, expected
+    ):
+        """Verify namespace visibility for various grant patterns."""
+        zone = "edge_zone"
+
+        # Create grants
+        for (file_path,) in grants:
+            enhanced_rebac_manager.rebac_write(
+                subject=("agent", "test-agent"),
+                relation="direct_viewer",
+                object=("file", file_path),
+                zone_id=zone,
+            )
+
+        # Fresh namespace manager per test to avoid cross-contamination
+        ns = NamespaceManager(
+            rebac_manager=enhanced_rebac_manager,
+            revision_window=1,
+        )
+
+        subject = ("agent", "test-agent")
+        result = ns.is_visible(subject, path, zone)
+        assert result is expected, (
+            f"Expected is_visible({subject}, {path!r}, {zone}) == {expected}, "
+            f"got {result}. Grants: {grants}"
+        )
+
+    def test_enforcer_raises_not_found_for_invisible_path(
+        self, enhanced_rebac_manager, namespace_manager
+    ):
+        """PermissionEnforcer raises NexusFileNotFoundError for invisible paths."""
+        from nexus.core.exceptions import NexusFileNotFoundError
+
+        enforcer = PermissionEnforcer(
+            rebac_manager=enhanced_rebac_manager,
+            namespace_manager=namespace_manager,
+        )
+
+        # Agent with no grants
+        ctx = OperationContext(
+            user="agent-x",
+            agent_id="agent-x",
+            subject_type="agent",
+            subject_id="agent-x",
+            groups=[],
+            zone_id="test_zone",
+        )
+
+        with pytest.raises(NexusFileNotFoundError):
+            enforcer.check("/workspace/secret/file.txt", Permission.READ, ctx)
+
+    def test_enforcer_batch_filter_uses_namespace(
+        self, enhanced_rebac_manager, namespace_manager
+    ):
+        """filter_list() uses namespace to pre-filter paths for agents."""
+        zone = "test_zone"
+
+        # Grant agent access to project-alpha only
+        enhanced_rebac_manager.rebac_write(
+            subject=("agent", "agent-filter"),
+            relation="direct_viewer",
+            object=("file", "/workspace/project-alpha/readme.md"),
+            zone_id=zone,
+        )
+
+        enforcer = PermissionEnforcer(
+            rebac_manager=enhanced_rebac_manager,
+            namespace_manager=namespace_manager,
+        )
+
+        ctx = OperationContext(
+            user="agent-filter",
+            agent_id="agent-filter",
+            subject_type="agent",
+            subject_id="agent-filter",
+            groups=[],
+            zone_id=zone,
+        )
+
+        all_paths = [
+            "/workspace/project-alpha/readme.md",
+            "/workspace/project-alpha/code.py",
+            "/workspace/project-beta/secret.txt",
+            "/admin/config.yml",
+        ]
+
+        filtered = enforcer.filter_list(all_paths, ctx)
+
+        # project-beta and admin should be filtered out by namespace
+        assert "/workspace/project-beta/secret.txt" not in filtered
+        assert "/admin/config.yml" not in filtered
+
+    def test_enforcer_admin_bypasses_namespace(
+        self, enhanced_rebac_manager, namespace_manager
+    ):
+        """Admin users bypass namespace checks — see all paths."""
+        enforcer = PermissionEnforcer(
+            rebac_manager=enhanced_rebac_manager,
+            namespace_manager=namespace_manager,
+            allow_admin_bypass=True,
+        )
+
+        admin_ctx = OperationContext(
+            user="admin",
+            groups=[],
+            is_admin=True,
+            admin_capabilities={"admin:read:*"},
+            zone_id="test_zone",
+        )
+
+        # Admin should see any path regardless of namespace
+        result = enforcer.check(
+            "/workspace/secret/file.txt", Permission.READ, admin_ctx
+        )
+        assert result is True

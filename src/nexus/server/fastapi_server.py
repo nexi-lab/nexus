@@ -1835,6 +1835,48 @@ def _register_routes(app: FastAPI) -> None:
     except ImportError as e:
         logger.warning(f"Failed to import A2A router: {e}. A2A endpoint will not be available.")
 
+    # Secrets audit log endpoints (Issue #997)
+    try:
+        from nexus.server.api.v2.routers.secrets_audit import (
+            get_secrets_audit_logger as _secrets_audit_dep,
+            router as secrets_audit_router,
+        )
+        from nexus.storage.secrets_audit_logger import SecretsAuditLogger
+
+        # Wire up dependency: create audit logger from app session_factory + auth zone_id
+        _secrets_audit_logger_instance: SecretsAuditLogger | None = None
+
+        def _get_secrets_audit_logger_override(
+            auth_result: dict[str, Any] = Depends(require_auth),
+        ) -> tuple:
+            nonlocal _secrets_audit_logger_instance
+            # Admin-only: secrets audit log is sensitive
+            if not auth_result.get("is_admin", False):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Secrets audit log access requires admin privileges",
+                )
+            if _secrets_audit_logger_instance is None:
+                session_factory = getattr(_fastapi_app.state.nexus_fs, "SessionLocal", None)
+                if session_factory is None:
+                    raise HTTPException(status_code=500, detail="Secrets audit not configured")
+                # Ensure audit tables exist on the session_factory's engine
+                engine = session_factory.kw.get("bind") if hasattr(session_factory, "kw") else None
+                if engine is not None:
+                    from nexus.storage.models.secrets_audit_log import SecretsAuditLogModel
+                    SecretsAuditLogModel.__table__.create(engine, checkfirst=True)
+                _secrets_audit_logger_instance = SecretsAuditLogger(
+                    session_factory=session_factory
+                )
+            zone_id = auth_result.get("zone_id", "default")
+            return _secrets_audit_logger_instance, zone_id
+
+        app.dependency_overrides[_secrets_audit_dep] = _get_secrets_audit_logger_override
+        app.include_router(secrets_audit_router)
+        logger.info("Secrets audit routes registered")
+    except ImportError as e:
+        logger.warning(f"Failed to import secrets audit router: {e}")
+
     # Asyncio debug endpoint (Python 3.14+)
     @app.get("/debug/asyncio", tags=["debug"])
     async def debug_asyncio() -> dict[str, Any]:

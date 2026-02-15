@@ -226,6 +226,13 @@ class OAuthCredentialModel(Base):
     created_by: Mapped[str | None] = mapped_column(String(255), nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+    # Token rotation fields (Issue #997, RFC 9700)
+    token_family_id: Mapped[str | None] = mapped_column(
+        String(36), nullable=True, default=lambda: str(uuid.uuid4()), index=True
+    )
+    rotation_counter: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    refresh_token_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     __table_args__ = (
         UniqueConstraint("provider", "user_email", "zone_id", name="uq_oauth_credential"),
         Index("idx_oauth_provider", "provider"),
@@ -234,6 +241,7 @@ class OAuthCredentialModel(Base):
         Index("idx_oauth_zone", "zone_id"),
         Index("idx_oauth_expires", "expires_at"),
         Index("idx_oauth_revoked", "revoked"),
+        Index("idx_oauth_token_family", "token_family_id"),
     )
 
     def __repr__(self) -> str:
@@ -253,12 +261,13 @@ class OAuthCredentialModel(Base):
         return not self.revoked and not self.is_expired()
 
     def validate(self) -> None:
-        """Validate OAuth credential before database operations."""
+        """Validate OAuth credential structural invariants.
+
+        Provider name validation is handled by OAuthProviderFactory at the
+        service layer. This method only checks structural invariants.
+        """
         if not self.provider:
             raise ValidationError("provider is required")
-        valid_providers = ["google", "microsoft", "dropbox", "box"]
-        if self.provider not in valid_providers:
-            raise ValidationError(f"provider must be one of {valid_providers}, got {self.provider}")
         if not self.user_email:
             raise ValidationError("user_email is required")
         if not self.encrypted_access_token:

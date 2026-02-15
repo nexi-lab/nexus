@@ -1,12 +1,13 @@
-"""Unit tests for NexusFSOAuthMixin.
+"""Unit tests for NexusFSOAuthMixin (DEPRECATED — Issue #1287).
 
-Tests cover OAuth credential management operations:
-- oauth_list_providers: List all available OAuth providers
-- oauth_get_auth_url: Get OAuth authorization URL
-- oauth_exchange_code: Exchange authorization code for tokens
-- oauth_list_credentials: List all stored credentials
-- oauth_revoke_credential: Revoke OAuth credential
-- oauth_test_credential: Test credential validity
+These tests targeted NexusFSOAuthMixin methods via NexusFS, but the mixin was
+removed from NexusFS's MRO in Phase 1.3 (replaced by OAuthService delegation).
+
+Coverage is now provided by:
+- tests/unit/core/test_nexus_fs_oauth.py — tests the mixin directly (33 tests)
+- tests/unit/services/test_oauth_service.py — tests OAuthService (49 tests)
+
+This file is skipped entirely until removed.
 """
 
 from __future__ import annotations
@@ -23,6 +24,11 @@ from nexus import LocalBackend, NexusFS
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
+
+pytestmark = pytest.mark.skip(
+    reason="Issue #1287: NexusFSOAuthMixin removed from NexusFS MRO. "
+    "Coverage migrated to test_oauth_service.py and test_nexus_fs_oauth.py"
+)
 
 
 @pytest.fixture

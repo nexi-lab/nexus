@@ -330,9 +330,12 @@ class WebSocketManager:
     async def broadcast_to_zone(self, zone_id: str, event: FileEvent) -> int:
         """Broadcast an event to all connections for a zone.
 
-        When a ReactiveSubscriptionManager is configured, delegates to it
-        for O(1) read-set lookups + O(L*P) pattern fallback. Otherwise
-        falls back to the original linear scan.
+        When a ReactiveSubscriptionManager is configured, uses batch_update
+        messages (#1170) — grouping all affected subscriptions per connection
+        into a single atomic message for consistent client state.
+
+        Falls back to individual event messages when no reactive manager
+        is available (legacy mode).
 
         Args:
             zone_id: The zone ID
@@ -345,37 +348,109 @@ class WebSocketManager:
         if not connections:
             return 0
 
-        message = {
+        # Batch path: group subscriptions per connection for atomic updates
+        if self._reactive_manager:
+            return await self._broadcast_batch(connections, event)
+
+        # Legacy path: individual event messages with pattern filtering
+        return await self._broadcast_legacy(connections, event)
+
+    async def _broadcast_batch(
+        self,
+        connections: dict[str, ConnectionInfo],
+        event: FileEvent,
+    ) -> int:
+        """Send batch_update messages with subscriptions grouped per connection.
+
+        Each connection receives a single batch_update message containing all
+        affected subscription IDs, ensuring consistent client state (#1170).
+
+        Args:
+            connections: Zone connections dict (connection_id -> ConnectionInfo)
+            event: The file event to broadcast
+
+        Returns:
+            Number of connections that received the batch
+        """
+        if self._reactive_manager is None:
+            return 0
+
+        try:
+            affected_subs = self._reactive_manager.find_affected_subscriptions(event)
+        except Exception as e:
+            logger.error(f"Reactive subscription lookup failed, falling back to legacy: {e}")
+            return await self._broadcast_legacy(connections, event)
+
+        # Build per-connection batch messages
+        event_data = event.to_dict()
+        targets: list[tuple[str, ConnectionInfo, dict[str, Any]]] = []
+
+        for conn_id, subs in affected_subs.items():
+            conn_info = connections.get(conn_id)
+            if not conn_info or not subs:
+                continue
+
+            message: dict[str, Any] = {
+                "type": "batch_update",
+                "event": event_data,
+                "commit_id": event.revision,
+                "timestamp": event.timestamp,
+                "updates": [
+                    {
+                        "subscription_id": sub.subscription_id,
+                        **({"query_id": sub.query_id} if sub.query_id else {}),
+                    }
+                    for sub in subs
+                ],
+            }
+            targets.append((conn_id, conn_info, message))
+
+        return await self._send_and_cleanup(targets)
+
+    async def _broadcast_legacy(
+        self,
+        connections: dict[str, ConnectionInfo],
+        event: FileEvent,
+    ) -> int:
+        """Send individual event messages using pattern filtering (legacy path).
+
+        Used when no ReactiveSubscriptionManager is configured.
+
+        Args:
+            connections: Zone connections dict (connection_id -> ConnectionInfo)
+            event: The file event to broadcast
+
+        Returns:
+            Number of connections that received the event
+        """
+        message: dict[str, Any] = {
             "type": "event",
             "data": event.to_dict(),
         }
 
-        # Determine which connections should receive this event
-        if self._reactive_manager:
-            try:
-                affected_ids = self._reactive_manager.find_affected_connections(event)
-                target_ids = affected_ids & set(connections.keys())
-            except Exception as e:
-                logger.error(f"Reactive lookup failed, falling back to legacy: {e}")
-                target_ids = {
-                    conn_id
-                    for conn_id, conn_info in connections.items()
-                    if self._matches_filters(event, conn_info)
-                }
-        else:
-            target_ids = {
-                conn_id
-                for conn_id, conn_info in connections.items()
-                if self._matches_filters(event, conn_info)
-            }
+        targets: list[tuple[str, ConnectionInfo, dict[str, Any]]] = []
+        for conn_id, conn_info in connections.items():
+            if self._matches_filters(event, conn_info):
+                targets.append((conn_id, conn_info, message))
 
+        return await self._send_and_cleanup(targets)
+
+    async def _send_and_cleanup(
+        self,
+        targets: list[tuple[str, ConnectionInfo, dict[str, Any]]],
+    ) -> int:
+        """Send messages to targets and clean up failed connections.
+
+        Args:
+            targets: List of (connection_id, conn_info, message) tuples
+
+        Returns:
+            Count of successful sends
+        """
         sent_count = 0
         failed_connections: list[str] = []
 
-        for conn_id in target_ids:
-            conn_info = connections.get(conn_id)
-            if not conn_info:
-                continue
+        for conn_id, conn_info, message in targets:
             try:
                 await self._send_to_connection(conn_info, message)
                 sent_count += 1
@@ -383,7 +458,6 @@ class WebSocketManager:
                 logger.warning(f"Failed to send to {conn_id}: {e}")
                 failed_connections.append(conn_id)
 
-        # Clean up failed connections
         for conn_id in failed_connections:
             await self.disconnect(conn_id)
 

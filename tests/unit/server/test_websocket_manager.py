@@ -2,6 +2,7 @@
 
 Tests the WebSocketManager class for real-time event streaming.
 Issue #1116: Add WebSocket Connection Manager for Real-Time Events
+Issue #1170: Batch Subscription Updates for Consistent Client State
 """
 
 from __future__ import annotations
@@ -12,6 +13,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from nexus.core.reactive_subscriptions import (
+    ReactiveSubscriptionManager,
+    Subscription,
+)
+from nexus.core.read_set import ReadSet, ReadSetRegistry
 from nexus.server.websocket.manager import (
     ConnectionInfo,
     WebSocketManager,
@@ -505,3 +511,351 @@ class TestPatternMatching:
 
         assert manager._matches_filters(event, conn_matches)
         assert not manager._matches_filters(event, conn_no_match)
+
+
+# ---------------------------------------------------------------------------
+# TestBatchSubscriptionUpdates (#1170)
+# ---------------------------------------------------------------------------
+
+
+class TestBatchSubscriptionUpdates:
+    """Integration tests for batch_update message format.
+
+    Issue #1170: Batch Subscription Updates for Consistent Client State
+    """
+
+    @pytest.fixture
+    def registry(self) -> ReadSetRegistry:
+        return ReadSetRegistry()
+
+    @pytest.fixture
+    def reactive_manager(self, registry: ReadSetRegistry) -> ReactiveSubscriptionManager:
+        return ReactiveSubscriptionManager(registry=registry)
+
+    @pytest.fixture
+    def manager(self, reactive_manager: ReactiveSubscriptionManager) -> WebSocketManager:
+        """WebSocketManager with reactive manager configured."""
+        return WebSocketManager(reactive_manager=reactive_manager)
+
+    def _make_event(
+        self,
+        path: str = "/inbox/a.txt",
+        zone_id: str = "zone1",
+        event_type: str = "file_write",
+        revision: int = 42,
+    ) -> MagicMock:
+        """Create a mock FileEvent."""
+        event = MagicMock()
+        event.type = event_type
+        event.path = path
+        event.zone_id = zone_id
+        event.revision = revision
+        event.timestamp = "2026-02-15T10:00:00"
+        event.to_dict.return_value = {
+            "type": event_type,
+            "path": path,
+            "zone_id": zone_id,
+            "revision": revision,
+            "timestamp": "2026-02-15T10:00:00",
+        }
+        return event
+
+    @pytest.mark.asyncio
+    async def test_batch_update_message_format(
+        self,
+        manager: WebSocketManager,
+        reactive_manager: ReactiveSubscriptionManager,
+    ) -> None:
+        """Batch update contains correct structure: type, event, commit_id, timestamp, updates."""
+        await manager.start()
+
+        ws = MockWebSocket()
+        await manager.connect(
+            websocket=ws,  # type: ignore
+            zone_id="zone1",
+            connection_id="conn1",
+        )
+
+        sub = Subscription(
+            subscription_id="sub1",
+            connection_id="conn1",
+            zone_id="zone1",
+            mode="pattern",
+            patterns=("/inbox/**/*",),
+        )
+        await reactive_manager.register(sub)
+
+        event = self._make_event(path="/inbox/a.txt")
+        sent = await manager.broadcast_to_zone("zone1", event)
+
+        assert sent == 1
+        assert len(ws.sent_messages) == 1
+        msg = ws.sent_messages[0]
+        assert msg["type"] == "batch_update"
+        assert msg["commit_id"] == 42
+        assert msg["timestamp"] == "2026-02-15T10:00:00"
+        assert "event" in msg
+        assert msg["event"]["path"] == "/inbox/a.txt"
+        assert len(msg["updates"]) == 1
+        assert msg["updates"][0]["subscription_id"] == "sub1"
+
+        await manager.stop()
+
+    @pytest.mark.asyncio
+    async def test_batch_groups_multiple_subs(
+        self,
+        manager: WebSocketManager,
+        reactive_manager: ReactiveSubscriptionManager,
+    ) -> None:
+        """Multiple subs on same connection grouped into single batch message."""
+        await manager.start()
+
+        ws = MockWebSocket()
+        await manager.connect(
+            websocket=ws,  # type: ignore
+            zone_id="zone1",
+            connection_id="conn1",
+        )
+
+        # Two pattern subscriptions on same connection
+        sub1 = Subscription(
+            subscription_id="sub_list",
+            connection_id="conn1",
+            zone_id="zone1",
+            mode="pattern",
+            query_id="q_list",
+        )
+        sub2 = Subscription(
+            subscription_id="sub_count",
+            connection_id="conn1",
+            zone_id="zone1",
+            mode="pattern",
+            query_id="q_count",
+        )
+        await reactive_manager.register(sub1)
+        await reactive_manager.register(sub2)
+
+        event = self._make_event()
+        sent = await manager.broadcast_to_zone("zone1", event)
+
+        assert sent == 1  # One message to one connection
+        assert len(ws.sent_messages) == 1
+        msg = ws.sent_messages[0]
+        assert msg["type"] == "batch_update"
+        sub_ids = {u["subscription_id"] for u in msg["updates"]}
+        assert sub_ids == {"sub_list", "sub_count"}
+
+        await manager.stop()
+
+    @pytest.mark.asyncio
+    async def test_batch_separate_connections(
+        self,
+        manager: WebSocketManager,
+        reactive_manager: ReactiveSubscriptionManager,
+    ) -> None:
+        """Different connections get separate batch messages."""
+        await manager.start()
+
+        ws1 = MockWebSocket()
+        ws2 = MockWebSocket()
+        await manager.connect(websocket=ws1, zone_id="zone1", connection_id="conn1")  # type: ignore
+        await manager.connect(websocket=ws2, zone_id="zone1", connection_id="conn2")  # type: ignore
+
+        sub1 = Subscription(
+            subscription_id="sub1",
+            connection_id="conn1",
+            zone_id="zone1",
+            mode="pattern",
+        )
+        sub2 = Subscription(
+            subscription_id="sub2",
+            connection_id="conn2",
+            zone_id="zone1",
+            mode="pattern",
+        )
+        await reactive_manager.register(sub1)
+        await reactive_manager.register(sub2)
+
+        event = self._make_event()
+        sent = await manager.broadcast_to_zone("zone1", event)
+
+        assert sent == 2
+        assert len(ws1.sent_messages) == 1
+        assert len(ws2.sent_messages) == 1
+        assert ws1.sent_messages[0]["type"] == "batch_update"
+        assert ws2.sent_messages[0]["type"] == "batch_update"
+
+        await manager.stop()
+
+    @pytest.mark.asyncio
+    async def test_batch_no_match_sends_nothing(
+        self,
+        manager: WebSocketManager,
+        reactive_manager: ReactiveSubscriptionManager,
+    ) -> None:
+        """No matching subscriptions sends no messages."""
+        await manager.start()
+
+        ws = MockWebSocket()
+        await manager.connect(websocket=ws, zone_id="zone1", connection_id="conn1")  # type: ignore
+
+        sub = Subscription(
+            subscription_id="sub1",
+            connection_id="conn1",
+            zone_id="zone1",
+            mode="pattern",
+            patterns=("/docs/**/*.md",),
+        )
+        await reactive_manager.register(sub)
+
+        event = self._make_event(path="/inbox/a.txt")
+        sent = await manager.broadcast_to_zone("zone1", event)
+
+        assert sent == 0
+        assert len(ws.sent_messages) == 0
+
+        await manager.stop()
+
+    @pytest.mark.asyncio
+    async def test_legacy_fallback_without_reactive_manager(self) -> None:
+        """Without reactive manager, falls back to legacy event messages."""
+        manager = WebSocketManager()  # No reactive_manager
+        await manager.start()
+
+        ws = MockWebSocket()
+        await manager.connect(websocket=ws, zone_id="zone1", connection_id="conn1")  # type: ignore
+
+        event = self._make_event()
+        sent = await manager.broadcast_to_zone("zone1", event)
+
+        assert sent == 1
+        assert len(ws.sent_messages) == 1
+        msg = ws.sent_messages[0]
+        assert msg["type"] == "event"  # Legacy format, not batch_update
+        assert "data" in msg
+
+        await manager.stop()
+
+    @pytest.mark.asyncio
+    async def test_batch_with_read_set_subscription(
+        self,
+        manager: WebSocketManager,
+        reactive_manager: ReactiveSubscriptionManager,
+    ) -> None:
+        """Read-set subscriptions work with batch format."""
+        await manager.start()
+
+        ws = MockWebSocket()
+        await manager.connect(websocket=ws, zone_id="zone1", connection_id="conn1")  # type: ignore
+
+        rs = ReadSet(query_id="q1", zone_id="zone1")
+        rs.record_read("file", "/inbox/a.txt", revision=10)
+
+        sub = Subscription(
+            subscription_id="sub1",
+            connection_id="conn1",
+            zone_id="zone1",
+            mode="read_set",
+            query_id="q1",
+        )
+        await reactive_manager.register(sub, read_set=rs)
+
+        event = self._make_event(path="/inbox/a.txt", revision=20)
+        sent = await manager.broadcast_to_zone("zone1", event)
+
+        assert sent == 1
+        msg = ws.sent_messages[0]
+        assert msg["type"] == "batch_update"
+        assert msg["updates"][0]["subscription_id"] == "sub1"
+        assert msg["updates"][0]["query_id"] == "q1"
+
+        await manager.stop()
+
+    @pytest.mark.asyncio
+    async def test_batch_stats_tracking(
+        self,
+        manager: WebSocketManager,
+        reactive_manager: ReactiveSubscriptionManager,
+    ) -> None:
+        """Batch sends update message stats correctly."""
+        await manager.start()
+
+        ws = MockWebSocket()
+        await manager.connect(websocket=ws, zone_id="zone1", connection_id="conn1")  # type: ignore
+
+        sub = Subscription(
+            subscription_id="sub1",
+            connection_id="conn1",
+            zone_id="zone1",
+            mode="pattern",
+        )
+        await reactive_manager.register(sub)
+
+        event = self._make_event()
+        await manager.broadcast_to_zone("zone1", event)
+
+        stats = manager.get_stats()
+        assert stats["total_messages_sent"] == 1
+
+        await manager.stop()
+
+    @pytest.mark.asyncio
+    async def test_batch_failed_connection_cleanup(
+        self,
+        manager: WebSocketManager,
+        reactive_manager: ReactiveSubscriptionManager,
+    ) -> None:
+        """Failed sends trigger connection cleanup."""
+        await manager.start()
+
+        ws = MockWebSocket()
+        await manager.connect(websocket=ws, zone_id="zone1", connection_id="conn1")  # type: ignore
+
+        sub = Subscription(
+            subscription_id="sub1",
+            connection_id="conn1",
+            zone_id="zone1",
+            mode="pattern",
+        )
+        await reactive_manager.register(sub)
+
+        # Close websocket to trigger send failure
+        ws.closed = True
+
+        event = self._make_event()
+        sent = await manager.broadcast_to_zone("zone1", event)
+
+        assert sent == 0
+        assert manager.get_connection_count() == 0  # Connection cleaned up
+
+        await manager.stop()
+
+    @pytest.mark.asyncio
+    async def test_batch_fallback_on_reactive_error(
+        self,
+        manager: WebSocketManager,
+        reactive_manager: ReactiveSubscriptionManager,
+    ) -> None:
+        """When reactive lookup raises, falls back to legacy event messages."""
+        await manager.start()
+
+        ws = MockWebSocket()
+        await manager.connect(
+            websocket=ws,  # type: ignore
+            zone_id="zone1",
+            connection_id="conn1",
+        )
+
+        # Make reactive manager raise on lookup
+        reactive_manager.find_affected_subscriptions = MagicMock(  # type: ignore[method-assign]
+            side_effect=RuntimeError("registry corrupted"),
+        )
+
+        event = self._make_event()
+        sent = await manager.broadcast_to_zone("zone1", event)
+
+        assert sent == 1
+        msg = ws.sent_messages[0]
+        assert msg["type"] == "event"  # Fell back to legacy format
+
+        await manager.stop()

@@ -542,6 +542,226 @@ class TestFindAffectedConnections:
 
 
 # ---------------------------------------------------------------------------
+# TestFindAffectedSubscriptions (#1170)
+# ---------------------------------------------------------------------------
+
+
+class TestFindAffectedSubscriptions:
+    """Tests for find_affected_subscriptions — subscription-level grouping."""
+
+    @pytest.fixture
+    def registry(self) -> ReadSetRegistry:
+        return ReadSetRegistry()
+
+    @pytest.fixture
+    def manager(self, registry: ReadSetRegistry) -> ReactiveSubscriptionManager:
+        return ReactiveSubscriptionManager(registry=registry)
+
+    def _make_event(
+        self,
+        path: str = "/inbox/a.txt",
+        zone_id: str = "zone1",
+        event_type: str = "file_write",
+        revision: int = 20,
+    ) -> FileEvent:
+        return FileEvent(
+            type=event_type,
+            path=path,
+            zone_id=zone_id,
+            revision=revision,
+        )
+
+    @pytest.mark.asyncio
+    async def test_single_pattern_subscription(self, manager: ReactiveSubscriptionManager) -> None:
+        """Single matching pattern sub returns one connection with one sub."""
+        sub = Subscription(
+            subscription_id="sub1",
+            connection_id="conn1",
+            zone_id="zone1",
+            mode="pattern",
+            patterns=("/inbox/**/*",),
+        )
+        await manager.register(sub)
+
+        event = self._make_event(path="/inbox/sub/msg.txt")
+        result = manager.find_affected_subscriptions(event)
+
+        assert set(result.keys()) == {"conn1"}
+        assert len(result["conn1"]) == 1
+        assert result["conn1"][0].subscription_id == "sub1"
+
+    @pytest.mark.asyncio
+    async def test_multiple_subs_same_connection(
+        self, manager: ReactiveSubscriptionManager
+    ) -> None:
+        """Two subs on same connection both returned in one group."""
+        sub1 = Subscription(
+            subscription_id="sub1",
+            connection_id="conn1",
+            zone_id="zone1",
+            mode="pattern",
+            patterns=("/inbox/**/*",),
+        )
+        sub2 = Subscription(
+            subscription_id="sub2",
+            connection_id="conn1",
+            zone_id="zone1",
+            mode="pattern",
+        )
+        await manager.register(sub1)
+        await manager.register(sub2)
+
+        event = self._make_event(path="/inbox/a.txt")
+        result = manager.find_affected_subscriptions(event)
+
+        assert set(result.keys()) == {"conn1"}
+        sub_ids = {s.subscription_id for s in result["conn1"]}
+        assert sub_ids == {"sub1", "sub2"}
+
+    @pytest.mark.asyncio
+    async def test_multiple_connections(self, manager: ReactiveSubscriptionManager) -> None:
+        """Subs on different connections are grouped separately."""
+        sub1 = Subscription(
+            subscription_id="sub1",
+            connection_id="conn1",
+            zone_id="zone1",
+            mode="pattern",
+        )
+        sub2 = Subscription(
+            subscription_id="sub2",
+            connection_id="conn2",
+            zone_id="zone1",
+            mode="pattern",
+        )
+        await manager.register(sub1)
+        await manager.register(sub2)
+
+        event = self._make_event()
+        result = manager.find_affected_subscriptions(event)
+
+        assert set(result.keys()) == {"conn1", "conn2"}
+        assert len(result["conn1"]) == 1
+        assert len(result["conn2"]) == 1
+
+    @pytest.mark.asyncio
+    async def test_mixed_mode_returns_both_subs(self, manager: ReactiveSubscriptionManager) -> None:
+        """Read-set and pattern subs on same conn returned as separate entries."""
+        rs = ReadSet(query_id="q1", zone_id="zone1")
+        rs.record_read("file", "/inbox/a.txt", revision=10)
+
+        sub_rs = Subscription(
+            subscription_id="sub_rs",
+            connection_id="conn1",
+            zone_id="zone1",
+            mode="read_set",
+            query_id="q1",
+        )
+        sub_pat = Subscription(
+            subscription_id="sub_pat",
+            connection_id="conn1",
+            zone_id="zone1",
+            mode="pattern",
+            patterns=("/inbox/**/*",),
+        )
+        await manager.register(sub_rs, read_set=rs)
+        await manager.register(sub_pat)
+
+        event = self._make_event(path="/inbox/a.txt", revision=20)
+        result = manager.find_affected_subscriptions(event)
+
+        assert set(result.keys()) == {"conn1"}
+        sub_ids = {s.subscription_id for s in result["conn1"]}
+        assert sub_ids == {"sub_rs", "sub_pat"}
+
+    @pytest.mark.asyncio
+    async def test_no_match_returns_empty(self, manager: ReactiveSubscriptionManager) -> None:
+        """Unmatching event returns empty dict."""
+        sub = Subscription(
+            subscription_id="sub1",
+            connection_id="conn1",
+            zone_id="zone1",
+            mode="pattern",
+            patterns=("/docs/**/*.md",),
+        )
+        await manager.register(sub)
+
+        event = self._make_event(path="/inbox/a.txt")
+        result = manager.find_affected_subscriptions(event)
+
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_event_type_filter(self, manager: ReactiveSubscriptionManager) -> None:
+        """Event type filter excludes non-matching subs from result."""
+        sub_match = Subscription(
+            subscription_id="sub1",
+            connection_id="conn1",
+            zone_id="zone1",
+            mode="pattern",
+            event_types=frozenset({"file_delete"}),
+        )
+        sub_no_match = Subscription(
+            subscription_id="sub2",
+            connection_id="conn1",
+            zone_id="zone1",
+            mode="pattern",
+            event_types=frozenset({"file_write"}),
+        )
+        await manager.register(sub_match)
+        await manager.register(sub_no_match)
+
+        event = self._make_event(event_type="file_delete")
+        result = manager.find_affected_subscriptions(event)
+
+        assert set(result.keys()) == {"conn1"}
+        assert len(result["conn1"]) == 1
+        assert result["conn1"][0].subscription_id == "sub1"
+
+    @pytest.mark.asyncio
+    async def test_zone_isolation(self, manager: ReactiveSubscriptionManager) -> None:
+        """Only subs in the event's zone are returned."""
+        sub1 = Subscription(
+            subscription_id="sub1",
+            connection_id="conn1",
+            zone_id="zone1",
+            mode="pattern",
+        )
+        sub2 = Subscription(
+            subscription_id="sub2",
+            connection_id="conn2",
+            zone_id="zone2",
+            mode="pattern",
+        )
+        await manager.register(sub1)
+        await manager.register(sub2)
+
+        event = self._make_event(zone_id="zone1")
+        result = manager.find_affected_subscriptions(event)
+
+        assert set(result.keys()) == {"conn1"}
+
+    @pytest.mark.asyncio
+    async def test_no_subscriptions_returns_empty(
+        self, manager: ReactiveSubscriptionManager
+    ) -> None:
+        """Empty manager returns empty dict."""
+        event = self._make_event()
+        result = manager.find_affected_subscriptions(event)
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_tracks_performance(self, manager: ReactiveSubscriptionManager) -> None:
+        """Lookup count incremented by find_affected_subscriptions."""
+        event = self._make_event()
+        initial_count = manager._lookup_count
+
+        manager.find_affected_subscriptions(event)
+        manager.find_affected_subscriptions(event)
+
+        assert manager._lookup_count == initial_count + 2
+
+
+# ---------------------------------------------------------------------------
 # TestCleanup
 # ---------------------------------------------------------------------------
 

@@ -233,6 +233,12 @@ class NexusConfig(BaseModel):
         description="Feature flags for optional functionality (semantic search, LLM read, etc.)",
     )
 
+    # Resiliency configuration (Issue #1366)
+    resiliency: dict[str, Any] | None = Field(
+        default=None,
+        description="Resiliency policies: timeouts, retries, circuit_breakers, targets",
+    )
+
     # Remote mode settings
     url: str | None = Field(
         default=None, description="Nexus server URL (required for mode='remote')"

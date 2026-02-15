@@ -103,6 +103,14 @@ class TokenManager:
             self.database_url = db_url or (str(self.engine.url) if self.engine else "")
             self._owns_engine = False
         elif db_url:
+            import warnings
+
+            warnings.warn(
+                "TokenManager(db_url=...) creates a standalone engine outside "
+                "RecordStoreABC. Use session_factory= for proper pillar compliance.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             self.database_url = db_url
             self.engine = create_engine(
                 self.database_url,
@@ -112,6 +120,14 @@ class TokenManager:
             Base.metadata.create_all(self.engine)
             self._owns_engine = True
         elif db_path:
+            import warnings
+
+            warnings.warn(
+                "TokenManager(db_path=...) creates a standalone engine outside "
+                "RecordStoreABC. Use session_factory= for proper pillar compliance.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             self.database_url = f"sqlite:///{db_path}"
             self.engine = create_engine(
                 self.database_url,

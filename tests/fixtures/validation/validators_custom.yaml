@@ -1,0 +1,17 @@
+auto_run: false
+max_total_timeout: 60
+validators:
+  - name: custom-lint
+    command: "python lint.py --json ."
+    timeout: 20
+    output_format: json
+    enabled: true
+  - name: ruff
+    command: "ruff check --output-format json ."
+    timeout: 5
+    output_format: json
+    enabled: true
+  - name: disabled-tool
+    command: "echo disabled"
+    timeout: 5
+    enabled: false

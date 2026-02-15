@@ -1,0 +1,40 @@
+[
+  {
+    "filePath": "/workspace/src/index.js",
+    "messages": [
+      {
+        "ruleId": "no-unused-vars",
+        "severity": 2,
+        "message": "'x' is defined but never used.",
+        "line": 3,
+        "column": 7,
+        "nodeType": "Identifier",
+        "messageId": "unusedVar",
+        "endLine": 3,
+        "endColumn": 8
+      },
+      {
+        "ruleId": "semi",
+        "severity": 1,
+        "message": "Missing semicolon.",
+        "line": 5,
+        "column": 20,
+        "nodeType": "ExpressionStatement",
+        "messageId": "missingSemi",
+        "endLine": 6,
+        "endColumn": 1,
+        "fix": {
+          "range": [89, 89],
+          "text": ";"
+        }
+      }
+    ],
+    "suppressedMessages": [],
+    "errorCount": 1,
+    "fatalErrorCount": 0,
+    "warningCount": 1,
+    "fixableErrorCount": 0,
+    "fixableWarningCount": 1,
+    "source": "const x = 1;\n"
+  }
+]

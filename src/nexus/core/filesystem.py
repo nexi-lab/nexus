@@ -900,6 +900,25 @@ class NexusFilesystem(ABC):
         """
         ...
 
+    def sandbox_validate(
+        self,
+        sandbox_id: str,  # noqa: ARG002
+        workspace_path: str = "/workspace",  # noqa: ARG002
+        context: dict | None = None,  # noqa: ARG002
+    ) -> dict[Any, Any]:
+        """Run validation pipeline in a sandbox.
+
+        Args:
+            sandbox_id: Sandbox identifier
+            workspace_path: Workspace root path in sandbox
+            context: Operation context
+
+        Returns:
+            Dict with validations list
+        """
+        return {"validations": []}
+        ...
+
     @abstractmethod
     def sandbox_pause(self, sandbox_id: str, context: dict | None = None) -> dict[Any, Any]:
         """Pause a running sandbox.

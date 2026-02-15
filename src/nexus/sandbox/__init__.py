@@ -12,6 +12,7 @@ from nexus.sandbox.sandbox_provider import (
     SandboxInfo,
     SandboxNotFoundError,
     SandboxProvider,
+    validate_language,
 )
 from nexus.sandbox.security_profile import SandboxSecurityProfile
 
@@ -25,4 +26,5 @@ __all__ = [
     "SandboxNotFoundError",
     "SandboxProvider",
     "SandboxSecurityProfile",
+    "validate_language",
 ]

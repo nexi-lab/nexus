@@ -1,0 +1,4 @@
+app.py:10:5: error: Incompatible types in assignment (expression has type "str", variable has type "int")  [assignment]
+app.py:15:1: error: Name "undefined_var" is not defined  [name-defined]
+utils.py:3:10: warning: Unused "type: ignore" comment  [unused-ignore]
+utils.py:20:5: note: Revealed type is "builtins.str"

@@ -23,6 +23,7 @@ from nexus.sandbox.sandbox_provider import (
     UnsupportedLanguageError,
     UnsupportedOperationError,
     validate_agent_id,
+    validate_language,
     validate_mount_path,
     validate_nexus_url,
 )
@@ -181,11 +182,7 @@ class E2BSandboxProvider(SandboxProvider):
             UnsupportedLanguageError: If language not supported
         """
         # Validate language
-        if language not in self.SUPPORTED_LANGUAGES:
-            supported = ", ".join(self.SUPPORTED_LANGUAGES.keys())
-            raise UnsupportedLanguageError(
-                f"Language '{language}' not supported. Supported: {supported}"
-            )
+        validate_language(language, self.SUPPORTED_LANGUAGES)
 
         # Get sandbox
         sandbox = await self._get_sandbox(sandbox_id)

@@ -65,9 +65,12 @@ class TestVersionServiceGetVersion:
         )
 
     @pytest.mark.asyncio
-    async def test_get_version_requires_router(self, service, operation_context):
-        """Test that get_version requires router to be configured."""
-        with pytest.raises(RuntimeError, match="Router not configured"):
+    async def test_get_version_not_found_without_session_factory(self, service, operation_context):
+        """Test that get_version raises NexusFileNotFoundError when no session_factory."""
+        from nexus.core.exceptions import NexusFileNotFoundError
+
+        # Without session_factory, version_meta is None → NexusFileNotFoundError
+        with pytest.raises(NexusFileNotFoundError):
             await service.get_version(
                 path="/test.txt",
                 version=1,
@@ -332,27 +335,17 @@ class TestVersionServiceDiffVersions:
         )
 
     @pytest.mark.asyncio
-    async def test_diff_versions_calls_metadata_store(self, service, operation_context):
-        """Test that diff_versions delegates to metadata store."""
-        # Arrange - mock the metadata store to return diff
-        service.metadata.get_version_diff.return_value = {
-            "content_changed": False,
-            "size_v1": 1000,
-            "size_v2": 2000,
-        }
-
-        # Act
-        result = await service.diff_versions(
-            path="/test.txt",
-            v1=1,
-            v2=2,
-            mode="metadata",
-            context=operation_context,
-        )
-
-        # Assert
-        assert isinstance(result, dict)
-        service.metadata.get_version_diff.assert_called_once_with("/test.txt", 1, 2)
+    async def test_diff_versions_requires_session_factory(self, service, operation_context):
+        """Test that diff_versions raises RuntimeError without session_factory."""
+        # Without session_factory, diff_versions raises RuntimeError
+        with pytest.raises(RuntimeError, match="session_factory required"):
+            await service.diff_versions(
+                path="/test.txt",
+                v1=1,
+                v2=2,
+                mode="metadata",
+                context=operation_context,
+            )
 
     # ========================================================================
     # Future Tests

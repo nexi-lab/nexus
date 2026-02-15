@@ -814,7 +814,7 @@ class TestPKCEHelper:
     def test_get_pkce_verifier_from_cache(self, service):
         """Test that verifier is retrieved from cache via state."""
         with patch(
-            "nexus.core.nexus_fs_oauth._pkce_cache",
+            "nexus.services.oauth_service._pkce_cache",
             {"state-123": {"code_verifier": "cached-verifier"}},
         ):
             result = service._get_pkce_verifier(
@@ -827,7 +827,7 @@ class TestPKCEHelper:
     def test_get_pkce_verifier_raises_when_missing(self, service):
         """Test that missing PKCE verifier raises ValueError."""
         with (
-            patch("nexus.core.nexus_fs_oauth._pkce_cache", {}),
+            patch("nexus.services.oauth_service._pkce_cache", {}),
             pytest.raises(ValueError, match="requires PKCE"),
         ):
             service._get_pkce_verifier(
@@ -839,7 +839,7 @@ class TestPKCEHelper:
     def test_get_pkce_verifier_cleans_cache(self, service):
         """Test that cache entry is cleaned up after retrieval."""
         cache = {"state-123": {"code_verifier": "verifier"}}
-        with patch("nexus.core.nexus_fs_oauth._pkce_cache", cache):
+        with patch("nexus.services.oauth_service._pkce_cache", cache):
             service._get_pkce_verifier(
                 provider="x",
                 code_verifier=None,

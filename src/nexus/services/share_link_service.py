@@ -1,73 +1,90 @@
-"""Share Link operations mixin for NexusFS.
+"""Share Link Service - Extracted from NexusFSShareLinksMixin.
 
-Implements W3C TAG Capability URL pattern for secure file sharing:
-- Anonymous access via unguessable URLs
-- Optional password protection
-- Time-limited access
-- Download limits
+This service handles all share link operations:
+- Create share links with configurable access (viewer/editor/owner)
+- Password protection, expiration, and download limits
+- Access validation and logging
 - Revocation support
-- Access logging
 
-Issue #227: Document Sharing & Access Links
+Implements W3C TAG Capability URL pattern for secure file sharing.
+
+Phase 2: Core Refactoring (Issue #1287)
+Extracted from: nexus_fs_share_links.py (678 lines)
 """
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+from nexus.core.path_utils import validate_path
 from nexus.core.response import HandlerResponse
 from nexus.core.rpc_decorator import rpc_expose
 
+logger = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
-    from nexus.core._metadata_generated import FileMetadataProtocol
-    from nexus.core.permissions import OperationContext, Permission
+    from nexus.core.permissions import OperationContext
+    from nexus.services.gateway import NexusFSGateway
 
 
-class NexusFSShareLinksMixin:
-    """Mixin providing share link operations for NexusFS.
+class ShareLinkService:
+    """Independent share link service extracted from NexusFS.
 
-    Implements Capability URL pattern (W3C TAG best practices):
+    Implements W3C TAG Capability URL pattern:
     - Share links are unguessable tokens (UUID v4, 122 bits entropy)
     - Token IS the credential - no session/ReBAC for anonymous access
     - Server validates token against DB on each request
+
+    Architecture:
+        - Uses Gateway for NexusFS filesystem operations
+        - Uses session_factory for ShareLinkModel database access
+        - Permission checking via Gateway's rebac operations
+        - Clean dependency injection
     """
 
-    # Type hints for attributes provided by NexusFS parent class
-    if TYPE_CHECKING:
-        metadata: FileMetadataProtocol
-        _enforce_permissions: bool
+    def __init__(
+        self,
+        gateway: NexusFSGateway,
+        enforce_permissions: bool = True,
+    ):
+        """Initialize share link service.
 
-        def _validate_path(self, path: str) -> str: ...
-        def _check_permission(
-            self,
-            path: str,
-            permission: Permission,
-            context: OperationContext | None = None,
-        ) -> None: ...
+        Args:
+            gateway: NexusFSGateway for filesystem and DB access
+            enforce_permissions: Whether to enforce permission checks
+        """
+        self._gw = gateway
+        self._enforce_permissions = enforce_permissions
+        logger.info("[ShareLinkService] Initialized")
 
-    def _hash_share_link_password(self, password: str) -> str:
+    # =========================================================================
+    # Password Hashing
+    # =========================================================================
+
+    @staticmethod
+    def _hash_password(password: str) -> str:
         """Hash password for share link protection.
 
-        Uses SHA-256 with salt for simplicity. For production,
-        consider Argon2id via passlib.
+        Uses SHA-256 with random salt.
 
         Args:
             password: Plain text password
 
         Returns:
-            Hashed password string
+            Hashed password string in format "salt:hash"
         """
-        # Simple salted hash - in production use argon2id
         salt = secrets.token_hex(16)
         hash_input = f"{salt}:{password}".encode()
         password_hash = hashlib.sha256(hash_input).hexdigest()
         return f"{salt}:{password_hash}"
 
-    def _verify_share_link_password(self, password: str, password_hash: str) -> bool:
+    @staticmethod
+    def _verify_password(password: str, password_hash: str) -> bool:
         """Verify password against stored hash.
 
         Args:
@@ -85,6 +102,39 @@ class NexusFSShareLinksMixin:
         except (ValueError, AttributeError):
             return False
 
+    # =========================================================================
+    # Context Extraction Helper
+    # =========================================================================
+
+    @staticmethod
+    def _extract_context_info(
+        context: OperationContext | None,
+    ) -> tuple[str, str, bool]:
+        """Extract zone_id, user_id, is_admin from context.
+
+        Args:
+            context: Operation context
+
+        Returns:
+            Tuple of (zone_id, user_id, is_admin)
+        """
+        zone_id = "default"
+        user_id = "anonymous"
+        is_admin = False
+        if context:
+            zone_id = getattr(context, "zone_id", None) or "default"
+            user_id = (
+                getattr(context, "user", None)
+                or getattr(context, "subject_id", None)
+                or "anonymous"
+            )
+            is_admin = getattr(context, "is_admin", False)
+        return zone_id, user_id, is_admin
+
+    # =========================================================================
+    # Public API
+    # =========================================================================
+
     @rpc_expose(description="Create a share link for a file or directory")
     async def create_share_link(
         self,
@@ -99,9 +149,9 @@ class NexusFSShareLinksMixin:
 
         Args:
             path: Virtual path to share
-            permission_level: Access level - 'viewer' (read), 'editor' (read+write), 'owner' (full)
-            expires_in_hours: Optional hours until link expires (None = never)
-            max_access_count: Optional max number of accesses (None = unlimited)
+            permission_level: Access level - 'viewer', 'editor', or 'owner'
+            expires_in_hours: Optional hours until link expires
+            max_access_count: Optional max number of accesses
             password: Optional password protection
             context: Operation context with user/zone info
 
@@ -112,7 +162,6 @@ class NexusFSShareLinksMixin:
         def _impl() -> HandlerResponse:
             from nexus.storage.models import ShareLinkModel
 
-            # Validate permission level
             valid_levels = {"viewer", "editor", "owner"}
             if permission_level not in valid_levels:
                 return HandlerResponse.error(
@@ -121,32 +170,22 @@ class NexusFSShareLinksMixin:
                     is_expected=True,
                 )
 
-            # Validate path exists
             try:
-                normalized_path = self._validate_path(path)
+                normalized_path = validate_path(path, allow_root=True)
             except Exception as e:
                 return HandlerResponse.error(f"Invalid path: {e}", code=400, is_expected=True)
 
-            # Get zone_id and user_id from context
-            zone_id = "default"
-            created_by = "anonymous"
-            if context:
-                zone_id = getattr(context, "zone_id", None) or "default"
-                created_by = (
-                    getattr(context, "user", None)
-                    or getattr(context, "subject_id", None)
-                    or "anonymous"
-                )
+            zone_id, created_by, _ = self._extract_context_info(context)
 
-            # Check if user has permission to share (must have at least the permission they're granting)
-            # Owner can grant any level, editor can grant editor/viewer, viewer can grant viewer
+            # Check write permission to create share link
             if self._enforce_permissions and context:
-                # Check user has owner/write permission to share
-                try:
-                    from nexus.core.permissions import Permission
-
-                    self._check_permission(normalized_path, Permission.WRITE, context)
-                except PermissionError:
+                has_perm = self._gw.rebac_check(
+                    subject=("user", created_by),
+                    permission="write",
+                    object=("file", normalized_path),
+                    zone_id=zone_id,
+                )
+                if not has_perm:
                     return HandlerResponse.error(
                         f"Permission denied: cannot create share link for '{path}'",
                         code=403,
@@ -154,14 +193,11 @@ class NexusFSShareLinksMixin:
                     )
 
             # Determine resource type
-            # Check if path is a directory or file
             resource_type = "file"
-            try:
-                stat_result = self.stat(normalized_path)  # type: ignore[attr-defined]
-                if stat_result and stat_result.get("is_dir"):
+            if self._gw.exists(normalized_path):
+                meta = self._gw.metadata_get(normalized_path)
+                if meta and getattr(meta, "is_dir", False):
                     resource_type = "directory"
-            except Exception:
-                pass  # Default to file if stat fails
 
             # Calculate expiration
             expires_at = None
@@ -171,11 +207,15 @@ class NexusFSShareLinksMixin:
             # Hash password if provided
             password_hash = None
             if password:
-                password_hash = self._hash_share_link_password(password)
+                password_hash = self._hash_password(password)
 
             # Create share link record
+            session_factory = self._gw.session_factory
+            if session_factory is None:
+                return HandlerResponse.error("Database not configured for share links", code=500)
+
             try:
-                with self.SessionLocal() as session:
+                with session_factory() as session:
                     share_link = ShareLinkModel(
                         resource_type=resource_type,
                         resource_id=normalized_path,
@@ -190,11 +230,9 @@ class NexusFSShareLinksMixin:
                     session.add(share_link)
                     session.commit()
 
-                    link_id = share_link.link_id
-
                     return HandlerResponse.ok(
                         {
-                            "link_id": link_id,
+                            "link_id": share_link.link_id,
                             "path": normalized_path,
                             "permission_level": permission_level,
                             "resource_type": resource_type,
@@ -204,7 +242,6 @@ class NexusFSShareLinksMixin:
                             "created_at": share_link.created_at.isoformat(),
                         }
                     )
-
             except Exception as e:
                 return HandlerResponse.error(f"Failed to create share link: {e}", code=500)
 
@@ -229,33 +266,22 @@ class NexusFSShareLinksMixin:
         def _impl() -> HandlerResponse:
             from nexus.storage.models import ShareLinkModel
 
-            try:
-                with self.SessionLocal() as session:
-                    link = session.query(ShareLinkModel).filter_by(link_id=link_id).first()
+            session_factory = self._gw.session_factory
+            if session_factory is None:
+                return HandlerResponse.error("Database not configured", code=500)
 
+            try:
+                with session_factory() as session:
+                    link = session.query(ShareLinkModel).filter_by(link_id=link_id).first()
                     if not link:
                         return HandlerResponse.error(
                             f"Share link not found: {link_id}", code=404, is_expected=True
                         )
 
-                    # Check authorization - only creator or admin can see full details
-                    zone_id = "default"
-                    user_id = "anonymous"
-                    is_admin = False
-                    if context:
-                        zone_id = getattr(context, "zone_id", None) or "default"
-                        user_id = (
-                            getattr(context, "user", None)
-                            or getattr(context, "subject_id", None)
-                            or "anonymous"
-                        )
-                        is_admin = getattr(context, "is_admin", False)
-
-                    # Check ownership
+                    zone_id, user_id, is_admin = self._extract_context_info(context)
                     is_owner = link.created_by == user_id and link.zone_id == zone_id
 
                     if not is_owner and not is_admin:
-                        # Return limited info for non-owners
                         return HandlerResponse.ok(
                             {
                                 "link_id": link.link_id,
@@ -266,7 +292,6 @@ class NexusFSShareLinksMixin:
                             }
                         )
 
-                    # Full details for owner/admin
                     return HandlerResponse.ok(
                         {
                             "link_id": link.link_id,
@@ -288,7 +313,6 @@ class NexusFSShareLinksMixin:
                             "is_valid": link.is_valid(),
                         }
                     )
-
             except Exception as e:
                 return HandlerResponse.error(f"Failed to get share link: {e}", code=500)
 
@@ -317,37 +341,26 @@ class NexusFSShareLinksMixin:
         def _impl() -> HandlerResponse:
             from nexus.storage.models import ShareLinkModel
 
-            zone_id = "default"
-            user_id = "anonymous"
-            is_admin = False
-            if context:
-                zone_id = getattr(context, "zone_id", None) or "default"
-                user_id = (
-                    getattr(context, "user", None)
-                    or getattr(context, "subject_id", None)
-                    or "anonymous"
-                )
-                is_admin = getattr(context, "is_admin", False)
+            session_factory = self._gw.session_factory
+            if session_factory is None:
+                return HandlerResponse.error("Database not configured", code=500)
+
+            zone_id, user_id, is_admin = self._extract_context_info(context)
 
             try:
-                with self.SessionLocal() as session:
-                    # Base query
+                with session_factory() as session:
                     query = session.query(ShareLinkModel).filter_by(zone_id=zone_id)
 
-                    # Non-admins can only see their own links
                     if not is_admin:
                         query = query.filter_by(created_by=user_id)
 
-                    # Filter by path if provided
                     if path:
-                        normalized_path = self._validate_path(path)
+                        normalized_path = validate_path(path, allow_root=True)
                         query = query.filter_by(resource_id=normalized_path)
 
-                    # Filter out revoked unless requested
                     if not include_revoked:
                         query = query.filter(ShareLinkModel.revoked_at.is_(None))
 
-                    # Filter out expired unless requested
                     if not include_expired:
                         now = datetime.now(UTC)
                         query = query.filter(
@@ -355,35 +368,27 @@ class NexusFSShareLinksMixin:
                             | (ShareLinkModel.expires_at >= now)
                         )
 
-                    # Order by creation date (newest first)
                     query = query.order_by(ShareLinkModel.created_at.desc())
-
                     links = query.all()
 
-                    result = []
-                    for link in links:
-                        result.append(
-                            {
-                                "link_id": link.link_id,
-                                "path": link.resource_id,
-                                "resource_type": link.resource_type,
-                                "permission_level": link.permission_level,
-                                "created_at": link.created_at.isoformat(),
-                                "expires_at": (
-                                    link.expires_at.isoformat() if link.expires_at else None
-                                ),
-                                "max_access_count": link.max_access_count,
-                                "access_count": link.access_count,
-                                "has_password": link.password_hash is not None,
-                                "is_valid": link.is_valid(),
-                                "revoked_at": (
-                                    link.revoked_at.isoformat() if link.revoked_at else None
-                                ),
-                            }
-                        )
+                    result = [
+                        {
+                            "link_id": link.link_id,
+                            "path": link.resource_id,
+                            "resource_type": link.resource_type,
+                            "permission_level": link.permission_level,
+                            "created_at": link.created_at.isoformat(),
+                            "expires_at": link.expires_at.isoformat() if link.expires_at else None,
+                            "max_access_count": link.max_access_count,
+                            "access_count": link.access_count,
+                            "has_password": link.password_hash is not None,
+                            "is_valid": link.is_valid(),
+                            "revoked_at": link.revoked_at.isoformat() if link.revoked_at else None,
+                        }
+                        for link in links
+                    ]
 
                     return HandlerResponse.ok({"links": result, "count": len(result)})
-
             except Exception as e:
                 return HandlerResponse.error(f"Failed to list share links: {e}", code=500)
 
@@ -408,28 +413,20 @@ class NexusFSShareLinksMixin:
         def _impl() -> HandlerResponse:
             from nexus.storage.models import ShareLinkModel
 
-            zone_id = "default"
-            user_id = "anonymous"
-            is_admin = False
-            if context:
-                zone_id = getattr(context, "zone_id", None) or "default"
-                user_id = (
-                    getattr(context, "user", None)
-                    or getattr(context, "subject_id", None)
-                    or "anonymous"
-                )
-                is_admin = getattr(context, "is_admin", False)
+            session_factory = self._gw.session_factory
+            if session_factory is None:
+                return HandlerResponse.error("Database not configured", code=500)
+
+            zone_id, user_id, is_admin = self._extract_context_info(context)
 
             try:
-                with self.SessionLocal() as session:
+                with session_factory() as session:
                     link = session.query(ShareLinkModel).filter_by(link_id=link_id).first()
-
                     if not link:
                         return HandlerResponse.error(
                             f"Share link not found: {link_id}", code=404, is_expected=True
                         )
 
-                    # Check authorization
                     is_owner = link.created_by == user_id and link.zone_id == zone_id
                     if not is_owner and not is_admin:
                         return HandlerResponse.error(
@@ -438,13 +435,11 @@ class NexusFSShareLinksMixin:
                             is_expected=True,
                         )
 
-                    # Check if already revoked
                     if link.revoked_at is not None:
                         return HandlerResponse.error(
                             "Share link is already revoked", code=400, is_expected=True
                         )
 
-                    # Revoke the link
                     link.revoked_at = datetime.now(UTC)
                     link.revoked_by = user_id
                     session.commit()
@@ -457,7 +452,6 @@ class NexusFSShareLinksMixin:
                             "revoked_by": link.revoked_by,
                         }
                     )
-
             except Exception as e:
                 return HandlerResponse.error(f"Failed to revoke share link: {e}", code=500)
 
@@ -494,7 +488,10 @@ class NexusFSShareLinksMixin:
         def _impl() -> HandlerResponse:
             from nexus.storage.models import ShareLinkAccessLogModel, ShareLinkModel
 
-            # Get authenticated user info if available
+            session_factory = self._gw.session_factory
+            if session_factory is None:
+                return HandlerResponse.error("Database not configured", code=500)
+
             accessed_by_user_id = None
             accessed_by_zone_id = None
             if context:
@@ -504,10 +501,9 @@ class NexusFSShareLinksMixin:
                 accessed_by_zone_id = getattr(context, "zone_id", None)
 
             try:
-                with self.SessionLocal() as session:
+                with session_factory() as session:
                     link = session.query(ShareLinkModel).filter_by(link_id=link_id).first()
 
-                    # Helper to log access attempt
                     def log_access(success: bool, failure_reason: str | None = None) -> None:
                         log_entry = ShareLinkAccessLogModel(
                             link_id=link_id,
@@ -520,14 +516,11 @@ class NexusFSShareLinksMixin:
                         )
                         session.add(log_entry)
 
-                    # Check link exists
                     if not link:
-                        # Don't log for non-existent links (prevents enumeration info)
                         return HandlerResponse.error(
                             "Share link not found or invalid", code=404, is_expected=True
                         )
 
-                    # Check revocation
                     if link.revoked_at is not None:
                         log_access(False, "revoked")
                         session.commit()
@@ -535,7 +528,6 @@ class NexusFSShareLinksMixin:
                             "Share link has been revoked", code=403, is_expected=True
                         )
 
-                    # Check expiration
                     now = datetime.now(UTC)
                     if link.expires_at is not None and link.expires_at < now:
                         log_access(False, "expired")
@@ -544,7 +536,6 @@ class NexusFSShareLinksMixin:
                             "Share link has expired", code=410, is_expected=True
                         )
 
-                    # Check access count limit
                     if (
                         link.max_access_count is not None
                         and link.access_count >= link.max_access_count
@@ -552,12 +543,9 @@ class NexusFSShareLinksMixin:
                         log_access(False, "limit_exceeded")
                         session.commit()
                         return HandlerResponse.error(
-                            "Share link access limit exceeded",
-                            code=429,
-                            is_expected=True,
+                            "Share link access limit exceeded", code=429, is_expected=True
                         )
 
-                    # Check password
                     if link.password_hash is not None:
                         if not password:
                             log_access(False, "password_required")
@@ -567,20 +555,18 @@ class NexusFSShareLinksMixin:
                                 code=401,
                                 is_expected=True,
                             )
-                        if not self._verify_share_link_password(password, link.password_hash):
+                        if not self._verify_password(password, link.password_hash):
                             log_access(False, "wrong_password")
                             session.commit()
                             return HandlerResponse.error(
                                 "Incorrect password", code=401, is_expected=True
                             )
 
-                    # Success - update counters and log
                     link.access_count += 1
                     link.last_accessed_at = now
                     log_access(True)
                     session.commit()
 
-                    # Return access info
                     return HandlerResponse.ok(
                         {
                             "link_id": link.link_id,
@@ -594,12 +580,9 @@ class NexusFSShareLinksMixin:
                                 if link.max_access_count
                                 else None
                             ),
-                            "expires_at": (
-                                link.expires_at.isoformat() if link.expires_at else None
-                            ),
+                            "expires_at": link.expires_at.isoformat() if link.expires_at else None,
                         }
                     )
-
             except Exception as e:
                 return HandlerResponse.error(f"Failed to access share link: {e}", code=500)
 
@@ -626,29 +609,20 @@ class NexusFSShareLinksMixin:
         def _impl() -> HandlerResponse:
             from nexus.storage.models import ShareLinkAccessLogModel, ShareLinkModel
 
-            zone_id = "default"
-            user_id = "anonymous"
-            is_admin = False
-            if context:
-                zone_id = getattr(context, "zone_id", None) or "default"
-                user_id = (
-                    getattr(context, "user", None)
-                    or getattr(context, "subject_id", None)
-                    or "anonymous"
-                )
-                is_admin = getattr(context, "is_admin", False)
+            session_factory = self._gw.session_factory
+            if session_factory is None:
+                return HandlerResponse.error("Database not configured", code=500)
+
+            zone_id, user_id, is_admin = self._extract_context_info(context)
 
             try:
-                with self.SessionLocal() as session:
-                    # First verify the link exists and user has access
+                with session_factory() as session:
                     link = session.query(ShareLinkModel).filter_by(link_id=link_id).first()
-
                     if not link:
                         return HandlerResponse.error(
                             f"Share link not found: {link_id}", code=404, is_expected=True
                         )
 
-                    # Check authorization
                     is_owner = link.created_by == user_id and link.zone_id == zone_id
                     if not is_owner and not is_admin:
                         return HandlerResponse.error(
@@ -657,7 +631,6 @@ class NexusFSShareLinksMixin:
                             is_expected=True,
                         )
 
-                    # Get logs
                     logs = (
                         session.query(ShareLinkAccessLogModel)
                         .filter_by(link_id=link_id)
@@ -666,23 +639,21 @@ class NexusFSShareLinksMixin:
                         .all()
                     )
 
-                    result = []
-                    for log in logs:
-                        result.append(
-                            {
-                                "log_id": log.log_id,
-                                "accessed_at": log.accessed_at.isoformat(),
-                                "ip_address": log.ip_address,
-                                "user_agent": log.user_agent,
-                                "success": bool(log.success),
-                                "failure_reason": log.failure_reason,
-                                "accessed_by_user_id": log.accessed_by_user_id,
-                                "accessed_by_zone_id": log.accessed_by_zone_id,
-                            }
-                        )
+                    result = [
+                        {
+                            "log_id": log.log_id,
+                            "accessed_at": log.accessed_at.isoformat(),
+                            "ip_address": log.ip_address,
+                            "user_agent": log.user_agent,
+                            "success": bool(log.success),
+                            "failure_reason": log.failure_reason,
+                            "accessed_by_user_id": log.accessed_by_user_id,
+                            "accessed_by_zone_id": log.accessed_by_zone_id,
+                        }
+                        for log in logs
+                    ]
 
                     return HandlerResponse.ok({"logs": result, "count": len(result)})
-
             except Exception as e:
                 return HandlerResponse.error(f"Failed to get access logs: {e}", code=500)
 

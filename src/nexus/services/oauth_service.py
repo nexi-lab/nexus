@@ -21,6 +21,10 @@ from nexus.core.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
 
+# In-memory cache for PKCE data (state -> pkce_data)
+# Moved from nexus_fs_oauth.py during Phase 1.3 extraction (Issue #1287)
+_pkce_cache: dict[str, dict[str, str]] = {}
+
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
 
@@ -111,7 +115,7 @@ class OAuthService:
     @rpc_expose(description="List all available OAuth providers")
     async def oauth_list_providers(
         self,
-        _context: OperationContext | None = None,
+        context: OperationContext | None = None,  # noqa: ARG002 - Required by RPC protocol
     ) -> builtins.list[dict[str, Any]]:
         """List all available OAuth providers from configuration.
 
@@ -1244,7 +1248,7 @@ class OAuthService:
         if requires_pkce:
             auth_url, pkce_data = provider_instance.get_authorization_url_with_pkce(state=state)
             # Store PKCE data in module-level cache
-            from nexus.core.nexus_fs_oauth import _pkce_cache
+            from nexus.services.oauth_service import _pkce_cache
 
             _pkce_cache[state] = pkce_data
             logger.info(
@@ -1288,7 +1292,7 @@ class OAuthService:
 
         # Try to get from cache using state
         if state:
-            from nexus.core.nexus_fs_oauth import _pkce_cache
+            from nexus.services.oauth_service import _pkce_cache
 
             pkce_data = _pkce_cache.get(state)
             if pkce_data:
@@ -1395,27 +1399,9 @@ class OAuthService:
 
 
 # =============================================================================
-# Phase 2 Extraction Progress
+# Phase 2 Extraction: Complete ✅
 # =============================================================================
 #
-# Status: Skeleton created ✅
-#
-# TODO (in order of priority):
-# 1. [ ] Extract oauth_list_providers() - Provider discovery
-# 2. [ ] Extract oauth_get_auth_url() with PKCE support
-# 3. [ ] Extract oauth_exchange_code() - Code to token exchange
-# 4. [ ] Extract oauth_list_credentials() - Credential listing with zone isolation
-# 5. [ ] Extract oauth_revoke_credential() - Credential revocation with permissions
-# 6. [ ] Extract oauth_test_credential() - Credential validation
-# 7. [ ] Extract mcp_connect() - Klavis MCP integration
-# 8. [ ] Extract helper methods (factory, token manager, provider creation)
-# 9. [ ] Add unit tests for OAuthService
-# 10. [ ] Update NexusFS to use composition
-# 11. [ ] Add backward compatibility shims with deprecation warnings
-# 12. [ ] Update documentation and migration guide
-#
-# Lines extracted: 0 / 1,116 (0%)
-# Files affected: 1 created, 0 modified
-#
-# This is a phased extraction to maintain working code at each step.
+# All 7 OAuth methods extracted + PKCE support + Klavis MCP integration.
+# Unit tests: tests/unit/services/test_oauth_service.py
 #

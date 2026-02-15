@@ -27,6 +27,7 @@ import logging
 from typing import TYPE_CHECKING, Any, cast
 
 from nexus.core.exceptions import PermissionDeniedError, ValidationError
+from nexus.core.rpc_decorator import rpc_expose
 from nexus.skills.types import PromptContext, SkillContent, SkillInfo
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,6 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.services.gateway import NexusFSGateway
-    from nexus.services.permissions.rebac_manager import ReBACManager
 
 
 class SkillService:
@@ -140,7 +140,7 @@ class SkillService:
         # Normalize path to remove trailing slash - must match hierarchy_manager's parent tuple format
         # for permission inheritance to work correctly.
         normalized_path = skill_path.rstrip("/")
-        result = self._gw._fs.rebac_create(
+        result = self._gw.rebac_create(
             subject=cast(Any, share_subject),  # 3-tuple for userset-as-subject
             relation="direct_viewer",
             object=("file", normalized_path),
@@ -150,6 +150,8 @@ class SkillService:
         logger.info(f"Shared skill '{skill_path}' with '{share_with}'")
         # rebac_create returns a dict with tuple_id, revision, consistency_token
         # Extract just the tuple_id string for the API contract
+        if result is None:
+            raise RuntimeError("rebac_create returned None")
         return cast(str, result["tuple_id"])
 
     def unshare(
@@ -189,7 +191,7 @@ class SkillService:
 
         # Normalize path to match share() - must strip trailing slash
         normalized_path = skill_path.rstrip("/")
-        tuples = self._gw._fs.rebac_list_tuples(
+        tuples = self._gw.rebac_list_tuples(
             subject=search_subject,
             relation="direct_viewer",
             object=("file", normalized_path),
@@ -232,6 +234,14 @@ class SkillService:
         Returns:
             List of SkillInfo objects
         """
+        return self._discover_impl(context, filter)
+
+    def _discover_impl(
+        self,
+        context: OperationContext | None,
+        filter: str = "all",
+    ) -> list[SkillInfo]:
+        """Synchronous implementation of discover (reused by export)."""
         self._validate_context(context)
         assert context is not None  # Validated by _validate_context
         logger.info(
@@ -579,13 +589,11 @@ class SkillService:
         if not context or not context.zone_id or not context.user_id:
             raise ValidationError("Context with zone_id and user_id required")
 
-    def _get_rebac(self) -> ReBACManager:
+    def _get_rebac(self) -> Any:
         """Get ReBAC manager instance from gateway."""
-        # Gateway wraps NexusFS which has _rebac_manager
-        if hasattr(self._gw, "_fs") and hasattr(self._gw._fs, "_rebac_manager"):
-            mgr = self._gw._fs._rebac_manager
-            if mgr is not None:
-                return mgr
+        mgr = self._gw.rebac_manager
+        if mgr is not None:
+            return mgr
         raise RuntimeError("ReBAC manager not configured")
 
     def _extract_owner_from_path(self, skill_path: str) -> str:
@@ -673,7 +681,7 @@ class SkillService:
             object=("file", normalized_path),
             zone_id=None,  # Public skills are zone-agnostic
         )
-        return is_public
+        return bool(is_public)
 
     def _is_skill_public(self, skill_path: str) -> bool:
         """Check if a skill is publicly shared."""
@@ -689,7 +697,7 @@ class SkillService:
         logger.info(
             f"[_is_skill_public] path={skill_path}, normalized={normalized_path}, result={result}"
         )
-        return result
+        return bool(result)
 
     def _parse_share_target(
         self, share_with: str, context: OperationContext
@@ -905,7 +913,7 @@ class SkillService:
 
         try:
             # Query rebac_list_tuples for public direct_viewer tuples on skill directories
-            tuples = self._gw._fs.rebac_list_tuples(
+            tuples = self._gw.rebac_list_tuples(
                 subject=("role", "public"),
                 relation="direct_viewer",
             )
@@ -1001,7 +1009,7 @@ class SkillService:
             # Query rebac_list_tuples for direct_viewer tuples where user is the subject
             # user_id is validated by caller
             assert context.user_id is not None
-            tuples = self._gw._fs.rebac_list_tuples(
+            tuples = self._gw.rebac_list_tuples(
                 subject=("user", context.user_id),
                 relation="direct_viewer",
             )
@@ -1110,3 +1118,362 @@ class SkillService:
             xml_parts.append("  </skill>")
         xml_parts.append("</available_skills>")
         return "\n".join(xml_parts)
+
+    # =========================================================================
+    # Package APIs (Import/Export)
+    # Phase 1.5: Moved from NexusFSSkillsMixin (Issue #1287)
+    # =========================================================================
+
+    @rpc_expose(description="Export a skill as a .skill (ZIP) package")
+    def export(
+        self,
+        skill_path: str | None = None,
+        skill_name: str | None = None,
+        output_path: str | None = None,
+        format: str = "generic",
+        include_dependencies: bool = False,  # noqa: ARG002 - TODO: Implement dependency inclusion
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Export a skill to .skill (ZIP) format.
+
+        Args:
+            skill_path: Full path to the skill to export
+            skill_name: Name of the skill (will search in user's skills)
+            output_path: Optional path to write .skill file. If None, returns bytes.
+            format: Export format ('generic' or 'claude')
+            include_dependencies: Whether to include dependent skills
+            context: Operation context with user_id and zone_id
+
+        Returns:
+            Dict with success, path (if written), or bytes (base64 if not written)
+        """
+        import base64
+        import io
+        import json
+        import zipfile
+
+        self._validate_context(context)
+        assert context is not None
+
+        # Resolve skill_path from skill_name if needed
+        if not skill_path and skill_name:
+            user_skill_dir = f"/zone/{context.zone_id}/user/{context.user_id}/skill/"
+            skill_path = f"{user_skill_dir}{skill_name}/"
+            if not self._gw.exists(skill_path, context=context):
+                skills = self._discover_impl(context, filter="all")
+                for s in skills:
+                    if s.name == skill_name:
+                        skill_path = s.path
+                        break
+
+        if not skill_path:
+            raise ValidationError("Either skill_path or skill_name must be provided")
+
+        self._assert_can_read(skill_path, context)
+
+        if not skill_path.endswith("/"):
+            skill_path += "/"
+
+        # Collect files from skill directory
+        files_to_export: list[tuple[str, bytes]] = []
+
+        def collect_files(dir_path: str, _prefix: str = "") -> None:
+            try:
+                items = self._gw.list(dir_path, context=context)
+                for item in items:
+                    item_str = str(item)
+                    if item_str.startswith(dir_path):
+                        rel_path = item_str[len(dir_path) :]
+                    else:
+                        rel_path = item_str
+
+                    full_path = (
+                        f"{dir_path}{rel_path}" if not item_str.startswith("/") else item_str
+                    )
+
+                    try:
+                        content = self._gw.read(full_path, context=context)
+                        if isinstance(content, str):
+                            content = content.encode("utf-8")
+                        files_to_export.append((rel_path, content))
+                    except Exception:
+                        logger.debug("Could not read %s, trying as directory", full_path)
+                        collect_files(full_path + "/", rel_path + "/")
+            except Exception:
+                logger.debug("Could not list directory: %s", dir_path)
+
+        collect_files(skill_path)
+
+        if not files_to_export:
+            raise ValidationError(f"No files found in skill: {skill_path}")
+
+        # Create ZIP package
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+            manifest = {
+                "version": "1.0",
+                "skill_path": skill_path,
+                "files": [f[0] for f in files_to_export],
+            }
+            zf.writestr("manifest.json", json.dumps(manifest, indent=2))
+
+            for rel_path, content in files_to_export:
+                zf.writestr(rel_path, content)
+
+        zip_bytes = zip_buffer.getvalue()
+        skill_name_from_path = skill_path.rstrip("/").split("/")[-1]
+
+        if output_path:
+            self._gw.write(output_path, zip_bytes, context=context)
+            return {
+                "success": True,
+                "path": output_path,
+                "size_bytes": len(zip_bytes),
+                "skill_name": skill_name_from_path,
+                "format": format,
+            }
+
+        return {
+            "success": True,
+            "zip_data": base64.b64encode(zip_bytes).decode("ascii"),
+            "size_bytes": len(zip_bytes),
+            "skill_name": skill_name_from_path,
+            "format": format,
+            "filename": f"{skill_name_from_path}.skill",
+        }
+
+    @rpc_expose(description="Import a skill from a .skill (ZIP) package")
+    def import_skill(
+        self,
+        source_path: str | None = None,
+        zip_bytes: bytes | str | None = None,
+        zip_data: str | None = None,
+        target_path: str | None = None,
+        allow_overwrite: bool = False,
+        context: OperationContext | None = None,
+        tier: str | None = None,  # noqa: ARG002 - Legacy parameter (ignored)
+    ) -> dict[str, Any]:
+        """Import a skill from .skill (ZIP) format.
+
+        Skills are always imported to the user's skill directory:
+        /zone/{zone_id}/user/{user_id}/skill/{skill_name}/
+
+        Args:
+            source_path: Path to .skill file to import
+            zip_bytes: ZIP bytes (base64 encoded string or raw bytes)
+            zip_data: Alias for zip_bytes (base64 encoded string)
+            target_path: Target path for the skill
+            allow_overwrite: Whether to overwrite existing skill
+            context: Operation context with user_id and zone_id
+            tier: Legacy parameter (ignored)
+
+        Returns:
+            Dict with imported_skills, skill_paths
+        """
+        import base64
+        import io
+        import json
+        import zipfile
+
+        self._validate_context(context)
+        assert context is not None
+
+        # Use zip_data as alias for zip_bytes
+        if zip_data and not zip_bytes:
+            zip_bytes = zip_data
+
+        # Get ZIP data
+        if source_path:
+            raw_zip_data = self._gw.read(source_path, context=context)
+            if isinstance(raw_zip_data, str):
+                raw_zip_data = raw_zip_data.encode("utf-8")
+        elif zip_bytes:
+            raw_zip_data = base64.b64decode(zip_bytes) if isinstance(zip_bytes, str) else zip_bytes
+        else:
+            raise ValidationError("Either source_path or zip_data required")
+
+        # Extract ZIP
+        zip_buffer = io.BytesIO(raw_zip_data)
+        files_imported: list[str] = []
+
+        with zipfile.ZipFile(zip_buffer, mode="r") as zf:
+            try:
+                manifest_data = zf.read("manifest.json")
+                manifest = json.loads(manifest_data.decode("utf-8"))
+            except Exception:
+                logger.debug("No valid manifest.json in ZIP, using defaults")
+                manifest = {}
+
+            base_path = f"/zone/{context.zone_id}/user/{context.user_id}/skill/"
+
+            # Detect ZIP structure
+            file_list = zf.namelist()
+            nested_skill_folder = None
+            for name in file_list:
+                if name.endswith("SKILL.md") and "/" in name:
+                    nested_skill_folder = name.split("/")[0]
+                    break
+
+            # Determine skill name
+            skill_name = None
+            if not target_path:
+                manifest_skill_path = manifest.get("skill_path", "")
+                if manifest_skill_path:
+                    skill_name = manifest_skill_path.rstrip("/").split("/")[-1]
+                elif nested_skill_folder:
+                    skill_name = nested_skill_folder
+                else:
+                    raise ValidationError(
+                        "Cannot determine skill name. ZIP must contain SKILL.md in a named folder or have a manifest with skill_path."
+                    )
+
+                target_path = f"{base_path}{skill_name}/"
+
+            if not target_path.endswith("/"):
+                target_path += "/"
+
+            # Check if skill exists
+            skill_md_path = f"{target_path}SKILL.md"
+            if self._gw.exists(skill_md_path, context=context) and not allow_overwrite:
+                raise ValidationError(
+                    f"Skill already exists at {target_path}. Set allow_overwrite=true to overwrite."
+                )
+
+            skill_name = target_path.rstrip("/").split("/")[-1]
+
+            # Extract files
+            for name in file_list:
+                if name == "manifest.json":
+                    continue
+
+                content = zf.read(name)
+
+                if nested_skill_folder and name.startswith(nested_skill_folder + "/"):
+                    rel_path = name[len(nested_skill_folder) + 1 :]
+                else:
+                    rel_path = name
+
+                if rel_path and not rel_path.endswith("/"):
+                    file_path = f"{target_path}{rel_path}"
+                    logger.info(
+                        "[skills_import] Writing file: %s, user=%s, zone=%s",
+                        file_path,
+                        context.user_id,
+                        context.zone_id,
+                    )
+                    try:
+                        self._gw.write(file_path, content, context=context)
+                        files_imported.append(file_path)
+                    except Exception as e:
+                        logger.error(
+                            "[skills_import] Failed to write %s: %s",
+                            file_path,
+                            e,
+                            exc_info=True,
+                        )
+                        raise
+
+            # Invalidate cache
+            self._invalidate_skill_cache(target_path, base_path)
+
+        return {
+            "imported_skills": [skill_name],
+            "skill_paths": [target_path],
+        }
+
+    @rpc_expose(description="Validate a .skill (ZIP) package")
+    def validate_zip(
+        self,
+        source_path: str | None = None,
+        zip_bytes: bytes | str | None = None,
+        zip_data: str | None = None,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Validate a .skill (ZIP) package without importing it.
+
+        Args:
+            source_path: Path to .skill file to validate
+            zip_bytes: ZIP bytes (base64 encoded string or raw bytes)
+            zip_data: Alias for zip_bytes (base64 encoded string)
+            context: Operation context with user_id and zone_id
+
+        Returns:
+            Dict with valid, skills_found, errors, warnings
+        """
+        import base64
+        import io
+        import json
+        import zipfile
+
+        self._validate_context(context)
+        assert context is not None
+
+        if zip_data and not zip_bytes:
+            zip_bytes = zip_data
+
+        if source_path:
+            raw_zip_data = self._gw.read(source_path, context=context)
+            if isinstance(raw_zip_data, str):
+                raw_zip_data = raw_zip_data.encode("utf-8")
+        elif zip_bytes:
+            raw_zip_data = base64.b64decode(zip_bytes) if isinstance(zip_bytes, str) else zip_bytes
+        else:
+            raise ValidationError("Either source_path or zip_data required")
+
+        errors: list[str] = []
+        warnings: list[str] = []
+        skills_found: list[str] = []
+        has_skill_md = False
+
+        try:
+            zip_buffer = io.BytesIO(raw_zip_data)
+            with zipfile.ZipFile(zip_buffer, mode="r") as zf:
+                files = zf.namelist()
+
+                if "manifest.json" in files:
+                    try:
+                        manifest_data = zf.read("manifest.json")
+                        manifest = json.loads(manifest_data.decode("utf-8"))
+                        skill_path = manifest.get("skill_path", "")
+                        if skill_path:
+                            skill_name = skill_path.rstrip("/").split("/")[-1]
+                            skills_found.append(skill_name)
+                    except Exception as e:
+                        errors.append(f"Invalid manifest.json: {e}")
+                else:
+                    warnings.append("Missing manifest.json (will use default skill name)")
+
+                for f in files:
+                    if f.endswith("SKILL.md") or f == "SKILL.md":
+                        has_skill_md = True
+                        if not skills_found:
+                            parts = f.rsplit("/", 1)
+                            if len(parts) > 1:
+                                skills_found.append(parts[0])
+                            else:
+                                skills_found.append("imported")
+                        break
+
+                if not has_skill_md:
+                    errors.append("Missing SKILL.md file")
+
+        except zipfile.BadZipFile as e:
+            errors.append(f"Invalid ZIP file: {e}")
+        except Exception as e:
+            errors.append(f"Validation error: {e}")
+
+        return {
+            "valid": len(errors) == 0,
+            "skills_found": skills_found,
+            "errors": errors,
+            "warnings": warnings,
+        }
+
+    def _invalidate_skill_cache(self, target_path: str, base_path: str) -> None:
+        """Invalidate metadata cache for skill and parent directories."""
+        try:
+            parent_dir = target_path.rsplit("/", 2)[0] + "/" if "/" in target_path else base_path
+            self._gw.invalidate_metadata_cache(target_path, parent_dir)
+            logger.info("Invalidated cache for %s and parent %s", target_path, parent_dir)
+        except Exception as e:
+            logger.warning("Failed to invalidate cache: %s", e)

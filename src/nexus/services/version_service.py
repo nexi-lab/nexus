@@ -170,8 +170,21 @@ class VersionService:
         # Check READ permission
         await self._check_read_permission(path, context)
 
-        # Get version metadata (run in thread to avoid blocking)
-        version_meta = await asyncio.to_thread(self.metadata.get_version, path, version)
+        # Get version metadata via VersionManager + session_factory
+        # (RaftMetadataStore lacks get_version(); use SQL version history instead)
+        if self._session_factory:
+            from nexus.storage.version_manager import VersionManager
+
+            factory = self._session_factory
+
+            def _get_version_meta() -> Any:
+                with factory() as session:
+                    return VersionManager.get_version(session, f"{path}@{version}")
+
+            version_meta = await asyncio.to_thread(_get_version_meta)
+        else:
+            version_meta = None
+
         if version_meta is None:
             raise NexusFileNotFoundError(f"{path} (version {version})")
 
@@ -297,22 +310,18 @@ class VersionService:
             Rollback creates a new version rather than deleting history.
             This preserves the audit trail and allows rolling forward again.
         """
-        logger.info(f"[ROLLBACK] Starting rollback for path={path}, version={version}")
+        logger.info(f"[ROLLBACK] path={path}, version={version}")
 
         # Validate and normalize path
         path = self._validate_path(path)
-        logger.info(f"[ROLLBACK] Validated path: {path}")
 
         # Check WRITE permission
-        logger.info(f"[ROLLBACK] Checking WRITE permission for path={path}, context={context}")
         await self._check_write_permission(path, context)
-        logger.info("[ROLLBACK] Permission check passed")
 
         # Route to backend using context
         if self.router is None:
             raise RuntimeError("Router not configured for VersionService")
 
-        logger.info(f"[ROLLBACK] Routing to backend for path={path}")
         zone_id = context.zone_id if context else None
         agent_id = context.agent_id if context else None
         is_admin = context.is_admin if context else False
@@ -324,20 +333,14 @@ class VersionService:
             is_admin=is_admin,
             check_write=True,
         )
-        logger.info(f"[ROLLBACK] Route: backend={route.backend}, readonly={route.readonly}")
 
         # Check readonly
         if route.readonly:
             raise PermissionError(f"Cannot rollback read-only path: {path}")
 
         # Perform rollback in metadata store
-        # Extract created_by from context for version history tracking
         created_by = context.user if context else None
-        logger.info(
-            f"[ROLLBACK] Calling metadata.rollback(path={path}, version={version}, created_by={created_by})"
-        )
         await asyncio.to_thread(self.metadata.rollback, path, version, created_by=created_by)
-        logger.info("[ROLLBACK] metadata.rollback() completed successfully")
 
         # Invalidate cache if enabled
         if (
@@ -346,11 +349,10 @@ class VersionService:
             and hasattr(self.metadata, "_cache")
             and self.metadata._cache
         ):
-            logger.info(f"[ROLLBACK] Invalidating cache for path={path}")
             self.metadata._cache.invalidate_path(path)
-            logger.info("[ROLLBACK] Cache invalidated")
+            logger.debug(f"Cache invalidated for path={path}")
 
-        logger.info(f"[ROLLBACK] Rollback completed successfully for path={path}")
+        logger.info(f"[ROLLBACK] Completed for path={path}")
 
     @rpc_expose(description="Compare file versions")
     async def diff_versions(
@@ -425,8 +427,20 @@ class VersionService:
         if mode not in ("metadata", "content"):
             raise ValueError(f"Invalid mode: {mode}. Must be 'metadata' or 'content'")
 
-        # Get metadata diff from metadata store (run in thread to avoid blocking)
-        meta_diff = await asyncio.to_thread(self.metadata.get_version_diff, path, v1, v2)
+        # Get metadata diff via VersionManager + session_factory
+        # (RaftMetadataStore lacks get_version_diff(); use SQL version history instead)
+        if self._session_factory:
+            from nexus.storage.version_manager import VersionManager
+
+            factory = self._session_factory
+
+            def _get_diff() -> dict[str, Any]:
+                with factory() as session:
+                    return VersionManager.get_version_diff(session, path, v1, v2)
+
+            meta_diff = await asyncio.to_thread(_get_diff)
+        else:
+            raise RuntimeError("session_factory required for diff_versions")
 
         if mode == "metadata":
             return meta_diff
@@ -530,6 +544,8 @@ class VersionService:
     def _validate_path(self, path: str) -> str:
         """Validate and normalize path.
 
+        Delegates to shared path validation utility for security checks.
+
         Args:
             path: Path to validate
 
@@ -537,38 +553,21 @@ class VersionService:
             Normalized path
 
         Raises:
-            ValueError: If path is invalid
+            InvalidPathError: If path is invalid
         """
-        # Normalize path
-        if not path.startswith("/"):
-            path = "/" + path
+        from nexus.core.path_utils import validate_path
 
-        # Remove trailing slash unless root
-        if path != "/" and path.endswith("/"):
-            path = path.rstrip("/")
-
-        return path
+        return validate_path(path, allow_root=True)
 
 
 # =============================================================================
-# Phase 2 Extraction Progress
+# Phase 2 Extraction: Complete ✅
 # =============================================================================
 #
-# Status: Implementation Complete ✅
-#
-# Completed Tasks:
-# 1. [x] Extract get_version() with async support and permission checks
-# 2. [x] Extract list_versions() with version metadata
-# 3. [x] Extract rollback() with cache invalidation
-# 4. [x] Extract diff_versions() with metadata and content modes
-# 5. [x] Extract helper methods (_check_read_permission, _check_write_permission, _validate_path)
-# 6. [x] Convert all blocking I/O to async using asyncio.to_thread()
-#
-# TODO (Future):
-# 7. [ ] Add comprehensive unit tests for VersionService
-# 8. [ ] Update NexusFS to use composition (self.versions = VersionService(...))
-# 9. [ ] Add backward compatibility shims with deprecation warnings
-# 10. [ ] Update documentation and migration guide
+# All 4 version methods extracted with async support.
+# Bug fix: get_version/diff_versions use VersionManager + session_factory
+# (RaftMetadataStore lacks get_version/get_version_diff methods).
+# Unit tests: tests/unit/services/test_version_service.py
 #
 # Lines extracted: ~300 / 300 (100%)
 # Files affected: 1 created, 0 modified

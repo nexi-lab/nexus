@@ -14,7 +14,14 @@ import pytest
 from nexus import LocalBackend, NexusFS
 from nexus.core.filesystem import NexusFilesystem as NexusFilesystemABC
 from nexus.skills.protocols import NexusFilesystem as NexusFilesystemProtocol
-from nexus.storage.raft_metadata_store import RaftMetadataStore
+
+try:
+    from nexus.storage.raft_metadata_store import RaftMetadataStore
+
+    RaftMetadataStore.embedded("/tmp/_raft_probe")  # noqa: S108
+    _raft_available = True
+except Exception:
+    _raft_available = False
 
 
 def test_protocol_has_all_abc_methods() -> None:
@@ -110,6 +117,7 @@ def test_protocol_method_signatures_match() -> None:
             )
 
 
+@pytest.mark.skipif(not _raft_available, reason="Raft metastore not available")
 def test_nexus_fs_satisfies_protocol() -> None:
     """Verify NexusFS implementation satisfies the Protocol.
 
@@ -154,6 +162,7 @@ def test_nexus_fs_satisfies_protocol() -> None:
         assert isinstance(nx, NexusFilesystemProtocol)
 
 
+@pytest.mark.skipif(not _raft_available, reason="Raft metastore not available")
 def test_protocol_runtime_checkable() -> None:
     """Verify Protocol is runtime_checkable and works with isinstance().
 

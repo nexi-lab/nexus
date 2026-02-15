@@ -233,11 +233,14 @@ class MCPService:
                                 }
                             )
                         except Exception:
-                            # Skip invalid tool definitions
+                            logger.debug(
+                                "Skipping invalid tool definition: %s", item, exc_info=True
+                            )
                             continue
             except Exception:
-                # If we can't read tools directory, return empty list
-                pass
+                logger.warning(
+                    "Failed to read tools directory: %s", mount.tools_path, exc_info=True
+                )
 
         return tools
 

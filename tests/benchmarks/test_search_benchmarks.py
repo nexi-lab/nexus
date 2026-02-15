@@ -773,9 +773,7 @@ class TestTrigramBenchmarks:
         trigram_fast.build_index(self.file_paths_1k, idx_path)
 
         def search():
-            return trigram_fast.grep(
-                idx_path, "xyzzy_nonexistent_12345", max_results=1000
-            )
+            return trigram_fast.grep(idx_path, "xyzzy_nonexistent_12345", max_results=1000)
 
         result = benchmark(search)
         assert result is not None

@@ -8,9 +8,11 @@ import logging
 import os
 from typing import Any, cast
 
-from nexus.constants import DEFAULT_LANGGRAPH_URL, DEFAULT_NEXUS_URL
-
 logger = logging.getLogger(__name__)
+
+# Kernel-local defaults — avoids importing nexus.constants (service-level module)
+_DEFAULT_NEXUS_URL = "http://localhost:2026"
+_DEFAULT_LANGGRAPH_URL = "http://localhost:2024"
 
 
 # Default agent configuration metadata
@@ -18,9 +20,9 @@ def get_default_agent_metadata() -> dict[str, Any]:
     """Get default agent metadata with configurable URLs from environment."""
     return {
         "platform": "langgraph",
-        "endpoint_url": os.getenv("LANGGRAPH_SERVER_URL", DEFAULT_LANGGRAPH_URL),
+        "endpoint_url": os.getenv("LANGGRAPH_SERVER_URL", _DEFAULT_LANGGRAPH_URL),
         "nexus_server_url": os.getenv("NEXUS_SERVER_URL")
-        or os.getenv("NEXUS_URL", DEFAULT_NEXUS_URL),
+        or os.getenv("NEXUS_URL", _DEFAULT_NEXUS_URL),
         "agent_id": "agent",
     }
 

@@ -249,11 +249,12 @@ class AgentRegistry:
                     entity_metadata=entity_metadata if entity_metadata else None,
                 )
             except Exception:
-                logger.warning(
+                logger.error(
                     "[AGENT-REG] Bridge: failed to register %s in entity_registry",
                     agent_id,
                     exc_info=True,
                 )
+                raise
 
         logger.debug(f"[AGENT-REG] Registered agent {agent_id} (owner={owner_id})")
         return record
@@ -442,6 +443,18 @@ class AgentRegistry:
         with self._lock:
             self._heartbeat_buffer[agent_id] = now
 
+            # Warn at 80% buffer capacity (Decision #15A)
+            buffer_len = len(self._heartbeat_buffer)
+            threshold = int(0.8 * self._max_buffer_size)
+            if buffer_len >= threshold:
+                pct = buffer_len / self._max_buffer_size * 100
+                logger.warning(
+                    "[AGENT-REG] Heartbeat buffer at %.0f%% capacity (%d/%d)",
+                    pct,
+                    buffer_len,
+                    self._max_buffer_size,
+                )
+
             # Check if auto-flush is needed
             elapsed = time.monotonic() - self._last_flush
             if elapsed >= self._flush_interval:
@@ -612,11 +625,12 @@ class AgentRegistry:
             try:
                 self._entity_registry.delete_entity("agent", agent_id)
             except Exception:
-                logger.warning(
+                logger.error(
                     "[AGENT-REG] Bridge: failed to remove %s from entity_registry",
                     agent_id,
                     exc_info=True,
                 )
+                raise
 
         # Remove from heartbeat buffer, known agents, and record cache
         with self._lock:

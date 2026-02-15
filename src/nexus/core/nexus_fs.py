@@ -3738,8 +3738,6 @@ class NexusFS(  # type: ignore[misc]
         """
         import logging
 
-        from nexus.core.agents import register_agent
-
         logger = logging.getLogger(__name__)
 
         # Extract user_id and zone_id from context
@@ -3749,86 +3747,30 @@ class NexusFS(  # type: ignore[misc]
 
         zone_id = self._extract_zone_id(context) or "default"
 
-        # Check if agent config already exists BEFORE modifying entity registry
-        # Extract agent name from agent_id (format: user_id,agent_name)
+        # Derive agent namespace paths
         agent_name_part = agent_id.split(",", 1)[1] if "," in agent_id else agent_id
         agent_dir = f"/zone/{zone_id}/user/{user_id}/agent/{agent_name_part}"
-        config_path = f"{agent_dir}/config.yaml"
 
-        try:
-            existing_meta = self.metadata.get(config_path)
-            if existing_meta:
-                raise ValueError(
-                    f"Agent already exists at {config_path}. "
-                    f"Cannot re-register existing agent. Delete the agent first if you want to recreate it."
-                )
-        except FileNotFoundError:
-            # Config doesn't exist, this is expected for new agents
-            pass
+        # Pre-flight: ensure agent does not already exist
+        self._check_agent_not_exists(agent_id, user_id, zone_id)
 
-        # Ensure EntityRegistry is initialized
-        if not self._entity_registry:
-            from nexus.services.permissions.entity_registry import EntityRegistry
-
-            self._entity_registry = EntityRegistry(self.SessionLocal)
-
-        # Register agent entity (always without API key first)
-        agent = register_agent(
-            user_id=user_id,
+        # --- Single registration path (Issue #1588) ---
+        # AgentRegistry.register() handles BOTH the DB write AND the EntityRegistry bridge.
+        record = self._agent_registry.register(
             agent_id=agent_id,
-            name=name,
+            owner_id=user_id,
             zone_id=zone_id,
-            metadata={"description": description} if description else None,
-            entity_registry=self._entity_registry,
+            name=name,
+            metadata=metadata,
+            capabilities=capabilities,
         )
+        agent = record.to_dict()
 
-        # Issue #1240: Dual-write to AgentRegistry for lifecycle tracking
-        if hasattr(self, "_agent_registry") and self._agent_registry:
-            try:
-                self._agent_registry.register(
-                    agent_id=agent_id,
-                    owner_id=user_id,
-                    zone_id=zone_id,
-                    name=name,
-                    metadata=metadata,
-                    capabilities=capabilities,
-                )
-            except Exception as reg_err:
-                logger.debug(f"[AGENT-REGISTRY] Dual-write register: {reg_err}")
+        # Provision identity, wallet, config, permissions, identity doc, API key
+        agent_did = self._provision_agent_identity(agent_id, agent, logger)
+        self._provision_agent_wallet(agent_id, zone_id, logger)
 
-        # Issue #1355: Provision cryptographic identity (Ed25519 keypair + DID)
-        agent_did: str | None = None
-        if hasattr(self, "_key_service") and self._key_service:
-            try:
-                key_record = self._key_service.ensure_keypair(agent_id)
-                agent_did = key_record.did
-                agent = {**agent, "did": agent_did, "key_id": key_record.key_id}
-                logger.info(
-                    "[KYA] Provisioned identity for agent %s (did=%s)",
-                    agent_id,
-                    agent_did,
-                )
-            except Exception as kya_err:
-                logger.warning(
-                    "[KYA] Failed to provision identity for agent %s: %s",
-                    agent_id,
-                    kya_err,
-                )
-
-        # Issue #1210: Auto-provision wallet (sync, non-blocking on failure)
-        if self._wallet_provisioner is not None:
-            try:
-                self._wallet_provisioner(agent_id, zone_id)
-                logger.info(f"[WALLET] Provisioned wallet for agent {agent_id}")
-            except Exception as wallet_err:
-                logger.warning(
-                    f"[WALLET] Failed to provision wallet for agent {agent_id}: {wallet_err}"
-                )
-
-        # Store capabilities in agent return dict for caller convenience
-        if capabilities:
-            agent["capabilities"] = list(capabilities)
-        # Create initial config data
+        config_path = f"{agent_dir}/config.yaml"
         config_data = self._create_agent_config_data(
             agent_id=agent_id,
             name=name,
@@ -3837,8 +3779,6 @@ class NexusFS(  # type: ignore[misc]
             created_at=agent.get("created_at"),
             metadata=metadata,
         )
-
-        # Create directory, config file, and grant ReBAC permissions
         self._create_agent_directory(
             agent_id=agent_id,
             user_id=user_id,
@@ -3849,8 +3789,113 @@ class NexusFS(  # type: ignore[misc]
         )
         agent["config_path"] = config_path
 
-        # Grant agent viewer permission on its own config directory
-        # This allows the agent to read its own configuration
+        self._grant_agent_self_permission(agent_id, agent_dir, zone_id, context, logger)
+
+        if agent_did:
+            self._write_agent_identity_document(agent_id, agent_did, agent_dir, context, logger)
+
+        if generate_api_key:
+            self._provision_agent_api_key(
+                agent_id=agent_id,
+                user_id=user_id,
+                name=name,
+                description=description,
+                metadata=metadata,
+                agent=agent,
+                config_path=config_path,
+                context=context,
+                logger=logger,
+            )
+        else:
+            agent["has_api_key"] = False
+
+        if capabilities:
+            agent["capabilities"] = list(capabilities)
+
+        return agent
+
+    # ------------------------------------------------------------------
+    # register_agent helper methods (Issue #1588: extracted for clarity)
+    # ------------------------------------------------------------------
+
+    def _check_agent_not_exists(
+        self,
+        agent_id: str,
+        user_id: str,
+        zone_id: str,
+    ) -> None:
+        """Raise ValueError if agent config already exists on the filesystem."""
+        agent_name_part = agent_id.split(",", 1)[1] if "," in agent_id else agent_id
+        agent_dir = f"/zone/{zone_id}/user/{user_id}/agent/{agent_name_part}"
+        config_path = f"{agent_dir}/config.yaml"
+        try:
+            existing_meta = self.metadata.get(config_path)
+            if existing_meta:
+                raise ValueError(
+                    f"Agent already exists at {config_path}. "
+                    f"Cannot re-register existing agent. Delete the agent first if you want to recreate it."
+                )
+        except FileNotFoundError:
+            pass  # Config doesn't exist — expected for new agents
+
+    def _provision_agent_identity(
+        self,
+        agent_id: str,
+        agent: dict,
+        logger: logging.Logger,
+    ) -> str | None:
+        """Provision Ed25519 keypair + DID for the agent (Issue #1355).
+
+        Returns the agent DID string if successful, None otherwise.
+        Mutates *agent* dict in-place to add ``did`` and ``key_id`` keys.
+        """
+        if not (hasattr(self, "_key_service") and self._key_service):
+            return None
+        try:
+            key_record = self._key_service.ensure_keypair(agent_id)
+            agent_did = key_record.did
+            agent["did"] = agent_did
+            agent["key_id"] = key_record.key_id
+            logger.info(
+                "[KYA] Provisioned identity for agent %s (did=%s)",
+                agent_id,
+                agent_did,
+            )
+            return agent_did
+        except Exception as kya_err:
+            logger.warning(
+                "[KYA] Failed to provision identity for agent %s: %s",
+                agent_id,
+                kya_err,
+            )
+            return None
+
+    def _provision_agent_wallet(
+        self,
+        agent_id: str,
+        zone_id: str,
+        logger: logging.Logger,
+    ) -> None:
+        """Auto-provision a TigerBeetle wallet for the agent (Issue #1210)."""
+        if self._wallet_provisioner is None:
+            return
+        try:
+            self._wallet_provisioner(agent_id, zone_id)
+            logger.info(f"[WALLET] Provisioned wallet for agent {agent_id}")
+        except Exception as wallet_err:
+            logger.warning(
+                f"[WALLET] Failed to provision wallet for agent {agent_id}: {wallet_err}"
+            )
+
+    def _grant_agent_self_permission(
+        self,
+        agent_id: str,
+        agent_dir: str,
+        zone_id: str,
+        context: dict | None,
+        logger: logging.Logger,
+    ) -> None:
+        """Grant the agent viewer permission on its own config directory."""
         try:
             self.rebac_create(
                 subject=("agent", agent_id),
@@ -3863,60 +3908,74 @@ class NexusFS(  # type: ignore[misc]
         except Exception as e:
             logger.warning(f"Failed to grant viewer permission to agent: {e}")
 
-        # Issue #1355: Write public identity document to agent namespace
-        if agent_did:
-            try:
-                from nexus.identity.did import create_did_document
+    def _write_agent_identity_document(
+        self,
+        agent_id: str,
+        agent_did: str,
+        agent_dir: str,
+        context: dict | None,
+        logger: logging.Logger,
+    ) -> None:
+        """Write public DID document to the agent's .identity namespace (Issue #1355)."""
+        try:
+            from nexus.identity.did import create_did_document
 
-                key_record = self._key_service.get_active_keys(agent_id)[0]
-                public_key = self._key_service._crypto.public_key_from_bytes(
-                    key_record.public_key_bytes
-                )
-                did_doc = create_did_document(agent_did, public_key)
-                identity_dir = f"{agent_dir}/.identity"
-                ctx = self._parse_context(context)
-                self.mkdir(identity_dir, parents=True, exist_ok=True, context=ctx)
-                self.write(
-                    f"{identity_dir}/did.json",
-                    json.dumps(did_doc, indent=2),
-                    context=ctx,
-                )
-                logger.info("[KYA] Wrote DID document to %s/did.json", identity_dir)
-            except Exception as did_err:
-                logger.warning("[KYA] Failed to write DID document: %s", did_err)
+            key_record = self._key_service.get_active_keys(agent_id)[0]
+            public_key = self._key_service._crypto.public_key_from_bytes(
+                key_record.public_key_bytes
+            )
+            did_doc = create_did_document(agent_did, public_key)
+            identity_dir = f"{agent_dir}/.identity"
+            ctx = self._parse_context(context)
+            self.mkdir(identity_dir, parents=True, exist_ok=True, context=ctx)
+            self.write(
+                f"{identity_dir}/did.json",
+                json.dumps(did_doc, indent=2),
+                context=ctx,
+            )
+            logger.info("[KYA] Wrote DID document to %s/did.json", identity_dir)
+        except Exception as did_err:
+            logger.warning("[KYA] Failed to write DID document: %s", did_err)
 
-        # Optionally generate API key
-        if generate_api_key:
+    def _provision_agent_api_key(
+        self,
+        agent_id: str,
+        user_id: str,
+        name: str,
+        description: str | None,
+        metadata: dict | None,
+        agent: dict,
+        config_path: str,
+        context: dict | None,
+        logger: logging.Logger,
+    ) -> None:
+        """Generate an API key for the agent and update its config.yaml."""
+        try:
+            raw_key = self._create_agent_api_key(
+                agent_id=agent_id,
+                user_id=user_id,
+                context=context,
+            )
+            agent["api_key"] = raw_key
+            agent["has_api_key"] = True
+
+            # Update config.yaml with API key information
             try:
-                raw_key = self._create_agent_api_key(
+                updated_config_data = self._create_agent_config_data(
                     agent_id=agent_id,
+                    name=name,
                     user_id=user_id,
-                    context=context,
+                    description=description,
+                    created_at=agent.get("created_at"),
+                    metadata=metadata,
+                    api_key=raw_key,
                 )
-                agent["api_key"] = raw_key
-                agent["has_api_key"] = True
-
-                # Update config.yaml with API key information
-                try:
-                    updated_config_data = self._create_agent_config_data(
-                        agent_id=agent_id,
-                        name=name,
-                        user_id=user_id,
-                        description=description,
-                        created_at=agent.get("created_at"),
-                        metadata=metadata,
-                        api_key=raw_key,
-                    )
-                    self._write_agent_config(config_path, updated_config_data, context)
-                except Exception as e:
-                    logger.warning(f"Failed to update config with API key: {e}")
+                self._write_agent_config(config_path, updated_config_data, context)
             except Exception as e:
-                logger.error(f"Failed to create API key for agent: {e}")
-                raise
-        else:
-            agent["has_api_key"] = False
-
-        return agent
+                logger.warning(f"Failed to update config with API key: {e}")
+        except Exception as e:
+            logger.error(f"Failed to create API key for agent: {e}")
+            raise
 
     @rpc_expose(description="Update agent configuration")
     def update_agent(
@@ -4350,12 +4409,6 @@ class NexusFS(  # type: ignore[misc]
             >>> if deleted:
             ...     print("Agent deleted")
         """
-        if not self._entity_registry:
-            from nexus.services.permissions.entity_registry import EntityRegistry
-
-            self._entity_registry = EntityRegistry(self.SessionLocal)
-
-        # Get agent info before deletion to extract user_id and zone_id
         import logging
 
         logger = logging.getLogger(__name__)
@@ -4474,17 +4527,9 @@ class NexusFS(  # type: ignore[misc]
                     f"[WALLET] Failed to cleanup wallet for agent {agent_id}: {wallet_err}"
                 )
 
-        # Delete from entity registry first (primary source of truth)
-        deleted = self._entity_registry.delete_entity("agent", agent_id)
-
-        # Issue #1240: Dual-write to AgentRegistry for lifecycle tracking
-        # Note: AgentRegistry.unregister() has a bridge that also calls
-        # entity_registry.delete_entity(), but the entity is already gone above.
-        if hasattr(self, "_agent_registry") and self._agent_registry:
-            try:
-                self._agent_registry.unregister(agent_id)
-            except Exception as unreg_err:
-                logger.debug(f"[AGENT-REGISTRY] Dual-write unregister: {unreg_err}")
+        # Single unregister path (Issue #1588): AgentRegistry.unregister() handles
+        # BOTH the agent_records DB delete AND the EntityRegistry bridge delete.
+        deleted = self._agent_registry.unregister(agent_id)
 
         return deleted
 

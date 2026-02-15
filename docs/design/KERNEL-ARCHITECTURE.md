@@ -32,11 +32,16 @@ NexusFS follows an **OS-inspired layered architecture**.
 (like Linux's vmlinuz needs bootloader + init). It defines interfaces; drivers provide
 implementations via DI at startup.
 
-**Driver pluggability:** Drivers are selected at startup via config (same binary,
-different drivers). NOT runtime hot-swap — that is a future goal (Task #8: DriverRegistry).
+**Three swap tiers** (follows Linux's monolithic kernel model, not microkernel):
 
-**Services:** Installable and removable like Linux packages. The kernel operates
-without any services loaded. Services depend on kernel interfaces, never the reverse.
+| Tier | Swap time | Nexus | Linux analogue |
+|------|-----------|-------|----------------|
+| Static kernel | Never | MetastoreABC, VFS, FileMetadataProtocol, syscall dispatch | vmlinuz core (scheduler, mm, VFS) |
+| Drivers | Config-time (DI at startup) | redb, S3, PostgreSQL, Dragonfly | compiled-in drivers (`=y`) |
+| Services | Runtime (load/unload) | ReBAC, Auth, Agents, EventBus, Skills | user-space daemons (systemd units) |
+
+**Services** depend on kernel interfaces, never the reverse. The kernel operates
+without any services loaded.
 
 **Distros:** Once kernel is minimal, different distributions (nexus-server, nexus-embedded,
 nexus-cloud) compose kernel + selected drivers + selected services. Planned, not yet designed.
@@ -53,7 +58,7 @@ not by domain or implementation.
 | **Metastore** | `MetastoreABC` | Ordered KV, CAS, prefix scan, optional Raft SC | **Required** — sole kernel init param |
 | **ObjectStore** | `ObjectStoreABC` (= `Backend`) | Streaming I/O, immutable blobs, petabyte scale | **Interface only** — instances mounted dynamically |
 | **RecordStore** | `RecordStoreABC` | Relational ACID, JOINs, FK, vector search | **Services only** — optional, injected for ReBAC/Auth/etc. |
-| **CacheStore** | `CacheStoreABC` | Ephemeral KV, Pub/Sub, TTL | **Services only** — optional, graceful degrade |
+| **CacheStore** | `CacheStoreABC` | Ephemeral KV, Pub/Sub, TTL | **Optional** — kernel defines ABC, services consume; defaults to `NullCacheStore` |
 
 **Orthogonality:** Between pillars = different query patterns. Within pillars = interchangeable
 drivers (deployment-time config). See `data-storage-matrix.md` for full proof.
@@ -93,6 +98,26 @@ TigerCache O(n), UserSession stays in RecordStore. `NullCacheStore` provides no-
 
 `FileMetadataProtocol` is kernel because it IS the inode layer — the typed contract
 between VFS and Metastore. Without it, the kernel cannot describe files.
+
+### NexusFS — Syscall Dispatch Layer
+
+`NexusFS` is the kernel entry point, analogous to Linux's syscall layer (`sys_open`,
+`sys_read`). It wires VFSRouter + FileMetadataProtocol + ObjectStoreABC into
+user-facing operations (read, write, list, mkdir, mount).
+
+**Current state:** NexusFS is a mixin-based god object that also contains service
+code (ReBAC, OAuth, Skills, MCP, Events, Tasks). Mixins are compile-time composition —
+cannot add/remove at runtime, cannot compose into different distros.
+
+**Target state:** Composition + ServiceRegistry pattern. Kernel provides
+`load_service()` / `unload_service()` for the Services tier (runtime swap).
+Drivers remain config-time DI (static kernel + drivers never change at runtime,
+following Linux's monolithic model). This enables:
+- Distro composition: `nexus-server` loads all services, `nexus-embedded` loads none
+- Clean kernel boundary: NexusFS shrinks to pure syscall dispatch
+
+Migration is incremental: current "move X out of core" tasks extract mixins into
+standalone service classes (Step 1), then a ServiceRegistry replaces inheritance (Step 2).
 
 ### Service Protocols (`nexus.services.protocols`)
 

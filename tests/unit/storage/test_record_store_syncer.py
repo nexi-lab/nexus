@@ -371,3 +371,65 @@ class TestBatchPartialFailure:
         with record_store.session_factory() as session:
             fps = session.query(FilePathModel).all()
             assert len(fps) == 0
+
+
+# =========================================================================
+# Transactional outbox: delivered=FALSE tests (Issue #1241)
+# =========================================================================
+
+
+class TestDeliveredColumn:
+    """Verify that all syncer operations create records with delivered=FALSE."""
+
+    def test_on_write_sets_delivered_false(
+        self, syncer: RecordStoreSyncer, record_store: SQLAlchemyRecordStore
+    ) -> None:
+        """on_write() should create operation_log with delivered=FALSE."""
+        metadata = _make_metadata("/outbox.txt", etag="ohash")
+        syncer.on_write(metadata, is_new=True, path="/outbox.txt", zone_id="default")
+
+        with record_store.session_factory() as session:
+            ops = session.query(OperationLogModel).all()
+            assert len(ops) == 1
+            assert ops[0].delivered is False
+
+    def test_on_delete_sets_delivered_false(
+        self, syncer: RecordStoreSyncer, record_store: SQLAlchemyRecordStore
+    ) -> None:
+        """on_delete() should create operation_log with delivered=FALSE."""
+        syncer.on_delete(path="/del-outbox.txt", zone_id="default")
+
+        with record_store.session_factory() as session:
+            ops = (
+                session.query(OperationLogModel)
+                .filter(OperationLogModel.operation_type == "delete")
+                .all()
+            )
+            assert len(ops) == 1
+            assert ops[0].delivered is False
+
+    def test_on_rename_sets_delivered_false(
+        self, syncer: RecordStoreSyncer, record_store: SQLAlchemyRecordStore
+    ) -> None:
+        """on_rename() should create operation_log with delivered=FALSE."""
+        syncer.on_rename(old_path="/old.txt", new_path="/new.txt", zone_id="default")
+
+        with record_store.session_factory() as session:
+            ops = session.query(OperationLogModel).all()
+            assert len(ops) == 1
+            assert ops[0].delivered is False
+
+    def test_on_write_batch_sets_delivered_false(
+        self, syncer: RecordStoreSyncer, record_store: SQLAlchemyRecordStore
+    ) -> None:
+        """on_write_batch() should create all records with delivered=FALSE."""
+        items = [
+            (_make_metadata("/x.txt", etag="hx"), True),
+            (_make_metadata("/y.txt", etag="hy"), True),
+        ]
+        syncer.on_write_batch(items, zone_id="default")
+
+        with record_store.session_factory() as session:
+            ops = session.query(OperationLogModel).all()
+            assert len(ops) == 2
+            assert all(op.delivered is False for op in ops)

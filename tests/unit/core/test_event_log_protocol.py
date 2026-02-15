@@ -1,7 +1,10 @@
 """Tests for EventLogProtocol type-checking compliance.
 
-Verifies that both WALEventLog and PGEventLog satisfy the
-runtime_checkable EventLogProtocol interface.
+Verifies that WALEventLog satisfies the runtime_checkable
+EventLogProtocol interface.
+
+PGEventLog was removed in Issue #1241 — event delivery from
+operation_log is now handled by EventDeliveryWorker (outbox).
 
 Issue #1397
 """
@@ -27,16 +30,6 @@ class TestEventLogProtocol:
         log = WALEventLog(config)
         assert isinstance(log, EventLogProtocol)
         log._wal.close()
-
-    def test_pg_event_log_satisfies_protocol(self) -> None:
-        """PGEventLog must be a structural subtype of EventLogProtocol."""
-        from unittest.mock import MagicMock
-
-        from nexus.services.event_log.pg_backend import PGEventLog
-
-        config = EventLogConfig()
-        log = PGEventLog(config, session_factory=MagicMock())
-        assert isinstance(log, EventLogProtocol)
 
     def test_event_log_config_defaults(self) -> None:
         """EventLogConfig should have sensible defaults."""

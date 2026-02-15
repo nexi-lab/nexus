@@ -1,9 +1,11 @@
 """Factory for EventLogProtocol implementations.
 
-Tries the Rust WAL first; falls back to PostgreSQL if the extension
-is not installed.  Returns None if neither is available (graceful degrade).
+Tries the Rust WAL backend.  Returns None if unavailable (graceful degrade).
 
-Tracked by: #1397
+PGEventLog was removed in Issue #1241 — event delivery is now handled by
+the transactional outbox pattern (``EventDeliveryWorker``).
+
+Tracked by: #1397, #1241
 """
 
 from __future__ import annotations
@@ -18,17 +20,22 @@ logger = logging.getLogger(__name__)
 
 def create_event_log(
     config: EventLogConfig,
-    session_factory: Any | None = None,
+    session_factory: Any | None = None,  # noqa: ARG001 — kept for API compat
 ) -> EventLogProtocol | None:
     """Create the best available EventLogProtocol implementation.
 
     Args:
         config: WAL / event log configuration.
-        session_factory: SQLAlchemy sync session factory (required for PG fallback).
+        session_factory: Unused (kept for backward compatibility).
 
     Returns:
         An EventLogProtocol instance, or None if no backend is available.
         Graceful degradation: callers must handle None (skip event logging).
+
+    Note:
+        PGEventLog was removed in Issue #1241.  Event delivery from the
+        ``operation_log`` table is now handled by ``EventDeliveryWorker``
+        (transactional outbox pattern with at-least-once semantics).
     """
     # Prefer Rust WAL
     try:
@@ -41,16 +48,8 @@ def create_event_log(
     except Exception as exc:
         logger.warning("Rust WAL unavailable: %s", exc)
 
-    # Fallback to PostgreSQL
-    if session_factory is not None:
-        try:
-            from nexus.services.event_log.pg_backend import PGEventLog
-
-            pg_log: EventLogProtocol = PGEventLog(config, session_factory)
-            logger.info("Event log: PostgreSQL fallback backend")
-            return pg_log
-        except Exception as exc:
-            logger.warning("PostgreSQL event log unavailable: %s", exc)
-
-    logger.info("Event log: disabled (no backend available, graceful degrade)")
+    logger.info(
+        "Event log: disabled (Rust WAL unavailable; "
+        "event delivery via transactional outbox — Issue #1241)"
+    )
     return None

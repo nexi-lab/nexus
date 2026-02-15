@@ -151,7 +151,7 @@ def _compute_entity_overlap(
     if existing_entity_types:
         existing_types = {t.strip() for t in existing_entity_types.split(",") if t.strip()}
 
-    overlap_count = 0
+    overlap_count: float = 0
     total_count = len(new_entities)
 
     for entity in new_entities:
@@ -643,8 +643,8 @@ class MemoryEvolutionDetector:
         if candidate.entities_json:
             try:
                 entities = json.loads(candidate.entities_json)
-                entity_texts = [
-                    e.get("text", e.get("name", "")) for e in entities if isinstance(e, dict)
+                entity_texts: list[str] = [
+                    e.get("text") or e.get("name", "") for e in entities if isinstance(e, dict)
                 ]
                 if entity_texts:
                     parts.append(f"Entities: {', '.join(entity_texts)}")

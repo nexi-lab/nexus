@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import ast
 import logging
+import threading
 from collections import OrderedDict, deque
 from typing import TYPE_CHECKING, Any
 
@@ -32,91 +33,6 @@ logger = logging.getLogger(__name__)
 
 # Tier priority: cheapest first
 TIER_PRIORITY = ("monty", "docker", "e2b")
-
-# Built-in functions safe for Monty (no I/O, no imports)
-_MONTY_SAFE_BUILTINS = frozenset(
-    {
-        "print",
-        "len",
-        "range",
-        "int",
-        "str",
-        "float",
-        "bool",
-        "list",
-        "dict",
-        "set",
-        "tuple",
-        "type",
-        "isinstance",
-        "issubclass",
-        "abs",
-        "round",
-        "min",
-        "max",
-        "sum",
-        "sorted",
-        "reversed",
-        "enumerate",
-        "zip",
-        "map",
-        "filter",
-        "any",
-        "all",
-        "hasattr",
-        "getattr",
-        "setattr",
-        "delattr",
-        "id",
-        "hash",
-        "repr",
-        "chr",
-        "ord",
-        "hex",
-        "oct",
-        "bin",
-        "format",
-        "iter",
-        "next",
-        "slice",
-        "super",
-        "property",
-        "staticmethod",
-        "classmethod",
-        "object",
-        "None",
-        "True",
-        "False",
-        "NotImplemented",
-        "Ellipsis",
-        "ValueError",
-        "TypeError",
-        "RuntimeError",
-        "StopIteration",
-        "KeyError",
-        "IndexError",
-        "AttributeError",
-        "NameError",
-        "ZeroDivisionError",
-        "AssertionError",
-        "Exception",
-        "BaseException",
-        "divmod",
-        "pow",
-        "complex",
-        "bytes",
-        "bytearray",
-        "memoryview",
-        "frozenset",
-        "ascii",
-        "breakpoint",
-        "callable",
-        "dir",
-        "vars",
-        "help",
-        "input",
-    }
-)
 
 # Functions that indicate non-trivial capabilities (need Docker/E2B)
 _ESCALATION_FUNCTIONS = frozenset(
@@ -158,10 +74,13 @@ class SandboxRouter:
         self._history_maxlen = history_maxlen
         self._agent_cache_maxsize = agent_cache_maxsize
 
+        # Thread-safety lock for mutable state (Issue #1317 review fix #3)
+        self._lock = threading.Lock()
+
         # Per-agent execution history: LRU-ordered dict of tier deques
         self._agent_history: OrderedDict[str, deque[str]] = OrderedDict()
 
-        # Per-agent host function cache
+        # Per-agent host function cache (evicted alongside history)
         self._host_fn_cache: dict[str, dict[str, Callable[..., Any]]] = {}
 
         # Metrics
@@ -222,12 +141,17 @@ class SandboxRouter:
         # Static analysis
         analysis_tier = self.analyze_code(code, language)
 
-        # Check agent history for sticky session
+        # Check agent history for sticky session (only escalate UP, never DOWN)
         if agent_id and agent_id in self._agent_history:
             history = self._agent_history[agent_id]
             if len(history) >= 3:  # Need minimum data points
                 sticky_tier = self._get_sticky_tier(history)
-                if sticky_tier and sticky_tier != analysis_tier and sticky_tier in self._providers:
+                if (
+                    sticky_tier
+                    and sticky_tier != analysis_tier
+                    and sticky_tier in self._providers
+                    and self._tier_index(sticky_tier) >= self._tier_index(analysis_tier)
+                ):
                     logger.debug(
                         "Agent %s: sticky session -> %s (analysis suggested %s)",
                         agent_id,
@@ -251,16 +175,20 @@ class SandboxRouter:
             tier: Tier that was used.
             escalated: Whether this was the result of an escalation.
         """
-        if agent_id in self._agent_history:
-            # Touch for LRU ordering
-            self._agent_history.move_to_end(agent_id)
-        else:
-            # Enforce agent cache size limit (LRU eviction)
-            if len(self._agent_history) >= self._agent_cache_maxsize:
-                self._agent_history.popitem(last=False)
-            self._agent_history[agent_id] = deque(maxlen=self._history_maxlen)
+        with self._lock:
+            if agent_id in self._agent_history:
+                # Touch for LRU ordering
+                self._agent_history.move_to_end(agent_id)
+            else:
+                # Enforce agent cache size limit (LRU eviction)
+                if len(self._agent_history) >= self._agent_cache_maxsize:
+                    evicted_id, _ = self._agent_history.popitem(last=False)
+                    # Evict host function cache alongside history (#1317 review fix #7)
+                    self._host_fn_cache.pop(evicted_id, None)
+                self._agent_history[agent_id] = deque(maxlen=self._history_maxlen)
 
-        self._agent_history[agent_id].append(tier)
+            self._agent_history[agent_id].append(tier)
+
         self.metrics.record_selection(tier)
 
         if escalated:
@@ -313,7 +241,8 @@ class SandboxRouter:
             agent_id: Agent identifier.
             host_fns: Host function mapping.
         """
-        self._host_fn_cache[agent_id] = dict(host_fns)
+        with self._lock:
+            self._host_fn_cache[agent_id] = dict(host_fns)
 
     def get_cached_host_functions(self, agent_id: str) -> dict[str, Callable[..., Any]] | None:
         """Get cached host functions for an agent.
@@ -324,7 +253,8 @@ class SandboxRouter:
         Returns:
             Host function mapping, or None if not cached.
         """
-        return self._host_fn_cache.get(agent_id)
+        with self._lock:
+            return self._host_fn_cache.get(agent_id)
 
     # -- Internal helpers ---------------------------------------------------
 
@@ -345,6 +275,18 @@ class SandboxRouter:
                 return tier
         # Should not happen if constructor validation passed
         return next(iter(self._providers))
+
+    @staticmethod
+    def _tier_index(tier: str) -> int:
+        """Return the index of a tier in the priority chain.
+
+        Higher index = more capable tier. Used to ensure sticky sessions
+        only escalate UP, never downgrade.
+        """
+        try:
+            return TIER_PRIORITY.index(tier)
+        except ValueError:
+            return -1
 
     def _get_sticky_tier(self, history: deque[str]) -> str | None:
         """Check if history strongly favors a specific tier.

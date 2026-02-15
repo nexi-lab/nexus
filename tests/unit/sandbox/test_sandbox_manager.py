@@ -89,6 +89,7 @@ def manager(session_factory, mock_provider):
     mgr = SandboxManager.__new__(SandboxManager)
     mgr._session_factory = session_factory
     mgr.providers = {"docker": mock_provider}
+    mgr._router = None
     return mgr
 
 
@@ -141,6 +142,7 @@ class TestCreateSandbox:
         mgr = SandboxManager.__new__(SandboxManager)
         mgr._session_factory = session_factory
         mgr.providers = {}
+        mgr._router = None
 
         with pytest.raises(ValueError, match="No sandbox providers available"):
             await mgr.create_sandbox(

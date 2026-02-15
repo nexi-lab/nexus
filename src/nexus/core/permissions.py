@@ -18,8 +18,8 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 import uuid
-from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import IntFlag
 from typing import TYPE_CHECKING, Any
@@ -381,18 +381,24 @@ class PermissionEnforcer:
         self.audit_store = audit_store
         self.admin_bypass_paths = admin_bypass_paths or []
 
-        # Issue #922: Permission boundary cache
-        self._enable_boundary_cache = enable_boundary_cache
-        self._boundary_cache: PermissionBoundaryCache | None = None
-        if boundary_cache is not None:
-            self._boundary_cache = boundary_cache
-            logger.info("[PermissionEnforcer] Using provided boundary cache")
-        elif enable_boundary_cache:
-            # Lazy import to avoid circular dependencies
-            from nexus.services.permissions.permission_boundary_cache import PermissionBoundaryCache
+        # Issue #899: Centralized cache coordinator for all permission caches
+        from nexus.core.permission_cache import PermissionCacheCoordinator
 
-            self._boundary_cache = PermissionBoundaryCache()
-            logger.info("[PermissionEnforcer] Boundary cache ENABLED (50k entries, 300s TTL)")
+        self._cache = PermissionCacheCoordinator(
+            rebac_manager=rebac_manager,
+            boundary_cache=boundary_cache,
+            enable_boundary_cache=enable_boundary_cache,
+            hotspot_detector=hotspot_detector,
+            enable_hotspot_tracking=enable_hotspot_tracking,
+        )
+
+        # Backward-compatible properties that delegate to coordinator
+        self._boundary_cache = self._cache.boundary_cache
+        self._hotspot_detector = self._cache.hotspot_detector
+        self._bitmap_completeness_cache = self._cache._bitmap_completeness_cache
+        self._bitmap_completeness_ttl = self._cache._bitmap_completeness_ttl
+        self._leopard_dir_index = self._cache._leopard_dir_index
+        self._leopard_dir_ttl = self._cache._leopard_dir_ttl
 
         # Register boundary cache invalidation callback with rebac_manager
         if (
@@ -400,39 +406,11 @@ class PermissionEnforcer:
             and self.rebac_manager
             and hasattr(self.rebac_manager, "register_boundary_cache_invalidator")
         ):
-            # Create a unique ID for this enforcer's callback
             callback_id = f"permission_enforcer_{id(self)}"
             self.rebac_manager.register_boundary_cache_invalidator(
                 callback_id,
                 self._boundary_cache.invalidate_permission_change,
             )
-
-        # Issue #921: Hotspot detection for proactive cache prefetching
-        self._enable_hotspot_tracking = enable_hotspot_tracking
-        self._hotspot_detector: HotspotDetector | None = None
-        if hotspot_detector is not None:
-            self._hotspot_detector = hotspot_detector
-            logger.info("[PermissionEnforcer] Using provided hotspot detector")
-        elif enable_hotspot_tracking:
-            # Lazy import to avoid circular dependencies
-            from nexus.services.permissions.hotspot_detector import HotspotDetector
-
-            self._hotspot_detector = HotspotDetector()
-            logger.info("[PermissionEnforcer] Hotspot tracking ENABLED (5min window, 50 threshold)")
-
-        # perf19: Bitmap completeness cache
-        # Tracks users whose Tiger bitmap contains ALL their permissions
-        # (no directory-level grants that could provide inherited access)
-        # Key: (subject_type, subject_id, zone_id) -> (is_complete, cached_at)
-        self._bitmap_completeness_cache: dict[tuple[str, str, str], tuple[bool, float]] = {}
-        self._bitmap_completeness_ttl = 3600.0  # 1 hour TTL (permissions rarely change)
-
-        # perf19: Leopard Directory Index (Option 4)
-        # Caches which directories a user can access (for inheritance checks)
-        # Key: (subject_type, subject_id, zone_id) -> (accessible_dirs: set, cached_at)
-        # When filtering, if any ancestor dir is in this set, path inherits access
-        self._leopard_dir_index: dict[tuple[str, str, str], tuple[set[str], float]] = {}
-        self._leopard_dir_ttl = 3600.0  # 1 hour TTL (permissions rarely change)
 
         # Warn if ACL store is provided (deprecated)
         if acl_store is not None:
@@ -460,17 +438,11 @@ class PermissionEnforcer:
             subject_id: If provided, only invalidate cache for this subject
             zone_id: If provided, only invalidate cache for this zone
         """
-        if subject_type and subject_id and zone_id:
-            # Invalidate specific user's cache
-            cache_key = (subject_type, subject_id, zone_id)
-            self._bitmap_completeness_cache.pop(cache_key, None)
-            self._leopard_dir_index.pop(cache_key, None)
-            logger.debug(f"[CACHE-INVALIDATE] Invalidated cache for {cache_key}")
-        else:
-            # Invalidate all caches
-            self._bitmap_completeness_cache.clear()
-            self._leopard_dir_index.clear()
-            logger.info("[CACHE-INVALIDATE] Cleared all permission caches")
+        self._cache.invalidate(subject_type, subject_id, zone_id)
+        logger.debug(
+            f"[CACHE-INVALIDATE] Invalidated cache for "
+            f"{(subject_type, subject_id, zone_id) if subject_type else 'all'}"
+        )
 
     def has_accessible_descendants(
         self,
@@ -490,8 +462,6 @@ class PermissionEnforcer:
         Returns:
             True if user can access any path starting with prefix
         """
-        import time
-
         start = time.time()
         tiger_cache = getattr(self.rebac_manager, "_tiger_cache", None)
         if tiger_cache is None:
@@ -576,8 +546,6 @@ class PermissionEnforcer:
         Returns:
             Dict mapping each prefix to True/False
         """
-        import time
-
         if not prefixes:
             return {}
 
@@ -902,60 +870,65 @@ class PermissionEnforcer:
         # Correct behavior: user should only see a directory if they have access to at least
         # one file inside it. This is handled by _has_descendant_access in the listing code.
 
-        # 1. Direct permission check (uses Tiger Cache, L1 cache, then graph traversal)
+        # Issue #899: Adaptive batch vs sequential ancestor resolution.
+        # For shallow paths (depth <= 2), sequential is fine (1-2 queries).
+        # For deeper paths, batch all checks into one rebac_check_bulk() call.
+        depth = object_id.count("/") if object_id else 0
+
+        if depth <= 2 or permission_name not in ("read", "write", "traverse"):
+            return self._check_rebac_sequential(
+                subject, permission_name, object_type, object_id, zone_id
+            )
+
+        return self._check_rebac_batched(subject, permission_name, object_type, object_id, zone_id)
+
+    def _check_rebac_sequential(
+        self,
+        subject: tuple[str, str],
+        permission_name: str,
+        object_type: str,
+        object_id: str,
+        zone_id: str,
+    ) -> bool:
+        """Sequential permission check for shallow paths (depth <= 2).
+
+        Performs direct check, TRAVERSE implication, boundary cache lookup,
+        and parent walk one level at a time. Efficient when only 1-2 parents.
+        """
+        # 1. Direct permission check
         result = self.rebac_manager.rebac_check(
-            subject=subject,  # P0-2: Use typed subject
+            subject=subject,
             permission=permission_name,
             object=(object_type, object_id),
             zone_id=zone_id,
         )
-        logger.debug(f"[_check_rebac] rebac_manager.rebac_check returned: {result}")
-
         if result:
             return True
 
-        # 2b. TRAVERSE implied by READ/WRITE - if user has READ or WRITE, they can TRAVERSE
-        if permission_name == "traverse" and not result:
-            # Check if user has READ (which implies TRAVERSE)
-            read_result = self.rebac_manager.rebac_check(
-                subject=subject,
-                permission="read",
-                object=(object_type, object_id),
-                zone_id=zone_id,
-            )
-            if read_result:
-                logger.debug("[_check_rebac] ALLOW TRAVERSE (has READ permission)")
-                return True
+        # 2. TRAVERSE implied by READ/WRITE
+        if permission_name == "traverse":
+            for implied_perm in ("read", "write"):
+                if self.rebac_manager.rebac_check(
+                    subject=subject,
+                    permission=implied_perm,
+                    object=(object_type, object_id),
+                    zone_id=zone_id,
+                ):
+                    logger.debug(
+                        f"[_check_rebac] ALLOW TRAVERSE (has {implied_perm.upper()} permission)"
+                    )
+                    return True
 
-            # Check if user has WRITE (which implies TRAVERSE)
-            write_result = self.rebac_manager.rebac_check(
-                subject=subject,
-                permission="write",
-                object=(object_type, object_id),
-                zone_id=zone_id,
-            )
-            if write_result:
-                logger.debug("[_check_rebac] ALLOW TRAVERSE (has WRITE permission)")
-                return True
-
-        # 3. Check parent directories for inherited permissions (filesystem hierarchy)
-        # For READ/WRITE/TRAVERSE, if user has permission on parent directory, grant access to child
-        # This enables permission inheritance: grant /workspace → inherits to /workspace/file.txt
-        #
-        # Issue #922: Use boundary cache for O(1) inheritance checks
-        # Instead of walking up O(depth) for every file, cache the nearest ancestor with a grant
+        # 3. Parent directory inheritance (sequential walk)
         if permission_name in ("read", "write", "traverse") and object_id:
-            import os
-
             subject_type, subject_id = subject
 
-            # FAST PATH: Check boundary cache first (Issue #922)
+            # FAST PATH: Boundary cache (Issue #922)
             if self._boundary_cache:
                 boundary = self._boundary_cache.get_boundary(
                     zone_id, subject_type, subject_id, permission_name, object_id
                 )
                 if boundary:
-                    # Found cached boundary - verify it's still valid
                     boundary_result = self.rebac_manager.rebac_check(
                         subject=subject,
                         permission=permission_name,
@@ -967,41 +940,25 @@ class PermissionEnforcer:
                             f"[_check_rebac] ALLOW (boundary cache hit: {object_id} → {boundary})"
                         )
                         return True
-                    else:
-                        # Boundary no longer valid - invalidate and fall through to slow path
-                        logger.debug(
-                            f"[_check_rebac] Boundary cache stale: {boundary} no longer grants {permission_name}"
-                        )
-                        self._boundary_cache.invalidate_permission_change(
-                            zone_id, subject_type, subject_id, permission_name, boundary
-                        )
+                    self._boundary_cache.invalidate_permission_change(
+                        zone_id, subject_type, subject_id, permission_name, boundary
+                    )
 
             # SLOW PATH: Walk up the directory tree
             parent_path = object_id
-            checked_parents = []
-
             while parent_path and parent_path != "/":
                 parent_path = os.path.dirname(parent_path)
                 if not parent_path or parent_path == object_id:
-                    # Reached root or no change
                     parent_path = "/"
 
-                checked_parents.append(parent_path)
-                logger.debug(f"[_check_rebac] Checking parent directory: {parent_path}")
-
-                # Check parent directory permission
                 parent_result = self.rebac_manager.rebac_check(
                     subject=subject,
                     permission=permission_name,
                     object=(object_type, parent_path),
                     zone_id=zone_id,
                 )
-
                 if parent_result:
-                    logger.debug(
-                        f"[_check_rebac] ALLOW (inherited from parent directory: {parent_path})"
-                    )
-                    # Cache this boundary for future lookups (Issue #922)
+                    logger.debug(f"[_check_rebac] ALLOW (inherited from parent: {parent_path})")
                     if self._boundary_cache:
                         self._boundary_cache.set_boundary(
                             zone_id,
@@ -1013,15 +970,96 @@ class PermissionEnforcer:
                         )
                     return True
 
-                # Stop at root
                 if parent_path == "/":
                     break
 
-            logger.debug(
-                f"[_check_rebac] No parent directory permissions found (checked: {checked_parents})"
-            )
+        return False
 
-        # No permission found
+    def _check_rebac_batched(
+        self,
+        subject: tuple[str, str],
+        permission_name: str,
+        object_type: str,
+        object_id: str,
+        zone_id: str,
+    ) -> bool:
+        """Batch permission check for deep paths (depth > 2) (Issue #899).
+
+        Collects all check variants (direct, implied TRAVERSE, all ancestors)
+        and resolves them in a single rebac_check_bulk() call instead of O(D)
+        sequential queries.
+        """
+        subject_type, subject_id = subject
+
+        # FAST PATH: Boundary cache (Issue #922)
+        if self._boundary_cache:
+            boundary = self._boundary_cache.get_boundary(
+                zone_id, subject_type, subject_id, permission_name, object_id
+            )
+            if boundary:
+                boundary_result = self.rebac_manager.rebac_check(
+                    subject=subject,
+                    permission=permission_name,
+                    object=(object_type, boundary),
+                    zone_id=zone_id,
+                )
+                if boundary_result:
+                    logger.debug(
+                        f"[_check_rebac_batched] ALLOW (boundary cache hit: "
+                        f"{object_id} → {boundary})"
+                    )
+                    return True
+                self._boundary_cache.invalidate_permission_change(
+                    zone_id, subject_type, subject_id, permission_name, boundary
+                )
+
+        # Collect ALL checks for a single rebac_check_bulk() call
+        from nexus.core.path_utils import get_ancestors
+
+        ancestors = get_ancestors(object_id)
+        checks: list[tuple[tuple[str, str], str, tuple[str, str]]] = []
+
+        # Direct permission on the object itself
+        checks.append((subject, permission_name, (object_type, object_id)))
+
+        # TRAVERSE implied by READ/WRITE on the object
+        if permission_name == "traverse":
+            checks.append((subject, "read", (object_type, object_id)))
+            checks.append((subject, "write", (object_type, object_id)))
+
+        # All ancestor checks for permission inheritance
+        for ancestor in ancestors:
+            if ancestor != object_id:
+                checks.append((subject, permission_name, (object_type, ancestor)))
+                # TRAVERSE implication also applies to ancestors
+                if permission_name == "traverse":
+                    checks.append((subject, "read", (object_type, ancestor)))
+                    checks.append((subject, "write", (object_type, ancestor)))
+
+        # ONE bulk call instead of O(D) sequential calls
+        results = self.rebac_manager.rebac_check_bulk(checks, zone_id=zone_id)
+
+        # Process results: direct > implied > inherited (priority order)
+        for check in checks:
+            if results.get(check, False):
+                granting_path = check[2][1]  # object_id from the check tuple
+                logger.debug(f"[_check_rebac_batched] ALLOW via {check[1]} on {granting_path}")
+                # Update boundary cache if granted via an ancestor
+                if self._boundary_cache and granting_path != object_id:
+                    self._boundary_cache.set_boundary(
+                        zone_id,
+                        subject_type,
+                        subject_id,
+                        permission_name,
+                        object_id,
+                        granting_path,
+                    )
+                return True
+
+        logger.debug(
+            f"[_check_rebac_batched] DENY {permission_name} on {object_id} "
+            f"(checked {len(checks)} tuples across {len(ancestors)} ancestors)"
+        )
         return False
 
     def _is_allowed_system_operation(self, path: str, permission: str) -> bool:
@@ -1218,14 +1256,14 @@ class PermissionEnforcer:
         paths: list[str],
         context: OperationContext,
     ) -> list[str]:
-        """Filter list of paths by read permission.
+        """Filter list of paths by read permission (Issue #899 strategy chain).
 
-        Performance optimized with bulk permission checking (issue #380).
-        Instead of checking each path individually (N queries), uses rebac_check_bulk()
-        to check all paths in a single batch (1-2 queries).
-
-        This is used by list() operations to only return files
-        the user has permission to read.
+        Uses a composable strategy chain for performance:
+        1. Tiger bitmap (O(1) per path)
+        2. Leopard directory index (cached dir grants)
+        3. Hierarchy pre-filter (batch parent checks)
+        4. Zone pre-filter (cross-zone elimination)
+        5. Bulk ReBAC (final fallback)
 
         Args:
             paths: List of paths to filter
@@ -1233,13 +1271,6 @@ class PermissionEnforcer:
 
         Returns:
             Filtered list of paths user can read
-
-        Examples:
-            >>> enforcer = PermissionEnforcer(metadata_store)
-            >>> ctx = OperationContext(user="alice", groups=["developers"])
-            >>> all_paths = ["/file1.txt", "/file2.txt", "/secret.txt"]
-            >>> enforcer.filter_list(all_paths, ctx)
-            ["/file1.txt", "/file2.txt"]  # /secret.txt filtered out
         """
         # Admin/system bypass
         if (context.is_admin and self.allow_admin_bypass) or (
@@ -1247,541 +1278,46 @@ class PermissionEnforcer:
         ):
             return paths
 
-        # Issue #1239 + #1244: Namespace pre-filter with dcache-accelerated batch lookup.
-        # filter_visible() acquires locks once for all paths (not per-path).
+        # Issue #1239 + #1244: Namespace pre-filter
         if self.namespace_manager is not None:
             subject = context.get_subject()
             paths = self.namespace_manager.filter_visible(subject, paths, context.zone_id)
             if not paths:
                 return []
 
-        # OPTIMIZATION: Use bulk permission checking for better performance
-        # This reduces N individual checks (each with 10-15 queries) to 1-2 bulk queries
+        # Use strategy chain if rebac_manager supports bulk checks
         if self.rebac_manager and hasattr(self.rebac_manager, "rebac_check_bulk"):
-            import time
-
             overall_start = time.time()
             zone_id = context.zone_id or "default"
-            logger.debug(
-                f"[PERF-FILTER] filter_list START: {len(paths)} paths, subject={context.get_subject()}, zone={zone_id}"
-            )
-
-            # TIGER CACHE + RUST ACCELERATION (Issue #896)
-            # Try O(1) bitmap filtering before falling back to O(n) graph traversal
-            tiger_cache = getattr(self.rebac_manager, "_tiger_cache", None)
-            if tiger_cache is not None and len(paths) > 0:
-                try:
-                    tiger_start = time.time()
-                    subject = context.get_subject()
-                    subject_type, subject_id = subject
-
-                    # Get bitmap bytes for this subject's read permissions on files
-                    bitmap_bytes = tiger_cache.get_bitmap_bytes(
-                        subject_type=subject_type,
-                        subject_id=subject_id,
-                        permission="read",
-                        resource_type="file",
-                        zone_id=zone_id,
-                    )
-
-                    if bitmap_bytes is not None:
-                        # Get path int IDs from resource map
-                        resource_map = tiger_cache._resource_map
-                        path_to_int: dict[str, int] = {}
-                        int_to_path: dict[int, str] = {}
-
-                        # Bulk lookup path int IDs using bulk_get_int_ids (fetches from DB if not in memory)
-                        # FIX: Previously used direct _uuid_to_int.get() which was empty after server restart
-                        resource_keys = [("file", path) for path in paths]
-                        with resource_map._engine.connect() as conn:
-                            int_id_map = resource_map.bulk_get_int_ids(resource_keys, conn)
-                        for path in paths:
-                            key = ("file", path)
-                            int_id = int_id_map.get(key)
-                            if int_id is not None:
-                                path_to_int[path] = int_id
-                                int_to_path[int_id] = path
-
-                        if path_to_int:
-                            # Use pyroaring for O(1) bitmap filtering
-                            try:
-                                from pyroaring import BitMap as RoaringBitmap
-
-                                # Deserialize bitmap from bytes
-                                bitmap = RoaringBitmap.deserialize(bitmap_bytes)
-
-                                # Filter path int IDs against bitmap - O(1) per check
-                                path_int_ids = list(path_to_int.values())
-                                accessible_ids = [idx for idx in path_int_ids if idx in bitmap]
-
-                                # Convert back to paths
-                                filtered = [
-                                    int_to_path[idx] for idx in accessible_ids if idx in int_to_path
-                                ]
-
-                                # Handle paths not in resource map (need fallback check)
-                                paths_not_in_map = [p for p in paths if p not in path_to_int]
-
-                                # CRITICAL FIX: Also handle paths that ARE in the map but NOT
-                                # in the bitmap. These might have inherited permissions via
-                                # parent directories (e.g., agent has viewer on directory,
-                                # child files inherit read permission via parent_viewer).
-                                # Tiger Cache only stores direct grants, not inherited permissions.
-                                paths_in_map_but_not_granted = [
-                                    p for p in paths if p in path_to_int and p not in filtered
-                                ]
-
-                                paths_needing_fallback = (
-                                    paths_not_in_map + paths_in_map_but_not_granted
-                                )
-
-                                if paths_needing_fallback:
-                                    # OPTIMIZATION: Only check fallback paths via rebac_check_bulk,
-                                    # not ALL paths. Combine Tiger Cache results with bulk results.
-                                    logger.debug(
-                                        f"[TIGER-BITMAP] {len(paths_needing_fallback)} paths need fallback: "
-                                        f"{len(paths_not_in_map)} not in map, "
-                                        f"{len(paths_in_map_but_not_granted)} in map but not in bitmap "
-                                        "(may have inherited permissions)"
-                                    )
-
-                                    subject = context.get_subject()
-                                    subject_type, subject_id = subject
-
-                                    # BITMAP COMPLETENESS CHECK (perf19 - Option 3):
-                                    # If we've previously determined this user's bitmap is complete
-                                    # (no directory grants providing inherited access), skip fallback entirely
-                                    completeness_key = (subject_type, subject_id, zone_id)
-                                    cached_completeness = self._bitmap_completeness_cache.get(
-                                        completeness_key
-                                    )
-
-                                    # EARLY DIRECTORY GRANT CHECK (perf19 - fast path):
-                                    # If user has NO directory grants in Tiger cache, bitmap is complete
-                                    # because paths not in bitmap cannot have inherited permissions
-                                    if not cached_completeness:
-                                        dir_bitmap_bytes = tiger_cache.get_bitmap_bytes(
-                                            subject_type=subject_type,
-                                            subject_id=subject_id,
-                                            permission="read",
-                                            resource_type="directory",
-                                            zone_id=zone_id,
-                                        )
-                                        if dir_bitmap_bytes is None:
-                                            # No directory grants -> bitmap is complete
-                                            self._bitmap_completeness_cache[completeness_key] = (
-                                                True,
-                                                time.time(),
-                                            )
-                                            tiger_elapsed = time.time() - tiger_start
-                                            logger.info(
-                                                f"[BITMAP-COMPLETE-EARLY] No directory grants for {subject_type}:{subject_id}, "
-                                                f"skipping {len(paths_needing_fallback)} fallback checks, "
-                                                f"filter_list: {tiger_elapsed:.3f}s, allowed {len(filtered)}/{len(paths)} paths"
-                                            )
-                                            return filtered
-
-                                    if cached_completeness:
-                                        is_complete, cached_at = cached_completeness
-                                        if (
-                                            is_complete
-                                            and (time.time() - cached_at)
-                                            < self._bitmap_completeness_ttl
-                                        ):
-                                            # Bitmap is complete - all permissions are direct grants
-                                            # No need to check fallback, paths not in bitmap are denied
-                                            tiger_elapsed = time.time() - tiger_start
-                                            logger.info(
-                                                f"[BITMAP-COMPLETE] Skipped {len(paths_needing_fallback)} fallback checks "
-                                                f"(bitmap complete for {subject_type}:{subject_id}), "
-                                                f"filter_list: {tiger_elapsed:.3f}s, allowed {len(filtered)}/{len(paths)} paths"
-                                            )
-                                            return filtered
-
-                                    # LEOPARD DIRECTORY INDEX (perf19 - Option 4):
-                                    # Check cached accessible directories first - if any ancestor
-                                    # of a path is in the index, the path inherits access
-                                    leopard_key = (subject_type, subject_id, zone_id)
-                                    cached_leopard = self._leopard_dir_index.get(leopard_key)
-                                    leopard_allowed: list[str] = []
-
-                                    if cached_leopard:
-                                        accessible_dirs, cached_at = cached_leopard
-                                        if (
-                                            time.time() - cached_at
-                                        ) < self._leopard_dir_ttl and accessible_dirs:
-                                            # Check each path against cached accessible directories
-                                            remaining_paths = []
-                                            for p in paths_needing_fallback:
-                                                # Check if any ancestor is in accessible_dirs
-                                                current = p
-                                                found = False
-                                                while current and current != "/":
-                                                    parent = os.path.dirname(current) or "/"
-                                                    if parent in accessible_dirs:
-                                                        leopard_allowed.append(p)
-                                                        found = True
-                                                        break
-                                                    current = parent
-                                                if not found:
-                                                    remaining_paths.append(p)
-
-                                            if leopard_allowed:
-                                                logger.info(
-                                                    f"[LEOPARD-INDEX] Allowed {len(leopard_allowed)} paths via cached directory grants, "
-                                                    f"{len(remaining_paths)} remaining"
-                                                )
-                                                paths_needing_fallback = remaining_paths
-                                                # Add leopard-allowed paths to filtered results
-                                                filtered.extend(leopard_allowed)
-
-                                    # HIERARCHICAL PRE-FILTER (perf19 - Option 2):
-                                    # Instead of checking N paths individually, first check unique
-                                    # parent directories. If user has no access to a parent dir
-                                    # (and bitmap already has all their grants), skip all children.
-                                    # This reduces 5000+ checks to ~50 parent directory checks.
-                                    hierarchy_start = time.time()
-                                    original_fallback_count = len(paths_needing_fallback)
-
-                                    # Skip if no paths left after Leopard check
-                                    if not paths_needing_fallback:
-                                        tiger_elapsed = time.time() - tiger_start
-                                        logger.info(
-                                            f"[TIGER-RUST] filter_list hybrid: {tiger_elapsed:.3f}s, "
-                                            f"allowed {len(filtered)}/{len(paths)} paths "
-                                            f"(bitmap: {len(filtered) - len(leopard_allowed)}, leopard: {len(leopard_allowed)})"
-                                        )
-                                        return filtered
-
-                                    # Group paths by their immediate parent directory
-                                    paths_by_parent: dict[str, list[str]] = defaultdict(list)
-                                    for p in paths_needing_fallback:
-                                        parent = os.path.dirname(p) or "/"
-                                        paths_by_parent[parent].append(p)
-
-                                    unique_parents = list(paths_by_parent.keys())
-
-                                    logger.info(
-                                        f"[HIERARCHY-DEBUG] paths_needing_fallback={len(paths_needing_fallback)}, "
-                                        f"unique_parents={len(unique_parents)}"
-                                    )
-
-                                    # Only do hierarchical check if it would save significant work
-                                    # (more than 100 paths and fewer unique parents than paths)
-                                    if (
-                                        len(unique_parents) < len(paths_needing_fallback)
-                                        and len(paths_needing_fallback) > 100
-                                    ):
-                                        # MULTI-LEVEL HIERARCHY CHECK:
-                                        # If too many unique parents (>200), first check top-level dirs
-                                        # to quickly eliminate large subtrees
-                                        if len(unique_parents) > 200:
-                                            # Extract top-level directories (depth 1-2 from root)
-                                            top_level_dirs: set[str] = set()
-                                            for parent in unique_parents:
-                                                parts = parent.strip("/").split("/")
-                                                if parts and parts[0]:
-                                                    top_level_dirs.add("/" + parts[0])
-
-                                            # Check top-level dirs first (usually <20)
-                                            top_level_checks = [
-                                                (subject, "read", ("file", d))
-                                                for d in top_level_dirs
-                                            ]
-                                            top_level_results = self.rebac_manager.rebac_check_bulk(
-                                                top_level_checks, zone_id=zone_id
-                                            )
-
-                                            # Find denied top-level dirs
-                                            denied_top_level = {
-                                                d
-                                                for d, check in zip(
-                                                    top_level_dirs, top_level_checks, strict=False
-                                                )
-                                                if not top_level_results.get(check, False)
-                                            }
-
-                                            # Filter out parents under denied top-level dirs
-                                            if denied_top_level:
-                                                filtered_parents = []
-                                                skipped_by_top = 0
-                                                for parent in unique_parents:
-                                                    top = (
-                                                        "/" + parent.strip("/").split("/")[0]
-                                                        if parent != "/"
-                                                        else "/"
-                                                    )
-                                                    if top in denied_top_level:
-                                                        skipped_by_top += len(
-                                                            paths_by_parent[parent]
-                                                        )
-                                                    else:
-                                                        filtered_parents.append(parent)
-
-                                                logger.info(
-                                                    f"[HIERARCHY-TOPLEVEL] {len(denied_top_level)}/{len(top_level_dirs)} "
-                                                    f"top-level dirs denied, skipped {skipped_by_top} paths, "
-                                                    f"reduced parents: {len(unique_parents)} -> {len(filtered_parents)}"
-                                                )
-                                                unique_parents = filtered_parents
-
-                                                # FIX: If ALL parents were filtered out, skip all fallback checks!
-                                                if not filtered_parents and skipped_by_top > 0:
-                                                    paths_needing_fallback = []
-                                                    # Mark bitmap as complete - no directory grants exist
-                                                    self._bitmap_completeness_cache[
-                                                        completeness_key
-                                                    ] = (True, time.time())
-                                                    logger.info(
-                                                        f"[HIERARCHY-TOPLEVEL] All {skipped_by_top} paths skipped - "
-                                                        f"marking bitmap complete for {subject_type}:{subject_id}"
-                                                    )
-
-                                        # Check which parent directories user might have access to
-                                        parent_checks = [
-                                            (subject, "read", ("file", parent))
-                                            for parent in unique_parents
-                                        ]
-                                        if parent_checks:
-                                            parent_results = self.rebac_manager.rebac_check_bulk(
-                                                parent_checks, zone_id=zone_id
-                                            )
-                                        else:
-                                            parent_results = {}
-
-                                        # Find parents with access (children may inherit)
-                                        accessible_parents = {
-                                            parent
-                                            for parent, check in zip(
-                                                unique_parents, parent_checks, strict=False
-                                            )
-                                            if parent_results.get(check, False)
-                                        }
-
-                                        hierarchy_elapsed = (time.time() - hierarchy_start) * 1000
-                                        logger.info(
-                                            f"[HIERARCHY-PREFILTER] {len(accessible_parents)}/{len(unique_parents)} "
-                                            f"parents accessible in {hierarchy_elapsed:.1f}ms"
-                                        )
-
-                                        # Store accessible directories in Leopard index for future requests
-                                        if accessible_parents:
-                                            # Merge with existing cached dirs (if any)
-                                            existing_dirs = set()
-                                            if (
-                                                cached_leopard
-                                                and (time.time() - cached_leopard[1])
-                                                < self._leopard_dir_ttl
-                                            ):
-                                                existing_dirs = cached_leopard[0]
-                                            new_dirs = existing_dirs | accessible_parents
-                                            self._leopard_dir_index[leopard_key] = (
-                                                new_dirs,
-                                                time.time(),
-                                            )
-                                            logger.info(
-                                                f"[LEOPARD-INDEX] Cached {len(accessible_parents)} accessible directories "
-                                                f"for {subject_type}:{subject_id} (total: {len(new_dirs)})"
-                                            )
-
-                                        # Only check paths under accessible parents
-                                        if len(accessible_parents) < len(unique_parents):
-                                            paths_needing_fallback = []
-                                            for parent in accessible_parents:
-                                                paths_needing_fallback.extend(
-                                                    paths_by_parent[parent]
-                                                )
-
-                                            logger.info(
-                                                f"[HIERARCHY-PREFILTER] Reduced fallback: {original_fallback_count} -> "
-                                                f"{len(paths_needing_fallback)} paths "
-                                                f"(skipped {original_fallback_count - len(paths_needing_fallback)} under denied parents)"
-                                            )
-
-                                            # If NO accessible parents, mark bitmap as complete
-                                            # This user has no directory-level grants, so bitmap has all their permissions
-                                            if (
-                                                len(accessible_parents) == 0
-                                                and original_fallback_count > 100
-                                            ):
-                                                self._bitmap_completeness_cache[
-                                                    completeness_key
-                                                ] = (True, time.time())
-                                                logger.info(
-                                                    f"[BITMAP-COMPLETE] Marked bitmap complete for {subject_type}:{subject_id} "
-                                                    f"(0 accessible parents out of {len(unique_parents)})"
-                                                )
-
-                                    # Build checks only for remaining paths needing fallback
-                                    fallback_checks = []
-                                    for path in paths_needing_fallback:
-                                        fallback_checks.append((subject, "read", ("file", path)))
-
-                                    # Check fallback paths via rebac_check_bulk
-                                    if fallback_checks:
-                                        fallback_results = self.rebac_manager.rebac_check_bulk(
-                                            fallback_checks, zone_id=zone_id
-                                        )
-                                    else:
-                                        fallback_results = {}
-
-                                    # Add paths that passed fallback check to filtered results
-                                    fallback_allowed_count = 0
-                                    for path, check in zip(
-                                        paths_needing_fallback, fallback_checks, strict=False
-                                    ):
-                                        if fallback_results.get(check, False):
-                                            filtered.append(path)
-                                            fallback_allowed_count += 1
-
-                                    # If fallback found 0 additional paths, mark bitmap as complete
-                                    # (all permissions are direct grants in bitmap, no inheritance)
-                                    if (
-                                        fallback_allowed_count == 0
-                                        and original_fallback_count > 100
-                                    ):
-                                        self._bitmap_completeness_cache[completeness_key] = (
-                                            True,
-                                            time.time(),
-                                        )
-                                        logger.info(
-                                            f"[BITMAP-COMPLETE] Marked bitmap complete for {subject_type}:{subject_id} "
-                                            f"(0 fallback results from {original_fallback_count} checks)"
-                                        )
-
-                                    tiger_elapsed = time.time() - tiger_start
-                                    bitmap_count = (
-                                        len(filtered)
-                                        - fallback_allowed_count
-                                        - len(leopard_allowed)
-                                    )
-                                    logger.info(
-                                        f"[TIGER-RUST] filter_list hybrid: {tiger_elapsed:.3f}s, "
-                                        f"allowed {len(filtered)}/{len(paths)} paths "
-                                        f"(bitmap: {bitmap_count}, leopard: {len(leopard_allowed)}, fallback: {fallback_allowed_count})"
-                                    )
-                                    return filtered
-                                else:
-                                    tiger_elapsed = time.time() - tiger_start
-                                    overall_elapsed = time.time() - overall_start
-                                    logger.info(
-                                        f"[TIGER-RUST] filter_list via Rust bitmap: {tiger_elapsed:.3f}s, "
-                                        f"allowed {len(filtered)}/{len(paths)} paths"
-                                    )
-                                    return filtered
-
-                            except ImportError:
-                                logger.debug(
-                                    "[TIGER-BITMAP] pyroaring not available, falling back to rebac_check_bulk"
-                                )
-                            except Exception as e:
-                                logger.warning(
-                                    f"[TIGER-BITMAP] Bitmap filtering failed: {e}, falling back to rebac_check_bulk"
-                                )
-                        else:
-                            logger.debug(
-                                "[TIGER-RUST] No paths found in resource map, falling back to rebac_check_bulk"
-                            )
-                    else:
-                        logger.debug(
-                            "[TIGER-RUST] No bitmap available for subject, falling back to rebac_check_bulk"
-                        )
-
-                except Exception as e:
-                    logger.warning(
-                        f"[TIGER-RUST] Tiger Cache integration error: {e}, falling back to rebac_check_bulk"
-                    )
-
-            # OPTIMIZATION: Pre-filter paths by zone before permission checks
-            # This avoids checking permissions on paths the user can never access
-            # For /zones/* paths, only keep paths matching the user's zone
-            prefilter_start = time.time()
-            paths_to_check = []
-            paths_prefiltered = 0
-            for path in paths:
-                # Fast path: /zones/X paths should only be checked for zone X
-                if path.startswith("/zones/"):
-                    # Extract zone from path: /zones/zone_name/...
-                    path_parts = path.split("/")
-                    if len(path_parts) >= 3:
-                        path_zone = path_parts[2]  # /zones/<zone_name>/...
-                        if path_zone != zone_id:
-                            # Skip paths for other zones entirely
-                            paths_prefiltered += 1
-                            continue
-                paths_to_check.append(path)
-
-            prefilter_elapsed = time.time() - prefilter_start
-            if paths_prefiltered > 0:
-                logger.debug(
-                    f"[PERF-FILTER] Zone pre-filter: {paths_prefiltered} paths skipped "
-                    f"(not in zone {zone_id}), {len(paths_to_check)} remaining in {prefilter_elapsed:.3f}s"
-                )
-
-            # Build list of checks: (subject, "read", object) for each path
-            build_start = time.time()
-            checks = []
             subject = context.get_subject()
 
-            for path in paths_to_check:
-                # PERFORMANCE FIX: Skip expensive router.route() call for each file
-                # For standard file paths, just use "file" as object type
-                # This avoids O(N) routing overhead during bulk permission checks
-                obj_type = "file"  # Default to file for all paths
-
-                # Only check router for special namespaces (non-file paths)
-                # This is much faster than routing every single file
-                if self.router and not path.startswith("/workspace"):
-                    try:
-                        # Use router to determine correct object type for special paths
-                        route = self.router.route(
-                            path,
-                            zone_id=context.zone_id,
-                            agent_id=context.agent_id,
-                            is_admin=context.is_admin,
-                        )
-                        # Get object type from namespace (if available)
-                        if hasattr(route, "namespace") and route.namespace:
-                            obj_type = route.namespace
-                    except Exception:
-                        # Fallback to "file" if routing fails
-                        pass
-
-                checks.append((subject, "read", (obj_type, path)))
-
-            build_elapsed = time.time() - build_start
             logger.debug(
-                f"[PERF-FILTER] Built {len(checks)} permission checks in {build_elapsed:.3f}s"
+                f"[PERF-FILTER] filter_list START: {len(paths)} paths, "
+                f"subject={subject}, zone={zone_id}"
             )
 
-            try:
-                # Perform bulk permission check
-                bulk_start = time.time()
-                results = self.rebac_manager.rebac_check_bulk(checks, zone_id=zone_id)
-                bulk_elapsed = time.time() - bulk_start
-                logger.debug(f"[PERF-FILTER] Bulk check completed in {bulk_elapsed:.3f}s")
+            from nexus.core.permission_filter_chain import FilterContext, run_filter_chain
 
-                # Filter paths based on bulk results
-                filtered = []
-                for path, check in zip(paths_to_check, checks, strict=False):
-                    if results.get(check, False):
-                        filtered.append(path)
+            filter_ctx = FilterContext(
+                paths=paths,
+                subject=subject,
+                zone_id=zone_id,
+                context=context,
+                cache=self._cache,
+                rebac_manager=self.rebac_manager,
+                router=self.router,
+            )
 
-                overall_elapsed = time.time() - overall_start
-                logger.debug(
-                    f"[PERF-FILTER] filter_list DONE: {overall_elapsed:.3f}s total, "
-                    f"allowed {len(filtered)}/{len(paths)} paths (prefiltered {paths_prefiltered})"
-                )
-                return filtered
+            filtered = run_filter_chain(filter_ctx)
 
-            except Exception as e:
-                # Fallback to individual checks if bulk fails
-                logger.warning(
-                    f"Bulk permission check failed, falling back to individual checks: {e}"
-                )
-                # Fall through to original implementation
+            overall_elapsed = time.time() - overall_start
+            logger.info(
+                f"[PERF-FILTER] filter_list DONE: {overall_elapsed:.3f}s total, "
+                f"allowed {len(filtered)}/{len(paths)} paths"
+            )
+            return filtered
 
-        # Fallback: Filter by ReBAC permissions individually (original implementation)
+        # Fallback: Filter by ReBAC permissions individually
         result = []
         for path in paths:
             if self.check(path, Permission.READ, context):

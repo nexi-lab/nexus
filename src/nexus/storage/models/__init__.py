@@ -41,6 +41,7 @@ from nexus.storage.models.ace import TrajectoryModel as TrajectoryModel
 # Domain: Agents
 from nexus.storage.models.agents import AgentEventModel as AgentEventModel
 from nexus.storage.models.agents import AgentRecordModel as AgentRecordModel
+from nexus.storage.models.agents import DelegationRecordModel as DelegationRecordModel
 
 # Previously extracted models
 from nexus.storage.models.audit_checkpoint import AuditCheckpointModel as AuditCheckpointModel

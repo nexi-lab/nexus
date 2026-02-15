@@ -194,6 +194,14 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import Manifest routes: %s", e)
 
+    # ---- Delegation router (Issue #1271) ----
+    try:
+        from nexus.server.api.v2.routers.delegation import router as delegation_router
+
+        registry.add(RouterEntry(router=delegation_router, name="delegation", endpoint_count=3))
+    except ImportError as e:
+        logger.warning("Failed to import Delegation routes: %s", e)
+
     return registry
 
 

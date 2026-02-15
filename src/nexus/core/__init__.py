@@ -83,6 +83,7 @@ if TYPE_CHECKING:
     from nexus.core.async_scoped_filesystem import AsyncScopedFilesystem
     from nexus.core.filesystem import NexusFilesystem
     from nexus.core.nexus_fs import NexusFS
+    from nexus.core.registry import BaseRegistry, BrickInfo, BrickRegistry
     from nexus.core.scoped_filesystem import ScopedFilesystem
 
 # Module-level cache for lazy imports
@@ -91,6 +92,9 @@ _lazy_imports_cache: dict[str, Any] = {}
 # Mapping of attribute names to their import paths
 _LAZY_IMPORTS = {
     "AsyncScopedFilesystem": ("nexus.core.async_scoped_filesystem", "AsyncScopedFilesystem"),
+    "BaseRegistry": ("nexus.core.registry", "BaseRegistry"),
+    "BrickInfo": ("nexus.core.registry", "BrickInfo"),
+    "BrickRegistry": ("nexus.core.registry", "BrickRegistry"),
     "NexusFilesystem": ("nexus.core.filesystem", "NexusFilesystem"),
     "NexusFS": ("nexus.core.nexus_fs", "NexusFS"),
     "ScopedFilesystem": ("nexus.core.scoped_filesystem", "ScopedFilesystem"),
@@ -135,6 +139,10 @@ def get_async_rebac_bridge() -> type:
 __all__ = [
     # Event loop optimization
     "setup_uvloop",
+    # Registry base classes (lazy)
+    "BaseRegistry",
+    "BrickInfo",
+    "BrickRegistry",
     # Filesystem classes (lazy)
     "AsyncScopedFilesystem",
     "NexusFilesystem",

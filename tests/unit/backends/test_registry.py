@@ -56,11 +56,11 @@ class DummyBackend(Backend):
 def clear_registry():
     """Clear registry before and after each test."""
     # Save existing connectors
-    saved = dict(ConnectorRegistry._connectors)
+    saved = dict(ConnectorRegistry._base._items)
     ConnectorRegistry.clear()
     yield
     # Restore after test
-    ConnectorRegistry._connectors = saved
+    ConnectorRegistry._base._items = saved
 
 
 class TestConnectorRegistry:

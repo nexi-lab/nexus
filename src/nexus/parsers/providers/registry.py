@@ -5,17 +5,18 @@ import os
 from typing import Any
 
 from nexus.core.exceptions import ParserError
+from nexus.core.registry import BaseRegistry
 from nexus.parsers.providers.base import ParseProvider, ProviderConfig
 from nexus.parsers.types import ParseResult
 
 logger = logging.getLogger(__name__)
 
 
-class ProviderRegistry:
+class ProviderRegistry(BaseRegistry[ParseProvider]):
     """Registry for managing parse providers.
 
-    The registry maintains a list of parse providers and selects the best
-    available provider for each file type based on priority and availability.
+    Inherits generic register/get/list/clear from ``BaseRegistry`` and adds
+    priority-ordered selection and availability gating.
 
     Example:
         >>> registry = ProviderRegistry()
@@ -30,10 +31,10 @@ class ProviderRegistry:
 
     def __init__(self) -> None:
         """Initialize the provider registry."""
-        self._providers: list[ParseProvider] = []
-        self._providers_by_name: dict[str, ParseProvider] = {}
+        super().__init__(name="parse_providers")
+        self._ordered: list[ParseProvider] = []
 
-    def register(self, provider: ParseProvider) -> None:
+    def register(self, provider: ParseProvider, **_kw: object) -> None:  # type: ignore[override]
         """Register a parse provider.
 
         Args:
@@ -50,11 +51,13 @@ class ProviderRegistry:
             logger.debug(f"Provider '{provider.name}' is not available, skipping registration")
             return
 
-        self._providers.append(provider)
-        self._providers_by_name[provider.name] = provider
+        # Store in BaseRegistry (keyed by name)
+        super().register(provider.name, provider, allow_overwrite=True)
+
+        self._ordered.append(provider)
 
         # Sort by priority (highest first)
-        self._providers.sort(key=lambda p: p.priority, reverse=True)
+        self._ordered.sort(key=lambda p: p.priority, reverse=True)
 
         logger.info(
             f"Registered provider '{provider.name}' with priority {provider.priority}, "
@@ -72,7 +75,7 @@ class ProviderRegistry:
         Returns:
             Best matching provider, or None if no provider can handle the file
         """
-        for provider in self._providers:
+        for provider in self._ordered:
             if provider.can_parse(file_path):
                 logger.debug(f"Selected provider '{provider.name}' for '{file_path}'")
                 return provider
@@ -89,7 +92,7 @@ class ProviderRegistry:
         Returns:
             Provider instance, or None if not found
         """
-        return self._providers_by_name.get(name)
+        return self.get(name)
 
     async def parse(
         self,
@@ -150,7 +153,7 @@ class ProviderRegistry:
         Returns:
             List of registered providers sorted by priority
         """
-        return self._providers.copy()
+        return self._ordered.copy()
 
     def get_supported_formats(self) -> list[str]:
         """Get all supported file formats across all providers.
@@ -159,7 +162,7 @@ class ProviderRegistry:
             Sorted list of unique file extensions
         """
         formats = set()
-        for provider in self._providers:
+        for provider in self._ordered:
             formats.update(provider.supported_formats)
         return sorted(formats)
 
@@ -253,12 +256,19 @@ class ProviderRegistry:
         logger.info(f"Auto-discovered {registered} parse providers")
         return registered
 
+    def unregister(self, key: str) -> ParseProvider | None:
+        """Remove a provider by name, cleaning up the ordered list."""
+        item = super().unregister(key)
+        if item is not None:
+            self._ordered = [p for p in self._ordered if p.name != key]
+        return item
+
     def clear(self) -> None:
         """Clear all registered providers."""
-        self._providers.clear()
-        self._providers_by_name.clear()
+        super().clear()
+        self._ordered.clear()
         logger.debug("Cleared all providers from registry")
 
     def __repr__(self) -> str:
-        provider_names = [p.name for p in self._providers]
+        provider_names = [p.name for p in self._ordered]
         return f"ProviderRegistry(providers={provider_names})"

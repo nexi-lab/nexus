@@ -418,29 +418,13 @@ class NexusFS(  # type: ignore[misc]
 
     @property
     def _service_extras(self) -> dict[str, Any]:
-        """Backward compat — server layer reads extras via this dict interface."""
-        s = self._services
-        return {
-            k: getattr(s, k)
-            for k in (
-                "observability_subsystem",
-                "chunked_upload_service",
-                "manifest_resolver",
-                "manifest_metrics",
-                "rebac_circuit_breaker",
-                "tool_namespace_middleware",
-                "resiliency_manager",
-                "delivery_worker",
-            )
-            if getattr(s, k) is not None
-        }
+        """Server layer reads extras via this dict interface."""
+        return {k: v for k, v in self._services.server_extras.items() if v is not None}
 
     @_service_extras.setter
     def _service_extras(self, value: dict[str, Any]) -> None:
-        """Backward compat — factory.py sets extras via dict assignment."""
-        for k, v in value.items():
-            if hasattr(self._services, k):
-                object.__setattr__(self._services, k, v)
+        """Server layer sets extras via dict assignment."""
+        self._services.server_extras.update(value)
 
     @property
     def read_set_cache(self) -> Any | None:

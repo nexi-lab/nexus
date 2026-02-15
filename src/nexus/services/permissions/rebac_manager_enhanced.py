@@ -317,7 +317,10 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
         # PERFORMANCE FIX: Cache zone tuples to avoid O(T) fetch per permission check
         # Key: zone_id, Value: (tuples_list, namespace_configs, cached_at_timestamp)
         # This dramatically reduces DB queries: from O(T) per check to O(1) amortized
-        self._zone_graph_cache: dict[str, tuple[list[dict[str, Any]], dict[str, Any], float]] = {}
+        # Issue #1459: LRU-capped to max 100 zones to prevent unbounded memory growth
+        from cachetools import LRUCache
+
+        self._zone_graph_cache: LRUCache[str, tuple[list[dict[str, Any]], dict[str, Any], float]] = LRUCache(maxsize=100)
         self._zone_graph_cache_ttl = cache_ttl_seconds  # Reuse existing TTL
 
         # Leopard index for O(1) transitive group lookups (Issue #692)
@@ -1186,6 +1189,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                     FROM rebac_tuples
                     WHERE zone_id = ?
                       AND (expires_at IS NULL OR expires_at > ?)
+                    LIMIT 10000
                     """
                 ),
                 (zone_id, datetime.now(UTC).isoformat()),

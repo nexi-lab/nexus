@@ -78,6 +78,7 @@ CACHE_TTL = {
     description="X (Twitter) API with OAuth 2.0 PKCE",
     category="api",
     requires=["requests-oauthlib"],
+    service_name="x",
 )
 class XConnectorBackend(Backend):
     """

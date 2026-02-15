@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
-from nexus.backends.service_map import SERVICE_REGISTRY, ServiceMap
+from nexus.backends.service_map import ServiceMap
 
 if TYPE_CHECKING:
     from nexus.skills.mcp_models import MCPMount, MCPToolDefinition
@@ -105,7 +105,7 @@ class SkillGenerator:
                     # Index by service name (from frontmatter)
                     self._templates[template.name] = template
                     # Also index by connector name if available from ServiceMap
-                    service_info = SERVICE_REGISTRY.get(template.name)
+                    service_info = ServiceMap.get_service_info(template.name)
                     if service_info and service_info.connector:
                         self._templates[service_info.connector] = template
                     logger.debug(f"Loaded template: {template_file.name} -> {template.name}")
@@ -147,7 +147,7 @@ class SkillGenerator:
         name = frontmatter.get("name", "")
 
         # Look up service info from ServiceMap to get connector and other info
-        service_info = SERVICE_REGISTRY.get(name)
+        service_info = ServiceMap.get_service_info(name)
 
         return ConnectorTemplate(
             name=name,

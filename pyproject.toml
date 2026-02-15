@@ -195,6 +195,7 @@ test = [
     "pytest-xdist>=3.5.0",  # Parallel test execution
     "pytest-alembic>=0.11.0",  # Alembic migration test harness (#1296)
     "freezegun>=1.4.0",  # Time mocking for tests
+    "pydantic-monty>=0.0.4",  # Monty sandbox integration/e2e tests (#1317)
     # LangGraph integration tests
     "langchain-core>=0.3.0",
     "langgraph>=0.2.0",

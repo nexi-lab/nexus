@@ -343,7 +343,6 @@ class SearchService(SemanticSearchMixin):
                 route = self.router.route(
                     path,
                     zone_id=zone_id,
-                    agent_id=agent_id,
                     is_admin=is_admin,
                     check_write=False,
                 )

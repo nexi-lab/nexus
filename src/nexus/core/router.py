@@ -35,7 +35,6 @@ class PathInfo:
 
     namespace: str  # e.g., "workspace", "shared", "external", "system", "archives"
     zone_id: str | None  # Zone identifier (if applicable)
-    agent_id: str | None  # DEPRECATED: No longer used for workspace (kept for backward compat)
     relative_path: str  # Remaining path after namespace/zone
 
 
@@ -131,7 +130,6 @@ class PathRouter:
         self,
         virtual_path: str,
         zone_id: str | None = None,
-        agent_id: str | None = None,
         is_admin: bool = False,
         check_write: bool = False,
     ) -> RouteResult:
@@ -154,7 +152,6 @@ class PathRouter:
         Args:
             virtual_path: Virtual path to route
             zone_id: Current zone identifier (for access control)
-            agent_id: DEPRECATED - No longer used (kept for backward compatibility)
             is_admin: Whether requester has admin privileges
             check_write: Whether to check write permissions
 
@@ -174,7 +171,7 @@ class PathRouter:
         path_info = self.parse_path(virtual_path, _zone_id=zone_id)
 
         # Check access control
-        self._check_access(path_info, zone_id, agent_id, is_admin, check_write)
+        self._check_access(path_info, zone_id, is_admin, check_write)
 
         # Find longest matching prefix
         matched_mount = self._match_longest_prefix(virtual_path)
@@ -201,7 +198,6 @@ class PathRouter:
         self,
         path_info: PathInfo,
         zone_id: str | None,
-        _agent_id: str | None,
         is_admin: bool,
         check_write: bool,
     ) -> None:
@@ -211,8 +207,6 @@ class PathRouter:
         Args:
             path_info: Parsed path information
             zone_id: Current zone identifier
-            _agent_id: Agent identifier (unused)
-            agent_id: Current agent identifier
             is_admin: Whether requester has admin privileges
             check_write: Whether to check write permissions
 
@@ -446,7 +440,6 @@ class PathRouter:
             return PathInfo(
                 namespace=namespace,
                 zone_id=None,
-                agent_id=None,
                 relative_path="/".join(parts[1:]) if len(parts) > 1 else "",
             )
 
@@ -461,7 +454,6 @@ class PathRouter:
                 return PathInfo(
                     namespace=namespace,
                     zone_id=parts[1],
-                    agent_id=None,
                     relative_path="/".join(parts[2:]) if len(parts) > 2 else "",
                 )
             else:
@@ -469,7 +461,6 @@ class PathRouter:
                 return PathInfo(
                     namespace=namespace,
                     zone_id=None,
-                    agent_id=None,
                     relative_path="",
                 )
 
@@ -479,7 +470,6 @@ class PathRouter:
             return PathInfo(
                 namespace=namespace,
                 zone_id=None,
-                agent_id=None,
                 relative_path="/".join(parts[1:]) if len(parts) > 1 else "",
             )
 
@@ -492,7 +482,6 @@ class PathRouter:
                     return PathInfo(
                         namespace=namespace,
                         zone_id=parts[1],
-                        agent_id=None,
                         relative_path="/".join(parts[2:]) if len(parts) > 2 else "",
                     )
                 else:
@@ -500,7 +489,6 @@ class PathRouter:
                     return PathInfo(
                         namespace=namespace,
                         zone_id=None,
-                        agent_id=None,
                         relative_path="",
                     )
             else:
@@ -508,7 +496,6 @@ class PathRouter:
                 return PathInfo(
                     namespace=namespace,
                     zone_id=None,
-                    agent_id=None,
                     relative_path="/".join(parts[1:]) if len(parts) > 1 else "",
                 )
 

@@ -220,22 +220,6 @@ class CacheConnectorMixin:
         if cls._l1_cache is not None:
             cls._l1_cache.clear()
 
-    # Backward compatibility aliases
-    @classmethod
-    def _get_memory_cache(cls) -> L1MetadataCache:
-        """Deprecated: Use _get_l1_cache() instead."""
-        return cls._get_l1_cache()
-
-    @classmethod
-    def get_memory_cache_stats(cls) -> dict[str, Any]:
-        """Deprecated: Use get_l1_cache_stats() instead."""
-        return cls.get_l1_cache_stats()
-
-    @classmethod
-    def clear_memory_cache(cls) -> None:
-        """Deprecated: Use clear_l1_cache() instead."""
-        cls.clear_l1_cache()
-
     # Maximum text size to store as 'full' (default 10MB)
     MAX_FULL_TEXT_SIZE: int = 10 * 1024 * 1024
 
@@ -1343,7 +1327,7 @@ class CacheConnectorMixin:
             Number of entries invalidated
         """
         # Invalidate L1 memory cache
-        memory_cache = self._get_memory_cache()
+        memory_cache = self._get_l1_cache()
         file_cache = get_file_cache()
         if path:
             # Remove specific path from memory cache

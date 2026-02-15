@@ -107,7 +107,6 @@ __all__ = [
 
 # Re-export from core modules with cleaner names
 from pathlib import Path
-from typing import Union
 
 from nexus.backends.backend import Backend
 from nexus.backends.gcs import GCSBackend

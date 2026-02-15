@@ -267,7 +267,6 @@ class BulkReBACStrategy:
                     route = ctx.router.route(
                         path,
                         zone_id=ctx.context.zone_id,
-                        agent_id=ctx.context.agent_id,
                         is_admin=ctx.context.is_admin,
                     )
                     if hasattr(route, "namespace") and route.namespace:

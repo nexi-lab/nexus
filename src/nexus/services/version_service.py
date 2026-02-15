@@ -198,13 +198,11 @@ class VersionService:
 
         # Route to backend
         zone_id = context.zone_id if context else None
-        agent_id = context.agent_id if context else None
         is_admin = context.is_admin if context else False
 
         route = self.router.route(
             path,
             zone_id=zone_id,
-            agent_id=agent_id,
             is_admin=is_admin,
             check_write=False,
         )
@@ -323,13 +321,11 @@ class VersionService:
             raise RuntimeError("Router not configured for VersionService")
 
         zone_id = context.zone_id if context else None
-        agent_id = context.agent_id if context else None
         is_admin = context.is_admin if context else False
 
         route = self.router.route(
             path,
             zone_id=zone_id,
-            agent_id=agent_id,
             is_admin=is_admin,
             check_write=True,
         )

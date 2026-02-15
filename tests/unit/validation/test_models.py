@@ -31,16 +31,12 @@ class TestValidationError:
         assert err.fix_available is True
 
     def test_defaults(self):
-        err = ValidationError(
-            file="a.py", line=1, column=1, severity="warning", message="msg"
-        )
+        err = ValidationError(file="a.py", line=1, column=1, severity="warning", message="msg")
         assert err.rule is None
         assert err.fix_available is False
 
     def test_frozen(self):
-        err = ValidationError(
-            file="a.py", line=1, column=1, severity="info", message="msg"
-        )
+        err = ValidationError(file="a.py", line=1, column=1, severity="info", message="msg")
         with pytest.raises(PydanticValidationError):
             err.line = 2  # type: ignore[misc]
 
@@ -53,12 +49,8 @@ class TestValidationResult:
         assert result.duration_ms == 0
 
     def test_with_errors(self):
-        err = ValidationError(
-            file="a.py", line=1, column=1, severity="error", message="bad"
-        )
-        result = ValidationResult(
-            validator="mypy", passed=False, errors=[err], duration_ms=150
-        )
+        err = ValidationError(file="a.py", line=1, column=1, severity="error", message="bad")
+        result = ValidationResult(validator="mypy", passed=False, errors=[err], duration_ms=150)
         assert result.passed is False
         assert len(result.errors) == 1
         assert result.duration_ms == 150

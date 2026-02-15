@@ -18,9 +18,7 @@ logger = logging.getLogger(__name__)
 _Severity = Literal["error", "warning", "info"]
 
 # mypy output: file.py:line:col: severity: message  [error-code]
-_MYPY_LINE_PATTERN = re.compile(
-    r"^(.+):(\d+):(\d+): (error|warning|note): (.+?)(?:\s+\[(.+)\])?$"
-)
+_MYPY_LINE_PATTERN = re.compile(r"^(.+):(\d+):(\d+): (error|warning|note): (.+?)(?:\s+\[(.+)\])?$")
 
 _SEVERITY_MAP: dict[str, _Severity] = {
     "error": "error",
@@ -45,7 +43,10 @@ class MypyValidator(Validator):
         return f"cd {shlex.quote(workspace_path)} && mypy --no-error-summary ."
 
     def parse_output(
-        self, stdout: str, stderr: str, exit_code: int  # noqa: ARG002
+        self,
+        stdout: str,
+        stderr: str,  # noqa: ARG002
+        exit_code: int,  # noqa: ARG002
     ) -> list[ValidationError]:
         errors: list[ValidationError] = []
 

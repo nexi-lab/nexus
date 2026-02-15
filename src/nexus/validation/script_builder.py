@@ -19,7 +19,10 @@ class _GenericValidator(BaseValidator):
     """Fallback validator for unknown tools — returns no parsed errors."""
 
     def parse_output(
-        self, stdout: str, stderr: str, exit_code: int  # noqa: ARG002
+        self,
+        stdout: str,  # noqa: ARG002
+        stderr: str,  # noqa: ARG002
+        exit_code: int,  # noqa: ARG002
     ) -> list[ValidationError]:
         return []
 
@@ -83,7 +86,7 @@ def build_simple_validation_script(
         parts.append("_EXIT=$?")
         parts.append("echo '===VALIDATOR_STDERR==='")
         parts.append(f"cat {stderr_file} 2>/dev/null")
-        parts.append("echo \"===VALIDATOR_EXIT===${_EXIT}===\"")
+        parts.append('echo "===VALIDATOR_EXIT===${_EXIT}==="')
         parts.append("echo '===VALIDATOR_END==='")
         parts.append(f"rm -f {stderr_file}")
         parts.append("")

@@ -112,9 +112,7 @@ class TestValidationPipelineIntegration:
     async def test_explicit_config_skips_detection(self):
         """Passing explicit config skips both YAML load and detection."""
         config = ValidationPipelineConfig(
-            validators=[
-                ValidatorConfig(name="eslint", command="npx eslint --format json .")
-            ],
+            validators=[ValidatorConfig(name="eslint", command="npx eslint --format json .")],
         )
         script_result = CodeExecutionResult(
             stdout=(
@@ -172,9 +170,7 @@ class TestValidationPipelineIntegration:
     async def test_result_serialization(self):
         """ValidationResult serializes cleanly to dict."""
         config = ValidationPipelineConfig(
-            validators=[
-                ValidatorConfig(name="ruff", command="ruff check --output-format json .")
-            ],
+            validators=[ValidatorConfig(name="ruff", command="ruff check --output-format json .")],
         )
         script_result = CodeExecutionResult(
             stdout=(

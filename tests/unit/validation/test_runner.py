@@ -94,9 +94,7 @@ class TestValidationRunner:
     async def test_validate_no_validators(self):
         """Empty workspace with no config returns empty results."""
         # First call: cat validators.yaml fails
-        yaml_result = CodeExecutionResult(
-            stdout="", stderr="", exit_code=1, execution_time=0.01
-        )
+        yaml_result = CodeExecutionResult(stdout="", stderr="", exit_code=1, execution_time=0.01)
         # Second call: ls for detection shows empty workspace
         ls_result = CodeExecutionResult(
             stdout="README.md\n", stderr="", exit_code=0, execution_time=0.01
@@ -110,9 +108,7 @@ class TestValidationRunner:
     @pytest.mark.asyncio
     async def test_validate_script_execution_failure(self):
         config = ValidationPipelineConfig(
-            validators=[
-                ValidatorConfig(name="ruff", command="ruff check .")
-            ],
+            validators=[ValidatorConfig(name="ruff", command="ruff check .")],
         )
         provider = AsyncMock()
         provider.run_code = AsyncMock(side_effect=RuntimeError("sandbox crashed"))
@@ -128,9 +124,7 @@ class TestValidationRunner:
     async def test_validate_auto_detect(self):
         """Auto-detection finds pyproject.toml and suggests ruff/mypy."""
         # First call: cat validators.yaml fails
-        yaml_result = CodeExecutionResult(
-            stdout="", stderr="", exit_code=1, execution_time=0.01
-        )
+        yaml_result = CodeExecutionResult(stdout="", stderr="", exit_code=1, execution_time=0.01)
         # Second call: ls shows Python project
         ls_result = CodeExecutionResult(
             stdout="pyproject.toml\nsrc\ntests\n",

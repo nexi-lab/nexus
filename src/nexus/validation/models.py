@@ -50,9 +50,7 @@ class ValidatorConfig(BaseModel, frozen=True):
     @classmethod
     def validate_name(cls, v: str) -> str:
         if not _VALIDATOR_NAME_PATTERN.match(v):
-            raise ValueError(
-                f"Validator name must be alphanumeric/dash/underscore: {v!r}"
-            )
+            raise ValueError(f"Validator name must be alphanumeric/dash/underscore: {v!r}")
         return v
 
     @field_validator("timeout")

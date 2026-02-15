@@ -19,9 +19,7 @@ class Validator(ABC):
         self.config = config
 
     @abstractmethod
-    def parse_output(
-        self, stdout: str, stderr: str, exit_code: int
-    ) -> list[ValidationError]:
+    def parse_output(self, stdout: str, stderr: str, exit_code: int) -> list[ValidationError]:
         """Parse tool output into structured errors.
 
         Args:

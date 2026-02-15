@@ -99,9 +99,7 @@ class TestValidationDockerIntegration:
         )
 
         runner = ValidationRunner()
-        results = await runner.validate(
-            sandbox_id, docker_provider, config=config
-        )
+        results = await runner.validate(sandbox_id, docker_provider, config=config)
 
         assert len(results) == 1
         assert results[0].validator == "echo-pass"

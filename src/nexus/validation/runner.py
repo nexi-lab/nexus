@@ -80,9 +80,7 @@ class ValidationRunner:
 
         # 3. Execute
         try:
-            exec_result = await provider.run_code(
-                sandbox_id, "bash", script, timeout=timeout
-            )
+            exec_result = await provider.run_code(sandbox_id, "bash", script, timeout=timeout)
         except Exception as e:
             logger.error("Validation script execution failed: %s", e)
             return [
@@ -104,9 +102,7 @@ class ValidationRunner:
             validator_start = time.monotonic()
 
             # Find matching config
-            matching_config = next(
-                (c for c in validator_configs if c.name == name), None
-            )
+            matching_config = next((c for c in validator_configs if c.name == name), None)
 
             # Get parser
             parser_cls = BUILTIN_VALIDATORS.get(name)
@@ -186,9 +182,7 @@ class ValidationRunner:
             logger.debug("Could not load validators.yaml: %s", e)
 
         # Fall back to auto-detection
-        detected_names = await detect_project_validators(
-            sandbox_id, provider, workspace_path
-        )
+        detected_names = await detect_project_validators(sandbox_id, provider, workspace_path)
 
         configs: list[ValidatorConfig] = []
         for name in detected_names:

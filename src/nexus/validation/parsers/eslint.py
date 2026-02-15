@@ -40,7 +40,10 @@ class ESLintValidator(Validator):
         return f"cd {shlex.quote(workspace_path)} && npx eslint --format json ."
 
     def parse_output(
-        self, stdout: str, stderr: str, exit_code: int  # noqa: ARG002
+        self,
+        stdout: str,
+        stderr: str,  # noqa: ARG002
+        exit_code: int,  # noqa: ARG002
     ) -> list[ValidationError]:
         if not stdout.strip():
             return []

@@ -41,7 +41,10 @@ class CargoClippyValidator(Validator):
         return f"cd {shlex.quote(workspace_path)} && cargo clippy --message-format json 2>&1"
 
     def parse_output(
-        self, stdout: str, stderr: str, exit_code: int  # noqa: ARG002
+        self,
+        stdout: str,
+        stderr: str,  # noqa: ARG002
+        exit_code: int,  # noqa: ARG002
     ) -> list[ValidationError]:
         errors: list[ValidationError] = []
 

@@ -92,8 +92,7 @@ class TestValidationResultSerialization:
                 passed=False,
                 errors=[
                     ValidationError(
-                        file="x.py", line=1, column=1,
-                        severity="error", message="bad type"
+                        file="x.py", line=1, column=1, severity="error", message="bad type"
                     )
                 ],
             ),
@@ -118,8 +117,7 @@ class TestCodeExecutionResultValidations:
 
         v = ValidationResult(validator="ruff", passed=True)
         result = CodeExecutionResult(
-            stdout="hello", stderr="", exit_code=0,
-            execution_time=0.5, validations=[v]
+            stdout="hello", stderr="", exit_code=0, execution_time=0.5, validations=[v]
         )
         assert result.validations is not None
         assert len(result.validations) == 1
@@ -129,9 +127,7 @@ class TestCodeExecutionResultValidations:
         """Verify dataclasses.asdict works for RPC serialization."""
         from nexus.sandbox.sandbox_provider import CodeExecutionResult
 
-        result = CodeExecutionResult(
-            stdout="out", stderr="err", exit_code=0, execution_time=0.1
-        )
+        result = CodeExecutionResult(stdout="out", stderr="err", exit_code=0, execution_time=0.1)
         d = dataclasses.asdict(result)
         assert d["stdout"] == "out"
         assert d["validations"] is None

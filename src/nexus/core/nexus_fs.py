@@ -6300,8 +6300,7 @@ class NexusFS(  # type: ignore[misc]
         # Convert ValidationResult Pydantic models to dicts for serialization
         if result.get("validations"):
             result["validations"] = [
-                v.model_dump() if hasattr(v, "model_dump") else v
-                for v in result["validations"]
+                v.model_dump() if hasattr(v, "model_dump") else v for v in result["validations"]
             ]
         return result
 

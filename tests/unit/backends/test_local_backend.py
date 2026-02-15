@@ -538,3 +538,191 @@ def test_stream_content_memory_efficient(temp_backend):
         assert len(chunk) <= 8192
 
     assert total_bytes == len(large_content)
+
+
+# ---------------------------------------------------------------------------
+# Concurrent sync tests (Issue #925: verify CASBlobStore integration)
+# ---------------------------------------------------------------------------
+
+NUM_THREADS = 50
+
+
+class TestConcurrentSync:
+    """Concurrent tests for LocalBackend with CASBlobStore integration."""
+
+    def test_concurrent_writes_same_content(self, temp_backend):
+        """50 threads writing identical content — ref_count must be exactly 50."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        content = b"concurrent same content sync"
+
+        def writer(_i: int) -> str:
+            return temp_backend.write_content(content).unwrap()
+
+        with ThreadPoolExecutor(max_workers=NUM_THREADS) as pool:
+            futures = [pool.submit(writer, i) for i in range(NUM_THREADS)]
+            hashes = [f.result() for f in as_completed(futures)]
+
+        # All should return the same hash
+        assert len(set(hashes)) == 1
+        h = hashes[0]
+
+        # Content must be readable
+        assert temp_backend.read_content(h).unwrap() == content
+
+        # ref_count must be exactly NUM_THREADS
+        meta = temp_backend._cas.read_meta(h)
+        assert meta.ref_count == NUM_THREADS
+
+    def test_concurrent_writes_different_content(self, temp_backend):
+        """50 threads writing unique content — all succeed independently."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def writer(i: int) -> str:
+            content = f"unique sync content {i}".encode()
+            return temp_backend.write_content(content).unwrap()
+
+        with ThreadPoolExecutor(max_workers=NUM_THREADS) as pool:
+            futures = [pool.submit(writer, i) for i in range(NUM_THREADS)]
+            hashes = [f.result() for f in as_completed(futures)]
+
+        # All hashes should be unique
+        assert len(set(hashes)) == NUM_THREADS
+
+        # Each blob should exist with ref_count=1
+        for h in hashes:
+            meta = temp_backend._cas.read_meta(h)
+            assert meta.ref_count == 1
+
+    def test_concurrent_read_write(self, temp_backend):
+        """Concurrent reads and writes don't corrupt data."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        content = b"read-write concurrent sync"
+        h = temp_backend.write_content(content).unwrap()
+
+        def worker(i: int) -> bytes | str:
+            if i % 2 == 0:
+                return temp_backend.write_content(content).unwrap()
+            else:
+                return temp_backend.read_content(h).unwrap()
+
+        with ThreadPoolExecutor(max_workers=NUM_THREADS) as pool:
+            futures = [pool.submit(worker, i) for i in range(NUM_THREADS)]
+            results = [f.result() for f in as_completed(futures)]
+
+        # Reads should return correct content
+        reads = [r for r in results if isinstance(r, bytes)]
+        assert all(r == content for r in reads)
+
+        # All writes should return the same hash
+        writes = [r for r in results if isinstance(r, str)]
+        assert all(r == h for r in writes)
+
+
+# === Chunked + CAS Integration Tests (Issue #925, Decision #11) ===
+
+
+class TestChunkedCASIntegration:
+    """Integration tests for chunked storage with CASBlobStore."""
+
+    @pytest.fixture
+    def chunked_backend(self, tmp_path):
+        """Backend with low CDC threshold for testing chunking."""
+        backend = LocalBackend(root_path=tmp_path / "chunked")
+        backend.cdc_threshold = 1024  # Lower for testing
+        return backend
+
+    def test_chunked_write_read_roundtrip(self, chunked_backend):
+        """Write >threshold file, verify manifest + chunks in CAS, read back."""
+        # Create content larger than threshold (1024 bytes)
+        content = b"A" * 500 + b"B" * 500 + b"C" * 200
+        assert len(content) >= chunked_backend.cdc_threshold
+
+        # Write
+        manifest_hash = chunked_backend.write_content(content).unwrap()
+
+        # Verify manifest is in CAS
+        meta = chunked_backend._cas.read_meta(manifest_hash)
+        assert meta.size == len(content)
+        assert any(k == "is_chunked_manifest" and v for k, v in meta.extra)
+
+        # Verify it's recognized as chunked
+        assert chunked_backend._is_chunked_content(manifest_hash)
+
+        # Read back and verify content integrity
+        read_back = chunked_backend.read_content(manifest_hash).unwrap()
+        assert read_back == content
+
+    def test_chunked_manifest_structure(self, chunked_backend):
+        """Verify manifest has correct chunk metadata."""
+        from nexus.backends.chunked_storage import ChunkedReference
+
+        content = b"X" * 2048  # 2KB, above threshold
+        manifest_hash = chunked_backend.write_content(content).unwrap()
+
+        # Read raw manifest
+        manifest_bytes = chunked_backend._cas.read_blob(manifest_hash)
+        manifest = ChunkedReference.from_json(manifest_bytes)
+
+        assert manifest.type == "chunked_manifest_v1"
+        assert manifest.total_size == len(content)
+        assert manifest.chunk_count > 0
+        assert manifest.content_hash == hash_content(content)
+
+        # Each chunk should exist in CAS with ref_count >= 1
+        for chunk_info in manifest.chunks:
+            assert chunked_backend._cas.blob_exists(chunk_info.chunk_hash)
+            chunk_meta = chunked_backend._cas.read_meta(chunk_info.chunk_hash)
+            assert chunk_meta.ref_count >= 1
+
+    def test_chunked_delete_releases_chunks(self, chunked_backend):
+        """Deleting chunked content releases all chunk refs."""
+        from nexus.backends.chunked_storage import ChunkedReference
+
+        content = b"D" * 2048
+        manifest_hash = chunked_backend.write_content(content).unwrap()
+
+        # Read manifest to get chunk hashes
+        manifest_bytes = chunked_backend._cas.read_blob(manifest_hash)
+        manifest = ChunkedReference.from_json(manifest_bytes)
+        chunk_hashes = [ci.chunk_hash for ci in manifest.chunks]
+
+        # Delete
+        chunked_backend.delete_content(manifest_hash)
+
+        # Manifest should be gone
+        assert not chunked_backend._cas.blob_exists(manifest_hash)
+
+        # All chunks should be gone (ref_count was 1)
+        for ch in chunk_hashes:
+            assert not chunked_backend._cas.blob_exists(ch)
+
+    def test_chunked_deduplication(self, chunked_backend):
+        """Writing same chunked content twice increments ref_count."""
+        content = b"E" * 2048
+        h1 = chunked_backend.write_content(content).unwrap()
+        h2 = chunked_backend.write_content(content).unwrap()
+
+        assert h1 == h2
+        meta = chunked_backend._cas.read_meta(h1)
+        assert meta.ref_count == 2
+
+    def test_concurrent_chunked_writes(self, chunked_backend):
+        """Multiple threads writing different chunked content."""
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def writer(i: int) -> str:
+            content = f"chunked content {i} ".encode() * 200  # ~3.6KB each
+            return chunked_backend.write_content(content).unwrap()
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futures = [pool.submit(writer, i) for i in range(8)]
+            hashes = [f.result() for f in as_completed(futures)]
+
+        # All should be unique
+        assert len(set(hashes)) == 8
+
+        # Each should be readable
+        for h in sorted(set(hashes)):
+            assert chunked_backend._is_chunked_content(h)

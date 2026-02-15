@@ -1,18 +1,16 @@
 """Unified local filesystem backend with CAS and directory support."""
 
-import contextlib
 import errno
 import json
 import logging
-import os
 import shutil
-import tempfile
 import time
 from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend
+from nexus.backends.cas_blob_store import CASBlobStore
 from nexus.backends.chunked_storage import ChunkedStorageMixin
 from nexus.backends.multipart_upload_mixin import MultipartUploadMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
@@ -111,6 +109,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         self._bloom_capacity = bloom_capacity
         self._bloom_fp_rate = bloom_fp_rate
         self._ensure_roots()
+        self._cas = CASBlobStore(self.cas_root)
         self._init_cas_bloom_filter()
 
     @property
@@ -235,130 +234,14 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         return content_path.with_suffix(".meta")
 
     def _read_metadata(self, content_hash: str) -> dict[str, Any]:
-        """Read metadata for content."""
-        meta_path = self._get_meta_path(content_hash)
-
-        if not meta_path.exists():
-            return {"ref_count": 0, "size": 0}
-
-        # Retry logic for Windows file locking and race conditions
-        # Increased retries for high-concurrency scenarios (50+ threads)
-        max_retries = 10
-        base_delay = 0.001  # 1ms base delay
-
-        for attempt in range(max_retries):
-            try:
-                # Read directly without locking (metadata files are small and atomic)
-                content = meta_path.read_text(encoding="utf-8")
-                result: dict[str, Any] = json.loads(content)
-                return result
-            except json.JSONDecodeError as e:
-                # Corrupted metadata - could be mid-write on Windows
-                if attempt < max_retries - 1:
-                    import random
-                    import time
-
-                    # Exponential backoff with jitter for high concurrency
-                    delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
-                    time.sleep(delay)
-                    continue
-                # Last attempt failed - raise error
-                raise BackendError(
-                    f"Failed to read metadata: {e}: {content_hash}",
-                    backend="local",
-                    path=content_hash,
-                ) from e
-            except OSError as e:
-                # File might be locked on Windows - retry with backoff
-                if attempt < max_retries - 1:
-                    import random
-                    import time
-
-                    # Exponential backoff with jitter for high concurrency
-                    delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
-                    time.sleep(delay)
-                    continue
-                raise BackendError(
-                    f"Failed to read metadata: {e}", backend="local", path=content_hash
-                ) from e
-
-        # Should never reach here
-        raise BackendError(
-            f"Failed to read metadata after {max_retries} retries",
-            backend="local",
-            path=content_hash,
-        )
+        """Read metadata for content. Delegates to CASBlobStore."""
+        return self._cas.read_meta(content_hash).to_dict()
 
     def _write_metadata(self, content_hash: str, metadata: dict[str, Any]) -> None:
-        """Write metadata for content with retry logic for Windows file locking."""
-        meta_path = self._get_meta_path(content_hash)
-        meta_path.parent.mkdir(parents=True, exist_ok=True)
+        """Write metadata for content. Delegates to CASBlobStore."""
+        from nexus.backends.cas_blob_store import CASMeta
 
-        # Retry logic for Windows PermissionError during concurrent writes
-        # Increased retries for high-concurrency scenarios (50+ threads)
-        max_retries = 10
-        base_delay = 0.001  # 1ms base delay
-
-        for attempt in range(max_retries):
-            tmp_path = None
-            try:
-                # Atomic write: write to temp file, then replace
-                # This avoids Windows file locking issues
-                with tempfile.NamedTemporaryFile(
-                    mode="w", encoding="utf-8", dir=meta_path.parent, delete=False, suffix=".tmp"
-                ) as tmp_file:
-                    tmp_path = Path(tmp_file.name)
-                    tmp_file.write(json.dumps(metadata))
-                    tmp_file.flush()
-                    # Force write to disk on Windows
-                    os.fsync(tmp_file.fileno())
-
-                # Atomic replace (works better than move on Windows)
-                os.replace(str(tmp_path), str(meta_path))
-                tmp_path = None  # Successfully moved
-                return  # Success!
-
-            except PermissionError as e:
-                # Windows-specific: another thread may be accessing the file
-                # Clean up temp file
-                if tmp_path is not None and tmp_path.exists():
-                    with contextlib.suppress(OSError):
-                        tmp_path.unlink()
-
-                if attempt < max_retries - 1:
-                    # Exponential backoff with jitter
-                    import random
-                    import time
-
-                    delay = base_delay * (2**attempt) + random.uniform(0, base_delay)
-                    time.sleep(delay)
-                    continue
-                else:
-                    # Last attempt failed - raise error
-                    raise BackendError(
-                        f"Failed to write metadata: {e}: {content_hash}",
-                        backend="local",
-                        path=content_hash,
-                    ) from e
-
-            except OSError as e:
-                # Clean up temp file on error
-                if tmp_path is not None and tmp_path.exists():
-                    with contextlib.suppress(OSError):
-                        tmp_path.unlink()
-                raise BackendError(
-                    f"Failed to write metadata: {e}: {content_hash}",
-                    backend="local",
-                    path=content_hash,
-                ) from e
-
-    def _lock_file(self, path: Path) -> "FileLock":
-        """Acquire lock on file."""
-        return FileLock(path)
-
-    def _get_lock_path(self, content_hash: str) -> Path:
-        """Get the lock file path for a content hash."""
-        return self._get_meta_path(content_hash).with_suffix(".lock")
+        self._cas.write_meta(content_hash, CASMeta.from_dict(metadata))
 
     def write_content(
         self, content: bytes, context: "OperationContext | None" = None
@@ -371,7 +254,6 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         file versions and parallel I/O.
 
         If content already exists, increments reference count.
-        Handles race conditions when multiple threads write the same content.
 
         Args:
             content: File content as bytes
@@ -400,80 +282,30 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
                     path="chunked",
                 )
 
-        # Small files: use single-blob storage
+        # Small files: lock-free CAS via CASBlobStore
         content_hash = self._compute_hash(content)
-        content_path = self._hash_to_path(content_hash)
-
-        # Fix #514: Acquire lock BEFORE checking if content exists
-        # This prevents TOCTOU race where multiple threads see "not exists"
-        # and all try to create initial metadata with ref_count=1
-        lock_path = self._get_lock_path(content_hash)
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:
-            with self._lock_file(lock_path):
-                # Check if content already exists (inside lock)
-                if content_path.exists():
-                    # Content exists - increment ref_count
-                    metadata = self._read_metadata(content_hash)
-                    metadata["ref_count"] = metadata.get("ref_count", 0) + 1
-                    self._write_metadata(content_hash, metadata)
-                    # Add to cache since we have the content in memory
-                    if self.content_cache is not None:
-                        self.content_cache.put(content_hash, content)
-                    # Ensure Bloom filter is updated (may already exist)
-                    self._cas_bloom_add(content_hash)
-                    return HandlerResponse.ok(
-                        data=content_hash,
-                        execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                        backend_name=self.name,
-                        path=content_hash,
-                    )
+            is_new = self._cas.store(content_hash, content)
 
-                # Content doesn't exist - write atomically
-                content_path.parent.mkdir(parents=True, exist_ok=True)
+            # Add to cache since we have the content in memory
+            if self.content_cache is not None:
+                self.content_cache.put(content_hash, content)
 
-                tmp_path = None
-                try:
-                    # Write to temp file first
-                    with tempfile.NamedTemporaryFile(
-                        mode="wb", dir=content_path.parent, delete=False
-                    ) as tmp_file:
-                        tmp_path = Path(tmp_file.name)
-                        tmp_file.write(content)
-                        tmp_file.flush()  # Flush Python buffers
-                        os.fsync(tmp_file.fileno())  # Force OS to write to disk
+            # Add to Bloom filter for fast future lookups
+            self._cas_bloom_add(content_hash)
 
-                    # Move to final location (atomic on Unix)
-                    os.replace(str(tmp_path), str(content_path))
-                    tmp_path = None  # Successfully moved
+            # Notify Zoekt to reindex (new content written)
+            if is_new:
+                content_path = self._hash_to_path(content_hash)
+                notify_zoekt_write(str(content_path))
 
-                    # Create metadata with ref_count=1
-                    metadata = {"ref_count": 1, "size": len(content)}
-                    self._write_metadata(content_hash, metadata)
-
-                    # Add to cache since we have the content in memory
-                    if self.content_cache is not None:
-                        self.content_cache.put(content_hash, content)
-
-                    # Add to Bloom filter for fast future lookups
-                    self._cas_bloom_add(content_hash)
-
-                    # Notify Zoekt to reindex (new content written)
-                    notify_zoekt_write(str(content_path))
-
-                    return HandlerResponse.ok(
-                        data=content_hash,
-                        execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                        backend_name=self.name,
-                        path=content_hash,
-                    )
-
-                finally:
-                    # Clean up temp file if it still exists
-                    if tmp_path is not None and tmp_path.exists():
-                        with contextlib.suppress(OSError):
-                            tmp_path.unlink()
+            return HandlerResponse.ok(
+                data=content_hash,
+                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                backend_name=self.name,
+                path=content_hash,
+            )
 
         except Exception as e:
             return HandlerResponse.from_exception(
@@ -783,8 +615,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         """
         Write content from an iterator of chunks.
 
-        Streams content to disk while collecting for hashing.
-        Uses same hash algorithm as write_content() for consistency.
+        Collects chunks, computes hash, then delegates to CASBlobStore.
 
         Args:
             chunks: Iterator yielding byte chunks
@@ -793,93 +624,12 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         Returns:
             HandlerResponse with content hash in data field
         """
-        start_time = time.perf_counter()
-        # Write to temp file while collecting chunks for hashing
-        # Note: We collect chunks for hashing to ensure consistency with hash_content()
-        # which may use Rust BLAKE3. True streaming hash requires matching incremental hasher.
-        tmp_path = None
+        # Collect all chunks, then delegate to write_content
         collected_chunks: list[bytes] = []
-        content_hash = "stream"  # Default for error reporting
-
-        try:
-            # Create temp file in CAS directory for atomic move
-            self.cas_root.mkdir(parents=True, exist_ok=True)
-
-            with tempfile.NamedTemporaryFile(
-                mode="wb", dir=self.cas_root, delete=False
-            ) as tmp_file:
-                tmp_path = Path(tmp_file.name)
-
-                for chunk in chunks:
-                    tmp_file.write(chunk)
-                    collected_chunks.append(chunk)
-
-                tmp_file.flush()
-                os.fsync(tmp_file.fileno())
-
-            # Compute hash using same algorithm as write_content
-            content = b"".join(collected_chunks)
-            content_hash = self._compute_hash(content)
-            total_size = len(content)
-            content_path = self._hash_to_path(content_hash)
-
-            # Acquire lock before checking/writing
-            lock_path = self._get_lock_path(content_hash)
-            lock_path.parent.mkdir(parents=True, exist_ok=True)
-
-            with self._lock_file(lock_path):
-                if content_path.exists():
-                    # Content exists - increment ref_count, discard temp file
-                    metadata = self._read_metadata(content_hash)
-                    metadata["ref_count"] = metadata.get("ref_count", 0) + 1
-                    self._write_metadata(content_hash, metadata)
-
-                    # Clean up temp file
-                    if tmp_path is not None and tmp_path.exists():
-                        tmp_path.unlink()
-                    tmp_path = None
-
-                    # Ensure Bloom filter is updated
-                    self._cas_bloom_add(content_hash)
-
-                    return HandlerResponse.ok(
-                        data=content_hash,
-                        execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                        backend_name=self.name,
-                        path=content_hash,
-                    )
-
-                # Content doesn't exist - move temp file to final location
-                content_path.parent.mkdir(parents=True, exist_ok=True)
-                os.replace(str(tmp_path), str(content_path))
-                tmp_path = None  # Successfully moved
-
-                # Create metadata with ref_count=1
-                metadata = {"ref_count": 1, "size": total_size}
-                self._write_metadata(content_hash, metadata)
-
-                # Add to Bloom filter for fast future lookups
-                self._cas_bloom_add(content_hash)
-
-                return HandlerResponse.ok(
-                    data=content_hash,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                    backend_name=self.name,
-                    path=content_hash,
-                )
-
-        except Exception as e:
-            return HandlerResponse.from_exception(
-                e,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=content_hash,
-            )
-        finally:
-            # Clean up temp file if it still exists
-            if tmp_path is not None and tmp_path.exists():
-                with contextlib.suppress(OSError):
-                    tmp_path.unlink()
+        for chunk in chunks:
+            collected_chunks.append(chunk)
+        content = b"".join(collected_chunks)
+        return self.write_content(content, context=context)
 
     def delete_content(
         self, content_hash: str, context: "OperationContext | None" = None
@@ -925,52 +675,9 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
                     path=content_hash,
                 )
 
-        # Fix #514: Use file locking to prevent race condition on ref_count
-        lock_path = self._get_lock_path(content_hash)
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-
-        should_delete_lock = False
+        # Single-blob: delegate to CASBlobStore (no FileLock)
         try:
-            with self._lock_file(lock_path):
-                metadata = self._read_metadata(content_hash)
-                ref_count = metadata.get("ref_count", 1)
-
-                if ref_count <= 1:
-                    # Last reference - delete file and metadata
-                    content_path.unlink()
-
-                    meta_path = self._get_meta_path(content_hash)
-                    if meta_path.exists():
-                        meta_path.unlink()
-
-                    # Mark lock file for deletion after context manager releases it
-                    should_delete_lock = True
-
-                    # Clean up empty directories
-                    self._cleanup_empty_dirs(content_path.parent)
-                else:
-                    # Decrement reference count
-                    metadata["ref_count"] = ref_count - 1
-                    self._write_metadata(content_hash, metadata)
-
-            # Clean up lock file AFTER releasing the lock (fixes #562 - Windows PermissionError)
-            # Retry logic for Windows file locking semantics
-            if should_delete_lock and lock_path.exists():
-                for attempt in range(3):
-                    try:
-                        lock_path.unlink()
-                        break
-                    except PermissionError:
-                        if attempt < 2:
-                            # Exponential backoff: 10ms, 20ms
-                            time.sleep(0.01 * (2**attempt))
-                        else:
-                            # Last attempt failed - log warning but don't fail the operation
-                            # Lock file will be orphaned but this is better than failing deletion
-                            logger.warning(
-                                f"Failed to delete lock file {lock_path} after 3 attempts. "
-                                "File will be orphaned but content deletion succeeded."
-                            )
+            self._cas.release(content_hash)
 
             return HandlerResponse.ok(
                 data=None,
@@ -986,19 +693,6 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
                 backend_name=self.name,
                 path=content_hash,
             )
-
-    def _cleanup_empty_dirs(self, dir_path: Path) -> None:
-        """Remove empty parent directories up to CAS root."""
-        try:
-            current = dir_path
-            while current != self.cas_root and current.exists():
-                if not any(current.iterdir()):
-                    current.rmdir()
-                    current = current.parent
-                else:
-                    break
-        except OSError:
-            pass
 
     def content_exists(
         self, content_hash: str, context: "OperationContext | None" = None
@@ -1438,56 +1132,3 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         if upload_dir.exists():
             shutil.rmtree(upload_dir, ignore_errors=True)
             logger.debug(f"Aborted multipart upload {upload_id}")
-
-
-class FileLock:
-    """
-    Context manager for file locking.
-
-    Uses fcntl.flock on POSIX systems and msvcrt.locking on Windows.
-    """
-
-    def __init__(self, path: Path, timeout: float = 10.0):
-        """Initialize file lock."""
-        self.path = path
-        self.timeout = timeout
-        self.lock_file: Any = None
-
-    def __enter__(self) -> "FileLock":
-        """Acquire lock."""
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Use a+b mode: append+binary with read/write
-        # This works better on Windows for newly created files
-        self.lock_file = open(self.path, "a+b")
-
-        # Platform-specific locking using sys.platform for mypy narrowing
-        import sys
-
-        if sys.platform == "win32":
-            import msvcrt
-
-            msvcrt.locking(self.lock_file.fileno(), msvcrt.LK_LOCK, 1)
-        else:
-            import fcntl
-
-            fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_EX)
-
-        return self
-
-    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
-        """Release lock."""
-        import sys
-
-        if self.lock_file:
-            # Platform-specific unlocking using sys.platform for mypy narrowing
-            if sys.platform == "win32":
-                import msvcrt
-
-                msvcrt.locking(self.lock_file.fileno(), msvcrt.LK_UNLCK, 1)
-            else:
-                import fcntl
-
-                fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_UN)
-
-            self.lock_file.close()

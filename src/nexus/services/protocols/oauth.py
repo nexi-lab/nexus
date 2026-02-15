@@ -12,6 +12,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
+
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
 
@@ -31,7 +33,7 @@ class OAuthProtocol(Protocol):
     async def oauth_get_auth_url(
         self,
         provider: str,
-        redirect_uri: str = "http://localhost:3000/oauth/callback",
+        redirect_uri: str = DEFAULT_OAUTH_REDIRECT_URI,
         scopes: list[str] | None = None,
     ) -> dict[str, Any]: ...
 

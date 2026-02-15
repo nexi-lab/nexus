@@ -13,6 +13,7 @@ from typing import Any
 import yaml
 from pydantic import ValidationError
 
+from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
 from nexus.server.auth.oauth_config import OAuthConfig, OAuthProviderConfig
 from nexus.server.auth.oauth_provider import OAuthProvider
 
@@ -240,7 +241,7 @@ class OAuthProviderFactory:
 
             # Final fallback to hardcoded default
             if not provider_redirect_uri:
-                provider_redirect_uri = "http://localhost:3000/oauth/callback"
+                provider_redirect_uri = DEFAULT_OAUTH_REDIRECT_URI
 
         # Instantiate provider
         try:

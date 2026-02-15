@@ -642,22 +642,19 @@ class DatabaseLocalAuth(LocalAuth):
         logger.info(f"Email verified for user: {user_id}")
         return True
 
-    # TODO: Implement password reset
     def request_password_reset(self, email: str) -> str | None:
-        """Request password reset via email.
+        """Request password reset via email (stub — not yet implemented).
 
         Args:
             email: User email
 
         Returns:
             Reset token (for testing) or None if user not found
-
-        TODO: Implement password reset token generation and email sending
         """
         raise NotImplementedError("Password reset not yet implemented")
 
     def reset_password(self, reset_token: str, new_password: str) -> bool:
-        """Reset password with reset token.
+        """Reset password with reset token (stub — not yet implemented).
 
         Args:
             reset_token: Password reset token
@@ -665,8 +662,6 @@ class DatabaseLocalAuth(LocalAuth):
 
         Returns:
             True if password reset successfully
-
-        TODO: Implement password reset token validation and expiry
         """
         raise NotImplementedError("Password reset not yet implemented")
 

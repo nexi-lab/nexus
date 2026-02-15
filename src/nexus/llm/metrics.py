@@ -153,7 +153,7 @@ class MetricsStore:
             metadata_path: Path to Nexus metadata database
         """
         self.metadata_path = metadata_path
-        # TODO: Integrate with Nexus metadata database when available
+        # Stub: database integration not yet wired (placeholder for persistent metrics)
 
     def save_metrics(self, metrics: LLMMetrics, session_id: str | None = None) -> None:
         """Save metrics to database.
@@ -162,8 +162,7 @@ class MetricsStore:
             metrics: Metrics to save
             session_id: Optional session ID for grouping metrics
         """
-        # TODO: Implement actual database storage
-        # For now, this is a placeholder
+        # Stub: no-op until database integration
         pass
 
     def load_metrics(self, session_id: str) -> LLMMetrics | None:  # noqa: ARG002
@@ -175,7 +174,7 @@ class MetricsStore:
         Returns:
             Metrics if found, None otherwise
         """
-        # TODO: Implement actual database retrieval
+        # Stub: returns None until database integration
         return None
 
     def get_metrics_by_model(self, model_name: str) -> list[LLMMetrics]:  # noqa: ARG002
@@ -187,5 +186,5 @@ class MetricsStore:
         Returns:
             List of metrics for the model
         """
-        # TODO: Implement actual database query
+        # Stub: returns empty list until database integration
         return []

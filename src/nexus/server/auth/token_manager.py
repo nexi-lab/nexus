@@ -325,13 +325,13 @@ class TokenManager:
                                 oauth_provider.refresh_token(credential),
                                 timeout=_PROVIDER_REFRESH_TIMEOUT_SECONDS,
                             )
-                        except asyncio.TimeoutError:
+                        except TimeoutError:
                             logger.error(
                                 f"OAuth refresh timed out for {provider}:{user_email}"
                             )
                             raise AuthenticationError(
                                 f"OAuth refresh timed out for {provider}"
-                            )
+                            ) from None
 
                         encrypted_access_token = self.crypto.encrypt_token(
                             new_credential.access_token

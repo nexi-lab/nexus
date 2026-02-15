@@ -1839,6 +1839,8 @@ def _register_routes(app: FastAPI) -> None:
     try:
         from nexus.server.api.v2.routers.secrets_audit import (
             get_secrets_audit_logger as _secrets_audit_dep,
+        )
+        from nexus.server.api.v2.routers.secrets_audit import (
             router as secrets_audit_router,
         )
         from nexus.storage.secrets_audit_logger import SecretsAuditLogger

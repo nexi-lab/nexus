@@ -141,6 +141,24 @@ class Memory:
             is_admin=False,
         )
 
+    @staticmethod
+    def _get_text_content(content: str | bytes | dict[str, Any]) -> str | None:
+        """Extract text from content for enrichment pipeline.
+
+        Args:
+            content: Memory content (text, bytes, or dict).
+
+        Returns:
+            Text string suitable for NLP processing, or None for binary content.
+        """
+        import json
+
+        if isinstance(content, dict):
+            return json.dumps(content)
+        elif isinstance(content, str):
+            return content if content.strip() else None
+        return None
+
     def store(
         self,
         content: str | bytes | dict[str, Any],
@@ -164,6 +182,7 @@ class Memory:
         relationship_types: list[str] | None = None,  # #1038: Custom relationship types
         store_to_graph: bool = False,  # #1039: Store entities/relationships to graph tables
         valid_at: datetime | str | None = None,  # #1183: When fact became valid in real world
+        classify_stability: bool = True,  # #1191: Auto-classify temporal stability
     ) -> str:
         """Store a memory.
 
@@ -275,134 +294,140 @@ class Memory:
             # If backend write fails, we can't proceed
             raise RuntimeError(f"Failed to store content in backend: {e}") from e
 
+        # DRY: Extract text content once for all enrichment steps (#1191)
+        text_content = self._get_text_content(content)
+
         # Generate embedding if requested (#406)
         embedding_json = None
         embedding_model_name = None
         embedding_dim = None
 
-        if generate_embedding:
-            # Get text content for embedding
-            if isinstance(content, dict):
-                # For structured content, embed the JSON string
-                text_content = json.dumps(content)
-            elif isinstance(content, str):
-                text_content = content
-            else:
-                # For binary content, skip embedding
-                text_content = None
+        if generate_embedding and text_content:
+            # Try to get embedding provider
+            if embedding_provider is None:
+                try:
+                    from nexus.search.embeddings import create_embedding_provider
 
-            if text_content and len(text_content.strip()) > 0:
-                # Try to get embedding provider
-                if embedding_provider is None:
-                    try:
-                        from nexus.search.embeddings import create_embedding_provider
+                    # Try to create default provider (OpenRouter)
+                    with contextlib.suppress(Exception):
+                        embedding_provider = create_embedding_provider(provider="openrouter")
+                except ImportError:
+                    pass
 
-                        # Try to create default provider (OpenRouter)
-                        with contextlib.suppress(Exception):
-                            embedding_provider = create_embedding_provider(provider="openrouter")
-                    except ImportError:
-                        pass
+            # Generate embedding
+            if embedding_provider:
+                from nexus.core.sync_bridge import run_sync
 
-                # Generate embedding
-                if embedding_provider:
-                    from nexus.core.sync_bridge import run_sync
-
-                    try:
-                        embedding_vec = run_sync(embedding_provider.embed_text(text_content))
-                        embedding_json = json.dumps(embedding_vec)
-                        embedding_model_name = getattr(embedding_provider, "model", "unknown")
-                        embedding_dim = len(embedding_vec)
-                    except Exception:
-                        # Failed to generate embedding, continue without it
-                        pass
+                try:
+                    embedding_vec = run_sync(embedding_provider.embed_text(text_content))
+                    embedding_json = json.dumps(embedding_vec)
+                    embedding_model_name = getattr(embedding_provider, "model", "unknown")
+                    embedding_dim = len(embedding_vec)
+                except Exception:
+                    # Failed to generate embedding, continue without it
+                    pass
 
         # #1025: Extract named entities for symbolic filtering
         entities_json_str = None
         entity_types_str = None
         person_refs_str = None
 
-        if extract_entities:
-            # Get text content for entity extraction
-            if isinstance(content, dict):
-                text_for_entities = json.dumps(content)
-            elif isinstance(content, str):
-                text_for_entities = content
-            else:
-                text_for_entities = None
+        if extract_entities and text_content:
+            from nexus.services.permissions.entity_extractor import EntityExtractor
 
-            if text_for_entities and len(text_for_entities.strip()) > 0:
-                from nexus.services.permissions.entity_extractor import EntityExtractor
+            extractor = EntityExtractor(use_spacy=False)
+            entities = extractor.extract(text_content)
 
-                extractor = EntityExtractor(use_spacy=False)
-                entities = extractor.extract(text_for_entities)
-
-                if entities:
-                    entities_json_str = json.dumps([e.to_dict() for e in entities])
-                    entity_types_str = extractor.get_entity_types_string(text_for_entities)
-                    person_refs_str = extractor.get_person_refs_string(text_for_entities)
+            if entities:
+                entities_json_str = json.dumps([e.to_dict() for e in entities])
+                entity_types_str = extractor.get_entity_types_string(text_content)
+                person_refs_str = extractor.get_person_refs_string(text_content)
 
         # #1028: Extract temporal metadata for date-based queries
         temporal_refs_json_str = None
         earliest_date = None
         latest_date = None
 
-        if extract_temporal:
-            # Get text content for temporal extraction
-            if isinstance(content, dict):
-                text_for_temporal = json.dumps(content)
-            elif isinstance(content, str):
-                text_for_temporal = content
-            else:
-                text_for_temporal = None
+        if extract_temporal and text_content:
+            from nexus.core.temporal_resolver import extract_temporal_metadata
 
-            if text_for_temporal and len(text_for_temporal.strip()) > 0:
-                from nexus.core.temporal_resolver import extract_temporal_metadata
+            temporal_meta = extract_temporal_metadata(
+                text_content,
+                reference_time=temporal_reference_time,
+            )
 
-                temporal_meta = extract_temporal_metadata(
-                    text_for_temporal,
-                    reference_time=temporal_reference_time,
-                )
-
-                if temporal_meta["temporal_refs"]:
-                    temporal_refs_json_str = json.dumps(temporal_meta["temporal_refs"])
-                    earliest_date = temporal_meta["earliest_date"]
-                    latest_date = temporal_meta["latest_date"]
+            if temporal_meta["temporal_refs"]:
+                temporal_refs_json_str = json.dumps(temporal_meta["temporal_refs"])
+                earliest_date = temporal_meta["earliest_date"]
+                latest_date = temporal_meta["latest_date"]
 
         # #1038: Extract relationships for graph-based retrieval
         relationships_json_str = None
         relationship_count_val = None
 
-        if extract_relationships:
-            # Get text content for relationship extraction
-            if isinstance(content, dict):
-                text_for_relationships = json.dumps(content)
-            elif isinstance(content, str):
-                text_for_relationships = content
-            else:
-                text_for_relationships = None
+        if extract_relationships and text_content:
+            from nexus.core.relationship_extractor import LLMRelationshipExtractor
 
-            if text_for_relationships and len(text_for_relationships.strip()) > 0:
-                from nexus.core.relationship_extractor import LLMRelationshipExtractor
+            rel_extractor = LLMRelationshipExtractor(
+                llm_provider=self.llm_provider,
+                confidence_threshold=0.5,
+            )
 
-                rel_extractor = LLMRelationshipExtractor(
+            # Get entities as hints for relationship extraction
+            entities_for_rel = None
+            if entities_json_str:
+                entities_for_rel = json.loads(entities_json_str)
+
+            rel_result = rel_extractor.extract(
+                text_content,
+                entities=entities_for_rel,
+                relationship_types=relationship_types,
+            )
+
+            if rel_result.relationships:
+                relationships_json_str = json.dumps(rel_result.to_dicts())
+                relationship_count_val = len(rel_result.relationships)
+
+        # #1191: Auto-classify temporal stability
+        temporal_stability_val = None
+        stability_confidence_val = None
+        estimated_ttl_days_val = None
+
+        if classify_stability and text_content:
+            try:
+                from nexus.services.memory.stability_classifier import (
+                    TemporalStabilityClassifier,
+                )
+
+                classifier = TemporalStabilityClassifier(
                     llm_provider=self.llm_provider,
-                    confidence_threshold=0.5,
                 )
 
-                # Get entities as hints for relationship extraction
-                entities_for_rel = None
+                # Reuse already-extracted entities and temporal refs
+                entities_for_classify = None
                 if entities_json_str:
-                    entities_for_rel = json.loads(entities_json_str)
+                    entities_for_classify = json.loads(entities_json_str)
 
-                rel_result = rel_extractor.extract(
-                    text_for_relationships,
-                    entities=entities_for_rel,
-                    relationship_types=relationship_types,
+                temporal_refs_for_classify = None
+                if temporal_refs_json_str:
+                    temporal_refs_for_classify = json.loads(temporal_refs_json_str)
+
+                classification = classifier.classify(
+                    text=text_content,
+                    entities=entities_for_classify,
+                    temporal_refs=temporal_refs_for_classify,
                 )
 
-                if rel_result.relationships:
-                    relationships_json_str = json.dumps(rel_result.to_dicts())
-                    relationship_count_val = len(rel_result.relationships)
+                temporal_stability_val = classification.temporal_stability
+                stability_confidence_val = classification.confidence
+                estimated_ttl_days_val = classification.estimated_ttl_days
+            except Exception:
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "Stability classification failed, continuing without it",
+                    exc_info=True,
+                )
 
         # #1183: Parse valid_at if provided as string
         valid_at_dt = (
@@ -442,6 +467,9 @@ class Memory:
             latest_date=latest_date,  # #1028: Store latest date
             relationships_json=relationships_json_str,  # #1038: Store relationships
             relationship_count=relationship_count_val,  # #1038: Store relationship count
+            temporal_stability=temporal_stability_val,  # #1191: Stability classification
+            stability_confidence=stability_confidence_val,  # #1191: Classification confidence
+            estimated_ttl_days=estimated_ttl_days_val,  # #1191: Estimated TTL
             valid_at=valid_at_dt,  # #1183: When fact became valid
             size_bytes=len(content_bytes),  # #1184: Content size for versioning
             created_by=user_id or agent_id,  # #1184: Who created this version
@@ -607,6 +635,7 @@ class Memory:
         event_before: str | datetime | None = None,  # #1028: Filter by event date <= value
         include_invalid: bool = False,  # #1183: Include invalidated memories
         include_superseded: bool = False,  # #1188: Include superseded memories
+        temporal_stability: str | None = None,  # #1191: Filter by temporal stability
         as_of: str
         | datetime
         | None = None,  # #1183: Point-in-time query (deprecated, use as_of_event)
@@ -731,6 +760,7 @@ class Memory:
             event_before=event_before_dt,  # #1028: Event date filtering
             include_invalid=include_invalid,  # #1183: Include invalidated memories
             include_superseded=include_superseded,  # #1188: Include superseded memories
+            temporal_stability=temporal_stability,  # #1191: Stability filtering
             valid_at_point=valid_at_point,  # #1185: Point-in-time query (as_of_event)
             system_at_point=system_at_point,  # #1185: System-time query (as_of_system)
             limit=limit,
@@ -850,6 +880,9 @@ class Memory:
                     else None,  # #1028
                     "relationships_json": memory.relationships_json,  # #1038
                     "relationship_count": memory.relationship_count,  # #1038
+                    "temporal_stability": memory.temporal_stability,  # #1191
+                    "stability_confidence": memory.stability_confidence,  # #1191
+                    "estimated_ttl_days": memory.estimated_ttl_days,  # #1191
                     "created_at": memory.created_at.isoformat() if memory.created_at else None,
                     "updated_at": memory.updated_at.isoformat() if memory.updated_at else None,
                     "valid_at": memory.valid_at.isoformat() if memory.valid_at else None,  # #1183
@@ -1381,6 +1414,9 @@ class Memory:
             "valid_at": memory.valid_at.isoformat() if memory.valid_at else None,  # #1183
             "invalid_at": memory.invalid_at.isoformat() if memory.invalid_at else None,  # #1183
             "is_current": memory.invalid_at is None,  # #1183: True if not invalidated
+            "temporal_stability": memory.temporal_stability,  # #1191
+            "stability_confidence": memory.stability_confidence,  # #1191
+            "estimated_ttl_days": memory.estimated_ttl_days,  # #1191
         }
 
     def retrieve(

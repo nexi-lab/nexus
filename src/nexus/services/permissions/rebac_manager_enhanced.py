@@ -37,6 +37,13 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from nexus.core.rebac import CROSS_ZONE_ALLOWED_RELATIONS, Entity
 from nexus.services.permissions.rebac_manager_zone_aware import ZoneAwareReBACManager
+from nexus.services.permissions.rebac_tracing import (
+    record_check_result,
+    record_graph_limit_exceeded,
+    record_traversal_result,
+    start_check_span,
+    start_graph_traversal_span,
+)
 from nexus.services.permissions.types import (
     CheckResult,
     ConsistencyLevel,
@@ -267,6 +274,39 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
             f"EnhancedReBACManager.rebac_check called: enforce_zone_isolation={self.enforce_zone_isolation}, MAX_DEPTH={GraphLimits.MAX_DEPTH}"
         )
 
+        # Issue #702: OTel tracing — wrap the entire check in a root span
+        check_start = time.perf_counter()
+        with start_check_span(
+            subject=subject,
+            permission=permission,
+            obj=object,
+            zone_id=zone_id,
+            consistency=consistency_level.value,
+        ) as _check_span:
+            result = self._rebac_check_inner(
+                subject,
+                permission,
+                object,
+                context,
+                zone_id,
+                consistency_level,
+                min_revision,
+            )
+            decision_ms = (time.perf_counter() - check_start) * 1000
+            record_check_result(_check_span, allowed=result, decision_time_ms=decision_ms)
+            return result
+
+    def _rebac_check_inner(
+        self,
+        subject: tuple[str, str],
+        permission: str,
+        object: tuple[str, str],
+        context: dict[str, Any] | None,
+        zone_id: str | None,
+        consistency_level: ConsistencyLevel,
+        min_revision: int | None,
+    ) -> bool:
+        """Inner body of rebac_check, extracted for clean span wrapping (Issue #702)."""
         object_type, object_id = object
         subject_type, subject_id = subject
         effective_zone = normalize_zone_id(zone_id)
@@ -600,38 +640,12 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
         # P0-1: Handle consistency levels
         if consistency == ConsistencyLevel.STRONG:
             # Strong consistency: Bypass cache, fresh read
-            stats = TraversalStats()
-            limit_error = None  # Track if we hit a limit
-            try:
-                result = self._compute_permission_with_limits(
-                    subject_entity, permission, object_entity, zone_id, stats, context
-                )
-            except GraphLimitExceeded as e:
-                # BUGFIX (Issue #5): Fail-closed on limit exceeded, but mark as indeterminate
-                logger.error(
-                    f"GraphLimitExceeded caught: limit_type={e.limit_type}, limit_value={e.limit_value}, actual_value={e.actual_value}"
-                )
-                result = False
-                limit_error = e
-
-            decision_time_ms = (time.perf_counter() - start_time) * 1000
-            stats.duration_ms = decision_time_ms
-
-            return CheckResult(
-                allowed=result,
-                consistency_token=self._get_version_token(zone_id),
-                decision_time_ms=decision_time_ms,
-                cached=False,
-                cache_age_ms=None,
-                traversal_stats=stats,
-                indeterminate=limit_error is not None,
-                limit_exceeded=limit_error,
+            return self._fresh_compute(
+                subject_entity, permission, object_entity, zone_id, start_time, context
             )
 
         elif consistency == ConsistencyLevel.BOUNDED:
             # Bounded consistency: Max 1s staleness OR revision-based (Issue #1081)
-            # If min_revision is provided, use revision-based check (AT_LEAST_AS_FRESH)
-            # Otherwise fall back to time-based check
             cached = None
             cached_revision = 0
 
@@ -663,34 +677,14 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                     traversal_stats=None,
                 )
 
-            # Cache miss or too old/stale - compute fresh
-            stats = TraversalStats()
-            limit_error = None
-            try:
-                result = self._compute_permission_with_limits(
-                    subject_entity, permission, object_entity, zone_id, stats, context
-                )
-            except GraphLimitExceeded as e:
-                result = False
-                limit_error = e
-
+            # Cache miss or too old/stale - compute fresh and cache
+            result = self._fresh_compute(
+                subject_entity, permission, object_entity, zone_id, start_time, context
+            )
             self._cache_check_result_zone_aware(
-                subject_entity, permission, object_entity, zone_id, result
+                subject_entity, permission, object_entity, zone_id, result.allowed
             )
-
-            decision_time_ms = (time.perf_counter() - start_time) * 1000
-            stats.duration_ms = decision_time_ms
-
-            return CheckResult(
-                allowed=result,
-                consistency_token=self._get_version_token(zone_id),
-                decision_time_ms=decision_time_ms,
-                cached=False,
-                cache_age_ms=None,
-                traversal_stats=stats,
-                indeterminate=limit_error is not None,
-                limit_exceeded=limit_error,
-            )
+            return result
 
         else:  # ConsistencyLevel.EVENTUAL (default)
             # Eventual consistency: Use cache (up to cache_ttl_seconds staleness)
@@ -710,34 +704,71 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                 )
             logger.debug("  -> CACHE MISS: computing fresh result")
 
-            # Cache miss - compute fresh
-            stats = TraversalStats()
-            limit_error = None
+            # Cache miss - compute fresh and cache
+            result = self._fresh_compute(
+                subject_entity, permission, object_entity, zone_id, start_time, context
+            )
+            self._cache_check_result_zone_aware(
+                subject_entity, permission, object_entity, zone_id, result.allowed
+            )
+            return result
+
+    def _fresh_compute(
+        self,
+        subject: Entity,
+        permission: str,
+        obj: Entity,
+        zone_id: str,
+        start_time: float,
+        context: dict[str, Any] | None = None,
+    ) -> CheckResult:
+        """Compute a fresh permission check with graph limits (Issue #702 DRY refactor).
+
+        Encapsulates the common pattern: allocate TraversalStats, call
+        ``_compute_permission_with_limits``, handle ``GraphLimitExceeded``,
+        and assemble a ``CheckResult``.
+        """
+        stats = TraversalStats()
+        limit_error: GraphLimitExceeded | None = None
+
+        # Issue #702: Wrap graph computation in a traversal span
+        with start_graph_traversal_span(engine="python") as _trav_span:
             try:
                 result = self._compute_permission_with_limits(
-                    subject_entity, permission, object_entity, zone_id, stats, context
+                    subject, permission, obj, zone_id, stats, context
                 )
             except GraphLimitExceeded as e:
+                logger.error(
+                    "GraphLimitExceeded caught: limit_type=%s, limit_value=%s, actual_value=%s",
+                    e.limit_type,
+                    e.limit_value,
+                    e.actual_value,
+                )
                 result = False
                 limit_error = e
+                record_graph_limit_exceeded(_trav_span, limit_type=e.limit_type)
 
-            self._cache_check_result_zone_aware(
-                subject_entity, permission, object_entity, zone_id, result
+            record_traversal_result(
+                _trav_span,
+                depth=stats.max_depth_reached,
+                visited_nodes=stats.nodes_visited,
+                db_queries=stats.queries,
+                cache_hits=stats.cache_hits,
             )
 
-            decision_time_ms = (time.perf_counter() - start_time) * 1000
-            stats.duration_ms = decision_time_ms
+        decision_time_ms = (time.perf_counter() - start_time) * 1000
+        stats.duration_ms = decision_time_ms
 
-            return CheckResult(
-                allowed=result,
-                consistency_token=self._get_version_token(zone_id),
-                decision_time_ms=decision_time_ms,
-                cached=False,
-                cache_age_ms=None,
-                traversal_stats=stats,
-                indeterminate=limit_error is not None,
-                limit_exceeded=limit_error,
-            )
+        return CheckResult(
+            allowed=result,
+            consistency_token=self._get_version_token(zone_id),
+            decision_time_ms=decision_time_ms,
+            cached=False,
+            cache_age_ms=None,
+            traversal_stats=stats,
+            indeterminate=limit_error is not None,
+            limit_exceeded=limit_error,
+        )
 
     def _compute_permission_with_limits(
         self,

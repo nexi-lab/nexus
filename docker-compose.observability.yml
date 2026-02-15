@@ -1,0 +1,195 @@
+# Observability stack for Nexus (Issue #761)
+#
+# Deploys Grafana, Prometheus, Loki, Tempo, and Grafana Alloy alongside
+# the Nexus server.  All services share the `nexus-network` from the
+# main docker-compose.yml.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+#
+# Or standalone (Nexus must already be running on nexus-network):
+#   docker compose -f docker-compose.observability.yml up -d
+
+version: "3.8"
+
+services:
+  # =========================================================================
+  # Nexus Server (extends base compose with observability env vars)
+  # =========================================================================
+  nexus-server:
+    environment:
+      - OTEL_ENABLED=true
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4317
+      - OTEL_SERVICE_NAME=nexus
+      - NEXUS_ENV=prod
+    networks:
+      - nexus-network
+
+  # =========================================================================
+  # Prometheus — Metric collection and storage
+  # =========================================================================
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: nexus-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=7d"
+      - "--web.enable-remote-write-receiver"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    networks:
+      - nexus-network
+    profiles:
+      - observability
+
+  # =========================================================================
+  # Loki — Log aggregation
+  # =========================================================================
+  loki:
+    image: grafana/loki:3.0.0
+    container_name: nexus-loki
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./observability/loki/loki.yml:/etc/loki/config.yaml:ro
+      - loki-data:/loki
+    command:
+      - "-config.file=/etc/loki/config.yaml"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    networks:
+      - nexus-network
+    profiles:
+      - observability
+
+  # =========================================================================
+  # Tempo — Distributed tracing
+  # =========================================================================
+  tempo:
+    image: grafana/tempo:latest
+    container_name: nexus-tempo
+    restart: unless-stopped
+    ports:
+      - "3200:3200"   # Tempo HTTP API
+      - "4317:4317"   # OTLP gRPC receiver
+      - "4318:4318"   # OTLP HTTP receiver
+    volumes:
+      - ./observability/tempo/tempo.yml:/etc/tempo/config.yaml:ro
+      - tempo-data:/tmp/tempo
+    command:
+      - "-config.file=/etc/tempo/config.yaml"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    networks:
+      - nexus-network
+    profiles:
+      - observability
+
+  # =========================================================================
+  # Grafana — Visualization and dashboards
+  # =========================================================================
+  grafana:
+    image: grafana/grafana:latest
+    container_name: nexus-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=nexus
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Viewer
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+    networks:
+      - nexus-network
+    depends_on:
+      - prometheus
+      - loki
+      - tempo
+    profiles:
+      - observability
+
+  # =========================================================================
+  # Grafana Alloy — Log collection agent (Promtail successor)
+  # =========================================================================
+  alloy:
+    image: grafana/alloy:latest
+    container_name: nexus-alloy
+    restart: unless-stopped
+    ports:
+      - "12345:12345"  # Alloy UI
+    volumes:
+      - ./observability/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    command:
+      - "run"
+      - "/etc/alloy/config.alloy"
+      - "--server.http.listen-addr=0.0.0.0:12345"
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    networks:
+      - nexus-network
+    depends_on:
+      - loki
+    profiles:
+      - observability
+
+  # =========================================================================
+  # postgres_exporter — PostgreSQL metrics for Prometheus (Issue #762)
+  # =========================================================================
+  postgres-exporter:
+    image: quay.io/prometheuscommunity/postgres-exporter:latest
+    container_name: nexus-postgres-exporter
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "postgresql://nexus_monitor:${POSTGRES_EXPORTER_PASSWORD:-nexus_monitor}@postgres:5432/${POSTGRES_DB:-nexus}?sslmode=disable"
+    command:
+      - "--collector.stat_statements"
+      - "--collector.stat_activity"
+      - "--collector.stat_bgwriter"
+      - "--collector.stat_database"
+      - "--collector.stat_user_tables"
+      - "--collector.locks"
+      - "--collector.wal"
+    ports:
+      - "9187:9187"
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+    networks:
+      - nexus-network
+    profiles:
+      - observability
+
+volumes:
+  prometheus-data:
+  loki-data:
+  tempo-data:
+  grafana-data:
+
+networks:
+  nexus-network:
+    external: true

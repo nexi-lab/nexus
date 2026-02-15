@@ -40,12 +40,15 @@ from nexus.core.nexus_fs_core import NexusFSCoreMixin
 from nexus.core.nexus_fs_events import NexusFSEventsMixin
 
 # NexusFSLLMMixin removed in Phase B — replaced by LLMSubsystem (Issue #1287)
-from nexus.core.nexus_fs_mcp import NexusFSMCPMixin
+# NexusFSMCPMixin removed in Phase 1.4 — replaced by MCPService delegation (Issue #1287)
 from nexus.core.nexus_fs_mounts import NexusFSMountsMixin
-from nexus.core.nexus_fs_oauth import NexusFSOAuthMixin
-from nexus.core.nexus_fs_search import NexusFSSearchMixin
+
+# NexusFSOAuthMixin removed in Phase 1.3 — replaced by OAuthService delegation (Issue #1287)
+# NexusFSReBACMixin imported below from nexus.services.permissions (Issue #42)
+# NexusFSSearchMixin removed in Phase 1.1 — replaced by SearchService delegation (Issue #1287)
 from nexus.core.nexus_fs_share_links import NexusFSShareLinksMixin
-from nexus.core.nexus_fs_skills import NexusFSSkillsMixin
+
+# NexusFSSkillsMixin removed in Phase 1.5 — replaced by SkillService delegation (Issue #1287)
 from nexus.core.nexus_fs_tasks import NexusFSTasksMixin
 
 # NexusFSVersionsMixin removed in Phase 2.3 - replaced by VersionService
@@ -69,14 +72,13 @@ from nexus.storage.record_store import RecordStoreABC
 
 class NexusFS(  # type: ignore[misc]
     NexusFSCoreMixin,
-    NexusFSSearchMixin,
     NexusFSReBACMixin,
     NexusFSShareLinksMixin,  # Issue #227: Document Sharing & Access Links
     # NexusFSVersionsMixin removed - replaced by VersionService (Phase 2.3)
     NexusFSMountsMixin,
-    NexusFSOAuthMixin,
-    NexusFSSkillsMixin,
-    NexusFSMCPMixin,
+    # NexusFSOAuthMixin removed — replaced by OAuthService delegation (Issue #1287)
+    # NexusFSSkillsMixin removed — replaced by SkillService delegation (Issue #1287)
+    # NexusFSMCPMixin removed — replaced by MCPService delegation (Issue #1287)
     # NexusFSLLMMixin removed — replaced by LLMSubsystem (Issue #1287)
     NexusFSEventsMixin,  # Issue #1106: Same-box file watching
     NexusFSTasksMixin,  # Issue #574: Durable task queue
@@ -629,17 +631,56 @@ class NexusFS(  # type: ignore[misc]
         self.oauth_service = OAuthService(
             oauth_factory=None,  # Lazy init from config
             token_manager=None,  # Lazy init from db_path
+            nexus_fs=self,  # Required for mcp_connect() filesystem operations
         )
 
-        # SkillService: Skill management - provided by NexusFSSkillsMixin._get_skill_service()
-        # Uses NexusFSGateway pattern for clean dependency injection
+        # Shared gateway for all extracted services (Issue #1287)
+        from nexus.services.gateway import NexusFSGateway
+
+        self._gateway = NexusFSGateway(self)
+
+        # SkillService: Skill management (10 methods)
+        # Issue #1287 Phase 1.5: NexusFSSkillsMixin removed, replaced by SkillService delegation
+        from nexus.services.skill_service import SkillService as _SkillService
+
+        self.skill_service = _SkillService(gateway=self._gateway)
 
         # SearchService: Search operations - semantic (4) + basic (3, deferred to Phase 2.2)
         self.search_service = SearchService(
             metadata_store=self.metadata,
             permission_enforcer=self._permission_enforcer,
+            router=self.router,
+            rebac_manager=self._rebac_manager,
             enforce_permissions=self._enforce_permissions,
+            default_context=self._default_context,
             record_store=self._record_store,
+            gateway=self._gateway,
+        )
+
+        # ShareLinkService: Share link operations (6 methods)
+        # Issue #1287 Phase 2: Extracted from NexusFSShareLinksMixin
+        from nexus.services.share_link_service import ShareLinkService
+
+        self.share_link_service = ShareLinkService(
+            gateway=self._gateway,
+            enforce_permissions=self._enforce_permissions,
+        )
+
+        # EventsService: File watching + advisory locking (4 methods)
+        # Issue #1287 Phase 2: Extracted from NexusFSEventsMixin
+        from nexus.services.events_service import EventsService
+
+        metadata_cache = None
+        if hasattr(self.metadata, "_cache"):
+            metadata_cache = self.metadata._cache
+
+        self.events_service = EventsService(
+            backend=self.backend,
+            event_bus=getattr(self, "_event_bus", None),
+            lock_manager=getattr(self, "_lock_manager", None),
+            file_watcher=getattr(self, "_file_watcher", None),
+            zone_id=getattr(self, "zone_id", None),
+            metadata_cache=metadata_cache,
         )
 
         # OPTIMIZATION: Initialize TRAVERSE permissions and Tiger Cache
@@ -6250,10 +6291,44 @@ class NexusFS(  # type: ignore[misc]
                 env_prefix = "\n".join(env_lines) + "\n"
                 code = env_prefix + code
 
-        result: dict[Any, Any] = await self._sandbox_manager.run_code(
+        import dataclasses
+
+        execution_result = await self._sandbox_manager.run_code(
             sandbox_id, language, code, timeout, as_script=as_script
         )
+        result = dataclasses.asdict(execution_result)
+        # Convert ValidationResult Pydantic models to dicts for serialization
+        if result.get("validations"):
+            result["validations"] = [
+                v.model_dump() if hasattr(v, "model_dump") else v for v in result["validations"]
+            ]
         return result
+
+    @rpc_expose(description="Validate code in sandbox")
+    async def sandbox_validate(  # type: ignore[override]
+        self,
+        sandbox_id: str,
+        workspace_path: str = "/workspace",
+        context: dict | None = None,  # noqa: ARG002
+    ) -> dict:
+        """Run validation pipeline in sandbox.
+
+        Detects project type and runs applicable linters (ruff, mypy, eslint, etc.),
+        returning structured validation results.
+
+        Args:
+            sandbox_id: Sandbox ID
+            workspace_path: Workspace root path in sandbox
+            context: Operation context
+
+        Returns:
+            Dict with validations list
+        """
+        self._ensure_sandbox_manager()
+        assert self._sandbox_manager is not None
+
+        results = await self._sandbox_manager.validate(sandbox_id, workspace_path)
+        return {"validations": results}
 
     @rpc_expose(description="Pause sandbox")
     async def sandbox_pause(self, sandbox_id: str, context: dict | None = None) -> dict:  # type: ignore[override]  # noqa: ARG002
@@ -6968,107 +7043,251 @@ class NexusFS(  # type: ignore[misc]
 
     # -------------------------------------------------------------------------
     # MCPService Delegation Methods (5 methods)
+    # Issue #1287 Phase 1.4: NexusFSMCPMixin removed, replaced by MCPService delegation
     # -------------------------------------------------------------------------
 
-    async def amcp_list_mounts(self, context: Any = None) -> list[dict[str, Any]]:
-        """List all MCP mounts - delegates to MCPService.
+    @rpc_expose(description="List MCP server mounts")
+    async def mcp_list_mounts(
+        self,
+        tier: str | None = None,
+        include_unmounted: bool = True,
+        _context: OperationContext | None = None,
+    ) -> list[dict[str, Any]]:
+        """List all MCP mounts - delegates to MCPService."""
+        return await self.mcp_service.mcp_list_mounts(
+            tier=tier,
+            include_unmounted=include_unmounted,
+            context=_context,
+        )
 
-        Async version of mcp_list_mounts() using the service layer.
+    # Backward-compat alias
+    amcp_list_mounts = mcp_list_mounts
 
-        Args:
-            context: Operation context
-
-        Returns:
-            List of MCP mount dictionaries
-        """
-        return await self.mcp_service.mcp_list_mounts(context=context)
-
-    async def amcp_list_tools(
+    @rpc_expose(description="List tools from MCP mount")
+    async def mcp_list_tools(
         self,
         name: str,
-        context: Any = None,
+        _context: OperationContext | None = None,
     ) -> list[dict[str, Any]]:
-        """List MCP tools from specific mount - delegates to MCPService.
-
-        Async version of mcp_list_tools() using the service layer.
-
-        Args:
-            name: Mount name to list tools from
-            context: Operation context
-
-        Returns:
-            List of tool dictionaries
-        """
+        """List MCP tools from specific mount - delegates to MCPService."""
         return await self.mcp_service.mcp_list_tools(
             name=name,
-            context=context,
+            context=_context,
         )
 
-    async def amcp_mount(
+    # Backward-compat alias
+    amcp_list_tools = mcp_list_tools
+
+    @rpc_expose(description="Mount MCP server")
+    async def mcp_mount(
         self,
         name: str,
+        transport: str | None = None,
         command: str | None = None,
-        args: list[str] | None = None,
         url: str | None = None,
+        args: list[str] | None = None,
         env: dict[str, str] | None = None,
-        context: Any = None,
+        headers: dict[str, str] | None = None,
+        description: str | None = None,
+        tier: str = "system",
+        _context: OperationContext | None = None,
     ) -> dict[str, Any]:
-        """Mount an MCP server - delegates to MCPService.
-
-        Async version of mcp_mount() using the service layer.
-
-        Args:
-            name: Mount name
-            command: Command to run (for stdio transport)
-            args: Command arguments
-            url: Server URL (for SSE transport)
-            env: Environment variables
-            context: Operation context
-
-        Returns:
-            Mount information dictionary
-        """
+        """Mount an MCP server - delegates to MCPService."""
         return await self.mcp_service.mcp_mount(
             name=name,
+            transport=transport,
             command=command,
-            args=args,
             url=url,
+            args=args,
             env=env,
+            headers=headers,
+            description=description,
+            tier=tier,
+            context=_context,
+        )
+
+    # Backward-compat alias
+    amcp_mount = mcp_mount
+
+    @rpc_expose(description="Unmount MCP server")
+    async def mcp_unmount(
+        self,
+        name: str,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Unmount an MCP server - delegates to MCPService."""
+        return await self.mcp_service.mcp_unmount(name=name, _context=_context)
+
+    # Backward-compat alias
+    amcp_unmount = mcp_unmount
+
+    @rpc_expose(description="Sync tools from MCP server")
+    async def mcp_sync(
+        self,
+        name: str,
+        _context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Sync/refresh tools from MCP mount - delegates to MCPService."""
+        return await self.mcp_service.mcp_sync(
+            name=name,
+            context=_context,
+        )
+
+    # Backward-compat alias
+    amcp_sync = mcp_sync
+
+    # -------------------------------------------------------------------------
+    # SkillService Delegation Methods (10 methods)
+    # Issue #1287 Phase 1.5: NexusFSSkillsMixin removed, replaced by SkillService delegation
+    # -------------------------------------------------------------------------
+
+    @rpc_expose(description="Share a skill with users, groups, or make public")
+    def skills_share(
+        self,
+        skill_path: str,
+        share_with: str,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Grant read permission on a skill - delegates to SkillService."""
+        tuple_id = self.skill_service.share(skill_path, share_with, context)
+        return {
+            "success": True,
+            "tuple_id": tuple_id,
+            "skill_path": skill_path,
+            "share_with": share_with,
+        }
+
+    @rpc_expose(description="Revoke sharing permission on a skill")
+    def skills_unshare(
+        self,
+        skill_path: str,
+        unshare_from: str,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Revoke read permission on a skill - delegates to SkillService."""
+        success = self.skill_service.unshare(skill_path, unshare_from, context)
+        return {
+            "success": success,
+            "skill_path": skill_path,
+            "unshare_from": unshare_from,
+        }
+
+    @rpc_expose(description="Discover skills the user has permission to see")
+    def skills_discover(
+        self,
+        filter: str = "all",
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """List skills the user can see - delegates to SkillService."""
+        skills = self.skill_service.discover(context, filter)
+        return {
+            "skills": [s.to_dict() for s in skills],
+            "count": len(skills),
+        }
+
+    @rpc_expose(description="Subscribe to a skill (add to user's library)")
+    def skills_subscribe(
+        self,
+        skill_path: str,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Subscribe to a skill - delegates to SkillService."""
+        newly_subscribed = self.skill_service.subscribe(skill_path, context)
+        return {
+            "success": True,
+            "skill_path": skill_path,
+            "already_subscribed": not newly_subscribed,
+        }
+
+    @rpc_expose(description="Unsubscribe from a skill (remove from user's library)")
+    def skills_unsubscribe(
+        self,
+        skill_path: str,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Unsubscribe from a skill - delegates to SkillService."""
+        was_subscribed = self.skill_service.unsubscribe(skill_path, context)
+        return {
+            "success": True,
+            "skill_path": skill_path,
+            "was_subscribed": was_subscribed,
+        }
+
+    @rpc_expose(description="Get skill metadata for system prompt injection")
+    def skills_get_prompt_context(
+        self,
+        max_skills: int = 50,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Get prompt context - delegates to SkillService."""
+        prompt_context = self.skill_service.get_prompt_context(context, max_skills)
+        return prompt_context.to_dict()
+
+    @rpc_expose(description="Load full skill content on-demand")
+    def skills_load(
+        self,
+        skill_path: str,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Load skill content - delegates to SkillService."""
+        content = self.skill_service.load(skill_path, context)
+        return content.to_dict()
+
+    @rpc_expose(description="Export a skill as a .skill (ZIP) package")
+    def skills_export(
+        self,
+        skill_path: str | None = None,
+        skill_name: str | None = None,
+        output_path: str | None = None,
+        format: str = "generic",
+        include_dependencies: bool = False,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Export a skill - delegates to SkillService."""
+        return self.skill_service.export(
+            skill_path=skill_path,
+            skill_name=skill_name,
+            output_path=output_path,
+            format=format,
+            include_dependencies=include_dependencies,
             context=context,
         )
 
-    async def amcp_unmount(self, name: str, context: Any = None) -> dict[str, Any]:
-        """Unmount an MCP server - delegates to MCPService.
-
-        Async version of mcp_unmount() using the service layer.
-
-        Args:
-            name: Mount name to unmount
-            context: Operation context
-
-        Returns:
-            Result dictionary with success status
-        """
-        return await self.mcp_service.mcp_unmount(name=name, _context=context)
-
-    async def amcp_sync(
+    @rpc_expose(description="Import a skill from a .skill (ZIP) package")
+    def skills_import(
         self,
-        name: str,
-        context: Any = None,
+        source_path: str | None = None,
+        zip_bytes: bytes | str | None = None,
+        zip_data: str | None = None,
+        target_path: str | None = None,
+        allow_overwrite: bool = False,
+        context: OperationContext | None = None,
+        tier: str | None = None,
     ) -> dict[str, Any]:
-        """Sync/refresh tools from MCP mount - delegates to MCPService.
+        """Import a skill - delegates to SkillService."""
+        return self.skill_service.import_skill(
+            source_path=source_path,
+            zip_bytes=zip_bytes,
+            zip_data=zip_data,
+            target_path=target_path,
+            allow_overwrite=allow_overwrite,
+            context=context,
+            tier=tier,
+        )
 
-        Async version of mcp_sync() using the service layer.
-
-        Args:
-            name: MCP mount name
-            context: Operation context
-
-        Returns:
-            Sync result dictionary with tool statistics
-        """
-        return await self.mcp_service.mcp_sync(
-            name=name,
+    @rpc_expose(description="Validate a .skill (ZIP) package")
+    def skills_validate_zip(
+        self,
+        source_path: str | None = None,
+        zip_bytes: bytes | str | None = None,
+        zip_data: str | None = None,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Validate a skill package - delegates to SkillService."""
+        return self.skill_service.validate_zip(
+            source_path=source_path,
+            zip_bytes=zip_bytes,
+            zip_data=zip_data,
             context=context,
         )
 
@@ -7179,80 +7398,41 @@ class NexusFS(  # type: ignore[misc]
     # Backward-compat alias
     acreate_llm_reader = create_llm_reader
 
-    # =========================================================================
-    # OAuthService Delegation Methods
-    # =========================================================================
+    # -------------------------------------------------------------------------
+    # OAuthService Delegation Methods (7 methods)
+    # Issue #1287 Phase 1.3: NexusFSOAuthMixin removed, replaced by OAuthService delegation
+    # -------------------------------------------------------------------------
 
-    async def aoauth_list_providers(
+    @rpc_expose(description="List available OAuth providers")
+    async def oauth_list_providers(
         self,
         _context: OperationContext | None = None,
     ) -> list[dict[str, Any]]:
-        """List all available OAuth providers - delegates to OAuthService.
+        """List available OAuth providers - delegates to OAuthService."""
+        return await self.oauth_service.oauth_list_providers(context=_context)
 
-        Returns information about all configured OAuth providers including
-        their scopes, PKCE requirements, and display names.
+    # Backward-compat alias
+    aoauth_list_providers = oauth_list_providers
 
-        Args:
-            _context: Operation context (optional)
-
-        Returns:
-            List of provider dictionaries containing:
-                - name: Provider identifier (e.g., "google-drive")
-                - display_name: Human-readable name
-                - scopes: List of OAuth scopes required
-                - requires_pkce: Whether provider requires PKCE
-                - icon_url: Optional URL to provider icon/logo
-                - metadata: Additional provider-specific metadata
-
-        Example:
-            ```python
-            # List all providers
-            providers = await fs.aoauth_list_providers()
-            for p in providers:
-                print(f"{p['display_name']}: {', '.join(p['scopes'])}")
-            ```
-        """
-        return await self.oauth_service.oauth_list_providers(_context=_context)
-
-    async def aoauth_get_auth_url(
+    @rpc_expose(description="Get OAuth authorization URL")
+    async def oauth_get_auth_url(
         self,
         provider: str,
         redirect_uri: str = "http://localhost:3000/oauth/callback",
         scopes: list[str] | None = None,
     ) -> dict[str, Any]:
-        """Get OAuth authorization URL - delegates to OAuthService.
-
-        Generates a state token and creates the OAuth authorization URL.
-        For providers requiring PKCE, also generates PKCE parameters.
-
-        Args:
-            provider: OAuth provider name (e.g., "google", "microsoft")
-            redirect_uri: OAuth redirect URI
-            scopes: Optional list of scopes to request
-
-        Returns:
-            Dictionary containing:
-                - url: Authorization URL to redirect user to
-                - state: CSRF state token
-                - pkce_data: PKCE parameters if provider requires it
-
-        Example:
-            ```python
-            # Get Google Drive auth URL
-            auth_data = await fs.aoauth_get_auth_url(
-                provider="google",
-                redirect_uri="http://localhost:3000/oauth/callback"
-            )
-            print(f"Visit: {auth_data['url']}")
-            ```
-        """
+        """Get OAuth authorization URL - delegates to OAuthService."""
         return await self.oauth_service.oauth_get_auth_url(
             provider=provider,
             redirect_uri=redirect_uri,
             scopes=scopes,
         )
 
-    async def aoauth_exchange_code(
+    # Backward-compat alias
+    aoauth_get_auth_url = oauth_get_auth_url
+
+    @rpc_expose(description="Exchange OAuth authorization code for tokens")
+    async def oauth_exchange_code(
         self,
         provider: str,
         code: str,
@@ -7262,38 +7442,7 @@ class NexusFS(  # type: ignore[misc]
         code_verifier: str | None = None,
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
-        """Exchange OAuth authorization code for tokens - delegates to OAuthService.
-
-        After user authorizes access, exchange the authorization code for
-        access and refresh tokens.
-
-        Args:
-            provider: OAuth provider name
-            code: Authorization code from OAuth callback
-            user_email: User email for credential storage (optional)
-            state: CSRF state token from authorization request
-            redirect_uri: OAuth redirect URI
-            code_verifier: PKCE code verifier (required for PKCE providers)
-            context: Operation context for zone isolation
-
-        Returns:
-            Dictionary containing:
-                - success: Whether exchange succeeded
-                - credential_id: Unique credential identifier
-                - user_email: User email address
-                - expires_at: Token expiration timestamp
-
-        Example:
-            ```python
-            # Exchange Google code
-            result = await fs.aoauth_exchange_code(
-                provider="google",
-                code="4/0AbCD...",
-                user_email="user@example.com"
-            )
-            print(f"Credential ID: {result['credential_id']}")
-            ```
-        """
+        """Exchange OAuth code for tokens - delegates to OAuthService."""
         return await self.oauth_service.oauth_exchange_code(
             provider=provider,
             code=code,
@@ -7304,176 +7453,76 @@ class NexusFS(  # type: ignore[misc]
             context=context,
         )
 
-    async def aoauth_list_credentials(
+    # Backward-compat alias
+    aoauth_exchange_code = oauth_exchange_code
+
+    @rpc_expose(description="List OAuth credentials")
+    async def oauth_list_credentials(
         self,
         provider: str | None = None,
         include_revoked: bool = False,
         context: OperationContext | None = None,
     ) -> list[dict[str, Any]]:
-        """List all OAuth credentials - delegates to OAuthService.
-
-        Returns credentials accessible to the current user. Non-admin users
-        can only see their own credentials.
-
-        Args:
-            provider: Optional provider filter
-            include_revoked: Include revoked credentials (default: False)
-            context: Operation context for user/zone identification
-
-        Returns:
-            List of credential dictionaries containing:
-                - credential_id: Unique identifier
-                - provider: OAuth provider name
-                - user_email: User email address
-                - scopes: List of granted scopes
-                - expires_at: Token expiration timestamp
-                - created_at: Creation timestamp
-                - last_used_at: Last usage timestamp
-                - revoked: Whether credential is revoked
-
-        Example:
-            ```python
-            # List all user's credentials
-            creds = await fs.aoauth_list_credentials(context=context)
-            for cred in creds:
-                print(f"{cred['provider']}: {cred['user_email']}")
-            ```
-        """
+        """List OAuth credentials - delegates to OAuthService."""
         return await self.oauth_service.oauth_list_credentials(
             provider=provider,
             include_revoked=include_revoked,
             context=context,
         )
 
-    async def aoauth_revoke_credential(
+    # Backward-compat alias
+    aoauth_list_credentials = oauth_list_credentials
+
+    @rpc_expose(description="Revoke OAuth credential")
+    async def oauth_revoke_credential(
         self,
         provider: str,
         user_email: str,
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
-        """Revoke OAuth credential - delegates to OAuthService.
-
-        Marks a credential as revoked, preventing further use. Users can only
-        revoke their own credentials unless they are admin.
-
-        Args:
-            provider: OAuth provider name
-            user_email: User email address
-            context: Operation context for permission checking
-
-        Returns:
-            Dictionary containing:
-                - success: True if revoked successfully
-                - credential_id: Revoked credential ID (optional)
-
-        Example:
-            ```python
-            # Revoke a credential
-            result = await fs.aoauth_revoke_credential(
-                provider="google",
-                user_email="user@example.com",
-                context=context
-            )
-            if result["success"]:
-                print("Credential revoked")
-            ```
-        """
+        """Revoke OAuth credential - delegates to OAuthService."""
         return await self.oauth_service.oauth_revoke_credential(
             provider=provider,
             user_email=user_email,
             context=context,
         )
 
-    async def aoauth_test_credential(
+    # Backward-compat alias
+    aoauth_revoke_credential = oauth_revoke_credential
+
+    @rpc_expose(description="Test OAuth credential validity")
+    async def oauth_test_credential(
         self,
         provider: str,
         user_email: str,
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
-        """Test OAuth credential validity - delegates to OAuthService.
-
-        Attempts to get a valid token, refreshing if necessary. Users can only
-        test their own credentials unless they are admin.
-
-        Args:
-            provider: OAuth provider name
-            user_email: User email address
-            context: Operation context for permission checking
-
-        Returns:
-            Dictionary containing:
-                - valid: True if credential is valid
-                - refreshed: True if token was refreshed
-                - expires_at: Token expiration timestamp
-                - error: Error message if invalid
-
-        Example:
-            ```python
-            # Test a credential
-            result = await fs.aoauth_test_credential(
-                provider="google",
-                user_email="user@example.com",
-                context=context
-            )
-            if result["valid"]:
-                print(f"Valid until {result['expires_at']}")
-            else:
-                print(f"Invalid: {result['error']}")
-            ```
-        """
+        """Test OAuth credential - delegates to OAuthService."""
         return await self.oauth_service.oauth_test_credential(
             provider=provider,
             user_email=user_email,
             context=context,
         )
 
-    async def amcp_connect(
+    # Backward-compat alias
+    aoauth_test_credential = oauth_test_credential
+
+    @rpc_expose(description="Connect to MCP provider via Klavis OAuth")
+    async def mcp_connect(
         self,
         provider: str,
         redirect_url: str | None = None,
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
-        """Connect to MCP provider via Klavis - delegates to OAuthService.
-
-        Creates a Klavis MCP instance for the provider. If OAuth tokens are
-        stored for this provider, passes them to Klavis. Otherwise returns
-        OAuth URL for authentication.
-
-        Args:
-            provider: MCP provider name (e.g., "google_drive", "gmail")
-            redirect_url: OAuth redirect URL for OAuth flow
-            context: Operation context for user identification
-
-        Returns:
-            Dictionary containing:
-                - provider: Provider name
-                - oauth_url: URL to complete OAuth if not authenticated
-                - strata_url: MCP strata URL if authenticated
-                - is_authenticated: Whether user is authenticated
-                - tools: List of available MCP tools if authenticated
-                - skill_path: Path to generated SKILL.md
-
-        Example:
-            ```python
-            # Connect to Google Drive via Klavis
-            result = await fs.amcp_connect(
-                provider="google_drive",
-                redirect_url="http://localhost:3000/oauth/callback",
-                context=context
-            )
-
-            if result["is_authenticated"]:
-                print(f"MCP URL: {result['strata_url']}")
-                print(f"Available tools: {len(result['tools'])}")
-            else:
-                print(f"Authenticate at: {result['oauth_url']}")
-            ```
-        """
+        """Connect to MCP provider via Klavis - delegates to OAuthService."""
         return await self.oauth_service.mcp_connect(
             provider=provider,
             redirect_url=redirect_url,
             context=context,
         )
+
+    # Backward-compat alias
+    amcp_connect = mcp_connect
 
     # =========================================================================
     # MountService Delegation Methods
@@ -7669,6 +7718,68 @@ class NexusFS(  # type: ignore[misc]
         )
 
     # =========================================================================
+    # SearchService Delegation Methods (list / glob / grep)
+    # =========================================================================
+
+    @rpc_expose(description="List files in directory")
+    def list(
+        self,
+        path: str = "/",
+        recursive: bool = True,
+        details: bool = False,
+        prefix: str | None = None,
+        show_parsed: bool = True,
+        context: Any = None,
+        limit: int | None = None,
+        cursor: str | None = None,
+    ) -> list[str] | list[dict[str, Any]] | Any:
+        """List files in a directory - delegates to SearchService."""
+        return self.search_service.list(
+            path=path,
+            recursive=recursive,
+            details=details,
+            prefix=prefix,
+            show_parsed=show_parsed,
+            context=context,
+            limit=limit,
+            cursor=cursor,
+        )
+
+    @rpc_expose(description="Find files by glob pattern")
+    def glob(self, pattern: str, path: str = "/", context: Any = None) -> builtins.list[str]:
+        """Find files matching a glob pattern - delegates to SearchService."""
+        return self.search_service.glob(pattern=pattern, path=path, context=context)
+
+    @rpc_expose(description="Execute multiple glob patterns in single call")
+    def glob_batch(
+        self, patterns: builtins.list[str], path: str = "/", context: Any = None
+    ) -> dict[str, builtins.list[str]]:
+        """Execute multiple glob patterns in a single call - delegates to SearchService."""
+        return self.search_service.glob_batch(patterns=patterns, path=path, context=context)
+
+    @rpc_expose(description="Search file contents")
+    def grep(
+        self,
+        pattern: str,
+        path: str = "/",
+        file_pattern: str | None = None,
+        ignore_case: bool = False,
+        max_results: int = 100,
+        search_mode: str = "auto",
+        context: Any = None,
+    ) -> builtins.list[dict[str, Any]]:
+        """Search file contents using regex patterns - delegates to SearchService."""
+        return self.search_service.grep(
+            pattern=pattern,
+            path=path,
+            file_pattern=file_pattern,
+            ignore_case=ignore_case,
+            max_results=max_results,
+            search_mode=search_mode,
+            context=context,
+        )
+
+    # =========================================================================
     # SearchService Delegation Methods (Semantic Search)
     # =========================================================================
 
@@ -7679,7 +7790,7 @@ class NexusFS(  # type: ignore[misc]
         limit: int = 10,
         filters: dict[str, Any] | None = None,
         search_mode: str = "semantic",
-    ) -> list[dict[str, Any]]:
+    ) -> builtins.list[dict[str, Any]]:
         """Search documents using natural language queries - delegates to SearchService."""
         return await self.search_service.semantic_search(
             query=query,
@@ -7712,16 +7823,36 @@ class NexusFS(  # type: ignore[misc]
         chunk_size: int = 1024,
         chunk_strategy: str = "semantic",
         async_mode: bool = True,
+        cache_url: str | None = None,
+        embedding_cache_ttl: int = 86400 * 3,
     ) -> None:
-        """Initialize semantic search engine - delegates to SearchService."""
-        return await self.search_service.initialize_semantic_search(
+        """Initialize semantic search engine.
+
+        Delegates to SearchService.ainitialize_semantic_search() (Issue #1287).
+        """
+        if self._record_store is None:
+            raise RuntimeError("Semantic search requires RecordStore (SQL engine)")
+
+        await self.search_service.ainitialize_semantic_search(
+            nx=self,
+            record_store_engine=self._record_store.engine,
             embedding_provider=embedding_provider,
             embedding_model=embedding_model,
             api_key=api_key,
             chunk_size=chunk_size,
             chunk_strategy=chunk_strategy,
             async_mode=async_mode,
+            cache_url=cache_url,
+            embedding_cache_ttl=embedding_cache_ttl,
         )
+        # Keep backward-compat reference on NexusFS
+        self._semantic_search = self.search_service._semantic_search  # type: ignore[assignment]
+
+    # Non-prefixed aliases (backward compat — mixin used these names)
+    semantic_search = asemantic_search
+    semantic_search_index = asemantic_search_index
+    semantic_search_stats = asemantic_search_stats
+    initialize_semantic_search = ainitialize_semantic_search
 
     def close(self) -> None:
         """Close the filesystem and release resources."""

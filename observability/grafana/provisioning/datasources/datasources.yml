@@ -1,0 +1,55 @@
+# Grafana datasource provisioning for Nexus observability (Issue #761)
+# Auto-provisions Prometheus, Loki, and Tempo with cross-linking.
+apiVersion: 1
+
+datasources:
+  # ── Prometheus ────────────────────────────────────────────────────────────
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    jsonData:
+      httpMethod: POST
+      exemplarTraceIdDestinations:
+        - name: traceID
+          datasourceUid: tempo
+
+  # ── Loki ──────────────────────────────────────────────────────────────────
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    editable: false
+    jsonData:
+      derivedFields:
+        - datasourceUid: tempo
+          matcherRegex: '"trace_id":\s*"(\w+)"'
+          name: TraceID
+          url: "$${__value.raw}"
+
+  # ── Tempo ─────────────────────────────────────────────────────────────────
+  - name: Tempo
+    uid: tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    editable: false
+    jsonData:
+      tracesToLogsV2:
+        datasourceUid: loki
+        filterByTraceID: true
+        filterBySpanID: true
+        tags:
+          - key: "service.name"
+            value: "compose_service"
+      nodeGraph:
+        enabled: true
+      tracesToMetrics:
+        datasourceUid: prometheus
+        tags:
+          - key: "service.name"
+            value: "job"

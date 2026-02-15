@@ -109,6 +109,8 @@ dependencies = [
     # Rate limiting for DoS protection (Issue #780)
     "slowapi>=0.1.9",
     "limits>=3.6.0",
+    # Prometheus metrics endpoint (Issue #761)
+    "prometheus_client>=0.20.0",
     # OpenTelemetry observability (Issue #764)
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
@@ -325,7 +327,7 @@ exclude_lines = [
 # Type checking configuration - Phase 3 will enable full strict mode
 python_version = "3.11"
 exclude = [
-    "nexus/raft/",  # Generated gRPC/protobuf code (Issue #1159)
+    "_pb2(_grpc)?\\.py$",  # Generated gRPC/protobuf stubs
 ]
 warn_return_any = true
 warn_unused_configs = true
@@ -369,6 +371,16 @@ disable_error_code = ["attr-defined", "override", "return-value"]
 module = "nexus.backends.gcs_connector"
 # HandlerResponse.error() returns HandlerResponse[None] but functions return HandlerResponse[T]
 disable_error_code = ["attr-defined", "return-value"]
+
+[[tool.mypy.overrides]]
+module = [
+    "nexus.core.async_scoped_filesystem",
+    "nexus.tools.langgraph.nexus_tools",
+]
+# These modules call methods on RemoteNexusFS/AsyncRemoteNexusFS that are
+# dispatched via __getattr__ (Issue #1289 RPC Proxy). The proxy returns Any
+# for dynamically-dispatched methods, triggering no-any-return warnings.
+warn_return_any = false
 
 [[tool.mypy.overrides]]
 module = "nexus.backends.s3_connector"
@@ -541,12 +553,20 @@ disable_error_code = ["no-any-return"]
 
 [[tool.mypy.overrides]]
 module = [
-    "nexus.raft",
-    "nexus.raft.*",
+    "nexus.core.metadata_pb2",
+    "nexus.raft.commands_pb2",
+    "nexus.raft.commands_pb2_grpc",
+    "nexus.raft.transport_pb2",
+    "nexus.raft.transport_pb2_grpc",
 ]
-# Generated gRPC/protobuf and Raft infrastructure - not yet typed (Issue #1159)
-# skip = treat as unresolvable, same as before raft files were committed
+# Generated gRPC/protobuf stubs — no type info available
 follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = "nexus.raft.client"
+# gRPC client interacts heavily with generated pb2 modules (metadata_pb2, commands_pb2)
+# that have no type stubs — attribute access on implicit Any modules
+disable_error_code = ["attr-defined"]
 
 [[tool.mypy.overrides]]
 module = "nexus.storage.raft_metadata_store"

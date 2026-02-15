@@ -10,7 +10,7 @@ import time
 import warnings
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator, Callable, Iterator
-from functools import partial, wraps
+from functools import partial
 from typing import Any, cast
 
 import litellm
@@ -96,31 +96,15 @@ def retry_decorator(
     retry_max_wait: float = 10.0,
     retry_multiplier: float = 2.0,
 ) -> Callable:
-    """Decorator for retrying functions with exponential backoff."""
+    """Decorator for retrying functions with exponential backoff (tenacity-backed)."""
+    from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-    def decorator(func: Callable) -> Callable:
-        @wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            last_exception = None
-            wait_time = retry_min_wait
-
-            for attempt in range(num_retries + 1):
-                try:
-                    return func(*args, **kwargs)
-                except retry_exceptions as e:
-                    last_exception = e
-                    if attempt < num_retries:
-                        time.sleep(wait_time)
-                        wait_time = min(wait_time * retry_multiplier, retry_max_wait)
-                    else:
-                        raise
-
-            if last_exception:
-                raise last_exception
-
-        return wrapper
-
-    return decorator
+    return retry(
+        stop=stop_after_attempt(num_retries + 1),
+        wait=wait_exponential(multiplier=retry_multiplier, min=retry_min_wait, max=retry_max_wait),
+        retry=retry_if_exception_type(retry_exceptions),
+        reraise=True,
+    )
 
 
 def async_retry_decorator(
@@ -130,31 +114,15 @@ def async_retry_decorator(
     retry_max_wait: float = 10.0,
     retry_multiplier: float = 2.0,
 ) -> Callable:
-    """Decorator for retrying async functions with exponential backoff."""
+    """Decorator for retrying async functions with exponential backoff (tenacity-backed)."""
+    from tenacity import retry, retry_if_exception_type, stop_after_attempt, wait_exponential
 
-    def decorator(func: Callable) -> Callable:
-        @wraps(func)
-        async def wrapper(*args: Any, **kwargs: Any) -> Any:
-            last_exception = None
-            wait_time = retry_min_wait
-
-            for attempt in range(num_retries + 1):
-                try:
-                    return await func(*args, **kwargs)
-                except retry_exceptions as e:
-                    last_exception = e
-                    if attempt < num_retries:
-                        await asyncio.sleep(wait_time)
-                        wait_time = min(wait_time * retry_multiplier, retry_max_wait)
-                    else:
-                        raise
-
-            if last_exception:
-                raise last_exception
-
-        return wrapper
-
-    return decorator
+    return retry(
+        stop=stop_after_attempt(num_retries + 1),
+        wait=wait_exponential(multiplier=retry_multiplier, min=retry_min_wait, max=retry_max_wait),
+        retry=retry_if_exception_type(retry_exceptions),
+        reraise=True,
+    )
 
 
 class LLMResponse(ABC):

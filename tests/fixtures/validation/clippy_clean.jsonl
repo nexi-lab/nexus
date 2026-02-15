@@ -1,0 +1,2 @@
+{"reason":"compiler-artifact","package_id":"my_crate 0.1.0","target":{"kind":["lib"],"name":"my_crate"}}
+{"reason":"build-finished","success":true}

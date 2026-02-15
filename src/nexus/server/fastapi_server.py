@@ -257,6 +257,14 @@ async def lifespan(_app: FastAPI) -> Any:
     except ImportError:
         logger.debug("OpenTelemetry not available")
 
+    # Initialize Prometheus metrics (Issue #761)
+    try:
+        from nexus.server.metrics import setup_prometheus
+
+        setup_prometheus()
+    except ImportError:
+        logger.debug("prometheus_client not available")
+
     # Configure thread pool size (Issue #932)
     # Increase from default 40 to prevent thread pool exhaustion under load
     limiter = to_thread.current_default_thread_limiter()
@@ -1169,6 +1177,7 @@ def create_app(
     database_url: str | None = None,
     thread_pool_size: int | None = None,
     operation_timeout: float | None = None,
+    data_dir: str | None = None,
 ) -> FastAPI:
     """Create FastAPI application.
 
@@ -1179,6 +1188,7 @@ def create_app(
         database_url: Database URL for async operations
         thread_pool_size: Thread pool size for sync operations (default: 200)
         operation_timeout: Timeout for sync operations in seconds (default: 30.0)
+        data_dir: Server data directory for persistent storage (A2A tasks, etc.)
 
     Returns:
         Configured FastAPI application
@@ -1201,6 +1211,7 @@ def create_app(
     app.state.api_key = api_key
     app.state.auth_provider = auth_provider
     app.state.database_url = database_url
+    app.state.data_dir = data_dir  # Issue #1412: A2A task persistence
 
     # Expose async_session_factory from RecordStoreABC (if available).
     # This is the canonical way for async endpoints to get database sessions
@@ -1372,6 +1383,27 @@ def create_app(
 
     # Initialize OAuth provider if credentials are available
     _initialize_oauth_provider(nexus_fs, auth_provider, database_url)
+
+    # Prometheus metrics middleware and endpoint (Issue #761)
+    try:
+        from nexus.server.metrics import PrometheusMiddleware, metrics_endpoint
+
+        app.add_middleware(PrometheusMiddleware)
+        app.add_route("/metrics", metrics_endpoint, methods=["GET"])
+    except ImportError:
+        pass
+
+    # Register QueryObserver → Prometheus collector bridge (Issue #762)
+    try:
+        from prometheus_client import REGISTRY
+
+        from nexus.server.pg_metrics_collector import QueryObserverCollector
+
+        obs_sub = nexus_fs._service_extras.get("observability_subsystem")
+        if obs_sub is not None:
+            REGISTRY.register(QueryObserverCollector(obs_sub.observer))
+    except Exception:
+        pass
 
     # Instrument FastAPI with OpenTelemetry (Issue #764)
     try:
@@ -1637,6 +1669,18 @@ def _register_routes(app: FastAPI) -> None:
             health["status"] = "degraded"
             health["unhealthy_backends"] = unhealthy_backends
 
+        # Circuit breaker health (Issue #1366)
+        _resiliency_mgr = (
+            _fastapi_app.state.nexus_fs._service_extras.get("resiliency_manager")
+            if _fastapi_app.state.nexus_fs
+            and hasattr(_fastapi_app.state.nexus_fs, "_service_extras")
+            else None
+        )
+        if _resiliency_mgr is not None:
+            health["components"]["resiliency"] = _resiliency_mgr.health_check()
+            if health["components"]["resiliency"]["status"] == "degraded":
+                health["status"] = "degraded"
+
         return health
 
     # Connection pool metrics endpoint (Issue #1075)
@@ -1744,10 +1788,16 @@ def _register_routes(app: FastAPI) -> None:
         from nexus.a2a import create_a2a_router
 
         a2a_base_url = os.environ.get("NEXUS_A2A_BASE_URL", "http://localhost:2026")
+        a2a_auth_required = bool(
+            getattr(_fastapi_app.state, "api_key", None)
+            or getattr(_fastapi_app.state, "auth_provider", None)
+        )
         a2a_router = create_a2a_router(
             nexus_fs=_fastapi_app.state.nexus_fs,
             config=None,  # Will use defaults; config can be passed when available
             base_url=a2a_base_url,
+            auth_required=a2a_auth_required,
+            data_dir=getattr(_fastapi_app.state, "data_dir", None),
         )
         app.include_router(a2a_router)
         logger.info("A2A protocol endpoint registered (/.well-known/agent.json + /a2a)")

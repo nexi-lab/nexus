@@ -10,12 +10,13 @@ import contextlib
 import contextvars
 import json
 import logging
-from typing import Any
+from typing import Any, cast
 
 from fastmcp import Context, FastMCP
 
 from nexus.core.filesystem import NexusFilesystem
 from nexus.mcp.formatters import format_response
+from nexus.mcp.tool_utils import handle_tool_errors, tool_error
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +71,7 @@ def create_mcp_server(
     name: str = "nexus",
     remote_url: str | None = None,
     api_key: str | None = None,
+    tool_namespace_middleware: Any | None = None,
 ) -> FastMCP:
     """Create an MCP server for Nexus operations.
 
@@ -78,6 +80,9 @@ def create_mcp_server(
         name: Server name (default: "nexus")
         remote_url: Remote Nexus URL for connecting to remote server
         api_key: Optional API key for remote server authentication (default)
+        tool_namespace_middleware: Optional ToolNamespaceMiddleware for per-tool
+            namespace filtering. When provided, discovery tools filter results
+            to only show tools visible to the current subject.
 
     Returns:
         FastMCP server instance
@@ -119,14 +124,15 @@ def create_mcp_server(
         if remote_url:
             from nexus.remote import RemoteNexusFS
 
-            nx = RemoteNexusFS(remote_url, api_key=api_key)
+            nx = cast(NexusFilesystem, RemoteNexusFS(remote_url, api_key=api_key))
         else:
             from nexus import connect
 
             nx = connect()
 
     # Store default connection and config for per-request API key support
-    _default_nx = nx
+    assert nx is not None  # guaranteed by the if-block above
+    _default_nx: NexusFilesystem = nx
     _remote_url = remote_url
 
     # Connection pool for per-request API keys (cached by API key)
@@ -174,7 +180,7 @@ def create_mcp_server(
         # Create new remote connection with API key from context
         from nexus.remote import RemoteNexusFS
 
-        new_nx = RemoteNexusFS(_remote_url, api_key=request_api_key)
+        new_nx = cast(NexusFilesystem, RemoteNexusFS(_remote_url, api_key=request_api_key))
         _connection_cache[request_api_key] = new_nx
         return new_nx
 
@@ -238,6 +244,25 @@ def create_mcp_server(
     # Add the middleware to FastMCP
     mcp.add_middleware(APIKeyExtractionMiddleware())
 
+    # Add tool namespace middleware if provided (Issue #1272)
+    if tool_namespace_middleware is not None:
+        mcp.add_middleware(tool_namespace_middleware)
+
+    def _get_visible_tool_names(ctx: Context | None) -> frozenset[str] | None:
+        """Get visible tool names for the current subject via namespace middleware.
+
+        Delegates to ``ToolNamespaceMiddleware.resolve_visible_tools()`` to
+        avoid duplicating subject extraction logic (#1A DRY fix).
+
+        Returns:
+            frozenset of visible tool names, or None if namespace filtering
+            is not configured (backward compat → all tools visible).
+        """
+        if tool_namespace_middleware is None:
+            return None
+        result: frozenset[str] | None = tool_namespace_middleware.resolve_visible_tools(ctx)
+        return result
+
     # =========================================================================
     # FILE OPERATIONS TOOLS
     # =========================================================================
@@ -250,6 +275,7 @@ def create_mcp_server(
             "openWorldHint": True,
         }
     )
+    @handle_tool_errors("reading file")
     def nexus_read_file(path: str, ctx: Context | None = None) -> str:
         """Read file content from Nexus filesystem.
 
@@ -260,20 +286,11 @@ def create_mcp_server(
         Returns:
             File content as string
         """
-        try:
-            nx_instance = _get_nexus_instance(ctx)
-            content = nx_instance.read(path)
-            if isinstance(content, bytes):
-                return content.decode("utf-8", errors="replace")
-            return str(content)
-        except FileNotFoundError:
-            return (
-                f"Error: File not found at '{path}'. Use nexus_list_files to check available files."
-            )
-        except PermissionError:
-            return f"Error: Permission denied for '{path}'. Check file permissions."
-        except Exception as e:
-            return f"Error reading file: {str(e)}"
+        nx_instance = _get_nexus_instance(ctx)
+        content = nx_instance.read(path)
+        if isinstance(content, bytes):
+            return content.decode("utf-8", errors="replace")
+        return str(content)
 
     @mcp.tool(
         annotations={
@@ -283,6 +300,7 @@ def create_mcp_server(
             "openWorldHint": True,
         }
     )
+    @handle_tool_errors("writing file")
     def nexus_write_file(path: str, content: str, ctx: Context | None = None) -> str:
         """Write content to a file in Nexus filesystem.
 
@@ -294,15 +312,10 @@ def create_mcp_server(
         Returns:
             Success message or error
         """
-        try:
-            nx_instance = _get_nexus_instance(ctx)
-            content_bytes = content.encode("utf-8") if isinstance(content, str) else content
-            nx_instance.write(path, content_bytes)
-            return f"Successfully wrote {len(content_bytes)} bytes to {path}"
-        except PermissionError:
-            return f"Error: Permission denied for '{path}'. Check write permissions."
-        except Exception as e:
-            return f"Error writing file: {str(e)}"
+        nx_instance = _get_nexus_instance(ctx)
+        content_bytes = content.encode("utf-8") if isinstance(content, str) else content
+        nx_instance.write(path, content_bytes)
+        return f"Successfully wrote {len(content_bytes)} bytes to {path}"
 
     @mcp.tool(
         annotations={
@@ -312,6 +325,7 @@ def create_mcp_server(
             "openWorldHint": True,
         }
     )
+    @handle_tool_errors("editing file")
     def nexus_edit_file(
         path: str,
         edits: list[dict],
@@ -344,24 +358,15 @@ def create_mcp_server(
                 edits=[{"old_str": "print('hello')", "new_str": "print('world')"}]
             )
         """
-        try:
-            nx_instance = _get_nexus_instance(ctx)
-            result = nx_instance.edit(
-                path,
-                edits,
-                fuzzy_threshold=fuzzy_threshold,
-                preview=preview,
-                if_match=if_match,
-            )
-            return json.dumps(result, indent=2)
-        except FileNotFoundError:
-            return (
-                f"Error: File not found at '{path}'. Use nexus_list_files to check available files."
-            )
-        except PermissionError:
-            return f"Error: Permission denied for '{path}'. Check write permissions."
-        except Exception as e:
-            return f"Error editing file: {str(e)}"
+        nx_instance = _get_nexus_instance(ctx)
+        result = nx_instance.edit(
+            path,
+            edits,
+            fuzzy_threshold=fuzzy_threshold,
+            preview=preview,
+            if_match=if_match,
+        )
+        return json.dumps(result, indent=2)
 
     @mcp.tool(
         annotations={
@@ -371,6 +376,7 @@ def create_mcp_server(
             "openWorldHint": True,
         }
     )
+    @handle_tool_errors("deleting file")
     def nexus_delete_file(path: str, ctx: Context | None = None) -> str:
         """Delete a file from Nexus filesystem.
 
@@ -380,16 +386,9 @@ def create_mcp_server(
         Returns:
             Success message or error
         """
-        try:
-            nx_instance = _get_nexus_instance(ctx)
-            nx_instance.delete(path)
-            return f"Successfully deleted {path}"
-        except FileNotFoundError:
-            return f"Error: File not found at '{path}'. It may have already been deleted."
-        except PermissionError:
-            return f"Error: Permission denied for '{path}'. Check delete permissions."
-        except Exception as e:
-            return f"Error deleting file: {str(e)}"
+        nx_instance = _get_nexus_instance(ctx)
+        nx_instance.delete(path)
+        return f"Successfully deleted {path}"
 
     @mcp.tool(
         annotations={
@@ -399,6 +398,7 @@ def create_mcp_server(
             "openWorldHint": True,
         }
     )
+    @handle_tool_errors("listing files")
     def nexus_list_files(
         path: str = "/",
         recursive: bool = False,
@@ -444,29 +444,31 @@ def create_mcp_server(
             - **size**: 1024
             ...
         """
+        nx_instance = _get_nexus_instance(ctx)
         try:
-            nx_instance = _get_nexus_instance(ctx)
             all_files = nx_instance.list(path, recursive=recursive, details=details)
-            total = len(all_files)
-
-            # Apply pagination
-            paginated_files = all_files[offset : offset + limit]
-            has_more = (offset + limit) < total
-
-            result = {
-                "total": total,
-                "count": len(paginated_files),
-                "offset": offset,
-                "items": paginated_files,
-                "has_more": has_more,
-                "next_offset": offset + limit if has_more else None,
-            }
-
-            return format_response(result, response_format)
         except FileNotFoundError:
-            return f"Error: Directory not found at '{path}'. Use nexus_list_files('/') to see root contents."
-        except Exception as e:
-            return f"Error listing files: {str(e)}"
+            return tool_error(
+                "not_found",
+                f"Directory not found at '{path}'. Use nexus_list_files('/') to see root contents.",
+            )
+
+        total = len(all_files)
+
+        # Apply pagination
+        paginated_files = all_files[offset : offset + limit]
+        has_more = (offset + limit) < total
+
+        result = {
+            "total": total,
+            "count": len(paginated_files),
+            "offset": offset,
+            "items": paginated_files,
+            "has_more": has_more,
+            "next_offset": offset + limit if has_more else None,
+        }
+
+        return format_response(result, response_format)
 
     @mcp.tool(
         annotations={
@@ -476,6 +478,7 @@ def create_mcp_server(
             "openWorldHint": True,
         }
     )
+    @handle_tool_errors("getting file info")
     def nexus_file_info(path: str, ctx: Context | None = None) -> str:
         """Get detailed information about a file.
 
@@ -485,32 +488,30 @@ def create_mcp_server(
         Returns:
             JSON string with file metadata
         """
-        try:
-            nx_instance = _get_nexus_instance(ctx)
-            # Use exists and other methods to get file info
-            # info() is not in base NexusFilesystem interface
-            if not nx_instance.exists(path):
-                return f"Error: File not found at '{path}'. Use nexus_list_files to check available files."
+        nx_instance = _get_nexus_instance(ctx)
+        if not nx_instance.exists(path):
+            return tool_error(
+                "not_found",
+                f"File not found at '{path}'. Use nexus_list_files to check available files.",
+            )
 
-            is_dir = nx_instance.is_directory(path)
-            info_dict = {
-                "path": path,
-                "exists": True,
-                "is_directory": is_dir,
-            }
+        is_dir = nx_instance.is_directory(path)
+        info_dict: dict[str, Any] = {
+            "path": path,
+            "exists": True,
+            "is_directory": is_dir,
+        }
 
-            # Try to get size if it's a file
-            if not is_dir:
-                try:
-                    content = nx_instance.read(path)
-                    if isinstance(content, bytes):
-                        info_dict["size"] = len(content)
-                except Exception:
-                    pass
+        # Try to get size if it's a file
+        if not is_dir:
+            try:
+                content = nx_instance.read(path)
+                if isinstance(content, bytes):
+                    info_dict["size"] = len(content)
+            except Exception:
+                pass
 
-            return json.dumps(info_dict, indent=2)
-        except Exception as e:
-            return f"Error getting file info: {str(e)}"
+        return json.dumps(info_dict, indent=2)
 
     # =========================================================================
     # DIRECTORY OPERATIONS TOOLS
@@ -524,6 +525,7 @@ def create_mcp_server(
             "openWorldHint": True,
         }
     )
+    @handle_tool_errors("creating directory")
     def nexus_mkdir(path: str, ctx: Context | None = None) -> str:
         """Create a directory in Nexus filesystem.
 
@@ -533,16 +535,12 @@ def create_mcp_server(
         Returns:
             Success message or error
         """
+        nx_instance = _get_nexus_instance(ctx)
         try:
-            nx_instance = _get_nexus_instance(ctx)
             nx_instance.mkdir(path)
-            return f"Successfully created directory {path}"
         except FileExistsError:
             return f"Directory already exists at '{path}'."
-        except PermissionError:
-            return f"Error: Permission denied for '{path}'. Check write permissions."
-        except Exception as e:
-            return f"Error creating directory: {str(e)}"
+        return f"Successfully created directory {path}"
 
     @mcp.tool(
         annotations={
@@ -552,6 +550,7 @@ def create_mcp_server(
             "openWorldHint": True,
         }
     )
+    @handle_tool_errors("removing directory")
     def nexus_rmdir(path: str, recursive: bool = False, ctx: Context | None = None) -> str:
         """Remove a directory from Nexus filesystem.
 
@@ -562,18 +561,17 @@ def create_mcp_server(
         Returns:
             Success message or error
         """
+        nx_instance = _get_nexus_instance(ctx)
         try:
-            nx_instance = _get_nexus_instance(ctx)
             nx_instance.rmdir(path, recursive=recursive)
-            return f"Successfully removed directory {path}"
-        except FileNotFoundError:
-            return f"Error: Directory not found at '{path}'. It may have already been removed."
         except OSError as e:
             if "not empty" in str(e).lower():
-                return f"Error: Directory '{path}' is not empty. Use recursive=True to remove non-empty directories."
-            return f"Error removing directory: {str(e)}"
-        except Exception as e:
-            return f"Error removing directory: {str(e)}"
+                return tool_error(
+                    "invalid_input",
+                    f"Directory '{path}' is not empty. Use recursive=True to remove non-empty directories.",
+                )
+            raise  # Let handle_tool_errors catch other OSErrors
+        return f"Successfully removed directory {path}"
 
     @mcp.tool(
         annotations={
@@ -585,6 +583,7 @@ def create_mcp_server(
             "openWorldHint": True,
         }
     )
+    @handle_tool_errors("renaming file")
     def nexus_rename_file(old_path: str, new_path: str, ctx: Context | None = None) -> str:
         """Rename or move a file or directory in Nexus filesystem.
 
@@ -595,16 +594,15 @@ def create_mcp_server(
         Returns:
             Success message or error
         """
+        nx_instance = _get_nexus_instance(ctx)
         try:
-            nx_instance = _get_nexus_instance(ctx)
             nx_instance.rename(old_path, new_path)
-            return f"Successfully renamed {old_path} to {new_path}"
-        except FileNotFoundError:
-            return f"Error: Source path '{old_path}' not found. Use nexus_list_files to check available files."
         except FileExistsError:
-            return f"Error: Target path '{new_path}' already exists."
-        except Exception as e:
-            return f"Error renaming file: {str(e)}"
+            return tool_error(
+                "invalid_input",
+                f"Target path '{new_path}' already exists.",
+            )
+        return f"Successfully renamed {old_path} to {new_path}"
 
     # =========================================================================
     # SEARCH TOOLS
@@ -618,6 +616,7 @@ def create_mcp_server(
             "openWorldHint": True,
         }
     )
+    @handle_tool_errors("searching files (glob)")
     def nexus_glob(
         pattern: str,
         path: str = "/",
@@ -648,34 +647,31 @@ def create_mcp_server(
             To find all Python files: nexus_glob("**/*.py", "/workspace")
             With pagination: nexus_glob("**/*.py", "/workspace", limit=50, offset=0)
         """
-        try:
-            nx_instance = _get_nexus_instance(ctx)
-            all_matches = nx_instance.glob(pattern, path)
-            total = len(all_matches)
+        nx_instance = _get_nexus_instance(ctx)
+        all_matches = nx_instance.glob(pattern, path)
+        total = len(all_matches)
 
-            # Apply pagination
-            paginated_matches = all_matches[offset : offset + limit]
-            has_more = (offset + limit) < total
+        # Apply pagination
+        paginated_matches = all_matches[offset : offset + limit]
+        has_more = (offset + limit) < total
 
-            # Issue #538: Log truncation when results exceed limit
-            if has_more or offset > 0:
-                logger.info(
-                    f"[GLOB] Truncated {total} -> {len(paginated_matches)} results "
-                    f"(offset={offset}, limit={limit})"
-                )
+        # Issue #538: Log truncation when results exceed limit
+        if has_more or offset > 0:
+            logger.info(
+                f"[GLOB] Truncated {total} -> {len(paginated_matches)} results "
+                f"(offset={offset}, limit={limit})"
+            )
 
-            result = {
-                "total": total,
-                "count": len(paginated_matches),
-                "offset": offset,
-                "items": paginated_matches,
-                "has_more": has_more,
-                "next_offset": offset + limit if has_more else None,
-            }
+        result = {
+            "total": total,
+            "count": len(paginated_matches),
+            "offset": offset,
+            "items": paginated_matches,
+            "has_more": has_more,
+            "next_offset": offset + limit if has_more else None,
+        }
 
-            return format_response(result, response_format)
-        except Exception as e:
-            return f"Error in glob search: {str(e)}. Check pattern syntax (e.g., '**/*.py' for recursive Python files)."
+        return format_response(result, response_format)
 
     @mcp.tool(
         annotations={
@@ -685,6 +681,7 @@ def create_mcp_server(
             "openWorldHint": True,
         }
     )
+    @handle_tool_errors("searching file contents (grep)")
     def nexus_grep(
         pattern: str,
         path: str = "/",
@@ -717,34 +714,31 @@ def create_mcp_server(
             To get first 50 matches: nexus_grep("TODO", "/workspace", limit=50)
             To get next 50 matches: nexus_grep("TODO", "/workspace", limit=50, offset=50)
         """
-        try:
-            nx_instance = _get_nexus_instance(ctx)
-            all_results = nx_instance.grep(pattern, path, ignore_case=ignore_case)
-            total = len(all_results)
+        nx_instance = _get_nexus_instance(ctx)
+        all_results = nx_instance.grep(pattern, path, ignore_case=ignore_case)
+        total = len(all_results)
 
-            # Apply pagination
-            paginated_results = all_results[offset : offset + limit]
-            has_more = (offset + limit) < total
+        # Apply pagination
+        paginated_results = all_results[offset : offset + limit]
+        has_more = (offset + limit) < total
 
-            # Issue #538: Log truncation when results exceed limit
-            if has_more or offset > 0:
-                logger.info(
-                    f"[GREP] Truncated {total} -> {len(paginated_results)} results "
-                    f"(offset={offset}, limit={limit})"
-                )
+        # Issue #538: Log truncation when results exceed limit
+        if has_more or offset > 0:
+            logger.info(
+                f"[GREP] Truncated {total} -> {len(paginated_results)} results "
+                f"(offset={offset}, limit={limit})"
+            )
 
-            result = {
-                "total": total,
-                "count": len(paginated_results),
-                "offset": offset,
-                "items": paginated_results,
-                "has_more": has_more,
-                "next_offset": offset + limit if has_more else None,
-            }
+        result = {
+            "total": total,
+            "count": len(paginated_results),
+            "offset": offset,
+            "items": paginated_results,
+            "has_more": has_more,
+            "next_offset": offset + limit if has_more else None,
+        }
 
-            return format_response(result, response_format)
-        except Exception as e:
-            return f"Error in grep search: {str(e)}. Check regex pattern syntax."
+        return format_response(result, response_format)
 
     @mcp.tool(
         annotations={
@@ -782,44 +776,37 @@ def create_mcp_server(
             First page: nexus_semantic_search("machine learning algorithms", limit=10)
             Next page: nexus_semantic_search("machine learning algorithms", limit=10, offset=10)
         """
-        try:
-            nx_instance = _get_nexus_instance(ctx)
-            # Check if nx has semantic_search method (only available in NexusFS)
-            if hasattr(nx_instance, "semantic_search"):
-                from nexus.core.sync_bridge import run_sync
-
-                # Get results with high limit to support pagination
-                # Note: We fetch offset+limit*2 to efficiently check if there are more results
-                fetch_limit = offset + limit * 2
-                # Call async semantic_search method
-                all_results = run_sync(
-                    nx_instance.semantic_search(query, path="/", limit=fetch_limit)
-                )
-                total = len(all_results)
-
-                # Apply pagination
-                paginated_results = all_results[offset : offset + limit]
-                has_more = (offset + limit) < total
-
-                result = {
-                    "total": total,
-                    "count": len(paginated_results),
-                    "offset": offset,
-                    "items": paginated_results,
-                    "has_more": has_more,
-                    "next_offset": offset + limit if has_more else None,
-                }
-
-                return format_response(result, response_format)
-            return (
-                "Semantic search not available (requires NexusFS with semantic search initialized)"
+        nx_instance = _get_nexus_instance(ctx)
+        if not hasattr(nx_instance, "semantic_search"):
+            return tool_error(
+                "unavailable",
+                "Semantic search not available (requires NexusFS with semantic search initialized).",
             )
+
+        try:
+            from nexus.core.sync_bridge import run_sync
+
+            fetch_limit = offset + limit * 2
+            all_results = run_sync(nx_instance.semantic_search(query, path="/", limit=fetch_limit))
         except Exception as e:
-            # If semantic search is not initialized, return a consistent "not available" message
-            error_msg = str(e)
-            if "not initialized" in error_msg.lower():
-                return "Semantic search not available (not initialized)"
-            return f"Error in semantic search: {error_msg}"
+            if "not initialized" in str(e).lower():
+                return tool_error("unavailable", "Semantic search not available (not initialized).")
+            return tool_error("internal", f"Error in semantic search: {e}", str(e))
+
+        total = len(all_results)
+        paginated_results = all_results[offset : offset + limit]
+        has_more = (offset + limit) < total
+
+        result = {
+            "total": total,
+            "count": len(paginated_results),
+            "offset": offset,
+            "items": paginated_results,
+            "has_more": has_more,
+            "next_offset": offset + limit if has_more else None,
+        }
+
+        return format_response(result, response_format)
 
     # =========================================================================
     # MEMORY TOOLS
@@ -849,29 +836,25 @@ def create_mcp_server(
         Returns:
             Success message or error
         """
-        try:
-            nx_instance = _get_nexus_instance(ctx)
-            # Check if nx has memory attribute (only available in NexusFS)
-            if not hasattr(nx_instance, "memory"):
-                return "Memory system not available (requires NexusFS)"
+        nx_instance = _get_nexus_instance(ctx)
+        if not hasattr(nx_instance, "memory"):
+            return tool_error("unavailable", "Memory system not available (requires NexusFS).")
 
+        try:
             nx_instance.memory.store(
                 content,
                 scope="user",
                 memory_type=memory_type,
                 importance=importance,
             )
-            # Commit the session to persist (only for local NexusFS)
-            # RemoteMemory handles commit/rollback server-side automatically
             if hasattr(nx_instance.memory, "session"):
                 nx_instance.memory.session.commit()
             return f"Successfully stored memory: {content[:80]}..."
         except Exception as e:
-            # Rollback on error (only for local NexusFS)
-            if hasattr(nx_instance, "memory") and hasattr(nx_instance.memory, "session"):
+            if hasattr(nx_instance.memory, "session"):
                 with contextlib.suppress(Exception):
                     nx_instance.memory.session.rollback()
-            return f"Error storing memory: {str(e)}"
+            return tool_error("internal", f"Error storing memory: {e}", str(e))
 
     @mcp.tool(
         annotations={
@@ -881,6 +864,7 @@ def create_mcp_server(
             "openWorldHint": True,
         }
     )
+    @handle_tool_errors("querying memory")
     def nexus_query_memory(
         query: str,
         memory_type: str | None = None,
@@ -897,21 +881,17 @@ def create_mcp_server(
         Returns:
             JSON string with matching memories
         """
-        try:
-            nx_instance = _get_nexus_instance(ctx)
-            # Check if nx has memory attribute (only available in NexusFS)
-            if not hasattr(nx_instance, "memory"):
-                return "Memory system not available (requires NexusFS)"
+        nx_instance = _get_nexus_instance(ctx)
+        if not hasattr(nx_instance, "memory"):
+            return tool_error("unavailable", "Memory system not available (requires NexusFS).")
 
-            memories = nx_instance.memory.search(
-                query,
-                scope="user",
-                memory_type=memory_type,
-                limit=limit,
-            )
-            return json.dumps(memories, indent=2)
-        except Exception as e:
-            return f"Error querying memory: {str(e)}"
+        memories = nx_instance.memory.search(
+            query,
+            scope="user",
+            memory_type=memory_type,
+            limit=limit,
+        )
+        return json.dumps(memories, indent=2)
 
     # =========================================================================
     # WORKFLOW TOOLS
@@ -925,22 +905,22 @@ def create_mcp_server(
             "openWorldHint": True,
         }
     )
+    @handle_tool_errors("listing workflows")
     def nexus_list_workflows(ctx: Context | None = None) -> str:
         """List available workflows in Nexus.
 
         Returns:
             JSON string with list of workflows
         """
-        try:
-            nx_instance = _get_nexus_instance(ctx)
-            # Check if nx has workflows attribute (only available in NexusFS)
-            if not hasattr(nx_instance, "workflows"):
-                return "Workflow system not available (requires NexusFS with workflows enabled)"
+        nx_instance = _get_nexus_instance(ctx)
+        if not hasattr(nx_instance, "workflows"):
+            return tool_error(
+                "unavailable",
+                "Workflow system not available (requires NexusFS with workflows enabled).",
+            )
 
-            workflows = nx_instance.workflows.list_workflows()
-            return json.dumps(workflows, indent=2)
-        except Exception as e:
-            return f"Error listing workflows: {str(e)}"
+        workflows = nx_instance.workflows.list_workflows()
+        return json.dumps(workflows, indent=2)
 
     @mcp.tool(
         annotations={
@@ -950,6 +930,7 @@ def create_mcp_server(
             "openWorldHint": True,
         }
     )
+    @handle_tool_errors("executing workflow")
     def nexus_execute_workflow(
         name: str, inputs: str | None = None, ctx: Context | None = None
     ) -> str:
@@ -962,23 +943,47 @@ def create_mcp_server(
         Returns:
             Workflow execution result
         """
-        try:
-            nx_instance = _get_nexus_instance(ctx)
-            # Check if nx has workflows attribute (only available in NexusFS)
-            if not hasattr(nx_instance, "workflows"):
-                return "Workflow system not available (requires NexusFS with workflows enabled)"
+        nx_instance = _get_nexus_instance(ctx)
+        if not hasattr(nx_instance, "workflows"):
+            return tool_error(
+                "unavailable",
+                "Workflow system not available (requires NexusFS with workflows enabled).",
+            )
 
+        try:
             input_dict = json.loads(inputs) if inputs else {}
-            result = nx_instance.workflows.execute(name, **input_dict)
-            return json.dumps(result, indent=2)
         except json.JSONDecodeError:
-            return "Error: Invalid JSON in inputs parameter. Provide valid JSON string."
-        except Exception as e:
-            return f"Error executing workflow: {str(e)}"
+            return tool_error(
+                "invalid_input", "Invalid JSON in inputs parameter. Provide valid JSON string."
+            )
+
+        result = nx_instance.workflows.execute(name, **input_dict)
+        return json.dumps(result, indent=2)
 
     # =========================================================================
     # SANDBOX EXECUTION TOOLS (Conditional Registration)
     # =========================================================================
+
+    def _format_sandbox_result(result: dict[str, Any]) -> str:
+        """Format sandbox execution result into a readable string."""
+        output_parts: list[str] = []
+
+        stdout = result.get("stdout", "").strip()
+        if stdout:
+            output_parts.append(f"Output:\n{stdout}")
+
+        stderr = result.get("stderr", "").strip()
+        if stderr:
+            output_parts.append(f"Errors:\n{stderr}")
+
+        exit_code = result.get("exit_code", -1)
+        exec_time = result.get("execution_time", 0)
+        output_parts.append(f"Exit code: {exit_code}")
+        output_parts.append(f"Execution time: {exec_time:.3f}s")
+
+        return (
+            "\n\n".join(output_parts) if output_parts else "Code executed successfully (no output)"
+        )
 
     # Check if sandbox support is available (use default connection for check)
     sandbox_available = False
@@ -997,6 +1002,7 @@ def create_mcp_server(
     if sandbox_available:
 
         @mcp.tool()
+        @handle_tool_errors("executing Python code")
         def nexus_python(code: str, sandbox_id: str, ctx: Context | None = None) -> str:
             """Execute Python code in Nexus sandbox.
 
@@ -1007,38 +1013,14 @@ def create_mcp_server(
             Returns:
                 Execution result with stdout, stderr, exit_code, and execution time
             """
-            try:
-                nx_instance = _get_nexus_instance(ctx)
-                result = nx_instance.sandbox_run(
-                    sandbox_id=sandbox_id, language="python", code=code, timeout=300
-                )
-
-                # Format output
-                output_parts = []
-
-                stdout = result.get("stdout", "").strip()
-                if stdout:
-                    output_parts.append(f"Output:\n{stdout}")
-
-                stderr = result.get("stderr", "").strip()
-                if stderr:
-                    output_parts.append(f"Errors:\n{stderr}")
-
-                exit_code = result.get("exit_code", -1)
-                exec_time = result.get("execution_time", 0)
-                output_parts.append(f"Exit code: {exit_code}")
-                output_parts.append(f"Execution time: {exec_time:.3f}s")
-
-                return (
-                    "\n\n".join(output_parts)
-                    if output_parts
-                    else "Code executed successfully (no output)"
-                )
-
-            except Exception as e:
-                return f"Error executing Python code: {str(e)}"
+            nx_instance = _get_nexus_instance(ctx)
+            result = nx_instance.sandbox_run(
+                sandbox_id=sandbox_id, language="python", code=code, timeout=300
+            )
+            return _format_sandbox_result(result)
 
         @mcp.tool()
+        @handle_tool_errors("executing bash command")
         def nexus_bash(command: str, sandbox_id: str, ctx: Context | None = None) -> str:
             """Execute bash commands in Nexus sandbox.
 
@@ -1049,38 +1031,14 @@ def create_mcp_server(
             Returns:
                 Execution result with stdout, stderr, exit_code, and execution time
             """
-            try:
-                nx_instance = _get_nexus_instance(ctx)
-                result = nx_instance.sandbox_run(
-                    sandbox_id=sandbox_id, language="bash", code=command, timeout=300
-                )
-
-                # Format output
-                output_parts = []
-
-                stdout = result.get("stdout", "").strip()
-                if stdout:
-                    output_parts.append(f"Output:\n{stdout}")
-
-                stderr = result.get("stderr", "").strip()
-                if stderr:
-                    output_parts.append(f"Errors:\n{stderr}")
-
-                exit_code = result.get("exit_code", -1)
-                exec_time = result.get("execution_time", 0)
-                output_parts.append(f"Exit code: {exit_code}")
-                output_parts.append(f"Execution time: {exec_time:.3f}s")
-
-                return (
-                    "\n\n".join(output_parts)
-                    if output_parts
-                    else "Command executed successfully (no output)"
-                )
-
-            except Exception as e:
-                return f"Error executing bash command: {str(e)}"
+            nx_instance = _get_nexus_instance(ctx)
+            result = nx_instance.sandbox_run(
+                sandbox_id=sandbox_id, language="bash", code=command, timeout=300
+            )
+            return _format_sandbox_result(result)
 
         @mcp.tool()
+        @handle_tool_errors("creating sandbox")
         def nexus_sandbox_create(
             name: str, ttl_minutes: int = 10, ctx: Context | None = None
         ) -> str:
@@ -1093,28 +1051,24 @@ def create_mcp_server(
             Returns:
                 JSON string with sandbox_id and metadata
             """
-            try:
-                nx_instance = _get_nexus_instance(ctx)
-                result = nx_instance.sandbox_create(name=name, ttl_minutes=ttl_minutes)
-                return json.dumps(result, indent=2)
-            except Exception as e:
-                return f"Error creating sandbox: {str(e)}"
+            nx_instance = _get_nexus_instance(ctx)
+            result = nx_instance.sandbox_create(name=name, ttl_minutes=ttl_minutes)
+            return json.dumps(result, indent=2)
 
         @mcp.tool()
+        @handle_tool_errors("listing sandboxes")
         def nexus_sandbox_list(ctx: Context | None = None) -> str:
             """List all active sandboxes.
 
             Returns:
                 JSON string with list of sandboxes
             """
-            try:
-                nx_instance = _get_nexus_instance(ctx)
-                result = nx_instance.sandbox_list()
-                return json.dumps(result, indent=2)
-            except Exception as e:
-                return f"Error listing sandboxes: {str(e)}"
+            nx_instance = _get_nexus_instance(ctx)
+            result = nx_instance.sandbox_list()
+            return json.dumps(result, indent=2)
 
         @mcp.tool()
+        @handle_tool_errors("stopping sandbox")
         def nexus_sandbox_stop(sandbox_id: str, ctx: Context | None = None) -> str:
             """Stop and destroy a sandbox.
 
@@ -1124,12 +1078,9 @@ def create_mcp_server(
             Returns:
                 Success message or error
             """
-            try:
-                nx_instance = _get_nexus_instance(ctx)
-                nx_instance.sandbox_stop(sandbox_id)
-                return f"Successfully stopped sandbox {sandbox_id}"
-            except Exception as e:
-                return f"Error stopping sandbox: {str(e)}"
+            nx_instance = _get_nexus_instance(ctx)
+            nx_instance.sandbox_stop(sandbox_id)
+            return f"Successfully stopped sandbox {sandbox_id}"
 
     # =========================================================================
     # RESOURCES
@@ -1196,20 +1147,32 @@ def create_mcp_server(
             "openWorldHint": True,
         }
     )
-    def nexus_discovery_search_tools(query: str, top_k: int = 5) -> str:
+    @handle_tool_errors("searching tools")
+    def nexus_discovery_search_tools(query: str, top_k: int = 5, ctx: Context | None = None) -> str:
         """Search for MCP tools by query.
 
         Returns relevant tools ranked by BM25 score. Use this to find
-        tools that can help accomplish a task.
+        tools that can help accomplish a task. Results are filtered by
+        the caller's tool namespace grants.
 
         Args:
             query: Search query describing the desired tool functionality
             top_k: Maximum number of results (default: 5)
+            ctx: FastMCP Context (automatically injected)
 
         Returns:
             JSON with matching tools and scores
         """
-        matches = tool_index.search(query, top_k=top_k)
+        # Over-fetch to compensate for namespace filtering
+        visible = _get_visible_tool_names(ctx)
+        fetch_k = top_k * 3 if visible is not None else top_k
+
+        matches = tool_index.search(query, top_k=fetch_k)
+
+        # Post-filter through namespace
+        if visible is not None:
+            matches = [m for m in matches if m.tool.name in visible][:top_k]
+
         result = {
             "tools": [m.to_dict() for m in matches],
             "count": len(matches),
@@ -1225,23 +1188,36 @@ def create_mcp_server(
             "openWorldHint": True,
         }
     )
-    def nexus_discovery_list_servers() -> str:
+    @handle_tool_errors("listing servers")
+    def nexus_discovery_list_servers(ctx: Context | None = None) -> str:
         """List all available MCP servers.
 
-        Returns information about available tool providers.
+        Returns information about available tool providers. Tool counts
+        are filtered by the caller's namespace grants.
+
+        Args:
+            ctx: FastMCP Context (automatically injected)
 
         Returns:
             JSON with server list and tool counts
         """
+        visible = _get_visible_tool_names(ctx)
         servers = tool_index.list_servers()
-        server_tool_counts = {
-            server: len(tool_index.list_tools(server=server)) for server in servers
-        }
+
+        total_visible = 0
+        server_tool_counts: dict[str, int] = {}
+        for server in servers:
+            tools = tool_index.list_tools(server=server)
+            if visible is not None:
+                tools = [t for t in tools if t.name in visible]
+            server_tool_counts[server] = len(tools)
+            total_visible += len(tools)
+
         result = {
             "servers": servers,
             "server_tool_counts": server_tool_counts,
             "total_servers": len(servers),
-            "total_tools": tool_index.tool_count,
+            "total_tools": total_visible if visible is not None else tool_index.tool_count,
         }
         return json.dumps(result, indent=2)
 
@@ -1253,18 +1229,30 @@ def create_mcp_server(
             "openWorldHint": True,
         }
     )
-    def nexus_discovery_get_tool_details(tool_name: str) -> str:
+    @handle_tool_errors("getting tool details")
+    def nexus_discovery_get_tool_details(tool_name: str, ctx: Context | None = None) -> str:
         """Get detailed information about a specific tool.
 
         Returns the full input schema and description. Use this after
-        search_tools to get complete parameter information.
+        search_tools to get complete parameter information. Invisible
+        tools (outside the caller's namespace) return "not found".
 
         Args:
             tool_name: Full tool name (e.g., 'nexus_read_file')
+            ctx: FastMCP Context (automatically injected)
 
         Returns:
             JSON with tool details or error
         """
+        # Namespace-as-security: invisible tools appear as "not found"
+        visible = _get_visible_tool_names(ctx)
+        if visible is not None and tool_name not in visible:
+            result: dict[str, Any] = {
+                "error": f"Tool '{tool_name}' not found",
+                "found": False,
+            }
+            return json.dumps(result, indent=2)
+
         tool = tool_index.get_tool(tool_name)
         if tool is None:
             result = {"error": f"Tool '{tool_name}' not found", "found": False}
@@ -1280,23 +1268,33 @@ def create_mcp_server(
             "openWorldHint": True,
         }
     )
-    def nexus_discovery_load_tools(tool_names: list[str]) -> str:
+    @handle_tool_errors("loading tools")
+    def nexus_discovery_load_tools(tool_names: list[str], ctx: Context | None = None) -> str:
         """Load specified tools into the active context.
 
         After loading, these tools become available for direct use.
         Use this after finding relevant tools with search_tools.
+        Invisible tools (outside the caller's namespace) are treated
+        as "not found" (namespace-as-security).
 
         Args:
             tool_names: List of tool names to load
+            ctx: FastMCP Context (automatically injected)
 
         Returns:
             JSON with loaded tools and status
         """
+        visible = _get_visible_tool_names(ctx)
         loaded = []
         not_found = []
         already_loaded = []
 
         for name in tool_names:
+            # Namespace-as-security: invisible tools appear as "not found"
+            if visible is not None and name not in visible:
+                not_found.append(name)
+                continue
+
             if name in _active_tools:
                 already_loaded.append(name)
                 continue

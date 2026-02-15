@@ -129,6 +129,77 @@ def _create_wallet_provisioner() -> Any:
     return _provision_wallet
 
 
+def _parse_resiliency_config(raw: dict[str, Any] | None) -> Any:
+    """Convert raw YAML dict → frozen ``ResiliencyConfig`` dataclasses.
+
+    Returns default config when *raw* is None or empty.  Falls back to
+    default config on parse errors (logs the error).
+    """
+    import logging as _log
+
+    from nexus.core.resiliency import (
+        CircuitBreakerPolicy,
+        ResiliencyConfig,
+        RetryPolicy,
+        TargetBinding,
+        TimeoutPolicy,
+        parse_duration,
+    )
+
+    if not raw:
+        return ResiliencyConfig()
+
+    _logger = _log.getLogger(__name__)
+
+    try:
+        timeouts: dict[str, TimeoutPolicy] = {"default": TimeoutPolicy()}
+        for name, val in raw.get("timeouts", {}).items():
+            if isinstance(val, dict):
+                timeouts[name] = TimeoutPolicy(
+                    seconds=parse_duration(val.get("seconds", 5.0)),
+                )
+            else:
+                timeouts[name] = TimeoutPolicy(seconds=parse_duration(val))
+
+        retries: dict[str, RetryPolicy] = {"default": RetryPolicy()}
+        for name, val in raw.get("retries", {}).items():
+            if isinstance(val, dict):
+                retries[name] = RetryPolicy(
+                    max_retries=int(val.get("max_retries", 3)),
+                    max_interval=float(val.get("max_interval", 10.0)),
+                    multiplier=float(val.get("multiplier", 2.0)),
+                    min_wait=float(val.get("min_wait", 1.0)),
+                )
+
+        circuit_breakers: dict[str, CircuitBreakerPolicy] = {"default": CircuitBreakerPolicy()}
+        for name, val in raw.get("circuit_breakers", {}).items():
+            if isinstance(val, dict):
+                circuit_breakers[name] = CircuitBreakerPolicy(
+                    failure_threshold=int(val.get("failure_threshold", 5)),
+                    success_threshold=int(val.get("success_threshold", 3)),
+                    timeout=parse_duration(val.get("timeout", 30.0)),
+                )
+
+        targets: dict[str, TargetBinding] = {}
+        for name, val in raw.get("targets", {}).items():
+            if isinstance(val, dict):
+                targets[name] = TargetBinding(
+                    timeout=str(val.get("timeout", "default")),
+                    retry=str(val.get("retry", "default")),
+                    circuit_breaker=str(val.get("circuit_breaker", "default")),
+                )
+
+        return ResiliencyConfig(
+            timeouts=timeouts,
+            retries=retries,
+            circuit_breakers=circuit_breakers,
+            targets=targets,
+        )
+    except (ValueError, TypeError, AttributeError) as exc:
+        _logger.error("Invalid resiliency config, using defaults: %s", exc)
+        return ResiliencyConfig()
+
+
 def create_nexus_services(
     record_store: RecordStoreABC,
     metadata_store: FileMetadataProtocol,
@@ -145,6 +216,7 @@ def create_nexus_services(
     zone_id: str | None = None,
     agent_id: str | None = None,
     enable_write_buffer: bool | None = None,
+    resiliency_raw: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Create default services for NexusFS dependency injection.
 
@@ -336,6 +408,13 @@ def create_nexus_services(
         engines=[engine],
     )
 
+    # --- Resiliency Subsystem (Issue #1366) ---
+    from nexus.core.resiliency import ResiliencyManager, set_default_manager
+
+    resiliency_config = _parse_resiliency_config(resiliency_raw)
+    resiliency_manager = ResiliencyManager(config=resiliency_config)
+    set_default_manager(resiliency_manager)
+
     # --- Chunked Upload Service (Issue #788) ---
     # Build upload config from environment variables (match NexusConfig field names)
     import os as _os
@@ -440,6 +519,20 @@ def create_nexus_services(
     except ImportError as _e:
         _factory_logger.warning("Failed to create ManifestResolver: %s", _e)
 
+    # --- Tool Namespace Middleware (Issue #1272) ---
+    tool_namespace_middleware = None
+    try:
+        from nexus.mcp.middleware import ToolNamespaceMiddleware
+
+        tool_namespace_middleware = ToolNamespaceMiddleware(
+            rebac_manager=rebac_manager,
+            zone_id=zone_id,
+            cache_ttl=cache_ttl_seconds or 300,
+        )
+        _factory_logger.debug("[FACTORY] ToolNamespaceMiddleware created (zone_id=%s)", zone_id)
+    except ImportError as _e:
+        _factory_logger.debug("ToolNamespaceMiddleware unavailable: %s", _e)
+
     result = {
         "rebac_manager": rebac_manager,
         "dir_visibility_cache": dir_visibility_cache,
@@ -459,6 +552,8 @@ def create_nexus_services(
         "manifest_resolver": manifest_resolver,
         "manifest_metrics": manifest_metrics,
         "rebac_circuit_breaker": rebac_circuit_breaker,
+        "tool_namespace_middleware": tool_namespace_middleware,
+        "resiliency_manager": resiliency_manager,
     }
 
     return result
@@ -561,6 +656,8 @@ def create_nexus_fs(
         "manifest_resolver",
         "manifest_metrics",
         "rebac_circuit_breaker",
+        "tool_namespace_middleware",
+        "resiliency_manager",
     ):
         val = services.pop(key, None)
         if val is not None:

@@ -66,6 +66,7 @@ from nexus.server.api.v2.models.reflection import (
     ReflectionResponse,
     ReflectRequest,
 )
+from nexus.server.api.v2.models.sync_push import SyncPushResponse
 from nexus.server.api.v2.models.trajectories import (
     TrajectoryCompleteRequest,
     TrajectoryGetResponse,
@@ -131,6 +132,8 @@ __all__ = [
     "ConflictListResponse",
     "ConflictResolveRequest",
     "ConflictResolveResponse",
+    # Sync Push
+    "SyncPushResponse",
     # Operations
     "OperationResponse",
     "OperationListResponse",

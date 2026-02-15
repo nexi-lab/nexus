@@ -183,6 +183,7 @@ class Memory:
         store_to_graph: bool = False,  # #1039: Store entities/relationships to graph tables
         valid_at: datetime | str | None = None,  # #1183: When fact became valid in real world
         classify_stability: bool = True,  # #1191: Auto-classify temporal stability
+        detect_evolution: bool = False,  # #1190: Detect memory evolution relationships (opt-in)
     ) -> str:
         """Store a memory.
 
@@ -343,6 +344,11 @@ class Memory:
                 entity_types_str = extractor.get_entity_types_string(text_content)
                 person_refs_str = extractor.get_person_refs_string(text_content)
 
+        # DRY: Parse entities once for reuse across enrichment steps (#1190)
+        parsed_entities: list[dict[str, Any]] | None = None
+        if entities_json_str:
+            parsed_entities = json.loads(entities_json_str)
+
         # #1028: Extract temporal metadata for date-based queries
         temporal_refs_json_str = None
         earliest_date = None
@@ -374,9 +380,7 @@ class Memory:
             )
 
             # Get entities as hints for relationship extraction
-            entities_for_rel = None
-            if entities_json_str:
-                entities_for_rel = json.loads(entities_json_str)
+            entities_for_rel = parsed_entities
 
             rel_result = rel_extractor.extract(
                 text_content,
@@ -404,9 +408,7 @@ class Memory:
                 )
 
                 # Reuse already-extracted entities and temporal refs
-                entities_for_classify = None
-                if entities_json_str:
-                    entities_for_classify = json.loads(entities_json_str)
+                entities_for_classify = parsed_entities
 
                 temporal_refs_for_classify = None
                 if temporal_refs_json_str:
@@ -475,6 +477,46 @@ class Memory:
             created_by=user_id or agent_id,  # #1184: Who created this version
             change_reason=change_reason,  # #1188: For correction mode
         )
+
+        # #1190: Detect memory evolution relationships (opt-in)
+        if detect_evolution and text_content:
+            try:
+                from nexus.services.memory.evolution_detector import (
+                    MemoryEvolutionDetector,
+                    apply_evolution_results,
+                )
+
+                detector = MemoryEvolutionDetector(llm_provider=self.llm_provider)
+
+                # Reuse embedding vector if available
+                embedding_vec_for_evolution = None
+                if embedding_json:
+                    embedding_vec_for_evolution = json.loads(embedding_json)
+
+                evolution_result = detector.detect(
+                    session=self.session,
+                    zone_id=zone_id,
+                    new_text=text_content,
+                    new_entities=parsed_entities,
+                    person_refs=person_refs_str,
+                    entity_types=entity_types_str,
+                    embedding_vec=embedding_vec_for_evolution,
+                    exclude_memory_id=memory.memory_id,
+                )
+
+                if evolution_result and evolution_result.relationships:
+                    apply_evolution_results(
+                        session=self.session,
+                        new_memory_id=memory.memory_id,
+                        results=evolution_result,
+                    )
+            except Exception:
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "Evolution detection failed, continuing without it",
+                    exc_info=True,
+                )
 
         # #1039: Store extracted entities and relationships to graph tables
         if store_to_graph and (entities_json_str or relationships_json_str):
@@ -883,6 +925,9 @@ class Memory:
                     "temporal_stability": memory.temporal_stability,  # #1191
                     "stability_confidence": memory.stability_confidence,  # #1191
                     "estimated_ttl_days": memory.estimated_ttl_days,  # #1191
+                    "extends_ids": memory.extends_ids,  # #1190
+                    "extended_by_ids": memory.extended_by_ids,  # #1190
+                    "derived_from_ids": memory.derived_from_ids,  # #1190
                     "created_at": memory.created_at.isoformat() if memory.created_at else None,
                     "updated_at": memory.updated_at.isoformat() if memory.updated_at else None,
                     "valid_at": memory.valid_at.isoformat() if memory.valid_at else None,  # #1183
@@ -1417,6 +1462,11 @@ class Memory:
             "temporal_stability": memory.temporal_stability,  # #1191
             "stability_confidence": memory.stability_confidence,  # #1191
             "estimated_ttl_days": memory.estimated_ttl_days,  # #1191
+            "supersedes_id": memory.supersedes_id,  # #1190
+            "superseded_by_id": memory.superseded_by_id,  # #1190
+            "extends_ids": memory.extends_ids,  # #1190
+            "extended_by_ids": memory.extended_by_ids,  # #1190
+            "derived_from_ids": memory.derived_from_ids,  # #1190
         }
 
     def retrieve(

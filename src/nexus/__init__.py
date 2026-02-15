@@ -47,7 +47,7 @@ __version__ = "0.7.1.dev0"
 __author__ = "Nexi Lab Team"
 __license__ = "Apache-2.0"
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 # =============================================================================
 # LAZY IMPORTS for performance optimization
@@ -164,99 +164,6 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module 'nexus' has no attribute {name!r}")
 
 
-def _setup_multi_zone(zone_mgr: Any, peers: list[str] | None, max_retries: int = 5) -> None:
-    """Create/join zones and mount DT_MOUNT entries from env vars.
-
-    Env vars:
-        NEXUS_ZONE_CREATE: comma-separated zone IDs to create (leader node)
-        NEXUS_ZONE_JOIN:   comma-separated zone IDs to join (follower nodes)
-        NEXUS_MOUNTS:      comma-separated /path=zone_id mount declarations
-
-    Args:
-        zone_mgr: ZoneManager instance
-        peers: List of peer addresses
-        max_retries: Number of retries for Raft leader election errors
-    """
-    import logging
-    import os
-    import posixpath
-    import time
-
-    logger = logging.getLogger(__name__)
-
-    zone_create_str = os.environ.get("NEXUS_ZONE_CREATE", "")
-    zone_join_str = os.environ.get("NEXUS_ZONE_JOIN", "")
-    mounts_str = os.environ.get("NEXUS_MOUNTS", "")
-
-    def _with_leader_retry(fn: Any, zid: str, action: str) -> None:
-        """Retry zone operations that fail due to Raft leader election."""
-        for attempt in range(max_retries):
-            try:
-                fn(zid, peers=peers)
-                return
-            except RuntimeError as e:
-                if "not leader" in str(e).lower() and attempt < max_retries - 1:
-                    wait = 0.5 * (attempt + 1)
-                    logger.warning(
-                        "Zone %s %s failed (not leader), retrying in %.1fs (%d/%d)",
-                        zid,
-                        action,
-                        wait,
-                        attempt + 1,
-                        max_retries,
-                    )
-                    time.sleep(wait)
-                    continue
-                raise
-
-    for zid in (z.strip() for z in zone_create_str.split(",") if z.strip()):
-        if zid not in zone_mgr.list_zones():
-            _with_leader_retry(zone_mgr.create_zone, zid, "create")
-
-    for zid in (z.strip() for z in zone_join_str.split(",") if z.strip()):
-        if zid not in zone_mgr.list_zones():
-            _with_leader_retry(zone_mgr.join_zone, zid, "join")
-
-    if not mounts_str:
-        return
-
-    from nexus.core._metadata_generated import DT_DIR, DT_MOUNT, FileMetadata
-    from nexus.raft.zone_path_resolver import ZonePathResolver
-
-    resolver = ZonePathResolver(zone_mgr, root_zone_id="root")
-    for entry in mounts_str.split(","):
-        entry = entry.strip()
-        if "=" not in entry:
-            continue
-        mpath, tzid = entry.split("=", 1)
-        mpath, tzid = mpath.strip(), tzid.strip()
-        if not mpath or not tzid:
-            continue
-        parent = posixpath.dirname(mpath)
-        name = posixpath.basename(mpath)
-        if not name:
-            continue
-        resolved = resolver.resolve(parent)
-        rel_path = posixpath.join(resolved.path, name)
-        store = zone_mgr.get_store(resolved.zone_id)
-        if store is None:
-            continue
-        existing = store.get(rel_path)
-        if existing and existing.entry_type == DT_MOUNT:
-            continue  # Already mounted (idempotent)
-        if not existing:
-            store.put(
-                FileMetadata(
-                    path=rel_path,
-                    backend_name="",
-                    physical_path="",
-                    size=0,
-                    entry_type=DT_DIR,
-                )
-            )
-        zone_mgr.mount(resolved.zone_id, rel_path, tzid)
-
-
 def connect(
     config: str | Path | dict | NexusConfig | None = None,
 ) -> NexusFilesystem:
@@ -301,7 +208,7 @@ def connect(
             >>> nx.write("/workspace/file.txt", b"Hello World")
 
         Federation mode (multi-node cluster):
-            >>> # Requires NEXUS_PEERS, NEXUS_NODE_ID, NEXUS_BIND_ADDR env vars
+            >>> # Requires NEXUS_NODE_ID, NEXUS_BIND_ADDR env vars
             >>> nx = nexus.connect(config={"mode": "federation"})
     """
     import os
@@ -331,11 +238,14 @@ def connect(
         api_key = cfg.api_key or os.getenv("NEXUS_API_KEY")
         timeout = int(cfg.timeout) if hasattr(cfg, "timeout") else 30
         connect_timeout = int(cfg.connect_timeout) if hasattr(cfg, "connect_timeout") else 5
-        return RemoteNexusFS(
-            server_url=server_url,
-            api_key=api_key,
-            timeout=timeout,
-            connect_timeout=connect_timeout,
+        return cast(
+            NexusFilesystem,
+            RemoteNexusFS(
+                server_url=server_url,
+                api_key=api_key,
+                timeout=timeout,
+                connect_timeout=connect_timeout,
+            ),
         )
 
     # ── Modes: standalone / federation ───────────────────────────────
@@ -379,8 +289,37 @@ def connect(
         metadata_path = cfg.db_path or str(Path(data_dir) / "metadata")
 
     # Create metadata store based on mode
+    metadata_store: FileMetadataProtocol
     if cfg.mode == "federation":
-        metadata_store = _create_federation_metastore(metadata_path)
+        # Federation: single-node bootstrap, multi-node via public APIs later.
+        try:
+            from nexus.raft import ZoneAwareMetadataStore
+            from nexus.raft.zone_manager import ZoneManager
+        except ImportError as err:
+            raise ImportError(
+                "mode='federation' requires the Rust Raft extension built with --features full. "
+                "Build with: maturin develop -m rust/nexus_raft/Cargo.toml --features full"
+            ) from err
+
+        node_id = int(os.environ.get("NEXUS_NODE_ID", "1"))
+        bind_addr = os.environ.get("NEXUS_BIND_ADDR", "0.0.0.0:2126")
+        zones_dir = os.environ.get("NEXUS_DATA_DIR", str(Path(metadata_path).parent / "zones"))
+        zone_mgr = ZoneManager(node_id=node_id, base_path=zones_dir, bind_addr=bind_addr)
+        zone_mgr.bootstrap()  # single-node, Raft self-elects leader
+
+        # Optional zone topology from env vars (idempotent)
+        zones_str = os.environ.get("NEXUS_FEDERATION_ZONES", "")
+        mounts_str = os.environ.get("NEXUS_FEDERATION_MOUNTS", "")
+        if zones_str:
+            zones = [z.strip() for z in zones_str.split(",") if z.strip()]
+            mounts: dict[str, str] = {}
+            if mounts_str:
+                for pair in mounts_str.split(","):
+                    path, zone_id = pair.strip().split("=", 1)
+                    mounts[path.strip()] = zone_id.strip()
+            zone_mgr.init_topology(zones=zones, mounts=mounts)
+
+        metadata_store = ZoneAwareMetadataStore.from_zone_manager(zone_mgr)
     else:
         # standalone: single-node embedded Raft (no peers)
         metadata_store = RaftMetadataStore.embedded(metadata_path)
@@ -439,37 +378,6 @@ def connect(
     nx_fs._config = cfg
 
     return nx_fs
-
-
-def _create_federation_metastore(metadata_path: str) -> FileMetadataProtocol:
-    """Create a federation-mode metadata store using ZoneManager + Raft.
-
-    Requires the Rust extension built with --features full.
-    Reads cluster config from env vars (SSOT):
-        NEXUS_NODE_ID, NEXUS_DATA_DIR, NEXUS_BIND_ADDR, NEXUS_PEERS
-    """
-    import os
-    from pathlib import Path
-
-    try:
-        from nexus.raft import ZoneAwareMetadataStore
-        from nexus.raft.zone_manager import ZoneManager
-    except ImportError as err:
-        raise ImportError(
-            "mode='federation' requires the Rust Raft extension built with --features full. "
-            "Build with: maturin develop -m rust/nexus_raft/Cargo.toml --features full"
-        ) from err
-
-    nexus_peers = os.environ.get("NEXUS_PEERS", "")
-    node_id = int(os.environ.get("NEXUS_NODE_ID", "1"))
-    bind_addr = os.environ.get("NEXUS_BIND_ADDR", "0.0.0.0:2126")
-    zones_dir = os.environ.get("NEXUS_DATA_DIR", str(Path(metadata_path).parent / "zones"))
-
-    peers = [p.strip() for p in nexus_peers.split(",") if p.strip()] if nexus_peers else None
-    zone_mgr = ZoneManager(node_id=node_id, base_path=zones_dir, bind_addr=bind_addr)
-    zone_mgr.bootstrap(root_zone_id="root", peers=peers)
-    _setup_multi_zone(zone_mgr, peers)
-    return ZoneAwareMetadataStore.from_zone_manager(zone_mgr, root_zone_id="root")
 
 
 __all__ = [

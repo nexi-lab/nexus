@@ -8,14 +8,19 @@ from typing import Any, cast
 import yaml
 
 from nexus.core.nexus_fs import NexusFS
+from nexus.core.registry import BaseRegistry
 from nexus.plugins.base import NexusPlugin, PluginMetadata
 from nexus.plugins.hooks import HookType, PluginHooks
 
 logger = logging.getLogger(__name__)
 
 
-class PluginRegistry:
-    """Registry for discovering and managing Nexus plugins."""
+class PluginRegistry(BaseRegistry[NexusPlugin]):
+    """Registry for discovering and managing Nexus plugins.
+
+    Inherits generic register/get/list/clear from ``BaseRegistry`` and adds
+    hook management, entry-point discovery, and per-plugin configuration.
+    """
 
     def __init__(self, nexus_fs: NexusFS | None = None, config_dir: Path | None = None):
         """Initialize plugin registry.
@@ -24,8 +29,8 @@ class PluginRegistry:
             nexus_fs: NexusFS instance to pass to plugins
             config_dir: Directory for plugin configurations (default: ~/.nexus/plugins)
         """
+        super().__init__(name="plugins")
         self._nexus_fs = nexus_fs
-        self._plugins: dict[str, NexusPlugin] = {}
         self._hooks = PluginHooks()
         self._config_dir = config_dir or Path.home() / ".nexus" / "plugins"
         self._config_dir.mkdir(parents=True, exist_ok=True)
@@ -72,10 +77,7 @@ class PluginRegistry:
                     plugin._config = config
 
                     # Register the plugin
-                    self._plugins[plugin_name] = plugin
-
-                    # Register hooks
-                    self._register_plugin_hooks(plugin_name, plugin)
+                    self.register(plugin, name=plugin_name)
 
                     discovered.append(plugin_name)
                     logger.info(f"Loaded plugin: {plugin_name} v{plugin.metadata().version}")
@@ -89,7 +91,7 @@ class PluginRegistry:
 
         return discovered
 
-    def register(self, plugin: NexusPlugin, name: str | None = None) -> None:
+    def register(self, plugin: NexusPlugin, name: str | None = None, **_kw: object) -> None:  # type: ignore[override]
         """Manually register a plugin.
 
         Args:
@@ -98,24 +100,22 @@ class PluginRegistry:
         """
         plugin_name = name or plugin.metadata().name
 
-        # Note: Configuration should be loaded during discovery
-        # We can't await here in sync method, so assume plugin is already initialized
+        # Store in BaseRegistry
+        super().register(plugin_name, plugin, allow_overwrite=True)
 
-        self._plugins[plugin_name] = plugin
         self._register_plugin_hooks(plugin_name, plugin)
 
         logger.info(f"Registered plugin: {plugin_name}")
 
-    def unregister(self, plugin_name: str) -> None:
+    def unregister(self, plugin_name: str) -> NexusPlugin | None:
         """Unregister a plugin.
 
         Args:
             plugin_name: Name of plugin to unregister
         """
-        if plugin_name not in self._plugins:
-            return
-
-        plugin = self._plugins[plugin_name]
+        plugin = self.get(plugin_name)
+        if plugin is None:
+            return None
 
         # Unregister hooks
         for hook_type in HookType:
@@ -123,12 +123,9 @@ class PluginRegistry:
                 if hook_name == hook_type.value:
                     self._hooks.unregister(hook_type, handler)
 
-        # Shutdown plugin
-        # Note: Can't await in sync method
-        # await plugin.shutdown()
-
-        del self._plugins[plugin_name]
+        result = super().unregister(plugin_name)
         logger.info(f"Unregistered plugin: {plugin_name}")
+        return result
 
     def get_plugin(self, name: str) -> NexusPlugin | None:
         """Get a registered plugin by name.
@@ -139,7 +136,7 @@ class PluginRegistry:
         Returns:
             Plugin instance or None if not found
         """
-        return self._plugins.get(name)
+        return self.get(name)
 
     def list_plugins(self) -> list[PluginMetadata]:
         """List all registered plugins.
@@ -147,7 +144,7 @@ class PluginRegistry:
         Returns:
             List of plugin metadata
         """
-        return [plugin.metadata() for plugin in self._plugins.values()]
+        return [plugin.metadata() for plugin in self.list_all()]
 
     def enable_plugin(self, name: str) -> None:
         """Enable a plugin.

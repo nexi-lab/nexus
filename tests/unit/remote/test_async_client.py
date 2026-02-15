@@ -756,45 +756,41 @@ class TestAsyncRemoteNexusFSFileOperations:
 
     @pytest.mark.asyncio
     async def test_delete(self, async_client):
-        """Test delete operation."""
-        # Delete returns the result directly (could be bool or dict)
-        async_client._call_rpc = AsyncMock(return_value=True)
+        """Test delete operation — hand-written override returns True."""
+        async_client._call_rpc = AsyncMock(return_value=None)
 
         result = await async_client.delete("/test.txt")
 
+        # delete() returns True on success
         assert result is True
-        # Check that delete was called
-        # Note: Implementation includes if_match in params dict, but when None it may
-        # be filtered out by the RPC layer, so we check flexibly
-        async_client._call_rpc.assert_called_once()
-        call_args = async_client._call_rpc.call_args
-        assert call_args[0][0] == "delete"
-        params = call_args[0][1]
-        assert params["path"] == "/test.txt"
-        # if_match may be None or omitted when None
-        if "if_match" in params:
-            assert params["if_match"] is None
+        async_client._call_rpc.assert_called_once_with("delete", {"path": "/test.txt"})
 
     @pytest.mark.asyncio
     async def test_mkdir(self, async_client):
-        """Test mkdir operation."""
+        """Test mkdir operation — auto-dispatched via proxy."""
         async_client._call_rpc = AsyncMock(return_value={})
 
         await async_client.mkdir("/workspace/newdir")
 
+        # Proxy only sends explicitly-provided args (no defaults)
         async_client._call_rpc.assert_called_once_with(
-            "mkdir", {"path": "/workspace/newdir", "parents": False, "exist_ok": False}
+            "mkdir",
+            {"path": "/workspace/newdir"},
+            read_timeout=None,
         )
 
     @pytest.mark.asyncio
     async def test_rmdir(self, async_client):
-        """Test rmdir operation."""
+        """Test rmdir operation — auto-dispatched via proxy."""
         async_client._call_rpc = AsyncMock(return_value=None)
 
         await async_client.rmdir("/workspace/olddir")
 
+        # Proxy only sends explicitly-provided args (no defaults)
         async_client._call_rpc.assert_called_once_with(
-            "rmdir", {"path": "/workspace/olddir", "recursive": False}
+            "rmdir",
+            {"path": "/workspace/olddir"},
+            read_timeout=None,
         )
 
     @pytest.mark.asyncio

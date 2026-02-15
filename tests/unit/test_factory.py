@@ -107,6 +107,7 @@ class TestCreateNexusServices:
             "version_service",
             "observability_subsystem",
             "wallet_provisioner",
+            "tool_namespace_middleware",
         }
         assert expected_keys.issubset(result.keys()), (
             f"Missing keys: {expected_keys - result.keys()}"
@@ -343,3 +344,183 @@ class TestCreateNexusFS:
             custom_namespaces=[{"name": "custom"}],
         )
         assert nx.router is not None
+
+
+# ---------------------------------------------------------------------------
+# Tool namespace middleware wiring (Issue #1272)
+# ---------------------------------------------------------------------------
+
+
+class TestToolNamespaceMiddleware:
+    """Tests for ToolNamespaceMiddleware factory wiring."""
+
+    def _make_record_store(self, tmp_path: Path) -> MagicMock:
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+
+        from nexus.storage.models import Base
+
+        db_file = tmp_path / "records.db"
+        engine = create_engine(f"sqlite:///{db_file}")
+        Base.metadata.create_all(engine)
+        session_factory = sessionmaker(bind=engine)
+
+        mock = MagicMock()
+        mock.engine = engine
+        mock.session_factory = session_factory
+        mock.database_url = f"sqlite:///{db_file}"
+        return mock
+
+    def test_middleware_created_by_factory(self, tmp_path: Path) -> None:
+        """Factory creates ToolNamespaceMiddleware when services are built."""
+        from nexus.core.router import PathRouter
+        from nexus.factory import create_nexus_services
+
+        deps = _make_deps(tmp_path)
+        router = PathRouter()
+        router.add_mount("/", deps["backend"], priority=0)
+        record_store = self._make_record_store(tmp_path)
+
+        result = create_nexus_services(
+            record_store=record_store,
+            metadata_store=deps["metadata_store"],
+            backend=deps["backend"],
+            router=router,
+        )
+
+        mw = result["tool_namespace_middleware"]
+        assert mw is not None
+        assert type(mw).__name__ == "ToolNamespaceMiddleware"
+
+    def test_middleware_receives_rebac_manager(self, tmp_path: Path) -> None:
+        """Middleware is wired with the same rebac_manager from the factory."""
+        from nexus.core.router import PathRouter
+        from nexus.factory import create_nexus_services
+
+        deps = _make_deps(tmp_path)
+        router = PathRouter()
+        router.add_mount("/", deps["backend"], priority=0)
+        record_store = self._make_record_store(tmp_path)
+
+        result = create_nexus_services(
+            record_store=record_store,
+            metadata_store=deps["metadata_store"],
+            backend=deps["backend"],
+            router=router,
+        )
+
+        mw = result["tool_namespace_middleware"]
+        assert mw._rebac_manager is result["rebac_manager"]
+
+    def test_middleware_receives_zone_id(self, tmp_path: Path) -> None:
+        """Middleware inherits zone_id from factory params."""
+        from nexus.core.router import PathRouter
+        from nexus.factory import create_nexus_services
+
+        deps = _make_deps(tmp_path)
+        router = PathRouter()
+        router.add_mount("/", deps["backend"], priority=0)
+        record_store = self._make_record_store(tmp_path)
+
+        result = create_nexus_services(
+            record_store=record_store,
+            metadata_store=deps["metadata_store"],
+            backend=deps["backend"],
+            router=router,
+            zone_id="test-zone-42",
+        )
+
+        mw = result["tool_namespace_middleware"]
+        assert mw._zone_id == "test-zone-42"
+
+    def test_middleware_metrics_initially_zero(self, tmp_path: Path) -> None:
+        """Freshly created middleware has zero metrics."""
+        from nexus.core.router import PathRouter
+        from nexus.factory import create_nexus_services
+
+        deps = _make_deps(tmp_path)
+        router = PathRouter()
+        router.add_mount("/", deps["backend"], priority=0)
+        record_store = self._make_record_store(tmp_path)
+
+        result = create_nexus_services(
+            record_store=record_store,
+            metadata_store=deps["metadata_store"],
+            backend=deps["backend"],
+            router=router,
+        )
+
+        mw = result["tool_namespace_middleware"]
+        assert mw.metrics["cache_hits"] == 0
+        assert mw.metrics["cache_misses"] == 0
+        assert mw.metrics["enabled"] is True
+
+
+# ---------------------------------------------------------------------------
+# Default tool profiles YAML (Issue #1272)
+# ---------------------------------------------------------------------------
+
+
+class TestDefaultToolProfiles:
+    """Tests for the default tool_profiles.yaml config."""
+
+    _CONFIG_PATH = Path("src/nexus/config/tool_profiles.yaml")
+
+    def test_default_profiles_load_successfully(self) -> None:
+        """Default YAML config loads without errors."""
+        from nexus.mcp.profiles import load_profiles
+
+        config = load_profiles(self._CONFIG_PATH)
+        assert config is not None
+
+    def test_default_profiles_contain_expected_names(self) -> None:
+        """Default config has all 5 standard profiles."""
+        from nexus.mcp.profiles import load_profiles
+
+        config = load_profiles(self._CONFIG_PATH)
+        expected = {"minimal", "coding", "search", "execution", "full"}
+        assert set(config.profile_names) == expected
+
+    def test_default_profile_is_minimal(self) -> None:
+        """Default profile is 'minimal'."""
+        from nexus.mcp.profiles import load_profiles
+
+        config = load_profiles(self._CONFIG_PATH)
+        default = config.get_default()
+        assert default is not None
+        assert default.name == "minimal"
+
+    def test_inheritance_resolved_correctly(self) -> None:
+        """Profile inheritance chains resolve to correct tool sets."""
+        from nexus.mcp.profiles import load_profiles
+
+        config = load_profiles(self._CONFIG_PATH)
+
+        # minimal has 4 tools
+        minimal = config.get_profile("minimal")
+        assert minimal is not None
+        assert len(minimal.tools) == 4
+        assert "nexus_read_file" in minimal.tools
+
+        # coding extends minimal → 4 + 7 = 11 tools
+        coding = config.get_profile("coding")
+        assert coding is not None
+        assert "nexus_read_file" in coding.tools  # inherited
+        assert "nexus_write_file" in coding.tools  # own
+
+        # full extends execution → all tools
+        full = config.get_profile("full")
+        assert full is not None
+        assert "nexus_read_file" in full.tools  # from minimal
+        assert "nexus_python" in full.tools  # from execution
+        assert "nexus_discovery_search_tools" in full.tools  # own
+
+    def test_profile_inheritance_deduplicates(self) -> None:
+        """Duplicate tools from inheritance are deduplicated."""
+        from nexus.mcp.profiles import load_profiles
+
+        config = load_profiles(self._CONFIG_PATH)
+        full = config.get_profile("full")
+        assert full is not None
+        # No duplicates — tools is a tuple of unique names
+        assert len(full.tools) == len(set(full.tools))

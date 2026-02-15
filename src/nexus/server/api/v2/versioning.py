@@ -104,6 +104,7 @@ def build_v2_registry(
             operations,
             playbooks,
             reflect,
+            sync_push,
             trajectories,
         )
 
@@ -119,6 +120,7 @@ def build_v2_registry(
             RouterEntry(router=conflicts.router, name="conflicts", endpoint_count=3),
             RouterEntry(router=operations.router, name="operations", endpoint_count=2),
             RouterEntry(router=audit.router, name="audit", endpoint_count=5),
+            RouterEntry(router=sync_push.router, name="sync_push", endpoint_count=1),
         ]
         for entry in _ace_routers:
             registry.add(entry)

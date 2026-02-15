@@ -553,7 +553,206 @@ class TestPermissionEnforcement:
 
 
 # ---------------------------------------------------------------------------
-# D) Rate Limiting
+# D) Stale Session Detection (Issue #1445)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.e2e
+class TestStaleSessionDetection:
+    """Verify agent_generation in JWT enables real stale-session detection.
+
+    Issue #1445: agent_generation must come from JWT claims, not a DB lookup.
+    This test validates the full flow:
+      1. Create JWT with agent_generation=N
+      2. PermissionEnforcer compares against current DB generation
+      3. Mismatch → StaleSessionError (409 Conflict)
+    """
+
+    def test_stale_jwt_rejected_by_permission_enforcer(self, nexus_fs_enforced: NexusFS):
+        """Agent JWT with outdated generation is rejected during permission check."""
+        from nexus.core.exceptions import StaleSessionError
+        from nexus.core.permissions import OperationContext
+
+        nx = nexus_fs_enforced
+
+        # Write a test file as admin
+        admin_ctx = OperationContext(
+            user="admin",
+            groups=["admins"],
+            zone_id="default",
+            is_admin=True,
+        )
+        nx.write("/workspace/agent-test.txt", b"hello", context=admin_ctx)
+
+        # Grant the agent read access via ReBAC
+        if nx._rebac_manager:
+            nx._rebac_manager.rebac_write(
+                subject=("agent", "agent_stale"),
+                relation="direct_viewer",
+                object=("file", "/workspace/agent-test.txt"),
+                zone_id="default",
+            )
+
+        # Simulate an agent context with a STALE generation
+        # (JWT says gen=3, but DB/registry says current gen=5)
+        from unittest.mock import MagicMock
+
+        mock_registry = MagicMock()
+        record = MagicMock()
+        record.generation = 5  # Current generation in DB
+        mock_registry.get.return_value = record
+
+        # Wire mock registry into enforcer
+        perm_enforcer = getattr(nx, "_permission_enforcer", None)
+        assert perm_enforcer is not None, "Permission enforcer not found on NexusFS"
+        original_registry = perm_enforcer.agent_registry
+        perm_enforcer.agent_registry = mock_registry
+
+        try:
+            stale_ctx = OperationContext(
+                user="owner",
+                groups=[],
+                zone_id="default",
+                subject_type="agent",
+                subject_id="agent_stale",
+                agent_id="agent_stale",
+                agent_generation=3,  # Stale: JWT says 3, DB says 5
+            )
+            with pytest.raises(StaleSessionError):
+                nx.read("/workspace/agent-test.txt", context=stale_ctx)
+        finally:
+            perm_enforcer.agent_registry = original_registry
+
+    def test_current_jwt_generation_passes(self, nexus_fs_enforced: NexusFS):
+        """Agent JWT with current generation is NOT rejected."""
+        from nexus.core.permissions import OperationContext
+
+        nx = nexus_fs_enforced
+
+        admin_ctx = OperationContext(
+            user="admin",
+            groups=["admins"],
+            zone_id="default",
+            is_admin=True,
+        )
+        nx.write("/workspace/agent-ok.txt", b"ok", context=admin_ctx)
+
+        if nx._rebac_manager:
+            nx._rebac_manager.rebac_write(
+                subject=("agent", "agent_current"),
+                relation="direct_viewer",
+                object=("file", "/workspace/agent-ok.txt"),
+                zone_id="default",
+            )
+
+        from unittest.mock import MagicMock
+
+        mock_registry = MagicMock()
+        record = MagicMock()
+        record.generation = 5
+        mock_registry.get.return_value = record
+
+        perm_enforcer = getattr(nx, "_permission_enforcer", None)
+        assert perm_enforcer is not None
+        original_registry = perm_enforcer.agent_registry
+        perm_enforcer.agent_registry = mock_registry
+
+        try:
+            current_ctx = OperationContext(
+                user="owner",
+                groups=[],
+                zone_id="default",
+                subject_type="agent",
+                subject_id="agent_current",
+                agent_id="agent_current",
+                agent_generation=5,  # Current: matches DB
+            )
+            content = nx.read("/workspace/agent-ok.txt", context=current_ctx)
+            assert content == b"ok"
+        finally:
+            perm_enforcer.agent_registry = original_registry
+
+    def test_deleted_agent_jwt_rejected(self, nexus_fs_enforced: NexusFS):
+        """Agent deleted from registry but JWT still valid should be rejected."""
+        from nexus.core.exceptions import StaleSessionError
+        from nexus.core.permissions import OperationContext
+
+        nx = nexus_fs_enforced
+
+        admin_ctx = OperationContext(
+            user="admin",
+            groups=["admins"],
+            zone_id="default",
+            is_admin=True,
+        )
+        nx.write("/workspace/deleted-agent.txt", b"secret", context=admin_ctx)
+
+        from unittest.mock import MagicMock
+
+        mock_registry = MagicMock()
+        mock_registry.get.return_value = None  # Agent deleted
+
+        perm_enforcer = getattr(nx, "_permission_enforcer", None)
+        assert perm_enforcer is not None
+        original_registry = perm_enforcer.agent_registry
+        perm_enforcer.agent_registry = mock_registry
+
+        try:
+            deleted_ctx = OperationContext(
+                user="owner",
+                groups=[],
+                zone_id="default",
+                subject_type="agent",
+                subject_id="deleted_agent",
+                agent_id="deleted_agent",
+                agent_generation=3,  # From old JWT
+            )
+            with pytest.raises(StaleSessionError):
+                nx.read("/workspace/deleted-agent.txt", context=deleted_ctx)
+        finally:
+            perm_enforcer.agent_registry = original_registry
+
+    def test_jwt_roundtrip_with_agent_generation(self):
+        """Full JWT roundtrip: create_token → authenticate → auth_result has generation."""
+        from nexus.server.auth.local import LocalAuth
+
+        auth = LocalAuth(jwt_secret="e2e-test-secret", token_expiry=3600)
+
+        # Create token with agent_generation
+        user_info = {
+            "subject_type": "agent",
+            "subject_id": "agent_roundtrip",
+            "zone_id": "default",
+            "agent_generation": 7,
+        }
+        token = auth.create_token("agent@test.com", user_info)
+
+        # Verify claims include agent_generation
+        claims = auth.verify_token(token)
+        assert claims["agent_generation"] == 7
+        assert claims["subject_type"] == "agent"
+
+    def test_sk_key_agent_has_no_generation(self):
+        """SK-key authenticated agent should have None agent_generation."""
+        from nexus.server.dependencies import get_operation_context
+
+        # Simulate SK-key auth result (no agent_generation field)
+        auth_result = {
+            "authenticated": True,
+            "subject_type": "agent",
+            "subject_id": "sk_agent",
+            "zone_id": "default",
+            "is_admin": False,
+            "metadata": {"key_id": "k1", "legacy_user_id": "alice"},
+            # No agent_generation — SK keys don't carry it
+        }
+        ctx = get_operation_context(auth_result)
+        assert ctx.agent_generation is None
+        assert ctx.subject_type == "agent"
+
+
+# ---------------------------------------------------------------------------
+# E) Rate Limiting
 # ---------------------------------------------------------------------------
 
 

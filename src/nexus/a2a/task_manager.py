@@ -1,18 +1,19 @@
 """A2A task lifecycle manager.
 
 Handles task CRUD, state machine transitions, and active SSE stream
-tracking.  All persistent state goes through SQLAlchemy; active streams
-are held in an in-memory dict of ``asyncio.Queue`` objects.
+tracking.  All persistent state goes through a pluggable
+``TaskStoreProtocol``; active streams are held in an in-memory dict of
+``asyncio.Queue`` objects.
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import uuid
+from contextlib import suppress as _suppress
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nexus.a2a.exceptions import (
     InvalidStateTransitionError,
@@ -31,6 +32,9 @@ from nexus.a2a.models import (
     is_valid_transition,
 )
 
+if TYPE_CHECKING:
+    from nexus.a2a.task_store import TaskStoreProtocol
+
 logger = logging.getLogger(__name__)
 
 
@@ -39,16 +43,32 @@ class TaskManager:
 
     Parameters
     ----------
+    store:
+        A ``TaskStoreProtocol`` implementation.  When *None* an
+        ``InMemoryTaskStore`` is used (useful for testing and embedded
+        mode).
     session_factory:
-        A callable that returns a SQLAlchemy ``Session`` (sync) or an
-        async session factory.  When *None* an in-memory dict is used
-        instead (useful for testing and embedded mode).
+        **Deprecated.**  If provided (and *store* is None), wraps the
+        session factory in a ``DatabaseTaskStore`` for backwards
+        compatibility.
     """
 
-    def __init__(self, session_factory: Any = None) -> None:
-        self._session_factory = session_factory
-        # In-memory fallback store: task_id -> task dict
-        self._memory_store: dict[str, dict[str, Any]] = {}
+    def __init__(
+        self,
+        store: TaskStoreProtocol | None = None,
+        session_factory: Any = None,
+    ) -> None:
+        if store is not None:
+            self._store: TaskStoreProtocol = store
+        elif session_factory is not None:
+            from nexus.a2a.stores.database import DatabaseTaskStore
+
+            self._store = DatabaseTaskStore(session_factory)
+        else:
+            from nexus.a2a.stores.in_memory import InMemoryTaskStore
+
+            self._store = InMemoryTaskStore()
+
         # Active SSE streams: task_id -> list of asyncio.Queue
         self._active_streams: dict[str, list[asyncio.Queue[dict[str, Any] | None]]] = {}
 
@@ -80,7 +100,7 @@ class TaskManager:
             metadata=metadata,
         )
 
-        await self._persist_task(task, zone_id=zone_id, agent_id=agent_id)
+        await self._store.save(task, zone_id=zone_id, agent_id=agent_id)
         return task
 
     async def get_task(
@@ -95,7 +115,7 @@ class TaskManager:
         Raises ``TaskNotFoundError`` if the task does not exist or belongs
         to a different zone.
         """
-        task = await self._load_task(task_id, zone_id=zone_id)
+        task = await self._store.get(task_id, zone_id=zone_id)
         if task is None:
             raise TaskNotFoundError(data={"taskId": task_id})
 
@@ -116,28 +136,13 @@ class TaskManager:
         offset: int = 0,
     ) -> list[Task]:
         """List tasks with optional filters."""
-        if self._session_factory is not None:
-            return await self._list_tasks_db(
-                zone_id=zone_id,
-                agent_id=agent_id,
-                state=state,
-                limit=limit,
-                offset=offset,
-            )
-        # In-memory fallback
-        tasks: list[Task] = []
-        for record in self._memory_store.values():
-            if record["zone_id"] != zone_id:
-                continue
-            if agent_id is not None and record.get("agent_id") != agent_id:
-                continue
-            task = self._record_to_task(record)
-            if state is not None and task.status.state != state:
-                continue
-            tasks.append(task)
-        # Sort by created_at descending
-        tasks.sort(key=lambda t: t.status.timestamp or datetime.min, reverse=True)
-        return tasks[offset : offset + limit]
+        return await self._store.list_tasks(
+            zone_id=zone_id,
+            agent_id=agent_id,
+            state=state,
+            limit=limit,
+            offset=offset,
+        )
 
     async def cancel_task(
         self,
@@ -150,7 +155,7 @@ class TaskManager:
         Raises ``TaskNotFoundError`` if the task does not exist.
         Raises ``TaskNotCancelableError`` if the task is in a terminal state.
         """
-        task = await self._load_task(task_id, zone_id=zone_id)
+        task = await self._store.get(task_id, zone_id=zone_id)
         if task is None:
             raise TaskNotFoundError(data={"taskId": task_id})
 
@@ -180,7 +185,7 @@ class TaskManager:
         Raises ``TaskNotFoundError`` if the task does not exist.
         Raises ``InvalidStateTransitionError`` if the transition is invalid.
         """
-        task = await self._load_task(task_id, zone_id=zone_id)
+        task = await self._store.get(task_id, zone_id=zone_id)
         if task is None:
             raise TaskNotFoundError(data={"taskId": task_id})
 
@@ -202,7 +207,7 @@ class TaskManager:
         if message is not None:
             task = task.model_copy(update={"history": [*task.history, message]})
 
-        await self._update_task_in_store(task, zone_id=zone_id)
+        await self._store.save(task, zone_id=zone_id)
 
         # Push status update to active streams
         event = TaskStatusUpdateEvent(
@@ -226,13 +231,13 @@ class TaskManager:
 
         Pushes an artifact update event to any active SSE streams.
         """
-        task = await self._load_task(task_id, zone_id=zone_id)
+        task = await self._store.get(task_id, zone_id=zone_id)
         if task is None:
             raise TaskNotFoundError(data={"taskId": task_id})
 
         new_artifacts = [*task.artifacts, artifact]
         task = task.model_copy(update={"artifacts": new_artifacts})
-        await self._update_task_in_store(task, zone_id=zone_id)
+        await self._store.save(task, zone_id=zone_id)
 
         event = TaskArtifactUpdateEvent(
             taskId=task_id,
@@ -276,174 +281,3 @@ class TaskManager:
                 queue.put_nowait(event)
             except asyncio.QueueFull:
                 logger.warning("SSE queue full for task %s, dropping event", task_id)
-
-    # ------------------------------------------------------------------
-    # Persistence helpers (in-memory or DB)
-    # ------------------------------------------------------------------
-
-    async def _persist_task(
-        self,
-        task: Task,
-        *,
-        zone_id: str,
-        agent_id: str | None,
-    ) -> None:
-        """Save a new task to the store."""
-        if self._session_factory is not None:
-            await self._persist_task_db(task, zone_id=zone_id, agent_id=agent_id)
-            return
-
-        self._memory_store[task.id] = {
-            "task": task.model_dump(mode="json"),
-            "zone_id": zone_id,
-            "agent_id": agent_id,
-            "created_at": datetime.now(UTC).isoformat(),
-        }
-
-    async def _load_task(self, task_id: str, *, zone_id: str) -> Task | None:
-        """Load a task from the store with zone isolation."""
-        if self._session_factory is not None:
-            return await self._load_task_db(task_id, zone_id=zone_id)
-
-        record = self._memory_store.get(task_id)
-        if record is None or record["zone_id"] != zone_id:
-            return None
-        return self._record_to_task(record)
-
-    async def _update_task_in_store(self, task: Task, *, zone_id: str) -> None:
-        """Update an existing task in the store."""
-        if self._session_factory is not None:
-            await self._update_task_db(task, zone_id=zone_id)
-            return
-
-        record = self._memory_store.get(task.id)
-        if record is not None:
-            record["task"] = task.model_dump(mode="json")
-
-    @staticmethod
-    def _record_to_task(record: dict[str, Any]) -> Task:
-        """Deserialize a task from an in-memory record."""
-        return Task.model_validate(record["task"])
-
-    # ------------------------------------------------------------------
-    # Database persistence (SQLAlchemy)
-    # ------------------------------------------------------------------
-
-    async def _persist_task_db(
-        self,
-        task: Task,
-        *,
-        zone_id: str,
-        agent_id: str | None,
-    ) -> None:
-        from nexus.a2a.db import A2ATaskModel
-
-        model = A2ATaskModel(
-            id=task.id,
-            context_id=task.contextId,
-            zone_id=zone_id,
-            agent_id=agent_id,
-            state=task.status.state.value,
-            messages_json=json.dumps([m.model_dump(mode="json") for m in task.history]),
-            artifacts_json=json.dumps([a.model_dump(mode="json") for a in task.artifacts]),
-            metadata_json=json.dumps(task.metadata) if task.metadata else None,
-        )
-
-        session = self._session_factory()
-        try:
-            session.add(model)
-            session.commit()
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
-
-    async def _load_task_db(self, task_id: str, *, zone_id: str) -> Task | None:
-        from nexus.a2a.db import A2ATaskModel
-
-        session = self._session_factory()
-        try:
-            row = session.get(A2ATaskModel, task_id)
-            if row is None or row.zone_id != zone_id:
-                return None
-            return self._db_row_to_task(row)
-        finally:
-            session.close()
-
-    async def _update_task_db(self, task: Task, *, zone_id: str) -> None:
-        from nexus.a2a.db import A2ATaskModel
-
-        session = self._session_factory()
-        try:
-            row = session.get(A2ATaskModel, task.id)
-            if row is None or row.zone_id != zone_id:
-                raise TaskNotFoundError(data={"taskId": task.id})
-            row.state = task.status.state.value
-            row.messages_json = json.dumps([m.model_dump(mode="json") for m in task.history])
-            row.artifacts_json = json.dumps([a.model_dump(mode="json") for a in task.artifacts])
-            row.metadata_json = json.dumps(task.metadata) if task.metadata else None
-            session.commit()
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
-
-    async def _list_tasks_db(
-        self,
-        *,
-        zone_id: str,
-        agent_id: str | None,
-        state: TaskState | None,
-        limit: int,
-        offset: int,
-    ) -> list[Task]:
-        from sqlalchemy import select
-
-        from nexus.a2a.db import A2ATaskModel
-
-        session = self._session_factory()
-        try:
-            stmt = (
-                select(A2ATaskModel)
-                .where(A2ATaskModel.zone_id == zone_id)
-                .order_by(A2ATaskModel.created_at.desc())
-                .limit(limit)
-                .offset(offset)
-            )
-            if agent_id is not None:
-                stmt = stmt.where(A2ATaskModel.agent_id == agent_id)
-            if state is not None:
-                stmt = stmt.where(A2ATaskModel.state == state.value)
-
-            rows = session.execute(stmt).scalars().all()
-            return [self._db_row_to_task(row) for row in rows]
-        finally:
-            session.close()
-
-    @staticmethod
-    def _db_row_to_task(row: Any) -> Task:
-        """Convert a database row to a Task model."""
-        messages = json.loads(row.messages_json) if row.messages_json else []
-        artifacts = json.loads(row.artifacts_json) if row.artifacts_json else []
-        metadata = json.loads(row.metadata_json) if row.metadata_json else None
-
-        return Task(
-            id=row.id,
-            contextId=row.context_id,
-            status=TaskStatus(
-                state=TaskState(row.state),
-                timestamp=row.updated_at,
-            ),
-            history=[Message.model_validate(m) for m in messages],
-            artifacts=[Artifact.model_validate(a) for a in artifacts],
-            metadata=metadata,
-        )
-
-
-# ------------------------------------------------------------------
-# Utility
-# ------------------------------------------------------------------
-
-from contextlib import suppress as _suppress  # noqa: E402

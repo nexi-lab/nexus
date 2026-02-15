@@ -315,16 +315,16 @@ class ReactiveSubscriptionManager:
             )
             return count
 
-    def find_affected_connections(self, event: FileEvent) -> set[str]:
-        """Find all connection IDs that should receive an event.
+    def _iter_matching_subscriptions(self, event: FileEvent) -> list[tuple[str, Subscription]]:
+        """Find all subscriptions matching an event (common core logic).
 
-        Dual-mode matching (both evaluated, results deduplicated):
+        Dual-mode matching (both evaluated):
         1. Read-set mode: O(1+d) via ReadSetRegistry reverse index
         2. Pattern mode: O(L x P) for legacy glob pattern subscriptions
 
         Event type filters are applied to both result sets.
 
-        Note: This is synchronous for performance (hot path). In asyncio's
+        Note: Synchronous for performance (hot path). In asyncio's
         cooperative multitasking, sync code runs to completion without
         preemption, so no snapshots are needed — the dicts cannot be mutated
         mid-iteration since there are no await points.
@@ -333,10 +333,11 @@ class ReactiveSubscriptionManager:
             event: The file event to match against subscriptions
 
         Returns:
-            Deduplicated set of connection_ids that should receive the event
+            List of (subscription_id, Subscription) pairs. May contain
+            duplicates if a subscription matches via both read-set and pattern;
+            callers deduplicate as needed.
         """
-        start_time = time.monotonic()
-        affected_connections: set[str] = set()
+        results: list[tuple[str, Subscription]] = []
 
         zone_id = event.zone_id
         event_type = str(event.type)
@@ -356,7 +357,7 @@ class ReactiveSubscriptionManager:
                     continue
                 sub = self._subscriptions.get(sub_id)
                 if sub and self._matches_event_type(event_type, sub.event_types):
-                    affected_connections.add(sub.connection_id)
+                    results.append((sub_id, sub))
 
         # Stage 2: Pattern matching for legacy subscriptions (O(L x P))
         for sub_id in self._pattern_subs_by_zone.get(zone_id or "", set()):
@@ -364,26 +365,69 @@ class ReactiveSubscriptionManager:
             if not sub:
                 continue
 
-            # Check event type filter
             if not self._matches_event_type(event_type, sub.event_types):
                 continue
 
             # Check path patterns (empty patterns = match all)
-            if not sub.patterns:
-                affected_connections.add(sub.connection_id)
-                continue
+            matched = not sub.patterns
+            if not matched:
+                for pattern in sub.patterns:
+                    if path_matches_pattern(event.path, pattern):
+                        matched = True
+                        break
 
-            for pattern in sub.patterns:
-                if path_matches_pattern(event.path, pattern):
-                    affected_connections.add(sub.connection_id)
-                    break
+            if matched:
+                results.append((sub_id, sub))
 
-        # Track performance
+        return results
+
+    def find_affected_connections(self, event: FileEvent) -> set[str]:
+        """Find all connection IDs that should receive an event.
+
+        Deduplicates by connection_id (a connection appears once even if
+        multiple subscriptions match).
+
+        Args:
+            event: The file event to match against subscriptions
+
+        Returns:
+            Deduplicated set of connection_ids that should receive the event
+        """
+        start_time = time.monotonic()
+        pairs = self._iter_matching_subscriptions(event)
+        result = {sub.connection_id for _, sub in pairs}
+        elapsed = time.monotonic() - start_time
+        self._lookup_count += 1
+        self._total_lookup_time += elapsed
+        return result
+
+    def find_affected_subscriptions(self, event: FileEvent) -> dict[str, list[Subscription]]:
+        """Find all subscriptions affected by an event, grouped by connection.
+
+        Returns full Subscription objects grouped by connection_id for
+        constructing batch_update messages (#1170). Deduplicates by
+        subscription_id within each connection.
+
+        Args:
+            event: The file event to match against subscriptions
+
+        Returns:
+            dict mapping connection_id to list of matching Subscription objects
+        """
+        start_time = time.monotonic()
+        pairs = self._iter_matching_subscriptions(event)
+
+        # Group by connection, deduplicate by sub_id
+        by_connection: dict[str, dict[str, Subscription]] = {}
+        for sub_id, sub in pairs:
+            conn_subs = by_connection.setdefault(sub.connection_id, {})
+            conn_subs[sub_id] = sub
+
         elapsed = time.monotonic() - start_time
         self._lookup_count += 1
         self._total_lookup_time += elapsed
 
-        return affected_connections
+        return {conn_id: list(subs.values()) for conn_id, subs in by_connection.items()}
 
     @staticmethod
     def _matches_event_type(

@@ -208,8 +208,8 @@ class TestKernelServices:
         assert ks.workflow_engine is None
         assert ks.version_service is None
         assert ks.write_observer is None
-        assert ks.observability_subsystem is None
-        assert ks.tool_namespace_middleware is None
+        # Server-layer extras are in server_extras dict, not direct fields
+        assert ks.server_extras == {}
 
     def test_mutable(self) -> None:
         """KernelServices is NOT frozen — attributes can be set."""
@@ -230,9 +230,15 @@ class TestKernelServices:
         assert dataclasses.is_dataclass(ks)
 
     def test_all_service_fields_present(self) -> None:
-        """Verify KernelServices has all expected fields."""
+        """Verify KernelServices has all expected fields.
+
+        Server-layer extras (observability_subsystem, chunked_upload_service,
+        manifest_resolver, manifest_metrics, rebac_circuit_breaker,
+        tool_namespace_middleware, resiliency_manager, delivery_worker) are
+        stored in the opaque server_extras dict, not as direct dataclass fields.
+        """
         field_names = {f.name for f in dataclasses.fields(KernelServices)}
-        expected = {
+        expected_fields = {
             "router",
             "rebac_manager",
             "dir_visibility_cache",
@@ -251,16 +257,9 @@ class TestKernelServices:
             "event_bus",
             "lock_manager",
             "workflow_engine",
-            "observability_subsystem",
-            "chunked_upload_service",
-            "manifest_resolver",
-            "manifest_metrics",
-            "rebac_circuit_breaker",
-            "tool_namespace_middleware",
-            "resiliency_manager",
-            "delivery_worker",
+            "server_extras",
         }
-        assert expected.issubset(field_names), f"Missing: {expected - field_names}"
+        assert expected_fields.issubset(field_names), f"Missing: {expected_fields - field_names}"
 
 
 # ---------------------------------------------------------------------------

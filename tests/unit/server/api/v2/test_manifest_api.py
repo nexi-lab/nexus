@@ -73,7 +73,8 @@ def app(agent_registry):
     mock_nexus_fs = MagicMock()
     mock_nexus_fs._agent_registry = agent_registry
     mock_nexus_fs._services = MagicMock()
-    mock_nexus_fs._services.manifest_resolver = MagicMock()
+    # manifest_resolver accessed via _service_extras dict
+    mock_nexus_fs._service_extras = {"manifest_resolver": MagicMock()}
 
     # Override dependencies
     from nexus.server.api.v2.routers.manifest import _get_require_auth, get_nexus_fs
@@ -261,7 +262,7 @@ class TestResolveHappyPath:
         async def mock_resolve(_sources: object, _variables: object, _output_dir: object) -> object:
             return mock_result
 
-        mock_fs._services.manifest_resolver.resolve = mock_resolve
+        mock_fs._service_extras["manifest_resolver"].resolve = mock_resolve
 
         with patch(
             "nexus.server.api.v2.routers.manifest._get_operation_context",

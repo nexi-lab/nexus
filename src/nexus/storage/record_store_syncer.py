@@ -199,7 +199,7 @@ class BufferedRecordStoreSyncer:
         self._buffer.stop(timeout=timeout)
 
     @property
-    def metrics(self) -> dict[str, int]:
+    def metrics(self) -> dict[str, int | float | dict[str, int]]:
         """Return buffer metrics."""
         return self._buffer.metrics
 

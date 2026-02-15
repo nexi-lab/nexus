@@ -98,6 +98,10 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         self,
         db_url: str | None = None,
         db_path: str | Path | None = None,
+        *,
+        create_tables: bool = True,
+        creator: Any | None = None,
+        async_creator: Any | None = None,
     ):
         """Initialize SQLAlchemy record store.
 
@@ -106,29 +110,44 @@ class SQLAlchemyRecordStore(RecordStoreABC):
                    If not provided, checks NEXUS_DATABASE_URL or POSTGRES_URL env vars,
                    then falls back to db_path parameter.
             db_path: Path to SQLite database file (fallback if db_url not provided).
+            create_tables: If True (default), run Base.metadata.create_all on init.
+                          Set to False in production when Alembic manages schema.
+            creator: Optional callable for custom connection creation (e.g. Cloud SQL
+                    Python Connector sync). Passed to ``create_engine(creator=...)``.
+            async_creator: Optional callable for custom async connection creation
+                          (e.g. Cloud SQL Python Connector async). Passed to
+                          ``create_async_engine(async_creator=...)``.
         """
         from sqlalchemy import create_engine, event
         from sqlalchemy.orm import sessionmaker
 
-        from nexus.storage.models import Base
-
         # Resolve database URL
         self.database_url = self._resolve_db_url(db_url, db_path)
+
+        # Store async_creator for lazy async engine initialization
+        self._async_creator = async_creator
 
         # Create engine with appropriate pool configuration
         engine_kwargs: dict[str, Any] = {}
         if self.database_url.startswith("sqlite"):
             engine_kwargs["connect_args"] = {"check_same_thread": False}
         else:
-            # PostgreSQL pool configuration (Issue #1246, Decision 16A)
+            # PostgreSQL pool configuration — env vars override defaults (Issue #1299)
+            pool_size = int(os.getenv("NEXUS_DB_POOL_SIZE", "20"))
+            max_overflow = int(os.getenv("NEXUS_DB_MAX_OVERFLOW", "30"))
+            pool_recycle = int(os.getenv("NEXUS_DB_POOL_RECYCLE", "1800"))
             engine_kwargs.update(
                 {
-                    "pool_size": 5,  # Baseline connections
-                    "max_overflow": 10,  # Burst capacity (total max = 15)
-                    "pool_pre_ping": True,  # Detect stale connections
-                    "pool_recycle": 1800,  # Recycle connections every 30min
+                    "pool_size": pool_size,
+                    "max_overflow": max_overflow,
+                    "pool_pre_ping": True,
+                    "pool_recycle": pool_recycle,
                 }
             )
+
+        # Pass creator for custom connection factories (e.g. Cloud SQL Connector)
+        if creator is not None:
+            engine_kwargs["creator"] = creator
 
         self._engine = create_engine(self.database_url, **engine_kwargs)
 
@@ -150,10 +169,13 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         self._async_engine: Any = None
         self._async_session_factory_instance: Any = None
 
-        # Create tables
-        Base.metadata.create_all(self._engine)
+        # Create tables (skip in production when Alembic is SSOT)
+        if create_tables:
+            from nexus.storage.models import Base
 
-        logger.info(f"SQLAlchemyRecordStore initialized: {self.database_url}")
+            Base.metadata.create_all(self._engine)
+
+        logger.info("SQLAlchemyRecordStore initialized: %s", self.database_url)
 
     @staticmethod
     def _resolve_db_url(db_url: str | None, db_path: str | Path | None) -> str:
@@ -199,6 +221,10 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         On first access, creates an async engine (``asyncpg`` for PostgreSQL,
         ``aiosqlite`` for SQLite) and an ``async_sessionmaker`` bound to it.
         Subsequent accesses reuse the same engine and session factory.
+
+        When ``async_creator`` was provided at construction time, it is passed
+        to ``create_async_engine`` so that connection creation goes through the
+        custom factory (e.g. Cloud SQL Python Connector).
         """
         if self._async_session_factory_instance is None:
             from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -207,15 +233,22 @@ class SQLAlchemyRecordStore(RecordStoreABC):
 
             engine_kwargs: dict[str, Any] = {}
             if "postgresql" in async_url:
+                pool_size = int(os.getenv("NEXUS_DB_POOL_SIZE", "20"))
+                max_overflow = int(os.getenv("NEXUS_DB_MAX_OVERFLOW", "30"))
+                pool_recycle = int(os.getenv("NEXUS_DB_POOL_RECYCLE", "1800"))
                 engine_kwargs.update(
                     {
-                        "pool_size": 20,
-                        "max_overflow": 30,
+                        "pool_size": pool_size,
+                        "max_overflow": max_overflow,
                         "pool_pre_ping": True,
                         "pool_use_lifo": True,
-                        "pool_recycle": 1800,
+                        "pool_recycle": pool_recycle,
                     }
                 )
+
+            # Pass async_creator for custom connection factories (e.g. Cloud SQL)
+            if self._async_creator is not None:
+                engine_kwargs["async_creator"] = self._async_creator
 
             self._async_engine = create_async_engine(async_url, **engine_kwargs)
             self._async_session_factory_instance = async_sessionmaker(

@@ -71,6 +71,8 @@ EXPECTED_MODELS = [
     # Agents
     "AgentRecordModel",
     "AgentEventModel",
+    # Delegation (Issue #1271)
+    "DelegationRecordModel",
     # ACE
     "TrajectoryModel",
     "TrajectoryFeedbackModel",

@@ -1,0 +1,120 @@
+name: API Surface Check
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/nexus/**/*.py'
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  api-surface-check:
+    name: Detect API Breaking Changes
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install -e ".[dev]"
+
+      - name: Export current API surface
+        run: |
+          python -c "
+          from nexus.sdk.api_versioning import export_api_surface
+          from pathlib import Path
+          import importlib
+          import nexus.core.filesystem as fs_mod
+          import nexus.plugins.base as plugin_mod
+
+          count = 0
+          count += export_api_surface(fs_mod, Path('/tmp/api-surface-current-filesystem.json'))
+          count += export_api_surface(plugin_mod, Path('/tmp/api-surface-current-plugins.json'))
+          print(f'Exported {count} API entries from current branch')
+          "
+
+      - name: Export base API surface
+        run: |
+          PR_SHA=$(git rev-parse HEAD)
+          git checkout origin/main -- src/
+          python -c "
+          from nexus.sdk.api_versioning import export_api_surface
+          from pathlib import Path
+          import nexus.core.filesystem as fs_mod
+          import nexus.plugins.base as plugin_mod
+
+          count = 0
+          count += export_api_surface(fs_mod, Path('/tmp/api-surface-base-filesystem.json'))
+          count += export_api_surface(plugin_mod, Path('/tmp/api-surface-base-plugins.json'))
+          print(f'Exported {count} API entries from main branch')
+          " || echo "No base surface available (first run)"
+          git checkout "$PR_SHA" -- src/
+
+      - name: Compare API surfaces
+        id: diff
+        run: |
+          python -c "
+          import json, sys
+          from pathlib import Path
+          from nexus.sdk.api_versioning import load_api_surface, diff_api_surfaces
+
+          breaking = []
+          for module in ['filesystem', 'plugins']:
+              base_path = Path(f'/tmp/api-surface-base-{module}.json')
+              current_path = Path(f'/tmp/api-surface-current-{module}.json')
+
+              if not base_path.exists():
+                  print(f'No base surface for {module} (first run)')
+                  continue
+
+              old = load_api_surface(base_path)
+              new = load_api_surface(current_path)
+              diff = diff_api_surfaces(old, new)
+
+              if diff['removed_stable']:
+                  for entry in diff['removed_stable']:
+                      breaking.append(f'{entry[\"name\"]} (stable since {entry.get(\"since\", \"?\")})')
+                      print(f'BREAKING: Removed stable API {entry[\"name\"]}')
+
+              if diff['removed_experimental']:
+                  for entry in diff['removed_experimental']:
+                      print(f'INFO: Removed experimental API {entry[\"name\"]}')
+
+              if diff['added']:
+                  for entry in diff['added']:
+                      print(f'INFO: Added API {entry[\"name\"]} ({entry[\"stability\"]})')
+
+          if breaking:
+              print(f'\n::error::Breaking changes detected: {len(breaking)} stable APIs removed')
+              sys.exit(1)
+          else:
+              print('No breaking changes detected')
+          "
+
+      - name: Comment on PR
+        if: failure() && github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `## API Surface Check Failed
+
+            Breaking changes detected in stable APIs. Stable APIs (marked with \`@stable_api\`) must not be removed without a deprecation period.
+
+            See the job logs for details on which APIs were affected.
+
+            If this change is intentional, update the API surface baseline.`
+            });

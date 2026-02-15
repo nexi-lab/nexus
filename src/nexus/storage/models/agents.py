@@ -1,6 +1,7 @@
-"""Agent lifecycle models.
+"""Agent lifecycle and delegation models.
 
 Issue #1286: Extracted from monolithic __init__.py.
+Issue #1271: Added DelegationRecordModel for agent delegation.
 """
 
 from __future__ import annotations
@@ -79,4 +80,42 @@ class AgentEventModel(Base):
         return (
             f"<AgentEventModel(id={self.id}, agent_id={self.agent_id}, "
             f"event_type={self.event_type})>"
+        )
+
+
+class DelegationRecordModel(Base):
+    """Delegation record for agent identity delegation (Issue #1271).
+
+    Tracks coordinator → worker agent delegation relationships,
+    including the delegation mode, scope constraints, and lease expiry.
+    JSON text columns store variable-length lists (paths).
+    """
+
+    __tablename__ = "delegation_records"
+
+    delegation_id: Mapped[str] = mapped_column(String(36), primary_key=True, nullable=False)
+    agent_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    parent_agent_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    delegation_mode: Mapped[str] = mapped_column(String(20), nullable=False)
+    scope_prefix: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    removed_grants: Mapped[str | None] = mapped_column(Text, nullable=True)
+    added_grants: Mapped[str | None] = mapped_column(Text, nullable=True)
+    readonly_paths: Mapped[str | None] = mapped_column(Text, nullable=True)
+    zone_id: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, nullable=False, default=lambda: datetime.now(UTC)
+    )
+
+    __table_args__ = (
+        Index("idx_delegation_agent_id", "agent_id"),
+        Index("idx_delegation_parent_agent_id", "parent_agent_id"),
+        Index("idx_delegation_lease_expires", "lease_expires_at"),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<DelegationRecordModel(delegation_id={self.delegation_id}, "
+            f"agent_id={self.agent_id}, parent={self.parent_agent_id}, "
+            f"mode={self.delegation_mode})>"
         )

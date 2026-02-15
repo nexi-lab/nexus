@@ -16,6 +16,7 @@ Zoekt integration:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import struct
 from typing import TYPE_CHECKING, Any
@@ -25,6 +26,20 @@ from sqlalchemy import event, text
 from nexus.search.hnsw_config import HNSWConfig
 
 logger = logging.getLogger(__name__)
+
+
+def _run_sync(coro: Any) -> Any:
+    """Run an async coroutine synchronously (Issue #1520: avoid core.sync_bridge import)."""
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+    # If a loop is already running, use nest_asyncio or thread
+    import concurrent.futures
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
+
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -560,10 +575,8 @@ class VectorDatabase:
 
         client = get_zoekt_client()
 
-        # Check if Zoekt is available (sync wrapper)
-        from nexus.core.sync_bridge import run_sync
-
-        is_available = run_sync(client.is_available())
+        # Check if Zoekt is available (sync wrapper, Issue #1520)
+        is_available = _run_sync(client.is_available())
 
         if not is_available:
             return None
@@ -577,7 +590,7 @@ class VectorDatabase:
                 zoekt_query = f"file:{path_filter.lstrip('/')} {zoekt_query}"
 
             # Run search
-            matches = run_sync(client.search(zoekt_query, num=limit * 2))
+            matches = _run_sync(client.search(zoekt_query, num=limit * 2))
 
             if not matches:
                 # No results - let FTS try
@@ -636,13 +649,11 @@ class VectorDatabase:
 
         index = get_bm25s_index()
 
-        # Check if index is initialized and has documents
-        from nexus.core.sync_bridge import run_sync
-
-        if not run_sync(index.initialize()):
+        # Check if index is initialized and has documents (Issue #1520)
+        if not _run_sync(index.initialize()):
             return None
 
-        stats = run_sync(index.get_stats())
+        stats = _run_sync(index.get_stats())
         if stats.get("total_documents", 0) == 0:
             return None
 
@@ -650,7 +661,7 @@ class VectorDatabase:
 
         try:
             # Run search
-            bm25s_results = run_sync(
+            bm25s_results = _run_sync(
                 index.search(query=query, limit=limit, path_filter=path_filter)
             )
 

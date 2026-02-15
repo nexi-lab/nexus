@@ -656,3 +656,91 @@ class TestConsistencyHints:
         fake.set_metadata("/test", b"data")
         assert fake.delete_metadata("/test", consistency="ec") is True
         assert fake.get_metadata("/test") is None
+
+
+# ===========================================================================
+# Multi-Zone Isolation Tests
+# ===========================================================================
+
+
+class TestMultiZoneIsolation:
+    """Tests for zone-scoped metadata isolation and zone_id assertions."""
+
+    def test_separate_stores_are_isolated(self) -> None:
+        """Two stores with separate engines and zone_ids should be isolated."""
+        fake_a = FakeLocalRaft()
+        store_a = object.__new__(RaftMetadataStore)
+        store_a._engine = fake_a
+        store_a._client = None
+        store_a._zone_id = "zone_a"
+
+        fake_b = FakeLocalRaft()
+        store_b = object.__new__(RaftMetadataStore)
+        store_b._engine = fake_b
+        store_b._client = None
+        store_b._zone_id = "zone_b"
+
+        store_a.put(_make_meta(path="/zone_a/file1.txt"))
+        store_b.put(_make_meta(path="/zone_b/file2.txt"))
+
+        a_files = store_a.list()
+        b_files = store_b.list()
+
+        a_paths = [f.path for f in a_files]
+        b_paths = [f.path for f in b_files]
+
+        assert "/zone_a/file1.txt" in a_paths
+        assert "/zone_b/file2.txt" not in a_paths
+        assert "/zone_b/file2.txt" in b_paths
+        assert "/zone_a/file1.txt" not in b_paths
+
+    def test_list_paginated_within_zone(self) -> None:
+        """list_paginated should work within a zone-scoped store."""
+        fake = FakeLocalRaft()
+        store = object.__new__(RaftMetadataStore)
+        store._engine = fake
+        store._client = None
+        store._zone_id = "zone_a"
+
+        for i in range(5):
+            store.put(_make_meta(path=f"/data/{chr(97 + i)}.txt"))
+
+        page1 = store.list_paginated(prefix="/data/", limit=3, zone_id="zone_a")
+        assert len(page1.items) == 3
+        assert page1.has_more is True
+
+    def test_zone_local_assertion_passes_for_zoned_store(self) -> None:
+        """zone_id filter should not raise assertion when store has zone_id set."""
+        fake = FakeLocalRaft()
+        store = object.__new__(RaftMetadataStore)
+        store._engine = fake
+        store._client = None
+        store._zone_id = "zone_a"
+
+        store.put(_make_meta(path="/test.txt"))
+        # Should not raise — store has zone_id set
+        result = store.list(zone_id="zone_a")
+        assert len(result) == 1
+
+    def test_zone_local_assertion_fires_for_unzoned_store(self) -> None:
+        """zone_id filter should raise assertion if passed to non-zoned store."""
+        store = _make_store()  # zone_id is None
+        store.put(_make_meta(path="/test.txt"))
+
+        with pytest.raises(AssertionError, match="zone_id filter.*passed to a non-zone-scoped"):
+            store.list(zone_id="zone_a")
+
+    def test_default_zone_id_allowed_on_unzoned_store(self) -> None:
+        """zone_id='default' should NOT trigger assertion on unzoned store."""
+        store = _make_store()  # zone_id is None
+        store.put(_make_meta(path="/test.txt"))
+        # "default" is the fallback zone — unzoned stores serve it implicitly
+        result = store.list(zone_id="default")
+        assert len(result) == 1
+
+    def test_list_without_zone_id_works_on_unzoned_store(self) -> None:
+        """list() without zone_id should work fine on unzoned store."""
+        store = _make_store()  # zone_id is None
+        store.put(_make_meta(path="/test.txt"))
+        result = store.list()  # No zone_id — should work fine
+        assert len(result) == 1

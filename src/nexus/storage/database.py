@@ -1,124 +1,80 @@
 """Database connection and session management for Nexus.
 
-This module provides the SQLAlchemy database connection used by various Nexus
-components (auth, permissions, version history, etc.). File metadata uses
-RaftMetadataStore (sled) instead.
+.. deprecated:: 0.7.1
+    This module is a backward-compatibility shim. All new code should use
+    :class:`nexus.storage.record_store.SQLAlchemyRecordStore` directly.
+    The module-level functions (``get_session``, ``get_engine``, ``SessionLocal``)
+    delegate to a lazily-created ``SQLAlchemyRecordStore`` singleton.
 
-Usage:
+Usage (legacy — prefer RecordStore DI):
     from nexus.storage.database import get_session, get_engine
 
-    # Get a session for database operations
     with get_session() as session:
         user = session.query(UserModel).filter_by(id=user_id).first()
-
-    # Or use the session factory directly
-    from nexus.storage.database import SessionLocal
-    session = SessionLocal()
-    try:
-        ...
-    finally:
-        session.close()
 """
 
 from __future__ import annotations
 
 import logging
-import os
+import warnings
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING
 
-from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from nexus.storage.models import Base
+if TYPE_CHECKING:
+    from nexus.storage.record_store import SQLAlchemyRecordStore
 
 logger = logging.getLogger(__name__)
 
-# Global engine and session factory (lazy initialized)
-_engine: Engine | None = None
-_SessionLocal: sessionmaker | None = None
+_DEPRECATION_MSG = (
+    "nexus.storage.database is deprecated and will be removed in v0.8. "
+    "Use nexus.storage.record_store.SQLAlchemyRecordStore via dependency injection."
+)
+
+# Module-level singleton — lazily created on first call.
+_record_store = None
+
+
+def _get_record_store(
+    db_url: str | None = None, db_path: str | Path | None = None
+) -> SQLAlchemyRecordStore:
+    """Return (and cache) a module-level RecordStore singleton."""
+    global _record_store
+
+    if _record_store is not None:
+        return _record_store
+
+    from nexus.storage.record_store import SQLAlchemyRecordStore
+
+    _record_store = SQLAlchemyRecordStore(db_url=db_url, db_path=db_path)
+    return _record_store
 
 
 def get_database_url(db_path: str | Path | None = None) -> str:
     """Get database URL from environment or parameter.
 
-    Priority order:
-    1. NEXUS_DATABASE_URL environment variable
-    2. POSTGRES_URL environment variable
-    3. db_path parameter (converted to SQLite URL)
-    4. Default SQLite path: ./nexus-data/nexus.db
-
-    Args:
-        db_path: Optional path to SQLite database file
-
-    Returns:
-        Database URL string
+    .. deprecated:: 0.7.1
+        Use ``SQLAlchemyRecordStore._resolve_db_url()`` instead.
     """
-    url = (
-        os.getenv("NEXUS_DATABASE_URL")
-        or os.getenv("POSTGRES_URL")
-        or (f"sqlite:///{db_path}" if db_path else None)
-        or "sqlite:///./nexus-data/nexus.db"
-    )
-    return url
+    warnings.warn(_DEPRECATION_MSG, DeprecationWarning, stacklevel=2)
+    from nexus.storage.record_store import SQLAlchemyRecordStore
+
+    return SQLAlchemyRecordStore._resolve_db_url(None, db_path)
 
 
 def get_engine(db_url: str | None = None, db_path: str | Path | None = None) -> Engine:
     """Get or create the SQLAlchemy engine.
 
-    Args:
-        db_url: Database URL (optional, uses env vars if not provided)
-        db_path: Path to SQLite database (optional, fallback if no URL)
-
-    Returns:
-        SQLAlchemy Engine instance
+    .. deprecated:: 0.7.1
+        Use ``record_store.engine`` instead.
     """
-    global _engine
-
-    if _engine is not None:
-        return _engine
-
-    database_url = db_url or get_database_url(db_path)
-    db_type = "postgresql" if "postgresql" in database_url else "sqlite"
-
-    logger.info(f"Initializing database: {db_type}")
-
-    # Configure engine based on database type
-    if db_type == "sqlite":
-        # Extract path and ensure parent directory exists
-        if database_url.startswith("sqlite:///"):
-            path = Path(database_url[10:])
-            path.parent.mkdir(parents=True, exist_ok=True)
-
-        _engine = create_engine(
-            database_url,
-            connect_args={"check_same_thread": False},
-            pool_pre_ping=True,
-        )
-
-        # Set SQLite busy timeout
-        @event.listens_for(_engine, "connect")
-        def set_sqlite_pragma(dbapi_conn: Any, _connection_record: Any) -> None:
-            cursor = dbapi_conn.cursor()
-            cursor.execute("PRAGMA busy_timeout=30000")
-            cursor.close()
-    else:
-        # PostgreSQL configuration
-        _engine = create_engine(
-            database_url,
-            pool_size=10,
-            max_overflow=20,
-            pool_pre_ping=True,
-            pool_recycle=3600,
-        )
-
-    # Create tables if they don't exist
-    Base.metadata.create_all(_engine)
-
-    return _engine
+    warnings.warn(_DEPRECATION_MSG, DeprecationWarning, stacklevel=2)
+    store = _get_record_store(db_url, db_path)
+    return store.engine
 
 
 def get_session_factory(
@@ -126,35 +82,23 @@ def get_session_factory(
 ) -> sessionmaker:
     """Get or create the session factory.
 
-    Args:
-        db_url: Database URL (optional)
-        db_path: Path to SQLite database (optional)
-
-    Returns:
-        SQLAlchemy sessionmaker instance
+    .. deprecated:: 0.7.1
+        Use ``record_store.session_factory`` instead.
     """
-    global _SessionLocal
-
-    if _SessionLocal is not None:
-        return _SessionLocal
-
-    engine = get_engine(db_url, db_path)
-    _SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
-    return _SessionLocal
+    warnings.warn(_DEPRECATION_MSG, DeprecationWarning, stacklevel=2)
+    store = _get_record_store(db_url, db_path)
+    return store.session_factory
 
 
 def SessionLocal() -> Session:
     """Create a new database session.
 
-    Returns:
-        SQLAlchemy Session instance
-
-    Note:
-        Caller is responsible for closing the session.
-        Prefer using get_session() context manager instead.
+    .. deprecated:: 0.7.1
+        Use ``record_store.session_factory()`` instead.
     """
-    factory = get_session_factory()
-    return factory()
+    warnings.warn(_DEPRECATION_MSG, DeprecationWarning, stacklevel=2)
+    store = _get_record_store()
+    return store.session_factory()
 
 
 @contextmanager
@@ -165,19 +109,12 @@ def get_session(
 
     Automatically commits on success and rolls back on error.
 
-    Args:
-        db_url: Database URL (optional)
-        db_path: Path to SQLite database (optional)
-
-    Yields:
-        SQLAlchemy Session instance
-
-    Example:
-        with get_session() as session:
-            user = session.query(UserModel).filter_by(id=1).first()
+    .. deprecated:: 0.7.1
+        Use ``record_store.session_factory`` with manual session management.
     """
-    factory = get_session_factory(db_url, db_path)
-    session = factory()
+    warnings.warn(_DEPRECATION_MSG, DeprecationWarning, stacklevel=2)
+    store = _get_record_store(db_url, db_path)
+    session = store.session_factory()
     try:
         yield session
         session.commit()
@@ -191,10 +128,11 @@ def get_session(
 def reset_engine() -> None:
     """Reset the global engine and session factory.
 
-    Useful for testing or reconfiguration.
+    .. deprecated:: 0.7.1
+        Use ``record_store.close()`` instead.
     """
-    global _engine, _SessionLocal
-    if _engine is not None:
-        _engine.dispose()
-    _engine = None
-    _SessionLocal = None
+    warnings.warn(_DEPRECATION_MSG, DeprecationWarning, stacklevel=2)
+    global _record_store
+    if _record_store is not None:
+        _record_store.close()
+        _record_store = None

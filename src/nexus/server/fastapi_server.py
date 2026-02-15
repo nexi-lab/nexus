@@ -257,6 +257,14 @@ async def lifespan(_app: FastAPI) -> Any:
     except ImportError:
         logger.debug("OpenTelemetry not available")
 
+    # Initialize Pyroscope continuous profiling (Issue #763)
+    try:
+        from nexus.server.profiling import setup_profiling
+
+        setup_profiling()
+    except ImportError:
+        logger.debug("Pyroscope not available")
+
     # Initialize Prometheus metrics (Issue #761)
     try:
         from nexus.server.metrics import setup_prometheus
@@ -823,6 +831,12 @@ async def lifespan(_app: FastAPI) -> Any:
     else:
         _app.state.chunked_upload_service = None
 
+    # Issue #726: Wire circuit breaker from factory for health endpoint access
+    if _app.state.nexus_fs:
+        _app.state.rebac_circuit_breaker = _app.state.nexus_fs._service_extras.get(
+            "rebac_circuit_breaker"
+        )
+
     # Issue #1240: Start agent heartbeat and stale detection background tasks
     _heartbeat_task = None
     _stale_detection_task = None
@@ -866,6 +880,14 @@ async def lifespan(_app: FastAPI) -> Any:
                     e2b_template_id=os.getenv("E2B_TEMPLATE_ID"),
                     config=sandbox_config,
                 )
+
+                # Attach smart router for Monty -> Docker -> E2B routing (Issue #1317)
+                if sandbox_mgr.providers:
+                    from nexus.sandbox.sandbox_router import SandboxRouter
+
+                    sandbox_mgr._router = SandboxRouter(
+                        available_providers=sandbox_mgr.providers,
+                    )
 
                 # Get NamespaceManager if available (best-effort)
                 # Issue #1265: Factory function handles L3 persistent store wiring
@@ -1142,6 +1164,14 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.warning(f"Error shutting down cache factory: {e}")
 
+    # Shutdown Pyroscope continuous profiling (Issue #763)
+    try:
+        from nexus.server.profiling import shutdown_profiling
+
+        shutdown_profiling()
+    except ImportError:
+        pass
+
     # Shutdown OpenTelemetry (Issue #764)
     try:
         from nexus.server.telemetry import shutdown_telemetry
@@ -1248,6 +1278,7 @@ def create_app(
     app.state.task_runner = None
     app.state.event_log = None
     app.state.key_service = None
+    app.state.rebac_circuit_breaker = None
     app.state.chunked_upload_service = None
 
     # Initialize subscription manager if we have a metadata store
@@ -1572,10 +1603,33 @@ def _register_routes(app: FastAPI) -> None:
                 "message": "Set NEXUS_SEARCH_DAEMON=true to enable",
             }
 
-        # Check async ReBAC manager
-        health["components"]["rebac"] = {
-            "status": "healthy" if _fastapi_app.state.async_rebac_manager else "disabled",
-        }
+        # Check ReBAC + circuit breaker (Issue #726)
+        rebac_health: dict[str, Any] = {"status": "disabled"}
+        has_rebac = _fastapi_app.state.async_rebac_manager or getattr(
+            _fastapi_app.state.nexus_fs, "_rebac_manager", None
+        )
+        if has_rebac:
+            cb = getattr(_fastapi_app.state, "rebac_circuit_breaker", None)
+            if cb:
+                from nexus.services.permissions.circuit_breaker import CircuitState
+
+                cb_state = cb.state
+                if cb_state == CircuitState.CLOSED:
+                    rebac_status = "healthy"
+                elif cb_state == CircuitState.HALF_OPEN:
+                    rebac_status = "degraded"
+                else:
+                    rebac_status = "unhealthy"
+                rebac_health = {
+                    "status": rebac_status,
+                    "circuit_state": cb_state.value,
+                    "failure_count": cb.failure_count,
+                    "open_count": cb.open_count,
+                    "last_failure_time": cb.last_failure_time,
+                }
+            else:
+                rebac_health = {"status": "healthy"}
+        health["components"]["rebac"] = rebac_health
 
         # Check subscription manager
         health["components"]["subscriptions"] = {
@@ -1768,7 +1822,7 @@ def _register_routes(app: FastAPI) -> None:
     except ImportError as e:
         logger.warning(f"Failed to register Exchange error handler: {e}.")
 
-    # A2A Protocol Endpoint (Issue #1256)
+    # A2A Protocol Endpoint (Issue #1256, brick-extracted #1401)
     try:
         from nexus.a2a import create_a2a_router
 
@@ -1777,11 +1831,32 @@ def _register_routes(app: FastAPI) -> None:
             getattr(_fastapi_app.state, "api_key", None)
             or getattr(_fastapi_app.state, "auth_provider", None)
         )
+
+        # Auth adapter: server-side concern, NOT imported by the brick.
+        # Passes through the auth result for zone_id / agent_id extraction.
+        # Note: resolve_auth may return {"authenticated": False} for
+        # invalid tokens — this is consistent with the pre-existing
+        # behavior where the router checks for header presence, not
+        # token validity.  A separate fix for resolve_auth (#TBD) will
+        # tighten this.
+        async def _a2a_auth_adapter(request: Request) -> dict[str, Any] | None:
+            try:
+                return await get_auth_result(
+                    request=request,
+                    authorization=request.headers.get("Authorization"),
+                    x_agent_id=request.headers.get("X-Agent-ID"),
+                    x_nexus_subject=request.headers.get("X-Nexus-Subject"),
+                    x_nexus_zone_id=request.headers.get("X-Nexus-Zone-ID"),
+                )
+            except Exception:
+                return None
+
         a2a_router = create_a2a_router(
             nexus_fs=_fastapi_app.state.nexus_fs,
             config=None,  # Will use defaults; config can be passed when available
             base_url=a2a_base_url,
             auth_required=a2a_auth_required,
+            auth_fn=_a2a_auth_adapter,
             data_dir=getattr(_fastapi_app.state, "data_dir", None),
         )
         app.include_router(a2a_router)

@@ -21,10 +21,30 @@ Database Support:
 - PostgreSQL: Uses ::jsonb operators, NOW(), EXTRACT()
 """
 
+import re
 from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.sql.elements import TextClause
+
+# Valid zone_id pattern (alphanumeric, hyphens, underscores) for SQL injection prevention
+_ZONE_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+
+def _zone_filter(zone_id: str | None) -> str:
+    """Generate optional zone_id WHERE clause fragment.
+
+    Args:
+        zone_id: Zone ID to filter by, or None for no filtering
+
+    Returns:
+        SQL fragment like "AND fp.zone_id = 'zone_a'" or empty string
+    """
+    if zone_id is None:
+        return ""
+    if not _ZONE_ID_RE.match(zone_id):
+        raise ValueError(f"Invalid zone_id: {zone_id!r}")
+    return f"\n  AND fp.zone_id = '{zone_id}'"
 
 
 def _json_extract(field: str, db_type: str = "sqlite") -> str:
@@ -74,7 +94,7 @@ def _interval_ago(interval: str, db_type: str = "sqlite") -> str:
         return "datetime('now')"
 
 
-def get_ready_work_view(db_type: str = "sqlite") -> TextClause:
+def get_ready_work_view(db_type: str = "sqlite", zone_id: str | None = None) -> TextClause:
     """SQL View: ready_work_items - files ready for processing (status='ready', no blockers)."""
     je = lambda f: _json_extract(f, db_type)  # noqa: E731
     create_stmt = (
@@ -106,7 +126,7 @@ SELECT
      WHERE fm_priority.path_id = fp.path_id
        AND fm_priority.key = 'priority') as priority
 FROM file_paths fp
-WHERE fp.deleted_at IS NULL
+WHERE fp.deleted_at IS NULL{_zone_filter(zone_id)}
   -- Must have status='ready'
   AND EXISTS (
     SELECT 1 FROM file_metadata fm
@@ -133,7 +153,7 @@ ORDER BY
 """)
 
 
-def get_pending_work_view(db_type: str = "sqlite") -> TextClause:
+def get_pending_work_view(db_type: str = "sqlite", zone_id: str | None = None) -> TextClause:
     """SQL View: pending_work_items - files with status='pending' ordered by priority."""
     je = lambda f: _json_extract(f, db_type)  # noqa: E731
     create_stmt = (
@@ -163,7 +183,7 @@ SELECT
      WHERE fm_priority.path_id = fp.path_id
        AND fm_priority.key = 'priority') as priority
 FROM file_paths fp
-WHERE fp.deleted_at IS NULL
+WHERE fp.deleted_at IS NULL{_zone_filter(zone_id)}
   AND EXISTS (
     SELECT 1 FROM file_metadata fm
     WHERE fm.path_id = fp.path_id
@@ -176,7 +196,7 @@ ORDER BY
 """)
 
 
-def get_blocked_work_view(db_type: str = "sqlite") -> TextClause:
+def get_blocked_work_view(db_type: str = "sqlite", zone_id: str | None = None) -> TextClause:
     """SQL View: blocked_work_items - files that are blocked by dependencies."""
     je = lambda f: _json_extract(f, db_type)  # noqa: E731
     create_stmt = (
@@ -211,7 +231,7 @@ SELECT
      WHERE fm_dep.path_id = fp.path_id
        AND fm_dep.key = 'depends_on') as blocker_count
 FROM file_paths fp
-WHERE fp.deleted_at IS NULL
+WHERE fp.deleted_at IS NULL{_zone_filter(zone_id)}
   AND EXISTS (
     SELECT 1 FROM file_metadata fm
     WHERE fm.path_id = fp.path_id
@@ -237,7 +257,7 @@ ORDER BY
 """)
 
 
-def get_work_by_priority_view(db_type: str = "sqlite") -> TextClause:
+def get_work_by_priority_view(db_type: str = "sqlite", zone_id: str | None = None) -> TextClause:
     """SQL View: work_by_priority - all work items ordered by priority and age."""
     je = lambda f: _json_extract(f, db_type)  # noqa: E731
     create_stmt = (
@@ -269,7 +289,7 @@ SELECT
      WHERE fm_tags.path_id = fp.path_id
        AND fm_tags.key = 'tags') as tags
 FROM file_paths fp
-WHERE fp.deleted_at IS NULL
+WHERE fp.deleted_at IS NULL{_zone_filter(zone_id)}
   AND EXISTS (
     SELECT 1 FROM file_metadata fm
     WHERE fm.path_id = fp.path_id
@@ -281,7 +301,7 @@ ORDER BY
 """)
 
 
-def get_in_progress_work_view(db_type: str = "sqlite") -> TextClause:
+def get_in_progress_work_view(db_type: str = "sqlite", zone_id: str | None = None) -> TextClause:
     """SQL View: in_progress_work - files currently being processed."""
     je = lambda f: _json_extract(f, db_type)  # noqa: E731
     # Avoid escape sequence in f-string (not supported in Python 3.11)
@@ -315,7 +335,7 @@ SELECT
      WHERE fm_started.path_id = fp.path_id
        AND fm_started.key = 'started_at') as started_at
 FROM file_paths fp
-WHERE fp.deleted_at IS NULL
+WHERE fp.deleted_at IS NULL{_zone_filter(zone_id)}
   AND EXISTS (
     SELECT 1 FROM file_metadata fm
     WHERE fm.path_id = fp.path_id
@@ -327,7 +347,7 @@ ORDER BY
 """)
 
 
-def get_ready_for_indexing_view(db_type: str = "sqlite") -> TextClause:
+def get_ready_for_indexing_view(db_type: str = "sqlite", zone_id: str | None = None) -> TextClause:
     """SQL View: ready_for_indexing - files queued for semantic indexing with no pending dependencies."""
     je = lambda f: _json_extract(f, db_type)  # noqa: E731
     create_stmt = (
@@ -352,7 +372,7 @@ SELECT
      WHERE fm_status.path_id = fp.path_id
        AND fm_status.key = 'processing_status') as processing_status
 FROM file_paths fp
-WHERE fp.deleted_at IS NULL
+WHERE fp.deleted_at IS NULL{_zone_filter(zone_id)}
   -- Must have processing_status='queued'
   AND EXISTS (
     SELECT 1 FROM file_metadata fm
@@ -376,7 +396,7 @@ ORDER BY fp.size_bytes ASC, fp.created_at ASC;
 """)
 
 
-def get_hot_tier_eviction_view(db_type: str = "sqlite") -> TextClause:
+def get_hot_tier_eviction_view(db_type: str = "sqlite", zone_id: str | None = None) -> TextClause:
     """SQL View: hot_tier_eviction_candidates - files accessed long ago (cache eviction candidates)."""
     create_stmt = (
         "CREATE OR REPLACE VIEW" if db_type == "postgresql" else "CREATE VIEW IF NOT EXISTS"
@@ -407,7 +427,7 @@ SELECT
     -- Hours since last access
     {hours_since_access} as hours_since_access
 FROM file_paths fp
-WHERE fp.deleted_at IS NULL
+WHERE fp.deleted_at IS NULL{_zone_filter(zone_id)}
   AND fp.backend_id = 'workspace'  -- Hot tier files
   AND fp.accessed_at IS NOT NULL
   AND fp.accessed_at < {time_threshold}  -- Not accessed in last hour
@@ -417,8 +437,12 @@ LIMIT 1000;
 """)
 
 
-def get_orphaned_content_view(db_type: str = "sqlite") -> TextClause:
-    """SQL View: orphaned_content_objects - content chunks with no references (GC targets)."""
+def get_orphaned_content_view(db_type: str = "sqlite", _zone_id: str | None = None) -> TextClause:
+    """SQL View: orphaned_content_objects - content chunks with no references (GC targets).
+
+    Note: zone_id is accepted for signature consistency with other view generators
+    but is not used (this view queries content_chunks, not file_paths).
+    """
     create_stmt = (
         "CREATE OR REPLACE VIEW" if db_type == "postgresql" else "CREATE VIEW IF NOT EXISTS"
     )

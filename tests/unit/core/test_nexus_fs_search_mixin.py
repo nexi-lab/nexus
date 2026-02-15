@@ -37,7 +37,9 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance for testing."""
     nx = create_nexus_fs(
         backend=LocalBackend(temp_dir),
-        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata")),
+        metadata_store=RaftMetadataStore.embedded(
+            str(temp_dir / "raft-metadata"), zone_id="default"
+        ),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=False,
@@ -51,7 +53,9 @@ def nx_with_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance with permissions enabled."""
     nx = create_nexus_fs(
         backend=LocalBackend(temp_dir),
-        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata-perms")),
+        metadata_store=RaftMetadataStore.embedded(
+            str(temp_dir / "raft-metadata-perms"), zone_id="default"
+        ),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=True,
@@ -524,6 +528,53 @@ class TestListWithPermissions:
 
         assert "/file1.txt" in files
         assert "/file2.txt" in files
+
+    def test_list_returns_files_in_zone(self, nx: NexusFS) -> None:
+        """Test that list returns files in the zone."""
+        nx.write("/zone/file1.txt", b"Content 1")
+        nx.write("/zone/file2.txt", b"Content 2")
+        nx.write("/zone/subdir/file3.txt", b"Content 3")
+
+        files = nx.list("/zone", recursive=True)
+
+        assert "/zone/file1.txt" in files
+        assert "/zone/file2.txt" in files
+        assert "/zone/subdir/file3.txt" in files
+
+    def test_list_without_context_returns_all(self, nx: NexusFS) -> None:
+        """Test that list without context returns all files."""
+        nx.write("/file1.txt", b"Content 1")
+        nx.write("/dir/file2.txt", b"Content 2")
+        nx.write("/other/file3.txt", b"Content 3")
+
+        files = nx.list("/", recursive=True)
+
+        assert "/file1.txt" in files
+        assert "/dir/file2.txt" in files
+        assert "/other/file3.txt" in files
+
+    def test_list_empty_directory_returns_empty(self, nx: NexusFS) -> None:
+        """Test that list on empty directory returns empty result."""
+        # Create a file outside the path we'll query
+        nx.write("/other/file.txt", b"Content")
+
+        files = nx.list("/empty", recursive=True)
+
+        assert len(files) == 0
+
+    def test_list_with_prefix_filters_correctly(self, nx: NexusFS) -> None:
+        """Test that list with prefix filters files correctly."""
+        nx.write("/a/file1.txt", b"Content 1")
+        nx.write("/a/file2.txt", b"Content 2")
+        nx.write("/b/file3.txt", b"Content 3")
+        nx.write("/b/file4.txt", b"Content 4")
+
+        files = nx.list(prefix="/a/", recursive=True)
+
+        assert "/a/file1.txt" in files
+        assert "/a/file2.txt" in files
+        assert "/b/file3.txt" not in files
+        assert "/b/file4.txt" not in files
 
 
 class TestGrepWithParsedContent:

@@ -33,14 +33,12 @@ import asyncio
 import logging
 import uuid
 from contextlib import asynccontextmanager
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
-from nexus.llm.context_builder import ContextBuilder
 from nexus.search.chunking import ChunkStrategy, DocumentChunker, EntropyAwareChunker
 from nexus.search.contextual_chunking import (
     ContextGenerator,
@@ -49,6 +47,7 @@ from nexus.search.contextual_chunking import (
     ContextualChunkResult,
 )
 from nexus.search.embeddings import EmbeddingProvider
+from nexus.search.results import BaseSearchResult
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
@@ -58,20 +57,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@dataclass
-class AsyncSearchResult:
-    """Async search result with full metadata."""
-
-    path: str
-    chunk_index: int
-    chunk_text: str
-    score: float
-    start_offset: int | None = None
-    end_offset: int | None = None
-    line_start: int | None = None
-    line_end: int | None = None
-    keyword_score: float | None = None
-    vector_score: float | None = None
+# AsyncSearchResult is identical to BaseSearchResult (Issue #1520: DRY unification)
+AsyncSearchResult = BaseSearchResult
 
 
 def create_async_engine_from_url(database_url: str) -> AsyncEngine:
@@ -155,6 +142,7 @@ class AsyncSemanticSearch:
         self.database_url = database_url
         self.embedding_provider = embedding_provider
         self.batch_size = batch_size
+        self._context_builder: Any = None  # Lazy-created ContextBuilder (Issue #1520)
         self.entropy_filtering = entropy_filtering
         self.entropy_threshold = entropy_threshold
         self.entropy_alpha = entropy_alpha
@@ -553,7 +541,12 @@ class AsyncSemanticSearch:
         """
         # Apply adaptive k if enabled (Issue #1021)
         if adaptive_k:
-            context_builder = ContextBuilder()
+            # Lazy import to break search → llm hard dependency (Issue #1520)
+            from nexus.llm.context_builder import ContextBuilder as _CB
+
+            if not hasattr(self, "_context_builder") or self._context_builder is None:
+                self._context_builder = _CB()
+            context_builder = self._context_builder
             original_limit = limit
             limit = context_builder.calculate_k_dynamic(query, k_base=limit)
             if limit != original_limit:

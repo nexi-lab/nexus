@@ -21,9 +21,101 @@ from nexus.a2a.models import (
 
 logger = logging.getLogger(__name__)
 
-# Module-level cache for the serialized Agent Card
-_cached_card_bytes: bytes | None = None
-_cached_card: AgentCard | None = None
+
+class AgentCardCache:
+    """Encapsulates the mutable cache state for a single Agent Card.
+
+    Each ``AgentCardCache`` instance is independent — no shared globals.
+    The class is intentionally simple: GIL + write-once semantics make
+    a ``threading.Lock`` unnecessary.
+    """
+
+    __slots__ = ("_card_bytes", "_card")
+
+    def __init__(self) -> None:
+        self._card_bytes: bytes | None = None
+        self._card: AgentCard | None = None
+
+    def get_card_bytes(
+        self,
+        *,
+        config: Any = None,
+        skills: list[Any] | None = None,
+        base_url: str = "http://localhost:2026",
+        auth_provider: Any = None,
+        force_rebuild: bool = False,
+    ) -> bytes:
+        """Return the Agent Card as pre-serialised JSON bytes.
+
+        Builds on first call and caches the result.  Pass
+        ``force_rebuild=True`` to invalidate and rebuild.
+        """
+        if self._card_bytes is not None and not force_rebuild:
+            return self._card_bytes
+
+        card = build_agent_card(
+            config=config,
+            skills=skills,
+            base_url=base_url,
+            auth_provider=auth_provider,
+        )
+
+        self._card = card
+        self._card_bytes = json.dumps(
+            card.model_dump(mode="json", exclude_none=True),
+            indent=2,
+        ).encode("utf-8")
+
+        logger.info(
+            "A2A Agent Card built: %s (%d skills)",
+            card.name,
+            len(card.skills),
+        )
+        return self._card_bytes
+
+    def get_card(self) -> AgentCard | None:
+        """Return the cached ``AgentCard`` instance, or *None* if not yet built."""
+        return self._card
+
+    def invalidate(self) -> None:
+        """Clear the cache so the card will be rebuilt on next access."""
+        self._card_bytes = None
+        self._card = None
+
+
+# Module-level default instance (backward-compatible with existing callers)
+_default_cache = AgentCardCache()
+
+
+def get_cached_card_bytes(
+    *,
+    config: Any = None,
+    skills: list[Any] | None = None,
+    base_url: str = "http://localhost:2026",
+    auth_provider: Any = None,
+    force_rebuild: bool = False,
+) -> bytes:
+    """Get the Agent Card as pre-serialized JSON bytes.
+
+    Thin wrapper around the default ``AgentCardCache`` instance.
+    """
+    return _default_cache.get_card_bytes(
+        config=config,
+        skills=skills,
+        base_url=base_url,
+        auth_provider=auth_provider,
+        force_rebuild=force_rebuild,
+    )
+
+
+def get_cached_card() -> AgentCard | None:
+    """Return the cached ``AgentCard`` instance, or *None* if not yet built."""
+    return _default_cache.get_card()
+
+
+def invalidate_cache() -> None:
+    """Clear the cached Agent Card so it will be rebuilt on next access."""
+    _default_cache.invalidate()
 
 
 def build_agent_card(
@@ -86,58 +178,6 @@ def build_agent_card(
     )
 
     return card
-
-
-def get_cached_card_bytes(
-    *,
-    config: Any = None,
-    skills: list[Any] | None = None,
-    base_url: str = "http://localhost:2026",
-    auth_provider: Any = None,
-    force_rebuild: bool = False,
-) -> bytes:
-    """Get the Agent Card as pre-serialized JSON bytes.
-
-    Builds on first call and caches the result.  Pass
-    ``force_rebuild=True`` to invalidate the cache (e.g. after
-    skills change at runtime).
-    """
-    global _cached_card_bytes, _cached_card
-
-    if _cached_card_bytes is not None and not force_rebuild:
-        return _cached_card_bytes
-
-    card = build_agent_card(
-        config=config,
-        skills=skills,
-        base_url=base_url,
-        auth_provider=auth_provider,
-    )
-
-    _cached_card = card
-    _cached_card_bytes = json.dumps(
-        card.model_dump(mode="json", exclude_none=True),
-        indent=2,
-    ).encode("utf-8")
-
-    logger.info(
-        "A2A Agent Card built: %s (%d skills)",
-        card.name,
-        len(card.skills),
-    )
-    return _cached_card_bytes
-
-
-def get_cached_card() -> AgentCard | None:
-    """Return the cached ``AgentCard`` instance, or *None* if not yet built."""
-    return _cached_card
-
-
-def invalidate_cache() -> None:
-    """Clear the cached Agent Card so it will be rebuilt on next access."""
-    global _cached_card_bytes, _cached_card
-    _cached_card_bytes = None
-    _cached_card = None
 
 
 # ------------------------------------------------------------------

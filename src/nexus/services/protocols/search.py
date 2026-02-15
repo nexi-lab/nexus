@@ -7,10 +7,13 @@ Adaptive algorithm selection (Issue #929):
 - Grep: sequential → parallel → Zoekt based on file count
 - Glob: Python → Rust acceleration based on file count
 
+Issue #1520: Added SearchBrickProtocol for search brick contract.
+
 References:
     - docs/design/NEXUS-LEGO-ARCHITECTURE.md
     - Issue #1287: Extract NexusFS domain services from god object
     - Issue #929: Adaptive algorithm selection
+    - Issue #1520: Extract search module into search brick
 """
 
 from __future__ import annotations
@@ -19,6 +22,50 @@ import builtins
 from typing import Any, Protocol, runtime_checkable
 
 from nexus.core.permissions import OperationContext
+
+# =============================================================================
+# Issue #1520: Search Brick Protocol
+# =============================================================================
+
+
+@runtime_checkable
+class SearchBrickProtocol(Protocol):
+    """Brick contract for search operations (Issue #1520).
+
+    Defines the interface that search brick implementations must satisfy.
+    Used by the kernel/services layer to interact with the search brick
+    without hard-coupling to its internals.
+    """
+
+    async def search(
+        self,
+        query: str,
+        *,
+        limit: int = 10,
+        path_filter: str | None = None,
+        search_mode: str = "hybrid",
+    ) -> builtins.list[Any]: ...
+
+    async def index_document(
+        self,
+        path: str,
+        content: str,
+        *,
+        zone_id: str | None = None,
+    ) -> int: ...
+
+    async def get_stats(self) -> dict[str, Any]: ...
+
+    async def initialize(self) -> None: ...
+
+    async def shutdown(self) -> None: ...
+
+    def verify_imports(self) -> dict[str, bool]: ...
+
+
+# =============================================================================
+# Issue #1287: Search Service Protocol
+# =============================================================================
 
 
 @runtime_checkable

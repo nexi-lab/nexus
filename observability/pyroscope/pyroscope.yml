@@ -1,0 +1,20 @@
+# Pyroscope continuous profiling server config (Issue #763)
+#
+# Runs in monolithic mode with local filesystem storage.
+# No authentication — relies on Docker network isolation.
+
+target: all
+
+server:
+  http_listen_port: 4040
+
+storage:
+  backend: filesystem
+  filesystem:
+    dir: /data
+
+limits:
+  max_nodes_per_profile: 16384
+
+self_profiling:
+  disable_push: true

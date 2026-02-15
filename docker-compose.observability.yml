@@ -22,6 +22,8 @@ services:
       - OTEL_EXPORTER_OTLP_ENDPOINT=http://tempo:4317
       - OTEL_SERVICE_NAME=nexus
       - NEXUS_ENV=prod
+      - PYROSCOPE_ENABLED=true
+      - PYROSCOPE_SERVER_ADDRESS=http://pyroscope:4040
     networks:
       - nexus-network
 
@@ -126,6 +128,7 @@ services:
       - prometheus
       - loki
       - tempo
+      - pyroscope
     profiles:
       - observability
 
@@ -184,10 +187,34 @@ services:
     profiles:
       - observability
 
+  # =========================================================================
+  # Pyroscope — Continuous profiling (Issue #763)
+  # =========================================================================
+  pyroscope:
+    image: grafana/pyroscope:1.16.1
+    container_name: nexus-pyroscope
+    restart: unless-stopped
+    ports:
+      - "4040:4040"
+    volumes:
+      - ./observability/pyroscope/pyroscope.yml:/etc/pyroscope/config.yaml:ro
+      - pyroscope-data:/data
+    command:
+      - "-config.file=/etc/pyroscope/config.yaml"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    networks:
+      - nexus-network
+    profiles:
+      - observability
+
 volumes:
   prometheus-data:
   loki-data:
   tempo-data:
+  pyroscope-data:
   grafana-data:
 
 networks:

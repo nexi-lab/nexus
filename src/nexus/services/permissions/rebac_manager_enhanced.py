@@ -383,6 +383,18 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
             tuple[str, Any]  # (callback_id, callback_fn)
         ] = []
 
+        # Issue #1459: Unified cache coordinator
+        # Consolidates cache invalidation orchestration for future phases.
+        # Currently wired alongside existing invalidation paths.
+        from nexus.services.permissions.cache.coordinator import CacheCoordinator
+
+        self._cache_coordinator: CacheCoordinator = CacheCoordinator(
+            l1_cache=self._l1_cache,
+            boundary_cache=self._boundary_cache,
+            iterator_cache=self._iterator_cache,
+            zone_graph_cache=self._zone_graph_cache,
+        )
+
     def rebac_check(
         self,
         subject: tuple[str, str],
@@ -1355,6 +1367,8 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
             if cid == callback_id:
                 return
         self._boundary_cache_invalidators.append((callback_id, callback))
+        # Also register with cache coordinator (Issue #1459)
+        self._cache_coordinator.register_boundary_invalidator(callback_id, callback)
 
     def unregister_boundary_cache_invalidator(self, callback_id: str) -> bool:
         """Unregister a boundary cache invalidation callback.
@@ -1463,6 +1477,8 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
             if cid == callback_id:
                 return
         self._dir_visibility_invalidators.append((callback_id, callback))
+        # Also register with cache coordinator (Issue #1459)
+        self._cache_coordinator.register_visibility_invalidator(callback_id, callback)
 
     def unregister_dir_visibility_invalidator(self, callback_id: str) -> bool:
         """Unregister a directory visibility cache invalidation callback.

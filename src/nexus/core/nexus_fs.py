@@ -55,15 +55,8 @@ from nexus.core.rpc_decorator import rpc_expose
 from nexus.parsers import MarkItDownParser, ParserRegistry
 from nexus.parsers.types import ParseResult
 
-# Phase 2: Service imports - Independent, testable services extracted from mixins
-from nexus.services.llm_service import LLMService
-from nexus.services.mcp_service import MCPService
-from nexus.services.mount_service import MountService
-from nexus.services.oauth_service import OAuthService
-
+# Phase 2: Service imports moved to _wire_services() as lazy imports (Issue #1519)
 # NexusFSReBACMixin import removed (Issue #1387)
-from nexus.services.rebac_service import ReBACService
-from nexus.services.search_service import SearchService
 from nexus.storage.content_cache import ContentCache
 from nexus.storage.record_store import RecordStoreABC
 
@@ -339,6 +332,14 @@ class NexusFS(  # type: ignore[misc]
         """
         # VersionService: injected by factory (Task #45)
         self.version_service = self._services.version_service
+
+        # Lazy-import services to avoid core/ → services/ top-level coupling (#1519)
+        from nexus.services.llm_service import LLMService
+        from nexus.services.mcp_service import MCPService
+        from nexus.services.mount_service import MountService
+        from nexus.services.oauth_service import OAuthService
+        from nexus.services.rebac_service import ReBACService
+        from nexus.services.search_service import SearchService
 
         # ReBACService: Permission and access control operations
         self.rebac_service = ReBACService(

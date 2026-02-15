@@ -243,7 +243,7 @@ class AsyncLocalBackend(AsyncBackend):
 
     # === Content Write Operations ===
 
-    async def write_content(  # type: ignore[override]  # async override
+    async def write_content(
         self, content: bytes, context: "OperationContext | None" = None
     ) -> HandlerResponse[str]:
         """
@@ -292,7 +292,7 @@ class AsyncLocalBackend(AsyncBackend):
 
     # === Content Read Operations ===
 
-    async def read_content(  # type: ignore[override]  # async override
+    async def read_content(
         self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[bytes]:
         """
@@ -355,7 +355,7 @@ class AsyncLocalBackend(AsyncBackend):
 
     # === Batch Read Operations ===
 
-    async def batch_read_content(  # type: ignore[override]  # async override
+    async def batch_read_content(
         self, content_hashes: list[str], context: "OperationContext | None" = None
     ) -> dict[str, bytes | None]:
         """
@@ -405,7 +405,7 @@ class AsyncLocalBackend(AsyncBackend):
 
     # === Content Delete Operations ===
 
-    async def delete_content(  # type: ignore[override]  # async override
+    async def delete_content(
         self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[None]:
         """
@@ -457,7 +457,7 @@ class AsyncLocalBackend(AsyncBackend):
 
     # === Content Existence/Size Operations ===
 
-    async def content_exists(  # type: ignore[override]  # async override
+    async def content_exists(
         self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[bool]:
         """
@@ -485,7 +485,7 @@ class AsyncLocalBackend(AsyncBackend):
             path=content_hash,
         )
 
-    async def get_content_size(  # type: ignore[override]  # async override
+    async def get_content_size(
         self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[int]:
         """
@@ -528,7 +528,7 @@ class AsyncLocalBackend(AsyncBackend):
 
         return await asyncio.to_thread(_get_size)
 
-    async def get_ref_count(  # type: ignore[override]  # async override
+    async def get_ref_count(
         self, content_hash: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[int]:
         """
@@ -627,7 +627,7 @@ class AsyncLocalBackend(AsyncBackend):
         for chunk in chunks:
             yield chunk
 
-    async def stream_range(  # type: ignore[override]  # async override
+    async def stream_range(
         self,
         content_hash: str,
         start: int,
@@ -685,7 +685,7 @@ class AsyncLocalBackend(AsyncBackend):
         for chunk in chunks:
             yield chunk
 
-    async def write_stream(  # type: ignore[override]  # async override
+    async def write_stream(
         self,
         chunks: AsyncIterator[bytes],
         context: "OperationContext | None" = None,
@@ -714,7 +714,7 @@ class AsyncLocalBackend(AsyncBackend):
 
     # === Directory Operations ===
 
-    async def mkdir(  # type: ignore[override]  # async override
+    async def mkdir(
         self,
         path: str,
         parents: bool = False,
@@ -766,7 +766,7 @@ class AsyncLocalBackend(AsyncBackend):
 
         return await asyncio.to_thread(_mkdir)
 
-    async def is_directory(  # type: ignore[override]  # async override
+    async def is_directory(
         self, path: str, context: "OperationContext | None" = None
     ) -> HandlerResponse[bool]:
         """
@@ -794,7 +794,7 @@ class AsyncLocalBackend(AsyncBackend):
             path=path,
         )
 
-    async def rmdir(  # type: ignore[override]  # async override
+    async def rmdir(
         self,
         path: str,
         recursive: bool = False,
@@ -856,7 +856,7 @@ class AsyncLocalBackend(AsyncBackend):
 
         return await asyncio.to_thread(_rmdir)
 
-    async def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:  # type: ignore[override]  # async override
+    async def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
         """
         List directory contents asynchronously.
 

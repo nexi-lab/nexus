@@ -87,6 +87,14 @@ class MockReBACManager:
         # Grant permission if path is in granted set
         return object_id in self.granted_paths
 
+    def rebac_check_bulk(self, checks, zone_id=None):
+        """Bulk check: delegate each check to rebac_check and return results dict."""
+        results = {}
+        for check in checks:
+            subject, permission, obj = check
+            results[check] = self.rebac_check(subject, permission, obj, zone_id)
+        return results
+
 
 class TestVirtualPathPermissionChecks:
     """Test that permission checks use virtual paths, not backend paths."""
@@ -326,10 +334,14 @@ class TestRegressionPrevention:
         # Verify walking pattern
         checked_paths = [check["object_id"] for check in rebac.checks]
 
-        # Should walk: file → 2024 → team-data (found!) → stops
-        # All paths should be virtual paths with mount point
+        # The batched approach checks all ancestors in one bulk call,
+        # including parents above the mount point (which return False).
+        # Verify that the grant target is found among the checked paths.
+        assert "/mnt/gcs/team-data" in checked_paths, (
+            "Should have checked the granted ancestor path"
+        )
+        # All checked paths should be valid absolute paths (virtual paths)
         for path in checked_paths:
-            if path != "/":  # Root is special
-                assert path.startswith("/mnt/gcs"), (
-                    f"All checked paths should be virtual paths with mount point, but found: {path}"
-                )
+            assert path.startswith("/"), (
+                f"All checked paths should be absolute virtual paths, but found: {path}"
+            )

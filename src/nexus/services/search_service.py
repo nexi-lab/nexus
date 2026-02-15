@@ -16,6 +16,8 @@ import builtins
 import fnmatch
 import logging
 import re
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any, cast
 
@@ -39,6 +41,9 @@ from nexus.services.search_semantic import SemanticSearchMixin
 # List directory traversal thresholds (Issue #901)
 LIST_PARALLEL_WORKERS = 10  # Thread pool size for parallel directory listing (I/O-bound)
 LIST_PARALLEL_MAX_DEPTH = 100  # Safety limit to prevent infinite traversal (e.g., symlink loops)
+
+# Zone-aware path prefixes for cross-zone filtering (Issue #899)
+ZONE_AWARE_PREFIXES: tuple[str, ...] = ("/zones/", "/shared/", "/archives/")
 
 # =============================================================================
 # Issue #538: Gitignore-style default exclusion patterns
@@ -164,25 +169,47 @@ class SearchService(SemanticSearchMixin):
         # Shared thread pool for parallel grep (Issue #929, fix #14)
         self._thread_pool: ThreadPoolExecutor | None = None
 
+        # Shared thread pool for parallel directory listing (Issue #899)
+        self._list_thread_pool: ThreadPoolExecutor | None = None
+
+        # Lock for lazy thread pool initialization (prevents TOCTOU race)
+        self._pool_lock = threading.Lock()
+
         # TTL cache for cross-zone sharing queries (Issue #904)
         self._cross_zone_cache: dict[tuple[str, ...], tuple[float, builtins.list[str]]] = {}
 
         logger.info("[SearchService] Initialized")
 
     def _get_thread_pool(self) -> ThreadPoolExecutor:
-        """Get or create the shared thread pool for parallel operations."""
+        """Get or create the shared thread pool for parallel grep operations."""
         if self._thread_pool is None:
-            self._thread_pool = ThreadPoolExecutor(
-                max_workers=GREP_PARALLEL_WORKERS,
-                thread_name_prefix="nexus-search",
-            )
+            with self._pool_lock:
+                if self._thread_pool is None:
+                    self._thread_pool = ThreadPoolExecutor(
+                        max_workers=GREP_PARALLEL_WORKERS,
+                        thread_name_prefix="nexus-search",
+                    )
         return self._thread_pool
+
+    def _get_list_thread_pool(self) -> ThreadPoolExecutor:
+        """Get or create the shared thread pool for parallel directory listing."""
+        if self._list_thread_pool is None:
+            with self._pool_lock:
+                if self._list_thread_pool is None:
+                    self._list_thread_pool = ThreadPoolExecutor(
+                        max_workers=LIST_PARALLEL_WORKERS,
+                        thread_name_prefix="nexus-list",
+                    )
+        return self._list_thread_pool
 
     def close(self) -> None:
         """Release resources held by the search service."""
         if self._thread_pool is not None:
             self._thread_pool.shutdown(wait=False)
             self._thread_pool = None
+        if self._list_thread_pool is not None:
+            self._list_thread_pool.shutdown(wait=False)
+            self._list_thread_pool = None
 
     @property
     def _gw_session_factory(self) -> Any:
@@ -559,46 +586,44 @@ class SearchService(SemanticSearchMixin):
         if not pending_dirs:
             return results
 
-        # BFS with parallel I/O for subdirectories
-        import time as _time_mod
-
-        start_time = _time_mod.time()
+        # BFS with parallel I/O using shared thread pool (Issue #899)
+        start_time = time.time()
         depth = 0
+        executor = self._get_list_thread_pool()
 
-        with ThreadPoolExecutor(max_workers=LIST_PARALLEL_WORKERS) as executor:
-            while pending_dirs and depth < LIST_PARALLEL_MAX_DEPTH:
-                depth += 1
-                futures = {
-                    executor.submit(backend.list_dir, bp, context=context): (vp, bp)
-                    for vp, bp in pending_dirs
-                }
-                pending_dirs = []
+        while pending_dirs and depth < LIST_PARALLEL_MAX_DEPTH:
+            depth += 1
+            futures = {
+                executor.submit(backend.list_dir, bp, context=context): (vp, bp)
+                for vp, bp in pending_dirs
+            }
+            pending_dirs = []
 
-                for future in as_completed(futures):
-                    virtual_path, b_path = futures[future]
-                    try:
-                        dir_entries = future.result(timeout=30)
-                        for entry in dir_entries:
-                            full_path = f"{virtual_path.rstrip('/')}/{entry}"
-                            if entry.endswith("/"):
-                                results.append(full_path.rstrip("/"))
-                                subdir_bp = (
-                                    f"{b_path.rstrip('/')}/{entry.rstrip('/')}"
-                                    if b_path
-                                    else entry.rstrip("/")
-                                )
-                                pending_dirs.append((full_path.rstrip("/"), subdir_bp))
-                            else:
-                                results.append(full_path)
-                    except Exception as e:
-                        logger.warning(f"[LIST-PARALLEL] Failed to list '{virtual_path}': {e}")
+            for future in as_completed(futures):
+                virtual_path, b_path = futures[future]
+                try:
+                    dir_entries = future.result(timeout=30)
+                    for entry in dir_entries:
+                        full_path = f"{virtual_path.rstrip('/')}/{entry}"
+                        if entry.endswith("/"):
+                            results.append(full_path.rstrip("/"))
+                            subdir_bp = (
+                                f"{b_path.rstrip('/')}/{entry.rstrip('/')}"
+                                if b_path
+                                else entry.rstrip("/")
+                            )
+                            pending_dirs.append((full_path.rstrip("/"), subdir_bp))
+                        else:
+                            results.append(full_path)
+                except Exception as e:
+                    logger.warning(f"[LIST-PARALLEL] Failed to list '{virtual_path}': {e}")
 
         if depth >= LIST_PARALLEL_MAX_DEPTH:
             logger.warning(
                 f"[LIST-PARALLEL] Hit max depth {LIST_PARALLEL_MAX_DEPTH}, truncating traversal"
             )
 
-        elapsed = _time_mod.time() - start_time
+        elapsed = time.time() - start_time
         logger.debug(f"[LIST-PARALLEL] Completed: {len(results)} entries in {elapsed:.3f}s")
 
         return results
@@ -1063,7 +1088,7 @@ class SearchService(SemanticSearchMixin):
         # Two-phase TRAVERSE optimization (Fix #1147)
         user_zone = zone_id
         _skipped_cross_zone = 0
-        _ZONE_PREFIXES = ("/zones/", "/shared/", "/archives/")
+        _ZONE_PREFIXES = ZONE_AWARE_PREFIXES
         dirs_to_check: list[str] = []
 
         for dir_path in dirs_needing_traverse:

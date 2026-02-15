@@ -204,7 +204,9 @@ class TestConcurrency:
     async def test_concurrent_calls_consistent_state(self):
         cb = _make_cb(failure_threshold=3)
         # 10 concurrent successes shouldn't break anything
-        results = await asyncio.gather(*[cb.call(AsyncMock(return_value=i)) for i in range(10)])
+        results = await asyncio.gather(
+            *[cb.call(AsyncMock(return_value=i)) for i in range(10)]
+        )
         assert len(results) == 10
         assert cb.state == CircuitState.CLOSED
         assert cb.success_count == 10

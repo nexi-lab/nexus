@@ -80,7 +80,9 @@ class TestCircuitOpensAfterDBFailures:
     @pytest.mark.asyncio
     async def test_circuit_opens_after_db_failures(self, service, mock_rebac_manager):
         # Make rebac_check raise OperationalError
-        mock_rebac_manager.rebac_check.side_effect = OperationalError("connection lost", None, None)
+        mock_rebac_manager.rebac_check.side_effect = OperationalError(
+            "connection lost", None, None
+        )
 
         # First 3 calls raise OperationalError (and trip the circuit)
         for _ in range(3):
@@ -106,7 +108,9 @@ class TestFallbackReturnsCachedPermission:
     @pytest.mark.asyncio
     async def test_fallback_returns_cached_permission(self, service, mock_rebac_manager):
         # Trip the circuit
-        mock_rebac_manager.rebac_check.side_effect = OperationalError("connection lost", None, None)
+        mock_rebac_manager.rebac_check.side_effect = OperationalError(
+            "connection lost", None, None
+        )
         for _ in range(3):
             with pytest.raises(OperationalError):
                 await service.rebac_check(
@@ -134,7 +138,9 @@ class TestCircuitOpenCacheMissRaises:
     @pytest.mark.asyncio
     async def test_circuit_open_cache_miss_raises(self, service, mock_rebac_manager):
         # Trip the circuit
-        mock_rebac_manager.rebac_check.side_effect = OperationalError("connection lost", None, None)
+        mock_rebac_manager.rebac_check.side_effect = OperationalError(
+            "connection lost", None, None
+        )
         for _ in range(3):
             with pytest.raises(OperationalError):
                 await service.rebac_check(
@@ -160,7 +166,9 @@ class TestWriteOperationsNoFallback:
     @pytest.mark.asyncio
     async def test_write_operations_no_fallback(self, service, mock_rebac_manager):
         # Trip the circuit
-        mock_rebac_manager.rebac_write.side_effect = OperationalError("connection lost", None, None)
+        mock_rebac_manager.rebac_write.side_effect = OperationalError(
+            "connection lost", None, None
+        )
         for _ in range(3):
             with pytest.raises(OperationalError):
                 await service.rebac_create(
@@ -187,7 +195,9 @@ class TestCircuitRecovery:
     @pytest.mark.asyncio
     async def test_circuit_recovery(self, service, mock_rebac_manager, circuit_breaker):
         # Phase 1: Trip the circuit
-        mock_rebac_manager.rebac_check.side_effect = OperationalError("connection lost", None, None)
+        mock_rebac_manager.rebac_check.side_effect = OperationalError(
+            "connection lost", None, None
+        )
         for _ in range(3):
             with pytest.raises(OperationalError):
                 await service.rebac_check(

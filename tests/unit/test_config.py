@@ -23,7 +23,7 @@ class TestNexusConfig:
         """Test that default values are set correctly."""
         config = NexusConfig()
 
-        assert config.mode == "embedded"
+        assert config.mode == "standalone"
         assert config.data_dir == "./nexus-data"
         assert config.cache_size_mb == 100
         assert config.enable_vector_search is True
@@ -36,7 +36,7 @@ class TestNexusConfig:
     def test_custom_values(self) -> None:
         """Test that custom values can be set."""
         config = NexusConfig(
-            mode="monolithic",
+            mode="standalone",
             data_dir="/tmp/nexus",
             cache_size_mb=200,
             enable_vector_search=False,
@@ -47,7 +47,7 @@ class TestNexusConfig:
             timeout=60.0,
         )
 
-        assert config.mode == "monolithic"
+        assert config.mode == "standalone"
         assert config.data_dir == "/tmp/nexus"
         assert config.cache_size_mb == 200
         assert config.enable_vector_search is False
@@ -57,48 +57,72 @@ class TestNexusConfig:
         assert config.api_key == "test-key"
         assert config.timeout == 60.0
 
-    def test_mode_validation_embedded(self) -> None:
-        """Test mode validation for embedded mode."""
-        config = NexusConfig(mode="embedded")
-        assert config.mode == "embedded"
+    # ── New mode validation ─────────────────────────────────────────
 
-    def test_mode_validation_monolithic(self) -> None:
-        """Test mode validation for monolithic mode."""
-        config = NexusConfig(mode="monolithic", url="http://localhost:8000")
-        assert config.mode == "monolithic"
+    def test_mode_validation_standalone(self) -> None:
+        """Test mode validation for standalone mode."""
+        config = NexusConfig(mode="standalone")
+        assert config.mode == "standalone"
 
-    def test_mode_validation_distributed(self) -> None:
-        """Test mode validation for distributed mode."""
-        config = NexusConfig(mode="distributed", url="http://localhost:8000")
-        assert config.mode == "distributed"
+    def test_mode_validation_remote(self) -> None:
+        """Test mode validation for remote mode."""
+        config = NexusConfig(mode="remote", url="http://localhost:8000")
+        assert config.mode == "remote"
+
+    def test_mode_validation_federation(self) -> None:
+        """Test mode validation for federation mode."""
+        config = NexusConfig(mode="federation")
+        assert config.mode == "federation"
 
     def test_mode_validation_invalid(self) -> None:
         """Test that invalid mode raises ValueError."""
         with pytest.raises(ValueError, match="mode must be one of"):
             NexusConfig(mode="invalid")
 
-    def test_url_provided_for_monolithic(self) -> None:
-        """Test that URL can be provided for monolithic mode."""
-        config = NexusConfig(mode="monolithic", url="http://localhost:8000")
+    # ── Old mode values rejected ────────────────────────────────────
+
+    def test_old_modes_rejected(self) -> None:
+        """Test that old mode values are rejected outright."""
+        for old_mode in ["embedded", "monolithic", "distributed"]:
+            with pytest.raises(ValueError, match="mode must be one of"):
+                NexusConfig(mode=old_mode)
+
+    # ── URL validation ──────────────────────────────────────────────
+
+    def test_url_required_for_remote(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test that URL is required for remote mode."""
+        monkeypatch.delenv("NEXUS_URL", raising=False)
+        with pytest.raises(ValueError, match="url is required for mode='remote'"):
+            NexusConfig(mode="remote")
+
+    def test_url_provided_for_remote(self) -> None:
+        """Test that URL can be provided for remote mode."""
+        config = NexusConfig(mode="remote", url="http://localhost:8000")
         assert config.url == "http://localhost:8000"
 
-    def test_url_provided_for_distributed(self) -> None:
-        """Test that URL can be provided for distributed mode."""
-        config = NexusConfig(mode="distributed", url="http://localhost:8000")
-        assert config.url == "http://localhost:8000"
-
-    def test_url_not_required_for_embedded(self) -> None:
-        """Test that URL is not required for embedded mode."""
-        config = NexusConfig(mode="embedded")
+    def test_url_not_required_for_standalone(self) -> None:
+        """Test that URL is not required for standalone mode."""
+        config = NexusConfig(mode="standalone")
         assert config.url is None
+
+    def test_url_not_required_for_federation(self) -> None:
+        """Test that URL is not required for federation mode."""
+        config = NexusConfig(mode="federation")
+        assert config.url is None
+
+    def test_url_from_env_for_remote(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test that NEXUS_URL env var satisfies remote mode URL requirement."""
+        monkeypatch.setenv("NEXUS_URL", "http://env-server:2026")
+        config = NexusConfig(mode="remote")
+        assert config.url == "http://env-server:2026"
 
     def test_config_is_mutable(self) -> None:
         """Test that config can be modified after creation."""
         config = NexusConfig()
-        config.mode = "monolithic"
+        config.mode = "remote"
         config.url = "http://localhost:8000"
 
-        assert config.mode == "monolithic"
+        assert config.mode == "remote"
         assert config.url == "http://localhost:8000"
 
     def test_backend_validation_local(self) -> None:
@@ -122,11 +146,11 @@ class TestLoadConfig:
 
     def test_passthrough_nexus_config(self) -> None:
         """Test that NexusConfig is passed through unchanged."""
-        original = NexusConfig(mode="embedded", cache_size_mb=200)
+        original = NexusConfig(mode="standalone", cache_size_mb=200)
         result = load_config(original)
 
         assert result is original
-        assert result.mode == "embedded"
+        assert result.mode == "standalone"
         assert result.cache_size_mb == 200
 
     def test_load_from_dict(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -135,11 +159,11 @@ class TestLoadConfig:
         for key in ["NEXUS_MODE", "NEXUS_DATA_DIR", "NEXUS_URL"]:
             monkeypatch.delenv(key, raising=False)
 
-        config_dict = {"mode": "embedded", "cache_size_mb": 150}
+        config_dict = {"mode": "standalone", "cache_size_mb": 150}
         result = load_config(config_dict)
 
         assert isinstance(result, NexusConfig)
-        assert result.mode == "embedded"
+        assert result.mode == "standalone"
         assert result.cache_size_mb == 150
 
     def test_load_from_string_path(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -149,7 +173,7 @@ class TestLoadConfig:
             monkeypatch.delenv(key, raising=False)
 
         config_file = tmp_path / "config.yaml"
-        config_dict = {"mode": "embedded", "cache_size_mb": 175}
+        config_dict = {"mode": "standalone", "cache_size_mb": 175}
 
         with open(config_file, "w") as f:
             yaml.dump(config_dict, f)
@@ -157,7 +181,7 @@ class TestLoadConfig:
         result = load_config(str(config_file))
 
         assert isinstance(result, NexusConfig)
-        assert result.mode == "embedded"
+        assert result.mode == "standalone"
         assert result.cache_size_mb == 175
 
     def test_load_from_path_object(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -167,7 +191,7 @@ class TestLoadConfig:
             monkeypatch.delenv(key, raising=False)
 
         config_file = tmp_path / "config.yaml"
-        config_dict = {"mode": "embedded", "cache_size_mb": 125}
+        config_dict = {"mode": "standalone", "cache_size_mb": 125}
 
         with open(config_file, "w") as f:
             yaml.dump(config_dict, f)
@@ -175,20 +199,27 @@ class TestLoadConfig:
         result = load_config(config_file)
 
         assert isinstance(result, NexusConfig)
-        assert result.mode == "embedded"
+        assert result.mode == "standalone"
         assert result.cache_size_mb == 125
 
     def test_load_auto_discover(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test auto-discovery when no config provided."""
-        # Set environment variable for testing
-        monkeypatch.setenv("NEXUS_MODE", "embedded")
+        monkeypatch.setenv("NEXUS_MODE", "standalone")
         monkeypatch.setenv("NEXUS_CACHE_SIZE_MB", "180")
 
         result = load_config(None)
 
         assert isinstance(result, NexusConfig)
-        assert result.mode == "embedded"
+        assert result.mode == "standalone"
         assert result.cache_size_mb == 180
+
+    def test_load_old_mode_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test that loading old mode values from dict is rejected."""
+        for key in ["NEXUS_MODE", "NEXUS_DATA_DIR", "NEXUS_URL"]:
+            monkeypatch.delenv(key, raising=False)
+
+        with pytest.raises(ValueError, match="mode must be one of"):
+            load_config({"mode": "embedded"})
 
 
 class TestLoadFromDict:
@@ -200,15 +231,15 @@ class TestLoadFromDict:
         for key in ["NEXUS_MODE", "NEXUS_DATA_DIR", "NEXUS_URL"]:
             monkeypatch.delenv(key, raising=False)
 
-        config_dict = {"mode": "embedded", "cache_size_mb": 250}
+        config_dict = {"mode": "standalone", "cache_size_mb": 250}
         result = _load_from_dict(config_dict)
 
-        assert result.mode == "embedded"
+        assert result.mode == "standalone"
         assert result.cache_size_mb == 250
 
     def test_merge_with_environment(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test that dict values override environment values."""
-        monkeypatch.setenv("NEXUS_MODE", "embedded")
+        monkeypatch.setenv("NEXUS_MODE", "standalone")
         monkeypatch.setenv("NEXUS_CACHE_SIZE_MB", "100")
 
         config_dict = {"cache_size_mb": 300}
@@ -217,7 +248,7 @@ class TestLoadFromDict:
         # Dict value should override environment
         assert result.cache_size_mb == 300
         # Environment value should be used for non-overridden fields
-        assert result.mode == "embedded"
+        assert result.mode == "standalone"
 
     def test_empty_dict(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test loading from empty dictionary."""
@@ -228,7 +259,7 @@ class TestLoadFromDict:
         result = _load_from_dict({})
 
         # Should use defaults
-        assert result.mode == "embedded"
+        assert result.mode == "standalone"
         assert result.cache_size_mb == 100
 
 
@@ -242,14 +273,14 @@ class TestLoadFromFile:
             monkeypatch.delenv(key, raising=False)
 
         config_file = tmp_path / "config.yaml"
-        config_dict = {"mode": "embedded", "cache_size_mb": 400, "enable_vector_search": False}
+        config_dict = {"mode": "standalone", "cache_size_mb": 400, "enable_vector_search": False}
 
         with open(config_file, "w") as f:
             yaml.dump(config_dict, f)
 
         result = _load_from_file(config_file)
 
-        assert result.mode == "embedded"
+        assert result.mode == "standalone"
         assert result.cache_size_mb == 400
         assert result.enable_vector_search is False
 
@@ -260,14 +291,14 @@ class TestLoadFromFile:
             monkeypatch.delenv(key, raising=False)
 
         config_file = tmp_path / "config.yml"
-        config_dict = {"mode": "embedded", "cache_size_mb": 350}
+        config_dict = {"mode": "standalone", "cache_size_mb": 350}
 
         with open(config_file, "w") as f:
             yaml.dump(config_dict, f)
 
         result = _load_from_file(config_file)
 
-        assert result.mode == "embedded"
+        assert result.mode == "standalone"
         assert result.cache_size_mb == 350
 
     def test_file_not_found(self) -> None:
@@ -283,15 +314,42 @@ class TestLoadFromFile:
         with pytest.raises(ValueError, match="Unsupported config file format"):
             _load_from_file(config_file)
 
+    def test_load_file_with_old_mode_rejected(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Test that loading a YAML file with old 'embedded' mode is rejected."""
+        for key in ["NEXUS_MODE", "NEXUS_DATA_DIR", "NEXUS_URL"]:
+            monkeypatch.delenv(key, raising=False)
+
+        config_file = tmp_path / "config.yaml"
+        with open(config_file, "w") as f:
+            yaml.dump({"mode": "embedded"}, f)
+
+        with pytest.raises(ValueError, match="mode must be one of"):
+            _load_from_file(config_file)
+
 
 class TestLoadFromEnvironment:
     """Tests for _load_from_environment function."""
 
-    def test_mode_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test loading mode from environment."""
-        monkeypatch.setenv("NEXUS_MODE", "monolithic")
+    def test_mode_from_env_standalone(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test loading standalone mode from environment."""
+        monkeypatch.setenv("NEXUS_MODE", "standalone")
         result = _load_from_environment()
-        assert result.mode == "monolithic"
+        assert result.mode == "standalone"
+
+    def test_mode_from_env_federation(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test loading federation mode from environment."""
+        monkeypatch.setenv("NEXUS_MODE", "federation")
+        result = _load_from_environment()
+        assert result.mode == "federation"
+
+    def test_mode_from_env_old_values_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Test that old NEXUS_MODE values are rejected."""
+        for old_mode in ["embedded", "distributed", "monolithic"]:
+            monkeypatch.setenv("NEXUS_MODE", old_mode)
+            with pytest.raises(ValueError, match="mode must be one of"):
+                _load_from_environment()
 
     def test_data_dir_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test loading data_dir from environment."""
@@ -357,7 +415,7 @@ class TestLoadFromEnvironment:
 
     def test_all_env_vars(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test loading all environment variables at once."""
-        monkeypatch.setenv("NEXUS_MODE", "distributed")
+        monkeypatch.setenv("NEXUS_MODE", "federation")
         monkeypatch.setenv("NEXUS_DATA_DIR", "/data")
         monkeypatch.setenv("NEXUS_CACHE_SIZE_MB", "512")
         monkeypatch.setenv("NEXUS_ENABLE_VECTOR_SEARCH", "false")
@@ -369,7 +427,7 @@ class TestLoadFromEnvironment:
 
         result = _load_from_environment()
 
-        assert result.mode == "distributed"
+        assert result.mode == "federation"
         assert result.data_dir == "/data"
         assert result.cache_size_mb == 512
         assert result.enable_vector_search is False
@@ -389,7 +447,7 @@ class TestLoadFromEnvironment:
         result = _load_from_environment()
 
         # Should use defaults
-        assert result.mode == "embedded"
+        assert result.mode == "standalone"
         assert result.data_dir == "./nexus-data"
         assert result.cache_size_mb == 100
         assert result.enable_vector_search is True
@@ -409,14 +467,14 @@ class TestAutoDiscover:
         monkeypatch.chdir(tmp_path)
 
         config_file = tmp_path / "nexus.yaml"
-        config_dict = {"mode": "embedded", "cache_size_mb": 600}
+        config_dict = {"mode": "standalone", "cache_size_mb": 600}
 
         with open(config_file, "w") as f:
             yaml.dump(config_dict, f)
 
         result = _auto_discover()
 
-        assert result.mode == "embedded"
+        assert result.mode == "standalone"
         assert result.cache_size_mb == 600
 
     def test_discover_nexus_yml(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -429,14 +487,14 @@ class TestAutoDiscover:
         monkeypatch.chdir(tmp_path)
 
         config_file = tmp_path / "nexus.yml"
-        config_dict = {"mode": "embedded", "cache_size_mb": 650}
+        config_dict = {"mode": "standalone", "cache_size_mb": 650}
 
         with open(config_file, "w") as f:
             yaml.dump(config_dict, f)
 
         result = _auto_discover()
 
-        assert result.mode == "embedded"
+        assert result.mode == "standalone"
         assert result.cache_size_mb == 650
 
     def test_discover_home_config(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -459,14 +517,14 @@ class TestAutoDiscover:
         monkeypatch.setattr(Path, "home", lambda: home_dir)
 
         config_file = nexus_dir / "config.yaml"
-        config_dict = {"mode": "embedded", "cache_size_mb": 700}
+        config_dict = {"mode": "standalone", "cache_size_mb": 700}
 
         with open(config_file, "w") as f:
             yaml.dump(config_dict, f)
 
         result = _auto_discover()
 
-        assert result.mode == "embedded"
+        assert result.mode == "standalone"
         assert result.cache_size_mb == 700
 
     def test_discover_priority_nexus_yaml_over_yml(
@@ -506,12 +564,12 @@ class TestAutoDiscover:
         monkeypatch.setattr(Path, "home", lambda: home_dir)
 
         # Set environment variables
-        monkeypatch.setenv("NEXUS_MODE", "embedded")
+        monkeypatch.setenv("NEXUS_MODE", "standalone")
         monkeypatch.setenv("NEXUS_CACHE_SIZE_MB", "999")
 
         result = _auto_discover()
 
-        assert result.mode == "embedded"
+        assert result.mode == "standalone"
         assert result.cache_size_mb == 999
 
     def test_fallback_to_defaults(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -532,7 +590,7 @@ class TestAutoDiscover:
         result = _auto_discover()
 
         # Should use all defaults
-        assert result.mode == "embedded"
+        assert result.mode == "standalone"
         assert result.data_dir == "./nexus-data"
         assert result.cache_size_mb == 100
         assert result.enable_vector_search is True
@@ -673,17 +731,17 @@ class TestNexusConfigAdvanced:
         assert config.backend == "gcs"
         assert config.gcs_bucket_name == "my-bucket"
 
-    def test_monolithic_mode_with_url(self) -> None:
-        """Test that monolithic mode works with URL provided."""
-        config = NexusConfig(mode="monolithic", url="http://localhost:8000")
-        assert config.mode == "monolithic"
+    def test_remote_mode_with_url(self) -> None:
+        """Test that remote mode works with URL provided."""
+        config = NexusConfig(mode="remote", url="http://localhost:8000")
+        assert config.mode == "remote"
         assert config.url == "http://localhost:8000"
 
-    def test_distributed_mode_with_url(self) -> None:
-        """Test that distributed mode works with URL provided."""
-        config = NexusConfig(mode="distributed", url="http://localhost:9000")
-        assert config.mode == "distributed"
-        assert config.url == "http://localhost:9000"
+    def test_federation_mode(self) -> None:
+        """Test federation mode without URL."""
+        config = NexusConfig(mode="federation")
+        assert config.mode == "federation"
+        assert config.url is None
 
     def test_parsers_list(self) -> None:
         """Test NexusConfig with parsers list."""

@@ -22,7 +22,7 @@ from fastapi import status as http_status
 
 from nexus.core.exceptions import NexusFileNotFoundError, NexusPermissionError
 from nexus.server.api.v1.dependencies import get_nexus_fs
-from nexus.server.dependencies import get_auth_result, get_operation_context
+from nexus.server.dependencies import get_auth_result, get_operation_context, resolve_auth
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +53,7 @@ async def websocket_events(
     # Authenticate via token query parameter
     auth_result: dict[str, Any] | None = None
     if token:
-        auth_result = await get_auth_result(request=websocket, authorization=f"Bearer {token}")  # type: ignore[arg-type]
+        auth_result = await resolve_auth(app_state=app_state, authorization=f"Bearer {token}")
 
     # Allow unauthenticated if no auth configured (open access mode)
     if not auth_result and (

@@ -670,6 +670,35 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
             yield chunk
             offset += len(chunk)
 
+    def stream_range(
+        self,
+        path: str,
+        start: int,
+        end: int,
+        chunk_size: int = 8192,
+        context: Any = None,  # noqa: ARG002
+    ) -> Any:
+        """Stream a byte range of file content using server-side read_range().
+
+        Args:
+            path: Virtual path to stream
+            start: Start byte offset (inclusive)
+            end: End byte offset (inclusive)
+            chunk_size: Size of each chunk in bytes (default: 8KB)
+            context: Unused in remote client (handled server-side)
+
+        Yields:
+            bytes: Chunks of file content within the requested range
+        """
+        offset = start
+        while offset <= end:
+            read_end = min(offset + chunk_size, end + 1)
+            chunk = self.read_range(path, offset, read_end)
+            if not chunk:
+                break
+            yield chunk
+            offset += len(chunk)
+
     def write(
         self,
         path: str,

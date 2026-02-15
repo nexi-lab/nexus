@@ -427,6 +427,20 @@ def create_nexus_services(
     except ImportError as _e:
         _factory_logger.warning("Failed to create ManifestResolver: %s", _e)
 
+    # --- Tool Namespace Middleware (Issue #1272) ---
+    tool_namespace_middleware = None
+    try:
+        from nexus.mcp.middleware import ToolNamespaceMiddleware
+
+        tool_namespace_middleware = ToolNamespaceMiddleware(
+            rebac_manager=rebac_manager,
+            zone_id=zone_id,
+            cache_ttl=cache_ttl_seconds or 300,
+        )
+        _factory_logger.debug("[FACTORY] ToolNamespaceMiddleware created (zone_id=%s)", zone_id)
+    except ImportError as _e:
+        _factory_logger.debug("ToolNamespaceMiddleware unavailable: %s", _e)
+
     result = {
         "rebac_manager": rebac_manager,
         "dir_visibility_cache": dir_visibility_cache,
@@ -445,6 +459,7 @@ def create_nexus_services(
         "chunked_upload_service": chunked_upload_service,
         "manifest_resolver": manifest_resolver,
         "manifest_metrics": manifest_metrics,
+        "tool_namespace_middleware": tool_namespace_middleware,
     }
 
     return result
@@ -546,6 +561,7 @@ def create_nexus_fs(
         "chunked_upload_service",
         "manifest_resolver",
         "manifest_metrics",
+        "tool_namespace_middleware",
     ):
         val = services.pop(key, None)
         if val is not None:

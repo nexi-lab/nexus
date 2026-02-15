@@ -1,0 +1,65 @@
+// Grafana Alloy pipeline configuration for Nexus (Issue #761)
+// Collects Docker container logs and ships to Loki with structured parsing.
+
+// ─── Docker log source ───────────────────────────────────────────────────────
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    target_label  = "container"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    target_label  = "compose_service"
+  }
+}
+
+// ─── Log collection ──────────────────────────────────────────────────────────
+loki.source.docker "default" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.relabel.containers.output
+  forward_to = [loki.process.pipeline.receiver]
+}
+
+// ─── Processing pipeline ─────────────────────────────────────────────────────
+loki.process "pipeline" {
+  // Parse JSON structured logs
+  stage.json {
+    expressions = {
+      level          = "level",
+      logger         = "logger",
+      correlation_id = "correlation_id",
+      trace_id       = "trace_id",
+      span_id        = "span_id",
+      event          = "event",
+      request_path   = "request_path",
+    }
+  }
+
+  // Drop noisy health-check and metrics requests (Decision #14)
+  stage.drop {
+    source     = "request_path"
+    expression = "^/(health|metrics)"
+  }
+
+  // Promote low-cardinality fields to labels
+  stage.labels {
+    values = {
+      level = "",
+    }
+  }
+
+  forward_to = [loki.write.local.receiver]
+}
+
+// ─── Loki writer ─────────────────────────────────────────────────────────────
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

@@ -1,12 +1,12 @@
 # Deployment Modes
 
-**Note: v0.1.0 only implements embedded mode. Monolithic and distributed modes are planned for future releases.**
+**Note: v0.1.0 only implements standalone mode. Monolithic and distributed modes are planned for future releases.**
 
 ## Current Support (v0.1.0)
 
-### ✅ Embedded Mode - Available Now
+### ✅ Standalone Mode - Available Now
 
-Embedded mode runs entirely in-process with no external dependencies. Perfect for:
+Standalone mode runs entirely in-process with no external dependencies. Perfect for:
 
 - Individual developers
 - CLI tools
@@ -22,7 +22,7 @@ Embedded mode runs entirely in-process with no external dependencies. Perfect fo
 │                 │
 │  ┌───────────┐ │
 │  │   Nexus   │ │  SQLite
-│  │  Embedded │ │  Local FS
+│  │ Standalone│ │  Local FS
 │  └───────────┘ │
 └─────────────────┘
 ```
@@ -42,7 +42,7 @@ nx = nexus.connect(config_file="nexus.yaml")
 #### Configuration
 
 ```yaml
-mode: embedded
+mode: standalone
 data_dir: ./nexus-data
 ```
 
@@ -92,7 +92,7 @@ Fully distributed architecture for enterprise scale.
 When monolithic and distributed modes are implemented, migration will be supported:
 
 ```bash
-# Export from embedded (future)
+# Export from standalone (future)
 nexus export --format jsonl > metadata.jsonl
 
 # Import to monolithic (future)
@@ -101,14 +101,14 @@ nexus import --url http://server:2026 < metadata.jsonl
 
 ## Current Limitations
 
-Since v0.1.0 only supports embedded mode:
+Since v0.1.0 only supports standalone mode:
 
 - **Single process only** - No concurrent access from multiple processes
 - **No remote access** - Must run in same process as application
 - **No multi-user** - Designed for single-user scenarios
 - **Local only** - Files stored on local filesystem only
 
-## When to Use Embedded Mode
+## When to Use Standalone Mode
 
 **Good fit:**
 - ✅ Personal projects
@@ -130,6 +130,6 @@ See the [main README](../index.md#roadmap) for the full feature roadmap and time
 
 ## Next Steps
 
-- [Quick Start](quickstart.md) - Get started with embedded mode
-- [Configuration](configuration.md) - Configure embedded mode
+- [Quick Start](quickstart.md) - Get started with standalone mode
+- [Configuration](configuration.md) - Configure standalone mode
 - [API Reference](../api/api.md) - Explore the API

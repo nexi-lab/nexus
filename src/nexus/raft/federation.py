@@ -2,7 +2,7 @@
 
 Federation is NOT kernel. It is an optional subsystem at the same level as
 CacheStore/RecordStore. Without federation, NexusFS gracefully degrades to
-client-server mode (RemoteNexusFS) or single-node embedded mode.
+client-server mode (RemoteNexusFS) or single-node standalone mode.
 
 Layering:
     NexusFederation (this file) — orchestration / service layer
@@ -105,7 +105,7 @@ class NexusFederation:
         root_zone = self._mgr.root_zone_id or "root"
 
         # Step 1: Create zone + copy subtree + DT_MOUNT in parent
-        new_zone_id = self._mgr.share_subtree(
+        new_zone_id: str = self._mgr.share_subtree(
             parent_zone_id=root_zone,
             path=local_path,
             zone_id=zone_id,
@@ -184,7 +184,7 @@ class NexusFederation:
                     f"DT_MOUNT (type={metadata.entry_type})"
                 )
 
-            zone_id = metadata.mount_zone_id
+            zone_id: str | None = metadata.mount_zone_id
             if not zone_id:
                 raise ValueError(
                     f"DT_MOUNT at '{remote_path}' on peer {peer_addr} has no target zone_id"

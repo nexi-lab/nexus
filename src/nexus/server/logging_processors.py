@@ -13,19 +13,22 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import MutableMapping
 from typing import Any
 
 # Cache OTel availability at module level (Issue #1002 / Issue 13).
 # Python does NOT cache failed imports in sys.modules, so a per-call
 # try/except ImportError would retry the full import machinery on every
 # log entry when OTel is not installed.
+_otel_trace: Any = None
+_HAS_OTEL = False
 try:
-    from opentelemetry import trace as _otel_trace
+    from opentelemetry import trace
 
+    _otel_trace = trace
     _HAS_OTEL = True
 except ImportError:
-    _otel_trace = None  # type: ignore[assignment]
-    _HAS_OTEL = False
+    pass
 
 # Configurable service name (Issue #1002 / Issue 8).
 # Matches OTel convention (OTEL_SERVICE_NAME).
@@ -33,8 +36,8 @@ _SERVICE_NAME = os.environ.get("NEXUS_SERVICE_NAME", "nexus")
 
 
 def otel_trace_processor(
-    _logger: Any, _method_name: Any, event_dict: dict[str, Any]
-) -> dict[str, Any]:
+    _logger: Any, _method_name: Any, event_dict: MutableMapping[str, Any]
+) -> MutableMapping[str, Any]:
     """Inject OTel trace_id and span_id into the log event dict.
 
     When an OTel span is active and recording, adds:
@@ -64,8 +67,8 @@ def otel_trace_processor(
 
 
 def error_classification_processor(
-    _logger: Any, _method_name: Any, event_dict: dict[str, Any]
-) -> dict[str, Any]:
+    _logger: Any, _method_name: Any, event_dict: MutableMapping[str, Any]
+) -> MutableMapping[str, Any]:
     """Classify errors as expected/unexpected based on ``is_expected`` attribute.
 
     When ``exc_info`` is present and contains an exception:
@@ -110,7 +113,9 @@ def error_classification_processor(
     return event_dict
 
 
-def add_service_name(_logger: Any, _method_name: Any, event_dict: dict[str, Any]) -> dict[str, Any]:
+def add_service_name(
+    _logger: Any, _method_name: Any, event_dict: MutableMapping[str, Any]
+) -> MutableMapping[str, Any]:
     """Add service name to every log event.
 
     Reads from ``NEXUS_SERVICE_NAME`` env var at module load time,

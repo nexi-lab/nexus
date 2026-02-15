@@ -260,41 +260,27 @@ def test_all_public_methods_are_exposed_or_excluded():
         "arebac_explain",  # Delegates to rebac_service.rebac_explain()
         "arebac_list_tuples",  # Delegates to rebac_service.rebac_list_tuples()
         "aget_namespace",  # Delegates to rebac_service.get_namespace()
-        # MCPService delegation (5 methods)
-        "amcp_mount",  # Delegates to mcp_service.mcp_mount()
-        "amcp_unmount",  # Delegates to mcp_service.mcp_unmount()
-        "amcp_list_mounts",  # Delegates to mcp_service.mcp_list_mounts()
-        "amcp_list_tools",  # Delegates to mcp_service.mcp_list_tools()
-        "amcp_sync",  # Delegates to mcp_service.mcp_sync()
-        "amcp_connect",  # Delegates to mcp_service.mcp_connect()
+        # MCPService backward-compat aliases (Issue #1287 Phase 1.4: mixin removed)
+        # Primary methods (mcp_*) have @rpc_expose; aliases (amcp_*) are internal-only
+        "amcp_mount",  # Alias for mcp_mount
+        "amcp_unmount",  # Alias for mcp_unmount
+        "amcp_list_mounts",  # Alias for mcp_list_mounts
+        "amcp_list_tools",  # Alias for mcp_list_tools
+        "amcp_sync",  # Alias for mcp_sync
+        "amcp_connect",  # Delegates to oauth_service.mcp_connect()
         # LLMService delegation (4 methods) — Issue #1287 Phase B: mixin removed
         "create_llm_reader",  # Delegates to llm_service.create_llm_reader()
         "llm_read",  # Delegates to llm_service.llm_read()
         "llm_read_detailed",  # Delegates to llm_service.llm_read_detailed()
         "llm_read_stream",  # Delegates to llm_service.llm_read_stream()
-        # OAuthService delegation (7 methods)
-        "aoauth_list_providers",  # Delegates to oauth_service.oauth_list_providers()
-        "aoauth_get_auth_url",  # Delegates to oauth_service.oauth_get_auth_url()
-        "aoauth_exchange_code",  # Delegates to oauth_service.oauth_exchange_code()
-        "aoauth_list_credentials",  # Delegates to oauth_service.oauth_list_credentials()
-        "aoauth_revoke_credential",  # Delegates to oauth_service.oauth_revoke_credential()
-        "aoauth_test_credential",  # Delegates to oauth_service.oauth_test_credential()
-        # SkillService delegation (15 methods)
-        "askills_list",  # Delegates to skill_service.skills_list()
-        "askills_info",  # Delegates to skill_service.skills_info()
-        "askills_search",  # Delegates to skill_service.skills_search()
-        "askills_create",  # Delegates to skill_service.skills_create()
-        "askills_publish",  # Delegates to skill_service.skills_publish()
-        "askills_fork",  # Delegates to skill_service.skills_fork()
-        "askills_validate_zip",  # Delegates to skill_service.skills_validate_zip()
-        "askills_import",  # Delegates to skill_service.skills_import()
-        "askills_submit_approval",  # Delegates to skill_service.skills_submit_approval()
-        "askills_approve",  # Delegates to skill_service.skills_approve()
-        "askills_reject",  # Delegates to skill_service.skills_reject()
-        "askills_list_approvals",  # Delegates to skill_service.skills_list_approvals()
-        "askills_export",  # Delegates to skill_service.skills_export()
-        "askills_create_from_file",  # Delegates to skill_service.skills_create_from_file()
-        "askills_create_from_content",  # Delegates to skill_service.skills_create_from_content()
+        # OAuthService backward-compat aliases (Issue #1287 Phase 1.3: mixin removed)
+        # Primary methods (oauth_*) have @rpc_expose; aliases (aoauth_*) are internal-only
+        "aoauth_list_providers",  # Alias for oauth_list_providers
+        "aoauth_get_auth_url",  # Alias for oauth_get_auth_url
+        "aoauth_exchange_code",  # Alias for oauth_exchange_code
+        "aoauth_list_credentials",  # Alias for oauth_list_credentials
+        "aoauth_revoke_credential",  # Alias for oauth_revoke_credential
+        "aoauth_test_credential",  # Alias for oauth_test_credential
         # MountService delegation (15 methods)
         "aadd_mount",  # Delegates to mount_service.add_mount()
         "aremove_mount",  # Delegates to mount_service.remove_mount()

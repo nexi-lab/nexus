@@ -241,6 +241,14 @@ async def lifespan(_app: FastAPI) -> Any:
 
     logger.info("Starting FastAPI Nexus server...")
 
+    # Initialize Sentry error tracking (Issue #759)
+    try:
+        from nexus.server.sentry import setup_sentry
+
+        setup_sentry()
+    except ImportError:
+        logger.debug("Sentry not available")
+
     # Initialize OpenTelemetry (Issue #764)
     try:
         from nexus.server.telemetry import setup_telemetry
@@ -248,6 +256,14 @@ async def lifespan(_app: FastAPI) -> Any:
         setup_telemetry()
     except ImportError:
         logger.debug("OpenTelemetry not available")
+
+    # Initialize Prometheus metrics (Issue #761)
+    try:
+        from nexus.server.metrics import setup_prometheus
+
+        setup_prometheus()
+    except ImportError:
+        logger.debug("prometheus_client not available")
 
     # Configure thread pool size (Issue #932)
     # Increase from default 40 to prevent thread pool exhaustion under load
@@ -409,6 +425,9 @@ async def lifespan(_app: FastAPI) -> Any:
                     logger.info("Event bus started for event publishing")
                 except Exception as e:
                     logger.warning(f"Failed to start event bus: {e}")
+
+            # Issue #1331: Store main event loop ref for cross-thread event publishing
+            _app.state.nexus_fs._main_event_loop = asyncio.get_running_loop()
 
             # Wire event_log into EventBus for WAL-first durability (Issue #1397).
             # EventBus.publish() handles: WAL append (if available) → Dragonfly fan-out.
@@ -964,6 +983,15 @@ async def lifespan(_app: FastAPI) -> Any:
     # Cleanup
     logger.info("Shutting down FastAPI Nexus server...")
 
+    # Issue #1331: Stop event bus
+    _ebus_stop = getattr(_app.state.nexus_fs, "_event_bus", None) if _app.state.nexus_fs else None
+    if _ebus_stop is not None:
+        try:
+            await _ebus_stop.stop()
+            logger.info("Event bus stopped")
+        except Exception as e:
+            logger.warning(f"Error shutting down event bus: {e}")
+
     # Issue #788: Stop upload cleanup task
     if _upload_cleanup_task:
         _upload_cleanup_task.cancel()
@@ -1122,6 +1150,14 @@ async def lifespan(_app: FastAPI) -> Any:
     except ImportError:
         pass
 
+    # Shutdown Sentry (Issue #759) — flush pending events
+    try:
+        from nexus.server.sentry import shutdown_sentry
+
+        shutdown_sentry()
+    except ImportError:
+        pass
+
 
 # ============================================================================
 # Application Factory
@@ -1167,6 +1203,18 @@ def create_app(
     app.state.api_key = api_key
     app.state.auth_provider = auth_provider
     app.state.database_url = database_url
+
+    # Expose async_session_factory from RecordStoreABC (if available).
+    # This is the canonical way for async endpoints to get database sessions
+    # without bypassing the RecordStore abstraction with raw URLs.
+    _record_store = getattr(nexus_fs, "_record_store", None)
+    if _record_store is not None:
+        try:
+            app.state.async_session_factory = _record_store.async_session_factory
+        except NotImplementedError:
+            app.state.async_session_factory = None
+    else:
+        app.state.async_session_factory = None
 
     # Thread pool and timeout settings (Issue #932)
     app.state.thread_pool_size = thread_pool_size or int(
@@ -1325,6 +1373,15 @@ def create_app(
 
     # Initialize OAuth provider if credentials are available
     _initialize_oauth_provider(nexus_fs, auth_provider, database_url)
+
+    # Prometheus metrics middleware and endpoint (Issue #761)
+    try:
+        from nexus.server.metrics import PrometheusMiddleware, metrics_endpoint
+
+        app.add_middleware(PrometheusMiddleware)
+        app.add_route("/metrics", metrics_endpoint, methods=["GET"])
+    except ImportError:
+        pass
 
     # Instrument FastAPI with OpenTelemetry (Issue #764)
     try:
@@ -1809,20 +1866,16 @@ def _register_routes(app: FastAPI) -> None:
             if not content_hash:
                 raise HTTPException(status_code=500, detail="File has no content hash")
 
-            route = nexus_fs.router.route(full_path)
-            backend = route.backend
-
-            if not hasattr(backend, "stream_content"):
-                raise HTTPException(status_code=501, detail="Backend does not support streaming")
-
             total_size = meta.get("size", 0)
 
+            # Use kernel stream methods — never reach through to the backend
+            # directly (ObjectStoreABC abstraction boundary).
             return build_range_response(
                 request_headers=request.headers,
-                content_generator=lambda s, e, cs: backend.stream_range(
-                    content_hash, s, e, chunk_size=cs, context=context
+                content_generator=lambda s, e, cs: nexus_fs.stream_range(
+                    full_path, s, e, chunk_size=cs, context=context
                 ),
-                full_generator=lambda: backend.stream_content(content_hash, context=context),
+                full_generator=lambda: nexus_fs.stream(full_path, context=context),
                 total_size=total_size,
                 etag=content_hash,
                 content_type="application/octet-stream",

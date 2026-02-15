@@ -51,11 +51,12 @@ def _orjson_serializer(data: dict[str, Any], **_kw: Any) -> str:
     Uses ``default=str`` as fallback for non-serializable types (e.g., sets,
     custom objects) to prevent log entry loss.
     """
-    return orjson.dumps(
+    raw: bytes = orjson.dumps(
         data,
         option=orjson.OPT_NON_STR_KEYS | orjson.OPT_UTC_Z,
         default=str,
-    ).decode("utf-8")
+    )
+    return raw.decode("utf-8")
 
 
 def configure_logging(
@@ -80,7 +81,8 @@ def configure_logging(
         raise ValueError(f"Invalid env: {env!r}. Must be 'dev' or 'prod'.")
 
     # Resolve and validate log level
-    level_name = (log_level or os.environ.get("LOG_LEVEL", "INFO")).upper()
+    resolved_level = log_level if log_level else os.environ.get("LOG_LEVEL", "INFO")
+    level_name = resolved_level.upper()
     level = getattr(logging, level_name, None)
     if level is None:
         raise ValueError(
@@ -94,9 +96,9 @@ def configure_logging(
         structlog.stdlib.add_log_level,
         structlog.stdlib.add_logger_name,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
-        add_service_name,  # type: ignore[list-item]
-        otel_trace_processor,  # type: ignore[list-item]
-        error_classification_processor,  # type: ignore[list-item]
+        add_service_name,
+        otel_trace_processor,
+        error_classification_processor,
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
         structlog.processors.UnicodeDecoder(),

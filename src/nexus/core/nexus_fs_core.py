@@ -211,6 +211,16 @@ class NexusFSCoreMixin:
             # Fire event asynchronously (fire-and-forget via sync bridge)
             from nexus.core.sync_bridge import fire_and_forget
 
+            # Ensure event bus is started (lazy init for NATS JetStream)
+            if not getattr(self._event_bus, "_started", False):
+
+                async def _start_and_publish() -> None:
+                    await self._event_bus.start()
+                    await self._event_bus.publish(event)
+
+                fire_and_forget(_start_and_publish())
+                return
+
             fire_and_forget(self._event_bus.publish(event))
         except Exception as e:
             logger.warning(f"Failed to create {event_type} event: {e}")
@@ -1493,6 +1503,51 @@ class NexusFSCoreMixin:
 
         # Stream from routed backend using content hash
         yield from route.backend.stream_content(meta.etag, chunk_size=chunk_size, context=context)
+
+    @rpc_expose(description="Stream a byte range of file content")
+    def stream_range(
+        self,
+        path: str,
+        start: int,
+        end: int,
+        chunk_size: int = 8192,
+        context: OperationContext | None = None,
+    ) -> Any:
+        """Stream a byte range [start, end] of file content.
+
+        This is the kernel-level range streaming method.  HTTP routers use
+        this (via ``build_range_response``) to implement RFC 9110 Range
+        requests without bypassing the ObjectStore abstraction.
+
+        Args:
+            path: Virtual path to stream
+            start: Start byte offset (inclusive)
+            end: End byte offset (inclusive)
+            chunk_size: Size of each chunk in bytes (default: 8KB)
+            context: Optional operation context for permission checks
+
+        Yields:
+            bytes: Chunks of file content within the requested range
+        """
+        path = self._validate_path(path)
+        self._check_permission(path, Permission.READ, context)
+
+        zone_id, agent_id, is_admin = self._get_routing_params(context)
+        route = self.router.route(
+            path,
+            zone_id=zone_id,
+            agent_id=agent_id,
+            is_admin=is_admin,
+            check_write=False,
+        )
+
+        meta = self.metadata.get(path)
+        if meta is None or meta.etag is None:
+            raise NexusFileNotFoundError(path)
+
+        yield from route.backend.stream_range(
+            meta.etag, start, end, chunk_size=chunk_size, context=context
+        )
 
     @rpc_expose(description="Write file content from stream")
     def write_stream(

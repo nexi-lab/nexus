@@ -6,9 +6,9 @@ unified filesystem, self-evolving agent memory, intelligent document processing,
 and seamless deployment across three modes.
 
 Three Deployment Modes, One Codebase:
-- Embedded: Zero-deployment, library mode (like SQLite)
-- Monolithic: Single server for teams
-- Distributed: Kubernetes-ready for enterprise scale
+- Standalone: Single-node redb, no Raft (like SQLite) — default mode
+- Remote: Thin HTTP client via RemoteNexusFS
+- Federation: ZoneManager + Raft consensus for multi-node clusters
 
 SDK vs CLI:
 -----------
@@ -164,28 +164,58 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module 'nexus' has no attribute {name!r}")
 
 
-def _setup_multi_zone(zone_mgr: Any, peers: list[str] | None) -> None:
+def _setup_multi_zone(zone_mgr: Any, peers: list[str] | None, max_retries: int = 5) -> None:
     """Create/join zones and mount DT_MOUNT entries from env vars.
 
     Env vars:
         NEXUS_ZONE_CREATE: comma-separated zone IDs to create (leader node)
         NEXUS_ZONE_JOIN:   comma-separated zone IDs to join (follower nodes)
         NEXUS_MOUNTS:      comma-separated /path=zone_id mount declarations
+
+    Args:
+        zone_mgr: ZoneManager instance
+        peers: List of peer addresses
+        max_retries: Number of retries for Raft leader election errors
     """
+    import logging
     import os
     import posixpath
+    import time
+
+    logger = logging.getLogger(__name__)
 
     zone_create_str = os.environ.get("NEXUS_ZONE_CREATE", "")
     zone_join_str = os.environ.get("NEXUS_ZONE_JOIN", "")
     mounts_str = os.environ.get("NEXUS_MOUNTS", "")
 
+    def _with_leader_retry(fn: Any, zid: str, action: str) -> None:
+        """Retry zone operations that fail due to Raft leader election."""
+        for attempt in range(max_retries):
+            try:
+                fn(zid, peers=peers)
+                return
+            except RuntimeError as e:
+                if "not leader" in str(e).lower() and attempt < max_retries - 1:
+                    wait = 0.5 * (attempt + 1)
+                    logger.warning(
+                        "Zone %s %s failed (not leader), retrying in %.1fs (%d/%d)",
+                        zid,
+                        action,
+                        wait,
+                        attempt + 1,
+                        max_retries,
+                    )
+                    time.sleep(wait)
+                    continue
+                raise
+
     for zid in (z.strip() for z in zone_create_str.split(",") if z.strip()):
         if zid not in zone_mgr.list_zones():
-            zone_mgr.create_zone(zid, peers=peers)
+            _with_leader_retry(zone_mgr.create_zone, zid, "create")
 
     for zid in (z.strip() for z in zone_join_str.split(",") if z.strip()):
         if zid not in zone_mgr.list_zones():
-            zone_mgr.join_zone(zid, peers=peers)
+            _with_leader_retry(zone_mgr.join_zone, zid, "join")
 
     if not mounts_str:
         return
@@ -233,14 +263,12 @@ def connect(
     """
     Connect to Nexus filesystem.
 
-    This is the main entry point for using Nexus. It auto-detects the deployment
-    mode from configuration and returns the appropriate client.
+    This is the main entry point for using Nexus. It dispatches based on the
+    deployment mode in configuration:
 
-    **Connection Priority**:
-    1. If `url` is set in config or `NEXUS_URL` environment variable → Remote mode (RemoteNexusFS)
-    2. Otherwise → Embedded mode (NexusFS with local backend)
-
-    **Recommended**: Use server mode for production, embedded mode for development/testing only.
+    - **standalone** (default): Single-node redb, no Raft. Like SQLite.
+    - **remote**: Thin HTTP client via RemoteNexusFS.
+    - **federation**: ZoneManager + Raft consensus for multi-node clusters.
 
     Args:
         config: Configuration source:
@@ -251,44 +279,32 @@ def connect(
 
     Returns:
         NexusFilesystem instance (mode-dependent):
-            - Remote/Server mode: Returns RemoteNexusFS (thin HTTP client)
-            - Embedded mode: Returns NexusFS with LocalBackend
+            - remote: Returns RemoteNexusFS (thin HTTP client)
+            - standalone/federation: Returns NexusFS with local backend
 
         All modes implement the NexusFilesystem interface, ensuring consistent
         API across deployment modes.
 
     Raises:
-        ValueError: If configuration is invalid
-        NotImplementedError: If mode is not yet implemented
+        ValueError: If configuration is invalid or mode is unknown
 
     Examples:
-        Server mode (recommended for production):
-            >>> import nexus
-            >>> # Requires nexus server running (nexus serve)
-            >>> # export NEXUS_URL=http://localhost:2026
-            >>> # export NEXUS_API_KEY=your-api-key
-            >>> nx = nexus.connect()
-            >>> nx.write("/workspace/file.txt", b"Hello World")
-
-        Server mode with explicit config:
+        Remote mode (production client):
             >>> nx = nexus.connect(config={
+            ...     "mode": "remote",
             ...     "url": "http://localhost:2026",
             ...     "api_key": "your-api-key"
             ... })
 
-        Embedded mode (development/testing only):
-            >>> # No NEXUS_URL set
+        Standalone mode (development/testing):
             >>> nx = nexus.connect()
             >>> nx.write("/workspace/file.txt", b"Hello World")
 
-        Explicit embedded mode:
-            >>> nx = nexus.connect(config={
-            ...     "mode": "embedded",
-            ...     "data_dir": "./nexus-data"
-            ... })
+        Federation mode (multi-node cluster):
+            >>> # Requires NEXUS_PEERS, NEXUS_NODE_ID, NEXUS_BIND_ADDR env vars
+            >>> nx = nexus.connect(config={"mode": "federation"})
     """
     import os
-    import warnings
     from pathlib import Path
 
     # Lazy load dependencies
@@ -304,195 +320,156 @@ def connect(
     # Load configuration
     cfg = load_config(config)
 
-    # Check for unimplemented modes first
-    if cfg.mode in ["monolithic", "distributed"]:
-        raise NotImplementedError(
-            f"{cfg.mode} mode is not yet implemented. "
-            f"Currently only 'embedded' mode is supported. "
-            f"For multi-zone deployments, use server mode instead."
-        )
-
-    # PRIORITY 1: Check for server URL (remote mode)
-    # If url is explicitly set in config or NEXUS_URL env var, use RemoteNexusFS
-    # IMPORTANT: If mode is explicitly set to "embedded" in config, skip URL check
-    # This allows server mode to force local NexusFS even when NEXUS_URL is set
-    explicit_embedded = isinstance(config, dict) and config.get("mode") == "embedded"
-
-    if not explicit_embedded:
+    # ── Mode: remote ─────────────────────────────────────────────────
+    if cfg.mode == "remote":
         server_url = cfg.url or os.getenv("NEXUS_URL")
-        if server_url:
-            # Remote/Server mode: thin HTTP client
-            api_key = cfg.api_key or os.getenv("NEXUS_API_KEY")
-
-            # Connection parameters with sensible defaults
-            timeout = int(cfg.timeout) if hasattr(cfg, "timeout") else 30
-            connect_timeout = int(cfg.connect_timeout) if hasattr(cfg, "connect_timeout") else 5
-
-            return RemoteNexusFS(  # type: ignore[return-value]  # virtual subclass of NexusFilesystem
-                server_url=server_url,
-                api_key=api_key,
-                timeout=timeout,
-                connect_timeout=connect_timeout,
+        if not server_url:
+            raise ValueError(
+                "mode='remote' requires a server URL. "
+                "Set 'url' in config or NEXUS_URL environment variable."
             )
-
-    # PRIORITY 2: Embedded mode (local backend)
-    # Only used if no URL is configured
-    # Return appropriate client based on mode
-    if cfg.mode == "embedded":
-        # Warn if embedded mode is being used without explicit intent
-        # (i.e., user didn't explicitly set mode="embedded")
-        if config is None or (isinstance(config, dict) and "mode" not in config):
-            warnings.warn(
-                "Embedded mode is intended for development and testing only. "
-                "For production deployments, use server mode:\n"
-                "  1. Start server: nexus serve --host 0.0.0.0 --port 2026\n"
-                "  2. Set environment: export NEXUS_URL=http://localhost:2026\n"
-                "  3. Connect: nx = nexus.connect()\n"
-                "To silence this warning, explicitly set mode='embedded' in your config.",
-                UserWarning,
-                stacklevel=2,
-            )
-
-        # Parse custom namespaces from config
-        custom_namespaces = None
-        if cfg.namespaces:
-            custom_namespaces = [
-                NamespaceConfig(
-                    name=ns["name"],
-                    readonly=ns.get("readonly", False),
-                    admin_only=ns.get("admin_only", False),
-                    requires_zone=ns.get("requires_zone", True),
-                )
-                for ns in cfg.namespaces
-            ]
-
-        def _create_metadata_store(metadata_path: str) -> FileMetadataProtocol:
-            """Create metadata store, auto-detecting zone/cluster mode from env.
-
-            Uses the same envvars as CLI (SSOT):
-              NEXUS_NODE_ID, NEXUS_DATA_DIR, NEXUS_BIND_ADDR, NEXUS_PEERS
-            """
-            nexus_peers = os.environ.get("NEXUS_PEERS", "")
-            node_id = int(os.environ.get("NEXUS_NODE_ID", "1"))
-            bind_addr = os.environ.get("NEXUS_BIND_ADDR", "0.0.0.0:2126")
-            zones_dir = os.environ.get("NEXUS_DATA_DIR", str(Path(metadata_path).parent / "zones"))
-
-            # Try ZoneManager (multi-zone capable, requires --features full)
-            try:
-                from nexus.raft import ZoneAwareMetadataStore
-                from nexus.raft.zone_manager import ZoneManager
-
-                peers = (
-                    [p.strip() for p in nexus_peers.split(",") if p.strip()]
-                    if nexus_peers
-                    else None
-                )
-                zone_mgr = ZoneManager(node_id=node_id, base_path=zones_dir, bind_addr=bind_addr)
-                zone_mgr.bootstrap(root_zone_id="root", peers=peers)
-                _setup_multi_zone(zone_mgr, peers)
-                return ZoneAwareMetadataStore.from_zone_manager(zone_mgr, root_zone_id="root")
-            except (ImportError, RuntimeError):
-                pass
-
-            # Fallback: embedded mode (no peers)
-            return RaftMetadataStore.embedded(metadata_path)
-
-        # Create backend based on configuration
-        backend: Backend
-        if cfg.backend == "gcs":
-            # GCS backend - import lazily to avoid loading google.cloud.storage on startup
-            from nexus.backends.gcs import GCSBackend
-
-            if not cfg.gcs_bucket_name:
-                raise ValueError(
-                    "gcs_bucket_name is required when backend='gcs'. "
-                    "Set gcs_bucket_name in your config or NEXUS_GCS_BUCKET_NAME environment variable."
-                )
-            backend = GCSBackend(
-                bucket_name=cfg.gcs_bucket_name,
-                project_id=cfg.gcs_project_id,
-                credentials_path=cfg.gcs_credentials_path,
-            )
-            metadata_path = cfg.db_path or str(Path("./nexus-gcs-metadata"))
-        else:
-            # Local backend (default)
-            data_dir = cfg.data_dir if cfg.data_dir is not None else "./nexus-data"
-            backend = LocalBackend(root_path=Path(data_dir).resolve())
-            metadata_path = cfg.db_path or str(Path(data_dir) / "metadata")
-
-        # Metadata store: auto-detect cluster mode from env (NEXUS_PEERS)
-        metadata_store = _create_metadata_store(metadata_path)
-
-        # Embedded mode: default to no permissions (like SQLite)
-        # User can explicitly enable with config={"enforce_permissions": True}
-        enforce_permissions = cfg.enforce_permissions
-        if config is None:
-            # No explicit config provided - use sensible embedded defaults
-            enforce_permissions = False
-        elif isinstance(config, dict) and "enforce_permissions" not in config:
-            # Dict config without explicit enforce_permissions - use embedded default
-            enforce_permissions = False
-
-        # Handle zone isolation configuration
-        # Default: enabled for security unless explicitly disabled
-        enforce_zone_isolation = cfg.enforce_zone_isolation
-        if config is None:
-            # No explicit config - use secure default (enabled)
-            enforce_zone_isolation = True
-        elif isinstance(config, dict) and "enforce_zone_isolation" not in config:
-            # Dict config without explicit setting - use secure default
-            enforce_zone_isolation = True
-
-        # Handle Tiger Cache configuration
-        # Default: enabled for PostgreSQL backends (provides materialized permissions)
-        # Can be disabled via NEXUS_ENABLE_TIGER_CACHE=false env var
-        enable_tiger_cache_env = os.getenv("NEXUS_ENABLE_TIGER_CACHE", "true").lower()
-        enable_tiger_cache = enable_tiger_cache_env in ("true", "1", "yes")
-
-        # Create RecordStore for Services layer (Task #14: Four Pillars)
-        # User Space selects the driver; Kernel only sees RecordStoreABC
-        record_store = SQLAlchemyRecordStore(db_path=cfg.db_path)
-
-        # Create NexusFS instance via factory (Task #23: kernel does not auto-create services)
-        from nexus.factory import create_nexus_fs
-
-        nx_fs = create_nexus_fs(
-            backend=backend,
-            metadata_store=metadata_store,
-            record_store=record_store,
-            is_admin=cfg.is_admin,
-            custom_namespaces=custom_namespaces,
-            enable_metadata_cache=cfg.enable_metadata_cache,
-            cache_path_size=cfg.cache_path_size,
-            cache_list_size=cfg.cache_list_size,
-            cache_kv_size=cfg.cache_kv_size,
-            cache_exists_size=cfg.cache_exists_size,
-            cache_ttl_seconds=cfg.cache_ttl_seconds,
-            auto_parse=cfg.auto_parse,
-            custom_parsers=cfg.parsers,
-            parse_providers=cfg.parse_providers,
-            enforce_permissions=enforce_permissions,
-            allow_admin_bypass=cfg.allow_admin_bypass,
-            enforce_zone_isolation=enforce_zone_isolation,
-            enable_workflows=cfg.enable_workflows,
-            enable_tiger_cache=enable_tiger_cache,
+        api_key = cfg.api_key or os.getenv("NEXUS_API_KEY")
+        timeout = int(cfg.timeout) if hasattr(cfg, "timeout") else 30
+        connect_timeout = int(cfg.connect_timeout) if hasattr(cfg, "connect_timeout") else 5
+        return RemoteNexusFS(  # type: ignore[return-value]  # virtual subclass of NexusFilesystem
+            server_url=server_url,
+            api_key=api_key,
+            timeout=timeout,
+            connect_timeout=connect_timeout,
         )
 
-        # Set memory config for Memory API
-        if cfg.zone_id or cfg.user_id or cfg.agent_id:
-            nx_fs._memory_config = {
-                "zone_id": cfg.zone_id,
-                "user_id": cfg.user_id,
-                "agent_id": cfg.agent_id,
-            }
+    # ── Modes: standalone / federation ───────────────────────────────
+    if cfg.mode not in ("standalone", "federation"):
+        raise ValueError(
+            f"Unknown mode: '{cfg.mode}'. Must be one of: standalone, remote, federation"
+        )
 
-        # Store config for OAuth factory and other components that need it
-        nx_fs._config = cfg
+    # Parse custom namespaces from config
+    custom_namespaces = None
+    if cfg.namespaces:
+        custom_namespaces = [
+            NamespaceConfig(
+                name=ns["name"],
+                readonly=ns.get("readonly", False),
+                admin_only=ns.get("admin_only", False),
+                requires_zone=ns.get("requires_zone", True),
+            )
+            for ns in cfg.namespaces
+        ]
 
-        return nx_fs
+    # Create backend based on configuration
+    backend: Backend
+    if cfg.backend == "gcs":
+        from nexus.backends.gcs import GCSBackend
+
+        if not cfg.gcs_bucket_name:
+            raise ValueError(
+                "gcs_bucket_name is required when backend='gcs'. "
+                "Set gcs_bucket_name in your config or NEXUS_GCS_BUCKET_NAME environment variable."
+            )
+        backend = GCSBackend(
+            bucket_name=cfg.gcs_bucket_name,
+            project_id=cfg.gcs_project_id,
+            credentials_path=cfg.gcs_credentials_path,
+        )
+        metadata_path = cfg.db_path or str(Path("./nexus-gcs-metadata"))
     else:
-        # This should never be reached as unimplemented modes are checked at the top
-        raise ValueError(f"Unknown mode: {cfg.mode}")
+        data_dir = cfg.data_dir if cfg.data_dir is not None else "./nexus-data"
+        backend = LocalBackend(root_path=Path(data_dir).resolve())
+        metadata_path = cfg.db_path or str(Path(data_dir) / "metadata")
+
+    # Create metadata store based on mode
+    if cfg.mode == "federation":
+        metadata_store = _create_federation_metastore(metadata_path)
+    else:
+        # standalone: single-node embedded Raft (no peers)
+        metadata_store = RaftMetadataStore.embedded(metadata_path)
+
+    # Permission defaults: standalone without explicit config → permissive
+    enforce_permissions = cfg.enforce_permissions
+    if config is None or isinstance(config, dict) and "enforce_permissions" not in config:
+        enforce_permissions = False
+
+    # Zone isolation: default enabled for security
+    enforce_zone_isolation = cfg.enforce_zone_isolation
+    if config is None or isinstance(config, dict) and "enforce_zone_isolation" not in config:
+        enforce_zone_isolation = True
+
+    # Tiger Cache
+    enable_tiger_cache_env = os.getenv("NEXUS_ENABLE_TIGER_CACHE", "true").lower()
+    enable_tiger_cache = enable_tiger_cache_env in ("true", "1", "yes")
+
+    # RecordStore (Four Pillars)
+    record_store = SQLAlchemyRecordStore(db_path=cfg.db_path)
+
+    # Create NexusFS via factory
+    from nexus.factory import create_nexus_fs
+
+    nx_fs = create_nexus_fs(
+        backend=backend,
+        metadata_store=metadata_store,
+        record_store=record_store,
+        is_admin=cfg.is_admin,
+        custom_namespaces=custom_namespaces,
+        enable_metadata_cache=cfg.enable_metadata_cache,
+        cache_path_size=cfg.cache_path_size,
+        cache_list_size=cfg.cache_list_size,
+        cache_kv_size=cfg.cache_kv_size,
+        cache_exists_size=cfg.cache_exists_size,
+        cache_ttl_seconds=cfg.cache_ttl_seconds,
+        auto_parse=cfg.auto_parse,
+        custom_parsers=cfg.parsers,
+        parse_providers=cfg.parse_providers,
+        enforce_permissions=enforce_permissions,
+        allow_admin_bypass=cfg.allow_admin_bypass,
+        enforce_zone_isolation=enforce_zone_isolation,
+        enable_workflows=cfg.enable_workflows,
+        enable_tiger_cache=enable_tiger_cache,
+    )
+
+    # Set memory config for Memory API
+    if cfg.zone_id or cfg.user_id or cfg.agent_id:
+        nx_fs._memory_config = {
+            "zone_id": cfg.zone_id,
+            "user_id": cfg.user_id,
+            "agent_id": cfg.agent_id,
+        }
+
+    # Store config for OAuth factory and other components that need it
+    nx_fs._config = cfg
+
+    return nx_fs
+
+
+def _create_federation_metastore(metadata_path: str) -> FileMetadataProtocol:
+    """Create a federation-mode metadata store using ZoneManager + Raft.
+
+    Requires the Rust extension built with --features full.
+    Reads cluster config from env vars (SSOT):
+        NEXUS_NODE_ID, NEXUS_DATA_DIR, NEXUS_BIND_ADDR, NEXUS_PEERS
+    """
+    import os
+    from pathlib import Path
+
+    try:
+        from nexus.raft import ZoneAwareMetadataStore
+        from nexus.raft.zone_manager import ZoneManager
+    except ImportError as err:
+        raise ImportError(
+            "mode='federation' requires the Rust Raft extension built with --features full. "
+            "Build with: maturin develop -m rust/nexus_raft/Cargo.toml --features full"
+        ) from err
+
+    nexus_peers = os.environ.get("NEXUS_PEERS", "")
+    node_id = int(os.environ.get("NEXUS_NODE_ID", "1"))
+    bind_addr = os.environ.get("NEXUS_BIND_ADDR", "0.0.0.0:2126")
+    zones_dir = os.environ.get("NEXUS_DATA_DIR", str(Path(metadata_path).parent / "zones"))
+
+    peers = [p.strip() for p in nexus_peers.split(",") if p.strip()] if nexus_peers else None
+    zone_mgr = ZoneManager(node_id=node_id, base_path=zones_dir, bind_addr=bind_addr)
+    zone_mgr.bootstrap(root_zone_id="root", peers=peers)
+    _setup_multi_zone(zone_mgr, peers)
+    return ZoneAwareMetadataStore.from_zone_manager(zone_mgr, root_zone_id="root")
 
 
 __all__ = [

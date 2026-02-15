@@ -45,9 +45,14 @@ class RecordStoreABC(ABC):
     Provides SQL engine and session factory for relational data:
     Users, ReBAC, Audit, Memory (vectors), Workflows, Versioning, etc.
 
+    The ABC exposes both sync and async interfaces, following the Linux VFS
+    pattern where ``struct file_operations`` provides both ``read`` (sync)
+    and ``read_iter`` (async-capable).  Concrete drivers implement both;
+    callers choose based on context.
+
     Implementations must provide:
-    - engine: SQLAlchemy engine for creating connections
-    - SessionLocal: Session factory for creating database sessions
+    - engine / session_factory: Synchronous SQLAlchemy access
+    - async_session_factory: Asynchronous SQLAlchemy access (lazy default)
     """
 
     @property
@@ -61,6 +66,19 @@ class RecordStoreABC(ABC):
     def session_factory(self) -> Any:
         """Session factory (sessionmaker) for creating database sessions."""
         ...
+
+    @property
+    def async_session_factory(self) -> Any:
+        """Async session factory (async_sessionmaker) for async database sessions.
+
+        Default raises ``NotImplementedError``.  Concrete drivers that support
+        async access (e.g. SQLAlchemyRecordStore) override this with a lazy
+        implementation that creates an async engine from the same DB URL.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support async_session_factory. "
+            "Override this property to enable async database access."
+        )
 
     @abstractmethod
     def close(self) -> None:
@@ -128,6 +146,10 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         # Create session factory
         self._session_factory = sessionmaker(bind=self._engine, expire_on_commit=False)
 
+        # Async engine/session are created lazily on first access
+        self._async_engine: Any = None
+        self._async_session_factory_instance: Any = None
+
         # Create tables
         Base.metadata.create_all(self._engine)
 
@@ -170,7 +192,54 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         """Session factory (alias for session_factory, backward compat)."""
         return self._session_factory
 
+    @property
+    def async_session_factory(self) -> Any:
+        """Lazily create async session factory from the same database URL.
+
+        On first access, creates an async engine (``asyncpg`` for PostgreSQL,
+        ``aiosqlite`` for SQLite) and an ``async_sessionmaker`` bound to it.
+        Subsequent accesses reuse the same engine and session factory.
+        """
+        if self._async_session_factory_instance is None:
+            from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+            async_url = self._to_async_url(self.database_url)
+
+            engine_kwargs: dict[str, Any] = {}
+            if "postgresql" in async_url:
+                engine_kwargs.update(
+                    {
+                        "pool_size": 20,
+                        "max_overflow": 30,
+                        "pool_pre_ping": True,
+                        "pool_use_lifo": True,
+                        "pool_recycle": 1800,
+                    }
+                )
+
+            self._async_engine = create_async_engine(async_url, **engine_kwargs)
+            self._async_session_factory_instance = async_sessionmaker(
+                self._async_engine, class_=AsyncSession, expire_on_commit=False
+            )
+            logger.info("Async session factory initialized: %s", async_url.split("@")[-1])
+
+        return self._async_session_factory_instance
+
+    @staticmethod
+    def _to_async_url(sync_url: str) -> str:
+        """Convert a synchronous database URL to its async driver variant."""
+        if sync_url.startswith("postgresql://"):
+            return sync_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        if sync_url.startswith("sqlite:///"):
+            return sync_url.replace("sqlite:///", "sqlite+aiosqlite:///", 1)
+        return sync_url
+
     def close(self) -> None:
-        """Close the engine and release connections."""
+        """Close all engines and release connections."""
         self._engine.dispose()
+        if self._async_engine is not None:
+            # Async engine dispose is sync-safe in SQLAlchemy 2.0+
+            self._async_engine.sync_engine.dispose()
+            self._async_engine = None
+            self._async_session_factory_instance = None
         logger.info("SQLAlchemyRecordStore closed")

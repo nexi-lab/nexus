@@ -105,7 +105,7 @@ Nexus is an AI-native filesystem that unifies files, memory, and permissions int
 │           ▼                      ▼                ▼                ▼        │
 │    ┌──────────────────────────────────────────────────────────────────┐    │
 │    │                    Connection Factory                             │    │
-│    │  - Auto-detects mode (embedded vs server)                        │    │
+│    │  - Dispatches by mode (standalone / remote / federation)          │    │
 │    │  - Creates NexusFS (local) or RemoteNexusFS (HTTP client)        │    │
 │    └──────────────────────────────────────────────────────────────────┘    │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -114,16 +114,16 @@ Nexus is an AI-native filesystem that unifies files, memory, and permissions int
          │                          │                          │
          ▼                          ▼                          ▼
 ┌─────────────────┐      ┌─────────────────┐      ┌─────────────────┐
-│   Embedded Mode │      │   Server Mode   │      │  Distributed    │
-│                 │      │                 │      │  (Planned)      │
-│  ┌───────────┐  │      │  ┌───────────┐  │      │                 │
-│  │  NexusFS  │  │      │  │ RemoteFS  │  │      │  Kubernetes     │
-│  │  (local)  │  │      │  │  (HTTP)   │  │      │  deployment     │
-│  └───────────┘  │      │  └─────┬─────┘  │      │                 │
-│        │        │      │        │        │      │                 │
-│        ▼        │      │        ▼        │      │                 │
-│  Local Backend  │      │  RPC Server     │      │                 │
-│  + SQLite       │      │  (JSON-RPC)     │      │                 │
+│ Standalone Mode │      │  Remote Mode    │      │ Federation Mode │
+│                 │      │                 │      │                 │
+│  ┌───────────┐  │      │  ┌───────────┐  │      │  ┌───────────┐  │
+│  │  NexusFS  │  │      │  │ RemoteFS  │  │      │  │  NexusFS  │  │
+│  │  (local)  │  │      │  │  (HTTP)   │  │      │  │  + Raft   │  │
+│  └───────────┘  │      │  └─────┬─────┘  │      │  └───────────┘  │
+│        │        │      │        │        │      │        │        │
+│        ▼        │      │        ▼        │      │        ▼        │
+│  Local Backend  │      │  RPC Server     │      │  ZoneManager    │
+│  + redb         │      │  (JSON-RPC)     │      │  + Raft peers   │
 └─────────────────┘      └─────────────────┘      └─────────────────┘
 ```
 
@@ -135,17 +135,17 @@ Nexus supports multiple deployment modes with the same codebase:
 
 | Mode | Description | Use Case | Database |
 |------|-------------|----------|----------|
-| **Embedded** | Library mode, no server | Development, testing, CLI tools | SQLite |
-| **Server** | Single HTTP server | Teams, multi-zone production | PostgreSQL |
-| **Distributed** | Kubernetes-ready (planned) | Enterprise scale | PostgreSQL cluster |
+| **Standalone** | Single-node, no Raft | Development, testing, CLI tools | redb |
+| **Remote** | Thin HTTP client | Teams, multi-user production | PostgreSQL (server-side) |
+| **Federation** | Multi-node Raft consensus | Cross-node zone sharing | redb + Raft |
 
 ### Mode Selection Logic
 
 ```python
-# Connection priority (in nexus.connect())
-1. If NEXUS_URL or config.url is set → RemoteNexusFS (server mode)
-2. If mode="embedded" explicitly set → NexusFS (local mode)
-3. Default → NexusFS with embedded warning
+# Explicit dispatch in nexus.connect()
+mode == "remote"     → RemoteNexusFS(url, api_key)
+mode == "standalone" → RaftMetadataStore.embedded() + NexusFS
+mode == "federation" → ZoneManager + Raft peers + NexusFS
 ```
 
 ---

@@ -67,6 +67,7 @@ dependencies = [
     # Caching
     "cachetools>=6.2.2",
     "redis>=7.0.0", # Redis/Dragonfly client (async support)
+    "nats-py>=2.9.0",  # NATS JetStream event bus (Issue #1331)
     # Authentication
     "authlib>=1.6.5", # JWT and OAuth support for OIDC auth
     "bcrypt>=4.0.0", # Password hashing for local auth
@@ -108,6 +109,8 @@ dependencies = [
     # Rate limiting for DoS protection (Issue #780)
     "slowapi>=0.1.9",
     "limits>=3.6.0",
+    # Prometheus metrics endpoint (Issue #761)
+    "prometheus_client>=0.20.0",
     # OpenTelemetry observability (Issue #764)
     "opentelemetry-api>=1.20.0",
     "opentelemetry-sdk>=1.20.0",
@@ -123,6 +126,8 @@ dependencies = [
     "aiofiles>=25.1.0",
     # Structured logging with JSON output and context propagation (Issue #1002)
     "structlog>=24.4.0",
+    # Governance graphs: collusion detection, ring detection (Issue #1359)
+    "networkx>=3.2",
 ]
 
 [project.optional-dependencies]
@@ -136,6 +141,11 @@ mobile = [
     # GGUF model support via llama.cpp (Issue #1214)
     # For local embedding inference on mobile/edge devices
     "llama-cpp-python>=0.2.0",
+]
+
+sentry = [
+    # Sentry error tracking and performance monitoring (Issue #759)
+    "sentry-sdk[fastapi]>=2.0.0",
 ]
 
 dev = [

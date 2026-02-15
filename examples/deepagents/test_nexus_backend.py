@@ -30,9 +30,9 @@ def test_basic_operations():
     print()
 
     try:
-        # Connect to Nexus (default embedded mode)
+        # Connect to Nexus (default standalone mode)
         nx = nexus.connect()
-        print("✓ Connected to Nexus (embedded mode)")
+        print("✓ Connected to Nexus (standalone mode)")
 
         # Note: We can't import NexusBackend without deepagents installed
         # So we'll test the underlying Nexus operations directly

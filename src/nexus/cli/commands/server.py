@@ -770,17 +770,33 @@ def serve(
             # Default: enable zone isolation for security
             enforce_zone_isolation = True
 
-        # IMPORTANT: Server must always use local NexusFS, never RemoteNexusFS
-        # Use force_local=True to prevent circular dependency even if NEXUS_URL is set
+        # Determine server deployment mode from NEXUS_MODE env var
+        # Server always runs local NexusFS (never RemoteNexusFS)
+        raw_server_mode = os.getenv("NEXUS_MODE", "standalone")
+
+        if raw_server_mode == "remote":
+            console.print(
+                "[red]Error:[/red] Server cannot run in mode='remote' "
+                "(a server cannot be a thin client of another server)"
+            )
+            sys.exit(1)
+
+        if raw_server_mode not in ("standalone", "federation"):
+            console.print(f"[red]Error:[/red] Unknown NEXUS_MODE: '{raw_server_mode}'")
+            console.print("[yellow]Allowed values:[/yellow] standalone, federation")
+            sys.exit(1)
+
+        console.print(f"  Mode: [cyan]{raw_server_mode}[/cyan]")
+
         nx = get_filesystem(
             backend_config,
             enforce_permissions=enforce_permissions,
-            force_local=True,  # Force local mode to prevent RemoteNexusFS
+            server_mode=raw_server_mode,
             allow_admin_bypass=allow_admin_bypass,
             enforce_zone_isolation=enforce_zone_isolation,
-            enable_memory_paging=enable_memory_paging,  # Issue #1258
-            memory_main_capacity=memory_main_capacity,  # Issue #1258
-            memory_recall_max_age_hours=memory_recall_max_age_hours,  # Issue #1258
+            enable_memory_paging=enable_memory_paging,
+            memory_main_capacity=memory_main_capacity,
+            memory_recall_max_age_hours=memory_recall_max_age_hours,
         )
 
         # Load backends from config file if specified

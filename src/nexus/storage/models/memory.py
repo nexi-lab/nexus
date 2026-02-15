@@ -89,6 +89,11 @@ class MemoryModel(Base):
     relationships_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     relationship_count: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
+    # #1191: Temporal stability classification
+    temporal_stability: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    stability_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
+    estimated_ttl_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
     abstraction_level: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     parent_memory_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     child_memory_ids: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -141,6 +146,7 @@ class MemoryModel(Base):
         Index("idx_memory_created_brin", "created_at", postgresql_using="brin"),
         Index("idx_memory_zone_created_brin", "zone_id", "created_at", postgresql_using="brin"),
         Index("idx_memory_valid_at_brin", "valid_at", postgresql_using="brin"),
+        Index("idx_memory_temporal_stability", "temporal_stability"),
     )
 
     def __repr__(self) -> str:
@@ -163,6 +169,12 @@ class MemoryModel(Base):
             raise ValidationError(f"state must be one of {valid_states}, got {self.state}")
         if self.importance is not None and not 0.0 <= self.importance <= 1.0:
             raise ValidationError(f"importance must be between 0.0 and 1.0, got {self.importance}")
+        # #1191: Validate temporal stability
+        valid_stabilities = ["static", "semi_dynamic", "dynamic"]
+        if self.temporal_stability is not None and self.temporal_stability not in valid_stabilities:
+            raise ValidationError(
+                f"temporal_stability must be one of {valid_stabilities}, got {self.temporal_stability}"
+            )
 
 
 class MemoryConfigModel(ResourceConfigMixin, Base):

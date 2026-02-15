@@ -18,6 +18,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from nexus.core.event_bus import (
+    AckableEvent,
     EventBusBase,
     EventBusProtocol,
     FileEvent,
@@ -26,6 +27,7 @@ from nexus.core.event_bus import (
     RedisEventBus,
     create_event_bus,
     get_global_event_bus,
+    require_global_event_bus,
     set_global_event_bus,
 )
 
@@ -1007,3 +1009,146 @@ class TestErrorRecovery:
 
         result = await bus.health_check()
         assert result is False
+
+
+# =============================================================================
+# AckableEvent Tests (Issue #1331)
+# =============================================================================
+
+
+class TestAckableEvent:
+    """Tests for AckableEvent acknowledgment semantics."""
+
+    def _make_event(self) -> FileEvent:
+        return FileEvent(
+            type=FileEventType.FILE_WRITE,
+            path="/test/file.txt",
+            zone_id="zone1",
+        )
+
+    @pytest.mark.asyncio
+    async def test_ack_calls_ack_fn(self):
+        """Test that ack() invokes the callback."""
+        ack_fn = AsyncMock()
+        ackable = AckableEvent(event=self._make_event(), _ack_fn=ack_fn)
+
+        await ackable.ack()
+
+        ack_fn.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_nack_calls_nack_fn_with_delay(self):
+        """Test that nack(delay=5.0) invokes with delay."""
+        nack_fn = AsyncMock()
+        ackable = AckableEvent(event=self._make_event(), _nack_fn=nack_fn)
+
+        await ackable.nack(delay=5.0)
+
+        nack_fn.assert_called_once_with(5.0)
+
+    @pytest.mark.asyncio
+    async def test_nack_without_delay(self):
+        """Test that nack() invokes with None delay."""
+        nack_fn = AsyncMock()
+        ackable = AckableEvent(event=self._make_event(), _nack_fn=nack_fn)
+
+        await ackable.nack()
+
+        nack_fn.assert_called_once_with(None)
+
+    @pytest.mark.asyncio
+    async def test_no_ack_fn_is_noop(self):
+        """Test that ack() with None callback does nothing (Redis compat)."""
+        ackable = AckableEvent(event=self._make_event())
+
+        # Should not raise
+        await ackable.ack()
+        await ackable.nack()
+        await ackable.in_progress()
+
+    @pytest.mark.asyncio
+    async def test_double_ack_is_idempotent(self):
+        """Test that calling ack() twice doesn't error."""
+        ack_fn = AsyncMock()
+        ackable = AckableEvent(event=self._make_event(), _ack_fn=ack_fn)
+
+        await ackable.ack()
+        await ackable.ack()
+
+        assert ack_fn.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_in_progress_extends_deadline(self):
+        """Test that in_progress() invokes callback."""
+        in_progress_fn = AsyncMock()
+        ackable = AckableEvent(event=self._make_event(), _in_progress_fn=in_progress_fn)
+
+        await ackable.in_progress()
+
+        in_progress_fn.assert_called_once()
+
+    def test_event_accessible(self):
+        """Test that ackable.event returns the FileEvent."""
+        event = self._make_event()
+        ackable = AckableEvent(event=event)
+
+        assert ackable.event is event
+        assert ackable.event.path == "/test/file.txt"
+
+
+# =============================================================================
+# Extended Factory Tests (Issue #1331)
+# =============================================================================
+
+
+class TestEventBusFactoryExtended:
+    """Extended factory tests including NATS backend."""
+
+    def test_create_nats_event_bus(self):
+        """Test creating NATS event bus via factory."""
+        from unittest.mock import patch
+
+        with patch("nexus.core.event_bus_nats.NatsEventBus") as MockNats:
+            MockNats.return_value = MagicMock()
+            create_event_bus(backend="nats", nats_url="nats://test:4222")
+            MockNats.assert_called_once_with(nats_url="nats://test:4222")
+
+    def test_create_nats_requires_url(self):
+        """Test that NATS backend requires nats_url."""
+        with pytest.raises(ValueError, match="nats_url is required"):
+            create_event_bus(backend="nats")
+
+    def test_create_redis_still_works(self, mock_redis_client):
+        """Test that Redis backend still works (regression test)."""
+        bus = create_event_bus(backend="redis", redis_client=mock_redis_client)
+        assert isinstance(bus, RedisEventBus)
+
+    def test_unsupported_backend_still_raises(self):
+        """Test error for unsupported backend."""
+        with pytest.raises(ValueError, match="Unsupported event bus backend"):
+            create_event_bus(backend="unknown")
+
+
+# =============================================================================
+# require_global_event_bus Tests (Issue #1331)
+# =============================================================================
+
+
+class TestRequireGlobalEventBus:
+    """Tests for require_global_event_bus() helper."""
+
+    def test_raises_when_none(self):
+        """Test that require raises when no bus is set."""
+        set_global_event_bus(None)
+        with pytest.raises(RuntimeError, match="not initialized"):
+            require_global_event_bus()
+
+    def test_returns_bus_when_set(self, mock_redis_client):
+        """Test that require returns the bus when set."""
+        bus = RedisEventBus(mock_redis_client)
+        set_global_event_bus(bus)
+        try:
+            result = require_global_event_bus()
+            assert result is bus
+        finally:
+            set_global_event_bus(None)

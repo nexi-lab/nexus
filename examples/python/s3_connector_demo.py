@@ -254,7 +254,7 @@ def demo_local():
 
     # Create local Nexus instance
     with tempfile.TemporaryDirectory() as tmpdir:
-        nx = connect(config={"mode": "embedded", "data_dir": tmpdir})
+        nx = connect(config={"mode": "standalone", "data_dir": tmpdir})
         print_success("Created local NexusFS instance")
 
         # Create and add S3 connector backend

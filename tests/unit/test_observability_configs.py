@@ -102,6 +102,59 @@ class TestDatasourcesConfig:
         assert prom.get("isDefault") is True
 
 
+class TestPostgresExporterConfig:
+    """Validate postgres scrape job in prometheus.yml (Issue #762)."""
+
+    def test_postgres_job_in_prometheus_config(self) -> None:
+        data = _load_yaml(OBSERVABILITY_DIR / "prometheus" / "prometheus.yml")
+        job_names = [sc["job_name"] for sc in data["scrape_configs"]]
+        assert "postgres" in job_names
+
+    def test_postgres_scrape_interval(self) -> None:
+        data = _load_yaml(OBSERVABILITY_DIR / "prometheus" / "prometheus.yml")
+        pg_job = next(sc for sc in data["scrape_configs"] if sc["job_name"] == "postgres")
+        assert pg_job["scrape_interval"] == "30s"
+
+
+class TestDashboardJson:
+    """Validate pg-stat-statements.json dashboard (Issue #762)."""
+
+    DASHBOARD_PATH = (
+        OBSERVABILITY_DIR / "grafana" / "provisioning" / "dashboards" / "pg-stat-statements.json"
+    )
+
+    def test_dashboard_json_parseable(self) -> None:
+        import json
+
+        assert self.DASHBOARD_PATH.exists(), f"Dashboard file missing: {self.DASHBOARD_PATH}"
+        with open(self.DASHBOARD_PATH) as f:
+            data = json.load(f)
+        assert isinstance(data, dict)
+
+    def test_dashboard_has_required_fields(self) -> None:
+        import json
+
+        with open(self.DASHBOARD_PATH) as f:
+            data = json.load(f)
+        assert "uid" in data
+        assert "title" in data
+        assert "panels" in data
+        assert len(data["panels"]) > 0
+
+    def test_dashboard_panels_reference_valid_datasource(self) -> None:
+        import json
+
+        with open(self.DASHBOARD_PATH) as f:
+            data = json.load(f)
+        for panel in data["panels"]:
+            ds = panel.get("datasource")
+            if ds is None:
+                continue  # row panels may lack a datasource
+            assert ds.get("uid") == "prometheus", (
+                f"Panel '{panel.get('title')}' uses datasource UID '{ds.get('uid')}', expected 'prometheus'"
+            )
+
+
 class TestAllYamlFilesParseable:
     """Smoke test: every .yml file under observability/ must be valid YAML."""
 

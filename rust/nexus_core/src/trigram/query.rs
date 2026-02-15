@@ -84,7 +84,7 @@ fn extract_from_hir(hir: &regex_syntax::hir::Hir) -> TrigramQuery {
         HirKind::Concat(subs) => {
             // Concatenation: collect all literal bytes, extract trigrams.
             let mut all_bytes = Vec::new();
-            let mut has_non_literal = false;
+            let mut _has_non_literal = false;
 
             for sub in subs {
                 if let HirKind::Literal(lit) = sub.kind() {
@@ -98,7 +98,7 @@ fn extract_from_hir(hir: &regex_syntax::hir::Hir) -> TrigramQuery {
                             // Continue to collect more, but mark non-literal seen.
                         }
                     }
-                    has_non_literal = true;
+                    _has_non_literal = true;
                     // Try to extract from sub-expression too.
                     all_bytes.clear();
                 }
@@ -130,11 +130,7 @@ fn extract_from_hir(hir: &regex_syntax::hir::Hir) -> TrigramQuery {
             }
 
             if all_trigrams.is_empty() {
-                if has_non_literal {
-                    TrigramQuery::All
-                } else {
-                    TrigramQuery::All
-                }
+                TrigramQuery::All
             } else {
                 // Deduplicate.
                 all_trigrams.sort();

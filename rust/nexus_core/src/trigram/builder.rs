@@ -75,7 +75,7 @@ impl TrigramIndexBuilder {
         for trigram in &trigrams {
             self.posting_lists
                 .entry(*trigram)
-                .or_insert_with(RoaringBitmap::new)
+                .or_default()
                 .insert(file_id);
         }
 
@@ -87,7 +87,7 @@ impl TrigramIndexBuilder {
             for trigram in &lower_trigrams {
                 self.posting_lists
                     .entry(*trigram)
-                    .or_insert_with(RoaringBitmap::new)
+                    .or_default()
                     .insert(file_id);
             }
         }

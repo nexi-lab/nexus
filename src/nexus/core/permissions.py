@@ -382,7 +382,7 @@ class PermissionEnforcer:
         self.admin_bypass_paths = admin_bypass_paths or []
 
         # Issue #899: Centralized cache coordinator for all permission caches
-        from nexus.core.permission_cache import PermissionCacheCoordinator
+        from nexus.services.permissions.permission_cache import PermissionCacheCoordinator
 
         self._cache = PermissionCacheCoordinator(
             rebac_manager=rebac_manager,
@@ -1302,7 +1302,10 @@ class PermissionEnforcer:
                 f"subject={subject}, zone={zone_id}"
             )
 
-            from nexus.core.permission_filter_chain import FilterContext, run_filter_chain
+            from nexus.services.permissions.permission_filter_chain import (
+                FilterContext,
+                run_filter_chain,
+            )
 
             filter_ctx = FilterContext(
                 paths=paths,

@@ -20,8 +20,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
-    from nexus.core.permission_cache import PermissionCacheCoordinator
     from nexus.core.permissions import OperationContext
+    from nexus.services.permissions.permission_cache import PermissionCacheCoordinator
     from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)

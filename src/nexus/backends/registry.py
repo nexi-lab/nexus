@@ -39,6 +39,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from nexus.core.registry import BaseRegistry
+
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
 
@@ -173,9 +175,8 @@ class ConnectorInfo:
 class ConnectorRegistry:
     """Registry for dynamic connector loading and discovery.
 
-    This is a singleton registry that stores connector classes by name.
-    Connectors register themselves at import time using the @register_connector
-    decorator.
+    Delegates storage to a ``BaseRegistry[ConnectorInfo]`` instance while
+    preserving the existing classmethod-based public API.
 
     Example:
         >>> @register_connector("azure_blob", description="Azure Blob Storage")
@@ -188,7 +189,7 @@ class ConnectorRegistry:
         ['azure_blob', 'gcs_connector', 's3_connector', ...]
     """
 
-    _connectors: dict[str, ConnectorInfo] = {}
+    _base: BaseRegistry[ConnectorInfo] = BaseRegistry("connectors")
 
     @classmethod
     def register(
@@ -211,8 +212,8 @@ class ConnectorRegistry:
         Raises:
             ValueError: If a connector with the same name is already registered
         """
-        if name in cls._connectors:
-            existing = cls._connectors[name]
+        existing = cls._base.get(name)
+        if existing is not None:
             if existing.connector_class is not connector_class:
                 raise ValueError(
                     f"Connector '{name}' is already registered to {existing.connector_class.__name__}. "
@@ -236,8 +237,7 @@ class ConnectorRegistry:
             requires=requires or [],
             user_scoped=user_scoped,
         )
-        cls._connectors[name] = info
-        logger.debug(f"Registered connector: {name} ({connector_class.__name__})")
+        cls._base.register(name, info, allow_overwrite=True)
 
     @classmethod
     def get(cls, name: str) -> type[Backend]:
@@ -252,10 +252,11 @@ class ConnectorRegistry:
         Raises:
             KeyError: If connector is not found
         """
-        if name not in cls._connectors:
-            available = ", ".join(sorted(cls._connectors.keys()))
-            raise KeyError(f"Unknown connector '{name}'. Available: {available}")
-        return cls._connectors[name].connector_class
+        try:
+            return cls._base.get_or_raise(name).connector_class
+        except KeyError:
+            available = ", ".join(cls._base.list_names())
+            raise KeyError(f"Unknown connector '{name}'. Available: {available}") from None
 
     @classmethod
     def get_info(cls, name: str) -> ConnectorInfo:
@@ -270,10 +271,11 @@ class ConnectorRegistry:
         Raises:
             KeyError: If connector is not found
         """
-        if name not in cls._connectors:
-            available = ", ".join(sorted(cls._connectors.keys()))
-            raise KeyError(f"Unknown connector '{name}'. Available: {available}")
-        return cls._connectors[name]
+        try:
+            return cls._base.get_or_raise(name)
+        except KeyError:
+            available = ", ".join(cls._base.list_names())
+            raise KeyError(f"Unknown connector '{name}'. Available: {available}") from None
 
     @classmethod
     def get_connection_args(cls, name: str) -> dict[str, ConnectionArg]:
@@ -288,8 +290,7 @@ class ConnectorRegistry:
         Raises:
             KeyError: If connector is not found
         """
-        info = cls.get_info(name)
-        return info.connection_args
+        return cls.get_info(name).connection_args
 
     @classmethod
     def list_available(cls) -> list[str]:
@@ -298,7 +299,7 @@ class ConnectorRegistry:
         Returns:
             Sorted list of connector names
         """
-        return sorted(cls._connectors.keys())
+        return cls._base.list_names()
 
     @classmethod
     def list_all(cls) -> list[ConnectorInfo]:
@@ -307,7 +308,7 @@ class ConnectorRegistry:
         Returns:
             List of ConnectorInfo objects, sorted by name
         """
-        return [cls._connectors[name] for name in sorted(cls._connectors.keys())]
+        return cls._base.list_all()
 
     @classmethod
     def list_by_category(cls, category: str) -> list[ConnectorInfo]:
@@ -319,7 +320,7 @@ class ConnectorRegistry:
         Returns:
             List of ConnectorInfo objects in that category
         """
-        return [info for info in cls._connectors.values() if info.category == category]
+        return [info for info in cls._base.list_all() if info.category == category]
 
     @classmethod
     def is_registered(cls, name: str) -> bool:
@@ -331,12 +332,12 @@ class ConnectorRegistry:
         Returns:
             True if registered, False otherwise
         """
-        return name in cls._connectors
+        return name in cls._base
 
     @classmethod
     def clear(cls) -> None:
         """Clear all registered connectors. Primarily for testing."""
-        cls._connectors.clear()
+        cls._base.clear()
 
 
 def register_connector(

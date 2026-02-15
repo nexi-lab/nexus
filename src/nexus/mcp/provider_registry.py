@@ -28,6 +28,8 @@ from typing import Any
 
 import yaml
 
+from nexus.core.registry import BaseRegistry
+
 logger = logging.getLogger(__name__)
 
 
@@ -188,11 +190,11 @@ class ProviderConfig:
         return result
 
 
-class MCPProviderRegistry:
+class MCPProviderRegistry(BaseRegistry[ProviderConfig]):
     """Registry for MCP providers.
 
-    Manages provider configurations from YAML config files,
-    supporting both Klavis-hosted and local providers.
+    Inherits generic register/get/list/clear from ``BaseRegistry`` and adds
+    YAML serialization, factory classmethods, and provider-type filtering.
     """
 
     def __init__(self, providers: dict[str, ProviderConfig] | None = None):
@@ -201,7 +203,10 @@ class MCPProviderRegistry:
         Args:
             providers: Optional dict of provider configs
         """
-        self._providers: dict[str, ProviderConfig] = providers or {}
+        super().__init__(name="mcp_providers")
+        if providers:
+            for name, config in providers.items():
+                self.register(name, config, allow_overwrite=True)
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> MCPProviderRegistry:
@@ -304,28 +309,6 @@ class MCPProviderRegistry:
                 description="Linear issues, projects, teams",
                 klavis_name="linear",
             ),
-            # Connector backends (not MCP yet, but could add MCP support later)
-            # These use Nexus OAuth + connector backends for now.
-            # To use: 'nexus oauth setup-gdrive' + 'nexus mounts add'
-            #
-            # "gdrive": ProviderConfig(
-            #     name="gdrive",
-            #     type=ProviderType.LOCAL,
-            #     display_name="Google Drive",
-            #     description="Google Drive files and folders",
-            #     oauth=OAuthConfig(...),
-            #     backend=BackendConfig(type="gdrive_connector", ...),
-            #     # TODO: Add mcp=MCPConfig(...) when MCP server available
-            # ),
-            # "x": ProviderConfig(
-            #     name="x",
-            #     type=ProviderType.LOCAL,
-            #     display_name="X (Twitter)",
-            #     description="X timeline, posts, users",
-            #     oauth=OAuthConfig(...),
-            #     backend=BackendConfig(type="x_connector", ...),
-            #     # TODO: Add mcp=MCPConfig(...) when MCP server available
-            # ),
         }
         return cls(providers=providers)
 
@@ -338,7 +321,7 @@ class MCPProviderRegistry:
         Returns:
             ProviderConfig or None if not found
         """
-        return self._providers.get(name)
+        return super().get(name)
 
     def list_providers(self) -> list[tuple[str, ProviderConfig]]:
         """List all providers.
@@ -346,7 +329,7 @@ class MCPProviderRegistry:
         Returns:
             List of (name, config) tuples
         """
-        return list(self._providers.items())
+        return [(name, self.get_or_raise(name)) for name in self.list_names()]
 
     def list_klavis_providers(self) -> list[tuple[str, ProviderConfig]]:
         """List Klavis-hosted providers.
@@ -356,7 +339,7 @@ class MCPProviderRegistry:
         """
         return [
             (name, config)
-            for name, config in self._providers.items()
+            for name, config in self.list_providers()
             if config.type == ProviderType.KLAVIS
         ]
 
@@ -368,7 +351,7 @@ class MCPProviderRegistry:
         """
         return [
             (name, config)
-            for name, config in self._providers.items()
+            for name, config in self.list_providers()
             if config.type == ProviderType.LOCAL
         ]
 
@@ -378,7 +361,7 @@ class MCPProviderRegistry:
         Args:
             config: Provider configuration
         """
-        self._providers[config.name] = config
+        self.register(config.name, config, allow_overwrite=True)
 
     def remove_provider(self, name: str) -> bool:
         """Remove a provider from the registry.
@@ -389,10 +372,7 @@ class MCPProviderRegistry:
         Returns:
             True if removed, False if not found
         """
-        if name in self._providers:
-            del self._providers[name]
-            return True
-        return False
+        return self.unregister(name) is not None
 
     def to_yaml(self, path: str | Path) -> None:
         """Save registry to YAML file.
@@ -403,7 +383,12 @@ class MCPProviderRegistry:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
 
-        data = {"providers": {name: config.to_dict() for name, config in self._providers.items()}}
+        data = {
+            "providers": {
+                name: config.to_dict()
+                for name, config in self.list_providers()
+            }
+        }
 
         with open(path, "w") as f:
             yaml.dump(data, f, default_flow_style=False, sort_keys=False)

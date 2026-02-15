@@ -355,6 +355,9 @@ def test_protocol_runtime_checkable() -> None:
             def sandbox_disconnect(self, sandbox_id, mount_path, context=None):
                 return {}
 
+            def sandbox_validate(self, sandbox_id, workspace_path="/workspace", context=None):
+                return {}
+
             def add_mount(
                 self, mount_point, backend_type, backend_config, priority=0, readonly=False
             ):

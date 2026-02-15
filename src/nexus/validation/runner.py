@@ -189,7 +189,7 @@ class ValidationRunner:
             validator_cls = BUILTIN_VALIDATORS.get(name)
             if validator_cls:
                 # Create a default config and instantiate to get the command
-                instance = validator_cls()
+                instance = validator_cls(config=None)  # type: ignore[arg-type]
                 configs.append(instance.config)
 
         return configs

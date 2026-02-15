@@ -10,7 +10,7 @@ import contextlib
 import contextvars
 import json
 import logging
-from typing import Any
+from typing import Any, cast
 
 from fastmcp import Context, FastMCP
 
@@ -124,14 +124,15 @@ def create_mcp_server(
         if remote_url:
             from nexus.remote import RemoteNexusFS
 
-            nx = RemoteNexusFS(remote_url, api_key=api_key)
+            nx = cast(NexusFilesystem, RemoteNexusFS(remote_url, api_key=api_key))
         else:
             from nexus import connect
 
             nx = connect()
 
     # Store default connection and config for per-request API key support
-    _default_nx = nx
+    assert nx is not None  # guaranteed by the if-block above
+    _default_nx: NexusFilesystem = nx
     _remote_url = remote_url
 
     # Connection pool for per-request API keys (cached by API key)
@@ -179,7 +180,7 @@ def create_mcp_server(
         # Create new remote connection with API key from context
         from nexus.remote import RemoteNexusFS
 
-        new_nx = RemoteNexusFS(_remote_url, api_key=request_api_key)
+        new_nx = cast(NexusFilesystem, RemoteNexusFS(_remote_url, api_key=request_api_key))
         _connection_cache[request_api_key] = new_nx
         return new_nx
 

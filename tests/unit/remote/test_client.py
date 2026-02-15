@@ -647,21 +647,17 @@ class TestRemoteNexusFSFileOperations:
         assert "lock_timeout" not in call_params
 
     def test_list(self, remote_client):
-        """Test list operation."""
+        """Test list operation — auto-dispatched with response_key extraction."""
         remote_client._call_rpc = Mock(return_value={"files": ["/file1.txt", "/file2.txt"]})
 
         result = remote_client.list("/workspace")
 
         assert result == ["/file1.txt", "/file2.txt"]
+        # Proxy only sends explicitly-provided args (no defaults)
         remote_client._call_rpc.assert_called_once_with(
             "list",
-            {
-                "path": "/workspace",
-                "recursive": True,
-                "details": False,
-                "prefix": None,
-                "show_parsed": True,
-            },
+            {"path": "/workspace"},
+            read_timeout=None,
         )
 
     def test_list_with_options(self, remote_client):
@@ -673,13 +669,8 @@ class TestRemoteNexusFSFileOperations:
         assert result == ["/file1.txt"]
         remote_client._call_rpc.assert_called_once_with(
             "list",
-            {
-                "path": "/workspace",
-                "recursive": True,
-                "details": True,
-                "prefix": "test",
-                "show_parsed": True,
-            },
+            {"path": "/workspace", "recursive": True, "details": True, "prefix": "test"},
+            read_timeout=None,
         )
 
     def test_exists(self, remote_client):
@@ -722,18 +713,21 @@ class TestRemoteNexusFSFileOperations:
         remote_client._call_rpc.assert_called_once_with("stat", {"path": "/test.txt"})
 
     def test_glob(self, remote_client):
-        """Test glob operation."""
+        """Test glob operation — auto-dispatched with response_key extraction."""
         remote_client._call_rpc = Mock(return_value={"matches": ["/file1.py", "/file2.py"]})
 
         result = remote_client.glob("*.py", "/workspace")
 
         assert result == ["/file1.py", "/file2.py"]
+        # Proxy only sends explicitly-provided args
         remote_client._call_rpc.assert_called_once_with(
-            "glob", {"pattern": "*.py", "path": "/workspace"}
+            "glob",
+            {"pattern": "*.py", "path": "/workspace"},
+            read_timeout=None,
         )
 
     def test_grep(self, remote_client):
-        """Test grep operation."""
+        """Test grep operation — auto-dispatched with response_key extraction."""
         remote_client._call_rpc = Mock(
             return_value={
                 "results": [
@@ -746,14 +740,9 @@ class TestRemoteNexusFSFileOperations:
 
         assert len(result) == 1
         assert result[0]["file"] == "/test.py"
+        # Proxy only sends explicitly-provided args (no defaults)
         remote_client._call_rpc.assert_called_once_with(
             "grep",
-            {
-                "pattern": "def test",
-                "path": "/workspace",
-                "file_pattern": None,
-                "ignore_case": False,
-                "max_results": 1000,
-                "search_mode": "auto",
-            },
+            {"pattern": "def test", "path": "/workspace"},
+            read_timeout=None,
         )

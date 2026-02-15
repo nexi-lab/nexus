@@ -373,6 +373,16 @@ module = "nexus.backends.gcs_connector"
 disable_error_code = ["attr-defined", "return-value"]
 
 [[tool.mypy.overrides]]
+module = [
+    "nexus.core.async_scoped_filesystem",
+    "nexus.tools.langgraph.nexus_tools",
+]
+# These modules call methods on RemoteNexusFS/AsyncRemoteNexusFS that are
+# dispatched via __getattr__ (Issue #1289 RPC Proxy). The proxy returns Any
+# for dynamically-dispatched methods, triggering no-any-return warnings.
+warn_return_any = false
+
+[[tool.mypy.overrides]]
 module = "nexus.backends.s3_connector"
 # HandlerResponse.error() returns HandlerResponse[None] but functions return HandlerResponse[T]
 disable_error_code = ["attr-defined", "return-value"]

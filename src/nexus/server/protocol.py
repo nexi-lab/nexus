@@ -1458,6 +1458,15 @@ class SandboxRunParams:
 
 
 @dataclass
+class SandboxValidateParams:
+    """Parameters for sandbox_validate() method."""
+
+    sandbox_id: str
+    workspace_path: str = "/workspace"
+    context: dict | None = None
+
+
+@dataclass
 class SandboxPauseParams:
     """Parameters for sandbox_pause() method."""
 
@@ -2195,6 +2204,7 @@ METHOD_PARAMS = {
     # Sandbox management methods (v0.8.0 - Issue #372)
     "sandbox_create": SandboxCreateParams,
     "sandbox_run": SandboxRunParams,
+    "sandbox_validate": SandboxValidateParams,
     "sandbox_pause": SandboxPauseParams,
     "sandbox_resume": SandboxResumeParams,
     "sandbox_stop": SandboxStopParams,

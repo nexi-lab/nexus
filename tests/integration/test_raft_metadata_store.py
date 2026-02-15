@@ -70,6 +70,19 @@ class FakeLocalRaft:
     def list_metadata(self, prefix: str) -> list[tuple[str, bytes]]:
         return sorted([(k, v) for k, v in self._metadata.items() if k.startswith(prefix)])
 
+    def get_metadata_multi(self, keys: list[str]) -> list[tuple[str, bytes | None]]:
+        return [(k, self._metadata.get(k)) for k in keys]
+
+    def list_metadata_paginated(
+        self, prefix: str, cursor: str = "", limit: int = 100
+    ) -> tuple[list[tuple[str, bytes]], str]:
+        items = sorted(
+            [(k, v) for k, v in self._metadata.items() if k.startswith(prefix) and k > cursor]
+        )
+        page = items[:limit]
+        next_cursor = page[-1][0] if len(page) == limit else ""
+        return page, next_cursor
+
     def batch_set_metadata(self, items: list[tuple[str, bytes]]) -> int:
         for path, value in items:
             self.set_metadata(path, value)
@@ -79,9 +92,6 @@ class FakeLocalRaft:
         for key in keys:
             self.delete_metadata(key)
         return len(keys)
-
-    def get_metadata_multi(self, keys: list[str]) -> list[tuple[str, bytes | None]]:
-        return [(k, self._metadata.get(k)) for k in keys]
 
     def count_metadata(self, prefix: str) -> int:
         return len(self.list_metadata(prefix))
@@ -336,7 +346,8 @@ class TestListOperations:
         assert isinstance(result, PaginatedResult)
         assert len(result.items) == 3
         assert result.has_more is True
-        # total_count is None — avoided to prevent full scan
+        # total_count is None when unavailable without full scan
+        assert result.total_count is None or result.total_count == 5
 
     def test_list_paginated_cursor(self) -> None:
         store = _make_store()

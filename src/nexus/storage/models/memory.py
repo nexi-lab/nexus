@@ -74,6 +74,11 @@ class MemoryModel(Base):
     supersedes_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     superseded_by_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
+    # #1190: Memory evolution relationships (denormalized back-links, JSON arrays of memory IDs)
+    extends_ids: Mapped[str | None] = mapped_column(Text, nullable=True)
+    extended_by_ids: Mapped[str | None] = mapped_column(Text, nullable=True)
+    derived_from_ids: Mapped[str | None] = mapped_column(Text, nullable=True)
+
     embedding_model: Mapped[str | None] = mapped_column(String(100), nullable=True)
     embedding_dim: Mapped[int | None] = mapped_column(Integer, nullable=True)
     embedding: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -147,6 +152,9 @@ class MemoryModel(Base):
         Index("idx_memory_zone_created_brin", "zone_id", "created_at", postgresql_using="brin"),
         Index("idx_memory_valid_at_brin", "valid_at", postgresql_using="brin"),
         Index("idx_memory_temporal_stability", "temporal_stability"),
+        Index("idx_memory_extends_ids", "extends_ids"),  # #1190
+        Index("idx_memory_extended_by_ids", "extended_by_ids"),  # #1190
+        Index("idx_memory_derived_from_ids", "derived_from_ids"),  # #1190
     )
 
     def __repr__(self) -> str:

@@ -183,7 +183,11 @@ class RaftMetadataStore(FileMetadataProtocol):
             SC mode: None (write is already committed).
         """
         data = _serialize_metadata(metadata)
-        return self._engine.set_metadata(metadata.path, data, consistency=consistency)
+        try:
+            return self._engine.set_metadata(metadata.path, data, consistency=consistency)
+        except TypeError:
+            # Compiled PyO3 binary may not yet support the consistency parameter
+            return self._engine.set_metadata(metadata.path, data)
 
     def _delete_engine(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
         """Delete metadata from the embedded sled engine.
@@ -197,7 +201,11 @@ class RaftMetadataStore(FileMetadataProtocol):
             Dictionary with deleted file info or None
         """
         existing = self._get_engine(path)
-        self._engine.delete_metadata(path, consistency=consistency)
+        try:
+            self._engine.delete_metadata(path, consistency=consistency)
+        except TypeError:
+            # Compiled PyO3 binary may not yet support the consistency parameter
+            self._engine.delete_metadata(path)
         if existing:
             return {
                 "path": existing.path,
@@ -622,11 +630,14 @@ class RaftMetadataStore(FileMetadataProtocol):
             return {}
 
         if self._has_engine:
-            results = self._engine.get_metadata_multi(list(paths))
-            return {
-                path: _deserialize_metadata(data) if data is not None else None
-                for path, data in results
-            }
+            if hasattr(self._engine, "get_metadata_multi"):
+                results = self._engine.get_metadata_multi(list(paths))
+                return {
+                    path: _deserialize_metadata(data) if data is not None else None
+                    for path, data in results
+                }
+            # Fallback: individual calls when batch API not yet compiled
+            return {path: self.get(path) for path in paths}
 
         # Fallback for remote mode
         return {path: self.get(path) for path in paths}
@@ -694,7 +705,10 @@ class RaftMetadataStore(FileMetadataProtocol):
         path_list = list(paths)
 
         # Phase 1: capture existing metadata for rollback (single FFI call)
-        snapshots = self._engine.get_metadata_multi(path_list)
+        if hasattr(self._engine, "get_metadata_multi"):
+            snapshots = self._engine.get_metadata_multi(path_list)
+        else:
+            snapshots = [(p, self._engine.get_metadata(p)) for p in path_list]
 
         # Phase 2: apply all deletes in a single FFI call
         try:
@@ -799,7 +813,10 @@ class RaftMetadataStore(FileMetadataProtocol):
         if self._has_engine:
             # Build meta keys and batch-fetch in one FFI call
             meta_keys = [f"meta:{path}:{key}" for path in paths]
-            results = self._engine.get_metadata_multi(meta_keys)
+            if hasattr(self._engine, "get_metadata_multi"):
+                results = self._engine.get_metadata_multi(meta_keys)
+            else:
+                results = [(k, self._engine.get_metadata(k)) for k in meta_keys]
             out: dict[str, Any] = {}
             for (_meta_key, data), path in zip(results, paths, strict=True):
                 if data is None:

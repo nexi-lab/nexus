@@ -43,7 +43,7 @@ def create_namespace_manager(
 
             persistent_store = PostgresPersistentViewStore(record_store)
             logger.info("[NAMESPACE] L3 persistent view store enabled (RecordStore)")
-        except Exception:
+        except (ImportError, ModuleNotFoundError):
             logger.warning(
                 "[NAMESPACE] Failed to initialize L3 persistent view store, "
                 "falling back to L2-only mode",

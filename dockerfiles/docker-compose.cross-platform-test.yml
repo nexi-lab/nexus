@@ -180,9 +180,10 @@ services:
       # --- Deployment mode (explicit federation for Raft cluster) ---
       NEXUS_MODE: federation
 
-      # --- Raft consensus ---
+      # --- Raft consensus (static bootstrap — all nodes know all peers) ---
       NEXUS_NODE_ID: 1
       NEXUS_BIND_ADDR: 0.0.0.0:2126
+      NEXUS_PEERS: "1@nexus-1:2126,2@nexus-2:2126,3@witness:2126"
 
       # --- RecordStore (shared PostgreSQL) ---
       NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
@@ -266,8 +267,12 @@ services:
     hostname: nexus-2
     restart: unless-stopped
     depends_on:
-      nexus-1:
+      postgres:
         condition: service_healthy
+      dragonfly:
+        condition: service_healthy
+      nexus-1:
+        condition: service_started
     environment:
       NEXUS_HOST: 0.0.0.0
       NEXUS_PORT: 2026
@@ -278,6 +283,7 @@ services:
 
       NEXUS_NODE_ID: 2
       NEXUS_BIND_ADDR: 0.0.0.0:2126
+      NEXUS_PEERS: "1@nexus-1:2126,2@nexus-2:2126,3@witness:2126"
 
       NEXUS_DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
       TOKEN_MANAGER_DB: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-nexus}@postgres:5432/${POSTGRES_DB:-nexus}
@@ -361,6 +367,7 @@ services:
     environment:
       NEXUS_NODE_ID: 3
       NEXUS_BIND_ADDR: 0.0.0.0:2126
+      NEXUS_PEERS: "1@nexus-1:2126,2@nexus-2:2126,3@witness:2126"
       NEXUS_DATA_DIR: /home/nexus/data
       RUST_LOG: info,nexus_raft=debug
     ports:

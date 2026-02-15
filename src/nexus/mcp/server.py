@@ -10,7 +10,7 @@ import contextlib
 import contextvars
 import json
 import logging
-from typing import Any
+from typing import Any, cast
 
 from fastmcp import Context, FastMCP
 
@@ -124,14 +124,15 @@ def create_mcp_server(
         if remote_url:
             from nexus.remote import RemoteNexusFS
 
-            nx = RemoteNexusFS(remote_url, api_key=api_key)
+            nx = cast(NexusFilesystem, RemoteNexusFS(remote_url, api_key=api_key))
         else:
             from nexus import connect
 
             nx = connect()
 
     # Store default connection and config for per-request API key support
-    _default_nx = nx
+    assert nx is not None  # guaranteed by the if-block above
+    _default_nx: NexusFilesystem = nx
     _remote_url = remote_url
 
     # Connection pool for per-request API keys (cached by API key)
@@ -179,7 +180,7 @@ def create_mcp_server(
         # Create new remote connection with API key from context
         from nexus.remote import RemoteNexusFS
 
-        new_nx = RemoteNexusFS(_remote_url, api_key=request_api_key)
+        new_nx = cast(NexusFilesystem, RemoteNexusFS(_remote_url, api_key=request_api_key))
         _connection_cache[request_api_key] = new_nx
         return new_nx
 
@@ -250,40 +251,16 @@ def create_mcp_server(
     def _get_visible_tool_names(ctx: Context | None) -> frozenset[str] | None:
         """Get visible tool names for the current subject via namespace middleware.
 
+        Delegates to ``ToolNamespaceMiddleware.resolve_visible_tools()`` to
+        avoid duplicating subject extraction logic (#1A DRY fix).
+
         Returns:
             frozenset of visible tool names, or None if namespace filtering
             is not configured (backward compat → all tools visible).
         """
         if tool_namespace_middleware is None:
             return None
-
-        if ctx is None:
-            return None
-
-        # Build a minimal fake middleware context to extract subject
-        # The middleware's _extract_subject uses fastmcp_context.get_state()
-        subject = None
-        if hasattr(ctx, "get_state"):
-            try:
-                subject_type = ctx.get_state("subject_type")
-                subject_id = ctx.get_state("subject_id")
-                if subject_type and subject_id:
-                    subject = (subject_type, subject_id)
-            except Exception:
-                pass
-
-            if subject is None:
-                try:
-                    ak = ctx.get_state("api_key")
-                    if ak:
-                        subject = ("api_key", ak)
-                except Exception:
-                    pass
-
-        if subject is None:
-            return None  # No subject → no filtering
-
-        result: frozenset[str] = tool_namespace_middleware._get_visible_tools(subject)
+        result: frozenset[str] | None = tool_namespace_middleware.resolve_visible_tools(ctx)
         return result
 
     # =========================================================================
@@ -1170,6 +1147,7 @@ def create_mcp_server(
             "openWorldHint": True,
         }
     )
+    @handle_tool_errors("searching tools")
     def nexus_discovery_search_tools(query: str, top_k: int = 5, ctx: Context | None = None) -> str:
         """Search for MCP tools by query.
 
@@ -1210,6 +1188,7 @@ def create_mcp_server(
             "openWorldHint": True,
         }
     )
+    @handle_tool_errors("listing servers")
     def nexus_discovery_list_servers(ctx: Context | None = None) -> str:
         """List all available MCP servers.
 
@@ -1250,6 +1229,7 @@ def create_mcp_server(
             "openWorldHint": True,
         }
     )
+    @handle_tool_errors("getting tool details")
     def nexus_discovery_get_tool_details(tool_name: str, ctx: Context | None = None) -> str:
         """Get detailed information about a specific tool.
 
@@ -1288,6 +1268,7 @@ def create_mcp_server(
             "openWorldHint": True,
         }
     )
+    @handle_tool_errors("loading tools")
     def nexus_discovery_load_tools(tool_names: list[str], ctx: Context | None = None) -> str:
         """Load specified tools into the active context.
 

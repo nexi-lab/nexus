@@ -45,6 +45,7 @@ services:
       # NOTE: this compose file lives in dockerfiles/, so use ../ for repo-root paths.
       - ../postgres-init/01-pg-stat-statements.sql:/docker-entrypoint-initdb.d/01-pg-stat-statements.sql:ro
       - ../postgres-init/02-wal-archiving.sql:/docker-entrypoint-initdb.d/02-wal-archiving.sql:ro
+      - ../postgres-init/03-monitoring-user.sql:/docker-entrypoint-initdb.d/03-monitoring-user.sql:ro
     # PostgreSQL 18 optimizations:
     # - io_method=worker: Async I/O for 2-3x I/O performance
     # - effective_io_concurrency=16: Concurrent I/O requests (tuned for SSD)

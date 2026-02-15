@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.sandbox.security_profile import SandboxSecurityProfile
+    from nexus.validation.models import ValidationResult
 
 # Validation patterns for shell-safe inputs
 _MOUNT_PATH_PATTERN = re.compile(r"^/[a-zA-Z0-9/_\-.]+$")
@@ -82,6 +83,31 @@ def validate_agent_id(agent_id: str) -> str:
     return agent_id
 
 
+SUPPORTED_LANGUAGE_KEYS = frozenset({"python", "javascript", "js", "bash", "sh"})
+
+
+def validate_language(language: str, supported: dict[str, str] | None = None) -> str:
+    """Validate a language key is supported.
+
+    Args:
+        language: Language key to validate.
+        supported: Optional mapping of language keys to runtime commands.
+            If None, uses the default SUPPORTED_LANGUAGE_KEYS.
+
+    Returns:
+        The validated language key.
+
+    Raises:
+        UnsupportedLanguageError: If language is not supported.
+    """
+    keys = set(supported.keys()) if supported else SUPPORTED_LANGUAGE_KEYS
+    if language not in keys:
+        raise UnsupportedLanguageError(
+            f"Language '{language}' not supported. Supported: {', '.join(sorted(keys))}"
+        )
+    return language
+
+
 @dataclass
 class CodeExecutionResult:
     """Result from code execution in sandbox."""
@@ -90,6 +116,7 @@ class CodeExecutionResult:
     stderr: str
     exit_code: int
     execution_time: float  # Seconds
+    validations: list[ValidationResult] | None = None
 
 
 @dataclass

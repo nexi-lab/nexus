@@ -408,6 +408,9 @@ class MemoryViewRouter:
         stability_confidence: float | None = None,  # #1191: Classification confidence
         estimated_ttl_days: int | None = None,  # #1191: Estimated TTL in days
         valid_at: Any = None,  # #1183: When fact became valid in real world
+        extends_ids: str | None = None,  # #1190: JSON array of extended memory IDs
+        extended_by_ids: str | None = None,  # #1190: JSON array of extending memory IDs
+        derived_from_ids: str | None = None,  # #1190: JSON array of source memory IDs
         size_bytes: int = 0,  # #1184: Content size for version tracking
         created_by: str | None = None,  # #1184: Who created this version
         change_reason: str | None = None,  # #1184: Why this version was created
@@ -508,6 +511,9 @@ class MemoryViewRouter:
                 temporal_stability=temporal_stability,  # #1191
                 stability_confidence=stability_confidence,  # #1191
                 estimated_ttl_days=estimated_ttl_days,  # #1191
+                extends_ids=extends_ids,  # #1190
+                extended_by_ids=extended_by_ids,  # #1190
+                derived_from_ids=derived_from_ids,  # #1190
                 valid_at=new_valid_at,
             )
 
@@ -587,6 +593,9 @@ class MemoryViewRouter:
                 temporal_stability=temporal_stability,  # #1191
                 stability_confidence=stability_confidence,  # #1191
                 estimated_ttl_days=estimated_ttl_days,  # #1191
+                extends_ids=extends_ids,  # #1190
+                extended_by_ids=extended_by_ids,  # #1190
+                derived_from_ids=derived_from_ids,  # #1190
                 valid_at=valid_at,  # #1183
             )
 

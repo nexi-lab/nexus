@@ -4,15 +4,19 @@ Lightweight registry for ID disambiguation and relationship tracking.
 Enables order-neutral virtual paths for memories.
 """
 
+import logging
 from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select
+from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import Session
 
 from nexus.storage.models import EntityRegistryModel
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -115,10 +119,6 @@ class EntityRegistry:
         Raises:
             ValueError: If entity_type is invalid or parent is inconsistent.
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
-
         logger.debug(
             f"[ENTITY-REG] register_entity called: {entity_type}:{entity_id}, parent={parent_type}:{parent_id}"
         )
@@ -228,10 +228,6 @@ class EntityRegistry:
             >>> if parent and parent.parent_type == "user":
             ...     print(f"Agent owned by user: {parent.parent_id}")
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
-
         logger.debug(
             f"[ENTITY-REG] get_parent called: entity_type={entity_type}, entity_id={entity_id}"
         )
@@ -332,7 +328,7 @@ class EntityRegistry:
                         session.delete(entity_to_delete)
                         session.commit()
                 break  # Success
-            except Exception as e:
+            except (OperationalError, ProgrammingError) as e:
                 if "database is locked" in str(e) and attempt < max_retries - 1:
                     time.sleep(0.1 * (attempt + 1))  # Exponential backoff
                     continue

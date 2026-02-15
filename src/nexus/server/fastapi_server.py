@@ -1171,6 +1171,7 @@ def create_app(
     database_url: str | None = None,
     thread_pool_size: int | None = None,
     operation_timeout: float | None = None,
+    data_dir: str | None = None,
 ) -> FastAPI:
     """Create FastAPI application.
 
@@ -1181,6 +1182,7 @@ def create_app(
         database_url: Database URL for async operations
         thread_pool_size: Thread pool size for sync operations (default: 200)
         operation_timeout: Timeout for sync operations in seconds (default: 30.0)
+        data_dir: Server data directory for persistent storage (A2A tasks, etc.)
 
     Returns:
         Configured FastAPI application
@@ -1203,6 +1205,7 @@ def create_app(
     app.state.api_key = api_key
     app.state.auth_provider = auth_provider
     app.state.database_url = database_url
+    app.state.data_dir = data_dir  # Issue #1412: A2A task persistence
 
     # Expose async_session_factory from RecordStoreABC (if available).
     # This is the canonical way for async endpoints to get database sessions
@@ -1383,6 +1386,18 @@ def create_app(
     except ImportError:
         pass
 
+    # Register QueryObserver → Prometheus collector bridge (Issue #762)
+    try:
+        from prometheus_client import REGISTRY
+
+        from nexus.server.pg_metrics_collector import QueryObserverCollector
+
+        obs_sub = nexus_fs._service_extras.get("observability_subsystem")
+        if obs_sub is not None:
+            REGISTRY.register(QueryObserverCollector(obs_sub.observer))
+    except Exception:
+        pass
+
     # Instrument FastAPI with OpenTelemetry (Issue #764)
     try:
         from nexus.server.telemetry import instrument_fastapi_app
@@ -1489,17 +1504,33 @@ def _register_routes(app: FastAPI) -> None:
     # Health check (exempt from rate limiting - must always be accessible)
     @app.get("/health", response_model=HealthResponse)
     @limiter.exempt
-    async def health_check() -> HealthResponse:
+    async def health_check() -> HealthResponse | Any:
         # Include configuration status for debugging
         enforce_permissions = None
         enforce_zone_isolation = None
         has_auth = None
 
-        if _fastapi_app.state.nexus_fs:
-            enforce_permissions = getattr(_fastapi_app.state.nexus_fs, "_enforce_permissions", None)
-            enforce_zone_isolation = getattr(
-                _fastapi_app.state.nexus_fs, "_enforce_zone_isolation", None
-            )
+        nx_fs = _fastapi_app.state.nexus_fs
+        if nx_fs:
+            enforce_permissions = getattr(nx_fs, "_enforce_permissions", None)
+            enforce_zone_isolation = getattr(nx_fs, "_enforce_zone_isolation", None)
+
+            # Federation mode: ensure topology is initialized (standard Raft lifecycle).
+            # The leader creates root "/" + mount topology via Raft consensus.
+            # Followers receive them via log replication. Docker health check
+            # acts as the readiness gate — returns 503 until topology is ready.
+            zone_mgr = getattr(nx_fs, "_zone_mgr", None)
+            if zone_mgr is not None and not zone_mgr.ensure_topology():
+                from fastapi.responses import JSONResponse
+
+                return JSONResponse(
+                    status_code=503,
+                    content={
+                        "status": "starting",
+                        "service": "nexus-rpc",
+                        "detail": "Waiting for Raft leader election and topology initialization",
+                    },
+                )
 
         # Check if authentication is configured
         has_auth = bool(_fastapi_app.state.api_key or _fastapi_app.state.auth_provider)
@@ -1742,10 +1773,16 @@ def _register_routes(app: FastAPI) -> None:
         from nexus.a2a import create_a2a_router
 
         a2a_base_url = os.environ.get("NEXUS_A2A_BASE_URL", "http://localhost:2026")
+        a2a_auth_required = bool(
+            getattr(_fastapi_app.state, "api_key", None)
+            or getattr(_fastapi_app.state, "auth_provider", None)
+        )
         a2a_router = create_a2a_router(
             nexus_fs=_fastapi_app.state.nexus_fs,
             config=None,  # Will use defaults; config can be passed when available
             base_url=a2a_base_url,
+            auth_required=a2a_auth_required,
+            data_dir=getattr(_fastapi_app.state, "data_dir", None),
         )
         app.include_router(a2a_router)
         logger.info("A2A protocol endpoint registered (/.well-known/agent.json + /a2a)")

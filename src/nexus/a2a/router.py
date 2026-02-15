@@ -27,6 +27,7 @@ from nexus.a2a.exceptions import (
     PushNotificationNotSupportedError,
 )
 from nexus.a2a.models import (
+    TERMINAL_STATES,
     A2AErrorData,
     A2ARequest,
     A2AResponse,
@@ -50,6 +51,7 @@ def build_router(
     config: Any = None,
     base_url: str | None = None,
     task_manager: TaskManager | None = None,
+    auth_required: bool = False,
 ) -> APIRouter:
     """Build and return the A2A FastAPI router.
 
@@ -60,6 +62,10 @@ def build_router(
     task_manager:
         Optional pre-built TaskManager (useful for testing).
         When *None* a new instance is created.
+    auth_required:
+        When *True*, all A2A operational endpoints require a valid
+        ``Authorization`` header.  The Agent Card endpoint remains
+        public regardless of this setting.
     """
     effective_base_url = base_url or "http://localhost:2026"
 
@@ -102,23 +108,12 @@ def build_router(
         real-world A2A implementations (ServiceNow, LangSmith, etc.) which
         require auth for all operational endpoints.
         """
-        auth_result = await _get_auth_result_safe(request)
-
         # Enforce authentication when server has auth configured
         # Per A2A spec: "All A2A requests must include a valid Authorization header"
         # Reference: https://a2a-protocol.org/latest/topics/enterprise-ready/
-        try:
-            from nexus.server.fastapi_server import _fastapi_app
-
-            has_auth = bool(
-                _fastapi_app
-                and (
-                    getattr(_fastapi_app.state, "api_key", None)
-                    or getattr(_fastapi_app.state, "auth_provider", None)
-                )
-            )
-            if has_auth and not auth_result:
-                # Return 401 Unauthorized per OAuth 2.0 / A2A best practices
+        if auth_required:
+            auth_header = request.headers.get("Authorization")
+            if not auth_header:
                 return JSONResponse(
                     content={
                         "error": "Unauthorized",
@@ -127,9 +122,9 @@ def build_router(
                     status_code=401,
                     headers={"WWW-Authenticate": 'Bearer realm="A2A"'},
                 )
-        except ImportError:
-            # If fastapi_server not available, allow request (testing scenario)
-            pass
+            auth_result = await _get_auth_result_safe(request)
+        else:
+            auth_result = await _get_auth_result_safe(request)
 
         try:
             body = await request.json()
@@ -277,6 +272,15 @@ async def _handle_send(
     task_id = params.get("taskId")
     if task_id:
         task = await task_manager.get_task(task_id, zone_id=zone_id)
+        # Reject continuation of terminal tasks
+        if task.status.state in TERMINAL_STATES:
+            raise InvalidParamsError(
+                data={
+                    "taskId": task_id,
+                    "currentState": task.status.state.value,
+                    "detail": "Cannot continue a task in terminal state.",
+                }
+            )
         # Add message to history and transition to working
         task = await task_manager.update_task_state(
             task_id,

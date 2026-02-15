@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nexus.core.memory_api import (
+from nexus.services.memory.memory_api import (
     DEFAULT_DECAY_FACTOR,
     DEFAULT_MIN_IMPORTANCE,
     get_effective_importance,
@@ -208,7 +208,7 @@ class TestDecayIntegration:
 
     def test_track_memory_access_updates_fields(self, mock_session, mock_backend):
         """Test that accessing a memory updates tracking fields."""
-        from nexus.core.memory_api import Memory
+        from nexus.services.memory.memory_api import Memory
 
         # Create mock memory
         mock_memory = MagicMock()
@@ -233,7 +233,7 @@ class TestDecayIntegration:
 
     def test_track_memory_access_increments_count(self, mock_session, mock_backend):
         """Test that access count increments."""
-        from nexus.core.memory_api import Memory
+        from nexus.services.memory.memory_api import Memory
 
         mock_memory = MagicMock()
         mock_memory.access_count = 5
@@ -250,7 +250,7 @@ class TestDecayIntegration:
 
     def test_track_memory_access_preserves_original(self, mock_session, mock_backend):
         """Test that original importance is preserved on subsequent accesses."""
-        from nexus.core.memory_api import Memory
+        from nexus.services.memory.memory_api import Memory
 
         mock_memory = MagicMock()
         mock_memory.access_count = 5

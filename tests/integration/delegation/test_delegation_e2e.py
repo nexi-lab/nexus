@@ -13,7 +13,7 @@ import pytest
 from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from nexus.delegation.models import DelegationMode, DelegationResult
+from nexus.services.delegation.models import DelegationMode, DelegationResult
 
 # ---------------------------------------------------------------------------
 # We rebuild the delegation endpoints with test-controllable dependencies
@@ -306,7 +306,7 @@ class TestCreateDelegation:
 
     def test_escalation_error_returns_403(self, client, mock_delegation_service):
         """EscalationError maps to HTTP 403."""
-        from nexus.delegation.errors import EscalationError
+        from nexus.services.delegation.errors import EscalationError
 
         mock_delegation_service.delegate.side_effect = EscalationError("not allowed")
         response = client.post(
@@ -322,7 +322,7 @@ class TestCreateDelegation:
 
     def test_chain_error_returns_403(self, client, mock_delegation_service):
         """DelegationChainError maps to HTTP 403."""
-        from nexus.delegation.errors import DelegationChainError
+        from nexus.services.delegation.errors import DelegationChainError
 
         mock_delegation_service.delegate.side_effect = DelegationChainError("no chains")
         response = client.post(
@@ -352,7 +352,7 @@ class TestRevokeDelegation:
 
     def test_revoke_not_found(self, client, mock_delegation_service):
         """DELETE for non-existent delegation returns 404."""
-        from nexus.delegation.errors import DelegationNotFoundError
+        from nexus.services.delegation.errors import DelegationNotFoundError
 
         mock_delegation_service.revoke_delegation.side_effect = DelegationNotFoundError("not found")
         response = client.delete("/api/v2/agents/delegate/nonexistent")

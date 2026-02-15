@@ -334,9 +334,6 @@ class NexusFS(  # type: ignore[misc]
         self._parser_threads: list[threading.Thread] = []
         self._parser_threads_lock = threading.Lock()
 
-        # v0.6.0: Policy system removed - use ReBAC for all permissions
-        self.policy_matcher = None  # type: ignore[assignment]
-
         # P0 Fixes: Use OperationContext for GA features
         from nexus.core.permissions import OperationContext
 
@@ -1275,24 +1272,6 @@ class NexusFS(  # type: ignore[misc]
         else:
             # No parent (shouldn't happen for valid paths)
             return None
-
-    def _inherit_permissions_from_parent(
-        self, _path: str, _is_directory: bool
-    ) -> tuple[str | None, str | None, int | None]:
-        """
-        Inherit permissions from parent directory (DEPRECATED).
-
-        This method is deprecated. UNIX permissions are no longer used.
-        Use ReBAC relationships for permission management.
-
-        Args:
-            _path: Virtual path of the new file/directory (unused)
-            _is_directory: Whether the new item is a directory (unused)
-
-        Returns:
-            Always returns (None, None, None)
-        """
-        return (None, None, None)
 
     def _check_permission(
         self,

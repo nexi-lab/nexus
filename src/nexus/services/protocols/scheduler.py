@@ -59,28 +59,45 @@ class SchedulerProtocol(Protocol):
 
 
 class InMemoryScheduler:
-    """Simple FIFO scheduler backed by a list.
+    """Priority-aware scheduler backed by a sorted list.
 
     Intended for testing and development only — not production-grade.
+
+    Scheduling policy:
+      - Higher ``priority`` values are scheduled first.
+      - Equal-priority requests are served in FIFO (submission) order.
+
+    This uses a monotonic counter (``_seq``) as a tiebreaker so that
+    equal-priority requests are dequeued in insertion order.
     """
 
     def __init__(self) -> None:
-        self._pending: list[AgentRequest] = []
+        self._pending: list[tuple[int, int, AgentRequest]] = []  # (-priority, seq, request)
+        self._seq: int = 0
 
     async def submit(self, request: AgentRequest) -> None:
-        self._pending.append(request)
+        import heapq
+
+        heapq.heappush(self._pending, (-request.priority, self._seq, request))
+        self._seq += 1
 
     async def next(self) -> AgentRequest | None:
+        import heapq
+
         if not self._pending:
             return None
-        return self._pending.pop(0)
+        _, _, request = heapq.heappop(self._pending)
+        return request
 
     async def pending_count(self, *, zone_id: str | None = None) -> int:
         if zone_id is None:
             return len(self._pending)
-        return sum(1 for r in self._pending if r.zone_id == zone_id)
+        return sum(1 for _, _, r in self._pending if r.zone_id == zone_id)
 
     async def cancel(self, agent_id: str) -> int:
+        import heapq
+
         before = len(self._pending)
-        self._pending = [r for r in self._pending if r.agent_id != agent_id]
+        self._pending = [(p, s, r) for p, s, r in self._pending if r.agent_id != agent_id]
+        heapq.heapify(self._pending)  # Re-establish heap invariant after filtering
         return before - len(self._pending)

@@ -2,9 +2,57 @@
 
 Provides quarantine marker handling for flaky/timing-dependent tests.
 Quarantined tests are skipped by default; pass --run-quarantine to include them.
+
+Hypothesis profiles (Issue #1303):
+  - dev:      10 examples, 500ms deadline — fast local iteration
+  - ci:       1000 examples, no deadline, derandomize — thorough PR checks
+  - thorough: 100K examples, no deadline — periodic full proofs (nightly/weekly)
+
+Usage:
+  HYPOTHESIS_PROFILE=ci pytest ...
+  pytest --hypothesis-profile ci ...
 """
 
+import os
+
 import pytest
+
+# ---------------------------------------------------------------------------
+# Hypothesis profiles (Issue #1303)
+# ---------------------------------------------------------------------------
+
+try:
+    from hypothesis import HealthCheck, Phase
+    from hypothesis import settings as hypothesis_settings
+
+    hypothesis_settings.register_profile(
+        "dev",
+        max_examples=10,
+        deadline=500,
+    )
+
+    hypothesis_settings.register_profile(
+        "ci",
+        max_examples=1000,
+        deadline=None,
+        derandomize=True,
+        print_blob=True,
+        suppress_health_check=[HealthCheck.too_slow],
+    )
+
+    hypothesis_settings.register_profile(
+        "thorough",
+        max_examples=100_000,
+        deadline=None,
+        derandomize=True,
+        print_blob=True,
+        suppress_health_check=[HealthCheck.too_slow],
+        phases=[Phase.explicit, Phase.reuse, Phase.generate, Phase.shrink],
+    )
+
+    hypothesis_settings.load_profile(os.getenv("HYPOTHESIS_PROFILE", "dev"))
+except ImportError:
+    pass  # hypothesis not installed — property-based tests will be skipped
 
 try:
     import structlog

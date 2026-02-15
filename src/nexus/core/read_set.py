@@ -248,8 +248,10 @@ class ReadSet:
             for entry in self.entries:
                 if entry.resource_id == write_path and write_revision > entry.revision:
                     return True
-            # Path matched but revision not newer
-            return False
+            # Path matched but revision not newer for the direct entry.
+            # IMPORTANT: Do NOT return False here — the same path may also
+            # be inside a read directory whose listing IS stale.
+            # Fall through to directory containment check below.
 
         # O(d) directory containment check
         # Check if write_path is inside any directory we read

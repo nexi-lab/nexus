@@ -72,7 +72,10 @@ fn verify_section_crc(
     let computed_crc = crc32fast::hash(&data[section_start..crc_start]);
     if stored_crc != computed_crc {
         return Err(TrigramError::CorruptIndex {
-            reason: format!("{} CRC mismatch (stored={:#010x}, computed={:#010x})", name, stored_crc, computed_crc),
+            reason: format!(
+                "{} CRC mismatch (stored={:#010x}, computed={:#010x})",
+                name, stored_crc, computed_crc
+            ),
         });
     }
     Ok(())
@@ -148,8 +151,7 @@ impl TrigramIndexReader {
 
         let data = &self.mmap[entry_offset..];
         // Skip file_id (4 bytes), read path_offset (4 bytes) and path_len (2 bytes).
-        let path_offset =
-            u32::from_le_bytes([data[4], data[5], data[6], data[7]]) as usize;
+        let path_offset = u32::from_le_bytes([data[4], data[5], data[6], data[7]]) as usize;
         let path_len = u16::from_le_bytes([data[8], data[9]]) as usize;
 
         // Path bytes are relative to the start of the file table.
@@ -299,7 +301,9 @@ impl TrigramIndexReader {
                 if results.len() >= max_results {
                     break;
                 }
-                if let Some(mut matches) = verify_file(path, &search_mode, max_results - results.len()) {
+                if let Some(mut matches) =
+                    verify_file(path, &search_mode, max_results - results.len())
+                {
                     results.append(&mut matches);
                 }
             }
@@ -492,9 +496,11 @@ pub fn trigram_search_candidates(
         pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to open index: {}", e))
     })?;
 
-    let candidate_ids = reader.search_candidates(pattern, ignore_case).map_err(|e| {
-        pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to search index: {}", e))
-    })?;
+    let candidate_ids = reader
+        .search_candidates(pattern, ignore_case)
+        .map_err(|e| {
+            pyo3::exceptions::PyRuntimeError::new_err(format!("Failed to search index: {}", e))
+        })?;
 
     let paths: Vec<String> = candidate_ids
         .iter()

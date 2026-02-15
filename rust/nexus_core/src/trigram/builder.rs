@@ -55,9 +55,10 @@ impl TrigramIndexBuilder {
         }
 
         let file_id = self.next_file_id;
-        self.next_file_id = self.next_file_id.checked_add(1).expect(
-            "TrigramIndexBuilder: file_id overflow (exceeded u32::MAX files)",
-        );
+        self.next_file_id = self
+            .next_file_id
+            .checked_add(1)
+            .expect("TrigramIndexBuilder: file_id overflow (exceeded u32::MAX files)");
 
         self.files.push(FileEntry {
             file_id,

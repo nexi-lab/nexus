@@ -4,9 +4,7 @@
 
 use super::builder::TrigramIndexBuilder;
 use super::error::TrigramError;
-use super::format::{
-    IndexHeader, FILE_ENTRY_SIZE, HEADER_SIZE, TRIGRAM_ENTRY_SIZE, VERSION,
-};
+use super::format::{IndexHeader, FILE_ENTRY_SIZE, HEADER_SIZE, TRIGRAM_ENTRY_SIZE, VERSION};
 
 /// Serialize a built trigram index to bytes.
 ///
@@ -23,23 +21,21 @@ pub fn write_index(builder: &TrigramIndexBuilder) -> Result<Vec<u8>, TrigramErro
     for f in files {
         path_bytes_total += f.path.len();
     }
-    let file_table_size =
-        files.len() * FILE_ENTRY_SIZE + path_bytes_total + 4; // +4 for section CRC32
+    let file_table_size = files.len() * FILE_ENTRY_SIZE + path_bytes_total + 4; // +4 for section CRC32
 
     // Trigram table: sorted entries.
-    let trigram_table_size =
-        sorted_postings.len() * TRIGRAM_ENTRY_SIZE + 4; // +4 for section CRC32
+    let trigram_table_size = sorted_postings.len() * TRIGRAM_ENTRY_SIZE + 4; // +4 for section CRC32
 
     // Posting lists: serialize each Roaring bitmap.
     let mut serialized_postings: Vec<Vec<u8>> = Vec::with_capacity(sorted_postings.len());
     let mut posting_data_size: usize = 0;
     for (_, bitmap) in &sorted_postings {
         let mut buf = Vec::new();
-        bitmap.serialize_into(&mut buf).map_err(|e| {
-            TrigramError::CorruptIndex {
+        bitmap
+            .serialize_into(&mut buf)
+            .map_err(|e| TrigramError::CorruptIndex {
                 reason: format!("Failed to serialize posting list: {}", e),
-            }
-        })?;
+            })?;
         posting_data_size += buf.len();
         serialized_postings.push(buf);
     }
@@ -70,14 +66,18 @@ pub fn write_index(builder: &TrigramIndexBuilder) -> Result<Vec<u8>, TrigramErro
     let mut path_offset: u32 = (files.len() * FILE_ENTRY_SIZE) as u32;
     let mut all_paths = Vec::new();
     for f in files {
-        let path_len: u16 = f.path.len().try_into().map_err(|_| TrigramError::CorruptIndex {
-            reason: format!(
-                "File path too long ({} bytes, max {}): {}",
-                f.path.len(),
-                u16::MAX,
-                &f.path[..f.path.len().min(80)]
-            ),
-        })?;
+        let path_len: u16 = f
+            .path
+            .len()
+            .try_into()
+            .map_err(|_| TrigramError::CorruptIndex {
+                reason: format!(
+                    "File path too long ({} bytes, max {}): {}",
+                    f.path.len(),
+                    u16::MAX,
+                    &f.path[..f.path.len().min(80)]
+                ),
+            })?;
         output.extend_from_slice(&f.file_id.to_le_bytes());
         output.extend_from_slice(&path_offset.to_le_bytes());
         output.extend_from_slice(&path_len.to_le_bytes());

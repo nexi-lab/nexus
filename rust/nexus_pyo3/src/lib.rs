@@ -61,7 +61,10 @@ fn nexus_fast(m: &Bound<PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(hash::hash_bytes, m)?)?;
     // Trigram Index
     m.add_function(wrap_pyfunction!(trigram::build_trigram_index, m)?)?;
-    m.add_function(wrap_pyfunction!(trigram::build_trigram_index_from_entries, m)?)?;
+    m.add_function(wrap_pyfunction!(
+        trigram::build_trigram_index_from_entries,
+        m
+    )?)?;
     m.add_function(wrap_pyfunction!(trigram::trigram_grep, m)?)?;
     m.add_function(wrap_pyfunction!(trigram::trigram_search_candidates, m)?)?;
     m.add_function(wrap_pyfunction!(trigram::trigram_index_stats, m)?)?;

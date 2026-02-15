@@ -19,11 +19,11 @@ version: '3.8'
 
 services:
   # ============================================
-  # PostgreSQL Database with pgvector extension (PostgreSQL 18)
-  # Features: Async I/O, Skip Scan, UUIDv7, OLD/NEW RETURNING, pgvector
+  # PostgreSQL Database with pgvector extension (PostgreSQL 16)
+  # PostgreSQL 16 — matches Cloud SQL production
   # ============================================
   postgres:
-    image: pgvector/pgvector:pg18
+    image: pgvector/pgvector:pg16
     container_name: nexus-postgres
     restart: unless-stopped
     environment:
@@ -31,20 +31,14 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nexus}
     volumes:
-      # PostgreSQL 18+ requires mount at /var/lib/postgresql (not /data subdirectory)
-      # See: https://github.com/docker-library/postgres/pull/1259
+      # PostgreSQL data directory
       - postgres-data:/var/lib/postgresql
-    # PostgreSQL 18 optimizations:
-    # - io_method=worker: Async I/O for 2-3x I/O performance
+    # PostgreSQL 16 optimizations:
     # - effective_io_concurrency=16: Concurrent I/O requests (tuned for SSD)
-    # - enable_self_join_elimination=on: Query optimizer improvement
     command: >
       postgres
-      -c io_method=worker
       -c effective_io_concurrency=16
       -c maintenance_io_concurrency=16
-      -c enable_self_join_elimination=on
-      -c enable_distinct_reordering=on
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     healthcheck:

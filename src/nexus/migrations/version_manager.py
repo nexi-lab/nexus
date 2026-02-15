@@ -17,7 +17,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import nexus
 from nexus.migrations.registry import MigrationPath, get_registry
@@ -141,15 +141,22 @@ class VersionManager:
             manager.rollback(result.from_version)
     """
 
-    def __init__(self, config: NexusConfig) -> None:
+    def __init__(
+        self,
+        config: NexusConfig,
+        session_factory: Any | None = None,
+    ) -> None:
         """Initialize version manager.
 
         Args:
             config: Nexus configuration
+            session_factory: Optional SQLAlchemy sessionmaker. When provided,
+                used instead of the deprecated ``nexus.storage.database`` module.
         """
         self.config = config
         self.registry = get_registry()
         self._session: Session | None = None
+        self._session_factory = session_factory
 
     def get_current_version(self) -> str:
         """Get the currently installed Nexus version.
@@ -168,41 +175,48 @@ class VersionManager:
         versions = self.registry.get_available_versions()
         return versions[-1] if versions else self.get_current_version()
 
+    def _get_session(self) -> Any:
+        """Return a new session from the injected factory or legacy shim."""
+        if self._session_factory is not None:
+            return self._session_factory()
+        # Fallback: legacy module (emits deprecation warning)
+        from nexus.storage.database import get_session_factory
+
+        return get_session_factory(db_path=self.config.db_path)()
+
     def get_migration_history(self) -> list[MigrationHistoryEntry]:
         """Get migration history from database.
 
         Returns:
             List of migration history entries, newest first
         """
-        # Import here to avoid circular imports
-        from nexus.storage.database import get_session
         from nexus.storage.models import MigrationHistoryModel
 
+        session = self._get_session()
         try:
-            with get_session(db_path=self.config.db_path) as session:
-                records = (
-                    session.query(MigrationHistoryModel)
-                    .order_by(MigrationHistoryModel.started_at.desc())
-                    .all()
-                )
+            records = (
+                session.query(MigrationHistoryModel)
+                .order_by(MigrationHistoryModel.started_at.desc())
+                .all()
+            )
 
-                return [
-                    MigrationHistoryEntry(
-                        id=r.id,
-                        from_version=r.from_version,
-                        to_version=r.to_version,
-                        migration_type=r.migration_type,
-                        status=r.status,
-                        backup_path=r.backup_path,
-                        started_at=r.started_at,
-                        completed_at=r.completed_at,
-                        error_message=r.error_message,
-                        metadata=json.loads(r.metadata_json) if r.metadata_json else None,
-                    )
-                    for r in records
-                ]
+            return [
+                MigrationHistoryEntry(
+                    id=r.id,
+                    from_version=r.from_version,
+                    to_version=r.to_version,
+                    migration_type=r.migration_type,
+                    status=r.status,
+                    backup_path=r.backup_path,
+                    started_at=r.started_at,
+                    completed_at=r.completed_at,
+                    error_message=r.error_message,
+                    metadata=json.loads(r.metadata_json) if r.metadata_json else None,
+                )
+                for r in records
+            ]
         finally:
-            pass  # Session cleanup handled by context manager
+            session.close()
 
     def plan_upgrade(self, from_version: str, to_version: str) -> MigrationPath | None:
         """Plan an upgrade path between versions.
@@ -574,25 +588,27 @@ class VersionManager:
         """
         import uuid
 
-        from nexus.storage.database import get_session
         from nexus.storage.models import MigrationHistoryModel
 
+        session = self._get_session()
         try:
-            with get_session(db_path=self.config.db_path) as session:
-                record = MigrationHistoryModel(
-                    id=str(uuid.uuid4()),
-                    from_version=from_version,
-                    to_version=to_version,
-                    migration_type=migration_type,
-                    status="running",
-                    backup_path=backup_path,
-                    started_at=datetime.now(UTC),
-                )
-                session.add(record)
-                session.commit()
-                return record.id
+            record = MigrationHistoryModel(
+                id=str(uuid.uuid4()),
+                from_version=from_version,
+                to_version=to_version,
+                migration_type=migration_type,
+                status="running",
+                backup_path=backup_path,
+                started_at=datetime.now(UTC),
+            )
+            session.add(record)
+            session.commit()
+            return record.id
+        except Exception:
+            session.rollback()
+            raise
         finally:
-            pass  # Session cleanup handled by context manager
+            session.close()
 
     def _record_migration_complete(
         self, history_id: str, status: str, error_message: str | None
@@ -604,16 +620,18 @@ class VersionManager:
             status: Final status
             error_message: Error message if failed
         """
-        from nexus.storage.database import get_session
         from nexus.storage.models import MigrationHistoryModel
 
+        session = self._get_session()
         try:
-            with get_session(db_path=self.config.db_path) as session:
-                record = session.query(MigrationHistoryModel).filter_by(id=history_id).first()
-                if record:
-                    record.status = status
-                    record.completed_at = datetime.now(UTC)
-                    record.error_message = error_message
-                    session.commit()
+            record = session.query(MigrationHistoryModel).filter_by(id=history_id).first()
+            if record:
+                record.status = status
+                record.completed_at = datetime.now(UTC)
+                record.error_message = error_message
+                session.commit()
+        except Exception:
+            session.rollback()
+            raise
         finally:
-            pass  # Session cleanup handled by context manager
+            session.close()

@@ -283,8 +283,8 @@ class TestRunCode:
             code="print('hello')",
         )
 
-        assert result["stdout"] == "hello"
-        assert result["exit_code"] == 0
+        assert result.stdout == "hello"
+        assert result.exit_code == 0
         mock_provider.run_code.assert_awaited_once()
 
     @pytest.mark.asyncio

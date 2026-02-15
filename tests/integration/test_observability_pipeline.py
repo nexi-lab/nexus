@@ -118,6 +118,25 @@ class TestMetricsIntegration:
 # ---------------------------------------------------------------------------
 
 
+class TestDatabaseMetricsIntegration:
+    """Test QueryObserver metrics appear in /metrics output (Issue #762)."""
+
+    def test_db_metrics_appear_in_metrics_output(self, client, auth_headers) -> None:
+        """After a DB-hitting request, app-level DB metrics should be present."""
+        # Make a request that exercises the database path
+        client.get("/v1/stat?path=/nonexistent", headers=auth_headers)
+        resp = client.get("/metrics")
+        assert resp.status_code == 200
+        # QueryObserverCollector exposes these gauges
+        assert "nexus_db_queries_total" in resp.text
+        assert "nexus_db_pool_checkouts_total" in resp.text
+
+    def test_observer_disabled_metric_present(self, client) -> None:
+        """The observer disabled gauge should always be present."""
+        resp = client.get("/metrics")
+        assert "nexus_db_observer_disabled" in resp.text
+
+
 class TestMetricsPerformance:
     """Verify Prometheus middleware adds minimal overhead."""
 

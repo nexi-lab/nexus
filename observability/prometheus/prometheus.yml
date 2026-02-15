@@ -10,3 +10,10 @@ scrape_configs:
       - targets: ["nexus-server:2026"]
         labels:
           service: "nexus"
+
+  - job_name: "postgres"
+    scrape_interval: 30s
+    static_configs:
+      - targets: ["postgres-exporter:9187"]
+        labels:
+          service: "postgres"

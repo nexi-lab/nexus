@@ -1383,6 +1383,18 @@ def create_app(
     except ImportError:
         pass
 
+    # Register QueryObserver → Prometheus collector bridge (Issue #762)
+    try:
+        from prometheus_client import REGISTRY
+
+        from nexus.server.pg_metrics_collector import QueryObserverCollector
+
+        obs_sub = nexus_fs._service_extras.get("observability_subsystem")
+        if obs_sub is not None:
+            REGISTRY.register(QueryObserverCollector(obs_sub.observer))
+    except Exception:
+        pass
+
     # Instrument FastAPI with OpenTelemetry (Issue #764)
     try:
         from nexus.server.telemetry import instrument_fastapi_app

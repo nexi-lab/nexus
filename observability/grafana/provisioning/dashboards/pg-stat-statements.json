@@ -1,0 +1,499 @@
+{
+  "uid": "nexus-pg-stat-statements",
+  "title": "PostgreSQL — pg_stat_statements",
+  "description": "PostgreSQL query performance monitoring via pg_stat_statements and app-level QueryObserver (Issue #762)",
+  "tags": ["postgresql", "nexus", "observability"],
+  "timezone": "browser",
+  "editable": true,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {
+          "text": "Prometheus",
+          "value": "prometheus"
+        },
+        "hide": 0,
+        "label": "Datasource"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "type": "row",
+      "title": "Overview",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false
+    },
+    {
+      "type": "stat",
+      "title": "Queries per Second",
+      "description": "Application-level query rate from QueryObserver",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 },
+      "targets": [
+        {
+          "expr": "rate(nexus_db_queries_total[5m])",
+          "legendFormat": "QPS"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 100 },
+              { "color": "red", "value": 500 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Slow Query Rate",
+      "description": "Rate of queries exceeding the slow threshold",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 1 },
+      "targets": [
+        {
+          "expr": "rate(nexus_db_slow_queries_total[5m])",
+          "legendFormat": "Slow/s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "gauge",
+      "title": "Active Connections",
+      "description": "Current active database connections",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 },
+      "targets": [
+        {
+          "expr": "pg_stat_activity_count{state=\"active\"}",
+          "legendFormat": "Active"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 50 },
+              { "color": "red", "value": 80 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "gauge",
+      "title": "Cache Hit Ratio",
+      "description": "Buffer cache hit ratio (target >99%)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
+      "targets": [
+        {
+          "expr": "pg_stat_database_blks_hit{datname=\"nexus\"} / (pg_stat_database_blks_hit{datname=\"nexus\"} + pg_stat_database_blks_read{datname=\"nexus\"}) * 100",
+          "legendFormat": "Hit %"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 95 },
+              { "color": "green", "value": 99 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Top Queries",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 5 },
+      "collapsed": false
+    },
+    {
+      "type": "table",
+      "title": "Top 10 by Total Time",
+      "description": "Queries consuming the most total execution time",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 6 },
+      "targets": [
+        {
+          "expr": "topk(10, pg_stat_statements_seconds_total)",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true, "__name__": true },
+            "renameByName": { "query": "Query", "Value": "Total Time (s)" }
+          }
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Top 10 by Calls",
+      "description": "Most frequently executed queries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 6 },
+      "targets": [
+        {
+          "expr": "topk(10, pg_stat_statements_calls_total)",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true, "__name__": true },
+            "renameByName": { "query": "Query", "Value": "Calls" }
+          }
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "title": "Top 10 by Rows",
+      "description": "Queries returning the most rows",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 6 },
+      "targets": [
+        {
+          "expr": "topk(10, pg_stat_statements_rows_total)",
+          "format": "table",
+          "instant": true
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": { "Time": true, "__name__": true },
+            "renameByName": { "query": "Query", "Value": "Rows" }
+          }
+        }
+      ]
+    },
+    {
+      "type": "row",
+      "title": "Query Performance",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 14 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "Mean Execution Time",
+      "description": "Average query execution time from pg_stat_statements",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 15 },
+      "targets": [
+        {
+          "expr": "rate(pg_stat_statements_seconds_total[5m]) / rate(pg_stat_statements_calls_total[5m])",
+          "legendFormat": "Mean exec time"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Blocks Hit / Read Ratio",
+      "description": "Shared buffer hit rate vs disk reads",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 15 },
+      "targets": [
+        {
+          "expr": "rate(pg_stat_statements_block_read_seconds_total[5m])",
+          "legendFormat": "Block reads/s"
+        },
+        {
+          "expr": "rate(pg_stat_database_blks_hit{datname=\"nexus\"}[5m])",
+          "legendFormat": "Block hits/s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": { "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "Temp Blocks",
+      "description": "Temporary block usage (indicates queries needing more work_mem)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 15 },
+      "targets": [
+        {
+          "expr": "rate(pg_stat_database_temp_bytes{datname=\"nexus\"}[5m])",
+          "legendFormat": "Temp bytes/s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": { "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Connection Pool",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 23 },
+      "collapsed": false
+    },
+    {
+      "type": "timeseries",
+      "title": "Pool Activity",
+      "description": "SQLAlchemy connection pool events from QueryObserver",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "targets": [
+        {
+          "expr": "rate(nexus_db_pool_checkouts_total[5m])",
+          "legendFormat": "Checkouts/s"
+        },
+        {
+          "expr": "rate(nexus_db_pool_checkins_total[5m])",
+          "legendFormat": "Checkins/s"
+        },
+        {
+          "expr": "rate(nexus_db_pool_connects_total[5m])",
+          "legendFormat": "New connects/s"
+        },
+        {
+          "expr": "rate(nexus_db_pool_invalidations_total[5m])",
+          "legendFormat": "Invalidations/s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": { "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Observer Health",
+      "description": "QueryObserver circuit breaker status (0=OK, 1=Disabled)",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 24 },
+      "targets": [
+        {
+          "expr": "nexus_db_observer_disabled",
+          "legendFormat": "Disabled"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "OK", "color": "green" } } },
+            { "type": "value", "options": { "1": { "text": "DISABLED", "color": "red" } } }
+          ]
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Observer Errors",
+      "description": "Total QueryObserver listener errors",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 24 },
+      "targets": [
+        {
+          "expr": "nexus_db_observer_errors_total",
+          "legendFormat": "Errors"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Total Pool Checkouts",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 28 },
+      "targets": [
+        {
+          "expr": "nexus_db_pool_checkouts_total",
+          "legendFormat": "Checkouts"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "title": "Total Pool Invalidations",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 28 },
+      "targets": [
+        {
+          "expr": "nexus_db_pool_invalidations_total",
+          "legendFormat": "Invalidations"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 10 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "row",
+      "title": "Database Health",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 32 },
+      "collapsed": false
+    },
+    {
+      "type": "stat",
+      "title": "Database Size",
+      "description": "Total database size on disk",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 33 },
+      "targets": [
+        {
+          "expr": "pg_database_size_bytes{datname=\"nexus\"}",
+          "legendFormat": "Size"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Dead Tuples",
+      "description": "Total dead tuples across user tables",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 33 },
+      "targets": [
+        {
+          "expr": "sum(pg_stat_user_tables_n_dead_tup)",
+          "legendFormat": "Dead tuples"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 10000 },
+              { "color": "red", "value": 100000 }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "type": "timeseries",
+      "title": "WAL Rate",
+      "description": "Write-Ahead Log generation rate",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 33 },
+      "targets": [
+        {
+          "expr": "rate(pg_stat_bgwriter_buffers_alloc[5m])",
+          "legendFormat": "Buffers allocated/s"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": { "fillOpacity": 10 }
+        }
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Lock Waits",
+      "description": "Current lock wait count",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 33 },
+      "targets": [
+        {
+          "expr": "pg_locks_count{mode=\"ExclusiveLock\"}",
+          "legendFormat": "Exclusive locks"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 5 },
+              { "color": "red", "value": 20 }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -14,10 +14,38 @@ from rich.table import Table
 from nexus.cli.utils import console, handle_error
 
 
+def _run_async(coro: Any) -> Any:
+    """Run an async coroutine from sync Click command context."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        import concurrent.futures
+
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            return pool.submit(asyncio.run, coro).result()
+    return asyncio.run(coro)
+
+
+def _get_registry() -> Any:
+    """Create a PluginRegistry with discovered + loaded plugins."""
+    from nexus.plugins.registry import PluginRegistry
+
+    registry = PluginRegistry()
+
+    async def _discover_and_load() -> None:
+        await registry.discover()
+        await registry.initialize_all()
+
+    _run_async(_discover_and_load())
+    return registry
+
+
 def register_commands(cli: click.Group) -> None:
     """Register all plugin commands."""
     cli.add_command(plugins)
-    # Register dynamic plugin commands (firecrawl, anthropic, etc.)
     _register_plugin_commands(cli)
 
 
@@ -48,12 +76,10 @@ def plugins() -> None:
 def plugins_list() -> None:
     """List all installed plugins."""
     try:
-        from nexus.plugins.registry import PluginRegistry
+        registry = _get_registry()
+        plugin_list = registry.list_plugins()
 
-        registry = PluginRegistry()
-        plugin_names = registry.discover()
-
-        if not plugin_names:
+        if not plugin_list:
             console.print("[yellow]No plugins installed.[/yellow]")
             console.print("\nInstall plugins with: [cyan]pip install nexus-plugin-<name>[/cyan]")
             return
@@ -64,12 +90,13 @@ def plugins_list() -> None:
         table.add_column("Description")
         table.add_column("Status", style="yellow")
 
-        for plugin_name in plugin_names:
-            plugin = registry.get_plugin(plugin_name)
+        for metadata in plugin_list:
+            plugin = registry.get_plugin_sync(metadata.name)
             if plugin:
-                metadata = plugin.metadata()
-                status = "✓ Enabled" if plugin.is_enabled() else "✗ Disabled"
-                table.add_row(metadata.name, metadata.version, metadata.description, status)
+                status = "Enabled" if plugin.is_enabled() else "Disabled"
+            else:
+                status = "(not loaded)"
+            table.add_row(metadata.name, metadata.version, metadata.description, status)
 
         console.print(table)
 
@@ -82,12 +109,9 @@ def plugins_list() -> None:
 def plugins_info(plugin_name: str) -> None:
     """Show detailed information about a plugin."""
     try:
-        from nexus.plugins.registry import PluginRegistry
+        registry = _get_registry()
+        plugin = registry.get_plugin_sync(plugin_name)
 
-        registry = PluginRegistry()
-        registry.discover()
-
-        plugin = registry.get_plugin(plugin_name)
         if not plugin:
             console.print(f"[red]Plugin '{plugin_name}' not found.[/red]")
             return
@@ -104,21 +128,19 @@ def plugins_info(plugin_name: str) -> None:
         if metadata.requires:
             console.print(f"[bold]Dependencies:[/bold] {', '.join(metadata.requires)}")
 
-        # Show commands
         commands = plugin.commands()
         if commands:
             console.print("\n[bold]Commands:[/bold]")
             for cmd_name in commands:
-                console.print(f"  • nexus {plugin_name} {cmd_name}")
+                console.print(f"  - nexus {plugin_name} {cmd_name}")
 
-        # Show hooks
         hooks = plugin.hooks()
         if hooks:
             console.print("\n[bold]Hooks:[/bold]")
             for hook_name in hooks:
-                console.print(f"  • {hook_name}")
+                console.print(f"  - {hook_name}")
 
-        status = "✓ Enabled" if plugin.is_enabled() else "✗ Disabled"
+        status = "Enabled" if plugin.is_enabled() else "Disabled"
         console.print(f"\n[bold]Status:[/bold] {status}")
 
     except Exception as e:
@@ -130,12 +152,9 @@ def plugins_info(plugin_name: str) -> None:
 def plugins_enable(plugin_name: str) -> None:
     """Enable a plugin."""
     try:
-        from nexus.plugins.registry import PluginRegistry
+        registry = _get_registry()
+        plugin = registry.get_plugin_sync(plugin_name)
 
-        registry = PluginRegistry()
-        registry.discover()
-
-        plugin = registry.get_plugin(plugin_name)
         if not plugin:
             console.print(f"[red]Plugin '{plugin_name}' not found.[/red]")
             return
@@ -145,7 +164,7 @@ def plugins_enable(plugin_name: str) -> None:
             return
 
         registry.enable_plugin(plugin_name)
-        console.print(f"[green]✓ Enabled plugin '{plugin_name}'[/green]")
+        console.print(f"[green]Enabled plugin '{plugin_name}'[/green]")
 
     except Exception as e:
         handle_error(e)
@@ -156,12 +175,9 @@ def plugins_enable(plugin_name: str) -> None:
 def plugins_disable(plugin_name: str) -> None:
     """Disable a plugin."""
     try:
-        from nexus.plugins.registry import PluginRegistry
+        registry = _get_registry()
+        plugin = registry.get_plugin_sync(plugin_name)
 
-        registry = PluginRegistry()
-        registry.discover()
-
-        plugin = registry.get_plugin(plugin_name)
         if not plugin:
             console.print(f"[red]Plugin '{plugin_name}' not found.[/red]")
             return
@@ -171,7 +187,7 @@ def plugins_disable(plugin_name: str) -> None:
             return
 
         registry.disable_plugin(plugin_name)
-        console.print(f"[green]✓ Disabled plugin '{plugin_name}'[/green]")
+        console.print(f"[green]Disabled plugin '{plugin_name}'[/green]")
 
     except Exception as e:
         handle_error(e)
@@ -185,7 +201,6 @@ def plugins_install(plugin_name: str) -> None:
     Example: nexus plugins install anthropic
     This will run: pip install nexus-plugin-anthropic
     """
-    # Convert short name to full package name
     package_name = plugin_name
     if not package_name.startswith("nexus-plugin-"):
         package_name = f"nexus-plugin-{plugin_name}"
@@ -196,10 +211,10 @@ def plugins_install(plugin_name: str) -> None:
         subprocess.check_call(
             ["pip", "install", package_name], stdout=subprocess.DEVNULL, stderr=subprocess.PIPE
         )
-        console.print(f"[green]✓ Successfully installed {package_name}[/green]")
+        console.print(f"[green]Successfully installed {package_name}[/green]")
         console.print("\nRun [cyan]'nexus plugins list'[/cyan] to see the installed plugin")
     except subprocess.CalledProcessError as e:
-        console.print(f"[red]✗ Failed to install {package_name}[/red]")
+        console.print(f"[red]Failed to install {package_name}[/red]")
         console.print(f"Error: {e.stderr.decode() if e.stderr else str(e)}")
 
 
@@ -211,7 +226,6 @@ def plugins_uninstall(plugin_name: str, yes: bool) -> None:
 
     Example: nexus plugins uninstall anthropic
     """
-    # Convert short name to full package name
     package_name = plugin_name
     if not package_name.startswith("nexus-plugin-"):
         package_name = f"nexus-plugin-{plugin_name}"
@@ -230,36 +244,88 @@ def plugins_uninstall(plugin_name: str, yes: bool) -> None:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
         )
-        console.print(f"[green]✓ Successfully uninstalled {package_name}[/green]")
+        console.print(f"[green]Successfully uninstalled {package_name}[/green]")
     except subprocess.CalledProcessError as e:
-        console.print(f"[red]✗ Failed to uninstall {package_name}[/red]")
+        console.print(f"[red]Failed to uninstall {package_name}[/red]")
         console.print(f"Error: {e.stderr.decode() if e.stderr else str(e)}")
+
+
+@plugins.command(name="init")
+@click.argument("name")
+@click.option(
+    "--type",
+    "plugin_type",
+    type=click.Choice(["generic", "storage", "parser"]),
+    default="generic",
+    help="Plugin type template",
+)
+@click.option("--author", default="Nexus Team", help="Plugin author name")
+@click.option("--description", default="", help="Plugin description")
+@click.option("--output-dir", type=click.Path(), default=".", help="Output directory")
+def plugins_init(
+    name: str, plugin_type: str, author: str, description: str, output_dir: str
+) -> None:
+    """Scaffold a new plugin project.
+
+    Creates a complete plugin project structure with pyproject.toml,
+    entry points, plugin class, tests, and README.
+
+    Example: nexus plugins init my-backend --type=storage
+    """
+    from pathlib import Path
+
+    from nexus.plugins.scaffold import PLUGIN_TYPES, scaffold_plugin
+
+    console.print(f"Creating {plugin_type} plugin: [cyan]nexus-plugin-{name}[/cyan]")
+
+    try:
+        result = scaffold_plugin(
+            name=name,
+            output_dir=Path(output_dir),
+            plugin_type=plugin_type,
+            author=author,
+            description=description,
+        )
+
+        console.print(f"\n[green]Created plugin scaffold at {result['project_dir']}[/green]")
+        console.print(f"\n  Package: {result['package_name']}")
+        console.print(f"  Module:  {result['module_name']}")
+        console.print(f"  Class:   {result['class_name']}")
+        console.print(f"  Type:    {PLUGIN_TYPES[plugin_type]}")
+
+        console.print("\n[bold]Next steps:[/bold]")
+        console.print(f"  cd {result['project_dir']}")
+        console.print('  pip install -e ".[dev]"')
+        console.print("  pytest tests/ -v")
+        console.print("  nexus plugins list")
+
+    except (ValueError, FileExistsError) as e:
+        console.print(f"[red]Error: {e}[/red]")
+    except Exception as e:
+        handle_error(e)
 
 
 # Dynamic plugin command registration
 def _register_plugin_commands(main: click.Group) -> None:
     """Dynamically register plugin commands at CLI initialization."""
     try:
-        from nexus.plugins.registry import PluginRegistry
+        registry = _get_registry()
 
-        # Discover plugins without NexusFS (for metadata only)
-        registry = PluginRegistry()
-        plugin_names = registry.discover()
-
-        for plugin_name in plugin_names:
-            plugin = registry.get_plugin(plugin_name)
+        for metadata in registry.list_plugins():
+            plugin = registry.get_plugin_sync(metadata.name)
             if not plugin or not plugin.is_enabled():
                 continue
 
-            # Get plugin commands
             commands = plugin.commands()
             if not commands:
                 continue
 
-            # Get plugin class for later instantiation
-            import importlib.metadata
+            plugin_name = metadata.name
 
-            entry_points = importlib.metadata.entry_points()
+            # Get plugin class for later instantiation
+            import importlib.metadata as im_metadata
+
+            entry_points = im_metadata.entry_points()
             if hasattr(entry_points, "select"):
                 nexus_plugins = entry_points.select(group="nexus.plugins")
             else:
@@ -281,17 +347,14 @@ def _register_plugin_commands(main: click.Group) -> None:
                 """Plugin commands."""
                 pass
 
-            # Update the docstring with plugin description
-            metadata = plugin.metadata()
             plugin_group.__doc__ = (
                 f"{metadata.description}\n\nPlugin: {metadata.name} v{metadata.version}"
             )
 
             # Add each command to the plugin group
             for cmd_name, cmd_func in commands.items():
-                # Create a wrapper that handles async commands with NexusFS
+
                 def make_command(func: Any, name: str, _p_class: Any, p_name: str) -> Any:
-                    # Preserve the original function's signature
                     sig = inspect.signature(func)
                     params: list[Any] = []
 
@@ -299,12 +362,9 @@ def _register_plugin_commands(main: click.Group) -> None:
                         if param_name == "self":
                             continue
 
-                        # Create Click option/argument based on parameter
                         if param.default == inspect.Parameter.empty:
-                            # Required argument
                             params.append(click.Argument([param_name]))
                         else:
-                            # Optional option
                             option_name = f"--{param_name.replace('_', '-')}"
                             params.append(
                                 click.Option(
@@ -320,54 +380,50 @@ def _register_plugin_commands(main: click.Group) -> None:
                         """Execute plugin command."""
                         nx = None
                         try:
-                            # Initialize NexusFS for commands that need it
                             from nexus import connect
-                            from nexus.plugins.registry import PluginRegistry
+                            from nexus.plugins.registry import PluginRegistry as PR
 
                             nx = connect()
 
-                            # Re-instantiate plugin with NexusFS
-                            plugin_registry = PluginRegistry(nx)  # type: ignore[arg-type]
-                            plugin_registry.discover()
-                            plugin_instance = plugin_registry.get_plugin(p_name)
+                            plugin_registry = PR(nx)
+
+                            async def _load() -> Any:
+                                await plugin_registry.discover()
+                                await plugin_registry.initialize_all()
+                                return await plugin_registry.get_plugin(p_name)
+
+                            plugin_instance = _run_async(_load())
 
                             if not plugin_instance:
                                 console.print(f"[red]Plugin '{p_name}' not found[/red]")
                                 return
 
-                            # Get the command method from the plugin instance
                             cmd_method = plugin_instance.commands().get(name)
                             if not cmd_method:
                                 console.print(f"[red]Command '{name}' not found[/red]")
                                 return
 
-                            # Handle async functions
                             if inspect.iscoroutinefunction(cmd_method):
-                                asyncio.run(cmd_method(**kwargs))
+                                _run_async(cmd_method(**kwargs))
                             else:
                                 cmd_method(**kwargs)
 
                         except Exception as e:
                             handle_error(e)
                         finally:
-                            # Clean up NexusFS connection
                             if nx:
                                 with contextlib.suppress(BaseException):
                                     nx.close()
 
-                    # Preserve docstring
                     wrapper.__doc__ = func.__doc__ or f"{name} command"
                     return wrapper
 
                 cmd = make_command(cmd_func, cmd_name, plugin_class, plugin_name)
                 plugin_group.add_command(cmd)
 
-            # Add the plugin group to main CLI
             main.add_command(plugin_group)
 
     except Exception as e:
-        # Silently fail if plugin system is not available
-        # This allows the CLI to work even if plugins are broken
         import logging
 
-        logging.debug(f"Failed to register plugin commands: {e}")
+        logging.debug("Failed to register plugin commands: %s", e)

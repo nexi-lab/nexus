@@ -225,28 +225,29 @@ class TestPluginRegistry:
         registry = PluginRegistry()
         plugin = TestPlugin()
 
-        registry.register(plugin)
+        registry.register_plugin(plugin)
 
-        assert registry.get_plugin("test-plugin") is not None
-        assert registry.get_plugin("test-plugin") == plugin
+        assert registry.get_plugin_sync("test-plugin") is not None
+        assert registry.get_plugin_sync("test-plugin") == plugin
 
-    def test_plugin_unregistration(self):
+    @pytest.mark.asyncio
+    async def test_plugin_unregistration(self):
         """Test unregistering a plugin."""
         registry = PluginRegistry()
         plugin = TestPlugin()
 
-        registry.register(plugin)
-        assert registry.get_plugin("test-plugin") is not None
+        registry.register_plugin(plugin)
+        assert registry.get_plugin_sync("test-plugin") is not None
 
-        registry.unregister("test-plugin")
-        assert registry.get_plugin("test-plugin") is None
+        await registry.unregister_plugin("test-plugin")
+        assert registry.get_plugin_sync("test-plugin") is None
 
     def test_list_plugins(self):
         """Test listing plugins."""
         registry = PluginRegistry()
         plugin = TestPlugin()
 
-        registry.register(plugin)
+        registry.register_plugin(plugin)
         plugins = registry.list_plugins()
 
         assert len(plugins) == 1
@@ -257,7 +258,7 @@ class TestPluginRegistry:
         registry = PluginRegistry()
         plugin = TestPlugin()
 
-        registry.register(plugin)
+        registry.register_plugin(plugin)
 
         registry.disable_plugin("test-plugin")
         assert not plugin.is_enabled()
@@ -271,7 +272,7 @@ class TestPluginRegistry:
         registry = PluginRegistry()
         plugin = TestPlugin()
 
-        registry.register(plugin)
+        registry.register_plugin(plugin)
 
         # Execute hook
         context = {"path": "/test"}
@@ -286,12 +287,13 @@ class TestPluginRegistry:
 
         assert isinstance(hooks, PluginHooks)
 
-    def test_unregister_nonexistent_plugin(self):
+    @pytest.mark.asyncio
+    async def test_unregister_nonexistent_plugin(self):
         """Test unregistering a plugin that doesn't exist (should not raise)."""
         registry = PluginRegistry()
 
         # Should not raise an error
-        registry.unregister("nonexistent-plugin")
+        await registry.unregister_plugin("nonexistent-plugin")
 
     def test_enable_disable_nonexistent_plugin(self):
         """Test enabling/disabling nonexistent plugin (should not raise)."""
@@ -301,19 +303,21 @@ class TestPluginRegistry:
         registry.enable_plugin("nonexistent-plugin")
         registry.disable_plugin("nonexistent-plugin")
 
-    def test_get_nonexistent_plugin(self):
+    @pytest.mark.asyncio
+    async def test_get_nonexistent_plugin(self):
         """Test getting a plugin that doesn't exist."""
         registry = PluginRegistry()
 
-        result = registry.get_plugin("nonexistent-plugin")
+        result = await registry.get_plugin("nonexistent-plugin")
         assert result is None
 
-    def test_discover_no_plugins(self):
+    @pytest.mark.asyncio
+    async def test_discover_no_plugins(self):
         """Test discovery when no plugins are installed."""
         registry = PluginRegistry()
 
         # Should return empty list when no plugins found
-        discovered = registry.discover()
+        discovered = await registry.discover()
 
         # Can't assert exact value since system may have plugins
         # but at least verify it returns a list
@@ -468,9 +472,9 @@ class TestPluginHooksWithInvalidHookType:
         plugin = PluginWithInvalidHook()
 
         # Should register without error, but skip invalid hook
-        registry.register(plugin)
+        registry.register_plugin(plugin)
 
-        assert registry.get_plugin("invalid-hook-plugin") is not None
+        assert registry.get_plugin_sync("invalid-hook-plugin") is not None
 
 
 class TestPluginPipeUtilities:

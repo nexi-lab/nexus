@@ -41,6 +41,10 @@ RelationshipType = Literal[
     "HAS",
     "USES",
     "OTHER",
+    # #1190: Memory evolution relationship types
+    "UPDATES",
+    "EXTENDS",
+    "DERIVES",
 ]
 
 # Default relationship types
@@ -60,6 +64,10 @@ DEFAULT_RELATIONSHIP_TYPES: list[str] = [
     "PART_OF",
     "HAS",
     "USES",
+    # #1190: Memory evolution relationship types
+    "UPDATES",
+    "EXTENDS",
+    "DERIVES",
 ]
 
 

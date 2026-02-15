@@ -104,6 +104,7 @@ async def store_memory(
             store_to_graph=request.store_to_graph,
             valid_at=request.valid_at,
             classify_stability=request.classify_stability,
+            detect_evolution=request.detect_evolution,
             _metadata=request.metadata,
             context=context,
         )

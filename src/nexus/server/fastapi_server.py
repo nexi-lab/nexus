@@ -241,6 +241,14 @@ async def lifespan(_app: FastAPI) -> Any:
 
     logger.info("Starting FastAPI Nexus server...")
 
+    # Initialize Sentry error tracking (Issue #759)
+    try:
+        from nexus.server.sentry import setup_sentry
+
+        setup_sentry()
+    except ImportError:
+        logger.debug("Sentry not available")
+
     # Initialize OpenTelemetry (Issue #764)
     try:
         from nexus.server.telemetry import setup_telemetry
@@ -1119,6 +1127,14 @@ async def lifespan(_app: FastAPI) -> Any:
         from nexus.server.telemetry import shutdown_telemetry
 
         shutdown_telemetry()
+    except ImportError:
+        pass
+
+    # Shutdown Sentry (Issue #759) — flush pending events
+    try:
+        from nexus.server.sentry import shutdown_sentry
+
+        shutdown_sentry()
     except ImportError:
         pass
 

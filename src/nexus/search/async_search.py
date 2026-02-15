@@ -542,13 +542,12 @@ class AsyncSemanticSearch:
         # Apply adaptive k if enabled (Issue #1021)
         if adaptive_k:
             # Lazy import to break search → llm hard dependency (Issue #1520)
-            from nexus.llm.context_builder import ContextBuilder as _CB
+            if self._context_builder is None:
+                from nexus.llm.context_builder import ContextBuilder as _CB
 
-            if not hasattr(self, "_context_builder") or self._context_builder is None:
                 self._context_builder = _CB()
-            context_builder = self._context_builder
             original_limit = limit
-            limit = context_builder.calculate_k_dynamic(query, k_base=limit)
+            limit = self._context_builder.calculate_k_dynamic(query, k_base=limit)
             if limit != original_limit:
                 logger.info(
                     "[ASYNC-SEARCH] Adaptive k applied: %d -> %d for query: %s",
@@ -886,13 +885,21 @@ class AsyncSemanticSearch:
         """
         from nexus.search.fusion import FusionConfig, FusionMethod, fuse_results
 
-        # Run keyword and vector search in parallel
-        keyword_task = self._keyword_search(session, query, limit * 3, path_filter)
+        # Create fusion config (needed for over_fetch_factor before search)
+        config = FusionConfig(
+            method=FusionMethod(fusion_method),
+            alpha=alpha,
+            rrf_k=rrf_k,
+        )
+
+        # Run keyword and vector search in parallel (over-fetch for better fusion)
+        fetch_limit = int(limit * config.over_fetch_factor)
+        keyword_task = self._keyword_search(session, query, fetch_limit, path_filter)
 
         vector_task = None
         if self.embedding_provider:
             query_embedding = await self.embedding_provider.embed_text(query)
-            vector_task = self._vector_search(session, query_embedding, limit * 3, path_filter)
+            vector_task = self._vector_search(session, query_embedding, fetch_limit, path_filter)
 
         # Wait for results
         keyword_results = await keyword_task
@@ -926,13 +933,6 @@ class AsyncSemanticSearch:
             }
             for r in vector_results
         ]
-
-        # Create fusion config
-        config = FusionConfig(
-            method=FusionMethod(fusion_method),
-            alpha=alpha,
-            rrf_k=rrf_k,
-        )
 
         # Use shared fusion logic
         fused = fuse_results(
@@ -1010,6 +1010,34 @@ class AsyncSemanticSearch:
 
         return stats
 
+    async def shutdown(self) -> None:
+        """Shutdown search engine (SearchBrickProtocol)."""
+        await self.close()
+
     async def close(self) -> None:
         """Close database connections."""
         await self.engine.dispose()
+
+    def verify_imports(self) -> dict[str, bool]:
+        """Verify required and optional imports (SearchBrickProtocol)."""
+        import importlib
+
+        results: dict[str, bool] = {}
+        for mod in [
+            "nexus.search.fusion",
+            "nexus.search.chunking",
+            "nexus.search.embeddings",
+            "nexus.search.results",
+        ]:
+            try:
+                importlib.import_module(mod)
+                results[mod] = True
+            except ImportError:
+                results[mod] = False
+        for mod in ["nexus.search.bm25s_search", "nexus.search.zoekt_client"]:
+            try:
+                importlib.import_module(mod)
+                results[mod] = True
+            except ImportError:
+                results[mod] = False
+        return results

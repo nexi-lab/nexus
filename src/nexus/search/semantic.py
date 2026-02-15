@@ -125,17 +125,10 @@ class SemanticSearch:
             chunk_size=chunk_size, strategy=chunk_strategy, overlap_size=128
         )
 
-        # Initialize context builder for adaptive retrieval (Issue #1021)
-        # Lazy import to break search → llm hard dependency (Issue #1520)
-        from nexus.llm.context_builder import (
-            AdaptiveRetrievalConfig as _ARC,
-        )
-        from nexus.llm.context_builder import (
-            ContextBuilder as _CB,
-        )
-
-        self.adaptive_config = adaptive_config or _ARC()
-        self._context_builder = _CB(adaptive_config=self.adaptive_config)
+        # Adaptive retrieval config (Issue #1021)
+        # ContextBuilder injected lazily on first use (Issue #1520: DI over hard import)
+        self.adaptive_config = adaptive_config
+        self._context_builder: Any = None
 
         # Initialize entropy-aware chunker (Issue #1024)
         self.entropy_filtering = entropy_filtering
@@ -448,7 +441,14 @@ class SemanticSearch:
         """
         # Apply adaptive k if enabled (Issue #1021)
         original_limit = limit
-        if adaptive_k and self.adaptive_config.enabled:
+        if adaptive_k and self.adaptive_config is not None and self.adaptive_config.enabled:
+            # Lazy import to break search → llm hard dependency (Issue #1520)
+            if self._context_builder is None:
+                from nexus.llm.context_builder import (
+                    ContextBuilder as _CB,
+                )
+
+                self._context_builder = _CB(adaptive_config=self.adaptive_config)
             limit = self._context_builder.calculate_k_dynamic(query, k_base=limit)
             if limit != original_limit:
                 logger.info(
@@ -721,6 +721,34 @@ class SemanticSearch:
             session.query(DocumentChunkModel).delete()
             session.commit()
 
+    async def shutdown(self) -> None:
+        """Shutdown search engine (SearchBrickProtocol)."""
+        self.close()
+
     def close(self) -> None:
         """Close the search engine (no-op for now)."""
         pass
+
+    def verify_imports(self) -> dict[str, bool]:
+        """Verify required and optional imports (SearchBrickProtocol)."""
+        import importlib
+
+        results: dict[str, bool] = {}
+        for mod in [
+            "nexus.search.fusion",
+            "nexus.search.chunking",
+            "nexus.search.embeddings",
+            "nexus.search.results",
+        ]:
+            try:
+                importlib.import_module(mod)
+                results[mod] = True
+            except ImportError:
+                results[mod] = False
+        for mod in ["nexus.search.bm25s_search", "nexus.search.zoekt_client"]:
+            try:
+                importlib.import_module(mod)
+                results[mod] = True
+            except ImportError:
+                results[mod] = False
+        return results

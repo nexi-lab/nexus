@@ -1005,19 +1005,20 @@ class VectorDatabase:
                 alpha = semantic_weight
                 fusion_method = "weighted"
 
-        # Get keyword results (retrieve more for better fusion)
-        keyword_results = self.keyword_search(session, query, limit * 3, path_filter)
-
-        # Get vector results
-        vector_results = self.vector_search(session, query_embedding, limit * 3, path_filter)
-
-        # Create fusion config
+        # Create fusion config (needed for over_fetch_factor)
         config = FusionConfig(
             method=FusionMethod(fusion_method),
             alpha=alpha,
             rrf_k=rrf_k,
             normalize_scores=normalize_scores,
         )
+
+        # Get keyword results (over-fetch for better fusion, Issue #1520)
+        fetch_limit = int(limit * config.over_fetch_factor)
+        keyword_results = self.keyword_search(session, query, fetch_limit, path_filter)
+
+        # Get vector results
+        vector_results = self.vector_search(session, query_embedding, fetch_limit, path_filter)
 
         # Fuse results using shared algorithm
         return fuse_results(

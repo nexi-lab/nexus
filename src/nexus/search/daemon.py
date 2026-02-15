@@ -90,6 +90,9 @@ class DaemonConfig:
     db_pool_max_size: int = 50
     db_pool_recycle: int = 1800  # 30 minutes
 
+    # Shared engine (Issue #1520: DI to avoid pool fragmentation)
+    async_engine: Any = None  # AsyncEngine injected by caller; if None, creates own
+
     # BM25S settings
     bm25s_index_dir: str = ".nexus-data/bm25s"
     bm25s_mmap: bool = True  # Memory-mapped for instant loading
@@ -239,8 +242,8 @@ class SearchDaemon:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._refresh_task
 
-        # Close database connections
-        if self._async_engine:
+        # Close database connections (only if we own the engine)
+        if self._async_engine and self.config.async_engine is None:
             await self._async_engine.dispose()
 
         self._initialized = False
@@ -286,7 +289,19 @@ class SearchDaemon:
             logger.error(f"Failed to initialize BM25S index: {e}")
 
     async def _init_database_pool(self) -> None:
-        """Initialize and warm the database connection pool."""
+        """Initialize and warm the database connection pool.
+
+        If config.async_engine is provided (DI), uses the shared engine
+        to avoid connection pool fragmentation (Issue #1520).
+        Otherwise, creates its own engine from database_url.
+        """
+        # Issue #1520: Use shared engine if injected via DI
+        if self.config.async_engine is not None:
+            self._async_engine = self.config.async_engine
+            self.stats.db_pool_size = self.config.db_pool_min_size
+            logger.info("Database pool: using shared engine (DI)")
+            return
+
         if not self.config.database_url:
             logger.debug("No database URL configured, skipping DB pool init")
             return
@@ -564,9 +579,17 @@ class SearchDaemon:
         """Hybrid search combining keyword and semantic results."""
         from nexus.search.fusion import FusionConfig, FusionMethod, fuse_results
 
-        # Run keyword and semantic search in parallel
-        keyword_task = self._keyword_search(query, limit * 3, path_filter)
-        semantic_task = self._semantic_search(query, limit * 3, path_filter)
+        # Create fusion config (needed for over_fetch_factor before search)
+        config = FusionConfig(
+            method=FusionMethod(fusion_method),
+            alpha=alpha,
+            rrf_k=60,
+        )
+
+        # Run keyword and semantic search in parallel (over-fetch for better fusion)
+        fetch_limit = int(limit * config.over_fetch_factor)
+        keyword_task = self._keyword_search(query, fetch_limit, path_filter)
+        semantic_task = self._semantic_search(query, fetch_limit, path_filter)
 
         keyword_results, semantic_results = await asyncio.gather(
             keyword_task, semantic_task, return_exceptions=True
@@ -612,13 +635,6 @@ class SearchDaemon:
             }
             for r in sem_results
         ]
-
-        # Fuse results
-        config = FusionConfig(
-            method=FusionMethod(fusion_method),
-            alpha=alpha,
-            rrf_k=60,
-        )
 
         fused = fuse_results(
             keyword_dicts,
@@ -971,6 +987,41 @@ class SearchDaemon:
                 "alpha": self.config.entropy_alpha,
             },
         }
+
+    async def initialize(self) -> None:
+        """Initialize daemon (SearchBrickProtocol). Delegates to startup()."""
+        await self.startup()
+
+    async def index_document(
+        self, path: str, _content: str = "", *, _zone_id: str | None = None
+    ) -> int:
+        """Index a document (SearchBrickProtocol). Delegates to notify_file_change."""
+        await self.notify_file_change(path, "update")
+        return 0  # Daemon indexes asynchronously via refresh loop
+
+    def verify_imports(self) -> dict[str, bool]:
+        """Verify required and optional imports (SearchBrickProtocol)."""
+        import importlib
+
+        results: dict[str, bool] = {}
+        for mod in [
+            "nexus.search.fusion",
+            "nexus.search.chunking",
+            "nexus.search.embeddings",
+            "nexus.search.results",
+        ]:
+            try:
+                importlib.import_module(mod)
+                results[mod] = True
+            except ImportError:
+                results[mod] = False
+        for mod in ["nexus.search.bm25s_search", "nexus.search.zoekt_client"]:
+            try:
+                importlib.import_module(mod)
+                results[mod] = True
+            except ImportError:
+                results[mod] = False
+        return results
 
     def get_health(self) -> dict[str, Any]:
         """Get health status for health check endpoint.

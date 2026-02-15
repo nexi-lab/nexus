@@ -1378,7 +1378,10 @@ class SearchService(SemanticSearchMixin):
             full_pattern = pattern
             if (
                 "**" not in full_pattern
-                and not full_pattern.startswith(("workspace/", "shared/", "external/"))
+                and not full_pattern.startswith("/")
+                and not full_pattern.startswith(
+                    ("workspace/", "shared/", "external/")
+                )  # Issue #1572
                 and "/" in full_pattern
             ):
                 full_pattern = "**/" + full_pattern
@@ -1483,7 +1486,10 @@ class SearchService(SemanticSearchMixin):
                     full_pattern = pattern
                     if (
                         "**" not in full_pattern
-                        and not full_pattern.startswith(("workspace/", "shared/", "external/"))
+                        and not full_pattern.startswith("/")
+                        and not full_pattern.startswith(
+                            ("workspace/", "shared/", "external/")
+                        )  # Issue #1572
                         and "/" in full_pattern
                     ):
                         full_pattern = "**/" + full_pattern

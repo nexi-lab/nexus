@@ -543,6 +543,7 @@ disable_error_code = ["no-any-return"]
 
 [[tool.mypy.overrides]]
 module = [
+    "nexus.core.metadata_pb2",
     "nexus.raft.commands_pb2",
     "nexus.raft.commands_pb2_grpc",
     "nexus.raft.transport_pb2",
@@ -550,6 +551,12 @@ module = [
 ]
 # Generated gRPC/protobuf stubs — no type info available
 follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = "nexus.raft.client"
+# gRPC client interacts heavily with generated pb2 modules (metadata_pb2, commands_pb2)
+# that have no type stubs — attribute access on implicit Any modules
+disable_error_code = ["attr-defined"]
 
 [[tool.mypy.overrides]]
 module = "nexus.storage.raft_metadata_store"

@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from nexus.rebac.types import WriteResult
 from nexus.server.auth.user_helpers import (
     add_user_to_zone,
     can_invite_to_zone,
@@ -14,6 +15,11 @@ from nexus.server.auth.user_helpers import (
     is_zone_owner,
     zone_group_id,
 )
+
+
+def _write_result(tuple_id: str) -> WriteResult:
+    """Helper to create WriteResult for mocks."""
+    return WriteResult(tuple_id=tuple_id, revision=1, consistency_token="t", written_at_ms=0.0)
 
 
 @pytest.fixture
@@ -110,7 +116,7 @@ class TestAddUserToZone:
 
     def test_add_member_without_caller(self, mock_rebac_manager: Any) -> None:
         """Test adding member without permission check (backward compat)."""
-        mock_rebac_manager.rebac_write.return_value = "tuple-123"
+        mock_rebac_manager.rebac_write.return_value = _write_result("tuple-123")
 
         result = add_user_to_zone(mock_rebac_manager, "bob", "acme", "member")
 
@@ -130,7 +136,7 @@ class TestAddUserToZone:
             return kwargs["object"][1] == "zone-acme-admins"
 
         mock_rebac_manager.rebac_check.side_effect = mock_check
-        mock_rebac_manager.rebac_write.return_value = "tuple-456"
+        mock_rebac_manager.rebac_write.return_value = _write_result("tuple-456")
 
         result = add_user_to_zone(
             mock_rebac_manager, "bob", "acme", "admin", caller_user_id="alice"
@@ -148,7 +154,7 @@ class TestAddUserToZone:
         """Test owner can add another owner."""
         # Setup: Alice is owner
         mock_rebac_manager.rebac_check.return_value = True
-        mock_rebac_manager.rebac_write.return_value = "tuple-789"
+        mock_rebac_manager.rebac_write.return_value = _write_result("tuple-789")
 
         result = add_user_to_zone(
             mock_rebac_manager, "bob", "acme", "owner", caller_user_id="alice"

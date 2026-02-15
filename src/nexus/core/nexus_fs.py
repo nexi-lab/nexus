@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from nexus.backends.backend import Backend
+from nexus.constants import DEFAULT_NEXUS_URL, DEFAULT_OAUTH_REDIRECT_URI
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 
@@ -6145,8 +6146,11 @@ class NexusFS(  # type: ignore[misc]
                 e2b_api_key=os.getenv("E2B_API_KEY"),
                 e2b_team_id=os.getenv("E2B_TEAM_ID"),
                 e2b_template_id=os.getenv("E2B_TEMPLATE_ID"),
-                config=config,
+                config=config,  # Pass config for Docker provider
             )
+
+            # Attach smart router for Monty -> Docker -> E2B routing (Issue #1317)
+            self._sandbox_manager.wire_router()
 
     @staticmethod
     def _run_async(coro: Any) -> Any:
@@ -6529,9 +6533,7 @@ class NexusFS(  # type: ignore[misc]
             import os
 
             # Check NEXUS_SERVER_URL first (for Docker deployments), then NEXUS_URL
-            nexus_url = os.getenv("NEXUS_SERVER_URL") or os.getenv(
-                "NEXUS_URL", "http://localhost:2026"
-            )
+            nexus_url = os.getenv("NEXUS_SERVER_URL") or os.getenv("NEXUS_URL", DEFAULT_NEXUS_URL)
 
         # Get Nexus API key from context if not provided
         if not nexus_api_key:
@@ -7915,7 +7917,7 @@ class NexusFS(  # type: ignore[misc]
     async def oauth_get_auth_url(
         self,
         provider: str,
-        redirect_uri: str = "http://localhost:3000/oauth/callback",
+        redirect_uri: str = DEFAULT_OAUTH_REDIRECT_URI,
         scopes: list[str] | None = None,
     ) -> dict[str, Any]:
         """Get OAuth authorization URL - delegates to OAuthService."""

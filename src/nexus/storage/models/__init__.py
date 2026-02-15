@@ -112,8 +112,17 @@ from nexus.storage.models.permissions import TigerResourceMapModel as TigerResou
 from nexus.storage.models.persistent_namespace_view import (
     PersistentNamespaceViewModel as PersistentNamespaceViewModel,
 )
+
+# Domain: OAuth Token Rotation (Issue #997)
+from nexus.storage.models.refresh_token_history import (
+    RefreshTokenHistoryModel as RefreshTokenHistoryModel,
+)
 from nexus.storage.models.reputation_event import ReputationEventModel as ReputationEventModel
 from nexus.storage.models.reputation_score import ReputationScoreModel as ReputationScoreModel
+
+# Domain: Secrets Audit (Issue #997)
+from nexus.storage.models.secrets_audit_log import SecretsAuditEventType as SecretsAuditEventType
+from nexus.storage.models.secrets_audit_log import SecretsAuditLogModel as SecretsAuditLogModel
 
 # Domain: Sharing
 from nexus.storage.models.sharing import ShareLinkAccessLogModel as ShareLinkAccessLogModel

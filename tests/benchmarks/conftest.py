@@ -146,3 +146,5 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "benchmark_hash: Content hashing benchmarks")
     config.addinivalue_line("markers", "benchmark_metadata: Metadata query benchmarks")
     config.addinivalue_line("markers", "benchmark_permissions: Permission check benchmarks")
+    config.addinivalue_line("markers", "benchmark_ci: critical benchmarks run on every PR")
+    config.addinivalue_line("markers", "benchmark_fusion: Hybrid search fusion benchmarks")

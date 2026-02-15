@@ -17,13 +17,16 @@ import builtins
 import logging
 from typing import TYPE_CHECKING, Any
 
+from cachetools import TTLCache
+
+from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
 from nexus.core.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
 
 # In-memory cache for PKCE data (state -> pkce_data)
-# Moved from nexus_fs_oauth.py during Phase 1.3 extraction (Issue #1287)
-_pkce_cache: dict[str, dict[str, str]] = {}
+# TTLCache with 10-minute TTL prevents unbounded growth (Issue #997)
+_pkce_cache: TTLCache[str, dict[str, str]] = TTLCache(maxsize=1000, ttl=600)
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
@@ -172,7 +175,7 @@ class OAuthService:
     async def oauth_get_auth_url(
         self,
         provider: str,
-        redirect_uri: str = "http://localhost:3000/oauth/callback",
+        redirect_uri: str = DEFAULT_OAUTH_REDIRECT_URI,
         scopes: builtins.list[str] | None = None,
     ) -> dict[str, Any]:
         """Get OAuth authorization URL for any provider.
@@ -534,37 +537,10 @@ class OAuthService:
         token_manager = self._get_token_manager()
         zone_id = get_zone_id(context)
 
-        # Extract current user's identity from context
-        current_user_id = None
-        if context:
-            current_user_id = getattr(context, "user_id", None) or getattr(context, "user", None)
-        is_admin = context and getattr(context, "is_admin", False)
-
-        # Permission check: users can only revoke their own credentials (unless admin)
-        if not is_admin and current_user_id:
-            # Fetch credential to check ownership
-            cred = await token_manager.get_credential(
-                provider=provider, user_email=user_email, zone_id=zone_id
-            )
-            if cred:
-                # Check if user_id matches (preferred) or user_email matches (fallback)
-                stored_user_id = cred.metadata.get("user_id") if cred.metadata else None
-                stored_user_email = cred.user_email
-
-                if stored_user_id and stored_user_id != current_user_id:
-                    raise ValueError(
-                        f"Permission denied: Cannot revoke credentials for {user_email}. "
-                        f"Only your own credentials can be revoked."
-                    )
-                if (
-                    not stored_user_id
-                    and stored_user_email
-                    and stored_user_email != current_user_id
-                ):
-                    raise ValueError(
-                        f"Permission denied: Cannot revoke credentials for {user_email}. "
-                        f"Only your own credentials can be revoked."
-                    )
+        # Permission check (Issue #997: DRY extraction)
+        await self._check_credential_ownership(
+            provider, user_email, zone_id, context, action="revoke"
+        )
 
         try:
             success = await token_manager.revoke_credential(
@@ -642,37 +618,10 @@ class OAuthService:
         token_manager = self._get_token_manager()
         zone_id = get_zone_id(context)
 
-        # Extract current user's identity from context
-        current_user_id = None
-        if context:
-            current_user_id = getattr(context, "user_id", None) or getattr(context, "user", None)
-        is_admin = context and getattr(context, "is_admin", False)
-
-        # Permission check: users can only test their own credentials (unless admin)
-        if not is_admin and current_user_id:
-            # Fetch credential to check ownership
-            cred = await token_manager.get_credential(
-                provider=provider, user_email=user_email, zone_id=zone_id
-            )
-            if cred:
-                # Check if user_id matches (preferred) or user_email matches (fallback)
-                stored_user_id = cred.metadata.get("user_id") if cred.metadata else None
-                stored_user_email = cred.user_email
-
-                if stored_user_id and stored_user_id != current_user_id:
-                    raise ValueError(
-                        f"Permission denied: Cannot test credentials for {user_email}. "
-                        f"Only your own credentials can be tested."
-                    )
-                if (
-                    not stored_user_id
-                    and stored_user_email
-                    and stored_user_email != current_user_id
-                ):
-                    raise ValueError(
-                        f"Permission denied: Cannot test credentials for {user_email}. "
-                        f"Only your own credentials can be tested."
-                    )
+        # Permission check (Issue #997: DRY extraction)
+        await self._check_credential_ownership(
+            provider, user_email, zone_id, context, action="test"
+        )
 
         try:
             # Try to get a valid token (will auto-refresh if needed)
@@ -1121,6 +1070,48 @@ class OAuthService:
     # =========================================================================
     # Helper Methods
     # =========================================================================
+
+    async def _check_credential_ownership(
+        self,
+        provider: str,
+        user_email: str,
+        zone_id: str,
+        context: OperationContext | None,
+        *,
+        action: str = "access",
+    ) -> None:
+        """Verify that the current user owns the credential (or is admin).
+
+        Raises ValueError if the user doesn't own the credential and isn't admin.
+        """
+        current_user_id = None
+        if context:
+            current_user_id = getattr(context, "user_id", None) or getattr(context, "user", None)
+        is_admin = context and getattr(context, "is_admin", False)
+
+        if is_admin or not current_user_id:
+            return
+
+        token_manager = self._get_token_manager()
+        cred = await token_manager.get_credential(
+            provider=provider, user_email=user_email, zone_id=zone_id
+        )
+        if not cred:
+            return
+
+        stored_user_id = cred.metadata.get("user_id") if cred.metadata else None
+        stored_user_email = cred.user_email
+
+        if stored_user_id and stored_user_id != current_user_id:
+            raise ValueError(
+                f"Permission denied: Cannot {action} credentials for {user_email}. "
+                f"Only your own credentials can be {action}d."
+            )
+        if not stored_user_id and stored_user_email and stored_user_email != current_user_id:
+            raise ValueError(
+                f"Permission denied: Cannot {action} credentials for {user_email}. "
+                f"Only your own credentials can be {action}d."
+            )
 
     def _get_oauth_factory(self) -> Any:
         """Get or create OAuth provider factory.

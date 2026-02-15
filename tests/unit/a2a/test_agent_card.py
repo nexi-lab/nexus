@@ -6,6 +6,7 @@ import json
 from dataclasses import dataclass, field
 
 from nexus.a2a.agent_card import (
+    AgentCardCache,
     _detect_auth_schemes,
     _map_skills,
     build_agent_card,
@@ -229,3 +230,42 @@ class TestCaching:
         assert "version" in card_dict
         assert "capabilities" in card_dict
         assert "skills" in card_dict
+
+
+# ======================================================================
+# AgentCardCache class
+# ======================================================================
+
+
+class TestAgentCardCache:
+    def test_cache_instances_independent(self) -> None:
+        """Two AgentCardCache instances don't share state."""
+        cache1 = AgentCardCache()
+        cache2 = AgentCardCache()
+
+        cache1.get_card_bytes(base_url="https://one.example.com")
+        assert cache2.get_card() is None  # cache2 was never populated
+
+    def test_cache_returns_same_bytes(self) -> None:
+        """Repeated calls return identical bytes (same object)."""
+        cache = AgentCardCache()
+        b1 = cache.get_card_bytes()
+        b2 = cache.get_card_bytes()
+        assert b1 is b2
+
+    def test_invalidate_clears_cache(self) -> None:
+        """After invalidate, next call rebuilds."""
+        cache = AgentCardCache()
+        cache.get_card_bytes()
+        assert cache.get_card() is not None
+
+        cache.invalidate()
+        assert cache.get_card() is None
+
+    def test_force_rebuild(self) -> None:
+        """force_rebuild=True produces fresh bytes object."""
+        cache = AgentCardCache()
+        b1 = cache.get_card_bytes()
+        b2 = cache.get_card_bytes(force_rebuild=True)
+        assert b1 is not b2
+        assert b1 == b2  # Same content, different object

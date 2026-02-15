@@ -13,13 +13,13 @@ import asyncio
 import json
 import logging
 import time
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from typing import Any
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from nexus.a2a.agent_card import get_cached_card_bytes
+from nexus.a2a.agent_card import AgentCardCache
 from nexus.a2a.exceptions import (
     A2AError,
     InvalidParamsError,
@@ -40,6 +40,9 @@ from nexus.a2a.task_manager import TaskManager
 
 logger = logging.getLogger(__name__)
 
+# Type alias for the injected auth callback
+AuthFn = Callable[[Request], Awaitable[dict[str, Any] | None]]
+
 # SSE configuration
 SSE_KEEPALIVE_INTERVAL = 15  # seconds
 SSE_MAX_LIFETIME = 1800  # 30 minutes
@@ -52,6 +55,7 @@ def build_router(
     base_url: str | None = None,
     task_manager: TaskManager | None = None,
     auth_required: bool = False,
+    auth_fn: AuthFn | None = None,
 ) -> APIRouter:
     """Build and return the A2A FastAPI router.
 
@@ -66,6 +70,10 @@ def build_router(
         When *True*, all A2A operational endpoints require a valid
         ``Authorization`` header.  The Agent Card endpoint remains
         public regardless of this setting.
+    auth_fn:
+        Optional async callback ``(Request) -> dict | None`` that
+        resolves authentication.  Injected by the server layer so
+        that this module has **zero** imports from ``nexus.server``.
     """
     effective_base_url = base_url or "http://localhost:2026"
 
@@ -73,6 +81,35 @@ def build_router(
     if task_manager is None:
         task_manager = TaskManager()
     tm: TaskManager = task_manager  # Final binding for closure narrowing
+
+    # Per-router Agent Card cache (no shared global state)
+    card_cache = AgentCardCache()
+
+    # ------------------------------------------------------------------
+    # Closure-local auth helper (captures auth_fn)
+    # ------------------------------------------------------------------
+
+    async def _get_auth_result(request: Request) -> dict[str, Any] | None:
+        if auth_fn is None:
+            return None
+        try:
+            return await auth_fn(request)
+        except Exception:
+            logger.warning("auth_fn raised; treating as unauthenticated", exc_info=True)
+            return None
+
+    # ------------------------------------------------------------------
+    # Closure-local extended card handler (captures card_cache + config)
+    # ------------------------------------------------------------------
+
+    async def _handle_extended_card() -> dict[str, Any]:
+        """Return the full Agent Card (authenticated endpoint)."""
+        card = card_cache.get_card()
+        if card is None:
+            card_bytes = card_cache.get_card_bytes(config=config, base_url=effective_base_url)
+            result: dict[str, Any] = json.loads(card_bytes)
+            return result
+        return card.model_dump(mode="json", exclude_none=True)
 
     # ------------------------------------------------------------------
     # Agent Card discovery (public — no auth)
@@ -86,7 +123,7 @@ def build_router(
         Other agents use it to discover capabilities before initiating
         communication.
         """
-        card_bytes = get_cached_card_bytes(
+        card_bytes = card_cache.get_card_bytes(
             config=config,
             base_url=effective_base_url,
         )
@@ -122,9 +159,18 @@ def build_router(
                     status_code=401,
                     headers={"WWW-Authenticate": 'Bearer realm="A2A"'},
                 )
-            auth_result = await _get_auth_result_safe(request)
-        else:
-            auth_result = await _get_auth_result_safe(request)
+
+        auth_result = await _get_auth_result(request)
+
+        if auth_required and auth_result is None:
+            return JSONResponse(
+                content={
+                    "error": "Unauthorized",
+                    "message": "Invalid or expired credentials.",
+                },
+                status_code=401,
+                headers={"WWW-Authenticate": 'Bearer realm="A2A"'},
+            )
 
         try:
             body = await request.json()
@@ -195,6 +241,7 @@ def build_router(
                 zone_id=zone_id,
                 agent_id=agent_id,
                 task_manager=tm,
+                handle_extended_card=_handle_extended_card,
             )
             resp = A2AResponse.success(request_id, result)
         except A2AError as e:
@@ -229,6 +276,7 @@ async def _dispatch(
     zone_id: str,
     agent_id: str | None,
     task_manager: TaskManager,
+    handle_extended_card: Callable[[], Awaitable[dict[str, Any]]],
 ) -> Any:
     """Route a JSON-RPC method to its handler."""
 
@@ -239,7 +287,7 @@ async def _dispatch(
     elif method == "a2a.tasks.cancel":
         return await _handle_cancel(params, zone_id, task_manager)
     elif method == "a2a.agent.getExtendedAgentCard":
-        return await _handle_extended_card()
+        return await handle_extended_card()
     elif method in (
         "a2a.tasks.createPushNotificationConfig",
         "a2a.tasks.getPushNotificationConfig",
@@ -334,21 +382,47 @@ async def _handle_cancel(
     return task.model_dump(mode="json")
 
 
-async def _handle_extended_card() -> dict[str, Any]:
-    """Handle a2a.agent.getExtendedAgentCard — return full card (with auth)."""
-    from nexus.a2a.agent_card import get_cached_card
-
-    card = get_cached_card()
-    if card is None:
-        card_bytes = get_cached_card_bytes()
-        result: dict[str, Any] = json.loads(card_bytes)
-        return result
-    return card.model_dump(mode="json", exclude_none=True)
-
-
 # ======================================================================
 # SSE streaming
 # ======================================================================
+
+
+async def _sse_event_loop(
+    task: Any,
+    queue: asyncio.Queue[dict[str, Any] | None],
+    task_manager: TaskManager,
+) -> AsyncGenerator[str, None]:
+    """Shared SSE event loop with keepalive and max lifetime.
+
+    Used by both ``sendStreamingMessage`` and ``subscribeToTask``.
+    """
+    try:
+        # First event: current task state
+        yield _format_sse_event({"task": task.model_dump(mode="json")})
+
+        # If already terminal, stop
+        if task.status.state in TERMINAL_STATES:
+            return
+
+        start_time = time.monotonic()
+        while True:
+            if time.monotonic() - start_time > SSE_MAX_LIFETIME:
+                break
+            try:
+                event = await asyncio.wait_for(queue.get(), timeout=SSE_KEEPALIVE_INTERVAL)
+            except TimeoutError:
+                yield ": keepalive\n\n"
+                continue
+            if event is None:
+                break
+            yield _format_sse_event(event)
+            status_update = event.get("statusUpdate")
+            if status_update and status_update.get("final"):
+                break
+    except (asyncio.CancelledError, GeneratorExit):
+        pass
+    finally:
+        task_manager.unregister_stream(task.id, queue)
 
 
 async def _handle_streaming(
@@ -389,52 +463,16 @@ async def _handle_send_streaming(
     except Exception as e:
         raise InvalidParamsError(data={"detail": str(e)}) from e
 
-    # Create task
     task = await task_manager.create_task(
         send_params.message,
         zone_id=zone_id,
         agent_id=agent_id,
         metadata=send_params.metadata,
     )
-
-    # Register stream
     queue = task_manager.register_stream(task.id)
 
-    async def event_generator() -> AsyncGenerator[str, None]:
-        try:
-            # First event: the task itself
-            yield _format_sse_event({"task": task.model_dump(mode="json")})
-
-            start_time = time.monotonic()
-            while True:
-                elapsed = time.monotonic() - start_time
-                if elapsed > SSE_MAX_LIFETIME:
-                    break
-
-                try:
-                    event = await asyncio.wait_for(queue.get(), timeout=SSE_KEEPALIVE_INTERVAL)
-                except TimeoutError:
-                    # Send keepalive comment
-                    yield ": keepalive\n\n"
-                    continue
-
-                if event is None:
-                    # Sentinel: stream ended
-                    break
-
-                yield _format_sse_event(event)
-
-                # If this was a final status update, close stream
-                status_update = event.get("statusUpdate")
-                if status_update and status_update.get("final"):
-                    break
-        except (asyncio.CancelledError, GeneratorExit):
-            pass
-        finally:
-            task_manager.unregister_stream(task.id, queue)
-
     return StreamingResponse(
-        event_generator(),
+        _sse_event_loop(task, queue, task_manager),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -456,53 +494,11 @@ async def _handle_subscribe(
     except Exception as e:
         raise InvalidParamsError(data={"detail": str(e)}) from e
 
-    # Verify task exists
     task = await task_manager.get_task(subscribe_params.taskId, zone_id=zone_id)
-
-    # Register stream
     queue = task_manager.register_stream(task.id)
 
-    async def event_generator() -> AsyncGenerator[str, None]:
-        try:
-            # First event: current task state
-            yield _format_sse_event({"task": task.model_dump(mode="json")})
-
-            # If already terminal, close immediately
-            if task.status.state in (
-                TaskState.COMPLETED,
-                TaskState.FAILED,
-                TaskState.CANCELED,
-                TaskState.REJECTED,
-            ):
-                return
-
-            start_time = time.monotonic()
-            while True:
-                elapsed = time.monotonic() - start_time
-                if elapsed > SSE_MAX_LIFETIME:
-                    break
-
-                try:
-                    event = await asyncio.wait_for(queue.get(), timeout=SSE_KEEPALIVE_INTERVAL)
-                except TimeoutError:
-                    yield ": keepalive\n\n"
-                    continue
-
-                if event is None:
-                    break
-
-                yield _format_sse_event(event)
-
-                status_update = event.get("statusUpdate")
-                if status_update and status_update.get("final"):
-                    break
-        except (asyncio.CancelledError, GeneratorExit):
-            pass
-        finally:
-            task_manager.unregister_stream(task.id, queue)
-
     return StreamingResponse(
-        event_generator(),
+        _sse_event_loop(task, queue, task_manager),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -521,22 +517,6 @@ def _format_sse_event(data: dict[str, Any]) -> str:
     """Format a dict as an SSE event string."""
     payload = json.dumps(data, default=str)
     return f"data: {payload}\n\n"
-
-
-async def _get_auth_result_safe(request: Request) -> dict[str, Any] | None:
-    """Get auth result, returning None on failure (lazy import)."""
-    try:
-        from nexus.server.fastapi_server import get_auth_result
-
-        return await get_auth_result(
-            request=request,
-            authorization=request.headers.get("Authorization"),
-            x_agent_id=request.headers.get("X-Agent-ID"),
-            x_nexus_subject=request.headers.get("X-Nexus-Subject"),
-            x_nexus_zone_id=request.headers.get("X-Nexus-Zone-ID"),
-        )
-    except Exception:
-        return None
 
 
 def _extract_zone_id(auth_result: dict[str, Any] | None) -> str:

@@ -1814,7 +1814,7 @@ def _register_routes(app: FastAPI) -> None:
     except ImportError as e:
         logger.warning(f"Failed to register Exchange error handler: {e}.")
 
-    # A2A Protocol Endpoint (Issue #1256)
+    # A2A Protocol Endpoint (Issue #1256, brick-extracted #1401)
     try:
         from nexus.a2a import create_a2a_router
 
@@ -1823,11 +1823,32 @@ def _register_routes(app: FastAPI) -> None:
             getattr(_fastapi_app.state, "api_key", None)
             or getattr(_fastapi_app.state, "auth_provider", None)
         )
+
+        # Auth adapter: server-side concern, NOT imported by the brick.
+        # Passes through the auth result for zone_id / agent_id extraction.
+        # Note: resolve_auth may return {"authenticated": False} for
+        # invalid tokens — this is consistent with the pre-existing
+        # behavior where the router checks for header presence, not
+        # token validity.  A separate fix for resolve_auth (#TBD) will
+        # tighten this.
+        async def _a2a_auth_adapter(request: Request) -> dict[str, Any] | None:
+            try:
+                return await get_auth_result(
+                    request=request,
+                    authorization=request.headers.get("Authorization"),
+                    x_agent_id=request.headers.get("X-Agent-ID"),
+                    x_nexus_subject=request.headers.get("X-Nexus-Subject"),
+                    x_nexus_zone_id=request.headers.get("X-Nexus-Zone-ID"),
+                )
+            except Exception:
+                return None
+
         a2a_router = create_a2a_router(
             nexus_fs=_fastapi_app.state.nexus_fs,
             config=None,  # Will use defaults; config can be passed when available
             base_url=a2a_base_url,
             auth_required=a2a_auth_required,
+            auth_fn=_a2a_auth_adapter,
             data_dir=getattr(_fastapi_app.state, "data_dir", None),
         )
         app.include_router(a2a_router)

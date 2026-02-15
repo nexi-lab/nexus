@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from nexus.search.fusion import normalize_scores_minmax
+from nexus.search.results import BaseSearchResult
 
 if TYPE_CHECKING:
     from nexus.search.embeddings import EmbeddingProvider
@@ -136,25 +137,13 @@ class GraphContext:
 
 
 @dataclass
-class GraphEnhancedSearchResult:
+class GraphEnhancedSearchResult(BaseSearchResult):
     """Search result with graph context enrichment.
 
-    Extends the base SemanticSearchResult with graph-aware scoring and
-    entity/relationship context.
+    Extends BaseSearchResult with graph-aware scoring and
+    entity/relationship context (Issue #1520).
     """
 
-    # Base result fields (from SemanticSearchResult)
-    path: str
-    chunk_index: int
-    chunk_text: str
-    score: float
-    start_offset: int | None = None
-    end_offset: int | None = None
-    line_start: int | None = None
-    line_end: int | None = None
-    # Individual score components
-    keyword_score: float | None = None
-    vector_score: float | None = None
     graph_score: float | None = None  # Graph proximity score
     # Graph context enrichment
     graph_context: GraphContext | None = None

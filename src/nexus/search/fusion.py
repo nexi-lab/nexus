@@ -5,6 +5,9 @@ Provides multiple fusion methods for combining keyword (BM25) and vector search 
 - Weighted: Score-based with optional min-max normalization
 - RRF Weighted: RRF with alpha weighting for BM25/vector bias
 
+Issue #1520: fuse_results() now accepts both dict and dataclass results.
+Issue #1520: FusionConfig gains over_fetch_factor for configurable candidate retrieval.
+
 Reference:
     - RRF Paper: https://plg.uwaterloo.ca/~gvcormac/cormacksigir09-rrf.pdf
     - Weaviate Hybrid Search: https://weaviate.io/blog/hybrid-search-explained
@@ -14,6 +17,7 @@ Issue: #798
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
@@ -36,12 +40,14 @@ class FusionConfig:
         alpha: Weight for vector search (0.0 = all BM25, 1.0 = all vector)
         rrf_k: RRF constant (default: 60 per original paper)
         normalize_scores: Apply min-max normalization for weighted fusion
+        over_fetch_factor: Multiplier for candidate retrieval (default 3.0)
     """
 
     method: FusionMethod = FusionMethod.RRF
     alpha: float = 0.5
     rrf_k: int = 60
     normalize_scores: bool = True
+    over_fetch_factor: float = 3.0
 
 
 def normalize_scores_minmax(scores: list[float]) -> list[float]:
@@ -67,6 +73,19 @@ def normalize_scores_minmax(scores: list[float]) -> list[float]:
     return [(s - min_score) / (max_score - min_score) for s in scores]
 
 
+def _to_dict(result: Any) -> dict[str, Any]:
+    """Convert a result (dict or dataclass) to dict.
+
+    Uses direct field access for dataclasses (3-5x faster than asdict()).
+    """
+    if isinstance(result, dict):
+        return result
+    fields = getattr(result, "__dataclass_fields__", None)
+    if fields is not None:
+        return {f: getattr(result, f) for f in fields}
+    return dict(result) if hasattr(result, "__iter__") else {"value": result}
+
+
 def _get_result_key(result: dict[str, Any], id_key: str | None) -> str:
     """Get unique key for a result.
 
@@ -83,8 +102,8 @@ def _get_result_key(result: dict[str, Any], id_key: str | None) -> str:
 
 
 def rrf_fusion(
-    keyword_results: list[dict[str, Any]],
-    vector_results: list[dict[str, Any]],
+    keyword_results: Sequence[dict[str, Any] | Any],
+    vector_results: Sequence[dict[str, Any] | Any],
     k: int = 60,
     limit: int = 10,
     id_key: str | None = "chunk_id",
@@ -111,7 +130,8 @@ def rrf_fusion(
     rrf_scores: dict[str, dict[str, Any]] = {}
 
     # Add keyword results
-    for rank, result in enumerate(keyword_results, start=1):
+    for rank, raw_result in enumerate(keyword_results, start=1):
+        result = _to_dict(raw_result)
         key = _get_result_key(result, id_key)
         if key not in rrf_scores:
             rrf_scores[key] = {"result": result.copy(), "rrf_score": 0.0}
@@ -119,7 +139,8 @@ def rrf_fusion(
         rrf_scores[key]["result"]["keyword_score"] = result.get("score", 0.0)
 
     # Add vector results
-    for rank, result in enumerate(vector_results, start=1):
+    for rank, raw_result in enumerate(vector_results, start=1):
+        result = _to_dict(raw_result)
         key = _get_result_key(result, id_key)
         if key not in rrf_scores:
             rrf_scores[key] = {"result": result.copy(), "rrf_score": 0.0}
@@ -141,8 +162,8 @@ def rrf_fusion(
 
 
 def weighted_fusion(
-    keyword_results: list[dict[str, Any]],
-    vector_results: list[dict[str, Any]],
+    keyword_results: Sequence[dict[str, Any] | Any],
+    vector_results: Sequence[dict[str, Any] | Any],
     alpha: float = 0.5,
     normalize: bool = True,
     limit: int = 10,
@@ -166,20 +187,22 @@ def weighted_fusion(
     # Create working copies with normalized scores if requested
     keyword_work = []
     if keyword_results:
-        keyword_scores = [r.get("score", 0.0) for r in keyword_results]
+        keyword_dicts = [_to_dict(r) for r in keyword_results]
+        keyword_scores = [r.get("score", 0.0) for r in keyword_dicts]
         normalized_keyword = (
             normalize_scores_minmax(keyword_scores) if normalize else keyword_scores
         )
-        for i, r in enumerate(keyword_results):
+        for i, r in enumerate(keyword_dicts):
             work = r.copy()
             work["_norm_score"] = normalized_keyword[i]
             keyword_work.append(work)
 
     vector_work = []
     if vector_results:
-        vector_scores = [r.get("score", 0.0) for r in vector_results]
+        vector_dicts = [_to_dict(r) for r in vector_results]
+        vector_scores = [r.get("score", 0.0) for r in vector_dicts]
         normalized_vector = normalize_scores_minmax(vector_scores) if normalize else vector_scores
-        for i, r in enumerate(vector_results):
+        for i, r in enumerate(vector_dicts):
             work = r.copy()
             work["_norm_score"] = normalized_vector[i]
             vector_work.append(work)
@@ -220,8 +243,8 @@ def weighted_fusion(
 
 
 def rrf_weighted_fusion(
-    keyword_results: list[dict[str, Any]],
-    vector_results: list[dict[str, Any]],
+    keyword_results: Sequence[dict[str, Any] | Any],
+    vector_results: Sequence[dict[str, Any] | Any],
     alpha: float = 0.5,
     k: int = 60,
     limit: int = 10,
@@ -248,7 +271,8 @@ def rrf_weighted_fusion(
     rrf_scores: dict[str, dict[str, Any]] = {}
 
     # Add keyword results with (1 - alpha) weight
-    for rank, result in enumerate(keyword_results, start=1):
+    for rank, raw_result in enumerate(keyword_results, start=1):
+        result = _to_dict(raw_result)
         key = _get_result_key(result, id_key)
         if key not in rrf_scores:
             rrf_scores[key] = {"result": result.copy(), "rrf_score": 0.0}
@@ -256,7 +280,8 @@ def rrf_weighted_fusion(
         rrf_scores[key]["result"]["keyword_score"] = result.get("score", 0.0)
 
     # Add vector results with alpha weight
-    for rank, result in enumerate(vector_results, start=1):
+    for rank, raw_result in enumerate(vector_results, start=1):
+        result = _to_dict(raw_result)
         key = _get_result_key(result, id_key)
         if key not in rrf_scores:
             rrf_scores[key] = {"result": result.copy(), "rrf_score": 0.0}
@@ -278,8 +303,8 @@ def rrf_weighted_fusion(
 
 
 def fuse_results(
-    keyword_results: list[dict[str, Any]],
-    vector_results: list[dict[str, Any]],
+    keyword_results: Sequence[dict[str, Any] | Any],
+    vector_results: Sequence[dict[str, Any] | Any],
     config: FusionConfig | None = None,
     limit: int = 10,
     id_key: str | None = "chunk_id",
@@ -288,6 +313,9 @@ def fuse_results(
 
     This is the main entry point for hybrid search fusion. It dispatches
     to the appropriate fusion algorithm based on the configuration.
+
+    Accepts both dict results and BaseSearchResult dataclass instances
+    (Issue #1520).
 
     Args:
         keyword_results: Results from keyword/BM25 search

@@ -21,7 +21,6 @@ from sqlalchemy import select
 from nexus.core.exceptions import ConflictError
 from nexus.core.hash_fast import hash_content
 from nexus.core.permissions import OperationContext
-from nexus.search.zoekt_client import notify_zoekt_sync_complete
 from nexus.storage.file_cache import get_file_cache
 from nexus.storage.models import ContentCacheModel, FilePathModel
 
@@ -139,6 +138,9 @@ class CacheConnectorMixin:
     # L1-only mode: skip L2 (PostgreSQL) caching entirely
     # Useful for LocalConnector where source is already local disk
     l1_only: bool = False
+
+    # Callback for sync completion notifications (e.g., zoekt reindex). Issue #1520.
+    on_sync_callback: Any | None = None
 
     # Maximum file size to cache (default 100MB)
     MAX_CACHE_FILE_SIZE: int = 100 * 1024 * 1024
@@ -1571,9 +1573,9 @@ class CacheConnectorMixin:
             f"skipped={result.files_skipped}, errors={len(result.errors)}"
         )
 
-        # Notify Zoekt to reindex if files were synced
-        if result.files_synced > 0:
-            notify_zoekt_sync_complete(result.files_synced)
+        # Notify search brick via callback if files were synced (Issue #1520)
+        if result.files_synced > 0 and self.on_sync_callback is not None:
+            self.on_sync_callback(result.files_synced)
 
         return result
 

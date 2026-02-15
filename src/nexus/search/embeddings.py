@@ -660,13 +660,16 @@ async def create_cached_embedding_provider(
     api_key: str | None = None,
     cache_url: str | None = None,
     cache_ttl: int = 86400,
+    embedding_cache: EmbeddingCacheProtocol | None = None,
 ) -> EmbeddingProvider:
     """Create an embedding provider with caching enabled.
 
     This is a convenience function that creates a base embedding provider
-    and wraps it with caching if a cache URL is provided.
+    and wraps it with caching if a cache URL is provided or an embedding
+    cache is injected directly.
 
     Implements Issue #950 - reduces embedding API calls by 90%.
+    Issue #1520: Added embedding_cache DI parameter to avoid internal cache creation.
 
     Args:
         provider: Provider name (openai, voyage, voyage-lite, fastembed, etc.)
@@ -675,6 +678,8 @@ async def create_cached_embedding_provider(
         cache_url: Redis/Dragonfly URL for caching (e.g., redis://localhost:6379)
                    If None, returns uncached provider
         cache_ttl: Cache TTL in seconds (default: 24 hours)
+        embedding_cache: Pre-built cache instance injected by caller (Issue #1520).
+                        If provided, cache_url is ignored.
 
     Returns:
         EmbeddingProvider instance (cached if cache_url provided)
@@ -691,6 +696,12 @@ async def create_cached_embedding_provider(
     """
     # Create base provider
     base_provider = create_embedding_provider(provider, model, api_key)
+
+    # Use pre-injected cache if provided (Issue #1520: DI over internal creation)
+    if embedding_cache is not None:
+        cached_provider = CachedEmbeddingProvider(base_provider, embedding_cache)
+        logger.info("Embedding cache enabled via DI injection")
+        return cached_provider
 
     # Return uncached if no cache URL
     if not cache_url:

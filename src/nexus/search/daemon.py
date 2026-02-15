@@ -40,6 +40,8 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
+from nexus.search.results import BaseSearchResult
+
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 
@@ -69,19 +71,12 @@ class DaemonStats:
 
 
 @dataclass
-class SearchResult:
-    """Unified search result from daemon."""
+class SearchResult(BaseSearchResult):
+    """Unified search result from daemon.
 
-    path: str
-    chunk_text: str
-    score: float
-    chunk_index: int = 0
-    start_offset: int | None = None
-    end_offset: int | None = None
-    line_start: int | None = None
-    line_end: int | None = None
-    keyword_score: float | None = None
-    vector_score: float | None = None
+    Extends BaseSearchResult with search_type field (Issue #1520).
+    """
+
     search_type: str = "hybrid"
 
 

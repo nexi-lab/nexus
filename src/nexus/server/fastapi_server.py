@@ -881,6 +881,14 @@ async def lifespan(_app: FastAPI) -> Any:
                     config=sandbox_config,
                 )
 
+                # Attach smart router for Monty -> Docker -> E2B routing (Issue #1317)
+                if sandbox_mgr.providers:
+                    from nexus.sandbox.sandbox_router import SandboxRouter
+
+                    sandbox_mgr._router = SandboxRouter(
+                        available_providers=sandbox_mgr.providers,
+                    )
+
                 # Get NamespaceManager if available (best-effort)
                 # Issue #1265: Factory function handles L3 persistent store wiring
                 namespace_manager = None

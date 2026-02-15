@@ -21,6 +21,7 @@ from sqlalchemy.orm import Session
 
 from nexus.sandbox.sandbox_provider import (
     CodeExecutionResult,
+    EscalationNeeded,
     SandboxNotFoundError,
     SandboxProvider,
 )
@@ -130,6 +131,9 @@ class SandboxManager:
                 logger.info(f"Monty provider not available: {e}")
             except Exception as e:
                 logger.warning(f"Failed to initialize Monty provider: {e}")
+
+        # Smart routing (Issue #1317): set externally after construction
+        self._router: Any | None = None
 
         logger.info(f"Initialized sandbox manager with providers: {list(self.providers.keys())}")
 
@@ -416,6 +420,18 @@ class SandboxManager:
                 sandbox_id,
             )
 
+        # Cache in router for re-wiring on escalation (Issue #1317)
+        router = getattr(self, "_router", None)
+        if router is not None:
+            # Look up agent_id from sandbox metadata
+            try:
+                meta = self._get_metadata(sandbox_id)
+                agent_id = meta.get("agent_id")
+                if agent_id:
+                    router.cache_host_functions(agent_id, host_functions)
+            except SandboxNotFoundError:
+                pass
+
     async def run_code(
         self,
         sandbox_id: str,
@@ -426,6 +442,10 @@ class SandboxManager:
         auto_validate: bool | None = None,  # noqa: ARG002
     ) -> CodeExecutionResult:
         """Run code in sandbox.
+
+        When a router is configured (Issue #1317), handles EscalationNeeded
+        exceptions by retrying on the next tier in the escalation chain
+        (monty -> docker -> e2b).
 
         Args:
             sandbox_id: Sandbox ID
@@ -449,10 +469,23 @@ class SandboxManager:
         meta_dict = self._get_metadata(sandbox_id)
         provider_name = meta_dict["provider"]
         ttl = meta_dict["ttl_minutes"]
+        agent_id = meta_dict.get("agent_id")
 
-        # Run code via provider
+        # Run code via provider — with escalation support
         provider = self.providers[provider_name]
-        result = await provider.run_code(sandbox_id, language, code, timeout, as_script=as_script)
+        try:
+            result = await provider.run_code(
+                sandbox_id, language, code, timeout, as_script=as_script
+            )
+        except EscalationNeeded as exc:
+            result = await self._handle_escalation(
+                exc, provider_name, language, code, timeout, as_script, agent_id
+            )
+
+        # Record execution in router if available
+        router = getattr(self, "_router", None)
+        if router is not None and agent_id:
+            router.record_execution(agent_id, provider_name, escalated=False)
 
         # Update last_active_at and expires_at
         now = datetime.now(UTC)
@@ -463,6 +496,90 @@ class SandboxManager:
         )
 
         logger.debug(f"Executed {language} code in sandbox {sandbox_id}")
+
+        return result
+
+    async def _handle_escalation(
+        self,
+        exc: EscalationNeeded,
+        from_tier: str,
+        language: str,
+        code: str,
+        timeout: int,
+        as_script: bool,
+        agent_id: str | None,
+    ) -> CodeExecutionResult:
+        """Handle EscalationNeeded by retrying on the next tier.
+
+        Args:
+            exc: The escalation exception.
+            from_tier: Tier that raised EscalationNeeded.
+            language: Programming language.
+            code: Code to execute.
+            timeout: Execution timeout.
+            as_script: Script mode flag.
+            agent_id: Agent ID for history tracking.
+
+        Returns:
+            Result from the escalated provider.
+
+        Raises:
+            EscalationNeeded: If no next tier is available.
+        """
+        router = getattr(self, "_router", None)
+        if router is None:
+            raise exc
+
+        # Determine next tier
+        to_tier = exc.suggested_tier
+        if to_tier and to_tier in self.providers:
+            next_tier = to_tier
+        else:
+            next_tier = router.get_next_tier(from_tier)
+
+        if next_tier is None:
+            logger.warning(
+                "Escalation from %s failed: no next tier available (reason: %s)",
+                from_tier,
+                exc.reason,
+            )
+            raise exc
+
+        logger.info(
+            "Escalating from %s to %s (reason: %s)",
+            from_tier,
+            next_tier,
+            exc.reason,
+        )
+
+        # Record escalation
+        if agent_id:
+            router.record_escalation(agent_id, from_tier, next_tier)
+
+        # Create a temporary sandbox on the next tier and run code
+        next_provider = self.providers[next_tier]
+        temp_sandbox_id = await next_provider.create(timeout_minutes=5)
+
+        try:
+            # Re-wire host functions if escalating from monty
+            if from_tier == "monty" and agent_id and router:
+                cached_fns = router.get_cached_host_functions(agent_id)
+                if cached_fns and hasattr(next_provider, "set_host_functions"):
+                    next_provider.set_host_functions(temp_sandbox_id, cached_fns)
+
+            result = await next_provider.run_code(
+                temp_sandbox_id, language, code, timeout, as_script=as_script
+            )
+        finally:
+            # Clean up temporary sandbox
+            try:
+                await next_provider.destroy(temp_sandbox_id)
+            except Exception as cleanup_err:
+                logger.warning(
+                    "Failed to destroy temp sandbox %s: %s",
+                    temp_sandbox_id,
+                    cleanup_err,
+                )
 
         return result
 

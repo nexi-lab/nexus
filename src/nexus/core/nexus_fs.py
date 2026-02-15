@@ -6145,6 +6145,14 @@ class NexusFS(  # type: ignore[misc]
                 config=config,  # Pass config for Docker provider
             )
 
+            # Attach smart router if providers are available (Issue #1317)
+            if self._sandbox_manager.providers:
+                from nexus.sandbox.sandbox_router import SandboxRouter
+
+                self._sandbox_manager._router = SandboxRouter(
+                    available_providers=self._sandbox_manager.providers,
+                )
+
     @staticmethod
     def _run_async(coro: Any) -> Any:
         """Run async coroutine safely, handling both running and non-running event loops.

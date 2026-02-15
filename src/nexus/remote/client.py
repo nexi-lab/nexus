@@ -1174,7 +1174,7 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         if context is not None:
             params["context"] = context
         result = self._call_rpc("sandbox_validate", params)
-        return result  # type: ignore[no-any-return]
+        return result
 
     # ============================================================
     # Skills Management Operations

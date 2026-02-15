@@ -900,12 +900,11 @@ class NexusFilesystem(ABC):
         """
         ...
 
-    @abstractmethod
     def sandbox_validate(
         self,
-        sandbox_id: str,
-        workspace_path: str = "/workspace",
-        context: dict | None = None,
+        sandbox_id: str,  # noqa: ARG002
+        workspace_path: str = "/workspace",  # noqa: ARG002
+        context: dict | None = None,  # noqa: ARG002
     ) -> dict[Any, Any]:
         """Run validation pipeline in a sandbox.
 
@@ -917,6 +916,7 @@ class NexusFilesystem(ABC):
         Returns:
             Dict with validations list
         """
+        return {"validations": []}
         ...
 
     @abstractmethod

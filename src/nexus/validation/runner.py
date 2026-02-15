@@ -28,6 +28,22 @@ from nexus.validation.script_builder import (
 if TYPE_CHECKING:
     from nexus.sandbox.sandbox_provider import SandboxProvider
 
+# Default configs for auto-detected validators (avoids instantiating Validator subclasses)
+_DEFAULT_VALIDATOR_CONFIGS: dict[str, ValidatorConfig] = {
+    "ruff": ValidatorConfig(
+        name="ruff", command="ruff check --output-format json .", output_format="json"
+    ),
+    "mypy": ValidatorConfig(name="mypy", command="mypy --no-error-summary .", output_format="text"),
+    "eslint": ValidatorConfig(
+        name="eslint", command="npx eslint --format json .", output_format="json"
+    ),
+    "cargo-clippy": ValidatorConfig(
+        name="cargo-clippy",
+        command="cargo clippy --message-format json 2>&1",
+        output_format="json",
+    ),
+}
+
 logger = logging.getLogger(__name__)
 
 
@@ -186,10 +202,7 @@ class ValidationRunner:
 
         configs: list[ValidatorConfig] = []
         for name in detected_names:
-            validator_cls = BUILTIN_VALIDATORS.get(name)
-            if validator_cls:
-                # Create a default config and instantiate to get the command
-                instance = validator_cls(config=None)  # type: ignore[arg-type]
-                configs.append(instance.config)
+            if name in BUILTIN_VALIDATORS:
+                configs.append(_DEFAULT_VALIDATOR_CONFIGS[name])
 
         return configs

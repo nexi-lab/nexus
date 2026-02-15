@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
@@ -47,17 +48,18 @@ from nexus.storage.models import Base
 
 
 @pytest.fixture()
-def sqlite_registry(tmp_path: Path) -> AgentRegistry:
+def sqlite_registry(tmp_path: Path) -> Iterator[AgentRegistry]:
     """Real AgentRegistry backed by SQLite."""
     db_path = tmp_path / f"test_{uuid.uuid4().hex[:8]}.db"
     engine = create_engine(f"sqlite:///{db_path}", echo=False)
     Base.metadata.create_all(engine)
     session_factory = sessionmaker(bind=engine, expire_on_commit=False)
-    return AgentRegistry(
+    yield AgentRegistry(
         session_factory=session_factory,
         flush_interval=1,
         cache_ttl=1,
     )
+    engine.dispose()
 
 
 @pytest.fixture()
@@ -323,6 +325,45 @@ class TestAsyncHookEngineE2E:
         with pytest.raises(ValueError, match="Unknown hook phase"):
             await async_hooks.fire("unknown", ctx)
 
+    @pytest.mark.asyncio()
+    async def test_concurrent_register_fire_unregister(self, async_hooks: AsyncHookEngine) -> None:
+        """Concurrent hook lifecycle operations verify API safety under interleaving."""
+        call_count = 0
+
+        async def counting_handler(_ctx: HookContext) -> HookResult:
+            nonlocal call_count
+            call_count += 1
+            return HookResult(proceed=True, modified_context=None, error=None)
+
+        # Register 10 hooks concurrently
+        specs = [
+            HookSpec(phase="pre_write", handler_name=f"concurrent-{i}", priority=i)
+            for i in range(10)
+        ]
+        hook_ids = await asyncio.gather(
+            *[async_hooks.register_hook(spec, counting_handler) for spec in specs]
+        )
+        assert len(hook_ids) == 10
+        assert len({h.id for h in hook_ids}) == 10  # all unique IDs
+
+        # Fire while concurrently unregistering half the hooks
+        ctx = HookContext(
+            phase="pre_write", path="/ws/f.txt", zone_id=None, agent_id=None, payload={}
+        )
+        fire_task = asyncio.create_task(async_hooks.fire("pre_write", ctx))
+        unregister_tasks = [
+            asyncio.create_task(async_hooks.unregister_hook(hook_ids[i]))
+            for i in range(0, 10, 2)  # unregister even-indexed hooks
+        ]
+        results = await asyncio.gather(fire_task, *unregister_tasks)
+
+        # Fire completed successfully
+        fire_result = results[0]
+        assert isinstance(fire_result, HookResult)
+        assert fire_result.proceed is True
+        # At least some unregisters succeeded
+        assert any(results[1:])
+
 
 # ---------------------------------------------------------------------------
 # 5. Server factory import validation
@@ -399,33 +440,36 @@ class TestServerLifespanWiring:
         state.agent_registry = agent_registry
         state.async_agent_registry = AsyncAgentRegistry(state.agent_registry)
 
-        # Verify the async wrapper is functional through the wired path
-        assert isinstance(state.async_agent_registry, AgentRegistryProtocol)
+        try:
+            # Verify the async wrapper is functional through the wired path
+            assert isinstance(state.async_agent_registry, AgentRegistryProtocol)
 
-        info = await state.async_agent_registry.register(
-            "lifespan-agent",
-            "admin",
-            zone_id="default",
-            name="Lifespan Test",
-        )
-        assert info.agent_id == "lifespan-agent"
-        assert info.state == "UNKNOWN"
+            info = await state.async_agent_registry.register(
+                "lifespan-agent",
+                "admin",
+                zone_id="default",
+                name="Lifespan Test",
+            )
+            assert info.agent_id == "lifespan-agent"
+            assert info.state == "UNKNOWN"
 
-        # Transition (simulates what an API endpoint would do)
-        connected = await state.async_agent_registry.transition(
-            "lifespan-agent",
-            "CONNECTED",
-            expected_generation=0,
-        )
-        assert connected.state == "CONNECTED"
+            # Transition (simulates what an API endpoint would do)
+            connected = await state.async_agent_registry.transition(
+                "lifespan-agent",
+                "CONNECTED",
+                expected_generation=0,
+            )
+            assert connected.state == "CONNECTED"
 
-        # List agents in zone (simulates permission-aware listing)
-        agents = await state.async_agent_registry.list_by_zone("default")
-        assert len(agents) == 1
-        assert agents[0].agent_id == "lifespan-agent"
+            # List agents in zone (simulates permission-aware listing)
+            agents = await state.async_agent_registry.list_by_zone("default")
+            assert len(agents) == 1
+            assert agents[0].agent_id == "lifespan-agent"
 
-        # Cleanup
-        await state.async_agent_registry.unregister("lifespan-agent")
+            # Cleanup
+            await state.async_agent_registry.unregister("lifespan-agent")
+        finally:
+            engine.dispose()
 
     @pytest.mark.asyncio()
     async def test_all_four_wrappers_wired_together(self, tmp_path: Path) -> None:
@@ -476,36 +520,39 @@ class TestServerLifespanWiring:
         assert isinstance(async_router, VFSRouterProtocol)
         assert isinstance(async_hooks, HookEngineProtocol)
 
-        # Cross-wrapper interaction: register agent, route a path, fire a hook
-        agent_info = await async_registry.register("cross-agent", "admin", zone_id="z1")
-        assert agent_info.agent_id == "cross-agent"
+        try:
+            # Cross-wrapper interaction: register agent, route a path, fire a hook
+            agent_info = await async_registry.register("cross-agent", "admin", zone_id="z1")
+            assert agent_info.agent_id == "cross-agent"
 
-        resolved = await async_router.route("/workspace/doc.txt", zone_id="z1")
-        assert resolved.backend_path == "doc.txt"
-        assert resolved.zone_id == "z1"
+            resolved = await async_router.route("/workspace/doc.txt", zone_id="z1")
+            assert resolved.backend_path == "doc.txt"
+            assert resolved.zone_id == "z1"
 
-        hook_fired = False
+            hook_fired = False
 
-        async def track_hook(_ctx: HookContext) -> HookResult:
-            nonlocal hook_fired
-            hook_fired = True
-            return HookResult(proceed=True, modified_context=None, error=None)
+            async def track_hook(_ctx: HookContext) -> HookResult:
+                nonlocal hook_fired
+                hook_fired = True
+                return HookResult(proceed=True, modified_context=None, error=None)
 
-        spec = HookSpec(phase="pre_write", handler_name="cross-test")
-        await async_hooks.register_hook(spec, track_hook)
-        ctx = HookContext(
-            phase="pre_write",
-            path="/workspace/doc.txt",
-            zone_id="z1",
-            agent_id="cross-agent",
-            payload={},
-        )
-        result = await async_hooks.fire("pre_write", ctx)
-        assert result.proceed is True
-        assert hook_fired is True
+            spec = HookSpec(phase="pre_write", handler_name="cross-test")
+            await async_hooks.register_hook(spec, track_hook)
+            ctx = HookContext(
+                phase="pre_write",
+                path="/workspace/doc.txt",
+                zone_id="z1",
+                agent_id="cross-agent",
+                payload={},
+            )
+            result = await async_hooks.fire("pre_write", ctx)
+            assert result.proceed is True
+            assert hook_fired is True
 
-        # Cleanup
-        await async_registry.unregister("cross-agent")
+            # Cleanup
+            await async_registry.unregister("cross-agent")
+        finally:
+            engine.dispose()
 
     @pytest.mark.asyncio()
     async def test_permission_enforcer_can_use_async_registry(self, tmp_path: Path) -> None:
@@ -526,35 +573,38 @@ class TestServerLifespanWiring:
         sync_reg = AgentRegistry(session_factory=session_factory, flush_interval=1)
         async_reg = AsyncAgentRegistry(sync_reg)
 
-        # Register agent with specific owner and zone (permission-relevant fields)
-        info = await async_reg.register(
-            "perm-agent",
-            "user:alice",
-            zone_id="zone-42",
-            name="Permission Test Agent",
-        )
-        assert info.owner_id == "user:alice"
-        assert info.zone_id == "zone-42"
+        try:
+            # Register agent with specific owner and zone (permission-relevant fields)
+            info = await async_reg.register(
+                "perm-agent",
+                "user:alice",
+                zone_id="zone-42",
+                name="Permission Test Agent",
+            )
+            assert info.owner_id == "user:alice"
+            assert info.zone_id == "zone-42"
 
-        # Simulate permission check: "does this agent belong to this zone?"
-        fetched = await async_reg.get("perm-agent")
-        assert fetched is not None
-        assert fetched.zone_id == "zone-42"
-        assert fetched.owner_id == "user:alice"
-        assert fetched.state == "UNKNOWN"  # Not yet connected
+            # Simulate permission check: "does this agent belong to this zone?"
+            fetched = await async_reg.get("perm-agent")
+            assert fetched is not None
+            assert fetched.zone_id == "zone-42"
+            assert fetched.owner_id == "user:alice"
+            assert fetched.state == "UNKNOWN"  # Not yet connected
 
-        # Transition to CONNECTED (agent authenticates)
-        connected = await async_reg.transition("perm-agent", "CONNECTED", expected_generation=0)
-        assert connected.state == "CONNECTED"
-        assert connected.generation == 1
+            # Transition to CONNECTED (agent authenticates)
+            connected = await async_reg.transition("perm-agent", "CONNECTED", expected_generation=0)
+            assert connected.state == "CONNECTED"
+            assert connected.generation == 1
 
-        # List by zone (used in zone-scoped permission queries)
-        zone_agents = await async_reg.list_by_zone("zone-42")
-        assert len(zone_agents) == 1
-        assert zone_agents[0].owner_id == "user:alice"
+            # List by zone (used in zone-scoped permission queries)
+            zone_agents = await async_reg.list_by_zone("zone-42")
+            assert len(zone_agents) == 1
+            assert zone_agents[0].owner_id == "user:alice"
 
-        # Different zone should be empty
-        other_zone = await async_reg.list_by_zone("zone-99")
-        assert len(other_zone) == 0
+            # Different zone should be empty
+            other_zone = await async_reg.list_by_zone("zone-99")
+            assert len(other_zone) == 0
 
-        await async_reg.unregister("perm-agent")
+            await async_reg.unregister("perm-agent")
+        finally:
+            engine.dispose()

@@ -124,3 +124,37 @@ class TestInvalidate:
         mock_inner.invalidate.return_value = None
         await wrapper.invalidate(("user", "alice"))
         mock_inner.invalidate.assert_called_once_with(("user", "alice"))
+
+
+# ---------------------------------------------------------------------------
+# Exception propagation through asyncio.to_thread
+# ---------------------------------------------------------------------------
+
+
+class TestExceptionPropagation:
+    @pytest.mark.asyncio()
+    async def test_is_visible_propagates_runtime_error(
+        self, wrapper: AsyncNamespaceManager, mock_inner: MagicMock
+    ) -> None:
+        """Exceptions from is_visible propagate through to_thread."""
+        mock_inner.is_visible.side_effect = RuntimeError("ReBAC rebuild failed")
+        with pytest.raises(RuntimeError, match="ReBAC rebuild failed"):
+            await wrapper.is_visible(("user", "alice"), "/workspace/file.txt")
+
+    @pytest.mark.asyncio()
+    async def test_get_mount_table_propagates_permission_error(
+        self, wrapper: AsyncNamespaceManager, mock_inner: MagicMock
+    ) -> None:
+        """PermissionError from get_mount_table propagates through to_thread."""
+        mock_inner.get_mount_table.side_effect = PermissionError("access denied")
+        with pytest.raises(PermissionError, match="access denied"):
+            await wrapper.get_mount_table(("user", "bob"), zone_id="z1")
+
+    @pytest.mark.asyncio()
+    async def test_invalidate_propagates_value_error(
+        self, wrapper: AsyncNamespaceManager, mock_inner: MagicMock
+    ) -> None:
+        """ValueError from invalidate propagates through to_thread."""
+        mock_inner.invalidate.side_effect = ValueError("invalid subject")
+        with pytest.raises(ValueError, match="invalid subject"):
+            await wrapper.invalidate(("user", "unknown"))

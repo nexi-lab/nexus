@@ -17,11 +17,11 @@ from typing import TYPE_CHECKING, Any
 from nexus.core.protocols.vfs_router import MountInfo, ResolvedPath
 
 if TYPE_CHECKING:
-    from nexus.core.router import MountConfig, PathRouter
+    from nexus.core.router import MountConfig, PathRouter, RouteResult
 
 
 def _to_resolved_path(
-    result: Any,
+    result: RouteResult,
     virtual_path: str,
     zone_id: str | None,
 ) -> ResolvedPath:

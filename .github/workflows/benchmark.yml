@@ -1,0 +1,149 @@
+name: Benchmark
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  benchmark-critical:
+    name: Benchmark (Critical Subset)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Create virtual environment
+        run: uv venv --python 3.13
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Build Rust extension (nexus_fast)
+        run: |
+          cd rust/nexus_pyo3
+          pip install maturin
+          maturin develop --release
+
+      - name: Build Rust extension (nexus_raft)
+        run: |
+          cd rust/nexus_raft
+          maturin develop --release --features python
+
+      - name: Build Rust extension (nexus_tasks)
+        run: |
+          cd rust/nexus_tasks
+          maturin develop --release
+
+      - name: Install dependencies
+        run: uv pip install -e ".[dev,test]"
+
+      - name: Smoke test (validate benchmark infrastructure)
+        run: |
+          uv run pytest tests/benchmarks/test_core_operations.py::TestHashingBenchmarks::test_sha256_tiny \
+            --benchmark-json=/tmp/smoke.json --benchmark-min-rounds=3 \
+            -o "addopts=" -q
+          python -c "import json; json.load(open('/tmp/smoke.json'))"
+
+      - name: Run critical benchmarks
+        run: |
+          uv run pytest tests/benchmarks/ -m benchmark_ci \
+            --benchmark-json=benchmark-results.json \
+            --benchmark-min-rounds=10 \
+            --benchmark-warmup=on \
+            --benchmark-warmup-iterations=3 \
+            -o "addopts=" -v
+
+      - name: Store benchmark results
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: pytest
+          output-file-path: benchmark-results.json
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: dev/bench
+          alert-threshold: "130%"
+          comment-on-alert: true
+          fail-on-alert: false
+          auto-push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          summary-always: true
+
+  benchmark-full:
+    name: Benchmark (Full Suite)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Create virtual environment
+        run: uv venv --python 3.13
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Build Rust extension (nexus_fast)
+        run: |
+          cd rust/nexus_pyo3
+          pip install maturin
+          maturin develop --release
+
+      - name: Build Rust extension (nexus_raft)
+        run: |
+          cd rust/nexus_raft
+          maturin develop --release --features python
+
+      - name: Build Rust extension (nexus_tasks)
+        run: |
+          cd rust/nexus_tasks
+          maturin develop --release
+
+      - name: Install dependencies
+        run: uv pip install -e ".[dev,test]"
+
+      - name: Run full benchmark suite
+        run: |
+          uv run pytest tests/benchmarks/ \
+            --benchmark-json=benchmark-results-full.json \
+            --benchmark-min-rounds=10 \
+            --benchmark-warmup=on \
+            --benchmark-warmup-iterations=3 \
+            -o "addopts=" -v
+
+      - name: Store full benchmark results
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          tool: pytest
+          output-file-path: benchmark-results-full.json
+          gh-pages-branch: gh-pages
+          benchmark-data-dir-path: dev/bench-full
+          auto-push: true
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          summary-always: true

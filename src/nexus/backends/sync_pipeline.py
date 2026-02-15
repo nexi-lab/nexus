@@ -32,7 +32,6 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.core.hash_fast import hash_content
 from nexus.core.permissions import OperationContext
-from nexus.search.zoekt_client import notify_zoekt_sync_complete
 
 if TYPE_CHECKING:
     from nexus.backends.cache_mixin import CacheEntry, SyncResult
@@ -149,6 +148,8 @@ class SyncPipelineService:
 
         # Notify Zoekt to reindex if files were synced
         if result.files_synced > 0:
+            from nexus.search.zoekt_client import notify_zoekt_sync_complete
+
             notify_zoekt_sync_complete(result.files_synced)
 
         return result
@@ -294,12 +295,8 @@ class SyncPipelineService:
                 f"{len(paths_needing_version_check)} files..."
             )
             try:
-                versions = connector._batch_get_versions(
-                    paths_needing_version_check, all_contexts
-                )
-                logger.info(
-                    f"[CACHE-SYNC] Batch version fetch complete: {len(versions)} versions"
-                )
+                versions = connector._batch_get_versions(paths_needing_version_check, all_contexts)
+                logger.info(f"[CACHE-SYNC] Batch version fetch complete: {len(versions)} versions")
             except Exception as e:
                 logger.warning(f"[CACHE-SYNC] Batch version fetch failed: {e}")
                 versions = {}
@@ -400,9 +397,7 @@ class SyncPipelineService:
 
                 # Skip if too large
                 if len(content) > max_size:
-                    logger.debug(
-                        f"[CACHE] SYNC SKIP (too large): {vpath} ({len(content)} bytes)"
-                    )
+                    logger.debug(f"[CACHE] SYNC SKIP (too large): {vpath} ({len(content)} bytes)")
                     result.files_skipped += 1
                     continue
 

@@ -1623,6 +1623,18 @@ def _register_routes(app: FastAPI) -> None:
             health["status"] = "degraded"
             health["unhealthy_backends"] = unhealthy_backends
 
+        # Circuit breaker health (Issue #1366)
+        _resiliency_mgr = (
+            _fastapi_app.state.nexus_fs._service_extras.get("resiliency_manager")
+            if _fastapi_app.state.nexus_fs
+            and hasattr(_fastapi_app.state.nexus_fs, "_service_extras")
+            else None
+        )
+        if _resiliency_mgr is not None:
+            health["components"]["resiliency"] = _resiliency_mgr.health_check()
+            if health["components"]["resiliency"]["status"] == "degraded":
+                health["status"] = "degraded"
+
         return health
 
     # Connection pool metrics endpoint (Issue #1075)

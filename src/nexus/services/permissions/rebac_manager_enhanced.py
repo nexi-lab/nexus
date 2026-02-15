@@ -26,16 +26,28 @@ Usage:
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
-from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from enum import Enum
 from pathlib import PurePosixPath
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy.exc import OperationalError, ProgrammingError
+
 from nexus.core.rebac import CROSS_ZONE_ALLOWED_RELATIONS, Entity
 from nexus.services.permissions.rebac_manager_zone_aware import ZoneAwareReBACManager
+from nexus.services.permissions.types import (
+    CheckResult,
+    ConsistencyLevel,
+    ConsistencyMode,  # noqa: F401 — re-exported for backward compatibility
+    ConsistencyRequirement,
+    GraphLimitExceeded,
+    GraphLimits,
+    TraversalStats,
+    WriteResult,
+)
+from nexus.services.permissions.utils.zone import normalize_zone_id
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -44,227 +56,7 @@ if TYPE_CHECKING:
     from nexus.services.permissions.rebac_iterator_cache import IteratorCache
     from nexus.services.permissions.tiger_cache import TigerCache, TigerCacheUpdater
 
-
-# ============================================================================
-# P0-1: Consistency Levels and Version Tokens
-# ============================================================================
-
-
-class ConsistencyLevel(Enum):
-    """Consistency levels for permission checks.
-
-    Controls cache behavior and staleness guarantees:
-    - EVENTUAL: Use cache (up to 5min staleness), fastest
-    - BOUNDED: Max 1s staleness
-    - STRONG: Bypass cache, fresh read, slowest but most accurate
-
-    Note: For new code, prefer ConsistencyMode with ConsistencyRequirement
-    which aligns with SpiceDB/Zanzibar naming conventions.
-    """
-
-    EVENTUAL = "eventual"  # Use cache (5min staleness)
-    BOUNDED = "bounded"  # Max 1s staleness
-    STRONG = "strong"  # Bypass cache, fresh read
-
-
-class ConsistencyMode(Enum):
-    """Per-request consistency modes aligned with SpiceDB/Zanzibar (Issue #1081).
-
-    Provides fine-grained control over cache behavior on a per-request basis,
-    following industry best practices from Google Zanzibar and SpiceDB.
-
-    Modes:
-    - MINIMIZE_LATENCY: Use cache for fastest response (~99% of requests)
-    - AT_LEAST_AS_FRESH: Cache must be >= min_revision (read-after-write)
-    - FULLY_CONSISTENT: Bypass cache entirely (security audits, <1% of requests)
-
-    See:
-    - https://authzed.com/docs/spicedb/concepts/consistency
-    - https://www.usenix.org/system/files/atc19-pang.pdf (Zanzibar paper)
-    """
-
-    MINIMIZE_LATENCY = "minimize_latency"  # Default: use cache, fastest
-    AT_LEAST_AS_FRESH = "at_least_as_fresh"  # Cache if revision >= min_revision
-    FULLY_CONSISTENT = "fully_consistent"  # Bypass cache, slowest but freshest
-
-
-@dataclass(slots=True)
-class ConsistencyRequirement:
-    """Per-request consistency requirement (Issue #1081).
-
-    Combines a consistency mode with optional parameters like min_revision.
-    This follows the SpiceDB/Zanzibar pattern for per-request consistency control.
-
-    Examples:
-        # Default: maximize cache usage (99% of requests)
-        ConsistencyRequirement()
-
-        # Read-after-write: ensure we see a recent write
-        ConsistencyRequirement(
-            mode=ConsistencyMode.AT_LEAST_AS_FRESH,
-            min_revision=write_result.revision
-        )
-
-        # Security audit: bypass all caches
-        ConsistencyRequirement(mode=ConsistencyMode.FULLY_CONSISTENT)
-
-    Attributes:
-        mode: The consistency mode to use
-        min_revision: Required for AT_LEAST_AS_FRESH - minimum acceptable revision
-    """
-
-    mode: ConsistencyMode = ConsistencyMode.MINIMIZE_LATENCY
-    min_revision: int | None = None
-
-    def __post_init__(self) -> None:
-        """Validate consistency requirement."""
-        if self.mode == ConsistencyMode.AT_LEAST_AS_FRESH and self.min_revision is None:
-            raise ValueError(
-                "min_revision is required for AT_LEAST_AS_FRESH mode. "
-                "Pass the revision from a previous write operation."
-            )
-
-    def to_legacy_level(self) -> ConsistencyLevel:
-        """Convert to legacy ConsistencyLevel for backward compatibility."""
-        if self.mode == ConsistencyMode.FULLY_CONSISTENT:
-            return ConsistencyLevel.STRONG
-        elif self.mode == ConsistencyMode.AT_LEAST_AS_FRESH:
-            return ConsistencyLevel.BOUNDED
-        else:
-            return ConsistencyLevel.EVENTUAL
-
-
-@dataclass(slots=True)
-class WriteResult:
-    """Result of a permission write with consistency metadata (Issue #1081).
-
-    Following the Zanzibar zookie pattern, writes return a consistency token
-    that can be used for subsequent read-your-writes queries.
-
-    Example:
-        # Write a permission
-        result = manager.rebac_write(subject, relation, object, zone_id=zone)
-
-        # Immediately check with read-your-writes guarantee
-        allowed = manager.rebac_check(
-            subject, permission, object,
-            consistency=ConsistencyRequirement(
-                mode=ConsistencyMode.AT_LEAST_AS_FRESH,
-                min_revision=result.revision
-            )
-        )
-
-    Attributes:
-        tuple_id: UUID of the created relationship tuple
-        revision: The revision number after this write (for AT_LEAST_AS_FRESH)
-        consistency_token: Opaque token encoding the revision (for clients)
-        written_at_ms: Timestamp when write was persisted (epoch ms)
-    """
-
-    tuple_id: str
-    revision: int
-    consistency_token: str
-    written_at_ms: float
-
-
-@dataclass(slots=True)
-class CheckResult:
-    """Result of a permission check with consistency metadata.
-
-    Attributes:
-        allowed: Whether permission is granted
-        consistency_token: Version token for this check (monotonic counter)
-        decision_time_ms: Time taken to compute decision
-        cached: Whether result came from cache
-        cache_age_ms: Age of cached result (None if not cached)
-        traversal_stats: Graph traversal statistics
-        indeterminate: Whether decision was indeterminate (denied due to limits, not policy)
-        limit_exceeded: The limit that was exceeded (if indeterminate=True)
-    """
-
-    allowed: bool
-    consistency_token: str
-    decision_time_ms: float
-    cached: bool
-    cache_age_ms: float | None = None
-    traversal_stats: TraversalStats | None = None
-    indeterminate: bool = False  # BUGFIX (Issue #5): Track limit-driven denials
-    limit_exceeded: GraphLimitExceeded | None = None  # BUGFIX (Issue #5): Which limit was hit
-
-
-@dataclass(slots=True)
-class TraversalStats:
-    """Statistics from graph traversal (P0-5).
-
-    Used for monitoring and debugging graph limits.
-    """
-
-    queries: int = 0
-    nodes_visited: int = 0
-    max_depth_reached: int = 0
-    cache_hits: int = 0
-    cache_misses: int = 0
-    duration_ms: float = 0.0
-
-
-# ============================================================================
-# P0-5: Graph Limits and DoS Protection
-# ============================================================================
-
-
-class GraphLimits:
-    """Hard limits for graph traversal to prevent DoS attacks.
-
-    These limits ensure permission checks complete within bounded time
-    and memory, even with pathological graphs.
-    """
-
-    MAX_DEPTH = 50  # Max recursion depth (increased for deep directory hierarchies)
-    MAX_FAN_OUT = 1000  # Max edges per union/expand
-    MAX_EXECUTION_TIME_MS = 1000  # 1 second timeout for permission computation
-    MAX_VISITED_NODES = 10000  # Memory bound
-    MAX_TUPLE_QUERIES = 100  # DB query limit
-
-
-class GraphLimitExceeded(Exception):
-    """Raised when graph traversal exceeds limits.
-
-    Attributes:
-        limit_type: Type of limit exceeded (depth, fan_out, timeout, nodes, queries)
-        limit_value: Configured limit value
-        actual_value: Actual value when limit was hit
-        path: Partial proof path before limit
-    """
-
-    def __init__(
-        self,
-        limit_type: str,
-        limit_value: int | float,
-        actual_value: int | float,
-        path: list[str] | None = None,
-    ):
-        self.limit_type = limit_type
-        self.limit_value = limit_value
-        self.actual_value = actual_value
-        self.path = path or []
-        super().__init__(f"Graph {limit_type} limit exceeded: {actual_value} > {limit_value}")
-
-    def to_http_error(self) -> dict[str, Any]:
-        """Convert to HTTP error response."""
-        if self.limit_type == "timeout":
-            return {
-                "code": 503,
-                "message": "Permission check timeout",
-                "limit": self.limit_value,
-                "actual": self.actual_value,
-            }
-        else:
-            return {
-                "code": 429,
-                "message": f"Graph {self.limit_type} limit exceeded",
-                "limit": self.limit_value,
-                "actual": self.actual_value,
-            }
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -317,8 +109,14 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
         # PERFORMANCE FIX: Cache zone tuples to avoid O(T) fetch per permission check
         # Key: zone_id, Value: (tuples_list, namespace_configs, cached_at_timestamp)
         # This dramatically reduces DB queries: from O(T) per check to O(1) amortized
-        self._zone_graph_cache: dict[str, tuple[list[dict[str, Any]], dict[str, Any], float]] = {}
+        # Issue #1459: LRU-capped to max 100 zones to prevent unbounded memory growth
+        from cachetools import LRUCache
+
+        self._zone_graph_cache: LRUCache[
+            str, tuple[list[dict[str, Any]], dict[str, Any], float]
+        ] = LRUCache(maxsize=100)
         self._zone_graph_cache_ttl = cache_ttl_seconds  # Reuse existing TTL
+        self._zone_graph_cache_lock = threading.RLock()
 
         # Leopard index for O(1) transitive group lookups (Issue #692)
         self._leopard: LeopardIndex | None = None
@@ -382,6 +180,18 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
         self._dir_visibility_invalidators: list[
             tuple[str, Any]  # (callback_id, callback_fn)
         ] = []
+
+        # Issue #1459: Unified cache coordinator
+        # Consolidates cache invalidation orchestration for future phases.
+        # Currently wired alongside existing invalidation paths.
+        from nexus.services.permissions.cache.coordinator import CacheCoordinator
+
+        self._cache_coordinator: CacheCoordinator = CacheCoordinator(
+            l1_cache=self._l1_cache,
+            boundary_cache=self._boundary_cache,
+            iterator_cache=self._iterator_cache,
+            zone_graph_cache=self._zone_graph_cache,
+        )
 
     def rebac_check(
         self,
@@ -453,16 +263,13 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
         else:
             # Legacy ConsistencyLevel
             consistency_level = consistency
-        import logging
-
-        logger = logging.getLogger(__name__)
         logger.debug(
             f"EnhancedReBACManager.rebac_check called: enforce_zone_isolation={self.enforce_zone_isolation}, MAX_DEPTH={GraphLimits.MAX_DEPTH}"
         )
 
         object_type, object_id = object
         subject_type, subject_id = subject
-        effective_zone = zone_id or "default"
+        effective_zone = normalize_zone_id(zone_id)
 
         # OPTIMIZATION 1: Boundary Cache (Issue #922) - O(1) inheritance shortcut
         # For file permissions, check if we have a cached boundary (nearest ancestor with grant)
@@ -604,7 +411,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
         """
         from datetime import UTC, datetime
 
-        effective_zone = zone_id or "default"
+        effective_zone = normalize_zone_id(zone_id)
         subject_type, subject_id = subject
         object_type, object_id = object
 
@@ -693,7 +500,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
 
         object_type, object_id = object
         subject_type, subject_id = subject
-        effective_zone = zone_id or "default"
+        effective_zone = normalize_zone_id(zone_id)
 
         # Check if this was a direct grant (if so, no need to cache boundary)
         if self._check_direct_grant(subject, permission, object, zone_id):
@@ -751,10 +558,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
         # BUGFIX (Issue #3): Fail fast on missing zone_id in production
         # In production, missing zone_id is a security issue - reject immediately
         if not zone_id:
-            import logging
             import os
-
-            logger = logging.getLogger(__name__)
 
             # Public role checks are zone-agnostic, so skip warning
             is_public_check = subject[0] == "role" and subject[1] == "public"
@@ -804,9 +608,6 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                 )
             except GraphLimitExceeded as e:
                 # BUGFIX (Issue #5): Fail-closed on limit exceeded, but mark as indeterminate
-                import logging
-
-                logger = logging.getLogger(__name__)
                 logger.error(
                     f"GraphLimitExceeded caught: limit_type={e.limit_type}, limit_value={e.limit_value}, actual_value={e.actual_value}"
                 )
@@ -893,9 +694,6 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
 
         else:  # ConsistencyLevel.EVENTUAL (default)
             # Eventual consistency: Use cache (up to cache_ttl_seconds staleness)
-            import logging
-
-            logger = logging.getLogger(__name__)
             cached = self._get_cached_check_zone_aware(
                 subject_entity, permission, object_entity, zone_id
             )
@@ -967,9 +765,6 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
         Raises:
             GraphLimitExceeded: If any limit is exceeded during traversal
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
         start_time = time.perf_counter()
 
         # Try Rust acceleration first (has proper memoization, prevents timeout)
@@ -1004,7 +799,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                 )
                 return result
 
-        except Exception as e:
+        except (RuntimeError, ValueError) as e:
             logger.warning(f"Rust single permission check failed, falling back to Python: {e}")
             # Fall through to Python implementation
 
@@ -1042,9 +837,6 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
         Returns:
             List of tuple dictionaries for Rust
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
 
         # PERFORMANCE: Check zone tuples cache first
         cached_tuples = self._get_cached_zone_tuples(zone_id)
@@ -1117,18 +909,19 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
         Returns:
             Cached tuples list or None if cache miss/expired
         """
-        if zone_id not in self._zone_graph_cache:
-            return None
+        with self._zone_graph_cache_lock:
+            if zone_id not in self._zone_graph_cache:
+                return None
 
-        tuples, _namespace_configs, cached_at = self._zone_graph_cache[zone_id]
-        age = time.perf_counter() - cached_at
+            tuples, _namespace_configs, cached_at = self._zone_graph_cache[zone_id]
+            age = time.perf_counter() - cached_at
 
-        if age > self._zone_graph_cache_ttl:
-            # Cache expired
-            del self._zone_graph_cache[zone_id]
-            return None
+            if age > self._zone_graph_cache_ttl:
+                # Cache expired
+                del self._zone_graph_cache[zone_id]
+                return None
 
-        return tuples
+            return tuples
 
     def _cache_zone_tuples(self, zone_id: str, tuples: list[dict[str, Any]]) -> None:
         """Cache zone tuples with timestamp.
@@ -1138,7 +931,8 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
             tuples: Tuples list to cache
         """
         namespace_configs = self._get_namespace_configs_for_rust()
-        self._zone_graph_cache[zone_id] = (tuples, namespace_configs, time.perf_counter())
+        with self._zone_graph_cache_lock:
+            self._zone_graph_cache[zone_id] = (tuples, namespace_configs, time.perf_counter())
 
     def get_zone_tuples(self, zone_id: str) -> list[dict[str, Any]]:
         """Fetch all permission tuples for a zone (for export/portability).
@@ -1174,6 +968,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                     FROM rebac_tuples
                     WHERE zone_id = ?
                       AND (expires_at IS NULL OR expires_at > ?)
+                    LIMIT 10000
                     """
                 ),
                 (zone_id, datetime.now(UTC).isoformat()),
@@ -1312,17 +1107,17 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
         Args:
             zone_id: Specific zone to invalidate, or None to clear all
         """
-        import logging
 
-        logger = logging.getLogger(__name__)
-
-        if zone_id is None:
-            count = len(self._zone_graph_cache)
-            self._zone_graph_cache.clear()
-            logger.debug(f"[GRAPH-CACHE] Cleared all {count} cached zone graphs")
-        elif zone_id in self._zone_graph_cache:
-            del self._zone_graph_cache[zone_id]
-            logger.debug(f"[GRAPH-CACHE] Invalidated cache for zone {zone_id}")
+        with self._zone_graph_cache_lock:
+            if zone_id is None:
+                count = len(self._zone_graph_cache)
+                self._zone_graph_cache.clear()
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug("[GRAPH-CACHE] Cleared all %d cached zone graphs", count)
+            elif zone_id in self._zone_graph_cache:
+                del self._zone_graph_cache[zone_id]
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug("[GRAPH-CACHE] Invalidated cache for zone %s", zone_id)
 
     # =========================================================================
     # Issue #922: Permission Boundary Cache Invalidation
@@ -1355,6 +1150,8 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
             if cid == callback_id:
                 return
         self._boundary_cache_invalidators.append((callback_id, callback))
+        # Also register with cache coordinator (Issue #1459)
+        self._cache_coordinator.register_boundary_invalidator(callback_id, callback)
 
     def unregister_boundary_cache_invalidator(self, callback_id: str) -> bool:
         """Unregister a boundary cache invalidation callback.
@@ -1382,9 +1179,6 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
 
         Extracts the permission from the relation and calls each invalidator.
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
 
         if not self._boundary_cache_invalidators:
             return
@@ -1431,7 +1225,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
             try:
                 for permission in permissions:
                     callback(zone_id, subject_type, subject_id, permission, object_id)
-            except Exception as e:
+            except (RuntimeError, ValueError, KeyError) as e:
                 logger.warning(f"[BOUNDARY-CACHE] Invalidator {callback_id} failed: {e}")
 
     # =========================================================================
@@ -1463,6 +1257,8 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
             if cid == callback_id:
                 return
         self._dir_visibility_invalidators.append((callback_id, callback))
+        # Also register with cache coordinator (Issue #1459)
+        self._cache_coordinator.register_visibility_invalidator(callback_id, callback)
 
     def unregister_dir_visibility_invalidator(self, callback_id: str) -> bool:
         """Unregister a directory visibility cache invalidation callback.
@@ -1493,9 +1289,6 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
             zone_id: Zone ID
             object: (object_type, object_id) tuple - only file objects trigger invalidation
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
 
         if not self._dir_visibility_invalidators:
             return
@@ -1513,7 +1306,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                 logger.debug(
                     f"[DIR-VIS-CACHE] Invalidator {callback_id} called for {zone_id}:{object_path}"
                 )
-            except Exception as e:
+            except (RuntimeError, ValueError, KeyError) as e:
                 logger.warning(f"[DIR-VIS-CACHE] Invalidator {callback_id} failed: {e}")
 
     def rebac_write(  # type: ignore[override]  # Issue #1081: Returns WriteResult instead of str
@@ -1576,7 +1369,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
         )
 
         # Invalidate cache for affected zones
-        effective_zone = zone_id or "default"
+        effective_zone = normalize_zone_id(zone_id)
         self.invalidate_zone_graph_cache(effective_zone)
 
         # For cross-zone shares, also invalidate the other zone
@@ -1587,9 +1380,6 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
 
         # Leopard: Update transitive closure for membership relations
         if self._leopard and relation in self.MEMBERSHIP_RELATIONS:
-            import logging
-
-            logger = logging.getLogger(__name__)
             subject_type = subject[0]
             subject_id = subject[1]
             object_type = object[0]
@@ -1607,7 +1397,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                     f"[LEOPARD] Updated closure for {subject_type}:{subject_id} -> "
                     f"{object_type}:{object_id}: {entries} entries"
                 )
-            except Exception as e:
+            except (OperationalError, ProgrammingError) as e:
                 # Log but don't fail the write - closure can be rebuilt
                 logger.warning(f"[LEOPARD] Failed to update closure: {e}")
 
@@ -1722,7 +1512,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
             # Invalidate cache for all affected zones
             affected_zones: set[str] = set()
             for t in tuples:
-                zone_id = t.get("zone_id") or "default"
+                zone_id = normalize_zone_id(t.get("zone_id"))
                 affected_zones.add(zone_id)
                 # Also check cross-zone shares
                 if t.get("subject_zone_id") and t.get("subject_zone_id") != zone_id:
@@ -1736,15 +1526,12 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
 
             # Leopard: Update transitive closure for membership relations
             if self._leopard:
-                import logging
-
-                logger = logging.getLogger(__name__)
                 for t in tuples:
                     relation = t.get("relation")
                     if relation in self.MEMBERSHIP_RELATIONS:
                         subject = t["subject"]
                         obj = t["object"]
-                        zone_id = t.get("zone_id") or "default"
+                        zone_id = normalize_zone_id(t.get("zone_id"))
 
                         subject_type = subject[0]
                         subject_id = subject[1]
@@ -1763,7 +1550,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                                 f"[LEOPARD] Updated closure for {subject_type}:{subject_id} -> "
                                 f"{object_type}:{object_id}: {entries} entries"
                             )
-                        except Exception as e:
+                        except (OperationalError, ProgrammingError) as e:
                             # Log but don't fail - closure can be rebuilt
                             logger.warning(f"[LEOPARD] Failed to update closure: {e}")
 
@@ -1801,7 +1588,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                     subject = t["subject"]
                     obj = t["object"]
                     relation = t.get("relation", "")
-                    zone_id = t.get("zone_id") or "default"
+                    zone_id = normalize_zone_id(t.get("zone_id"))
                     subject_tuple = (subject[0], subject[1])
                     object_type = obj[0]
                     object_id = obj[1]
@@ -1823,7 +1610,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
             # Issue #919: Notify directory visibility cache invalidators for all affected objects
             for t in tuples:
                 obj = t["object"]
-                zone_id = t.get("zone_id") or "default"
+                zone_id = normalize_zone_id(t.get("zone_id"))
                 self._notify_dir_visibility_invalidators(zone_id, obj)
 
             # Invalidate L1 permission cache for all affected subjects and objects
@@ -1831,7 +1618,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                 for t in tuples:
                     subject = t["subject"]
                     obj = t["object"]
-                    zone_id = t.get("zone_id") or "default"
+                    zone_id = normalize_zone_id(t.get("zone_id"))
                     self._l1_cache.invalidate_subject(subject[0], subject[1], zone_id)
                     self._l1_cache.invalidate_object(obj[0], obj[1], zone_id)
 
@@ -1928,19 +1715,14 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                                 permission=permission,
                                 resource_type=object_type,
                                 resource_id=object_id,
-                                zone_id=zone_id or "default",
+                                zone_id=normalize_zone_id(zone_id),
                             )
-                        except Exception as e:
-                            import logging
-
-                            logging.getLogger(__name__).debug(f"[TIGER] Revoke failed: {e}")
+                        except (OperationalError, ProgrammingError) as e:
+                            logger.debug(f"[TIGER] Revoke failed: {e}")
 
             # Leopard: Update transitive closure for membership relations
             if self._leopard and tuple_info["relation"] in self.MEMBERSHIP_RELATIONS:
-                import logging
-
-                logger = logging.getLogger(__name__)
-                effective_zone = zone_id or "default"
+                effective_zone = normalize_zone_id(zone_id)
 
                 try:
                     entries = self._leopard.update_closure_on_membership_remove(
@@ -1955,13 +1737,13 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                         f"{tuple_info['subject_type']}:{tuple_info['subject_id']} -> "
                         f"{tuple_info['object_type']}:{tuple_info['object_id']}: {entries} entries"
                     )
-                except Exception as e:
+                except (OperationalError, ProgrammingError) as e:
                     # Log but don't fail the delete - closure can be rebuilt
                     logger.warning(f"[LEOPARD] Failed to update closure on delete: {e}")
 
             # Issue #919: Notify directory visibility cache invalidators
             object_tuple = (tuple_info["object_type"], tuple_info["object_id"])
-            self._notify_dir_visibility_invalidators(zone_id or "default", object_tuple)
+            self._notify_dir_visibility_invalidators(normalize_zone_id(zone_id), object_tuple)
 
             # Invalidate L1 permission cache for affected subject and object
             if self._l1_cache is not None:
@@ -1969,7 +1751,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                 subject_id = tuple_info["subject_id"]
                 object_type = tuple_info["object_type"]
                 object_id = tuple_info["object_id"]
-                effective_zone = zone_id or "default"
+                effective_zone = normalize_zone_id(zone_id)
                 self._l1_cache.invalidate_subject(subject_type, subject_id, effective_zone)
                 self._l1_cache.invalidate_object(object_type, object_id, effective_zone)
 
@@ -2159,7 +1941,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                 # The permission grant (write path) will populate via persist_single_grant
                 if logger:
                     logger.debug(f"[TIGER] Read skip: resource {object[1]} not in memory cache")
-        except Exception as e:
+        except (RuntimeError, ValueError, KeyError) as e:
             # Don't fail the permission check if Tiger write fails
             if logger:
                 logger.debug(f"[TIGER] Write-through failed: {e}")
@@ -2337,9 +2119,6 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
         Returns:
             Number of entries processed
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
 
         if not self._tiger_updater:
             logger.warning("[TIGER] tiger_process_queue: _tiger_updater is None")
@@ -2430,9 +2209,6 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
         Returns:
             True if path appears to be a directory
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
 
         # Explicit directory marker
         if path.endswith("/"):
@@ -2522,7 +2298,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
             try:
                 # Check if any files exist under this path
                 return bool(self._metadata_store.is_implicit_directory(path))
-            except Exception as e:
+            except (RuntimeError, OperationalError) as e:
                 logger.debug(f"[LEOPARD] Failed to check directory via metadata: {e}")
 
         # Default: treat paths without extensions as potential directories
@@ -2553,9 +2329,6 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
             - Read optimization: O(depth) -> O(1) per file
             - Storage: O(grants) -> O(grants * avg_descendants)
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
 
         if not self._tiger_cache:
             return
@@ -2676,7 +2449,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                 result = conn.execute(query, {"zone_id": zone_id})
                 row = result.fetchone()
                 return int(row.current_version) if row else 0
-        except Exception:
+        except (OperationalError, ProgrammingError):
             return 0
 
     def _get_directory_descendants(
@@ -2693,9 +2466,6 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
         Returns:
             List of descendant file paths
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
 
         # Try using metadata store if available
         if hasattr(self, "_metadata_store") and self._metadata_store:
@@ -2706,7 +2476,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                     zone_id=zone_id,
                 )
                 return [f.path for f in files]
-            except Exception as e:
+            except (RuntimeError, OperationalError) as e:
                 logger.warning(f"[LEOPARD] Metadata store query failed: {e}")
 
         # Fallback: query file_paths table directly
@@ -2724,7 +2494,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
             with self.engine.connect() as conn:
                 result = conn.execute(query, {"prefix": f"{directory_path}%", "zone_id": zone_id})
                 return [row.virtual_path for row in result]
-        except Exception as e:
+        except (RuntimeError, OperationalError) as e:
             logger.error(f"[LEOPARD] Failed to query descendants: {e}")
             return []
 
@@ -2772,9 +2542,6 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
         - visited: prevents cycles within a single path (copied per branch)
         - memo: caches results across ALL branches (shared, never copied)
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
         indent = "  " * depth
 
         # Initialize memo on first call
@@ -2869,7 +2636,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                             logger.debug(f"{indent}└─[✅ GRANTED] via relation '{relation}'")
                             memo[memo_key] = True  # Cache positive result
                             return True
-                    except Exception as e:
+                    except (RuntimeError, ValueError) as e:
                         logger.error(
                             f"{indent}│ └─[ERROR] Exception while checking '{relation}': {type(e).__name__}: {e}"
                         )
@@ -2933,7 +2700,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                     )
                     # Re-raise to propagate to caller
                     raise
-                except Exception as e:
+                except (RuntimeError, ValueError) as e:
                     logger.error(
                         f"{indent}[depth={depth}]   [{i + 1}/{len(union_relations)}] Unexpected exception while checking '{rel}': {type(e).__name__}: {e}"
                     )
@@ -3077,9 +2844,6 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
         Returns:
             List of related object entities within the zone
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
         logger.debug(
             f"_find_related_objects_zone_aware: obj={obj}, relation={relation}, zone_id={zone_id}"
         )
@@ -3152,9 +2916,6 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
         Returns:
             List of subject entities (the subjects from matching tuples)
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
         logger.debug(
             f"_find_subjects_with_relation_zone_aware: Looking for (?, '{relation}', {obj})"
         )
@@ -3213,9 +2974,6 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
         Returns:
             True if direct relation exists within the zone
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
 
         # EXTENSIVE DEBUG LOGGING
         logger.debug(
@@ -3303,9 +3061,6 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                     ),
                 )
                 if cursor.fetchone():
-                    import logging
-
-                    logger = logging.getLogger(__name__)
                     logger.debug(f"Cross-zone share found: {subject} -> {relation} -> {obj}")
                     return True
 
@@ -3379,8 +3134,6 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                 # This handles nested groups, union expansion, etc.
                 # NOTE: We create a fresh stats object for this sub-check to avoid
                 # conflating limits across different code paths
-                from nexus.services.permissions.rebac_manager_enhanced import TraversalStats
-
                 sub_stats = TraversalStats()
                 userset_entity = Entity(userset_type, userset_id)
 
@@ -3401,9 +3154,6 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                         return True
                 except GraphLimitExceeded:
                     # If userset check hits limits, skip this userset and try others
-                    import logging
-
-                    logger = logging.getLogger(__name__)
                     logger.warning(
                         f"Userset check hit limits: {subject} -> {userset_relation} -> {userset_entity}, skipping"
                     )
@@ -3576,9 +3326,6 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
             >>> results = manager.rebac_check_bulk(checks, zone_id="org_123")
             >>> # Returns: {check1: True, check2: True, check3: False}
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
         import time as time_module
 
         bulk_start = time_module.perf_counter()
@@ -4187,7 +3934,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                                         tiger_updates[group_key] = set()
                                     tiger_updates[group_key].add(resource_int_id)
                                     tiger_writes += 1
-                            except Exception as e:
+                            except (KeyError, ValueError) as e:
                                 logger.debug(f"[TIGER] Failed to get int_id for {obj}: {e}")
 
                     # Bulk add to Tiger Cache bitmaps (memory)
@@ -4217,7 +3964,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                                     resource_int_ids=ids,
                                     zone_id=t,
                                 )
-                            except Exception as e:
+                            except (RuntimeError, OperationalError) as e:
                                 logger.debug(f"[TIGER] Background persist failed: {e}")
 
                     threading.Thread(
@@ -4237,7 +3984,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                     f"✅ [BULK-DEBUG] Rust acceleration successful for {len(cache_misses)} checks"
                 )
 
-            except Exception as e:
+            except (RuntimeError, ValueError) as e:
                 logger.warning(
                     f"[BULK-DEBUG] Rust acceleration failed: {e}, falling back to Python"
                 )
@@ -4266,7 +4013,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                         bulk_memo_cache=bulk_memo_cache,  # Pass shared memo cache
                         memo_stats=memo_stats,  # Pass stats tracker
                     )
-                except Exception as e:
+                except (RuntimeError, ValueError, OperationalError) as e:
                     logger.warning(f"Bulk check failed for {check}, falling back: {e}")
                     # Fallback to individual check
                     result = self.rebac_check(
@@ -4310,7 +4057,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                                     fallback_tiger_updates[group_key] = set()
                                 fallback_tiger_updates[group_key].add(resource_int_id)
                                 tiger_writes += 1
-                        except Exception as e:
+                        except (KeyError, ValueError) as e:
                             logger.debug(f"[TIGER] Failed to get int_id for {obj}: {e}")
 
                 # Bulk add to Tiger Cache bitmaps (memory)
@@ -4340,7 +4087,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                                 resource_int_ids=ids,
                                 zone_id=t,
                             )
-                        except Exception as e:
+                        except (RuntimeError, OperationalError) as e:
                             logger.debug(f"[TIGER] Background persist failed: {e}")
 
                 threading.Thread(
@@ -4446,7 +4193,6 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
             ...     offset=50,
             ... )
         """
-        import logging
         import time as time_module
 
         from nexus.services.permissions.rebac_fast import (
@@ -4454,11 +4200,10 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
             list_objects_for_subject_rust,
         )
 
-        logger = logging.getLogger(__name__)
         start_time = time_module.perf_counter()
 
         subject_type, subject_id = subject
-        zone_id = zone_id or "default"
+        zone_id = normalize_zone_id(zone_id)
 
         logger.debug(
             f"[LIST-OBJECTS] Starting for {subject_type}:{subject_id} "
@@ -4498,7 +4243,7 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
                     f"[LIST-OBJECTS] Rust completed: {len(result)} objects in {elapsed:.1f}ms"
                 )
                 return result
-            except Exception as e:
+            except (RuntimeError, ValueError) as e:
                 logger.warning(f"Rust list_objects_for_subject failed, falling back to Python: {e}")
                 # Fall through to Python implementation
 
@@ -4533,10 +4278,8 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
 
         Slower than Rust but provides same functionality when Rust is not available.
         """
-        import logging
         import time as time_module
 
-        logger = logging.getLogger(__name__)
         start_time = time_module.perf_counter()
 
         subject = Entity(subject_type, subject_id)
@@ -4776,9 +4519,6 @@ class EnhancedReBACManager(ZoneAwareReBACManager):
         Returns:
             True if permission is granted
         """
-        import logging
-
-        logger = logging.getLogger(__name__)
 
         # Initialize visited set on first call
         if visited is None:

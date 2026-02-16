@@ -348,10 +348,8 @@ async def _startup_scheduler(app: FastAPI) -> None:
         )
         app.state.scheduler_service = scheduler_service
 
-        # Store DSN for dispatcher LISTEN/NOTIFY (still needs raw asyncpg)
-        app.state.scheduler_dsn = db_url.replace("+asyncpg", "").replace(
-            "postgresql://", "postgresql://"
-        )
+        # Store async engine for dispatcher LISTEN/NOTIFY
+        app.state.scheduler_engine = _scheduler_engine
         logger.info("Scheduler service initialized (SQLAlchemy async ORM)")
     except ImportError as e:
         logger.debug(f"Scheduler service not available: {e}")

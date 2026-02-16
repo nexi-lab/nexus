@@ -423,8 +423,8 @@ class CacheConnectorMixin:
         # L2: Disk-based lookup for remaining paths (metadata sidecar + content files)
         file_cache = get_file_cache()
 
-        # Determine zone — use connector's zone_id or "default"
-        cache_zone = getattr(self, "zone_id", None) or "default"
+        # Determine zone — use connector's zone_id or "root"
+        cache_zone = getattr(self, "zone_id", None) or "root"
 
         # Read metadata sidecars in bulk
         meta_entries = file_cache.read_meta_bulk(cache_zone, paths_needing_l2)
@@ -616,7 +616,7 @@ class CacheConnectorMixin:
 
         # Read metadata sidecar from disk
         file_cache = get_file_cache()
-        cache_zone = getattr(self, "zone_id", None) or "default"
+        cache_zone = getattr(self, "zone_id", None) or "root"
         meta = file_cache.read_meta(cache_zone, path)
 
         if not meta:
@@ -719,7 +719,7 @@ class CacheConnectorMixin:
         content_hash = hash_content(content)
         original_size = len(content)
         now = datetime.now(UTC)
-        cache_zone = zone_id or "default"
+        cache_zone = zone_id or "root"
 
         # Determine text content
         if content_text is None:
@@ -1077,7 +1077,7 @@ class CacheConnectorMixin:
                 cached_size = len(content_text) if content_text else 0
 
                 # Write binary + text content to disk via FileContentCache
-                cache_zone = zone_id or "default"
+                cache_zone = zone_id or "root"
                 if original_size <= self.MAX_CACHE_FILE_SIZE:
                     try:
                         file_cache.write(cache_zone, path, content, text_content=content_text)
@@ -1201,7 +1201,7 @@ class CacheConnectorMixin:
         # Invalidate L1 memory cache
         memory_cache = self._get_l1_cache()
         file_cache = get_file_cache()
-        cache_zone = getattr(self, "zone_id", None) or "default"
+        cache_zone = getattr(self, "zone_id", None) or "root"
 
         if path:
             # Remove specific path from memory cache

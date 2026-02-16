@@ -41,7 +41,7 @@ class UploadSessionModel(Base):
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="created")
 
     # Identity
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
     user_id: Mapped[str] = mapped_column(String(255), nullable=False, default="anonymous")
 
     # tus metadata (JSON-encoded)

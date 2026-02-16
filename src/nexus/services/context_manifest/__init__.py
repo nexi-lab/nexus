@@ -23,7 +23,7 @@ Public API:
         - ``ALLOWED_VARIABLES`` — whitelist of allowed template variables
 
 References:
-    - docs/design/KERNEL-ARCHITECTURE.md
+    - docs/architecture/KERNEL-ARCHITECTURE.md
     - Issue #1341: Context manifest with deterministic pre-execution
 """
 

@@ -66,7 +66,7 @@ class PolicyEnforcedPayment(PaymentProtocol):
             5. Delegate to inner protocol
             6. On success → fire-and-forget ledger update
         """
-        zone_id = request.metadata.get("zone_id", "default") if request.metadata else "default"
+        zone_id = request.metadata.get("zone_id", "root") if request.metadata else "root"
         approval_id = request.metadata.get("approval_id") if request.metadata else None
 
         # 1. If approval_id provided, check it before evaluation

@@ -360,9 +360,9 @@ def create_nexus_services(
     session_factory = record_store.session_factory
 
     # --- ReBAC Manager ---
-    from nexus.rebac.manager import EnhancedReBACManager
+    from nexus.rebac.manager import ReBACManager
 
-    rebac_manager = EnhancedReBACManager(
+    rebac_manager = ReBACManager(
         engine=engine,
         cache_ttl_seconds=cache_ttl_seconds or 300,
         max_depth=10,
@@ -385,7 +385,7 @@ def create_nexus_services(
     )
 
     # --- Directory Visibility Cache ---
-    from nexus.rebac.dir_visibility_cache import DirectoryVisibilityCache
+    from nexus.rebac.cache.visibility import DirectoryVisibilityCache
 
     dir_visibility_cache = DirectoryVisibilityCache(
         tiger_cache=getattr(rebac_manager, "_tiger_cache", None),

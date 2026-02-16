@@ -273,10 +273,10 @@ class TestAgentReconnection:
     )
     def test_reconnection_flow(self, engine, store):
         """Full flow: build namespace → clear L2 → restore from L3."""
-        from nexus.rebac.manager import EnhancedReBACManager
+        from nexus.rebac.manager import ReBACManager
         from nexus.rebac.namespace_manager import MountEntry, NamespaceManager
 
-        rebac = EnhancedReBACManager(engine=engine, cache_ttl_seconds=300, max_depth=10)
+        rebac = ReBACManager(engine=engine, cache_ttl_seconds=300, max_depth=10)
         try:
             # Grant files
             rebac.rebac_write(

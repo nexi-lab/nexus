@@ -55,7 +55,7 @@ from cachetools import TTLCache
 
 if TYPE_CHECKING:
     from nexus.core.persistent_view_store import PersistentViewStore
-    from nexus.rebac.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.manager import ReBACManager
 
 logger = logging.getLogger(__name__)
 
@@ -156,7 +156,7 @@ class NamespaceManager:
     No stampede prevention — rebuild cost (1-5ms) is cheap.
 
     Args:
-        rebac_manager: EnhancedReBACManager for rebac_list_objects() and zone revision
+        rebac_manager: ReBACManager for rebac_list_objects() and zone revision
         cache_maxsize: Maximum number of subjects in the mount table cache (default: 10,000)
         cache_ttl: TTL in seconds for mount table cache entries (default: 300s, safety net)
         revision_window: Number of revisions per quantization bucket (default: 10)
@@ -170,7 +170,7 @@ class NamespaceManager:
 
     def __init__(
         self,
-        rebac_manager: EnhancedReBACManager,
+        rebac_manager: ReBACManager,
         cache_maxsize: int = 10_000,
         cache_ttl: int = 300,
         revision_window: int = 10,

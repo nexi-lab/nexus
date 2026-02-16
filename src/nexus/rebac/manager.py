@@ -33,13 +33,13 @@ from nexus.core.rebac import (
     NamespaceConfig,
 )
 from nexus.rebac.batch.bulk_checker import BulkPermissionChecker
+from nexus.rebac.cache.result_cache import ReBACPermissionCache
 from nexus.rebac.cache.tiger.facade import TigerFacade
 from nexus.rebac.consistency.revision import (
     get_zone_revision_for_grant,
     increment_version_token,
 )
 from nexus.rebac.consistency.zone_manager import (
-    ZoneIsolationError,  # noqa: F401 — re-exported for backward compat
     ZoneManager,
 )
 from nexus.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
@@ -59,11 +59,6 @@ from nexus.rebac.graph.bulk_evaluator import (
 from nexus.rebac.graph.expand import ExpandEngine
 from nexus.rebac.graph.traversal import PermissionComputer
 from nexus.rebac.graph.zone_traversal import ZoneAwareTraversal
-from nexus.rebac.rebac_cache import ReBACPermissionCache
-from nexus.rebac.rebac_fast import (
-    check_permissions_bulk_with_fallback,
-    is_rust_available,
-)
 from nexus.rebac.rebac_tracing import (
     record_check_result,
     record_graph_limit_exceeded,
@@ -75,7 +70,6 @@ from nexus.rebac.tuples.repository import TupleRepository
 from nexus.rebac.types import (
     CheckResult,
     ConsistencyLevel,
-    ConsistencyMode,  # noqa: F401 — re-exported for backward compatibility
     ConsistencyRequirement,
     GraphLimitExceeded,
     GraphLimits,
@@ -83,14 +77,18 @@ from nexus.rebac.types import (
     WriteResult,
 )
 from nexus.rebac.utils.changelog import insert_changelog_entry
+from nexus.rebac.utils.fast import (
+    check_permissions_bulk_with_fallback,
+    is_rust_available,
+)
 from nexus.rebac.utils.zone import normalize_zone_id
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
-    from nexus.rebac.leopard import LeopardIndex
-    from nexus.rebac.rebac_iterator_cache import IteratorCache
-    from nexus.rebac.tiger_cache import TigerCache, TigerCacheUpdater
+    from nexus.rebac.cache.iterator import IteratorCache
+    from nexus.rebac.cache.leopard import LeopardIndex
+    from nexus.rebac.cache.tiger import TigerCache, TigerCacheUpdater
 
 logger = logging.getLogger(__name__)
 
@@ -200,7 +198,7 @@ class ReBACManager:
         # Leopard index for O(1) transitive group lookups (Issue #692)
         self._leopard: LeopardIndex | None = None
         if enable_leopard:
-            from nexus.rebac.leopard import LeopardIndex
+            from nexus.rebac.cache.leopard import LeopardIndex
 
             self._leopard = LeopardIndex(
                 engine=engine,
@@ -213,7 +211,7 @@ class ReBACManager:
         self._tiger_cache: TigerCache | None = None
         self._tiger_updater: TigerCacheUpdater | None = None
         if enable_tiger_cache and engine.dialect.name == "postgresql":
-            from nexus.rebac.tiger_cache import (
+            from nexus.rebac.cache.tiger import (
                 TigerCache,
                 TigerCacheUpdater,
                 TigerResourceMap,
@@ -271,7 +269,7 @@ class ReBACManager:
         )
 
         # Iterator cache for paginated list operations (Issue #722)
-        from nexus.rebac.rebac_iterator_cache import IteratorCache
+        from nexus.rebac.cache.iterator import IteratorCache
 
         self._iterator_cache: IteratorCache = IteratorCache(
             max_size=1000,
@@ -279,7 +277,7 @@ class ReBACManager:
         )
 
         # Issue #922: Permission boundary cache for O(1) inheritance checks
-        from nexus.rebac.permission_boundary_cache import PermissionBoundaryCache
+        from nexus.rebac.cache.boundary import PermissionBoundaryCache
 
         self._boundary_cache: PermissionBoundaryCache = PermissionBoundaryCache()
 
@@ -900,7 +898,7 @@ class ReBACManager:
 
         # Try Rust acceleration first (has proper memoization, prevents timeout)
         try:
-            from nexus.rebac.rebac_fast import (
+            from nexus.rebac.utils.fast import (
                 check_permission_single_rust,
                 is_rust_available,
             )
@@ -2883,7 +2881,7 @@ class ReBACManager:
         """
         import time as time_module
 
-        from nexus.rebac.rebac_fast import (
+        from nexus.rebac.utils.fast import (
             RUST_AVAILABLE,
             list_objects_for_subject_rust,
         )
@@ -6156,12 +6154,3 @@ class ReBACManager:
         Connections are closed immediately after each operation.
         """
         pass
-
-
-# ====================================================================================
-# Backward Compatibility Alias
-# ====================================================================================
-
-# Backward-compat aliases (Issue #1385)
-EnhancedReBACManager = ReBACManager
-ZoneAwareReBACManager = ReBACManager

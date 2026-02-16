@@ -967,10 +967,10 @@ def test_dynamic_viewer_no_config_returns_none(rebac_manager):
 
 @pytest.fixture
 def enhanced_rebac_manager(engine):
-    """Create an EnhancedReBACManager for testing rebac_list_objects."""
-    from nexus.rebac.manager import EnhancedReBACManager
+    """Create an ReBACManager for testing rebac_list_objects."""
+    from nexus.rebac.manager import ReBACManager
 
-    manager = EnhancedReBACManager(
+    manager = ReBACManager(
         engine=engine,
         cache_ttl_seconds=300,
         max_depth=10,

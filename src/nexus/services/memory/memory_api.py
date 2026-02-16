@@ -10,7 +10,7 @@ inspired by SimpleMem (arXiv:2601.02553).
 from __future__ import annotations
 
 import builtins
-import contextlib
+from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, Literal
 
@@ -141,6 +141,32 @@ class Memory:
             is_admin=False,
         )
 
+        # Composed services (#1498)
+        from nexus.services.memory.ace_facade import AceFacade
+        from nexus.services.memory.state import MemoryStateManager
+        from nexus.services.memory.versioning import MemoryVersioning
+
+        self._versioning = MemoryVersioning(
+            session=session,
+            memory_router=self.memory_router,
+            permission_enforcer=self.permission_enforcer,
+            backend=backend,
+            context=self.context,
+        )
+        self._state = MemoryStateManager(
+            memory_router=self.memory_router,
+            permission_enforcer=self.permission_enforcer,
+            context=self.context,
+        )
+        self._ace = AceFacade(
+            session=session,
+            backend=backend,
+            llm_provider=llm_provider,
+            user_id=user_id or "system",
+            agent_id=agent_id,
+            zone_id=zone_id,
+        )
+
     @staticmethod
     def _get_text_content(content: str | bytes | dict[str, Any]) -> str | None:
         """Extract text from content for enrichment pipeline.
@@ -158,6 +184,74 @@ class Memory:
         elif isinstance(content, str):
             return content if content.strip() else None
         return None
+
+    def _read_content(self, content_hash: str, *, parse_json: bool = False) -> str | dict[str, Any]:
+        """Read and decode content from CAS backend (#1498 DRY helper).
+
+        Centralises the content-read-and-decode pattern used by get(), query(),
+        search(), retrieve(), get_history(), get_version(), and diff_versions().
+
+        Args:
+            content_hash: CAS content hash to read.
+            parse_json: If True, attempt to parse UTF-8 content as JSON first.
+
+        Returns:
+            Decoded string, parsed dict (if parse_json), or hex for binary.
+            Falls back to a placeholder string on read failure.
+        """
+        import json as _json
+
+        try:
+            content_bytes: bytes = self.backend.read_content(
+                content_hash, context=self.context
+            ).unwrap()
+            if parse_json:
+                try:
+                    parsed: dict[str, Any] = _json.loads(content_bytes.decode("utf-8"))
+                    return parsed
+                except (_json.JSONDecodeError, UnicodeDecodeError):
+                    pass
+            try:
+                return content_bytes.decode("utf-8")
+            except UnicodeDecodeError:
+                return content_bytes.hex()
+        except Exception:
+            return f"<content not available: {content_hash}>"
+
+    def _batch_operation(
+        self,
+        memory_ids: list[str],
+        operation: Callable[[str], bool],
+        success_key: str = "success",
+    ) -> dict[str, Any]:
+        """Generic batch operation helper (#1498 DRY helper).
+
+        Applies a single-item operation to each ID and collects results.
+
+        Args:
+            memory_ids: List of memory IDs to operate on.
+            operation: Callable taking a memory_id and returning bool.
+            success_key: Name for the success count in the result dict
+                (e.g., 'approved', 'deleted', 'deactivated', 'invalidated').
+
+        Returns:
+            Dict with success/failure counts and ID lists.
+        """
+        success_ids: list[str] = []
+        failed_ids: list[str] = []
+
+        for memory_id in memory_ids:
+            if operation(memory_id):
+                success_ids.append(memory_id)
+            else:
+                failed_ids.append(memory_id)
+
+        return {
+            success_key: len(success_ids),
+            "failed": len(failed_ids),
+            f"{success_key}_ids": success_ids,
+            "failed_ids": failed_ids,
+        }
 
     def store(
         self,
@@ -247,33 +341,33 @@ class Memory:
         """
         import json
 
-        # #1027: Apply coreference resolution before storing (write-time disambiguation)
-        # This transforms "He went to the store" -> "John Smith went to the store"
-        # making memories self-contained and context-independent
-        if resolve_coreferences and isinstance(content, str):
-            from nexus.core.coref_resolver import resolve_coreferences as resolve_coref
+        from nexus.services.memory.enrichment import EnrichmentFlags, EnrichmentPipeline
 
-            content = resolve_coref(
-                text=content,
-                context=coreference_context,
-                llm_provider=self.llm_provider,
-            )
+        # Build enrichment flags from store() parameters
+        enrichment_flags = EnrichmentFlags(
+            generate_embedding=generate_embedding,
+            extract_entities=extract_entities,
+            extract_temporal=extract_temporal,
+            extract_relationships=extract_relationships,
+            classify_stability=classify_stability,
+            detect_evolution=detect_evolution,
+            resolve_coreferences=resolve_coreferences,
+            resolve_temporal=resolve_temporal,
+            store_to_graph=store_to_graph,
+            embedding_provider=embedding_provider,
+            coreference_context=coreference_context,
+            temporal_reference_time=temporal_reference_time,
+            relationship_types=relationship_types,
+        )
 
-        # #1027: Apply temporal resolution (Φtime from SimpleMem pipeline)
-        # This transforms "Meeting tomorrow" -> "Meeting on 2025-01-11"
-        # making memories time-independent and self-contained
-        if resolve_temporal and isinstance(content, str):
-            from nexus.core.temporal_resolver import resolve_temporal as resolve_temp
+        pipeline = EnrichmentPipeline(llm_provider=self.llm_provider)
 
-            content = resolve_temp(
-                text=content,
-                reference_time=temporal_reference_time,
-                llm_provider=self.llm_provider,
-            )
+        # #1027: Apply write-time content transformations (coreference + temporal resolution)
+        if isinstance(content, str):
+            content = pipeline.resolve_content(content, enrichment_flags)
 
         # Convert content to bytes
         if isinstance(content, dict):
-            # Structured content - serialize as JSON
             content_bytes = json.dumps(content, indent=2).encode("utf-8")
         elif isinstance(content, str):
             content_bytes = content.encode("utf-8")
@@ -284,152 +378,19 @@ class Memory:
         zone_id = context.zone_id if context else self.zone_id
         user_id = context.user_id if context else self.user_id
         agent_id = context.agent_id if context else self.agent_id
+
         # Store content in backend (CAS)
-        # LocalBackend.write_content() handles hashing and storage
         try:
             backend_context = context if context else self.context
             content_hash = self.backend.write_content(
                 content_bytes, context=backend_context
             ).unwrap()
         except Exception as e:
-            # If backend write fails, we can't proceed
             raise RuntimeError(f"Failed to store content in backend: {e}") from e
 
-        # DRY: Extract text content once for all enrichment steps (#1191)
+        # Run enrichment pipeline on text content
         text_content = self._get_text_content(content)
-
-        # Generate embedding if requested (#406)
-        embedding_json = None
-        embedding_model_name = None
-        embedding_dim = None
-
-        if generate_embedding and text_content:
-            # Try to get embedding provider
-            if embedding_provider is None:
-                try:
-                    from nexus.search.embeddings import create_embedding_provider
-
-                    # Try to create default provider (OpenRouter)
-                    with contextlib.suppress(Exception):
-                        embedding_provider = create_embedding_provider(provider="openrouter")
-                except ImportError:
-                    pass
-
-            # Generate embedding
-            if embedding_provider:
-                from nexus.core.sync_bridge import run_sync
-
-                try:
-                    embedding_vec = run_sync(embedding_provider.embed_text(text_content))
-                    embedding_json = json.dumps(embedding_vec)
-                    embedding_model_name = getattr(embedding_provider, "model", "unknown")
-                    embedding_dim = len(embedding_vec)
-                except Exception:
-                    # Failed to generate embedding, continue without it
-                    pass
-
-        # #1025: Extract named entities for symbolic filtering
-        entities_json_str = None
-        entity_types_str = None
-        person_refs_str = None
-
-        if extract_entities and text_content:
-            from nexus.services.permissions.entity_extractor import EntityExtractor
-
-            extractor = EntityExtractor(use_spacy=False)
-            entities = extractor.extract(text_content)
-
-            if entities:
-                entities_json_str = json.dumps([e.to_dict() for e in entities])
-                entity_types_str = extractor.get_entity_types_string(text_content)
-                person_refs_str = extractor.get_person_refs_string(text_content)
-
-        # DRY: Parse entities once for reuse across enrichment steps (#1190)
-        parsed_entities: list[dict[str, Any]] | None = None
-        if entities_json_str:
-            parsed_entities = json.loads(entities_json_str)
-
-        # #1028: Extract temporal metadata for date-based queries
-        temporal_refs_json_str = None
-        earliest_date = None
-        latest_date = None
-
-        if extract_temporal and text_content:
-            from nexus.core.temporal_resolver import extract_temporal_metadata
-
-            temporal_meta = extract_temporal_metadata(
-                text_content,
-                reference_time=temporal_reference_time,
-            )
-
-            if temporal_meta["temporal_refs"]:
-                temporal_refs_json_str = json.dumps(temporal_meta["temporal_refs"])
-                earliest_date = temporal_meta["earliest_date"]
-                latest_date = temporal_meta["latest_date"]
-
-        # #1038: Extract relationships for graph-based retrieval
-        relationships_json_str = None
-        relationship_count_val = None
-
-        if extract_relationships and text_content:
-            from nexus.services.memory.relationship_extractor import LLMRelationshipExtractor
-
-            rel_extractor = LLMRelationshipExtractor(
-                llm_provider=self.llm_provider,
-                confidence_threshold=0.5,
-            )
-
-            # Get entities as hints for relationship extraction
-            entities_for_rel = parsed_entities
-
-            rel_result = rel_extractor.extract(
-                text_content,
-                entities=entities_for_rel,
-                relationship_types=relationship_types,
-            )
-
-            if rel_result.relationships:
-                relationships_json_str = json.dumps(rel_result.to_dicts())
-                relationship_count_val = len(rel_result.relationships)
-
-        # #1191: Auto-classify temporal stability
-        temporal_stability_val = None
-        stability_confidence_val = None
-        estimated_ttl_days_val = None
-
-        if classify_stability and text_content:
-            try:
-                from nexus.services.memory.stability_classifier import (
-                    TemporalStabilityClassifier,
-                )
-
-                classifier = TemporalStabilityClassifier(
-                    llm_provider=self.llm_provider,
-                )
-
-                # Reuse already-extracted entities and temporal refs
-                entities_for_classify = parsed_entities
-
-                temporal_refs_for_classify = None
-                if temporal_refs_json_str:
-                    temporal_refs_for_classify = json.loads(temporal_refs_json_str)
-
-                classification = classifier.classify(
-                    text=text_content,
-                    entities=entities_for_classify,
-                    temporal_refs=temporal_refs_for_classify,
-                )
-
-                temporal_stability_val = classification.temporal_stability
-                stability_confidence_val = classification.confidence
-                estimated_ttl_days_val = classification.estimated_ttl_days
-            except Exception:
-                import logging
-
-                logging.getLogger(__name__).warning(
-                    "Stability classification failed, continuing without it",
-                    exc_info=True,
-                )
+        enrichment = pipeline.enrich(text_content, enrichment_flags)
 
         # #1183: Parse valid_at if provided as string
         valid_at_dt = (
@@ -457,25 +418,25 @@ class Memory:
             importance=importance,
             namespace=namespace,
             path_key=path_key,
-            state=state,  # #368: Pass state parameter
-            embedding=embedding_json,  # #406: Store embedding
-            embedding_model=embedding_model_name,  # #406: Store model name
-            embedding_dim=embedding_dim,  # #406: Store dimension
-            entities_json=entities_json_str,  # #1025: Store entities
-            entity_types=entity_types_str,  # #1025: Store entity types
-            person_refs=person_refs_str,  # #1025: Store person references
-            temporal_refs_json=temporal_refs_json_str,  # #1028: Store temporal refs
-            earliest_date=earliest_date,  # #1028: Store earliest date
-            latest_date=latest_date,  # #1028: Store latest date
-            relationships_json=relationships_json_str,  # #1038: Store relationships
-            relationship_count=relationship_count_val,  # #1038: Store relationship count
-            temporal_stability=temporal_stability_val,  # #1191: Stability classification
-            stability_confidence=stability_confidence_val,  # #1191: Classification confidence
-            estimated_ttl_days=estimated_ttl_days_val,  # #1191: Estimated TTL
-            valid_at=valid_at_dt,  # #1183: When fact became valid
-            size_bytes=len(content_bytes),  # #1184: Content size for versioning
-            created_by=user_id or agent_id,  # #1184: Who created this version
-            change_reason=change_reason,  # #1188: For correction mode
+            state=state,
+            embedding=enrichment.embedding_json,
+            embedding_model=enrichment.embedding_model,
+            embedding_dim=enrichment.embedding_dim,
+            entities_json=enrichment.entities_json,
+            entity_types=enrichment.entity_types,
+            person_refs=enrichment.person_refs,
+            temporal_refs_json=enrichment.temporal_refs_json,
+            earliest_date=enrichment.earliest_date,
+            latest_date=enrichment.latest_date,
+            relationships_json=enrichment.relationships_json,
+            relationship_count=enrichment.relationship_count,
+            temporal_stability=enrichment.temporal_stability,
+            stability_confidence=enrichment.stability_confidence,
+            estimated_ttl_days=enrichment.estimated_ttl_days,
+            valid_at=valid_at_dt,
+            size_bytes=len(content_bytes),
+            created_by=user_id or agent_id,
+            change_reason=change_reason,
         )
 
         # #1190: Detect memory evolution relationships (opt-in)
@@ -490,16 +451,16 @@ class Memory:
 
                 # Reuse embedding vector if available
                 embedding_vec_for_evolution = None
-                if embedding_json:
-                    embedding_vec_for_evolution = json.loads(embedding_json)
+                if enrichment.embedding_json:
+                    embedding_vec_for_evolution = json.loads(enrichment.embedding_json)
 
                 evolution_result = detector.detect(
                     session=self.session,
                     zone_id=zone_id,
                     new_text=text_content,
-                    new_entities=parsed_entities,
-                    person_refs=person_refs_str,
-                    entity_types=entity_types_str,
+                    new_entities=enrichment.parsed_entities,
+                    person_refs=enrichment.person_refs,
+                    entity_types=enrichment.entity_types,
                     embedding_vec=embedding_vec_for_evolution,
                     exclude_memory_id=memory.memory_id,
                 )
@@ -519,13 +480,13 @@ class Memory:
                 )
 
         # #1039: Store extracted entities and relationships to graph tables
-        if store_to_graph and (entities_json_str or relationships_json_str):
+        if store_to_graph and (enrichment.entities_json or enrichment.relationships_json):
             try:
                 self._store_to_graph(
                     memory_id=memory.memory_id,
                     zone_id=zone_id,
-                    entities_json=entities_json_str,
-                    relationships_json=relationships_json_str,
+                    entities_json=enrichment.entities_json,
+                    relationships_json=enrichment.relationships_json,
                 )
             except Exception as e:
                 # Log warning but don't fail the memory store
@@ -869,7 +830,9 @@ class Memory:
         ]
         content_map = self.backend.batch_read_content(content_hashes)
 
-        # Build results with enriched content
+        # Build results with enriched content using Pydantic models (#1498)
+        from nexus.services.memory.response_models import MemoryQueryResponse
+
         results = []
         for memory in accessible_memories:
             # #1185: Get content hash (use historical version if as_of_system was specified)
@@ -896,46 +859,12 @@ class Memory:
             )
 
             results.append(
-                {
-                    "memory_id": memory.memory_id,
-                    "content": content,
-                    "content_hash": effective_content_hash,  # #1185: Use historical hash for as_of_system
-                    "zone_id": memory.zone_id,
-                    "user_id": memory.user_id,
-                    "agent_id": memory.agent_id,
-                    "scope": memory.scope,
-                    "visibility": memory.visibility,
-                    "memory_type": memory.memory_type,
-                    "importance": memory.importance,
-                    "importance_effective": effective_importance,  # #1030
-                    "state": memory.state,  # #368
-                    "namespace": memory.namespace,  # v0.8.0
-                    "path_key": memory.path_key,  # v0.8.0
-                    "entity_types": memory.entity_types,  # #1025
-                    "person_refs": memory.person_refs,  # #1025
-                    "temporal_refs_json": memory.temporal_refs_json,  # #1028
-                    "earliest_date": memory.earliest_date.isoformat()
-                    if memory.earliest_date
-                    else None,  # #1028
-                    "latest_date": memory.latest_date.isoformat()
-                    if memory.latest_date
-                    else None,  # #1028
-                    "relationships_json": memory.relationships_json,  # #1038
-                    "relationship_count": memory.relationship_count,  # #1038
-                    "temporal_stability": memory.temporal_stability,  # #1191
-                    "stability_confidence": memory.stability_confidence,  # #1191
-                    "estimated_ttl_days": memory.estimated_ttl_days,  # #1191
-                    "extends_ids": memory.extends_ids,  # #1190
-                    "extended_by_ids": memory.extended_by_ids,  # #1190
-                    "derived_from_ids": memory.derived_from_ids,  # #1190
-                    "created_at": memory.created_at.isoformat() if memory.created_at else None,
-                    "updated_at": memory.updated_at.isoformat() if memory.updated_at else None,
-                    "valid_at": memory.valid_at.isoformat() if memory.valid_at else None,  # #1183
-                    "invalid_at": memory.invalid_at.isoformat()
-                    if memory.invalid_at
-                    else None,  # #1183
-                    "is_current": memory.invalid_at is None,  # #1183: True if not invalidated
-                }
+                MemoryQueryResponse.from_memory_model(
+                    memory,
+                    content=content,
+                    importance_effective=effective_importance,
+                    content_hash_override=effective_content_hash,
+                ).model_dump()
             )
 
         return results
@@ -1102,39 +1031,22 @@ class Memory:
             # Limit results
             scored_memories = scored_memories[:limit]
 
-            # Build result list with content
+            # Build result list with content using Pydantic model (#1498)
+            from nexus.services.memory.response_models import MemorySearchResponse
+
             results = []
             for memory, score, semantic_score, keyword_score in scored_memories:
-                # Read content
-                try:
-                    content_bytes = self.backend.read_content(
-                        memory.content_hash, context=self.context
-                    ).unwrap()
-                    content = content_bytes.decode("utf-8")
-                except Exception:
-                    content = f"<content not available: {memory.content_hash}>"
+                # Read content via DRY helper (#1498)
+                content = self._read_content(memory.content_hash)
 
                 results.append(
-                    {
-                        "memory_id": memory.memory_id,
-                        "content": content,
-                        "content_hash": memory.content_hash,
-                        "zone_id": memory.zone_id,
-                        "user_id": memory.user_id,
-                        "agent_id": memory.agent_id,
-                        "scope": memory.scope,
-                        "visibility": memory.visibility,
-                        "memory_type": memory.memory_type,
-                        "importance": memory.importance,
-                        "state": memory.state,
-                        "namespace": memory.namespace,
-                        "path_key": memory.path_key,
-                        "created_at": memory.created_at.isoformat() if memory.created_at else None,
-                        "updated_at": memory.updated_at.isoformat() if memory.updated_at else None,
-                        "score": score,
-                        "semantic_score": semantic_score if search_mode == "hybrid" else None,
-                        "keyword_score": keyword_score if search_mode == "hybrid" else None,
-                    }
+                    MemorySearchResponse.from_memory_model(
+                        memory,
+                        content=content,
+                        score=score,
+                        semantic_score=semantic_score if search_mode == "hybrid" else None,
+                        keyword_score=keyword_score if search_mode == "hybrid" else None,
+                    ).model_dump()
                 )
 
             return results
@@ -1316,39 +1228,12 @@ class Memory:
         }
 
     def _resolve_to_current(self, memory_id: str) -> Any:
-        """Follow the superseded_by chain to find the current memory (#1188).
-
-        If the given memory_id has been superseded, follows the chain forward
-        to find the latest (current) version.
-
-        Uses _get_memory_by_id_raw to traverse through soft-deleted nodes
-        in the chain. The caller (get()) handles filtering deleted memories.
-
-        Returns:
-            The current MemoryModel, or None if not found.
-        """
-        memory = self.memory_router._get_memory_by_id_raw(memory_id)
-        if not memory:
-            return None
-
-        # Follow superseded_by_id chain to current version
-        visited = {memory.memory_id}
-        while memory.superseded_by_id:
-            successor = self.memory_router._get_memory_by_id_raw(memory.superseded_by_id)
-            if successor is None or successor.memory_id in visited:
-                break
-            visited.add(successor.memory_id)
-            memory = successor
-
-        return memory
+        """Follow the superseded_by chain to find the current memory (#1188). Delegates to MemoryVersioning."""
+        return self._versioning.resolve_to_current(memory_id)
 
     def resolve_to_current(self, memory_id: str) -> Any:
-        """Public wrapper for _resolve_to_current (#1193).
-
-        Follow the superseded_by chain to find the current memory.
-        Returns the current MemoryModel, or None if not found.
-        """
-        return self._resolve_to_current(memory_id)
+        """Public wrapper for version resolution (#1193). Delegates to MemoryVersioning."""
+        return self._versioning.resolve_to_current(memory_id)
 
     def ensure_upsert_key(self, memory_id: str, existing: dict[str, Any]) -> str:
         """Ensure memory has a path_key for upsert operations (#1193).
@@ -1413,18 +1298,8 @@ class Memory:
         if track_access:
             self._track_memory_access(memory)
 
-        # Read content
-        content = None
-        try:
-            content_bytes = self.backend.read_content(
-                memory.content_hash, context=self.context
-            ).unwrap()
-            try:
-                content = content_bytes.decode("utf-8")
-            except UnicodeDecodeError:
-                content = content_bytes.hex()
-        except Exception:
-            content = f"<content not available: {memory.content_hash}>"
+        # Read content via DRY helper (#1498)
+        content = self._read_content(memory.content_hash)
 
         # Calculate effective importance with decay (Issue #1030)
         effective_importance = get_effective_importance(
@@ -1434,40 +1309,13 @@ class Memory:
             created_at=memory.created_at,
         )
 
-        return {
-            "memory_id": memory.memory_id,
-            "content": content,
-            "content_hash": memory.content_hash,
-            "zone_id": memory.zone_id,
-            "user_id": memory.user_id,
-            "agent_id": memory.agent_id,
-            "scope": memory.scope,
-            "visibility": memory.visibility,
-            "memory_type": memory.memory_type,
-            "importance": memory.importance,
-            "importance_original": memory.importance_original,  # #1030
-            "importance_effective": effective_importance,  # #1030
-            "access_count": memory.access_count,  # #1030
-            "last_accessed_at": (
-                memory.last_accessed_at.isoformat() if memory.last_accessed_at else None
-            ),  # #1030
-            "state": memory.state,  # #368
-            "namespace": memory.namespace,
-            "path_key": memory.path_key,
-            "created_at": memory.created_at.isoformat() if memory.created_at else None,
-            "updated_at": memory.updated_at.isoformat() if memory.updated_at else None,
-            "valid_at": memory.valid_at.isoformat() if memory.valid_at else None,  # #1183
-            "invalid_at": memory.invalid_at.isoformat() if memory.invalid_at else None,  # #1183
-            "is_current": memory.invalid_at is None,  # #1183: True if not invalidated
-            "temporal_stability": memory.temporal_stability,  # #1191
-            "stability_confidence": memory.stability_confidence,  # #1191
-            "estimated_ttl_days": memory.estimated_ttl_days,  # #1191
-            "supersedes_id": memory.supersedes_id,  # #1190
-            "superseded_by_id": memory.superseded_by_id,  # #1190
-            "extends_ids": memory.extends_ids,  # #1190
-            "extended_by_ids": memory.extended_by_ids,  # #1190
-            "derived_from_ids": memory.derived_from_ids,  # #1190
-        }
+        from nexus.services.memory.response_models import MemoryDetailResponse
+
+        return MemoryDetailResponse.from_memory_model(
+            memory,
+            content=content,
+            importance_effective=effective_importance,
+        ).model_dump()
 
     def retrieve(
         self,
@@ -1524,43 +1372,15 @@ class Memory:
         if not self.permission_enforcer.check_memory(memory, Permission.READ, self.context):
             return None
 
-        # Read content
-        content = None
-        import json
+        # Read content via DRY helper (#1498), try JSON parse for structured content
+        content = self._read_content(memory.content_hash, parse_json=True)
 
-        try:
-            content_bytes = self.backend.read_content(
-                memory.content_hash, context=self.context
-            ).unwrap()
-            try:
-                # Try to parse as JSON (structured content)
-                content = json.loads(content_bytes.decode("utf-8"))
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                # Fall back to text or hex
-                try:
-                    content = content_bytes.decode("utf-8")
-                except UnicodeDecodeError:
-                    content = content_bytes.hex()
-        except Exception:
-            content = f"<content not available: {memory.content_hash}>"
+        from nexus.services.memory.response_models import MemoryRetrieveResponse
 
-        return {
-            "memory_id": memory.memory_id,
-            "content": content,
-            "content_hash": memory.content_hash,
-            "zone_id": memory.zone_id,
-            "user_id": memory.user_id,
-            "agent_id": memory.agent_id,
-            "scope": memory.scope,
-            "visibility": memory.visibility,
-            "memory_type": memory.memory_type,
-            "importance": memory.importance,
-            "state": memory.state,  # #368
-            "namespace": memory.namespace,
-            "path_key": memory.path_key,
-            "created_at": memory.created_at.isoformat() if memory.created_at else None,
-            "updated_at": memory.updated_at.isoformat() if memory.updated_at else None,
-        }
+        return MemoryRetrieveResponse.from_memory_model(
+            memory,
+            content=content,
+        ).model_dump()
 
     def delete(
         self,
@@ -1580,380 +1400,53 @@ class Memory:
             >>> memory.delete("mem_123")
             True
         """
-        memory = self.memory_router.get_memory_by_id(memory_id)
-        if not memory:
-            return False
-
-        # Check permission
-        check_context = context or self.context
-        if not self.permission_enforcer.check_memory(memory, Permission.WRITE, check_context):
-            return False
-
-        return self.memory_router.delete_memory(memory_id)
+        return self._state.delete(memory_id, context=context)
 
     def approve(self, memory_id: str) -> bool:
-        """Approve a memory (activate it) (#368).
-
-        Args:
-            memory_id: Memory ID to approve.
-
-        Returns:
-            True if approved, False if not found or no permission.
-
-        Example:
-            >>> memory.approve("mem_123")
-            True
-        """
-        memory = self.memory_router.get_memory_by_id(memory_id)
-        if not memory:
-            return False
-
-        # Check permission
-        if not self.permission_enforcer.check_memory(memory, Permission.WRITE, self.context):
-            return False
-
-        result = self.memory_router.approve_memory(memory_id)
-        return result is not None
+        """Approve a memory (activate it) (#368). Delegates to MemoryStateManager."""
+        return self._state.approve(memory_id)
 
     def deactivate(self, memory_id: str) -> bool:
-        """Deactivate a memory (make it inactive) (#368).
-
-        Args:
-            memory_id: Memory ID to deactivate.
-
-        Returns:
-            True if deactivated, False if not found or no permission.
-
-        Example:
-            >>> memory.deactivate("mem_123")
-            True
-        """
-        memory = self.memory_router.get_memory_by_id(memory_id)
-        if not memory:
-            return False
-
-        # Check permission
-        if not self.permission_enforcer.check_memory(memory, Permission.WRITE, self.context):
-            return False
-
-        result = self.memory_router.deactivate_memory(memory_id)
-        return result is not None
+        """Deactivate a memory (make it inactive) (#368). Delegates to MemoryStateManager."""
+        return self._state.deactivate(memory_id)
 
     def approve_batch(self, memory_ids: list[str]) -> dict[str, Any]:
-        """Approve multiple memories at once (#368).
-
-        Args:
-            memory_ids: List of memory IDs to approve.
-
-        Returns:
-            Dictionary with success/failure counts and details.
-
-        Example:
-            >>> result = memory.approve_batch(["mem_1", "mem_2", "mem_3"])
-            >>> print(f"Approved {result['approved']} memories")
-        """
-        approved = []
-        failed = []
-
-        for memory_id in memory_ids:
-            if self.approve(memory_id):
-                approved.append(memory_id)
-            else:
-                failed.append(memory_id)
-
-        return {
-            "approved": len(approved),
-            "failed": len(failed),
-            "approved_ids": approved,
-            "failed_ids": failed,
-        }
+        """Approve multiple memories at once (#368). Delegates to MemoryStateManager."""
+        return self._state.approve_batch(memory_ids)
 
     def deactivate_batch(self, memory_ids: list[str]) -> dict[str, Any]:
-        """Deactivate multiple memories at once (#368).
-
-        Args:
-            memory_ids: List of memory IDs to deactivate.
-
-        Returns:
-            Dictionary with success/failure counts and details.
-
-        Example:
-            >>> result = memory.deactivate_batch(["mem_1", "mem_2", "mem_3"])
-            >>> print(f"Deactivated {result['deactivated']} memories")
-        """
-        deactivated = []
-        failed = []
-
-        for memory_id in memory_ids:
-            if self.deactivate(memory_id):
-                deactivated.append(memory_id)
-            else:
-                failed.append(memory_id)
-
-        return {
-            "deactivated": len(deactivated),
-            "failed": len(failed),
-            "deactivated_ids": deactivated,
-            "failed_ids": failed,
-        }
+        """Deactivate multiple memories at once (#368). Delegates to MemoryStateManager."""
+        return self._state.deactivate_batch(memory_ids)
 
     def delete_batch(self, memory_ids: list[str]) -> dict[str, Any]:
-        """Delete multiple memories at once (#368).
-
-        Args:
-            memory_ids: List of memory IDs to delete.
-
-        Returns:
-            Dictionary with success/failure counts and details.
-
-        Example:
-            >>> result = memory.delete_batch(["mem_1", "mem_2", "mem_3"])
-            >>> print(f"Deleted {result['deleted']} memories")
-        """
-        deleted = []
-        failed = []
-
-        for memory_id in memory_ids:
-            if self.delete(memory_id):
-                deleted.append(memory_id)
-            else:
-                failed.append(memory_id)
-
-        return {
-            "deleted": len(deleted),
-            "failed": len(failed),
-            "deleted_ids": deleted,
-            "failed_ids": failed,
-        }
+        """Delete multiple memories at once (#368). Delegates to MemoryStateManager."""
+        return self._state.delete_batch(memory_ids)
 
     def invalidate(
         self,
         memory_id: str,
         invalid_at: datetime | str | None = None,
     ) -> bool:
-        """Invalidate a memory (mark as no longer valid) (#1183).
-
-        This is a temporal soft-delete that marks when a fact became false,
-        without removing the historical record. The memory remains queryable
-        for historical analysis but is excluded from "current facts" queries.
-
-        Args:
-            memory_id: Memory ID to invalidate.
-            invalid_at: When the fact became invalid. Defaults to now().
-
-        Returns:
-            True if invalidated, False if not found or no permission.
-
-        Example:
-            >>> # Fact is no longer true as of today
-            >>> memory.invalidate("mem_123")
-            True
-
-            >>> # Fact became false on a specific date
-            >>> memory.invalidate("mem_123", invalid_at="2026-01-15")
-            True
-
-            >>> # Query only current facts (excludes invalidated)
-            >>> current_facts = memory.query(include_invalid=False)
-
-        Note:
-            Unlike delete(), invalidate() preserves the memory for historical
-            queries. Use delete() to permanently remove data.
-        """
-        memory = self.memory_router.get_memory_by_id(memory_id)
-        if not memory:
-            return False
-
-        # Check permission
-        if not self.permission_enforcer.check_memory(memory, Permission.WRITE, self.context):
-            return False
-
-        # Parse invalid_at
-        invalid_at_dt: datetime = datetime.now(UTC)
-        if invalid_at is not None:
-            if isinstance(invalid_at, str):
-                parsed = parse_datetime(invalid_at)
-                if parsed is not None:
-                    invalid_at_dt = parsed
-            else:
-                invalid_at_dt = invalid_at
-
-        # Update the memory
-        result = self.memory_router.invalidate_memory(memory_id, invalid_at_dt)
-        return result is not None
+        """Invalidate a memory (mark as no longer valid) (#1183). Delegates to MemoryStateManager."""
+        return self._state.invalidate(memory_id, invalid_at=invalid_at)
 
     def invalidate_batch(
         self, memory_ids: list[str], invalid_at: datetime | str | None = None
     ) -> dict[str, Any]:
-        """Invalidate multiple memories at once (#1183).
-
-        Args:
-            memory_ids: List of memory IDs to invalidate.
-            invalid_at: When facts became invalid. Defaults to now().
-
-        Returns:
-            Dictionary with success/failure counts and details.
-
-        Example:
-            >>> result = memory.invalidate_batch(["mem_1", "mem_2", "mem_3"])
-            >>> print(f"Invalidated {result['invalidated']} memories")
-        """
-        invalidated = []
-        failed = []
-
-        for memory_id in memory_ids:
-            if self.invalidate(memory_id, invalid_at=invalid_at):
-                invalidated.append(memory_id)
-            else:
-                failed.append(memory_id)
-
-        return {
-            "invalidated": len(invalidated),
-            "failed": len(failed),
-            "invalidated_ids": invalidated,
-            "failed_ids": failed,
-        }
+        """Invalidate multiple memories at once (#1183). Delegates to MemoryStateManager."""
+        return self._state.invalidate_batch(memory_ids, invalid_at=invalid_at)
 
     def revalidate(self, memory_id: str) -> bool:
-        """Revalidate a memory (clear invalid_at timestamp) (#1183).
-
-        Use when a previously invalidated fact becomes true again.
-
-        Args:
-            memory_id: Memory ID to revalidate.
-
-        Returns:
-            True if revalidated, False if not found or no permission.
-
-        Example:
-            >>> # Fact is true again
-            >>> memory.revalidate("mem_123")
-            True
-        """
-        memory = self.memory_router.get_memory_by_id(memory_id)
-        if not memory:
-            return False
-
-        # Check permission
-        if not self.permission_enforcer.check_memory(memory, Permission.WRITE, self.context):
-            return False
-
-        result = self.memory_router.revalidate_memory(memory_id)
-        return result is not None
+        """Revalidate a memory (#1183). Delegates to MemoryStateManager."""
+        return self._state.revalidate(memory_id)
 
     def get_history(self, memory_id: str) -> list[dict[str, Any]]:
-        """Get the complete version history chain for a memory (#1188).
-
-        Traverses the supersedes chain to return all versions of a memory,
-        from oldest to newest.
-
-        Args:
-            memory_id: Any memory ID in the chain (can be current or old).
-
-        Returns:
-            List of memory dicts in chronological order (oldest first).
-            Empty list if memory not found.
-        """
-        import json
-
-        memory = self.memory_router.get_memory_by_id(memory_id)
-        if not memory:
-            return []
-
-        # Walk backward to find the oldest ancestor
-        current = memory
-        while current.supersedes_id:
-            ancestor = self.memory_router.get_memory_by_id(current.supersedes_id)
-            if ancestor is None:
-                break
-            current = ancestor
-
-        # Now walk forward from oldest to newest
-        chain = []
-        visited = set()
-        node = current
-        while node and node.memory_id not in visited:
-            visited.add(node.memory_id)
-
-            # Read content for this memory
-            content = None
-            try:
-                content_bytes = self.backend.read_content(
-                    node.content_hash, context=self.context
-                ).unwrap()
-                try:
-                    content = json.loads(content_bytes.decode("utf-8"))
-                except (json.JSONDecodeError, UnicodeDecodeError):
-                    try:
-                        content = content_bytes.decode("utf-8")
-                    except UnicodeDecodeError:
-                        content = content_bytes.hex()
-            except Exception:
-                content = f"<content not available: {node.content_hash}>"
-
-            chain.append(
-                {
-                    "memory_id": node.memory_id,
-                    "content": content,
-                    "content_hash": node.content_hash,
-                    "version": node.current_version,
-                    "supersedes_id": node.supersedes_id,
-                    "superseded_by_id": node.superseded_by_id,
-                    "valid_at": node.valid_at.isoformat() if node.valid_at else None,
-                    "invalid_at": node.invalid_at.isoformat() if node.invalid_at else None,
-                    "created_at": node.created_at.isoformat() if node.created_at else None,
-                }
-            )
-
-            # Move to next version
-            if node.superseded_by_id:
-                next_node = self.memory_router.get_memory_by_id(node.superseded_by_id)
-                if next_node is None:
-                    break
-                node = next_node
-            else:
-                break
-
-        return chain
+        """Get the complete version history chain for a memory (#1188). Delegates to MemoryVersioning."""
+        return self._versioning.get_history(memory_id)
 
     def gc_old_versions(self, older_than_days: int = 365) -> int:
-        """Garbage collect old superseded versions (#1188).
-
-        Removes superseded memories older than the threshold.
-        Never removes current (non-superseded) memories.
-
-        Args:
-            older_than_days: Only remove versions older than this many days.
-
-        Returns:
-            Number of versions removed.
-        """
-        from datetime import timedelta
-
-        from sqlalchemy import select
-
-        from nexus.storage.models import MemoryModel
-
-        now = datetime.now(UTC)
-        threshold = now - timedelta(days=older_than_days)
-
-        # Find superseded memories older than threshold
-        stmt = select(MemoryModel).where(
-            MemoryModel.superseded_by_id.isnot(None),  # Is superseded
-            MemoryModel.invalid_at.isnot(None),  # Has been invalidated
-            MemoryModel.invalid_at <= threshold,  # Older than threshold
-        )
-        old_memories = list(self.session.execute(stmt).scalars().all())
-
-        removed = 0
-        for memory in old_memories:
-            self.session.delete(memory)
-            removed += 1
-
-        if removed > 0:
-            self.session.commit()
-
-        return removed
+        """Garbage collect old superseded versions (#1188). Delegates to MemoryVersioning."""
+        return self._versioning.gc_old_versions(older_than_days)
 
     def list(
         self,
@@ -2032,6 +1525,8 @@ class Memory:
         # Use provided context or fall back to instance context
         check_context = context or self.context
 
+        from nexus.services.memory.response_models import MemoryListResponse
+
         results = []
         for memory in memories:
             # Check permission
@@ -2039,103 +1534,50 @@ class Memory:
                 continue
 
             results.append(
-                {
-                    "memory_id": memory.memory_id,
-                    "content_hash": memory.content_hash,
-                    "zone_id": memory.zone_id,
-                    "user_id": memory.user_id,
-                    "agent_id": memory.agent_id,
-                    "scope": memory.scope,
-                    "visibility": memory.visibility,
-                    "memory_type": memory.memory_type,
-                    "importance": memory.importance,
-                    "state": memory.state,  # #368
-                    "namespace": memory.namespace,
-                    "path_key": memory.path_key,
-                    "created_at": memory.created_at.isoformat() if memory.created_at else None,
-                    "updated_at": memory.updated_at.isoformat() if memory.updated_at else None,
-                }
+                MemoryListResponse(
+                    memory_id=memory.memory_id,
+                    content_hash=memory.content_hash,
+                    zone_id=memory.zone_id,
+                    user_id=memory.user_id,
+                    agent_id=memory.agent_id,
+                    scope=memory.scope,
+                    visibility=memory.visibility,
+                    memory_type=memory.memory_type,
+                    importance=memory.importance,
+                    state=memory.state,
+                    namespace=memory.namespace,
+                    path_key=memory.path_key,
+                    created_at=MemoryListResponse._iso_or_none(memory.created_at),
+                    updated_at=MemoryListResponse._iso_or_none(memory.updated_at),
+                ).model_dump()
             )
 
         return results
 
-    # ========== ACE (Agentic Context Engineering) Integration (v0.5.0) ==========
+    # ========== ACE (Agentic Context Engineering) Delegation (#1498) ==========
+    # These methods delegate to ACE services via AceFacade.
+    # Callers are encouraged to use ACE services directly.
 
-    def start_trajectory(
-        self,
-        task_description: str,
-        task_type: str | None = None,
-    ) -> str:
-        """Start tracking a new execution trajectory.
+    @property
+    def ace(self) -> Any:
+        """Access composed ACE services (trajectory, feedback, playbook, etc.)."""
+        return self._ace
 
-        Args:
-            task_description: Description of the task
-            task_type: Optional task type
-
-        Returns:
-            trajectory_id: ID of the created trajectory
-
-        Example:
-            >>> traj_id = memory.start_trajectory("Deploy caching strategy")
-            >>> # ... execute task ...
-            >>> memory.complete_trajectory(traj_id, "success", success_score=0.95)
-        """
-        from nexus.services.ace.trajectory import TrajectoryManager
-
-        traj_mgr = TrajectoryManager(
-            self.session,
-            self.backend,
-            self.user_id or "system",
-            self.agent_id,
-            self.zone_id,
-        )
-        return traj_mgr.start_trajectory(task_description, task_type)
+    def start_trajectory(self, task_description: str, task_type: str | None = None) -> str:
+        """Start tracking a new execution trajectory. Delegates to ACE TrajectoryManager."""
+        return self._ace.trajectory.start_trajectory(task_description, task_type)
 
     def log_trajectory_step(
-        self,
-        trajectory_id: str,
-        step_type: str,
-        description: str,
-        result: Any = None,
+        self, trajectory_id: str, step_type: str, description: str, result: Any = None
     ) -> None:
-        """Log a step in the trajectory.
-
-        Args:
-            trajectory_id: Trajectory ID
-            step_type: Type of step ('action', 'decision', 'observation')
-            description: Step description
-            result: Optional result data
-        """
-        from nexus.services.ace.trajectory import TrajectoryManager
-
-        traj_mgr = TrajectoryManager(
-            self.session,
-            self.backend,
-            self.user_id or "system",
-            self.agent_id,
-            self.zone_id,
-        )
-        traj_mgr.log_step(trajectory_id, step_type, description, result)
+        """Log a step in the trajectory. Delegates to ACE TrajectoryManager."""
+        self._ace.trajectory.log_step(trajectory_id, step_type, description, result)
 
     def log_step(
-        self,
-        trajectory_id: str,
-        step_type: str,
-        description: str,
-        result: Any = None,
+        self, trajectory_id: str, step_type: str, description: str, result: Any = None
     ) -> None:
-        """Alias for log_trajectory_step() to match #303 spec.
-
-        Args:
-            trajectory_id: Trajectory ID
-            step_type: Type of step ('action', 'decision', 'observation')
-            description: Step description
-            result: Optional result data
-
-        Example:
-            >>> memory.log_step(traj_id, "decision", "Checking data format")
-        """
-        self.log_trajectory_step(trajectory_id, step_type, description, result)
+        """Alias for log_trajectory_step(). Delegates to ACE TrajectoryManager."""
+        self._ace.trajectory.log_step(trajectory_id, step_type, description, result)
 
     def complete_trajectory(
         self,
@@ -2145,41 +1587,9 @@ class Memory:
         error_message: str | None = None,
         metrics: dict[str, Any] | None = None,
     ) -> str:
-        """Complete a trajectory with outcome.
-
-        Args:
-            trajectory_id: Trajectory ID
-            status: Status ('success', 'failure', 'partial')
-            success_score: Success score (0.0-1.0)
-            error_message: Error message if failed
-            metrics: Performance metrics (rows_processed, duration_ms, etc.)
-
-        Returns:
-            trajectory_id: The completed trajectory ID
-
-        Example:
-            >>> memory.complete_trajectory(
-            ...     traj_id,
-            ...     status="success",
-            ...     success_score=0.95,
-            ...     metrics={"rows_processed": 1000, "duration_ms": 2500}
-            ... )
-        """
-        from nexus.services.ace.trajectory import TrajectoryManager
-
-        traj_mgr = TrajectoryManager(
-            self.session,
-            self.backend,
-            self.user_id or "system",
-            self.agent_id,
-            self.zone_id,
-        )
-        return traj_mgr.complete_trajectory(
-            trajectory_id,
-            status,
-            success_score,
-            error_message,
-            metrics,
+        """Complete a trajectory with outcome. Delegates to ACE TrajectoryManager."""
+        return self._ace.trajectory.complete_trajectory(
+            trajectory_id, status, success_score, error_message, metrics
         )
 
     def add_feedback(
@@ -2191,229 +1601,39 @@ class Memory:
         message: str | None = None,
         metrics: dict[str, Any] | None = None,
     ) -> str:
-        """Add feedback to a completed trajectory.
-
-        Args:
-            trajectory_id: Trajectory to add feedback to
-            feedback_type: Category of feedback
-            score: Revised success score (0.0-1.0)
-            source: Identifier of feedback source
-            message: Human-readable explanation
-            metrics: Additional metrics
-
-        Returns:
-            feedback_id: ID of the feedback entry
-
-        Example:
-            >>> memory.add_feedback(
-            ...     traj_id,
-            ...     feedback_type="monitoring_alert",
-            ...     score=0.3,
-            ...     source="datadog",
-            ...     message="Error rate spiked to 15%",
-            ... )
-        """
-        from nexus.services.ace.feedback import FeedbackManager
-
-        feedback_mgr = FeedbackManager(self.session)
-        return feedback_mgr.add_feedback(
-            trajectory_id,
-            feedback_type,
-            score,
-            source,
-            message,
-            metrics,
+        """Add feedback to a completed trajectory. Delegates to ACE FeedbackManager."""
+        return self._ace.feedback.add_feedback(
+            trajectory_id, feedback_type, score, source, message, metrics
         )
 
-    def get_trajectory_feedback(
-        self,
-        trajectory_id: str,
-    ) -> builtins.list[dict[str, Any]]:
-        """Get all feedback for a trajectory.
-
-        Returns feedback in chronological order:
-        - Initial completion score
-        - All subsequent feedback entries
-
-        Args:
-            trajectory_id: Trajectory ID
-
-        Returns:
-            List of feedback dicts with score, type, source, timestamp
-
-        Example:
-            >>> feedback_list = memory.get_trajectory_feedback(traj_id)
-            >>> for f in feedback_list:
-            ...     print(f"{f['created_at']}: {f['message']}")
-        """
-        from nexus.services.ace.feedback import FeedbackManager
-
-        feedback_mgr = FeedbackManager(self.session)
-        return feedback_mgr.get_trajectory_feedback(trajectory_id)
+    def get_trajectory_feedback(self, trajectory_id: str) -> builtins.list[dict[str, Any]]:
+        """Get all feedback for a trajectory. Delegates to ACE FeedbackManager."""
+        return self._ace.feedback.get_trajectory_feedback(trajectory_id)
 
     def get_effective_score(
         self,
         trajectory_id: str,
         strategy: Literal["latest", "average", "weighted"] = "latest",
     ) -> float:
-        """Get current effective score for trajectory.
+        """Get effective score for trajectory. Delegates to ACE FeedbackManager."""
+        return self._ace.feedback.get_effective_score(trajectory_id, strategy)
 
-        Strategies:
-        - 'latest': Most recent feedback score
-        - 'average': Mean of all feedback scores
-        - 'weighted': Time-weighted (recent = higher weight)
-
-        Args:
-            trajectory_id: Trajectory to score
-            strategy: Scoring strategy
-
-        Returns:
-            Effective score (0.0-1.0)
-
-        Example:
-            >>> score = memory.get_effective_score(traj_id, strategy="weighted")
-            >>> print(f"Effective score: {score:.2f}")
-        """
-        from nexus.services.ace.feedback import FeedbackManager
-
-        feedback_mgr = FeedbackManager(self.session)
-        return feedback_mgr.get_effective_score(trajectory_id, strategy)
-
-    def mark_for_relearning(
-        self,
-        trajectory_id: str,
-        reason: str,
-        priority: int = 5,
-    ) -> None:
-        """Flag trajectory for re-reflection.
-
-        Used when new feedback significantly changes outcome:
-        - Production failure detected
-        - Human feedback indicates error
-        - A/B test shows different results
-
-        Args:
-            trajectory_id: Trajectory to re-learn from
-            reason: Why re-learning is needed
-            priority: Urgency (1=low, 10=critical)
-
-        Example:
-            >>> memory.mark_for_relearning(
-            ...     traj_id,
-            ...     reason="production_failure",
-            ...     priority=9
-            ... )
-        """
-        from nexus.services.ace.feedback import FeedbackManager
-
-        feedback_mgr = FeedbackManager(self.session)
-        feedback_mgr.mark_for_relearning(trajectory_id, reason, priority)
+    def mark_for_relearning(self, trajectory_id: str, reason: str, priority: int = 5) -> None:
+        """Flag trajectory for re-reflection. Delegates to ACE FeedbackManager."""
+        self._ace.feedback.mark_for_relearning(trajectory_id, reason, priority)
 
     def batch_add_feedback(
-        self,
-        feedback_items: builtins.list[dict[str, Any]],
+        self, feedback_items: builtins.list[dict[str, Any]]
     ) -> builtins.list[str]:
-        """Add feedback to multiple trajectories at once.
+        """Add feedback to multiple trajectories. Delegates to ACE FeedbackManager."""
+        return self._ace.feedback.batch_add_feedback(feedback_items)
 
-        Useful for:
-        - Batch processing monitoring alerts
-        - Bulk human feedback collection
-        - A/B test result imports
+    async def reflect_async(self, trajectory_id: str, context: str | None = None) -> dict[str, Any]:
+        """Reflect on a single trajectory (async). Delegates to ACE Reflector."""
+        return await self._ace.reflector.reflect_async(trajectory_id, context)
 
-        Args:
-            feedback_items: List of dicts with trajectory_id, feedback_type, score, etc.
-
-        Returns:
-            List of feedback_ids
-
-        Example:
-            >>> feedback_items = [
-            ...     {
-            ...         "trajectory_id": "traj_1",
-            ...         "feedback_type": "ab_test_result",
-            ...         "score": 0.7,
-            ...         "source": "ab_testing_framework",
-            ...         "metrics": {"user_sat": 3.2}
-            ...     },
-            ...     {
-            ...         "trajectory_id": "traj_2",
-            ...         "feedback_type": "ab_test_result",
-            ...         "score": 0.95,
-            ...         "source": "ab_testing_framework",
-            ...         "metrics": {"user_sat": 4.5}
-            ...     }
-            ... ]
-            >>> feedback_ids = memory.batch_add_feedback(feedback_items)
-        """
-        from nexus.services.ace.feedback import FeedbackManager
-
-        feedback_mgr = FeedbackManager(self.session)
-        return feedback_mgr.batch_add_feedback(feedback_items)
-
-    async def reflect_async(
-        self,
-        trajectory_id: str,
-        context: str | None = None,
-    ) -> dict[str, Any]:
-        """Reflect on a single trajectory (async).
-
-        Args:
-            trajectory_id: Trajectory ID to reflect on
-            context: Optional additional context
-
-        Returns:
-            Dictionary with reflection results:
-                - helpful_strategies: Successful patterns
-                - harmful_patterns: Failure patterns
-                - observations: Neutral observations
-                - memory_id: ID of reflection memory
-
-        Example:
-            >>> reflection = await memory.reflect_async(traj_id)
-            >>> for strategy in reflection['helpful_strategies']:
-            ...     print(f"✓ {strategy['description']}")
-        """
-        from nexus.services.ace.reflection import Reflector
-        from nexus.services.ace.trajectory import TrajectoryManager
-
-        traj_mgr = TrajectoryManager(
-            self.session,
-            self.backend,
-            self.user_id or "system",
-            self.agent_id,
-            self.zone_id,
-        )
-
-        reflector = Reflector(
-            self.session,
-            self.backend,
-            self.llm_provider,
-            traj_mgr,
-            self.user_id or "system",
-            self.agent_id,
-            self.zone_id,
-        )
-
-        return await reflector.reflect_async(trajectory_id, context)
-
-    def reflect(
-        self,
-        trajectory_id: str,
-        context: str | None = None,
-    ) -> dict[str, Any]:
-        """Reflect on a single trajectory (sync).
-
-        Args:
-            trajectory_id: Trajectory ID to reflect on
-            context: Optional additional context
-
-        Returns:
-            Reflection results
-
-        Example:
-            >>> reflection = memory.reflect(traj_id)
-            >>> print(reflection['helpful_strategies'])
-        """
+    def reflect(self, trajectory_id: str, context: str | None = None) -> dict[str, Any]:
+        """Reflect on a single trajectory (sync). Delegates to ACE Reflector."""
         from nexus.core.sync_bridge import run_sync
 
         return run_sync(self.reflect_async(trajectory_id, context))
@@ -2564,103 +1784,27 @@ class Memory:
         min_trajectories: int = 10,
         task_type: str | None = None,
     ) -> dict[str, Any]:
-        """Batch reflection across multiple trajectories (sync).
-
-        Args:
-            agent_id: Filter by agent ID
-            since: ISO timestamp to filter trajectories
-            min_trajectories: Minimum trajectories needed
-            task_type: Filter by task type
-
-        Returns:
-            Batch reflection results
-        """
+        """Batch reflection across multiple trajectories (sync)."""
         from nexus.core.sync_bridge import run_sync
 
         return run_sync(self.batch_reflect_async(agent_id, since, min_trajectories, task_type))
 
     def get_playbook(self, playbook_name: str = "default") -> dict[str, Any] | None:
-        """Get agent's playbook.
-
-        Args:
-            playbook_name: Playbook name (default: "default")
-
-        Returns:
-            Playbook dict with strategies, or None if not found
-
-        Example:
-            >>> playbook = memory.get_playbook("default")
-            >>> if playbook:
-            ...     print(f"Version: {playbook['version']}")
-            ...     for strategy in playbook['content']['strategies']:
-            ...         print(f"  {strategy['type']}: {strategy['description']}")
-        """
-        from nexus.services.ace.playbook import PlaybookManager
-
-        playbook_mgr = PlaybookManager(
-            self.session,
-            self.backend,
-            self.user_id or "system",
-            self.agent_id,
-            self.zone_id,
+        """Get agent's playbook. Delegates to ACE PlaybookManager."""
+        playbooks = self._ace.playbook.query_playbooks(
+            agent_id=self.agent_id, name_pattern=playbook_name, limit=1
         )
-
-        # Query by name and agent_id
-        playbooks = playbook_mgr.query_playbooks(
-            agent_id=self.agent_id,
-            name_pattern=playbook_name,
-            limit=1,
-        )
-
         if not playbooks:
             return None
-
-        # Get full playbook with content
-        return playbook_mgr.get_playbook(playbooks[0]["playbook_id"])
+        return self._ace.playbook.get_playbook(playbooks[0]["playbook_id"])
 
     def update_playbook(
-        self,
-        strategies: builtins.list[dict[str, Any]],
-        playbook_name: str = "default",
+        self, strategies: builtins.list[dict[str, Any]], playbook_name: str = "default"
     ) -> dict[str, Any]:
-        """Update playbook with new strategies.
-
-        Args:
-            strategies: List of strategy dicts with:
-                - category: 'helpful', 'harmful', or 'neutral'
-                - pattern: Strategy description
-                - context: Context where it applies
-                - confidence: Confidence score (0.0-1.0)
-            playbook_name: Playbook name (default: "default")
-
-        Returns:
-            Update result with playbook_id and strategies_added
-
-        Example:
-            >>> memory.update_playbook([
-            ...     {
-            ...         'category': 'helpful',
-            ...         'pattern': 'Always validate input before processing',
-            ...         'context': 'Data processing tasks',
-            ...         'confidence': 0.9
-            ...     }
-            ... ])
-        """
-        from nexus.services.ace.playbook import PlaybookManager
-
-        playbook_mgr = PlaybookManager(
-            self.session,
-            self.backend,
-            self.user_id or "system",
-            self.agent_id,
-            self.zone_id,
-        )
-
-        # Get or create playbook
+        """Update playbook with new strategies. Delegates to ACE PlaybookManager."""
         playbook = self.get_playbook(playbook_name)
         if not playbook:
-            # Create new playbook
-            playbook_id = playbook_mgr.create_playbook(
+            playbook_id = self._ace.playbook.create_playbook(
                 name=playbook_name,
                 description=f"Playbook for {self.agent_id or 'agent'}",
                 scope="agent",
@@ -2668,128 +1812,46 @@ class Memory:
         else:
             playbook_id = playbook["playbook_id"]
 
-        # Convert strategies to ACE format
-        ace_strategies = []
-        for s in strategies:
-            ace_strategies.append(
-                {
-                    "type": s.get("category", "neutral"),  # helpful/harmful/neutral
-                    "description": s.get("pattern", ""),
-                    "evidence": s.get("context", ""),
-                    "confidence": s.get("confidence", 0.5),
-                }
-            )
+        ace_strategies = [
+            {
+                "type": s.get("category", "neutral"),
+                "description": s.get("pattern", ""),
+                "evidence": s.get("context", ""),
+                "confidence": s.get("confidence", 0.5),
+            }
+            for s in strategies
+        ]
 
-        # Update playbook
-        playbook_mgr.update_playbook(playbook_id, strategies=ace_strategies)
-
-        return {
-            "playbook_id": playbook_id,
-            "strategies_added": len(ace_strategies),
-        }
+        self._ace.playbook.update_playbook(playbook_id, strategies=ace_strategies)
+        return {"playbook_id": playbook_id, "strategies_added": len(ace_strategies)}
 
     def curate_playbook(
-        self,
-        reflections: builtins.list[str],
-        playbook_name: str = "default",
+        self, reflections: builtins.list[str], playbook_name: str = "default"
     ) -> dict[str, Any]:
-        """Auto-curate playbook from reflection memories.
-
-        Args:
-            reflections: List of reflection memory IDs
-            playbook_name: Playbook name (default: "default")
-
-        Returns:
-            Curation result with strategies_added and strategies_merged
-
-        Example:
-            >>> result = memory.curate_playbook(
-            ...     reflections=["mem_123", "mem_456"],
-            ...     playbook_name="default"
-            ... )
-            >>> print(f"Added {result['strategies_added']} new strategies")
-        """
-        from nexus.services.ace.curation import Curator
-        from nexus.services.ace.playbook import PlaybookManager
-
-        playbook_mgr = PlaybookManager(
-            self.session,
-            self.backend,
-            self.user_id or "system",
-            self.agent_id,
-            self.zone_id,
-        )
-
-        curator = Curator(self.session, self.backend, playbook_mgr)
-
-        # Get or create playbook
+        """Auto-curate playbook from reflections. Delegates to ACE Curator."""
         playbook = self.get_playbook(playbook_name)
         if not playbook:
-            playbook_id = playbook_mgr.create_playbook(
+            playbook_id = self._ace.playbook.create_playbook(
                 name=playbook_name,
                 description=f"Playbook for {self.agent_id or 'agent'}",
                 scope="agent",
             )
         else:
             playbook_id = playbook["playbook_id"]
-
-        # Curate
-        return curator.curate_playbook(playbook_id, reflections)
+        return self._ace.curator.curate_playbook(playbook_id, reflections)
 
     async def consolidate_async(
         self,
         memory_type: str | None = None,
         scope: str | None = None,
-        namespace: str | None = None,  # v0.8.0: Exact namespace
-        namespace_prefix: str | None = None,  # v0.8.0: Namespace prefix
+        namespace: str | None = None,
+        namespace_prefix: str | None = None,
         preserve_high_importance: bool = True,
         importance_threshold: float = 0.8,
     ) -> dict[str, Any]:
-        """Consolidate memories to prevent context collapse (async).
-
-        Args:
-            memory_type: Filter by memory type (e.g., 'experience', 'reflection')
-            scope: Filter by scope (e.g., 'agent', 'user')
-            namespace: Filter by exact namespace match. v0.8.0
-            namespace_prefix: Filter by namespace prefix. v0.8.0
-            preserve_high_importance: Keep high-importance memories unconsolidated
-            importance_threshold: Threshold for high importance (0.0-1.0)
-
-        Returns:
-            Consolidation report with:
-                - memories_consolidated: Count
-                - consolidations_created: Count
-                - space_saved: Approximate reduction
-
-        Examples:
-            >>> # Consolidate by namespace
-            >>> report = await memory.consolidate_async(
-            ...     namespace="knowledge/geography/facts",
-            ...     importance_threshold=0.8
-            ... )
-
-            >>> # Consolidate all under prefix
-            >>> report = await memory.consolidate_async(
-            ...     namespace_prefix="knowledge/",
-            ...     importance_threshold=0.5
-            ... )
-        """
-        from nexus.services.ace.consolidation import ConsolidationEngine
-
-        consolidation_engine = ConsolidationEngine(
-            self.session,
-            self.backend,
-            self.llm_provider,
-            self.user_id or "system",
-            self.agent_id,
-            self.zone_id,
-        )
-
-        # Determine max importance for consolidation
+        """Consolidate memories to prevent context collapse (async). Delegates to ACE ConsolidationEngine."""
         max_importance = importance_threshold if preserve_high_importance else 1.0
-
-        # Consolidate
-        results = consolidation_engine.consolidate_by_criteria(
+        results = self._ace.consolidation.consolidate_by_criteria(
             memory_type=memory_type,
             scope=scope,
             namespace=namespace,
@@ -2798,39 +1860,24 @@ class Memory:
             batch_size=10,
             limit=100,
         )
-
-        # Calculate stats
         total_consolidated = sum(r.get("memories_consolidated", 0) for r in results)
         total_created = len(results)
-
         return {
             "memories_consolidated": total_consolidated,
             "consolidations_created": total_created,
-            "space_saved": total_consolidated - total_created,  # Approximate
+            "space_saved": total_consolidated - total_created,
         }
 
     def consolidate(
         self,
         memory_type: str | None = None,
         scope: str | None = None,
-        namespace: str | None = None,  # v0.8.0: Exact namespace
-        namespace_prefix: str | None = None,  # v0.8.0: Namespace prefix
+        namespace: str | None = None,
+        namespace_prefix: str | None = None,
         preserve_high_importance: bool = True,
         importance_threshold: float = 0.8,
     ) -> dict[str, Any]:
-        """Consolidate memories to prevent context collapse (sync).
-
-        Args:
-            memory_type: Filter by memory type
-            scope: Filter by scope
-            namespace: Filter by exact namespace match. v0.8.0
-            namespace_prefix: Filter by namespace prefix. v0.8.0
-            preserve_high_importance: Keep high-importance memories
-            importance_threshold: Threshold for high importance
-
-        Returns:
-            Consolidation report
-        """
+        """Consolidate memories (sync). Delegates to ACE ConsolidationEngine."""
         from nexus.core.sync_bridge import run_sync
 
         return run_sync(
@@ -2854,53 +1901,14 @@ class Memory:
         playbook_name: str = "default",
         **task_kwargs: Any,
     ) -> tuple[Any, str]:
-        """Execute with automatic trajectory tracking + reflection + curation (async).
-
-        Args:
-            task_fn: Async function to execute
-            task_description: Description of the task
-            task_type: Optional task type
-            auto_reflect: Automatically reflect on outcome (default True)
-            auto_curate: Automatically curate playbook (default True)
-            playbook_name: Playbook to curate (default "default")
-            **task_kwargs: Arguments to pass to task_fn
-
-        Returns:
-            Tuple of (task_result, trajectory_id)
-
-        Example:
-            >>> async def process_data(filename):
-            ...     # Process the data
-            ...     return {"rows": 1000}
-            >>>
-            >>> result, traj_id = await memory.execute_with_learning_async(
-            ...     process_data,
-            ...     "Process customer orders",
-            ...     auto_reflect=True,
-            ...     auto_curate=True,
-            ...     filename="orders.csv"
-            ... )
-        """
-        from nexus.services.ace.learning_loop import LearningLoop
-
-        learning_loop = LearningLoop(
-            self.session,
-            self.backend,
-            self.llm_provider,
-            self.user_id or "system",
-            self.agent_id,
-            self.zone_id,
-        )
-
-        # Get or create playbook for curation
+        """Execute with automatic learning loop (async). Delegates to ACE LearningLoop."""
         playbook_id = None
         if auto_curate:
             playbook = self.get_playbook(playbook_name)
             if playbook:
                 playbook_id = playbook["playbook_id"]
 
-        # Execute with learning
-        execution_result = await learning_loop.execute_with_learning_async(
+        execution_result = await self._ace.learning_loop.execute_with_learning_async(
             task_description=task_description,
             task_fn=task_fn,
             task_type=task_type,
@@ -2909,7 +1917,6 @@ class Memory:
             enable_curation=auto_curate,
             **task_kwargs,
         )
-
         return (execution_result["result"], execution_result["trajectory_id"])
 
     def execute_with_learning(
@@ -2922,20 +1929,7 @@ class Memory:
         playbook_name: str = "default",
         **task_kwargs: Any,
     ) -> tuple[Any, str]:
-        """Execute with automatic learning (sync).
-
-        Args:
-            task_fn: Function to execute (can be sync or async)
-            task_description: Description of the task
-            task_type: Optional task type
-            auto_reflect: Automatically reflect
-            auto_curate: Automatically curate playbook
-            playbook_name: Playbook to curate
-            **task_kwargs: Arguments to pass to task_fn
-
-        Returns:
-            Tuple of (task_result, trajectory_id)
-        """
+        """Execute with automatic learning loop (sync). Delegates to ACE LearningLoop."""
         from nexus.core.sync_bridge import run_sync
 
         return run_sync(
@@ -2951,118 +1945,26 @@ class Memory:
         )
 
     def query_trajectories(
-        self,
-        agent_id: str | None = None,
-        status: str | None = None,
-        limit: int = 50,
+        self, agent_id: str | None = None, status: str | None = None, limit: int = 50
     ) -> builtins.list[dict[str, Any]]:
-        """Query execution trajectories.
-
-        Args:
-            agent_id: Filter by agent ID (defaults to current agent)
-            status: Filter by status (e.g., 'success', 'failure', 'partial')
-            limit: Maximum number of results
-
-        Returns:
-            List of trajectory dictionaries
-
-        Example:
-            >>> trajectories = memory.query_trajectories(status="success", limit=10)
-            >>> for traj in trajectories:
-            ...     print(f"{traj['trajectory_id']}: {traj['task_description']}")
-        """
-        from nexus.services.ace.trajectory import TrajectoryManager
-
+        """Query execution trajectories. Delegates to ACE TrajectoryManager."""
         target_agent_id = agent_id or self.agent_id
-
-        traj_mgr = TrajectoryManager(
-            self.session,
-            self.backend,
-            self.user_id or "system",
-            target_agent_id,
-            self.zone_id,
-        )
-
-        return traj_mgr.query_trajectories(
-            agent_id=target_agent_id,
-            status=status,
-            limit=limit,
+        return self._ace.trajectory.query_trajectories(
+            agent_id=target_agent_id, status=status, limit=limit
         )
 
     def query_playbooks(
-        self,
-        agent_id: str | None = None,
-        scope: str | None = None,
-        limit: int = 50,
+        self, agent_id: str | None = None, scope: str | None = None, limit: int = 50
     ) -> builtins.list[dict[str, Any]]:
-        """Query playbooks.
-
-        Args:
-            agent_id: Filter by agent ID (defaults to current agent)
-            scope: Filter by scope (e.g., 'agent', 'user', 'global')
-            limit: Maximum number of results
-
-        Returns:
-            List of playbook dictionaries
-
-        Example:
-            >>> playbooks = memory.query_playbooks(scope="agent", limit=10)
-            >>> for pb in playbooks:
-            ...     print(f"{pb['name']}: v{pb['version']}")
-        """
-        from nexus.services.ace.playbook import PlaybookManager
-
+        """Query playbooks. Delegates to ACE PlaybookManager."""
         target_agent_id = agent_id or self.agent_id
-
-        playbook_mgr = PlaybookManager(
-            self.session,
-            self.backend,
-            self.user_id or "system",
-            target_agent_id,
-            self.zone_id,
+        return self._ace.playbook.query_playbooks(
+            agent_id=target_agent_id, scope=scope, limit=limit
         )
 
-        return playbook_mgr.query_playbooks(
-            agent_id=target_agent_id,
-            scope=scope,
-            limit=limit,
-        )
-
-    def process_relearning(
-        self,
-        limit: int = 10,
-    ) -> builtins.list[dict[str, Any]]:
-        """Process trajectories flagged for re-learning.
-
-        This processes trajectories that have received feedback after completion,
-        re-reflecting on them with updated scores to improve agent learning.
-
-        Args:
-            limit: Maximum number of trajectories to process
-
-        Returns:
-            List of re-learning results with trajectory_id, success, and reflection_id/error
-
-        Example:
-            >>> results = memory.process_relearning(limit=5)
-            >>> for result in results:
-            ...     if result['success']:
-            ...         print(f"Re-learned {result['trajectory_id']}")
-        """
-        from nexus.services.ace.learning_loop import LearningLoop
-
-        # Initialize learning loop
-        learning_loop = LearningLoop(
-            session=self.session,
-            backend=self.backend,
-            user_id=self.user_id or "system",
-            agent_id=self.agent_id,
-            zone_id=self.zone_id,
-            llm_provider=self.llm_provider,
-        )
-
-        # Process relearning queue
-        return learning_loop.process_relearning_queue(limit)
+    def process_relearning(self, limit: int = 10) -> builtins.list[dict[str, Any]]:
+        """Process trajectories flagged for re-learning. Delegates to ACE LearningLoop."""
+        return self._ace.learning_loop.process_relearning_queue(limit)
 
     async def index_memories_async(
         self,
@@ -3208,107 +2110,12 @@ class Memory:
     # ========== Version Tracking Methods (#1184) ==========
 
     def _get_chain_memory_ids(self, memory_id: str) -> builtins.list[str]:
-        """Get all memory IDs in the supersedes chain (#1188).
-
-        Walks backward to find the oldest ancestor, then forward to collect all IDs.
-
-        Args:
-            memory_id: Any memory ID in the chain.
-
-        Returns:
-            List of all memory IDs in the chain (oldest to newest).
-        """
-        # Use _get_memory_by_id_raw to include soft-deleted memories in the chain,
-        # since version history must persist for audit trail purposes (#1188).
-        memory = self.memory_router._get_memory_by_id_raw(memory_id)
-        if not memory:
-            return [memory_id]
-
-        # Walk backward to oldest ancestor
-        current = memory
-        while current.supersedes_id:
-            ancestor = self.memory_router._get_memory_by_id_raw(current.supersedes_id)
-            if ancestor is None:
-                break
-            current = ancestor
-
-        # Walk forward collecting all IDs
-        chain_ids = []
-        visited = set()
-        node = current
-        while node and node.memory_id not in visited:
-            visited.add(node.memory_id)
-            chain_ids.append(node.memory_id)
-            if node.superseded_by_id:
-                next_node = self.memory_router._get_memory_by_id_raw(node.superseded_by_id)
-                if next_node is None:
-                    break
-                node = next_node
-            else:
-                break
-
-        return chain_ids
+        """Get all memory IDs in the supersedes chain (#1188). Delegates to MemoryVersioning."""
+        return self._versioning.get_chain_memory_ids(memory_id)
 
     def list_versions(self, memory_id: str) -> builtins.list[dict[str, Any]]:
-        """List all versions of a memory.
-
-        Returns version history with metadata for each version, ordered by
-        version number (newest first). Follows the supersedes chain (#1188)
-        to collect versions across all memory rows.
-
-        Args:
-            memory_id: The memory ID to get versions for.
-
-        Returns:
-            List of version info dicts with keys:
-            - version: Version number
-            - content_hash: SHA-256 hash for CAS retrieval
-            - size: Content size in bytes
-            - created_at: Timestamp when version was created
-            - created_by: User/agent who created it
-            - source_type: How version was created ('original', 'update', 'rollback')
-            - change_reason: Why this version was created
-            - parent_version_id: ID of the previous version
-
-        Example:
-            >>> versions = memory.list_versions("mem_123")
-            >>> for v in versions:
-            ...     print(f"v{v['version']}: {v['size']} bytes")
-        """
-        from sqlalchemy import select
-
-        from nexus.storage.models import VersionHistoryModel
-
-        # #1188: Collect all memory IDs in the supersedes chain
-        chain_ids = self._get_chain_memory_ids(memory_id)
-
-        # Query all versions across the entire chain
-        stmt = (
-            select(VersionHistoryModel)
-            .where(
-                VersionHistoryModel.resource_type == "memory",
-                VersionHistoryModel.resource_id.in_(chain_ids),
-            )
-            .order_by(VersionHistoryModel.version_number.desc())
-        )
-
-        versions = []
-        for v in self.session.scalars(stmt):
-            versions.append(
-                {
-                    "version": v.version_number,
-                    "content_hash": v.content_hash,
-                    "size": v.size_bytes,
-                    "mime_type": v.mime_type,
-                    "created_at": v.created_at.isoformat() if v.created_at else None,
-                    "created_by": v.created_by,
-                    "change_reason": v.change_reason,
-                    "source_type": v.source_type,
-                    "parent_version_id": v.parent_version_id,
-                }
-            )
-
-        return versions
+        """List all versions of a memory. Delegates to MemoryVersioning."""
+        return self._versioning.list_versions(memory_id)
 
     def get_version(
         self,
@@ -3316,79 +2123,8 @@ class Memory:
         version: int,
         context: OperationContext | None = None,
     ) -> dict[str, Any] | None:
-        """Retrieve a specific version of a memory.
-
-        Fetches the content and metadata for a specific historical version
-        of a memory using CAS storage.
-
-        Args:
-            memory_id: The memory ID.
-            version: Version number to retrieve (1-indexed).
-            context: Optional operation context for permission checks.
-
-        Returns:
-            Memory dictionary with content at specified version, or None
-            if memory or version not found.
-
-        Example:
-            >>> # Get version 1 of a memory
-            >>> v1 = memory.get_version("mem_123", version=1)
-            >>> print(v1['content'])
-        """
-        from sqlalchemy import select
-
-        from nexus.storage.models import VersionHistoryModel
-
-        # Check if memory exists and we have permission
-        memory = self.memory_router.get_memory_by_id(memory_id)
-        if not memory:
-            return None
-
-        check_context = context or self.context
-        if not self.permission_enforcer.check_memory(memory, Permission.READ, check_context):
-            return None
-
-        # #1188: Search across the supersedes chain for the version
-        chain_ids = self._get_chain_memory_ids(memory_id)
-
-        # Get the specific version entry from any memory in the chain
-        stmt = select(VersionHistoryModel).where(
-            VersionHistoryModel.resource_type == "memory",
-            VersionHistoryModel.resource_id.in_(chain_ids),
-            VersionHistoryModel.version_number == version,
-        )
-        version_entry = self.session.scalar(stmt)
-
-        if not version_entry:
-            return None
-
-        # Read content from CAS using version's content_hash
-        content = None
-        try:
-            content_bytes = self.backend.read_content(
-                version_entry.content_hash, context=self.context
-            ).unwrap()
-            try:
-                content = content_bytes.decode("utf-8")
-            except UnicodeDecodeError:
-                content = content_bytes.hex()
-        except Exception:
-            content = f"<content not available: {version_entry.content_hash}>"
-
-        return {
-            "memory_id": memory_id,
-            "version": version_entry.version_number,
-            "content": content,
-            "content_hash": version_entry.content_hash,
-            "size": version_entry.size_bytes,
-            "mime_type": version_entry.mime_type,
-            "created_at": version_entry.created_at.isoformat()
-            if version_entry.created_at
-            else None,
-            "created_by": version_entry.created_by,
-            "source_type": version_entry.source_type,
-            "change_reason": version_entry.change_reason,
-        }
+        """Retrieve a specific version of a memory. Delegates to MemoryVersioning."""
+        return self._versioning.get_version(memory_id, version, context=context)
 
     def rollback(
         self,
@@ -3396,90 +2132,8 @@ class Memory:
         version: int,
         context: OperationContext | None = None,
     ) -> None:
-        """Rollback a memory to a previous version.
-
-        Restores the memory content to a specific historical version.
-        Creates a new version entry with source_type='rollback' to maintain
-        audit trail.
-
-        Args:
-            memory_id: The memory ID to rollback.
-            version: Version number to rollback to.
-            context: Optional operation context for permission checks.
-
-        Raises:
-            ValueError: If memory or version not found, or no permission.
-
-        Example:
-            >>> # Rollback to version 1
-            >>> memory.rollback("mem_123", version=1)
-        """
-        from sqlalchemy import select, update
-
-        from nexus.storage.models import MemoryModel, VersionHistoryModel
-
-        # Check if memory exists and we have write permission
-        memory = self.memory_router.get_memory_by_id(memory_id)
-        if not memory:
-            raise ValueError(f"Memory not found: {memory_id}")
-
-        check_context = context or self.context
-        if not self.permission_enforcer.check_memory(memory, Permission.WRITE, check_context):
-            raise ValueError(f"No permission to rollback memory: {memory_id}")
-
-        # #1188: Search across the supersedes chain for the version
-        chain_ids = self._get_chain_memory_ids(memory_id)
-
-        # #1188: Find the latest (current) memory in the chain for rollback
-        latest_memory = self.memory_router.get_memory_by_id(chain_ids[-1])
-        if latest_memory is None:
-            latest_memory = memory
-        latest_memory_id = latest_memory.memory_id
-
-        target_stmt = select(VersionHistoryModel).where(
-            VersionHistoryModel.resource_type == "memory",
-            VersionHistoryModel.resource_id.in_(chain_ids),
-            VersionHistoryModel.version_number == version,
-        )
-        target_version = self.session.scalar(target_stmt)
-
-        if not target_version:
-            raise ValueError(f"Version {version} not found for memory {memory_id}")
-
-        # Get current version entry for lineage
-        current_stmt = select(VersionHistoryModel).where(
-            VersionHistoryModel.resource_type == "memory",
-            VersionHistoryModel.resource_id.in_(chain_ids),
-            VersionHistoryModel.version_number == latest_memory.current_version,
-        )
-        current_version_entry = self.session.scalar(current_stmt)
-        parent_version_id = current_version_entry.version_id if current_version_entry else None
-
-        # Update the latest memory to target version's content
-        latest_memory.content_hash = target_version.content_hash
-        latest_memory.updated_at = datetime.now(UTC)
-
-        # Atomically increment version at database level on the latest memory
-        self.session.execute(
-            update(MemoryModel)
-            .where(MemoryModel.memory_id == latest_memory_id)
-            .values(current_version=MemoryModel.current_version + 1)
-        )
-        self.session.refresh(latest_memory)
-
-        # Create version history entry for the rollback on the latest memory
-        self.memory_router._create_version_entry(
-            memory_id=latest_memory_id,
-            content_hash=target_version.content_hash,
-            size_bytes=target_version.size_bytes,
-            version_number=latest_memory.current_version,
-            source_type="rollback",
-            parent_version_id=parent_version_id,
-            change_reason=f"Rollback to version {version}",
-            created_by=check_context.user if check_context else None,
-        )
-
-        self.session.commit()
+        """Rollback a memory to a previous version. Delegates to MemoryVersioning."""
+        self._versioning.rollback(memory_id, version, context=context)
 
     def diff_versions(
         self,
@@ -3489,103 +2143,5 @@ class Memory:
         mode: Literal["metadata", "content"] = "metadata",
         context: OperationContext | None = None,
     ) -> dict[str, Any] | str:
-        """Compare two versions of a memory.
-
-        Args:
-            memory_id: The memory ID.
-            v1: First version number.
-            v2: Second version number.
-            mode: Diff mode - "metadata" returns size/hash comparison,
-                  "content" returns unified diff format.
-            context: Optional operation context for permission checks.
-
-        Returns:
-            For mode="metadata": Dict with version comparison info.
-            For mode="content": String in unified diff format.
-
-        Raises:
-            ValueError: If memory or versions not found, or no permission.
-
-        Example:
-            >>> # Compare metadata between versions
-            >>> diff = memory.diff_versions("mem_123", v1=1, v2=2)
-            >>> print(f"Content changed: {diff['content_changed']}")
-
-            >>> # Get content diff
-            >>> diff_text = memory.diff_versions("mem_123", v1=1, v2=2, mode="content")
-            >>> print(diff_text)
-        """
-        import difflib
-
-        from sqlalchemy import select
-
-        from nexus.storage.models import VersionHistoryModel
-
-        # Check if memory exists and we have permission
-        memory = self.memory_router.get_memory_by_id(memory_id)
-        if not memory:
-            raise ValueError(f"Memory not found: {memory_id}")
-
-        check_context = context or self.context
-        if not self.permission_enforcer.check_memory(memory, Permission.READ, check_context):
-            raise ValueError(f"No permission to diff memory: {memory_id}")
-
-        # #1188: Search across the supersedes chain for versions
-        chain_ids = self._get_chain_memory_ids(memory_id)
-
-        stmt = select(VersionHistoryModel).where(
-            VersionHistoryModel.resource_type == "memory",
-            VersionHistoryModel.resource_id.in_(chain_ids),
-            VersionHistoryModel.version_number.in_([v1, v2]),
-        )
-
-        versions_dict = {v.version_number: v for v in self.session.scalars(stmt)}
-
-        if v1 not in versions_dict:
-            raise ValueError(f"Version {v1} not found for memory {memory_id}")
-        if v2 not in versions_dict:
-            raise ValueError(f"Version {v2} not found for memory {memory_id}")
-
-        version1 = versions_dict[v1]
-        version2 = versions_dict[v2]
-
-        if mode == "metadata":
-            return {
-                "memory_id": memory_id,
-                "v1": v1,
-                "v2": v2,
-                "content_hash_v1": version1.content_hash,
-                "content_hash_v2": version2.content_hash,
-                "content_changed": version1.content_hash != version2.content_hash,
-                "size_v1": version1.size_bytes,
-                "size_v2": version2.size_bytes,
-                "size_delta": version2.size_bytes - version1.size_bytes,
-                "created_at_v1": version1.created_at.isoformat() if version1.created_at else None,
-                "created_at_v2": version2.created_at.isoformat() if version2.created_at else None,
-            }
-        else:
-            # Content diff mode - read both versions and compute unified diff
-            try:
-                content1_bytes = self.backend.read_content(
-                    version1.content_hash, context=self.context
-                ).unwrap()
-                content1 = content1_bytes.decode("utf-8")
-            except Exception:
-                content1 = f"<content not available: {version1.content_hash}>"
-
-            try:
-                content2_bytes = self.backend.read_content(
-                    version2.content_hash, context=self.context
-                ).unwrap()
-                content2 = content2_bytes.decode("utf-8")
-            except Exception:
-                content2 = f"<content not available: {version2.content_hash}>"
-
-            # Generate unified diff
-            diff_lines = difflib.unified_diff(
-                content1.splitlines(keepends=True),
-                content2.splitlines(keepends=True),
-                fromfile=f"version {v1}",
-                tofile=f"version {v2}",
-            )
-            return "".join(diff_lines)
+        """Compare two versions of a memory. Delegates to MemoryVersioning."""
+        return self._versioning.diff_versions(memory_id, v1, v2, mode=mode, context=context)

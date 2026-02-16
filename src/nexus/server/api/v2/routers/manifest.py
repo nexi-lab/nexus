@@ -13,7 +13,6 @@ because FastAPI uses ``eval_str=True`` on dependency signatures at import time.
 
 import logging
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -62,6 +61,7 @@ class ResolveResponse(BaseModel):
     total_ms: float
     source_count: int
     sources: list[dict[str, Any]]
+    data: list[dict[str, Any]] | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -226,30 +226,47 @@ async def resolve_manifest(
     if workspace_root:
         variables["workspace.root"] = workspace_root
 
-    # Create temporary output directory for resolution
-    import tempfile
-
-    with tempfile.TemporaryDirectory(prefix="manifest_") as tmpdir:
-        output_dir = Path(tmpdir)
+    # Per-agent MemoryQueryExecutor wiring (Issue #1428: 1B)
+    # Memory is per-agent (scoped by zone/user), so we bind at resolve-time.
+    # Use _memory_api (private field) to avoid triggering lazy initialization
+    # which may fail if the memory subsystem isn't fully configured.
+    request_resolver = resolver
+    memory = getattr(nexus_fs, "_memory_api", None)
+    if memory is not None:
         try:
-            result = await resolver.resolve(sources, variables, output_dir)
-        except ManifestResolutionError as exc:
-            # Return sanitized error info (no internal paths/stack traces)
-            failed_summary = [
-                {
-                    "source_type": sr.source_type,
-                    "source_name": sr.source_name,
-                    "status": sr.status,
-                }
-                for sr in exc.failed_sources
-            ]
-            raise HTTPException(
-                status_code=500,
-                detail={
-                    "message": "One or more required sources failed during resolution",
-                    "failed_sources": failed_summary,
-                },
-            ) from exc
+            from nexus.services.context_manifest.executors.memory_query import (
+                MemoryQueryExecutor,
+            )
+            from nexus.services.context_manifest.executors.memory_search_adapter import (
+                MemorySearchAdapter,
+            )
+
+            mem_adapter = MemorySearchAdapter(memory=memory)
+            mem_executor = MemoryQueryExecutor(memory_search=mem_adapter)
+            request_resolver = resolver.with_executors({"memory_query": mem_executor})
+        except Exception:
+            logger.debug("MemoryQueryExecutor wiring skipped", exc_info=True)
+
+    # Resolve — skip file writes since results are returned in-memory (15A)
+    try:
+        result = await request_resolver.resolve(sources, variables)
+    except ManifestResolutionError as exc:
+        # Return sanitized error info (no internal paths/stack traces)
+        failed_summary = [
+            {
+                "source_type": sr.source_type,
+                "source_name": sr.source_name,
+                "status": sr.status,
+            }
+            for sr in exc.failed_sources
+        ]
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "One or more required sources failed during resolution",
+                "failed_sources": failed_summary,
+            },
+        ) from exc
 
     source_results = [
         {
@@ -262,9 +279,21 @@ async def resolve_manifest(
         for sr in result.sources
     ]
 
+    # Include resolved data in response (Issue #1428: 2A)
+    source_data = [
+        {
+            "source_type": sr.source_type,
+            "source_name": sr.source_name,
+            "data": sr.data,
+        }
+        for sr in result.sources
+        if sr.status in ("ok", "truncated") and sr.data is not None
+    ]
+
     return ResolveResponse(
         resolved_at=result.resolved_at,
         total_ms=result.total_ms,
         source_count=len(result.sources),
         sources=source_results,
+        data=source_data if source_data else None,
     )

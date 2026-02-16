@@ -212,6 +212,12 @@ class WorkspaceSnapshotModel(Base):
         Index("idx_workspace_snapshots_workspace_path", "workspace_path"),
         Index("idx_workspace_snapshots_manifest", "manifest_hash"),
         Index("idx_workspace_snapshots_created_at", "created_at"),
+        # Composite index for get_latest_snapshot (Issue #1428: 4A)
+        Index(
+            "idx_workspace_snapshots_ws_path_created",
+            "workspace_path",
+            created_at.desc(),
+        ),
     )
 
     def __repr__(self) -> str:

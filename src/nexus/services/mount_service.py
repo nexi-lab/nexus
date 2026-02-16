@@ -187,9 +187,7 @@ class MountService:
             if self.nexus_fs and hasattr(self.nexus_fs, "SessionLocal"):
                 session_factory = self.nexus_fs.SessionLocal
 
-            backend = BackendFactory.create(
-                backend_type, config, session_factory=session_factory
-            )
+            backend = BackendFactory.create(backend_type, config, session_factory=session_factory)
 
             # Add mount to router
             self.router.add_mount(

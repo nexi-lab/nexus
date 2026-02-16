@@ -31,6 +31,7 @@ from nexus.core.response import HandlerResponse
 # avoid import issues with conftest)
 # ---------------------------------------------------------------------------
 
+
 class _MockBackend(Backend):
     """In-memory Backend for contract testing."""
 
@@ -116,6 +117,7 @@ class _MockBackend(Backend):
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture()
 def mock_backend() -> _MockBackend:
     return _MockBackend()
@@ -131,6 +133,7 @@ def local_backend(tmp_path: Any) -> Backend:
 # ---------------------------------------------------------------------------
 # Contract test class — parametrized by backend fixture
 # ---------------------------------------------------------------------------
+
 
 class BackendContractTests:
     """Reusable contract tests for any Backend implementation.
@@ -336,6 +339,7 @@ class BackendContractTests:
 # Run contract tests against MockBackend
 # ---------------------------------------------------------------------------
 
+
 class TestMockBackendContract:
     """Contract tests against MockBackend (reference implementation)."""
 
@@ -422,6 +426,7 @@ class TestMockBackendContract:
 # ---------------------------------------------------------------------------
 # Run contract tests against LocalBackend (real filesystem)
 # ---------------------------------------------------------------------------
+
 
 class TestLocalBackendContract:
     """Contract tests against LocalBackend (real filesystem)."""

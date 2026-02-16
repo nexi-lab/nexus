@@ -359,9 +359,7 @@ class MountCoreService:
         """
         from nexus.backends.factory import BackendFactory
 
-        return BackendFactory.create(
-            backend_type, config, session_factory=self._gw.session_factory
-        )
+        return BackendFactory.create(backend_type, config, session_factory=self._gw.session_factory)
 
     def _setup_mount_point(
         self,

@@ -446,7 +446,9 @@ class EventsService:
         if self._metadata_cache is not None:
             virtual_path = path
             if self._is_same_box():
-                assert self._backend.is_passthrough, "Backend must be passthrough for this operation"
+                assert self._backend.is_passthrough, (
+                    "Backend must be passthrough for this operation"
+                )
                 base_path = str(self._backend.base_path)
                 if path.startswith(base_path):
                     virtual_path = path[len(base_path) :]

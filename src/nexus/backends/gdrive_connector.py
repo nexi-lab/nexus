@@ -679,9 +679,7 @@ class GoogleDriveConnectorBackend(Backend):
             )
         else:
             results = (
-                service.files()
-                .list(q=query, spaces="drive", fields="files(id, name)")
-                .execute()
+                service.files().list(q=query, spaces="drive", fields="files(id, name)").execute()
             )
 
         files = results.get("files", [])
@@ -708,9 +706,7 @@ class GoogleDriveConnectorBackend(Backend):
 
             file = (
                 service.files()
-                .create(
-                    body=file_metadata, media_body=media, fields="id", supportsAllDrives=True
-                )
+                .create(body=file_metadata, media_body=media, fields="id", supportsAllDrives=True)
                 .execute()
             )
             file_id = file["id"]
@@ -887,9 +883,7 @@ class GoogleDriveConnectorBackend(Backend):
             )
         else:
             results = (
-                service.files()
-                .list(q=query, spaces="drive", fields="files(id, name)")
-                .execute()
+                service.files().list(q=query, spaces="drive", fields="files(id, name)").execute()
             )
 
         files = results.get("files", [])
@@ -963,9 +957,7 @@ class GoogleDriveConnectorBackend(Backend):
                 .execute()
             )
         else:
-            results = (
-                service.files().list(q=query, spaces="drive", fields="files(id)").execute()
-            )
+            results = service.files().list(q=query, spaces="drive", fields="files(id)").execute()
 
         files = results.get("files", [])
 
@@ -1105,9 +1097,7 @@ class GoogleDriveConnectorBackend(Backend):
             if not is_last:
                 # Intermediate folder - create if parents=True, otherwise fail if missing
                 if parents:
-                    parent_id = self._get_or_create_folder(
-                        service, folder_name, parent_id, context
-                    )
+                    parent_id = self._get_or_create_folder(service, folder_name, parent_id, context)
                 else:
                     # Try to get existing folder
                     query = f"name='{folder_name}' and '{parent_id}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false"

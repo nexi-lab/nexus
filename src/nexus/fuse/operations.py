@@ -427,7 +427,7 @@ class NexusFUSEOperations(Operations):
                             "size": event.size,
                             "timestamp": event.timestamp,
                         },
-                        zone_id=event.zone_id or "default",
+                        zone_id=event.zone_id or "root",
                     )
             except ImportError:
                 pass  # Subscription manager not available

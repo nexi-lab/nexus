@@ -261,7 +261,7 @@ class GraphStore:
     def __init__(
         self,
         session: AsyncSession,
-        zone_id: str = "default",
+        zone_id: str = "root",
         embedding_provider: EmbeddingProvider | None = None,
         merge_threshold: float = 0.85,
         confidence_threshold: float = 0.75,

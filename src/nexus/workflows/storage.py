@@ -11,6 +11,7 @@ from typing import Any
 import yaml
 from sqlalchemy import select
 
+from nexus.raft.zone_manager import ROOT_ZONE_ID
 from nexus.storage.models import WorkflowExecutionModel, WorkflowModel
 from nexus.workflows.loader import WorkflowLoader
 from nexus.workflows.types import WorkflowDefinition, WorkflowExecution
@@ -26,10 +27,10 @@ class WorkflowStore:
 
         Args:
             session_factory: SQLAlchemy session factory
-            zone_id: Zone ID (optional, defaults to "default")
+            zone_id: Zone ID (optional, defaults to ROOT_ZONE_ID)
         """
         self.session_factory = session_factory
-        self.zone_id = zone_id or "default"
+        self.zone_id = zone_id or ROOT_ZONE_ID
 
     def _get_zone_id(self) -> str:
         """Get current zone ID."""

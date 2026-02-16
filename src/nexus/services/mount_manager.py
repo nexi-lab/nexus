@@ -35,7 +35,7 @@ class MountManager:
 
     Example:
         >>> from nexus import NexusFS
-        >>> from nexus.core.mount_manager import MountManager
+        >>> from nexus.services.mount_manager import MountManager
         >>>
         >>> nx = NexusFS(...)
         >>> manager = MountManager(nx.SessionLocal)

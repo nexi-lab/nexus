@@ -257,7 +257,7 @@ class TestTokenRotation:
         token1 = await manager.get_valid_token("google", "alice@example.com")
 
         # Verify cache is populated
-        cache_key = ("google", "alice@example.com", "default")
+        cache_key = ("google", "alice@example.com", "root")
         assert cache_key in manager._token_cache
 
         # Second call should use cache
@@ -275,7 +275,7 @@ class TestTokenRotation:
 
         # Populate cache
         await manager.get_valid_token("google", "alice@example.com")
-        cache_key = ("google", "alice@example.com", "default")
+        cache_key = ("google", "alice@example.com", "root")
         assert cache_key in manager._token_cache
 
         # Revoke should clear cache
@@ -504,7 +504,7 @@ class TestReuseDetectionDuringRefresh:
                 credential_id=model.credential_id,
                 refresh_token_hash=_hash_token("1//stale_refresh"),
                 rotation_counter=0,
-                zone_id="default",
+                zone_id="root",
                 rotated_at=datetime.now(UTC),
             )
             session.add(history_entry)

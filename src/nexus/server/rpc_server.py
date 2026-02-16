@@ -46,12 +46,11 @@ from nexus.server.path_utils import (
     unscope_internal_path,
     unscope_result,
 )
+from nexus.core.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.server.protocol import (
     RPCErrorCode,
     RPCRequest,
     RPCResponse,
-    decode_rpc_message,
-    encode_rpc_message,
     parse_method_params,
 )
 
@@ -491,7 +490,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         from datetime import timedelta
 
         from nexus.rebac.entity_registry import EntityRegistry
-        from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+        from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 
         if not self.auth_provider or not hasattr(self.auth_provider, "session_factory"):
             raise RuntimeError("Database auth provider not configured")
@@ -671,7 +670,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         Returns:
             Success status
         """
-        from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+        from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 
         if not self.auth_provider or not hasattr(self.auth_provider, "session_factory"):
             raise RuntimeError("Database auth provider not configured")

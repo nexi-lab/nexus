@@ -74,11 +74,10 @@ from nexus.server.path_utils import (
     unscope_internal_path,
     unscope_result,
 )
+from nexus.core.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.server.protocol import (
     RPCErrorCode,
     RPCRequest,
-    decode_rpc_message,
-    encode_rpc_message,
     parse_method_params,
 )
 from nexus.server.rate_limiting import (  # noqa: E402
@@ -724,7 +723,7 @@ async def lifespan(_app: FastAPI) -> Any:
     # Issue #1240: Initialize AgentRegistry for agent lifecycle tracking
     if _app.state.nexus_fs and getattr(_app.state.nexus_fs, "SessionLocal", None):
         try:
-            from nexus.core.agent_registry import AgentRegistry
+            from nexus.services.agents.agent_registry import AgentRegistry
 
             _app.state.agent_registry = AgentRegistry(
                 session_factory=_app.state.nexus_fs.SessionLocal,
@@ -1241,6 +1240,16 @@ def create_app(
     app.state.nexus_fs = nexus_fs
     app.state.api_key = api_key
     app.state.auth_provider = auth_provider
+
+    # Issue #1399: BrickContainer for DI (auth brick + future bricks)
+    from nexus.core.brick_container import BrickContainer
+
+    app.state.brick_container = BrickContainer()
+    if auth_provider is not None:
+        from nexus.auth.protocol import AuthBrickProtocol
+
+        if isinstance(auth_provider, AuthBrickProtocol):
+            app.state.brick_container.register(AuthBrickProtocol, auth_provider)
     app.state.database_url = database_url
     app.state.data_dir = data_dir  # Issue #1412: A2A task persistence
 
@@ -1366,9 +1375,9 @@ def create_app(
             from nexus.server.auth.auth_routes import set_auth_provider
 
             # Extract DatabaseLocalAuth from DiscriminatingAuthProvider if needed
-            from nexus.server.auth.base import AuthProvider
-            from nexus.server.auth.database_local import DatabaseLocalAuth
-            from nexus.server.auth.factory import DiscriminatingAuthProvider
+            from nexus.auth.providers.base import AuthProvider
+            from nexus.auth.providers.database_local import DatabaseLocalAuth
+            from nexus.auth.providers.discriminator import DiscriminatingAuthProvider
 
             local_auth_provider: AuthProvider | None = None
             if isinstance(auth_provider, DatabaseLocalAuth):
@@ -3337,7 +3346,7 @@ def _handle_admin_create_key(params: Any, context: Any) -> dict[str, Any]:
     import uuid
     from datetime import timedelta
 
-    from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
     from nexus.rebac.entity_registry import EntityRegistry
 
     _require_admin(context)
@@ -3502,7 +3511,7 @@ def _handle_admin_get_key(params: Any, context: Any) -> dict[str, Any]:
 def _handle_admin_revoke_key(params: Any, context: Any) -> dict[str, Any]:
     """Handle admin_revoke_key method."""
     from nexus.core.exceptions import NexusFileNotFoundError
-    from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 
     _require_admin(context)
 

@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.core.permissions import OperationContext
 from nexus.server.auth.google_oauth import GoogleOAuthProvider
-from nexus.server.auth.local import LocalAuth
+from nexus.auth.providers.local import LocalAuth
 from nexus.server.auth.oauth_crypto import OAuthCrypto
 from nexus.server.auth.user_helpers import get_user_by_email
 from nexus.storage.models import UserModel, UserOAuthAccountModel

@@ -19,7 +19,7 @@ from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 
 if TYPE_CHECKING:
-    from nexus.core.memory_api import Memory
+    from nexus.services.memory.memory_api import Memory
     from nexus.core.mount_manager import MountManager
     from nexus.core.permissions import PermissionEnforcer
     from nexus.core.workspace_manager import WorkspaceManager
@@ -170,7 +170,71 @@ class NexusFS(  # type: ignore[misc]
         # on agent registration. Duck-typed callable: (agent_id: str, zone_id: str) -> None.
         # Injected by factory.py when NEXUS_PAY is available.
         wallet_provisioner: Any | None = None,
+        # Config-object API (used by factory.py create_nexus_fs)
+        # When provided, these override the flat params above.
+        cache: Any | None = None,
+        permissions: Any | None = None,
+        distributed: Any | None = None,
+        memory: Any | None = None,
+        parsing: Any | None = None,
+        services: Any | None = None,
     ):
+        logger = logging.getLogger(__name__)
+
+        # Map config objects to flat params (backward compat bridge)
+        if cache is not None:
+            enable_metadata_cache = getattr(cache, "enable_metadata_cache", enable_metadata_cache)
+            cache_path_size = getattr(cache, "path_size", cache_path_size)
+            cache_list_size = getattr(cache, "list_size", cache_list_size)
+            cache_kv_size = getattr(cache, "kv_size", cache_kv_size)
+            cache_exists_size = getattr(cache, "exists_size", cache_exists_size)
+            cache_ttl_seconds = getattr(cache, "ttl_seconds", cache_ttl_seconds)
+            enable_content_cache = getattr(cache, "enable_content_cache", enable_content_cache)
+            content_cache_size_mb = getattr(cache, "content_cache_size_mb", content_cache_size_mb)
+        if permissions is not None:
+            enforce_permissions = getattr(permissions, "enforce", enforce_permissions)
+            inherit_permissions = getattr(permissions, "inherit", inherit_permissions)
+            allow_admin_bypass = getattr(permissions, "allow_admin_bypass", allow_admin_bypass)
+            enforce_zone_isolation = getattr(permissions, "enforce_zone_isolation", enforce_zone_isolation)
+            audit_strict_mode = getattr(permissions, "audit_strict_mode", audit_strict_mode)
+            enable_tiger_cache = getattr(permissions, "enable_tiger_cache", enable_tiger_cache)
+            enable_deferred_permissions = getattr(permissions, "enable_deferred", enable_deferred_permissions)
+            deferred_flush_interval = getattr(permissions, "deferred_flush_interval", deferred_flush_interval)
+        if distributed is not None:
+            coordination_url = getattr(distributed, "coordination_url", coordination_url)
+            enable_distributed_events = getattr(distributed, "enable_events", enable_distributed_events)
+            enable_distributed_locks = getattr(distributed, "enable_locks", enable_distributed_locks)
+            enable_workflows = getattr(distributed, "enable_workflows", enable_workflows)
+        if memory is not None:
+            enable_memory_paging = getattr(memory, "enable_paging", enable_memory_paging)
+            memory_main_capacity = getattr(memory, "main_capacity", memory_main_capacity)
+            memory_recall_max_age_hours = getattr(memory, "recall_max_age_hours", memory_recall_max_age_hours)
+        if parsing is not None:
+            auto_parse = getattr(parsing, "auto_parse", auto_parse)
+            providers = getattr(parsing, "providers", None)
+            if providers is not None:
+                parse_providers = [dict(p) for p in providers]
+        if services is not None:
+            router = getattr(services, "router", router)
+            rebac_manager = getattr(services, "rebac_manager", rebac_manager)
+            dir_visibility_cache = getattr(services, "dir_visibility_cache", dir_visibility_cache)
+            audit_store = getattr(services, "audit_store", audit_store)
+            entity_registry = getattr(services, "entity_registry", entity_registry)
+            permission_enforcer = getattr(services, "permission_enforcer", permission_enforcer)
+            hierarchy_manager = getattr(services, "hierarchy_manager", hierarchy_manager)
+            deferred_permission_buffer = getattr(services, "deferred_permission_buffer", deferred_permission_buffer)
+            workspace_registry = getattr(services, "workspace_registry", workspace_registry)
+            mount_manager = getattr(services, "mount_manager", mount_manager)
+            workspace_manager = getattr(services, "workspace_manager", workspace_manager)
+            write_observer = getattr(services, "write_observer", write_observer)
+            version_service = getattr(services, "version_service", version_service)
+            overlay_resolver = getattr(services, "overlay_resolver", overlay_resolver)
+            wallet_provisioner = getattr(services, "wallet_provisioner", wallet_provisioner)
+            workflow_engine = getattr(services, "workflow_engine", workflow_engine)
+
+        # Stash services object for deferred field injection (event_bus, lock_manager, etc.)
+        self._injected_services = services
+
         # Store config for OAuth factory and other components that need it
         self._config: Any | None = None
 
@@ -432,19 +496,32 @@ class NexusFS(  # type: ignore[misc]
         self._coordination_client: Any = None
         self._event_client: Any = None  # May be same as coordination or separate
 
+        # Inject pre-built services from KernelServices (if provided)
+        _svc = getattr(self, "_injected_services", None)
+        if _svc is not None:
+            if getattr(_svc, "event_bus", None) is not None:
+                self._event_bus = _svc.event_bus
+            if getattr(_svc, "lock_manager", None) is not None:
+                self._lock_manager = _svc.lock_manager
+            self._service_extras = getattr(_svc, "server_extras", {}) or {}
+            if getattr(_svc, "agent_registry", None) is not None:
+                self._agent_registry = _svc.agent_registry
+            if getattr(_svc, "namespace_manager", None) is not None:
+                self._namespace_manager = _svc.namespace_manager
+            if getattr(_svc, "cache_observer", None) is not None:
+                self._cache_observer = _svc.cache_observer
+
         # Issue #1106: Auto-start flag for cache invalidation
         # Note: Event bus has its own _started flag, so we don't duplicate it here
         # This flag tracks whether _start_cache_invalidation() has been called
         self._cache_invalidation_started: bool = False
 
-        if enable_distributed_locks or enable_distributed_events:
+        # Skip inline creation if already injected from services
+        if (enable_distributed_locks or enable_distributed_events) and self._event_bus is None and self._lock_manager is None:
             try:
-                import logging
                 import os
 
                 from nexus.cache.dragonfly import DragonflyClient
-
-                logger = logging.getLogger(__name__)
 
                 # Coordination URL (noeviction) - required for locks
                 coordination_url_resolved = coordination_url or os.getenv("NEXUS_REDIS_URL")
@@ -516,9 +593,6 @@ class NexusFS(  # type: ignore[misc]
                     )
 
             except ImportError as e:
-                import logging
-
-                logger = logging.getLogger(__name__)
                 logger.warning(f"Could not initialize distributed event system: {e}")
 
         # VFS lock manager — local, in-process path-level locking (Issue #1398)
@@ -571,9 +645,6 @@ class NexusFS(  # type: ignore[misc]
 
                 mount_result = self.load_all_saved_mounts(auto_sync=auto_sync)
                 if mount_result["loaded"] > 0 or mount_result["failed"] > 0:
-                    import logging
-
-                    logger = logging.getLogger(__name__)
                     sync_msg = (
                         f", {mount_result['synced']} synced" if mount_result["synced"] > 0 else ""
                     )
@@ -589,9 +660,6 @@ class NexusFS(  # type: ignore[misc]
                             logger.error(f"  ❌ {error}")
         except Exception as e:
             # Log warning but don't fail initialization if mount loading fails
-            import logging
-
-            logger = logging.getLogger(__name__)
             logger.warning(f"Failed to load saved mounts during initialization: {e}")
 
         # Phase 2: Service Composition - Extract from mixins into services
@@ -972,7 +1040,7 @@ class NexusFS(  # type: ignore[misc]
 
             # Issue #1258: Create MemoryWithPaging if enabled, else standard Memory
             if self._enable_memory_paging:
-                from nexus.core.memory_with_paging import MemoryWithPaging
+                from nexus.services.memory.memory_with_paging import MemoryWithPaging
 
                 # Try to get engine for VectorDatabase integration
                 engine = None
@@ -993,7 +1061,7 @@ class NexusFS(  # type: ignore[misc]
                     session_factory=self.SessionLocal,
                 )
             else:
-                from nexus.core.memory_api import Memory
+                from nexus.services.memory.memory_api import Memory
 
                 self._memory_api = Memory(
                     session=session,
@@ -1108,7 +1176,7 @@ class NexusFS(  # type: ignore[misc]
         Returns:
             Memory API instance
         """
-        from nexus.core.memory_api import Memory
+        from nexus.services.memory.memory_api import Memory
         from nexus.rebac.entity_registry import EntityRegistry
 
         # Get or create entity registry
@@ -3915,7 +3983,7 @@ class NexusFS(  # type: ignore[misc]
         context: dict | Any | None,
     ) -> str:
         """Create API key for agent and return the raw key."""
-        from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+        from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 
         zone_id = self._extract_zone_id(context)
         session = self.SessionLocal()
@@ -4762,7 +4830,7 @@ class NexusFS(  # type: ignore[misc]
         if not hasattr(self, "_agent_registry") or not self._agent_registry:
             raise ValueError("AgentRegistry not available")
 
-        from nexus.core.agent_record import AgentState
+        from nexus.services.agents.agent_record import AgentState
 
         try:
             target = AgentState(target_state)
@@ -4825,7 +4893,7 @@ class NexusFS(  # type: ignore[misc]
 
         state_enum = None
         if state:
-            from nexus.core.agent_record import AgentState
+            from nexus.services.agents.agent_record import AgentState
 
             try:
                 state_enum = AgentState(state)
@@ -5024,7 +5092,7 @@ class NexusFS(  # type: ignore[misc]
             if create_api_key:
                 from sqlalchemy import select
 
-                from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+                from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
                 from nexus.storage.models import APIKeyModel
 
                 # Lock the user row to prevent race conditions during concurrent provisioning
@@ -5111,7 +5179,7 @@ class NexusFS(  # type: ignore[misc]
         agent_paths = []
         if create_agents:
             try:
-                from nexus.core.agent_provisioning import create_standard_agents
+                from nexus.services.agents.agent_provisioning import create_standard_agents
 
                 agent_results = create_standard_agents(self, user_id, admin_context)
 
@@ -5141,7 +5209,7 @@ class NexusFS(  # type: ignore[misc]
                     # Grant SkillBuilder permissions after skills are imported
                     if create_agents:
                         try:
-                            from nexus.core.agent_provisioning import (
+                            from nexus.services.agents.agent_provisioning import (
                                 grant_skill_builder_permissions,
                             )
 

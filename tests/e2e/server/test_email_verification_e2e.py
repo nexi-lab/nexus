@@ -35,9 +35,9 @@ from nexus.backends.local import LocalBackend
 from nexus.core.nexus_fs import NexusFS
 from nexus.factory import create_nexus_fs
 from nexus.raft import _HAS_METASTORE
-from nexus.server.auth.database_key import DatabaseAPIKeyAuth
-from nexus.server.auth.database_local import DatabaseLocalAuth
-from nexus.server.auth.factory import DiscriminatingAuthProvider
+from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+from nexus.auth.providers.database_local import DatabaseLocalAuth
+from nexus.auth.providers.discriminator import DiscriminatingAuthProvider
 from nexus.storage.models import Base
 from nexus.storage.record_store import SQLAlchemyRecordStore
 

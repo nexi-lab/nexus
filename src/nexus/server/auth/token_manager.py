@@ -24,15 +24,13 @@ import json
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from typing import Any
 
 from cachetools import TTLCache
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import select
 
 from nexus.core.exceptions import AuthenticationError
-from nexus.storage.models import Base, OAuthCredentialModel
+from nexus.storage.models import OAuthCredentialModel
 from nexus.storage.token_rotation_store import TokenRotationStore
 
 from .oauth_crypto import OAuthCrypto
@@ -79,65 +77,23 @@ class TokenManager:
 
     def __init__(
         self,
-        db_path: str | Path | None = None,
-        db_url: str | None = None,
+        session_factory: Any,
         encryption_key: str | None = None,
         audit_logger: Any | None = None,
-        session_factory: Any | None = None,
     ):
         """Initialize token manager.
 
         Args:
-            db_path: Path to SQLite database (deprecated, use db_url)
-            db_url: Database URL
+            session_factory: SQLAlchemy sessionmaker. Reuses the app-level
+                connection pool (Issue #1597).
             encryption_key: Fernet encryption key (base64-encoded)
             audit_logger: Optional SecretsAuditLogger instance for audit trail
-            session_factory: Optional SQLAlchemy sessionmaker. When provided,
-                reuses the app-level connection pool instead of creating a
-                separate engine (Issue #1597).
         """
-        if session_factory is not None:
-            self.SessionLocal = session_factory
-            # Derive database_url for OAuthCrypto; engine is owned externally
-            self.engine = session_factory.kw.get("bind") if hasattr(session_factory, "kw") else None
-            self.database_url = db_url or (str(self.engine.url) if self.engine else "")
-            self._owns_engine = False
-        elif db_url:
-            import warnings
-
-            warnings.warn(
-                "TokenManager(db_url=...) creates a standalone engine outside "
-                "RecordStoreABC. Use session_factory= for proper pillar compliance.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            self.database_url = db_url
-            self.engine = create_engine(
-                self.database_url,
-                connect_args={"check_same_thread": False} if "sqlite" in self.database_url else {},
-            )
-            self.SessionLocal = sessionmaker(bind=self.engine)
-            Base.metadata.create_all(self.engine)
-            self._owns_engine = True
-        elif db_path:
-            import warnings
-
-            warnings.warn(
-                "TokenManager(db_path=...) creates a standalone engine outside "
-                "RecordStoreABC. Use session_factory= for proper pillar compliance.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            self.database_url = f"sqlite:///{db_path}"
-            self.engine = create_engine(
-                self.database_url,
-                connect_args={"check_same_thread": False},
-            )
-            self.SessionLocal = sessionmaker(bind=self.engine)
-            Base.metadata.create_all(self.engine)
-            self._owns_engine = True
-        else:
-            raise ValueError("One of db_path, db_url, or session_factory must be provided")
+        self.SessionLocal = session_factory
+        # Derive database_url for OAuthCrypto; engine is owned externally
+        self.engine = session_factory.kw.get("bind") if hasattr(session_factory, "kw") else None
+        self.database_url = str(self.engine.url) if self.engine else ""
+        self._owns_engine = False
 
         # Pass session_factory to OAuthCrypto for shared pool (Issue #1597)
         self.crypto = OAuthCrypto(
@@ -714,15 +670,52 @@ class TokenManager:
                 logger.warning("Failed to write secrets audit log", exc_info=True)
 
     def close(self) -> None:
-        """Cleanup resources."""
-        if getattr(self, "_closed", False):
-            return
-        self._closed = True
+        """Cleanup resources.
 
-        if not getattr(self, "_owns_engine", True) or self.engine is None:
-            return
+        When created via from_database_url(), disposes the owned engine.
+        When created with an external session_factory, only clears caches.
+        """
+        self._token_cache.clear()
+        self._refresh_locks.clear()
 
-        try:
-            self.engine.dispose()
-        except Exception:
-            logger.debug("Engine dispose failed (non-critical)", exc_info=True)
+        if getattr(self, "_owns_engine", False) and self.engine is not None:
+            try:
+                self.engine.dispose()
+            except Exception:
+                logger.debug("Engine dispose failed (non-critical)", exc_info=True)
+
+    @classmethod
+    def from_database_url(
+        cls,
+        db_url: str,
+        encryption_key: str | None = None,
+        audit_logger: Any | None = None,
+    ) -> "TokenManager":
+        """Create TokenManager from a database URL.
+
+        Convenience factory for callers that don't have a pre-existing
+        session_factory (e.g. CLI commands, standalone scripts).
+        The engine is owned by this instance and disposed on close().
+        """
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+
+        from nexus.storage.models import Base
+
+        connect_args: dict[str, Any] = {}
+        if "sqlite" in db_url:
+            connect_args["check_same_thread"] = False
+
+        engine = create_engine(db_url, connect_args=connect_args)
+        Base.metadata.create_all(engine)
+        factory = sessionmaker(bind=engine)
+
+        instance = cls(
+            session_factory=factory,
+            encryption_key=encryption_key,
+            audit_logger=audit_logger,
+        )
+        # Mark that this instance owns the engine (for cleanup)
+        instance._owns_engine = True  # noqa: SLF001
+        instance.database_url = db_url
+        return instance

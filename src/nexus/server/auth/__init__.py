@@ -1,40 +1,75 @@
-"""Authentication providers for Nexus server."""
+"""Authentication providers for Nexus server.
 
-from nexus.server.auth.base import AuthProvider, AuthResult
-from nexus.server.auth.database_key import DatabaseAPIKeyAuth
-from nexus.server.auth.factory import create_auth_provider
-from nexus.server.auth.google_oauth import GoogleOAuthProvider
-from nexus.server.auth.local import LocalAuth
-from nexus.server.auth.microsoft_oauth import MicrosoftOAuthProvider
-from nexus.server.auth.oauth_config import OAuthConfig, OAuthProviderConfig
-from nexus.server.auth.oauth_crypto import OAuthCrypto
-from nexus.server.auth.oauth_factory import OAuthProviderFactory
-from nexus.server.auth.oauth_provider import OAuthCredential, OAuthError, OAuthProvider
-from nexus.server.auth.oidc import MultiOIDCAuth, OIDCAuth
-from nexus.server.auth.static_key import StaticAPIKeyAuth
-from nexus.server.auth.token_manager import TokenManager
+Backward-compatibility shim: Auth providers now live in nexus.auth brick.
+OAuth credential management stays here (Phase 2 extraction).
+"""
+
+import warnings
+
+# Auth brick re-exports (moved to nexus.auth in Issue #1399)
+from nexus.auth.providers.base import AuthProvider, AuthResult  # noqa: F401
+from nexus.auth.providers.database_key import DatabaseAPIKeyAuth  # noqa: F401
+from nexus.auth.providers.database_local import DatabaseLocalAuth  # noqa: F401
+from nexus.auth.providers.discriminator import DiscriminatingAuthProvider  # noqa: F401
+from nexus.auth.providers.local import LocalAuth  # noqa: F401
+from nexus.auth.providers.oidc import MultiOIDCAuth, OIDCAuth  # noqa: F401
+from nexus.auth.providers.static_key import StaticAPIKeyAuth  # noqa: F401
+
+# Factory function — stays here but delegates to brick providers
+from nexus.server.auth.factory import create_auth_provider  # noqa: F401
+
+# OAuth components — stay in server/auth (Phase 2 extraction)
+from nexus.server.auth.google_oauth import GoogleOAuthProvider  # noqa: F401
+from nexus.server.auth.microsoft_oauth import MicrosoftOAuthProvider  # noqa: F401
+from nexus.server.auth.oauth_config import OAuthConfig, OAuthProviderConfig  # noqa: F401
+from nexus.server.auth.oauth_crypto import OAuthCrypto  # noqa: F401
+from nexus.server.auth.oauth_factory import OAuthProviderFactory  # noqa: F401
+from nexus.server.auth.oauth_provider import OAuthCredential, OAuthError, OAuthProvider  # noqa: F401
+from nexus.server.auth.token_manager import TokenManager  # noqa: F401
 
 __all__ = [
+    # Auth brick (canonical: nexus.auth)
     "AuthProvider",
     "AuthResult",
     "StaticAPIKeyAuth",
     "DatabaseAPIKeyAuth",
+    "DatabaseLocalAuth",
+    "DiscriminatingAuthProvider",
     "LocalAuth",
     "OIDCAuth",
     "MultiOIDCAuth",
     "create_auth_provider",
-    # OAuth components
+    # OAuth components (stay in server/auth for Phase 2)
     "OAuthProvider",
     "OAuthCredential",
     "OAuthError",
     "OAuthCrypto",
-    # OAuth configuration
     "OAuthConfig",
     "OAuthProviderConfig",
     "OAuthProviderFactory",
-    # Google OAuth providers
     "GoogleOAuthProvider",
-    # Microsoft OAuth
     "MicrosoftOAuthProvider",
     "TokenManager",
 ]
+
+
+def __getattr__(name: str) -> object:
+    """Emit deprecation warning for auth provider imports from server.auth."""
+    if name in (
+        "AuthProvider",
+        "AuthResult",
+        "StaticAPIKeyAuth",
+        "DatabaseAPIKeyAuth",
+        "DatabaseLocalAuth",
+        "DiscriminatingAuthProvider",
+        "LocalAuth",
+        "OIDCAuth",
+        "MultiOIDCAuth",
+    ):
+        warnings.warn(
+            f"Importing {name} from nexus.server.auth is deprecated. "
+            f"Use nexus.auth instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+    return globals()[name]

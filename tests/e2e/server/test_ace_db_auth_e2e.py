@@ -177,7 +177,7 @@ def db_auth_server(tmp_path_factory):
             with Session() as session:
                 # Get the raw key hash - we can't recover the raw key from the hash
                 # Instead, create a new key directly
-                from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+                from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 
                 _key_id, api_key = DatabaseAPIKeyAuth.create_key(
                     session,
@@ -207,7 +207,7 @@ def db_auth_server(tmp_path_factory):
         from sqlalchemy import create_engine as ce2
         from sqlalchemy.orm import sessionmaker as sm2
 
-        from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+        from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 
         engine2 = ce2(f"sqlite:///{db_path}")
         Session2 = sm2(bind=engine2)

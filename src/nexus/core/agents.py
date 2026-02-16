@@ -137,7 +137,7 @@ def create_agent_with_api_key(
     agent = register_agent(user_id, agent_id, name, entity_registry=entity_registry, **kwargs)
 
     # 2. Create API key (provider-specific)
-    from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 
     key_id, raw_key = DatabaseAPIKeyAuth.create_key(
         session,

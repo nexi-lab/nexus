@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
 
 from nexus.raft.zone_manager import ROOT_ZONE_ID
-from nexus.server.auth.database_local import DatabaseLocalAuth
+from nexus.auth.providers.database_local import DatabaseLocalAuth
 from nexus.server.auth.oauth_user_auth import OAuthUserAuth
 
 logger = logging.getLogger(__name__)
@@ -794,7 +794,7 @@ async def request_verification(
         return {"message": "If this email is registered, a verification link has been sent."}
 
     try:
-        from nexus.server.auth.database_local import get_user_by_email
+        from nexus.auth.user_queries import get_user_by_email
 
         with auth.session_factory() as session:
             user = get_user_by_email(session, str(email))
@@ -943,7 +943,7 @@ async def oauth_check(
                 # Existing OAuth account - login immediately
                 from datetime import UTC, datetime, timedelta
 
-                from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+                from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
                 from nexus.storage.models import APIKeyModel, UserModel
 
                 user = session.get(UserModel, existing_oauth.user_id)
@@ -1223,7 +1223,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
         import uuid
         from datetime import UTC, datetime, timedelta
 
-        from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+        from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
         from nexus.server.auth.user_helpers import get_user_by_email
         from nexus.storage.models import UserModel
 

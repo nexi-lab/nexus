@@ -16,7 +16,7 @@ from typing import Any, Literal
 
 from sqlalchemy.orm import Session
 
-from nexus.core.memory_router import MemoryViewRouter
+from nexus.services.memory.memory_router import MemoryViewRouter
 from nexus.core.permissions import OperationContext, Permission
 from nexus.core.temporal import parse_datetime, validate_temporal_params
 from nexus.rebac.entity_registry import EntityRegistry
@@ -372,7 +372,7 @@ class Memory:
         relationship_count_val = None
 
         if extract_relationships and text_content:
-            from nexus.core.relationship_extractor import LLMRelationshipExtractor
+            from nexus.services.memory.relationship_extractor import LLMRelationshipExtractor
 
             rel_extractor = LLMRelationshipExtractor(
                 llm_provider=self.llm_provider,

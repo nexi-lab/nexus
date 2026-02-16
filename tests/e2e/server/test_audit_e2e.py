@@ -133,7 +133,7 @@ def audit_server(tmp_path_factory):
         from sqlalchemy import create_engine as ce
         from sqlalchemy.orm import sessionmaker
 
-        from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+        from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 
         eng = ce(f"sqlite:///{db_path}")
         factory = sessionmaker(bind=eng)

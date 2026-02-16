@@ -18,7 +18,7 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
-from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.storage.models import APIKeyModel, Base
 
 # Add scripts directory to path for imports

@@ -104,11 +104,11 @@ class ParseConfig:
 
 
 # ---------------------------------------------------------------------------
-# KernelServices — mutable container for injected service dependencies
+# KernelServices — frozen container for injected service dependencies
 # ---------------------------------------------------------------------------
 
 
-@dataclass
+@dataclass(frozen=True)
 class KernelServices:
     """Injected service dependencies for NexusFS kernel.
 
@@ -116,7 +116,8 @@ class KernelServices:
     ``nexus.factory.create_nexus_services()`` and bundled here
     for clean injection into the kernel constructor.
 
-    NOT frozen — services are wired post-construction by factory.
+    Frozen — all wiring must happen at construction time in factory.py.
+    Use ``dataclasses.replace()`` to create modified copies if needed.
     """
 
     # Permission services

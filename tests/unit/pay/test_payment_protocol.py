@@ -547,7 +547,6 @@ class TestCreditsPaymentProtocol:
         from nexus.pay.credits import InsufficientCreditsError
         from nexus.pay.protocol import (
             CreditsPaymentProtocol,
-            ProtocolError,
             ProtocolTransferRequest,
         )
 
@@ -561,7 +560,7 @@ class TestCreditsPaymentProtocol:
             amount=Decimal("1000.0"),
         )
 
-        with pytest.raises(ProtocolError, match="Not enough"):
+        with pytest.raises(InsufficientCreditsError, match="Not enough"):
             await proto.transfer(request)
 
 
@@ -597,7 +596,6 @@ class TestErrorPropagation:
         from nexus.pay.credits import CreditsError
         from nexus.pay.protocol import (
             CreditsPaymentProtocol,
-            ProtocolError,
             ProtocolTransferRequest,
         )
 
@@ -611,6 +609,5 @@ class TestErrorPropagation:
             amount=Decimal("1.0"),
         )
 
-        with pytest.raises(ProtocolError) as exc_info:
+        with pytest.raises(CreditsError, match="db error"):
             await proto.transfer(request)
-        assert exc_info.value.__cause__ is not None

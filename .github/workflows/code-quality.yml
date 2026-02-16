@@ -10,7 +10,7 @@ on:
       - '.pre-commit-config.yaml'
       - 'pyproject.toml'
   push:
-    branches: [main, refactor/**]
+    branches: [main, develop, refactor/**]
     paths:
       - 'src/**/*.py'
       - 'tests/**/*.py'

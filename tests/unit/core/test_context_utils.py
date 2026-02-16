@@ -190,30 +190,12 @@ class TestGetDatabaseUrl:
             result = get_database_url(obj)
             assert result == "sqlite:///obj.db"
 
-    def test_get_database_url_from_metadata(self):
-        """Test that obj._record_store.database_url is used as fallback."""
-
-        # Use a simple object without _config or db_path
-        class MetadataObj:
-            def __init__(self):
-                self._record_store = Mock()
-                self._record_store.database_url = "postgresql://localhost/metadata"
-
-        obj = MetadataObj()
-
-        with pytest.MonkeyPatch().context() as m:
-            m.delenv("TOKEN_MANAGER_DB", raising=False)
-            result = get_database_url(obj)
-            assert result == "postgresql://localhost/metadata"
-
     def test_get_database_url_priority_order(self):
-        """Test that priority order is correct: env > config > obj.db_path > metadata."""
+        """Test that priority order is correct: env > config > obj.db_path."""
         obj = Mock()
         obj._config = Mock()
         obj._config.db_path = "sqlite:///config.db"
         obj.db_path = "sqlite:///obj.db"
-        obj._record_store = Mock()
-        obj._record_store.database_url = "postgresql://localhost/metadata"
 
         # Env var should take priority
         with pytest.MonkeyPatch().context() as m:
@@ -264,19 +246,17 @@ class TestGetDatabaseUrl:
             result = get_database_url(obj)
             assert result == "sqlite:///obj.db"
 
-    def test_get_database_url_with_none_db_path(self):
-        """Test that None db_path is skipped."""
+    def test_get_database_url_with_none_db_path_raises(self):
+        """Test that None db_path with no other source raises RuntimeError."""
         obj = Mock()
         obj._config = Mock()
         obj._config.db_path = None
         obj.db_path = None
-        obj._record_store = Mock()
-        obj._record_store.database_url = "postgresql://localhost/metadata"
 
         with pytest.MonkeyPatch().context() as m:
             m.delenv("TOKEN_MANAGER_DB", raising=False)
-            result = get_database_url(obj)
-            assert result == "postgresql://localhost/metadata"
+            with pytest.raises(RuntimeError, match="No database path configured"):
+                get_database_url(obj)
 
 
 class TestResolveSkillBasePath:

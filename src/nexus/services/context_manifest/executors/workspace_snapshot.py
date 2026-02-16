@@ -6,6 +6,7 @@ into agent context. Supports both specific snapshot IDs and "latest" resolution.
 Performance:
     - Blocking DB queries run in thread pool to avoid blocking the event loop.
     - File tree capped at MAX_TREE_FILES to prevent context explosion.
+    - Thread pool is configurable via constructor (14B).
 """
 
 from __future__ import annotations
@@ -13,14 +14,18 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from concurrent.futures import Executor
 from typing import Any
 
+from nexus.services.context_manifest.executors.executor_utils import (
+    WorkspaceSnapshotSourceProtocol,
+    resolve_source_template,
+)
 from nexus.services.context_manifest.executors.snapshot_lookup_db import (
     ManifestReader,
     SnapshotLookup,
 )
 from nexus.services.context_manifest.models import ContextSourceProtocol, SourceResult
-from nexus.services.context_manifest.template import resolve_template
 
 logger = logging.getLogger(__name__)
 
@@ -35,15 +40,19 @@ class WorkspaceSnapshotExecutor:
             retrieving snapshot metadata from the database.
         manifest_reader: Optional ManifestReader for loading file trees
             from CAS. If not provided, file_tree is omitted from results.
+        thread_pool: Optional thread pool for blocking I/O. Defaults to
+            the event loop's default executor.
     """
 
     def __init__(
         self,
         snapshot_lookup: SnapshotLookup,
         manifest_reader: ManifestReader | None = None,
+        thread_pool: Executor | None = None,
     ) -> None:
         self._snapshot_lookup = snapshot_lookup
         self._manifest_reader = manifest_reader
+        self._thread_pool = thread_pool
 
     async def execute(
         self,
@@ -63,7 +72,7 @@ class WorkspaceSnapshotExecutor:
             SourceResult with snapshot metadata, or error on failure.
         """
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self._execute_sync, source, variables)
+        return await loop.run_in_executor(self._thread_pool, self._execute_sync, source, variables)
 
     def _execute_sync(
         self,
@@ -72,24 +81,18 @@ class WorkspaceSnapshotExecutor:
     ) -> SourceResult:
         """Synchronous implementation of workspace snapshot resolution."""
         start = time.monotonic()
-        source_type = source.type
-        source_name = source.source_name
 
-        # Extract snapshot_id from source
-        snapshot_id: str = getattr(source, "snapshot_id", "latest")
+        # Extract snapshot_id via typed protocol (6A)
+        snapshot_id: str = (
+            source.snapshot_id
+            if isinstance(source, WorkspaceSnapshotSourceProtocol)
+            else getattr(source, "snapshot_id", "latest")
+        )
 
-        # Resolve template variables in snapshot_id
-        if "{{" in snapshot_id:
-            try:
-                snapshot_id = resolve_template(snapshot_id, variables)
-            except ValueError as exc:
-                elapsed_ms = (time.monotonic() - start) * 1000
-                return SourceResult.error(
-                    source_type=source_type,
-                    source_name=source_name,
-                    error_message=f"Template resolution failed: {exc}",
-                    elapsed_ms=elapsed_ms,
-                )
+        # Resolve template variables in snapshot_id (5A — shared helper)
+        snapshot_id, err = resolve_source_template(snapshot_id, variables, source, start)
+        if err is not None:
+            return err
 
         # Resolve snapshot
         try:
@@ -97,8 +100,8 @@ class WorkspaceSnapshotExecutor:
         except _SnapshotError as exc:
             elapsed_ms = (time.monotonic() - start) * 1000
             return SourceResult.error(
-                source_type=source_type,
-                source_name=source_name,
+                source_type=source.type,
+                source_name=source.source_name,
                 error_message=str(exc),
                 elapsed_ms=elapsed_ms,
             )
@@ -134,8 +137,8 @@ class WorkspaceSnapshotExecutor:
         elapsed_ms = (time.monotonic() - start) * 1000
 
         return SourceResult.ok(
-            source_type=source_type,
-            source_name=source_name,
+            source_type=source.type,
+            source_name=source.source_name,
             data=data,
             elapsed_ms=elapsed_ms,
         )

@@ -19,11 +19,15 @@ import logging
 import os
 import re
 import time
+from concurrent.futures import Executor
 from pathlib import Path
 from typing import Any
 
+from nexus.services.context_manifest.executors.executor_utils import (
+    FileGlobSourceProtocol,
+    resolve_source_template,
+)
 from nexus.services.context_manifest.models import ContextSourceProtocol, SourceResult
-from nexus.services.context_manifest.template import resolve_template
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +38,17 @@ class FileGlobExecutor:
     Args:
         workspace_root: Root directory that glob patterns are evaluated against.
             All resolved paths must stay under this directory.
+        thread_pool: Optional thread pool for blocking I/O. Defaults to
+            the event loop's default executor.
     """
 
-    def __init__(self, workspace_root: Path) -> None:
+    def __init__(
+        self,
+        workspace_root: Path,
+        thread_pool: Executor | None = None,
+    ) -> None:
         self._workspace_root = workspace_root.resolve()
+        self._thread_pool = thread_pool
 
     async def execute(
         self,
@@ -57,7 +68,7 @@ class FileGlobExecutor:
             SourceResult with file contents dict, or error on validation failure.
         """
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, self._execute_sync, source, variables)
+        return await loop.run_in_executor(self._thread_pool, self._execute_sync, source, variables)
 
     def _execute_sync(
         self,
@@ -66,33 +77,31 @@ class FileGlobExecutor:
     ) -> SourceResult:
         """Synchronous implementation of file glob resolution."""
         start = time.monotonic()
-        source_type = source.type
-        source_name = source.source_name
 
-        # Extract pattern and max_files from source
-        pattern: str = getattr(source, "pattern", "")
-        max_files: int = getattr(source, "max_files", 50)
+        # Extract pattern and max_files via typed protocol (6A)
+        pattern: str = (
+            source.pattern
+            if isinstance(source, FileGlobSourceProtocol)
+            else getattr(source, "pattern", "")
+        )
+        max_files: int = (
+            source.max_files
+            if isinstance(source, FileGlobSourceProtocol)
+            else getattr(source, "max_files", 50)
+        )
 
-        # Resolve template variables in pattern
-        if "{{" in pattern:
-            try:
-                pattern = resolve_template(pattern, variables)
-            except ValueError as exc:
-                elapsed_ms = (time.monotonic() - start) * 1000
-                return SourceResult.error(
-                    source_type=source_type,
-                    source_name=source_name,
-                    error_message=f"Template resolution failed: {exc}",
-                    elapsed_ms=elapsed_ms,
-                )
+        # Resolve template variables in pattern (5A — shared helper)
+        pattern, err = resolve_source_template(pattern, variables, source, start)
+        if err is not None:
+            return err
 
         # Security: reject absolute paths and '..' traversal
         # Check both native and POSIX absolute (/ prefix) for cross-platform safety
         if os.path.isabs(pattern) or pattern.startswith("/"):
             elapsed_ms = (time.monotonic() - start) * 1000
             return SourceResult.error(
-                source_type=source_type,
-                source_name=source_name,
+                source_type=source.type,
+                source_name=source.source_name,
                 error_message="Absolute paths are not allowed in glob patterns",
                 elapsed_ms=elapsed_ms,
             )
@@ -101,8 +110,8 @@ class FileGlobExecutor:
         if ".." in re.split(r"[/\\]", pattern):
             elapsed_ms = (time.monotonic() - start) * 1000
             return SourceResult.error(
-                source_type=source_type,
-                source_name=source_name,
+                source_type=source.type,
+                source_name=source.source_name,
                 error_message="Path traversal ('..') is not allowed in glob patterns",
                 elapsed_ms=elapsed_ms,
             )
@@ -111,8 +120,8 @@ class FileGlobExecutor:
         if not self._workspace_root.is_dir():
             elapsed_ms = (time.monotonic() - start) * 1000
             return SourceResult.error(
-                source_type=source_type,
-                source_name=source_name,
+                source_type=source.type,
+                source_name=source.source_name,
                 error_message=f"Workspace root does not exist: {self._workspace_root}",
                 elapsed_ms=elapsed_ms,
             )
@@ -169,8 +178,8 @@ class FileGlobExecutor:
         }
 
         return SourceResult.ok(
-            source_type=source_type,
-            source_name=source_name,
+            source_type=source.type,
+            source_name=source.source_name,
             data=metadata,
             elapsed_ms=elapsed_ms,
         )

@@ -75,6 +75,8 @@ def app(agent_registry):
     mock_nexus_fs._services = MagicMock()
     # manifest_resolver accessed via _service_extras dict
     mock_nexus_fs._service_extras = {"manifest_resolver": MagicMock()}
+    # Prevent MemoryQueryExecutor wiring (requires async-aware mock)
+    mock_nexus_fs._memory_api = None
 
     # Override dependencies
     from nexus.server.api.v2.routers.manifest import _get_require_auth, get_nexus_fs
@@ -259,7 +261,9 @@ class TestResolveHappyPath:
         mock_fs = app.dependency_overrides[get_nexus_fs]()
 
         # Make resolve an async mock
-        async def mock_resolve(_sources: object, _variables: object, _output_dir: object) -> object:
+        async def mock_resolve(
+            _sources: object, _variables: object, _output_dir: object = None
+        ) -> object:
             return mock_result
 
         mock_fs._service_extras["manifest_resolver"].resolve = mock_resolve

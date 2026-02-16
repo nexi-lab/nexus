@@ -37,14 +37,15 @@ class ContextManifestProtocol(Protocol):
         self,
         sources: Sequence[ContextSourceProtocol],
         variables: dict[str, str],
-        output_dir: Path,
+        output_dir: Path | None = None,
     ) -> ManifestResult:
-        """Resolve all sources and write results to *output_dir*.
+        """Resolve all sources and optionally write results to *output_dir*.
 
         Args:
             sources: Sequence of context sources to resolve.
             variables: Template variable values for substitution.
-            output_dir: Directory to write result files into.
+            output_dir: Directory to write result files into. If None,
+                no files are written — results are returned in-memory only.
 
         Returns:
             ManifestResult with all source results.

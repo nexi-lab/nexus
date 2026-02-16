@@ -17,8 +17,8 @@ from nexus.core.memory_router import MemoryViewRouter
 from nexus.core.permissions import (
     OperationContext,
     Permission,
-    PermissionEnforcer,
 )
+from nexus.services.permissions.enforcer import PermissionEnforcer
 from nexus.services.permissions.entity_registry import EntityRegistry
 from nexus.services.permissions.utils.zone import normalize_zone_id
 from nexus.storage.models import MemoryModel

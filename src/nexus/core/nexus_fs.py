@@ -278,6 +278,9 @@ class NexusFS(  # type: ignore[misc]
         if self.enable_workflows and self.workflow_engine:
             self._workflow_queue = asyncio.Queue(maxsize=1000)
 
+        # Auth services — injected from server layer (Issue #1519, 3A)
+        self._api_key_creator = svc.api_key_creator
+
         # Initialize OAuth token manager (lazy initialization in mixin)
         self._token_manager = None
 
@@ -354,27 +357,35 @@ class NexusFS(  # type: ignore[misc]
     def _wire_services(self) -> None:
         """Wire services that require a reference to self (NexusFS).
 
-        Called at end of __init__. These services cannot be pre-created in
-        factory.py because they need the fully-constructed NexusFS instance.
+        Called at end of __init__. Services follow "accept or build" pattern
+        (Issue #1519, 4B): if pre-built via KernelServices, use that instance;
+        otherwise build internally. This enables factory pre-wiring and
+        test-time mock injection.
         """
+        svc = self._services
+
         # VersionService: injected by factory (Task #45)
-        self.version_service = self._services.version_service
+        self.version_service = svc.version_service
 
         # Lazy-import services to avoid core/ → services/ top-level coupling (#1519)
         from nexus.services.llm_service import LLMService
         from nexus.services.mcp_service import MCPService
         from nexus.services.mount_service import MountService
         from nexus.services.oauth_service import OAuthService
-        from nexus.services.rebac_service import ReBACService
         from nexus.services.search_service import SearchService
 
         # ReBACService: Permission and access control operations
-        self.rebac_service = ReBACService(
-            rebac_manager=self._rebac_manager,
-            enforce_permissions=self._enforce_permissions,
-            enable_audit_logging=True,
-            circuit_breaker=self._services.rebac_circuit_breaker,
-        )
+        if svc.rebac_service is not None:
+            self.rebac_service = svc.rebac_service
+        else:
+            from nexus.services.rebac_service import ReBACService
+
+            self.rebac_service = ReBACService(
+                rebac_manager=self._rebac_manager,
+                enforce_permissions=self._enforce_permissions,
+                enable_audit_logging=True,
+                circuit_breaker=self._services.rebac_circuit_breaker,
+            )
 
         # MountService: Dynamic backend mounting operations
         self.mount_service = MountService(
@@ -410,16 +421,19 @@ class NexusFS(  # type: ignore[misc]
         self.skill_service = _SkillService(gateway=self._gateway)
 
         # SearchService: Search operations
-        self.search_service = SearchService(
-            metadata_store=self.metadata,
-            permission_enforcer=self._permission_enforcer,
-            router=self.router,
-            rebac_manager=self._rebac_manager,
-            enforce_permissions=self._enforce_permissions,
-            default_context=self._default_context,
-            record_store=self._record_store,
-            gateway=self._gateway,
-        )
+        if svc.search_service is not None:
+            self.search_service = svc.search_service
+        else:
+            self.search_service = SearchService(
+                metadata_store=self.metadata,
+                permission_enforcer=self._permission_enforcer,
+                router=self.router,
+                rebac_manager=self._rebac_manager,
+                enforce_permissions=self._enforce_permissions,
+                default_context=self._default_context,
+                record_store=self._record_store,
+                gateway=self._gateway,
+            )
 
         # ShareLinkService: Share link operations
         from nexus.services.share_link_service import ShareLinkService
@@ -430,20 +444,23 @@ class NexusFS(  # type: ignore[misc]
         )
 
         # EventsService: File watching + advisory locking
-        from nexus.services.events_service import EventsService
+        if svc.events_service is not None:
+            self.events_service = svc.events_service
+        else:
+            from nexus.services.events_service import EventsService
 
-        metadata_cache = None
-        if hasattr(self.metadata, "_cache"):
-            metadata_cache = self.metadata._cache
+            metadata_cache = None
+            if hasattr(self.metadata, "_cache"):
+                metadata_cache = self.metadata._cache
 
-        self.events_service = EventsService(
-            backend=self.backend,
-            event_bus=self._event_bus,
-            lock_manager=self._lock_manager,
-            file_watcher=self._file_watcher,
-            zone_id=None,
-            metadata_cache=metadata_cache,
-        )
+            self.events_service = EventsService(
+                backend=self.backend,
+                event_bus=self._event_bus,
+                lock_manager=self._lock_manager,
+                file_watcher=self._file_watcher,
+                zone_id=None,
+                metadata_cache=metadata_cache,
+            )
 
     @property
     def _service_extras(self) -> dict[str, Any]:
@@ -3640,7 +3657,11 @@ class NexusFS(  # type: ignore[misc]
         context: dict | Any | None,
     ) -> str:
         """Create API key for agent and return the raw key."""
-        from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+        if self._api_key_creator is None:
+            raise RuntimeError(
+                "API key creator not injected. "
+                "Use factory.create_nexus_services() to wire auth services."
+            )
 
         zone_id = self._extract_zone_id(context)
         session = self.SessionLocal()
@@ -3649,8 +3670,8 @@ class NexusFS(  # type: ignore[misc]
             # Determine expiration based on owner's key
             expires_at = self._determine_agent_key_expiration(user_id, session)
 
-            # Create the API key
-            _key_id, raw_key = DatabaseAPIKeyAuth.create_key(
+            # Create the API key (Issue #1519, 3A: uses injected protocol)
+            _key_id, raw_key = self._api_key_creator.create_key(
                 session,
                 user_id=user_id,
                 name=agent_id,  # Use agent_id format: <user_id>,<agent_name>
@@ -4813,8 +4834,13 @@ class NexusFS(  # type: ignore[misc]
             if create_api_key:
                 from sqlalchemy import select
 
-                from nexus.server.auth.database_key import DatabaseAPIKeyAuth
                 from nexus.storage.models import APIKeyModel
+
+                if self._api_key_creator is None:
+                    raise RuntimeError(
+                        "API key creator not injected. "
+                        "Use factory.create_nexus_services() to wire auth services."
+                    )
 
                 # Lock the user row to prevent race conditions during concurrent provisioning
                 # This ensures only one thread can check and create API keys at a time
@@ -4841,7 +4867,8 @@ class NexusFS(  # type: ignore[misc]
                     # Use custom key name if provided, otherwise default
                     key_name = api_key_name or f"Primary key for {email}"
 
-                    key_id, api_key = DatabaseAPIKeyAuth.create_key(
+                    # Issue #1519, 3A: uses injected protocol
+                    key_id, api_key = self._api_key_creator.create_key(
                         session,
                         user_id=user_id,
                         name=key_name,
@@ -6963,7 +6990,7 @@ class NexusFS(  # type: ignore[misc]
 
                 # Check if user is zone admin for this resource's zone
                 if zone_id and op_context.user:
-                    from nexus.server.auth.user_helpers import is_zone_admin
+                    from nexus.core.zone_helpers import is_zone_admin
 
                     if is_zone_admin(self._rebac_manager, op_context.user, zone_id):
                         # Zone admin can share resources in their zone
@@ -10483,11 +10510,56 @@ class NexusFS(  # type: ignore[misc]
         # Keep backward-compat reference on NexusFS
         self._semantic_search = self.search_service._semantic_search  # type: ignore[assignment]
 
-    # Non-prefixed aliases (backward compat — mixin used these names)
-    semantic_search = asemantic_search
-    semantic_search_index = asemantic_search_index
-    semantic_search_stats = asemantic_search_stats
-    initialize_semantic_search = ainitialize_semantic_search
+    # Non-prefixed aliases (backward compat — remove in v0.8.0)
+    # Issue #1519, 8A: emit DeprecationWarning so callers get advance notice.
+
+    @property
+    def semantic_search(self) -> Any:  # type: ignore[override]
+        """Deprecated: use ``asemantic_search`` instead."""
+        import warnings
+
+        warnings.warn(
+            "semantic_search is deprecated, use asemantic_search(); will be removed in v0.8.0",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.asemantic_search
+
+    @property
+    def semantic_search_index(self) -> Any:  # type: ignore[override]
+        """Deprecated: use ``asemantic_search_index`` instead."""
+        import warnings
+
+        warnings.warn(
+            "semantic_search_index is deprecated, use asemantic_search_index(); will be removed in v0.8.0",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.asemantic_search_index
+
+    @property
+    def semantic_search_stats(self) -> Any:  # type: ignore[override]
+        """Deprecated: use ``asemantic_search_stats`` instead."""
+        import warnings
+
+        warnings.warn(
+            "semantic_search_stats is deprecated, use asemantic_search_stats(); will be removed in v0.8.0",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.asemantic_search_stats
+
+    @property
+    def initialize_semantic_search(self) -> Any:  # type: ignore[override]
+        """Deprecated: use ``ainitialize_semantic_search`` instead."""
+        import warnings
+
+        warnings.warn(
+            "initialize_semantic_search is deprecated, use ainitialize_semantic_search(); will be removed in v0.8.0",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.ainitialize_semantic_search
 
     # =========================================================================
     # ShareLinkService Delegation Methods (6 methods)

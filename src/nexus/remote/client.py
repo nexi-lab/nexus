@@ -75,7 +75,7 @@ class RemoteFilesystemError(NexusError):
     def __init__(
         self,
         message: str,
-        status_code: int | None = None,
+        status_code: int = 500,
         details: dict[str, Any] | None = None,
         method: str | None = None,
     ):

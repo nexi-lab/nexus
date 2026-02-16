@@ -147,9 +147,9 @@ class NexusFSCoreMixin:
             try:
                 return await asyncio.wait_for(coro, timeout=timeout)
             except TimeoutError:
-                logger.warning(f"Event task timed out after {timeout}s: {name or 'unnamed'}")
+                logger.warning("Event task timed out after %ss: %s", timeout, name or "unnamed")
             except Exception as e:
-                logger.error(f"Event task failed: {name or 'unnamed'}: {e}")
+                logger.error("Event task failed: %s: %s", name or "unnamed", e, exc_info=True)
 
         task = asyncio.create_task(wrapped_coro(), name=name)
         self._event_tasks.add(task)
@@ -224,7 +224,7 @@ class NexusFSCoreMixin:
 
             fire_and_forget(self._event_bus.publish(event))
         except Exception as e:
-            logger.warning(f"Failed to create {event_type} event: {e}")
+            logger.warning("Failed to create %s event: %s", event_type, e, exc_info=True)
 
     def _fire_workflow_event(
         self,
@@ -321,6 +321,22 @@ class NexusFSCoreMixin:
                 NexusFSCoreMixin._revision_notifier = NullRevisionNotifier()
         return self._revision_notifier
 
+    @staticmethod
+    def _revision_fallback(zone_id: str, operation: str, default: int, exc: Exception) -> int:
+        """Log a revision operation failure and return *default*.
+
+        Consolidates the duplicated fallback logic for ``_increment_and_get_revision``
+        and ``_get_current_revision`` (Issue #1519, 5B).
+        """
+        logger.warning(
+            "Failed to %s revision for zone %s: %s",
+            operation,
+            zone_id,
+            exc,
+            exc_info=True,
+        )
+        return default
+
     def _get_revision_lock(self, zone_id: str) -> threading.Lock:
         """Get or create a per-zone lock for revision increments (Issue #1180).
 
@@ -363,8 +379,7 @@ class NexusFSCoreMixin:
             try:
                 return self.metadata.increment_revision(zone_id)
             except Exception as e:
-                logger.warning(f"Failed to increment revision for zone {zone_id}: {e}")
-                return int(time.time() * 1000)
+                return self._revision_fallback(zone_id, "increment", int(time.time() * 1000), e)
 
         # Legacy fallback: FileMetadata-based counter (requires lock)
         from nexus.core._metadata_generated import FileMetadata
@@ -390,9 +405,7 @@ class NexusFSCoreMixin:
                 self._get_revision_notifier().notify_revision(zone_id, new_rev)
                 return new_rev
             except Exception as e:
-                logger.warning(f"Failed to increment revision for zone {zone_id}: {e}")
-                # Fallback: return timestamp-based pseudo-revision
-                return int(time.time() * 1000)
+                return self._revision_fallback(zone_id, "increment", int(time.time() * 1000), e)
 
     def _get_current_revision(self, zone_id: str) -> int:
         """Get the current revision for a zone.
@@ -411,8 +424,7 @@ class NexusFSCoreMixin:
             try:
                 return self.metadata.get_revision(zone_id)
             except Exception as e:
-                logger.warning(f"Failed to get revision for zone {zone_id}: {e}")
-                return 0
+                return self._revision_fallback(zone_id, "get", 0, e)
 
         # Legacy fallback: FileMetadata-based lookup
         rev_path = f"{SYSTEM_PATH_PREFIX}zone_rev/{zone_id}"
@@ -420,8 +432,7 @@ class NexusFSCoreMixin:
             meta = self.metadata.get(rev_path)
             return meta.version if meta else 0
         except Exception as e:
-            logger.warning(f"Failed to get revision for zone {zone_id}: {e}")
-            return 0
+            return self._revision_fallback(zone_id, "get", 0, e)
 
     def _wait_for_revision(
         self,

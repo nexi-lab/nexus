@@ -266,7 +266,11 @@ class CachingBackendWrapper(Backend):
         return self._inner.content_exists(content_hash, context=context)
 
     def batch_read_content(
-        self, content_hashes: list[str], context: OperationContext | None = None
+        self,
+        content_hashes: list[str],
+        context: OperationContext | None = None,
+        *,
+        contexts: dict[str, OperationContext] | None = None,
     ) -> dict[str, bytes | None]:
         """Batch read with L1 cache for already-cached items."""
         result: dict[str, bytes | None] = {}
@@ -306,7 +310,9 @@ class CachingBackendWrapper(Backend):
 
         # Third pass: read remaining uncached from inner backend
         if uncached_hashes:
-            inner_results = self._inner.batch_read_content(uncached_hashes, context=context)
+            inner_results = self._inner.batch_read_content(
+                uncached_hashes, context=context, contexts=contexts
+            )
             for content_hash, data in inner_results.items():
                 result[content_hash] = data
                 # Populate L1 for successful reads

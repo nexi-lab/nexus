@@ -42,8 +42,11 @@ class TestAuthHelperLogging:
         mock_session = MagicMock()
         mock_session.scalars.side_effect = RuntimeError("DB connection lost")
 
-        with caplog.at_level(logging.WARNING, logger="nexus.server.auth.user_helpers"):
-            result = get_user_zones(mock_session, "user-123")
+        mock_rebac = MagicMock()
+        mock_rebac._connection.side_effect = RuntimeError("DB connection lost")
+
+        with caplog.at_level(logging.WARNING, logger="nexus.core.zone_helpers"):
+            result = get_user_zones(mock_rebac, "user-123")
 
         assert result == []
         assert "Failed to fetch zone IDs" in caplog.text

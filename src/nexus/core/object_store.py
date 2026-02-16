@@ -101,11 +101,18 @@ class ObjectStoreABC(Protocol):
         """
         ...
 
-    def batch_read(self, content_hashes: list[str]) -> dict[str, bytes | None]:
+    def batch_read(
+        self,
+        content_hashes: list[str],
+        *,
+        contexts: dict[str, OperationContext] | None = None,
+    ) -> dict[str, bytes | None]:
         """Read multiple content items by hash.
 
         Args:
             content_hashes: List of SHA-256 hashes
+            contexts: Per-hash operation contexts for path-based backends.
+                     Maps content_hash -> OperationContext with backend_path.
 
         Returns:
             Dict mapping hash → content bytes (None for missing items)
@@ -146,5 +153,12 @@ class BackendObjectStore:
     def size(self, content_hash: str) -> int:
         return self._backend.get_content_size(content_hash, context=self._context).unwrap()
 
-    def batch_read(self, content_hashes: list[str]) -> dict[str, bytes | None]:
-        return self._backend.batch_read_content(content_hashes, context=self._context)
+    def batch_read(
+        self,
+        content_hashes: list[str],
+        *,
+        contexts: dict[str, OperationContext] | None = None,
+    ) -> dict[str, bytes | None]:
+        return self._backend.batch_read_content(
+            content_hashes, context=self._context, contexts=contexts
+        )

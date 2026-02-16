@@ -1,4 +1,4 @@
-"""Delegation service — core business logic (Issue #1271).
+"""Delegation service — core business logic (Issue #1271, #1618).
 
 Orchestrates agent identity delegation: coordinator agents can
 provision worker agents with narrower permissions.
@@ -10,6 +10,15 @@ Uses ordered steps for safety without requiring cross-system transactions:
     4. Persist DelegationRecord (audit trail)
 
 On failure at step 2+: unregister agent (no key exists, safe to retry).
+
+#1618 additions:
+    - DelegationStatus lifecycle (ACTIVE → REVOKED/EXPIRED/COMPLETED)
+    - Soft-delete revocation (status=REVOKED first, then cleanup)
+    - Fail-loud on grant deletion during revocation
+    - Session context manager (DRY)
+    - Pagination for list_delegations
+    - Intent, depth, can_sub_delegate, parent_delegation_id fields
+    - DelegationScope serialization
 """
 
 from __future__ import annotations
@@ -17,6 +26,8 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from collections.abc import Generator
+from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
@@ -25,8 +36,15 @@ from nexus.services.delegation.errors import (
     DelegationChainError,
     DelegationError,
     DelegationNotFoundError,
+    DepthExceededError,
 )
-from nexus.services.delegation.models import DelegationMode, DelegationRecord, DelegationResult
+from nexus.services.delegation.models import (
+    DelegationMode,
+    DelegationRecord,
+    DelegationResult,
+    DelegationScope,
+    DelegationStatus,
+)
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
@@ -38,8 +56,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# v1 constraint: maximum TTL for delegations
+# Maximum TTL for delegations
 MAX_TTL_SECONDS = 86400  # 24 hours
+
+# Maximum sub-delegation depth
+MAX_CHAIN_DEPTH = 5
 
 
 class DelegationService:
@@ -64,6 +85,24 @@ class DelegationService:
         self._agent_registry: AgentRegistry | None = agent_registry
         logger.info("[DelegationService] Initialized")
 
+    @contextmanager
+    def _session(self, *, commit: bool = True) -> Generator[Any, None, None]:
+        """Context manager for session lifecycle.
+
+        Eliminates duplicated try/except/rollback/finally across methods.
+        Set commit=False for read-only operations.
+        """
+        session: Session = self._session_factory()
+        try:
+            yield session
+            if commit:
+                session.commit()
+        except Exception:
+            session.rollback()
+            raise
+        finally:
+            session.close()
+
     def delegate(
         self,
         coordinator_agent_id: str,
@@ -77,6 +116,9 @@ class DelegationService:
         add_grants: list[str] | None = None,
         readonly_paths: list[str] | None = None,
         ttl_seconds: int | None = None,
+        intent: str = "",
+        can_sub_delegate: bool = False,
+        scope: DelegationScope | None = None,
     ) -> DelegationResult:
         """Create a delegated worker agent with narrowed permissions.
 
@@ -92,29 +134,45 @@ class DelegationService:
             add_grants: Paths to include (CLEAN mode).
             readonly_paths: Paths to downgrade to viewer (COPY mode).
             ttl_seconds: Delegation TTL in seconds (max 86400).
+            intent: Immutable purpose description for audit trail.
+            can_sub_delegate: Whether worker can create further delegations.
+            scope: Fine-grained operation/resource/budget constraints.
 
         Returns:
             DelegationResult with worker agent ID, API key, and mount table.
 
         Raises:
-            DelegationChainError: If coordinator is itself a delegated agent.
+            DelegationChainError: If coordinator cannot sub-delegate.
+            DepthExceededError: If chain depth exceeds max_depth.
             DelegationError: If coordinator is not registered.
             EscalationError: If grants would exceed parent's permissions.
             TooManyGrantsError: If too many grants derived.
         """
-        # 1. Validate coordinator is registered and not delegated
-        self._validate_coordinator(coordinator_agent_id)
+        # 1. Validate coordinator is registered and can delegate
+        parent_delegation = self._validate_coordinator(coordinator_agent_id)
 
-        # 2. Compute lease expiry
+        # 2. Compute chain depth
+        depth = 0
+        parent_delegation_id: str | None = None
+        if parent_delegation is not None:
+            depth = parent_delegation.depth + 1
+            parent_delegation_id = parent_delegation.delegation_id
+            # Enforce max depth from parent's scope
+            parent_max_depth = MAX_CHAIN_DEPTH
+            if parent_delegation.scope is not None:
+                parent_max_depth = parent_delegation.scope.max_depth
+            if depth > parent_max_depth:
+                raise DepthExceededError(
+                    f"Delegation depth {depth} exceeds max_depth {parent_max_depth}"
+                )
+
+        # 3. Compute lease expiry
         lease_expires_at = self._compute_lease_expiry(ttl_seconds)
 
-        # 3. Enumerate coordinator's grants
-        parent_grants = self._enumerate_parent_grants(
-            coordinator_agent_id,
-            zone_id,
-        )
+        # 4. Enumerate coordinator's grants (single query, Issue 13A)
+        parent_grants = self._enumerate_parent_grants(coordinator_agent_id, zone_id)
 
-        # 4. Derive child grants (pure function)
+        # 5. Derive child grants (pure function)
         child_grants = derive_grants(
             parent_grants=parent_grants,
             mode=delegation_mode,
@@ -132,7 +190,7 @@ class DelegationService:
             delegation_mode.value,
         )
 
-        # 5. Register worker agent (UNKNOWN state, no API key yet)
+        # 6. Register worker agent (UNKNOWN state, no API key yet)
         if self._agent_registry is None:
             raise DelegationError("agent_registry is required for DelegationService")
         self._agent_registry.register(
@@ -144,7 +202,7 @@ class DelegationService:
         )
 
         try:
-            # 6. Create ReBAC tuples for child grants
+            # 7. Create ReBAC tuples for child grants
             self._create_grant_tuples(
                 worker_id=worker_id,
                 grants=child_grants,
@@ -153,7 +211,7 @@ class DelegationService:
                 expires_at=lease_expires_at,
             )
 
-            # 7. Persist delegation record
+            # 8. Persist delegation record with status=ACTIVE
             delegation_id = str(uuid.uuid4())
             self._persist_delegation_record(
                 delegation_id=delegation_id,
@@ -166,9 +224,14 @@ class DelegationService:
                 added_grants=add_grants,
                 readonly_paths=readonly_paths,
                 zone_id=zone_id,
+                intent=intent,
+                parent_delegation_id=parent_delegation_id,
+                depth=depth,
+                can_sub_delegate=can_sub_delegate,
+                scope=scope,
             )
 
-            # 8. Create API key (activation step — only after grants exist)
+            # 9. Create API key (activation step — only after grants exist)
             raw_key = self._create_worker_api_key(
                 worker_id=worker_id,
                 worker_name=worker_name,
@@ -177,7 +240,7 @@ class DelegationService:
                 expires_at=lease_expires_at,
             )
 
-            # 9. Get mount table for response
+            # 10. Get mount table for response
             mount_table = self._get_worker_mount_table(worker_id, zone_id)
 
         except Exception:
@@ -186,12 +249,13 @@ class DelegationService:
             raise
 
         logger.info(
-            "[Delegation] Created delegation=%s worker=%s coordinator=%s mode=%s grants=%d",
+            "[Delegation] Created delegation=%s worker=%s coordinator=%s mode=%s grants=%d depth=%d",
             delegation_id,
             worker_id,
             coordinator_agent_id,
             delegation_mode.value,
             len(child_grants),
+            depth,
         )
 
         return DelegationResult(
@@ -204,7 +268,14 @@ class DelegationService:
         )
 
     def revoke_delegation(self, delegation_id: str) -> bool:
-        """Revoke a delegation: delete grants, revoke API key, remove record.
+        """Revoke a delegation using soft-delete-first pattern (Issue 8A).
+
+        Steps:
+            0. Set status=REVOKED (contract with callers — immediate)
+            1. Delete ReBAC tuples (fail-loud, Issue 7A)
+            2. Revoke API key
+            3. Unregister agent
+        The record persists with status=REVOKED for audit trail.
 
         Args:
             delegation_id: The delegation to revoke.
@@ -219,19 +290,24 @@ class DelegationService:
         if record is None:
             raise DelegationNotFoundError(f"Delegation {delegation_id} not found")
 
-        # 1. Delete ReBAC tuples for the worker agent
+        if record.status != DelegationStatus.ACTIVE:
+            raise DelegationError(
+                f"Delegation {delegation_id} is not active (status={record.status.value})"
+            )
+
+        # Step 0: Soft-delete — mark as REVOKED immediately
+        self._update_delegation_status(delegation_id, DelegationStatus.REVOKED)
+
+        # Step 1: Delete ReBAC tuples — fail-loud (Issue 7A)
         self._delete_worker_tuples(record.agent_id, record.zone_id)
 
-        # 2. Revoke API key
+        # Step 2: Revoke API key
         self._revoke_worker_api_key(record.agent_id)
 
-        # 3. Unregister agent entity
+        # Step 3: Unregister agent entity
         if self._agent_registry is None:
             raise DelegationError("agent_registry is required for DelegationService")
         self._agent_registry.unregister(record.agent_id)
-
-        # 4. Delete delegation record
-        self._delete_delegation_record(delegation_id)
 
         logger.info(
             "[Delegation] Revoked delegation=%s worker=%s",
@@ -240,42 +316,48 @@ class DelegationService:
         )
         return True
 
-    def list_delegations(self, parent_agent_id: str) -> list[DelegationRecord]:
-        """List all delegations created by a coordinator agent.
+    def list_delegations(
+        self,
+        parent_agent_id: str,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        status_filter: DelegationStatus | None = None,
+    ) -> tuple[list[DelegationRecord], int]:
+        """List delegations created by a coordinator agent with pagination.
 
         Args:
             parent_agent_id: The coordinator agent ID.
+            limit: Maximum records to return (default 50).
+            offset: Number of records to skip (default 0).
+            status_filter: Optional filter by status (default: all statuses).
 
         Returns:
-            List of DelegationRecord objects.
+            Tuple of (records, total_count).
         """
         from nexus.storage.models.agents import DelegationRecordModel
 
-        session = self._session_factory()
-        try:
+        with self._session(commit=False) as session:
+            query = session.query(DelegationRecordModel).filter(
+                DelegationRecordModel.parent_agent_id == parent_agent_id
+            )
+            if status_filter is not None:
+                query = query.filter(DelegationRecordModel.status == status_filter.value)
+
+            total = query.count()
             rows = (
-                session.query(DelegationRecordModel)
-                .filter(DelegationRecordModel.parent_agent_id == parent_agent_id)
-                .order_by(DelegationRecordModel.created_at.desc())
+                query.order_by(DelegationRecordModel.created_at.desc())
+                .offset(offset)
+                .limit(limit)
                 .all()
             )
-            return [self._model_to_record(row) for row in rows]
-        finally:
-            session.close()
+            return [self._model_to_record(row) for row in rows], total
 
     def get_delegation_by_id(self, delegation_id: str) -> DelegationRecord | None:
-        """Get delegation record by delegation_id.
-
-        Args:
-            delegation_id: The delegation record ID.
-
-        Returns:
-            DelegationRecord or None if not found.
-        """
+        """Get delegation record by delegation_id."""
         from nexus.storage.models.agents import DelegationRecordModel
 
-        session = self._session_factory()
-        try:
+        with self._session(commit=False) as session:
             row = (
                 session.query(DelegationRecordModel)
                 .filter(DelegationRecordModel.delegation_id == delegation_id)
@@ -284,52 +366,79 @@ class DelegationService:
             if row is None:
                 return None
             return self._model_to_record(row)
-        finally:
-            session.close()
 
     def get_delegation(self, agent_id: str) -> DelegationRecord | None:
-        """Get delegation record for a worker agent.
-
-        Args:
-            agent_id: The worker agent ID.
-
-        Returns:
-            DelegationRecord or None if not a delegated agent.
-        """
+        """Get active delegation record for a worker agent."""
         from nexus.storage.models.agents import DelegationRecordModel
 
-        session = self._session_factory()
-        try:
+        with self._session(commit=False) as session:
             row = (
                 session.query(DelegationRecordModel)
-                .filter(DelegationRecordModel.agent_id == agent_id)
+                .filter(
+                    DelegationRecordModel.agent_id == agent_id,
+                    DelegationRecordModel.status == DelegationStatus.ACTIVE.value,
+                )
                 .first()
             )
             if row is None:
                 return None
             return self._model_to_record(row)
-        finally:
-            session.close()
+
+    def get_delegation_chain(self, delegation_id: str) -> list[DelegationRecord]:
+        """Trace delegation chain from child to root.
+
+        Args:
+            delegation_id: Starting delegation ID.
+
+        Returns:
+            List of DelegationRecord from child to root.
+        """
+        chain: list[DelegationRecord] = []
+        current_id: str | None = delegation_id
+        seen: set[str] = set()
+
+        while current_id is not None and current_id not in seen:
+            seen.add(current_id)
+            record = self.get_delegation_by_id(current_id)
+            if record is None:
+                break
+            chain.append(record)
+            current_id = record.parent_delegation_id
+
+        return chain
 
     # -------------------------------------------------------------------------
     # Private helpers
     # -------------------------------------------------------------------------
 
-    def _validate_coordinator(self, coordinator_agent_id: str) -> None:
-        """Validate that coordinator is registered and not itself delegated."""
+    def _validate_coordinator(self, coordinator_agent_id: str) -> DelegationRecord | None:
+        """Validate that coordinator is registered and can delegate.
+
+        Returns the coordinator's own delegation record if it is a delegated
+        agent (for chain depth tracking), or None if it's a root agent.
+
+        Raises:
+            DelegationError: If coordinator is not registered.
+            DelegationChainError: If coordinator is delegated but cannot sub-delegate.
+        """
         # Check if coordinator is registered
         if self._entity_registry is not None:
             entity = self._entity_registry.get_entity("agent", coordinator_agent_id)
             if entity is None:
                 raise DelegationError(f"Coordinator agent {coordinator_agent_id} is not registered")
 
-        # Check if coordinator is a delegated agent (no chains in v1)
+        # Check if coordinator is a delegated agent
         existing = self.get_delegation(coordinator_agent_id)
         if existing is not None:
-            raise DelegationChainError(
-                f"Agent {coordinator_agent_id} is a delegated agent and cannot delegate. "
-                "Delegation chains are not supported in v1."
-            )
+            # #1618: allow sub-delegation if can_sub_delegate is True
+            if not existing.can_sub_delegate:
+                raise DelegationChainError(
+                    f"Agent {coordinator_agent_id} is a delegated agent and "
+                    "cannot sub-delegate (can_sub_delegate=False)."
+                )
+            return existing
+
+        return None
 
     def _compute_lease_expiry(self, ttl_seconds: int | None) -> datetime | None:
         """Compute lease expiry from TTL, enforcing MAX_TTL_SECONDS."""
@@ -348,15 +457,12 @@ class DelegationService:
     ) -> list[tuple[str, str]]:
         """Enumerate parent agent's grants as (relation, object_id) tuples.
 
-        Calls rebac_list_objects for "write" and "read" permissions to
-        determine the relation for each grant.
+        Issue 13A: Uses single read query + write query to classify.
         """
         subject = ("agent", agent_id)
-
-        # Fetch limit: slightly above MAX_DELEGATABLE_GRANTS to detect overflow
         fetch_limit = MAX_DELEGATABLE_GRANTS + 1
 
-        # Get write-accessible objects (these have editor/owner relations)
+        # Get write-accessible objects (editor/owner relations)
         write_objects = self._rebac_manager.rebac_list_objects(
             subject=subject,
             permission="write",
@@ -366,7 +472,7 @@ class DelegationService:
         )
         write_ids = {obj_id for _, obj_id in write_objects}
 
-        # Get read-accessible objects (includes write objects + read-only)
+        # Get read-accessible objects (includes write + read-only)
         read_objects = self._rebac_manager.rebac_list_objects(
             subject=subject,
             permission="read",
@@ -375,7 +481,6 @@ class DelegationService:
             limit=fetch_limit,
         )
 
-        # Build (relation, object_id) tuples
         result: list[tuple[str, str]] = []
         for _, obj_id in read_objects:
             if obj_id in write_ids:
@@ -429,31 +534,48 @@ class DelegationService:
         added_grants: list[str] | None,
         readonly_paths: list[str] | None,
         zone_id: str | None,
+        intent: str = "",
+        parent_delegation_id: str | None = None,
+        depth: int = 0,
+        can_sub_delegate: bool = False,
+        scope: DelegationScope | None = None,
     ) -> None:
         """Persist delegation record to database."""
         from nexus.storage.models.agents import DelegationRecordModel
 
-        session = self._session_factory()
-        try:
+        scope_json = None
+        if scope is not None:
+            scope_json = json.dumps(
+                {
+                    "allowed_operations": sorted(scope.allowed_operations),
+                    "resource_patterns": sorted(scope.resource_patterns),
+                    "budget_limit": str(scope.budget_limit)
+                    if scope.budget_limit is not None
+                    else None,
+                    "max_depth": scope.max_depth,
+                }
+            )
+
+        with self._session() as session:
             model = DelegationRecordModel(
                 delegation_id=delegation_id,
                 agent_id=agent_id,
                 parent_agent_id=parent_agent_id,
                 delegation_mode=delegation_mode.value,
+                status=DelegationStatus.ACTIVE.value,
                 scope_prefix=scope_prefix,
+                scope=scope_json,
                 lease_expires_at=lease_expires_at,
                 removed_grants=json.dumps(removed_grants or []),
                 added_grants=json.dumps(added_grants or []),
                 readonly_paths=json.dumps(readonly_paths or []),
                 zone_id=zone_id,
+                intent=intent,
+                parent_delegation_id=parent_delegation_id,
+                depth=depth,
+                can_sub_delegate=can_sub_delegate,
             )
             session.add(model)
-            session.commit()
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
 
     def _create_worker_api_key(
         self,
@@ -466,8 +588,7 @@ class DelegationService:
         """Create API key for the worker agent."""
         from nexus.identity.api_key_ops import create_api_key
 
-        session = self._session_factory()
-        try:
+        with self._session() as session:
             _key_id, raw_key = create_api_key(
                 session,
                 user_id=owner_id,
@@ -477,20 +598,14 @@ class DelegationService:
                 zone_id=zone_id,
                 expires_at=expires_at,
             )
-            session.commit()
             return raw_key
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
 
     def _get_worker_mount_table(
         self,
         worker_id: str,
         zone_id: str | None,
     ) -> list[str]:
-        """Get mount table for the worker agent."""
+        """Get mount table for the worker agent (fail-soft — informational)."""
         if self._namespace_manager is None:
             return []
         try:
@@ -506,30 +621,25 @@ class DelegationService:
     def _delete_worker_tuples(self, worker_id: str, zone_id: str | None) -> None:
         """Delete all ReBAC tuples for a worker agent.
 
-        Delegates to ReBACManager.rebac_delete_by_subject() public API.
+        Fail-loud (Issue 7A): propagates exceptions on revocation path.
         """
-        try:
-            deleted = self._rebac_manager.rebac_delete_by_subject(
-                subject_type="agent",
-                subject_id=worker_id,
-                zone_id=zone_id,
-            )
-            logger.debug(
-                "[Delegation] Deleted %d ReBAC tuples for worker=%s",
-                deleted,
-                worker_id,
-            )
-        except Exception as e:
-            logger.warning("[Delegation] Error deleting worker tuples: %s", e)
+        deleted = self._rebac_manager.rebac_delete_by_subject(
+            subject_type="agent",
+            subject_id=worker_id,
+            zone_id=zone_id,
+        )
+        logger.debug(
+            "[Delegation] Deleted %d ReBAC tuples for worker=%s",
+            deleted,
+            worker_id,
+        )
 
     def _revoke_worker_api_key(self, worker_id: str) -> None:
         """Revoke all API keys for the worker agent."""
         from nexus.identity.api_key_ops import revoke_api_key
         from nexus.storage.models.auth import APIKeyModel
 
-        session = self._session_factory()
-        try:
-            # Find API keys for this agent
+        with self._session() as session:
             keys = (
                 session.query(APIKeyModel)
                 .filter(
@@ -540,19 +650,25 @@ class DelegationService:
             )
             for key in keys:
                 revoke_api_key(session, key.key_id)
-            session.commit()
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
+
+    def _update_delegation_status(self, delegation_id: str, status: DelegationStatus) -> None:
+        """Update delegation record status (soft-delete pattern, Issue 8A)."""
+        from nexus.storage.models.agents import DelegationRecordModel
+
+        with self._session() as session:
+            rows_updated = (
+                session.query(DelegationRecordModel)
+                .filter(DelegationRecordModel.delegation_id == delegation_id)
+                .update({"status": status.value})
+            )
+            if rows_updated == 0:
+                raise DelegationNotFoundError(f"Delegation {delegation_id} not found")
 
     def _load_delegation_record(self, delegation_id: str) -> DelegationRecord | None:
         """Load a delegation record by ID."""
         from nexus.storage.models.agents import DelegationRecordModel
 
-        session = self._session_factory()
-        try:
+        with self._session(commit=False) as session:
             row = (
                 session.query(DelegationRecordModel)
                 .filter(DelegationRecordModel.delegation_id == delegation_id)
@@ -561,38 +677,48 @@ class DelegationService:
             if row is None:
                 return None
             return self._model_to_record(row)
-        finally:
-            session.close()
-
-    def _delete_delegation_record(self, delegation_id: str) -> None:
-        """Delete a delegation record."""
-        from nexus.storage.models.agents import DelegationRecordModel
-
-        session = self._session_factory()
-        try:
-            session.query(DelegationRecordModel).filter(
-                DelegationRecordModel.delegation_id == delegation_id
-            ).delete()
-            session.commit()
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
 
     @staticmethod
     def _model_to_record(model: Any) -> DelegationRecord:
         """Convert SQLAlchemy model to frozen domain object."""
+        from decimal import Decimal
+
+        # Deserialize scope JSON if present
+        scope = None
+        scope_raw = getattr(model, "scope", None)
+        if scope_raw:
+            scope_data = json.loads(scope_raw)
+            budget_str = scope_data.get("budget_limit")
+            scope = DelegationScope(
+                allowed_operations=frozenset(scope_data.get("allowed_operations", [])),
+                resource_patterns=frozenset(scope_data.get("resource_patterns", [])),
+                budget_limit=Decimal(budget_str) if budget_str is not None else None,
+                max_depth=scope_data.get("max_depth", 0),
+            )
+
+        # Handle status with backward compat
+        status_val = getattr(model, "status", "active")
+        try:
+            status = DelegationStatus(status_val)
+        except ValueError:
+            status = DelegationStatus.ACTIVE
+
         return DelegationRecord(
             delegation_id=model.delegation_id,
             agent_id=model.agent_id,
             parent_agent_id=model.parent_agent_id,
             delegation_mode=DelegationMode(model.delegation_mode),
+            status=status,
             scope_prefix=model.scope_prefix,
+            scope=scope,
             lease_expires_at=model.lease_expires_at,
             removed_grants=tuple(json.loads(model.removed_grants or "[]")),
             added_grants=tuple(json.loads(model.added_grants or "[]")),
             readonly_paths=tuple(json.loads(model.readonly_paths or "[]")),
             zone_id=model.zone_id,
+            intent=getattr(model, "intent", ""),
+            parent_delegation_id=getattr(model, "parent_delegation_id", None),
+            depth=getattr(model, "depth", 0),
+            can_sub_delegate=bool(getattr(model, "can_sub_delegate", False)),
             created_at=model.created_at,
         )

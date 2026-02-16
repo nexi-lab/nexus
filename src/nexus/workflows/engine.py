@@ -9,6 +9,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+from nexus.raft.zone_manager import ROOT_ZONE_ID
 from nexus.workflows.actions import BUILTIN_ACTIONS
 from nexus.workflows.protocol import WorkflowServices
 from nexus.workflows.triggers import BUILTIN_TRIGGERS, TriggerManager
@@ -247,7 +248,7 @@ class WorkflowEngine:
         if not workflow_id_str:
             logger.warning(f"No workflow_id found for {workflow_name}, using generated UUID")
 
-        zone_id = str(event_context.get("zone_id", "default"))
+        zone_id = str(event_context.get("zone_id", ROOT_ZONE_ID))
 
         context = WorkflowContext(
             workflow_id=workflow_id,

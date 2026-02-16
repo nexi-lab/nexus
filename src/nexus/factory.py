@@ -801,6 +801,7 @@ def _create_workflow_engine(record_store: Any, glob_match_fn: Any = None) -> Any
         logger.warning("Workflows require record_store, skipping")
         return None
     try:
+        from nexus.raft.zone_manager import ROOT_ZONE_ID
         from nexus.storage.models import WorkflowExecutionModel, WorkflowModel
         from nexus.workflows.engine import WorkflowEngine
         from nexus.workflows.protocol import WorkflowServices
@@ -810,7 +811,7 @@ def _create_workflow_engine(record_store: Any, glob_match_fn: Any = None) -> Any
             session_factory=record_store.async_session_factory,
             workflow_model=WorkflowModel,
             execution_model=WorkflowExecutionModel,
-            zone_id="default",
+            zone_id=ROOT_ZONE_ID,
         )
         services = WorkflowServices(glob_match=glob_match_fn)
         return WorkflowEngine(workflow_store=workflow_store, services=services)

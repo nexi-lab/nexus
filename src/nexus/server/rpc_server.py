@@ -360,8 +360,6 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                     # For agent-authenticated requests (via API key), extract user and agent
                     if result.subject_type == "agent":
                         agent_id = result.subject_id
-                        # Get user from metadata (owner of the agent key)
-                        user_id = result.metadata.get("legacy_user_id", result.subject_id)
 
                     # Determine the subject for permission checking
                     # If X-Agent-ID header is provided and validated, use agent as subject

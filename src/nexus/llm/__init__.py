@@ -6,7 +6,6 @@ Provides a unified interface for multiple LLM providers with:
 - Vision support
 - Token counting
 - Cost tracking
-- Metrics storage in Nexus metadata database
 - Response caching with Nexus CAS
 """
 
@@ -45,7 +44,7 @@ from nexus.llm.message import (
     ToolCall,
     ToolFunction,
 )
-from nexus.llm.metrics import LLMMetrics, MetricsStore, ResponseLatency, TokenUsage
+from nexus.llm.metrics import LLMMetrics, ResponseLatency, TokenUsage
 from nexus.llm.provider import LiteLLMProvider, LLMProvider, LLMResponse
 
 __all__ = [
@@ -74,7 +73,6 @@ __all__ = [
     "LLMMetrics",
     "TokenUsage",
     "ResponseLatency",
-    "MetricsStore",
     # Cancellation
     "CancellationToken",
     "AsyncCancellationToken",

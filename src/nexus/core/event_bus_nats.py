@@ -198,7 +198,7 @@ class NatsEventBus(EventBusBase):
         if not self._started or self._js is None:
             raise RuntimeError("NatsEventBus not started. Call start() first.")
 
-        zone_id = event.zone_id or "default"
+        zone_id = event.zone_id or "root"
         event_type = event.type.value if isinstance(event.type, FileEventType) else event.type
         subject = self._subject(zone_id, event_type)
 

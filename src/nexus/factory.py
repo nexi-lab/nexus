@@ -517,8 +517,8 @@ def create_nexus_services(
     try:
         from nexus.search.zoekt_client import notify_zoekt_sync_complete, notify_zoekt_write
 
-        if hasattr(backend, "_on_write_callback") and backend._on_write_callback is None:
-            backend._on_write_callback = notify_zoekt_write
+        if hasattr(backend, "on_write_callback") and backend.on_write_callback is None:
+            backend.on_write_callback = notify_zoekt_write
         if hasattr(backend, "on_sync_callback") and backend.on_sync_callback is None:
             backend.on_sync_callback = notify_zoekt_sync_complete
     except ImportError:
@@ -1069,11 +1069,6 @@ def create_nexus_fs(
         parsing=parsing,
         services=services,
     )
-
-    # Wire circuit breaker into ReBACService (Issue #726)
-    cb = services.rebac_circuit_breaker
-    if cb and hasattr(nx, "rebac_service"):
-        nx.rebac_service._circuit_breaker = cb
 
     # Post-construction I/O (mount restoration, etc.)
     _post_init(nx)

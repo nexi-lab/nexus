@@ -373,6 +373,7 @@ class NexusFS(  # type: ignore[misc]
             rebac_manager=self._rebac_manager,
             enforce_permissions=self._enforce_permissions,
             enable_audit_logging=True,
+            circuit_breaker=self._services.rebac_circuit_breaker,
         )
 
         # MountService: Dynamic backend mounting operations

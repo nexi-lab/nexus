@@ -1,4 +1,4 @@
-"""Tests for ZoneManager — zone isolation enforcement.
+"""Tests for ZoneIsolationValidator — zone isolation enforcement.
 
 Covers:
 - Default zone resolution
@@ -6,7 +6,7 @@ Covers:
 - Cross-zone allowing for CROSS_ZONE_ALLOWED_RELATIONS
 - Subject zone mismatch detection
 - ZoneIsolationError attributes
-- ZoneManager with enforce=False (kill-switch) — functional tests
+- ZoneIsolationValidator with enforce=False (kill-switch) — functional tests
 - is_cross_zone_readable() policy check
 
 Related: Issue #1459 (decomposition), Issue #773 (zone isolation)
@@ -18,15 +18,15 @@ import pytest
 
 from nexus.services.permissions.consistency.zone_manager import (
     ZoneIsolationError,
-    ZoneManager,
+    ZoneIsolationValidator,
 )
 
 
-class TestZoneManagerDefaults:
+class TestZoneIsolationValidatorDefaults:
     """Test zone_id default resolution."""
 
     def test_none_zone_id_defaults_to_default(self):
-        mgr = ZoneManager(enforce=True)
+        mgr = ZoneIsolationValidator(enforce=True)
         zone_id, subj_z, obj_z, cross = mgr.validate_write_zones(
             zone_id=None, subject_zone_id=None, object_zone_id=None, relation="editor"
         )
@@ -36,7 +36,7 @@ class TestZoneManagerDefaults:
         assert cross is False
 
     def test_empty_zone_id_defaults_to_default(self):
-        mgr = ZoneManager(enforce=True)
+        mgr = ZoneIsolationValidator(enforce=True)
         zone_id, subj_z, obj_z, cross = mgr.validate_write_zones(
             zone_id="", subject_zone_id=None, object_zone_id=None, relation="viewer"
         )
@@ -45,7 +45,7 @@ class TestZoneManagerDefaults:
         assert obj_z == "default"
 
     def test_explicit_zone_id_preserved(self):
-        mgr = ZoneManager(enforce=True)
+        mgr = ZoneIsolationValidator(enforce=True)
         zone_id, subj_z, obj_z, cross = mgr.validate_write_zones(
             zone_id="org_acme", subject_zone_id=None, object_zone_id=None, relation="editor"
         )
@@ -55,14 +55,14 @@ class TestZoneManagerDefaults:
         assert cross is False
 
     def test_subject_zone_defaults_to_zone_id(self):
-        mgr = ZoneManager(enforce=True)
+        mgr = ZoneIsolationValidator(enforce=True)
         _, subj_z, _, _ = mgr.validate_write_zones(
             zone_id="org_x", subject_zone_id=None, object_zone_id=None, relation="member"
         )
         assert subj_z == "org_x"
 
     def test_object_zone_defaults_to_zone_id(self):
-        mgr = ZoneManager(enforce=True)
+        mgr = ZoneIsolationValidator(enforce=True)
         _, _, obj_z, _ = mgr.validate_write_zones(
             zone_id="org_x", subject_zone_id=None, object_zone_id=None, relation="member"
         )
@@ -73,7 +73,7 @@ class TestZoneIsolationEnforcement:
     """Test cross-zone blocking and allowing."""
 
     def test_same_zone_allowed(self):
-        mgr = ZoneManager(enforce=True)
+        mgr = ZoneIsolationValidator(enforce=True)
         zone_id, _, _, cross = mgr.validate_write_zones(
             zone_id="org_a",
             subject_zone_id="org_a",
@@ -84,7 +84,7 @@ class TestZoneIsolationEnforcement:
         assert cross is False
 
     def test_cross_zone_non_allowed_relation_raises(self):
-        mgr = ZoneManager(enforce=True)
+        mgr = ZoneIsolationValidator(enforce=True)
         with pytest.raises(ZoneIsolationError, match="Cannot create cross-zone"):
             mgr.validate_write_zones(
                 zone_id="org_a",
@@ -94,7 +94,7 @@ class TestZoneIsolationEnforcement:
             )
 
     def test_cross_zone_allowed_relation_succeeds(self):
-        mgr = ZoneManager(enforce=True)
+        mgr = ZoneIsolationValidator(enforce=True)
         zone_id, subj_z, obj_z, cross = mgr.validate_write_zones(
             zone_id="org_a",
             subject_zone_id="org_a",
@@ -108,7 +108,7 @@ class TestZoneIsolationEnforcement:
         assert cross is True
 
     def test_cross_zone_shared_editor_allowed(self):
-        mgr = ZoneManager(enforce=True)
+        mgr = ZoneIsolationValidator(enforce=True)
         zone_id, _, _, cross = mgr.validate_write_zones(
             zone_id="org_a",
             subject_zone_id="org_a",
@@ -119,7 +119,7 @@ class TestZoneIsolationEnforcement:
         assert cross is True
 
     def test_cross_zone_shared_owner_allowed(self):
-        mgr = ZoneManager(enforce=True)
+        mgr = ZoneIsolationValidator(enforce=True)
         zone_id, _, _, cross = mgr.validate_write_zones(
             zone_id="org_a",
             subject_zone_id="org_a",
@@ -131,7 +131,7 @@ class TestZoneIsolationEnforcement:
 
     def test_subject_zone_mismatch_raises(self):
         """When subject_zone differs from both zone_id and object_zone, it's a cross-zone violation."""
-        mgr = ZoneManager(enforce=True)
+        mgr = ZoneIsolationValidator(enforce=True)
         with pytest.raises(ZoneIsolationError, match="Cannot create cross-zone"):
             mgr.validate_write_zones(
                 zone_id="org_a",
@@ -156,20 +156,20 @@ class TestZoneIsolationErrorAttributes:
         assert err.object_zone is None
 
 
-class TestZoneManagerKillSwitch:
+class TestZoneIsolationValidatorKillSwitch:
     """Test enforce=False bypasses validation — functional tests."""
 
     def test_enforce_false_flag_set(self):
-        mgr = ZoneManager(enforce=False)
+        mgr = ZoneIsolationValidator(enforce=False)
         assert mgr.enforce is False
 
     def test_enforce_true_flag_set(self):
-        mgr = ZoneManager(enforce=True)
+        mgr = ZoneIsolationValidator(enforce=True)
         assert mgr.enforce is True
 
     def test_enforce_false_allows_cross_zone_non_allowed_relation(self):
         """Kill-switch should allow cross-zone writes that would normally be rejected."""
-        mgr = ZoneManager(enforce=False)
+        mgr = ZoneIsolationValidator(enforce=False)
         zone_id, subj_z, obj_z, cross = mgr.validate_write_zones(
             zone_id="org_a",
             subject_zone_id="org_a",
@@ -184,7 +184,7 @@ class TestZoneManagerKillSwitch:
 
     def test_enforce_false_allows_subject_zone_mismatch(self):
         """Kill-switch should allow subject zone mismatch."""
-        mgr = ZoneManager(enforce=False)
+        mgr = ZoneIsolationValidator(enforce=False)
         zone_id, subj_z, obj_z, cross = mgr.validate_write_zones(
             zone_id="org_a",
             subject_zone_id="org_b",
@@ -199,7 +199,7 @@ class TestZoneManagerKillSwitch:
 
     def test_enforce_false_still_resolves_defaults(self):
         """Kill-switch should still resolve None zones to defaults."""
-        mgr = ZoneManager(enforce=False)
+        mgr = ZoneIsolationValidator(enforce=False)
         zone_id, subj_z, obj_z, cross = mgr.validate_write_zones(
             zone_id=None,
             subject_zone_id=None,
@@ -216,33 +216,33 @@ class TestIsCrossZoneReadable:
     """Test is_cross_zone_readable() policy check."""
 
     def test_shared_viewer_is_cross_zone_readable(self):
-        mgr = ZoneManager()
+        mgr = ZoneIsolationValidator()
         assert mgr.is_cross_zone_readable("shared-viewer") is True
 
     def test_shared_editor_is_cross_zone_readable(self):
-        mgr = ZoneManager()
+        mgr = ZoneIsolationValidator()
         assert mgr.is_cross_zone_readable("shared-editor") is True
 
     def test_shared_owner_is_cross_zone_readable(self):
-        mgr = ZoneManager()
+        mgr = ZoneIsolationValidator()
         assert mgr.is_cross_zone_readable("shared-owner") is True
 
     def test_editor_is_not_cross_zone_readable(self):
-        mgr = ZoneManager()
+        mgr = ZoneIsolationValidator()
         assert mgr.is_cross_zone_readable("editor") is False
 
     def test_viewer_is_not_cross_zone_readable(self):
-        mgr = ZoneManager()
+        mgr = ZoneIsolationValidator()
         assert mgr.is_cross_zone_readable("viewer") is False
 
     def test_member_is_not_cross_zone_readable(self):
-        mgr = ZoneManager()
+        mgr = ZoneIsolationValidator()
         assert mgr.is_cross_zone_readable("member") is False
 
     def test_owner_is_not_cross_zone_readable(self):
-        mgr = ZoneManager()
+        mgr = ZoneIsolationValidator()
         assert mgr.is_cross_zone_readable("owner") is False
 
     def test_empty_relation_is_not_cross_zone_readable(self):
-        mgr = ZoneManager()
+        mgr = ZoneIsolationValidator()
         assert mgr.is_cross_zone_readable("") is False

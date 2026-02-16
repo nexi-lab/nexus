@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from contextlib import AbstractContextManager
 
     from nexus.core.rebac import NamespaceConfig
-    from nexus.services.permissions.consistency.zone_manager import ZoneManager
+    from nexus.services.permissions.consistency.zone_manager import ZoneIsolationValidator
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +52,7 @@ class ZoneAwareTraversal:
         fix_sql: Callable to fix SQL placeholders for the current dialect
         get_namespace: Callable (entity_type) -> NamespaceConfig | None
         evaluate_conditions: Callable (conditions, context) -> bool
-        zone_manager: ZoneManager for cross-zone policy decisions
+        zone_manager: ZoneIsolationValidator for cross-zone policy decisions
         enable_graph_limits: Whether to enforce P0-5 graph limits
     """
 
@@ -63,7 +63,7 @@ class ZoneAwareTraversal:
         fix_sql: Callable[[str], str],
         get_namespace: Callable[[str], NamespaceConfig | None],
         evaluate_conditions: Callable[[dict[str, Any] | None, dict[str, Any] | None], bool],
-        zone_manager: ZoneManager,
+        zone_manager: ZoneIsolationValidator,
         enable_graph_limits: bool = True,
     ) -> None:
         self._connection = connection_factory

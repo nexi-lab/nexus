@@ -44,7 +44,7 @@ from nexus.services.permissions.consistency.revision import (
     get_zone_revision_for_grant,
     increment_version_token,
 )
-from nexus.services.permissions.consistency.zone_manager import ZoneManager
+from nexus.services.permissions.consistency.zone_manager import ZoneIsolationValidator
 from nexus.services.permissions.directory.expander import DirectoryExpander
 from nexus.services.permissions.graph.bulk_evaluator import (
     check_direct_relation as _check_direct_relation_in_graph,
@@ -134,7 +134,7 @@ class EnhancedReBACManager(ReBACManager):
         super().__init__(engine, cache_ttl_seconds, max_depth)
         # Zone isolation (absorbed from ZoneAwareReBACManager — Phase 10)
         self.enforce_zone_isolation = enforce_zone_isolation
-        self._zone_manager = ZoneManager(enforce=enforce_zone_isolation)
+        self._zone_manager = ZoneIsolationValidator(enforce=enforce_zone_isolation)
         self.enable_graph_limits = enable_graph_limits
         self.enable_leopard = enable_leopard
         self.enable_tiger_cache = enable_tiger_cache
@@ -1795,7 +1795,7 @@ class EnhancedReBACManager(ReBACManager):
                 object_zone_id=object_zone_id,
             )
 
-        # Delegate zone validation to ZoneManager (Issue #1459)
+        # Delegate zone validation to ZoneIsolationValidator (Issue #1459)
         zone_id, subject_zone_id, object_zone_id, _is_cross_zone = (
             self._zone_manager.validate_write_zones(
                 zone_id, subject_zone_id, object_zone_id, relation

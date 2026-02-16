@@ -7,10 +7,10 @@ the relation is in CROSS_ZONE_ALLOWED_RELATIONS.
 
 Usage:
     from nexus.services.permissions.consistency.zone_manager import (
-        ZoneManager, ZoneIsolationError,
+        ZoneIsolationValidator, ZoneIsolationError,
     )
 
-    manager = ZoneManager(enforce=True)
+    manager = ZoneIsolationValidator(enforce=True)
     zone_id, subj, obj, is_cross = manager.validate_write_zones(
         zone_id="org_acme",
         subject_zone_id=None,
@@ -44,7 +44,7 @@ class ZoneIsolationError(Exception):
         self.object_zone = object_zone
 
 
-class ZoneManager:
+class ZoneIsolationValidator:
     """Zone isolation enforcement helper.
 
     Validates that permission tuples respect zone boundaries.

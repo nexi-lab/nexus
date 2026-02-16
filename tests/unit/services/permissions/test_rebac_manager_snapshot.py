@@ -766,7 +766,7 @@ class TestConsistencyModuleIntegration:
         assert versions[-1] > versions[0]
 
     def test_zone_validation_delegates_to_zone_manager(self, engine):
-        """Zone-aware manager delegates zone validation to ZoneManager."""
+        """Zone-aware manager delegates zone validation to ZoneIsolationValidator."""
         mgr = EnhancedReBACManager(
             engine=engine,
             cache_ttl_seconds=300,

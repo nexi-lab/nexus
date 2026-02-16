@@ -25,7 +25,6 @@ from __future__ import annotations
 from typing import Any, Protocol, runtime_checkable
 
 
-
 @runtime_checkable
 class PermissionProtocol(Protocol):
     """Service contract for relationship-based access control (ReBAC).

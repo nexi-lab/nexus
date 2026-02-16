@@ -1,6 +1,9 @@
 """Unit tests for Nexus exceptions."""
 
+import inspect
+
 from nexus.core.exceptions import (
+    AccessDeniedError,
     AuditLogError,
     AuthenticationError,
     BackendError,
@@ -11,6 +14,7 @@ from nexus.core.exceptions import (
     NexusFileNotFoundError,
     NexusPermissionError,
     ParserError,
+    PathNotMountedError,
     PermissionDeniedError,
     ValidationError,
 )
@@ -134,6 +138,8 @@ def test_exception_inheritance() -> None:
     assert issubclass(InvalidPathError, NexusError)
     assert issubclass(MetadataError, NexusError)
     assert issubclass(ParserError, NexusError)
+    assert issubclass(AccessDeniedError, NexusError)
+    assert issubclass(PathNotMountedError, NexusError)
 
     # All should also be standard Exceptions
     assert issubclass(NexusError, Exception)
@@ -239,3 +245,162 @@ def test_authentication_error_is_expected() -> None:
     """Test AuthenticationError is classified as expected (user auth issue)."""
     error = AuthenticationError("Token expired")
     assert error.is_expected is True
+
+
+# ============================================================================
+# Issue #1460: Unified Exception Hierarchy Tests
+# ============================================================================
+
+
+def test_all_nexus_error_subclasses_have_is_expected() -> None:
+    """Every NexusError subclass must define is_expected as a class attribute.
+
+    Uses introspection to auto-discover all subclasses so new exceptions
+    added in the future are automatically covered.
+    """
+    import nexus.core.exceptions as exc_module
+
+    for name, cls in inspect.getmembers(exc_module, inspect.isclass):
+        if issubclass(cls, NexusError) and cls is not NexusError:
+            assert hasattr(cls, "is_expected"), f"{name} missing is_expected class attribute"
+            assert isinstance(cls.is_expected, bool), (
+                f"{name}.is_expected must be bool, got {type(cls.is_expected)}"
+            )
+
+
+def test_permission_denied_is_subclass_of_nexus_permission_error() -> None:
+    """PermissionDeniedError must be a subclass of NexusPermissionError (Issue #1460).
+
+    This ensures a single 'except NexusPermissionError' catches both
+    generic permission errors and ReBAC-specific permission errors.
+    """
+    assert issubclass(PermissionDeniedError, NexusPermissionError)
+    assert issubclass(PermissionDeniedError, NexusError)
+
+    # Verify catch works: except NexusPermissionError catches PermissionDeniedError
+    caught = False
+    try:
+        raise PermissionDeniedError("ReBAC denied")
+    except NexusPermissionError:
+        caught = True
+    assert caught, "except NexusPermissionError must catch PermissionDeniedError"
+
+
+def test_permission_denied_error_attributes() -> None:
+    """PermissionDeniedError preserves path and message after reparenting."""
+    error = PermissionDeniedError("No read access", path="/workspace/secret.txt")
+    assert error.is_expected is True
+    assert error.path == "/workspace/secret.txt"
+    assert "No read access" in str(error)
+
+
+def test_access_denied_error() -> None:
+    """AccessDeniedError (from router) now inherits NexusError."""
+    error = AccessDeniedError("Namespace 'system' requires admin privileges")
+    assert isinstance(error, NexusError)
+    assert error.is_expected is True
+    assert error.path is None
+    assert "Namespace 'system'" in str(error)
+
+    # With path
+    error = AccessDeniedError("Zone isolation violation", path="/shared/zone-a/file.txt")
+    assert error.path == "/shared/zone-a/file.txt"
+
+
+def test_path_not_mounted_error() -> None:
+    """PathNotMountedError (from router) now inherits NexusError."""
+    error = PathNotMountedError("/unmounted/path")
+    assert isinstance(error, NexusError)
+    assert error.is_expected is True
+    assert error.path == "/unmounted/path"
+    assert "No mount found for path" in str(error)
+
+    # Custom message
+    error = PathNotMountedError("/custom", message="Backend offline")
+    assert "Backend offline" in str(error)
+    assert error.path == "/custom"
+
+
+def test_not_found_error_alias_removed() -> None:
+    """NotFoundError alias must be removed from exceptions module (Issue #1460)."""
+    import nexus.core.exceptions as exc_module
+
+    assert not hasattr(exc_module, "NotFoundError"), (
+        "NotFoundError alias should be removed; use NexusFileNotFoundError directly"
+    )
+
+
+def test_router_exceptions_in_error_handler() -> None:
+    """Error handler must map router exceptions to correct HTTP status codes."""
+    from unittest.mock import MagicMock
+
+    from nexus.server.error_handlers import nexus_error_handler
+
+    request = MagicMock()
+
+    # AccessDeniedError → 403
+    resp = nexus_error_handler(request, AccessDeniedError("Admin required"))
+    assert resp.status_code == 403
+
+    # PathNotMountedError → 404
+    resp = nexus_error_handler(request, PathNotMountedError("/no/mount"))
+    assert resp.status_code == 404
+
+    # PermissionDeniedError (subclass of NexusPermissionError) → 403
+    resp = nexus_error_handler(request, PermissionDeniedError("ReBAC denied"))
+    assert resp.status_code == 403
+
+    # NexusPermissionError → 403
+    resp = nexus_error_handler(request, NexusPermissionError("/test"))
+    assert resp.status_code == 403
+
+    # InvalidPathError → 400
+    resp = nexus_error_handler(request, InvalidPathError("/bad\x00path"))
+    assert resp.status_code == 400
+
+    # NexusFileNotFoundError → 404
+    resp = nexus_error_handler(request, NexusFileNotFoundError("/missing"))
+    assert resp.status_code == 404
+
+    # BackendError → 502
+    resp = nexus_error_handler(request, BackendError("Connection failed"))
+    assert resp.status_code == 502
+
+    # Generic NexusError → 500
+    resp = nexus_error_handler(request, NexusError("Unknown"))
+    assert resp.status_code == 500
+
+
+def test_error_handler_response_includes_is_expected() -> None:
+    """Error handler response body must include is_expected flag."""
+    import json
+    from unittest.mock import MagicMock
+
+    from nexus.server.error_handlers import nexus_error_handler
+
+    request = MagicMock()
+
+    # Expected error
+    resp = nexus_error_handler(request, AccessDeniedError("Admin required"))
+    body = json.loads(resp.body)
+    assert body["is_expected"] is True
+
+    # Unexpected error
+    resp = nexus_error_handler(request, BackendError("DB down"))
+    body = json.loads(resp.body)
+    assert body["is_expected"] is False
+
+
+def test_router_uses_canonical_exceptions() -> None:
+    """Router must raise exceptions from core.exceptions, not local definitions."""
+    from nexus.core import router as router_module
+
+    # Router should NOT define its own exception classes
+    for name in ("PathNotMountedError", "InvalidPathError", "AccessDeniedError"):
+        # The class should exist in the module (imported), but should be
+        # the canonical version from core.exceptions
+        cls = getattr(router_module, name, None)
+        if cls is not None:
+            assert issubclass(cls, NexusError), (
+                f"router.{name} must be a NexusError subclass, got bases: {cls.__bases__}"
+            )

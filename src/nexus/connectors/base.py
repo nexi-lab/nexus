@@ -307,11 +307,8 @@ class SkillDocMixin:
             return result
 
         try:
-            import contextlib
-
             # Create .skill directory
-            with contextlib.suppress(Exception):
-                filesystem.mkdir(skill_dir, parents=True, exist_ok=True)
+            filesystem.mkdir(skill_dir, parents=True, exist_ok=True)
 
             # Write SKILL.md
             skill_md_path = posixpath.join(skill_dir, "SKILL.md")
@@ -323,8 +320,7 @@ class SkillDocMixin:
             # Write examples if any
             if self.EXAMPLES:
                 examples_dir = posixpath.join(skill_dir, "examples")
-                with contextlib.suppress(Exception):
-                    filesystem.mkdir(examples_dir, parents=True, exist_ok=True)
+                filesystem.mkdir(examples_dir, parents=True, exist_ok=True)
 
                 for filename, content in self.EXAMPLES.items():
                     example_path = posixpath.join(examples_dir, filename)

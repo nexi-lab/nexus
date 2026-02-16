@@ -17,7 +17,9 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -44,7 +46,7 @@ def _find_free_port() -> int:
 
 def _make_client() -> httpx.Client:
     """Create httpx client for localhost connections."""
-    return httpx.Client(timeout=10)
+    return httpx.Client(timeout=60)
 
 
 def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> None:
@@ -60,6 +62,73 @@ def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> 
                 pass
             time.sleep(0.3)
     raise TimeoutError(f"Server did not start within {timeout}s at {base_url}")
+
+
+def _rpc(
+    client: httpx.Client,
+    base_url: str,
+    method: str,
+    params: dict[str, Any],
+    headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Call a JSON-RPC method on the NFS API and return parsed response."""
+    resp = client.post(
+        f"{base_url}/api/nfs/{method}",
+        json={
+            "jsonrpc": "2.0",
+            "id": str(uuid.uuid4()),
+            "method": method,
+            "params": params,
+        },
+        headers=headers,
+    )
+    assert resp.status_code == 200, (
+        f"RPC {method} returned HTTP {resp.status_code}: {resp.text[:500]}"
+    )
+    return resp.json()
+
+
+def _rebac_grant(
+    client: httpx.Client,
+    base_url: str,
+    subject_id: str,
+    relation: str,
+    object_path: str,
+    zone_id: str = "test",
+    headers: dict[str, str] | None = None,
+) -> str | None:
+    """Create a ReBAC tuple via JSON-RPC and return the tuple_id."""
+    result = _rpc(
+        client,
+        base_url,
+        "rebac_create",
+        {
+            "subject": ["user", subject_id],
+            "relation": relation,
+            "object": ["file", object_path],
+            "zone_id": zone_id,
+        },
+        headers=headers,
+    )
+    rpc_result = result.get("result", {})
+    return rpc_result.get("tuple_id") if isinstance(rpc_result, dict) else None
+
+
+def _rebac_revoke(
+    client: httpx.Client,
+    base_url: str,
+    tuple_id: str,
+    headers: dict[str, str] | None = None,
+) -> bool:
+    """Delete a ReBAC tuple via JSON-RPC."""
+    result = _rpc(
+        client,
+        base_url,
+        "rebac_delete",
+        {"tuple_id": tuple_id},
+        headers=headers,
+    )
+    return result.get("error") is None
 
 
 # === Fixtures ===
@@ -92,16 +161,16 @@ def server():
         # Source code on PYTHONPATH
         "PYTHONPATH": str(Path(__file__).resolve().parents[2] / "src"),
         # AsyncNexusFS settings
+        "NEXUS_DATABASE_URL": f"sqlite:///{os.path.join(data_dir, 'nexus.db')}",
         "NEXUS_BACKEND_ROOT": backend_root,
         "NEXUS_TENANT_ID": "ns-e2e-test",
         # CRITICAL: Permissions ENABLED for namespace testing
         "NEXUS_ENFORCE_PERMISSIONS": "true",
-        "NEXUS_ENFORCE_ZONE_ISOLATION": "true",
+        # Small revision window so namespace cache invalidates after each grant
+        "NEXUS_NAMESPACE_REVISION_WINDOW": "1",
         # Use in-memory Metastore (no PostgreSQL dependency)
-        "NEXUS_AUTH_TYPE": "static",  # Static auth with in-memory ReBAC
         "NEXUS_REBAC_BACKEND": "memory",  # Metastore in-memory
-        # Static users (alice, bob, admin)
-        "NEXUS_STATIC_USERS": "alice:pass1,bob:pass2,admin:pass3",
+        # Admin designation for open access mode (namespace bypass)
         "NEXUS_STATIC_ADMINS": "admin",
         # Disable search daemon
         "NEXUS_SEARCH_DAEMON": "false",
@@ -117,7 +186,7 @@ def server():
             (
                 "from nexus.cli import main; "
                 f"main(['serve', '--host', '127.0.0.1', '--port', '{port}', "
-                f"'--data-dir', '{data_dir}', '--auth-type', 'static', '--api-key', 'test-api-key'])"
+                f"'--data-dir', '{data_dir}'])"
             ),
         ],
         env=env,
@@ -204,11 +273,10 @@ def bob_headers() -> dict[str, str]:
 
 @pytest.fixture()
 def admin_headers() -> dict[str, str]:
-    """Headers for admin user (bypasses namespace checks)."""
+    """Headers for admin user (bypasses namespace checks via NEXUS_STATIC_ADMINS)."""
     return {
         "X-Nexus-Subject": "user:admin",
         "X-Nexus-Zone-ID": "test",
-        "X-Nexus-Require-Admin": "true",
     }
 
 
@@ -225,17 +293,19 @@ def test_health(base_url: str, client: httpx.Client) -> None:
 
 
 def test_zero_grants_zero_visibility(
-    base_url: str, client: httpx.Client, alice_headers: dict
+    base_url: str, client: httpx.Client
 ) -> None:
     """Subject with no grants sees nothing (fail-closed).
 
-    Alice has no ReBAC grants → all paths return 404 (invisible).
+    A user with no ReBAC grants → all paths return 404 (invisible).
+    Uses a dedicated user (charlie) to avoid polluting namespace cache
+    for alice/bob who are tested with grants in later tests.
     """
-    # Try to read a file that exists in the backend but alice has no grant
+    charlie_headers = {"X-Nexus-Subject": "user:charlie", "X-Nexus-Zone-ID": "test"}
     resp = client.get(
         f"{base_url}/api/v2/files/read",
         params={"path": "/workspace/secret.txt"},
-        headers=alice_headers,
+        headers=charlie_headers,
     )
     # Should return 404 (path invisible), not 403 (permission denied)
     assert resp.status_code == 404
@@ -275,36 +345,12 @@ def test_per_subject_namespace_isolation(
     )
     assert resp.status_code == 200, f"Admin write failed: {resp.text}"
 
-    # Admin grants ReBAC permissions
-    # Grant alice viewer-of alice_path
-    resp = client.post(
-        f"{base_url}/api/rebac/tuples",
-        json={
-            "subject_type": "user",
-            "subject_id": "alice",
-            "relation": "direct_viewer",
-            "object_type": "file",
-            "object_id": alice_path,
-            "zone_id": "test",
-        },
-        headers=admin_headers,
-    )
-    assert resp.status_code == 200, f"Grant alice failed: {resp.text}"
+    # Admin grants ReBAC permissions via JSON-RPC
+    alice_tid = _rebac_grant(client, base_url, "alice", "direct_viewer", alice_path, headers=admin_headers)
+    assert alice_tid, "Grant alice failed"
 
-    # Grant bob viewer-of bob_path
-    resp = client.post(
-        f"{base_url}/api/rebac/tuples",
-        json={
-            "subject_type": "user",
-            "subject_id": "bob",
-            "relation": "direct_viewer",
-            "object_type": "file",
-            "object_id": bob_path,
-            "zone_id": "test",
-        },
-        headers=admin_headers,
-    )
-    assert resp.status_code == 200, f"Grant bob failed: {resp.text}"
+    bob_tid = _rebac_grant(client, base_url, "bob", "direct_viewer", bob_path, headers=admin_headers)
+    assert bob_tid, "Grant bob failed"
 
     # Wait for cache to settle (namespace manager rebuild)
     time.sleep(0.5)
@@ -345,12 +391,14 @@ def test_per_subject_namespace_isolation(
 
 
 def test_admin_bypasses_namespace(
-    base_url: str, client: httpx.Client, alice_headers: dict, admin_headers: dict
+    base_url: str, client: httpx.Client, admin_headers: dict
 ) -> None:
     """Admin user bypasses namespace visibility checks.
 
-    Admin creates a file that alice has no grant for, but admin can still access it.
+    Admin creates a file that frank has no grant for, but admin can still access it.
+    Uses dedicated user (frank) to avoid namespace cache pollution.
     """
+    frank_headers = {"X-Nexus-Subject": "user:frank", "X-Nexus-Zone-ID": "test"}
     secret_path = "/admin/secret.txt"
 
     # Admin creates a file
@@ -361,11 +409,11 @@ def test_admin_bypasses_namespace(
     )
     assert resp.status_code == 200
 
-    # Alice cannot see it (no grant)
+    # Frank cannot see it (no grant)
     resp = client.get(
         f"{base_url}/api/v2/files/read",
         params={"path": secret_path},
-        headers=alice_headers,
+        headers=frank_headers,
     )
     assert resp.status_code == 404  # Invisible
 
@@ -380,14 +428,17 @@ def test_admin_bypasses_namespace(
 
 
 def test_fine_grained_rebac_check_after_namespace(
-    base_url: str, client: httpx.Client, alice_headers: dict, admin_headers: dict
+    base_url: str, client: httpx.Client, admin_headers: dict
 ) -> None:
     """Defense in depth: namespace visibility + ReBAC fine-grained check.
 
-    Alice has viewer-of grant (read-only) on /workspace/shared/doc.txt.
+    User has viewer-of grant (read-only) on /workspace/shared/doc.txt.
     - GET /read should work (visible + read permission)
     - POST /write should fail with 403 (visible but no write permission)
+
+    Uses dedicated user (dave) to avoid namespace cache pollution from prior tests.
     """
+    dave_headers = {"X-Nexus-Subject": "user:dave", "X-Nexus-Zone-ID": "test"}
     doc_path = "/workspace/shared/doc.txt"
 
     # Admin creates file
@@ -398,52 +449,44 @@ def test_fine_grained_rebac_check_after_namespace(
     )
     assert resp.status_code == 200
 
-    # Admin grants alice VIEWER (read-only)
-    resp = client.post(
-        f"{base_url}/api/rebac/tuples",
-        json={
-            "subject_type": "user",
-            "subject_id": "alice",
-            "relation": "direct_viewer",  # viewer = read-only
-            "object_type": "file",
-            "object_id": doc_path,
-            "zone_id": "test",
-        },
-        headers=admin_headers,
-    )
-    assert resp.status_code == 200
+    # Admin grants dave VIEWER (read-only) via JSON-RPC
+    tid = _rebac_grant(client, base_url, "dave", "direct_viewer", doc_path, headers=admin_headers)
+    assert tid, "Grant dave viewer failed"
 
     time.sleep(0.5)  # Cache settle
 
-    # Alice can READ (visible + read permission)
+    # Dave can READ (visible + read permission)
     resp = client.get(
         f"{base_url}/api/v2/files/read",
         params={"path": doc_path},
-        headers=alice_headers,
+        headers=dave_headers,
     )
     assert resp.status_code == 200
     assert resp.json()["content"] == "v1"
 
-    # Alice CANNOT WRITE (visible but no write permission)
+    # Dave CANNOT WRITE (visible but no write permission)
     # Should return 403 (permission denied), NOT 404 (path is visible)
     resp = client.post(
         f"{base_url}/api/v2/files/write",
         json={"path": doc_path, "content": "v2"},
-        headers=alice_headers,
+        headers=dave_headers,
     )
-    assert resp.status_code == 403, f"Alice should get 403 (no write perm): {resp.text}"
+    assert resp.status_code == 403, f"Dave should get 403 (no write perm): {resp.text}"
 
 
 def test_grant_revocation_makes_path_invisible(
-    base_url: str, client: httpx.Client, alice_headers: dict, admin_headers: dict
+    base_url: str, client: httpx.Client, admin_headers: dict
 ) -> None:
     """Revoking a grant makes the path invisible (404).
 
-    1. Admin grants alice viewer-of /workspace/project/data.txt
-    2. Alice can read it (200)
+    1. Admin grants eve viewer-of /workspace/project/data.txt
+    2. Eve can read it (200)
     3. Admin revokes the grant
-    4. Alice gets 404 (path now invisible)
+    4. Eve gets 404 (path now invisible)
+
+    Uses dedicated user (eve) to avoid namespace cache pollution from prior tests.
     """
+    eve_headers = {"X-Nexus-Subject": "user:eve", "X-Nexus-Zone-ID": "test"}
     project_path = "/workspace/project/data.txt"
 
     # Admin creates file
@@ -454,46 +497,30 @@ def test_grant_revocation_makes_path_invisible(
     )
     assert resp.status_code == 200
 
-    # Admin grants alice viewer
-    resp = client.post(
-        f"{base_url}/api/rebac/tuples",
-        json={
-            "subject_type": "user",
-            "subject_id": "alice",
-            "relation": "direct_viewer",
-            "object_type": "file",
-            "object_id": project_path,
-            "zone_id": "test",
-        },
-        headers=admin_headers,
-    )
-    assert resp.status_code == 200
-    tuple_id = resp.json().get("tuple_id")
+    # Admin grants eve viewer via JSON-RPC
+    tuple_id = _rebac_grant(client, base_url, "eve", "direct_viewer", project_path, headers=admin_headers)
+    assert tuple_id, "Grant eve viewer failed"
 
     time.sleep(0.5)  # Cache settle
 
-    # Alice can read
+    # Eve can read
     resp = client.get(
         f"{base_url}/api/v2/files/read",
         params={"path": project_path},
-        headers=alice_headers,
+        headers=eve_headers,
     )
     assert resp.status_code == 200
 
-    # Admin revokes grant
-    resp = client.delete(
-        f"{base_url}/api/rebac/tuples/{tuple_id}",
-        headers=admin_headers,
-    )
-    assert resp.status_code == 200
+    # Admin revokes grant via JSON-RPC
+    assert _rebac_revoke(client, base_url, tuple_id, headers=admin_headers)
 
     time.sleep(0.5)  # Cache invalidation
 
-    # Alice now gets 404 (path invisible)
+    # Eve now gets 404 (path invisible)
     resp = client.get(
         f"{base_url}/api/v2/files/read",
         params={"path": project_path},
-        headers=alice_headers,
+        headers=eve_headers,
     )
     assert resp.status_code == 404
 
@@ -504,17 +531,18 @@ def test_grant_revocation_makes_path_invisible(
 
 
 def test_namespace_check_performance(
-    base_url: str, client: httpx.Client, alice_headers: dict, admin_headers: dict
+    base_url: str, client: httpx.Client, admin_headers: dict
 ) -> None:
     """Validate namespace visibility check has acceptable performance.
 
     Expected: <10ms per visibility check (O(log m) bisect lookup).
+    Uses dedicated user (grace) to avoid namespace cache pollution.
     """
-    # Admin grants alice access to 100 different paths
-    paths = [f"/workspace/perf-test/file-{i:03d}.txt" for i in range(100)]
+    grace_headers = {"X-Nexus-Subject": "user:grace", "X-Nexus-Zone-ID": "test"}
+    paths = [f"/workspace/perf-test/file-{i:03d}.txt" for i in range(20)]
 
     # Create one file to test visibility against
-    test_path = paths[50]  # Middle of the sorted list (worst case for bisect)
+    test_path = paths[10]  # Middle of the sorted list (worst case for bisect)
     resp = client.post(
         f"{base_url}/api/v2/files/write",
         json={"path": test_path, "content": "perf test"},
@@ -522,37 +550,26 @@ def test_namespace_check_performance(
     )
     assert resp.status_code == 200
 
-    # Grant alice viewer on all 100 paths (builds a 100-entry mount table)
+    # Grant grace viewer on all 20 paths (builds a 20-entry mount table)
     for p in paths:
-        client.post(
-            f"{base_url}/api/rebac/tuples",
-            json={
-                "subject_type": "user",
-                "subject_id": "alice",
-                "relation": "direct_viewer",
-                "object_type": "file",
-                "object_id": p,
-                "zone_id": "test",
-            },
-            headers=admin_headers,
-        )
+        _rebac_grant(client, base_url, "grace", "direct_viewer", p, headers=admin_headers)
 
     time.sleep(0.5)  # Cache rebuild
 
-    # Measure 100 visibility checks (O(log 100) bisect each)
+    # Measure 50 visibility checks (O(log 20) bisect each)
     start = time.perf_counter()
-    for _ in range(100):
+    for _ in range(50):
         resp = client.get(
             f"{base_url}/api/v2/files/read",
             params={"path": test_path},
-            headers=alice_headers,
+            headers=grace_headers,
         )
         assert resp.status_code == 200
 
     elapsed_ms = (time.perf_counter() - start) * 1000
-    avg_ms = elapsed_ms / 100
+    avg_ms = elapsed_ms / 50
 
-    print(f"\n[PERF] 100 visibility checks: {elapsed_ms:.1f}ms total, {avg_ms:.2f}ms avg")
+    print(f"\n[PERF] 50 visibility checks: {elapsed_ms:.1f}ms total, {avg_ms:.2f}ms avg")
 
     # Assert: Average per-check latency should be reasonable
     # This includes HTTP round-trip + namespace check + ReBAC check

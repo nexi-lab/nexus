@@ -28,6 +28,11 @@ _DB_EXECUTOR = ThreadPoolExecutor(max_workers=20, thread_name_prefix="a2a-db")
 class DatabaseTaskStore:
     """SQLAlchemy-backed task store.
 
+    .. deprecated::
+        DatabaseTaskStore is deprecated.  Use ``VFSTaskStore`` for
+        filesystem-backed persistence (§17.6 convergence).  This store
+        will be removed in a future release.
+
     Parameters
     ----------
     session_factory:
@@ -35,6 +40,15 @@ class DatabaseTaskStore:
     """
 
     def __init__(self, session_factory: Any) -> None:
+        import warnings
+
+        warnings.warn(
+            "DatabaseTaskStore is deprecated. Use VFSTaskStore for "
+            "filesystem-backed persistence. This store will be removed "
+            "in a future release.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self._session_factory = session_factory
 
     async def _run_in_session(self, fn: Callable[..., _T]) -> _T:

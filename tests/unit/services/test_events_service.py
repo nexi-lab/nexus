@@ -195,9 +195,9 @@ class TestZoneIdResolution:
         assert svc._get_zone_id(None) == "service_zone"
 
     def test_defaults_to_default(self, mock_backend_remote):
-        """Defaults to 'default' when no zone available."""
+        """Defaults to 'root' when no zone available."""
         svc = EventsService(backend=mock_backend_remote)
-        assert svc._get_zone_id(None) == "default"
+        assert svc._get_zone_id(None) == "root"
 
 
 # =============================================================================

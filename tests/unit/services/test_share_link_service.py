@@ -160,7 +160,7 @@ class TestContextExtraction:
     def test_defaults_for_none_context(self):
         """None context returns defaults."""
         zone_id, user_id, is_admin = ShareLinkService._extract_context_info(None)
-        assert zone_id == "default"
+        assert zone_id == "root"
         assert user_id == "anonymous"
         assert is_admin is False
 

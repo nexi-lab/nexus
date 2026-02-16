@@ -15,13 +15,14 @@ import asyncio
 import builtins
 import fnmatch
 import logging
+import os
 import re
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any, cast
 
-from nexus.core import glob_fast, grep_fast
+from nexus.core import glob_fast, grep_fast, trigram_fast
 from nexus.core.exceptions import PermissionDeniedError
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
@@ -31,6 +32,7 @@ from nexus.search.strategies import (
     GREP_PARALLEL_THRESHOLD,
     GREP_PARALLEL_WORKERS,
     GREP_SEQUENTIAL_THRESHOLD,
+    GREP_TRIGRAM_THRESHOLD,
     GREP_ZOEKT_THRESHOLD,
     GlobStrategy,
     SearchStrategy,
@@ -1681,14 +1683,29 @@ class SearchService(SemanticSearchMixin):
         cached_text_ratio = len(searchable_texts) / len(files) if files else 0.0
         files_needing_raw = [f for f in files if f not in searchable_texts]
 
-        # Phase 3: Select strategy (Issue #929)
+        # Phase 3: Select strategy (Issue #929, #954)
+        zone_id, _, _ = self._get_routing_params(context)
         strategy = self._select_grep_strategy(
             file_count=len(files),
             cached_text_ratio=cached_text_ratio,
+            zone_id=zone_id,
         )
 
         # Phase 4: Execute strategy-specific search
         results: list[dict[str, Any]] = []
+
+        # Strategy: TRIGRAM_INDEX (Issue #954)
+        if strategy == SearchStrategy.TRIGRAM_INDEX and zone_id:
+            trigram_results = self._try_grep_with_trigram(
+                pattern=pattern,
+                ignore_case=ignore_case,
+                max_results=max_results,
+                zone_id=zone_id,
+                context=context,
+            )
+            if trigram_results is not None:
+                return trigram_results
+            strategy = SearchStrategy.RUST_BULK  # Fallback
 
         # Strategy: ZOEKT_INDEX
         if strategy == SearchStrategy.ZOEKT_INDEX:
@@ -1931,6 +1948,158 @@ class SearchService(SemanticSearchMixin):
             logger.warning(f"[GREP] Zoekt search failed: {e}")
             return None
 
+    def _try_grep_with_trigram(
+        self,
+        pattern: str,
+        ignore_case: bool,
+        max_results: int,
+        zone_id: str,
+        context: Any = None,
+    ) -> builtins.list[dict[str, Any]] | None:
+        """Try trigram index for accelerated grep (Issue #954).
+
+        Uses trigram index for O(1) candidate lookup, then verifies candidates
+        by reading content through NexusFS (supporting CAS backends).
+
+        Returns None if trigram index is not available or on error,
+        allowing fallback to other strategies.
+        """
+        if not trigram_fast.is_available():
+            return None
+
+        index_path = trigram_fast.get_index_path(zone_id)
+        if not os.path.isfile(index_path):
+            return None
+
+        # Phase 1: Get candidate file paths from trigram index (sub-ms).
+        candidates = trigram_fast.search_candidates(
+            index_path=index_path,
+            pattern=pattern,
+            ignore_case=ignore_case,
+        )
+
+        if candidates is None:
+            logger.warning("[GREP] Trigram candidate search failed, falling back")
+            return None
+
+        if not candidates:
+            logger.debug("[GREP] Issue #954: Trigram index found 0 candidates for zone=%s", zone_id)
+            return []
+
+        logger.debug(
+            "[GREP] Issue #954: Trigram index found %d candidates for zone=%s",
+            len(candidates),
+            zone_id,
+        )
+
+        # Phase 2: Verify candidates by reading content through NexusFS.
+        flags = re.IGNORECASE if ignore_case else 0
+        try:
+            regex = re.compile(pattern, flags)
+        except re.error:
+            return None
+
+        results: builtins.list[dict[str, Any]] = []
+        for file_path in candidates:
+            if len(results) >= max_results:
+                break
+            try:
+                content = self._read(file_path, context=context)
+                if not isinstance(content, bytes):
+                    continue
+                try:
+                    text = content.decode("utf-8")
+                except UnicodeDecodeError:
+                    continue
+                for line_num, line in enumerate(text.splitlines(), start=1):
+                    if len(results) >= max_results:
+                        break
+                    match_obj = regex.search(line)
+                    if match_obj:
+                        results.append(
+                            {
+                                "file": file_path,
+                                "line": line_num,
+                                "content": line,
+                                "match": match_obj.group(0),
+                            }
+                        )
+            except Exception:
+                continue
+
+        return results
+
+    def build_trigram_index_for_zone(
+        self,
+        zone_id: str,
+        context: Any = None,
+    ) -> dict[str, Any]:
+        """Build trigram index for all files in a zone (Issue #954).
+
+        Reads file content through NexusFS (supporting CAS backends) and
+        builds the index using (virtual_path, content) pairs.
+
+        Args:
+            zone_id: Zone identifier.
+            context: Operation context for permission filtering.
+
+        Returns:
+            Dict with status, file_count, trigram_count, index_size_bytes.
+        """
+        if not trigram_fast.is_available():
+            return {"status": "unavailable", "reason": "Rust extension not available"}
+
+        # List all files in the zone.
+        files = cast(list[str], self.list("/", recursive=True, context=context))
+
+        index_path = trigram_fast.get_index_path(zone_id)
+        os.makedirs(os.path.dirname(index_path), exist_ok=True)
+
+        # Read content through NexusFS and build index from (path, content) pairs.
+        # This works with any backend (CAS, S3, etc.) since we read through the
+        # NexusFS abstraction rather than directly from disk.
+        entries: builtins.list[tuple[str, bytes]] = []
+        for file_path in files:
+            try:
+                content = self._read(file_path, context=context)
+                if isinstance(content, bytes):
+                    entries.append((file_path, content))
+            except Exception:
+                continue  # Skip unreadable files.
+
+        success = trigram_fast.build_index_from_entries(entries, index_path)
+        if not success:
+            return {"status": "error", "reason": "Index build failed"}
+
+        stats = trigram_fast.get_stats(index_path)
+        return {
+            "status": "ok",
+            "index_path": index_path,
+            **(stats or {}),
+        }
+
+    def get_trigram_index_status(self, zone_id: str) -> dict[str, Any]:
+        """Get trigram index status for a zone (Issue #954)."""
+        if not trigram_fast.is_available():
+            return {"status": "unavailable"}
+
+        index_path = trigram_fast.get_index_path(zone_id)
+        if not os.path.isfile(index_path):
+            return {"status": "not_built", "index_path": index_path}
+
+        stats = trigram_fast.get_stats(index_path)
+        if stats is None:
+            return {"status": "error", "index_path": index_path}
+
+        return {"status": "ok", "index_path": index_path, **stats}
+
+    def invalidate_trigram_index(self, zone_id: str) -> None:
+        """Delete trigram index for a zone and clear cache (Issue #954)."""
+        index_path = trigram_fast.get_index_path(zone_id)
+        trigram_fast.invalidate_cache(index_path)
+        if os.path.isfile(index_path):
+            os.remove(index_path)
+
     def _grep_parallel(
         self,
         regex: re.Pattern[str],
@@ -2023,12 +2192,21 @@ class SearchService(SemanticSearchMixin):
         file_count: int,
         cached_text_ratio: float,
         zoekt_available: bool | None = None,
+        zone_id: str | None = None,
     ) -> SearchStrategy:
-        """Select optimal grep strategy (Issue #929)."""
+        """Select optimal grep strategy (Issue #929, #954)."""
         if cached_text_ratio >= GREP_CACHED_TEXT_RATIO:
             return SearchStrategy.CACHED_TEXT
         if file_count < GREP_SEQUENTIAL_THRESHOLD:
             return SearchStrategy.SEQUENTIAL
+        # Issue #954: Trigram index — prefer for large file sets with built index.
+        if (
+            file_count > GREP_TRIGRAM_THRESHOLD
+            and zone_id
+            and trigram_fast.is_available()
+            and trigram_fast.index_exists(zone_id)
+        ):
+            return SearchStrategy.TRIGRAM_INDEX
         if file_count > GREP_ZOEKT_THRESHOLD:
             if zoekt_available is None:
                 zoekt_available = self._is_zoekt_available()

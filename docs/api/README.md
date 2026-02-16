@@ -255,7 +255,7 @@ See [Permissions](permissions.md) for complete security documentation.
 ## 📄 Related Documentation
 
 - [Main Documentation](../../README.md)
-- [Architecture Overview](../../ARCHITECTURE.md)
+- [Kernel Architecture](../architecture/KERNEL-ARCHITECTURE.md)
 - [Examples](../../examples/)
 - [API Verification Report](../API_VERIFICATION_REPORT.md)
 

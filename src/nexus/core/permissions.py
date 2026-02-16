@@ -6,7 +6,7 @@ This module defines the kernel-level types for ReBAC permission enforcement:
 - check_stale_session(): stale session detection helper
 
 The PermissionEnforcer class has been moved to services/permissions/enforcer.py
-(it depends on services/ at runtime).  Re-exported here for backward compatibility.
+(it depends on services/ at runtime).
 """
 
 from __future__ import annotations
@@ -285,7 +285,3 @@ def check_stale_session(agent_registry: Any, context: OperationContext) -> None:
             f"Session generation {context.agent_generation} is stale "
             f"(current: {current_record.generation})",
         )
-
-
-# Backward-compat re-export (moved to services/permissions/enforcer.py in #1519)
-from nexus.services.permissions.enforcer import PermissionEnforcer as PermissionEnforcer  # noqa: E402, F401, I001

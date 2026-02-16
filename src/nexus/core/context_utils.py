@@ -32,7 +32,7 @@ def get_zone_id(context: Any) -> str:
         >>> get_zone_id(ctx)
         'acme'
         >>> get_zone_id(None)
-        'default'
+        'root'
     """
     if context and hasattr(context, "zone_id") and context.zone_id:
         return str(context.zone_id)

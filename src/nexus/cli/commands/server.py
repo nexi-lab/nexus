@@ -966,12 +966,10 @@ def serve(
             # Database authentication with both API keys (sk-*) and JWT tokens
             import os
 
-            from sqlalchemy import create_engine
-            from sqlalchemy.orm import sessionmaker
-
             from nexus.server.auth.database_key import DatabaseAPIKeyAuth
             from nexus.server.auth.database_local import DatabaseLocalAuth
             from nexus.server.auth.factory import DiscriminatingAuthProvider
+            from nexus.storage.record_store import SQLAlchemyRecordStore
 
             db_url = os.getenv("NEXUS_DATABASE_URL")
             if not db_url:
@@ -992,13 +990,8 @@ def serve(
                     "[yellow]   For production, set: export NEXUS_JWT_SECRET='your-secret-key'[/yellow]"
                 )
 
-            engine = create_engine(
-                db_url,
-                pool_pre_ping=True,
-                pool_recycle=1800,
-                pool_size=5,
-            )
-            session_factory = sessionmaker(bind=engine)
+            _record_store = SQLAlchemyRecordStore(db_url=db_url)
+            session_factory = _record_store.session_factory
 
             # Create composite provider that routes tokens to appropriate handler
             auth_provider = DiscriminatingAuthProvider(
@@ -1017,10 +1010,8 @@ def serve(
             # Local username/password authentication with JWT tokens (database-backed)
             import os
 
-            from sqlalchemy import create_engine
-            from sqlalchemy.orm import sessionmaker
-
             from nexus.server.auth.database_local import DatabaseLocalAuth
+            from nexus.storage.record_store import SQLAlchemyRecordStore
 
             db_url = os.getenv("NEXUS_DATABASE_URL")
             if not db_url:
@@ -1039,13 +1030,8 @@ def serve(
 
                 jwt_secret = secrets.token_urlsafe(32)
 
-            engine = create_engine(
-                db_url,
-                pool_pre_ping=True,  # Test connections before use (fixes stale connection errors)
-                pool_recycle=1800,  # Recycle connections every 30 min
-                pool_size=5,  # Auth doesn't need many connections
-            )
-            session_factory = sessionmaker(bind=engine)
+            _record_store = SQLAlchemyRecordStore(db_url=db_url)
+            session_factory = _record_store.session_factory
             # Use DatabaseLocalAuth directly (not LocalAuth) for user registration/login endpoints
             auth_provider = DatabaseLocalAuth(
                 session_factory=session_factory,
@@ -1145,10 +1131,13 @@ def serve(
             console.print("  • All permissions and relationships")
             console.print()
 
-            from sqlalchemy import create_engine, delete
+            from sqlalchemy import delete
             from sqlalchemy import table as sa_table
 
-            engine = create_engine(db_url)
+            from nexus.storage.record_store import SQLAlchemyRecordStore
+
+            _reset_store = SQLAlchemyRecordStore(db_url=db_url, create_tables=False)
+            engine = _reset_store.engine
 
             # List of tables to clear (in dependency order)
             tables_to_clear = [
@@ -1245,14 +1234,12 @@ def serve(
 
             from datetime import UTC, datetime, timedelta
 
-            from sqlalchemy import create_engine
-            from sqlalchemy.orm import sessionmaker
-
             from nexus.server.auth.database_key import DatabaseAPIKeyAuth
             from nexus.services.permissions.entity_registry import EntityRegistry
+            from nexus.storage.record_store import SQLAlchemyRecordStore
 
-            engine = create_engine(db_url)
-            Session = sessionmaker(bind=engine)
+            _init_store = SQLAlchemyRecordStore(db_url=db_url)
+            Session = _init_store.session_factory
 
             # Register user in entity registry (for agent permission inheritance)
             entity_registry = EntityRegistry(Session)

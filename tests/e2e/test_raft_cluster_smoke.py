@@ -3,12 +3,9 @@
 These tests validate the core Raft consensus behavior against a live
 docker-compose cluster (nexus-1, nexus-2, witness).
 
-Prerequisites:
-    docker compose -f dockerfiles/docker-compose.cross-platform-test.yml \
-        up -d postgres dragonfly nexus-1 nexus-2 witness
-
-Run:
-    uv run python -m pytest tests/e2e/test_raft_cluster_smoke.py -o "addopts=" -v
+Run (from inside Docker network — production-consistent):
+    docker compose -f dockerfiles/docker-compose.cross-platform-test.yml up -d
+    docker compose -f dockerfiles/docker-compose.cross-platform-test.yml logs -f test
 
 The tests are marked with @pytest.mark.docker so they can be skipped in CI
 environments without Docker.
@@ -23,11 +20,10 @@ import httpx
 import pytest
 
 # ---------------------------------------------------------------------------
-# Configuration
+# Configuration — Docker-internal addresses (same network as Raft nodes)
 # ---------------------------------------------------------------------------
-NODE1_URL = "http://localhost:2026"
-NODE2_URL = "http://localhost:2027"
-WITNESS_URL = "http://localhost:2028"  # witness doesn't serve HTTP API
+NODE1_URL = "http://nexus-1:2026"
+NODE2_URL = "http://nexus-2:2026"
 HEALTH_TIMEOUT = 60  # seconds to wait for cluster to be healthy
 
 # Deterministic admin key set via NEXUS_API_KEY in docker-compose.cross-platform-test.yml.
@@ -45,7 +41,7 @@ def _jsonrpc(url: str, method: str, params: dict, *, api_key: str, timeout: floa
         json={"jsonrpc": "2.0", "method": method, "params": params, "id": 1},
         headers={"Authorization": f"Bearer {api_key}"},
         timeout=timeout,
-        # trust_env=False avoids proxy issues with localhost
+        # trust_env=False avoids proxy issues inside Docker
         trust_env=False,
     )
     return resp.json()
@@ -84,9 +80,8 @@ def cluster():
     # Quick check: is node-1 already reachable?
     if _health(NODE1_URL) is None:
         pytest.skip(
-            "Docker cluster not running. Start with:\n"
-            "  docker compose -f dockerfiles/docker-compose.cross-platform-test.yml "
-            "up -d postgres dragonfly nexus-1 nexus-2 witness"
+            "Raft cluster not reachable. Ensure this test runs inside the Docker network:\n"
+            "  docker compose -f dockerfiles/docker-compose.cross-platform-test.yml up -d"
         )
 
     _wait_healthy([NODE1_URL, NODE2_URL])

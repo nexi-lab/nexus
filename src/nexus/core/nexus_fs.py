@@ -4939,7 +4939,7 @@ class NexusFS(  # type: ignore[misc]
         agent_paths = []
         if create_agents:
             try:
-                from nexus.core.agent_provisioning import create_standard_agents
+                from nexus.services.agents.agent_provisioning import create_standard_agents
 
                 agent_results = create_standard_agents(self, user_id, admin_context)
 
@@ -4969,7 +4969,7 @@ class NexusFS(  # type: ignore[misc]
                     # Grant SkillBuilder permissions after skills are imported
                     if create_agents:
                         try:
-                            from nexus.core.agent_provisioning import (
+                            from nexus.services.agents.agent_provisioning import (
                                 grant_skill_builder_permissions,
                             )
 

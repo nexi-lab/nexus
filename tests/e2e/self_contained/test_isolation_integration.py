@@ -5,6 +5,7 @@ Uses ``ProcessPoolExecutor`` (``force_process=True``) for portability.
 
 from __future__ import annotations
 
+import tempfile
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 
@@ -30,8 +31,8 @@ def _cfg(**overrides: object) -> IsolationConfig:
 
 
 @pytest.fixture()
-def backend() -> Iterator[IsolatedBackend]:
-    b = IsolatedBackend(_cfg())
+def backend(tmp_path) -> Iterator[IsolatedBackend]:
+    b = IsolatedBackend(_cfg(backend_kwargs={"storage_dir": str(tmp_path / "store")}))
     yield b
     b.disconnect()
 
@@ -97,26 +98,31 @@ class TestConcurrentRequests:
 class TestPoolRestartRecovery:
     def test_recovery_after_restart(self) -> None:
         """After pool restart (max failures), a valid call still succeeds."""
-        cfg = _cfg(max_consecutive_failures=2)
-        backend = IsolatedBackend(cfg)
-        try:
-            # Force failures by calling a method that raises in worker
-            for _ in range(2):
-                try:
-                    backend.list_dir("/nonexistent")
-                except FileNotFoundError:
-                    pass
-            # Pool should have restarted — next valid call should work
-            wr = backend.write_content(b"after-restart")
-            assert wr.success is True
-        finally:
-            backend.disconnect()
+        with tempfile.TemporaryDirectory() as td:
+            cfg = _cfg(
+                max_consecutive_failures=2,
+                backend_kwargs={"storage_dir": td + "/store"},
+            )
+            backend = IsolatedBackend(cfg)
+            try:
+                # Force failures by calling a method that raises in worker
+                for _ in range(2):
+                    try:
+                        backend.list_dir("/nonexistent")
+                    except FileNotFoundError:
+                        pass
+                # Pool should have restarted — next valid call should work
+                wr = backend.write_content(b"after-restart")
+                assert wr.success is True
+            finally:
+                backend.disconnect()
 
 
 class TestShutdownAndReconnect:
     def test_disconnect_then_error(self) -> None:
         """After disconnect, calls return error (not crash)."""
-        b = IsolatedBackend(_cfg())
-        b.disconnect()
-        resp = b.write_content(b"after-shutdown")
-        assert resp.success is False
+        with tempfile.TemporaryDirectory() as td:
+            b = IsolatedBackend(_cfg(backend_kwargs={"storage_dir": td + "/store"}))
+            b.disconnect()
+            resp = b.write_content(b"after-shutdown")
+            assert resp.success is False

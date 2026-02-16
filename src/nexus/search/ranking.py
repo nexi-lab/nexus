@@ -8,7 +8,7 @@ Industry references:
 - Elasticsearch: BM25F with field boosts
 - Typesense: Explicit query_by_weights
 
-Issue: #1092
+Issue: #1092, #1499
 """
 
 from __future__ import annotations
@@ -18,6 +18,8 @@ import os
 import re
 from dataclasses import dataclass, field
 from typing import Any
+
+from nexus.search.results import detect_matched_field
 
 logger = logging.getLogger(__name__)
 
@@ -108,74 +110,6 @@ def get_ranking_config_from_env() -> RankingConfig:
         enable_exactness_boost=os.environ.get("NEXUS_SEARCH_EXACTNESS_BOOST", "true").lower()
         == "true",
     )
-
-
-def detect_matched_field(
-    query: str,
-    path: str,
-    content: str | None = None,  # noqa: ARG001 - kept for API consistency
-    title: str | None = None,
-    tags: list[str] | None = None,
-    description: str | None = None,
-) -> str:
-    """Detect which field the query primarily matched in.
-
-    Checks fields in order of importance (filename first, content last)
-    and returns the first field where a match is found.
-
-    Args:
-        query: Search query
-        path: File path
-        content: File content (optional)
-        title: Document title (optional)
-        tags: Document tags (optional)
-        description: Document description (optional)
-
-    Returns:
-        Name of the matched field ("filename", "title", "path", "tags", "description", "content")
-    """
-    query_lower = query.lower().strip()
-    query_terms = query_lower.split()
-
-    # Extract filename from path
-    filename = path.split("/")[-1].lower() if path else ""
-    filename_without_ext = filename.rsplit(".", 1)[0] if "." in filename else filename
-
-    # Check filename (highest priority)
-    if query_lower in filename or query_lower in filename_without_ext:
-        return "filename"
-
-    # Check if all query terms appear in filename
-    if all(term in filename for term in query_terms):
-        return "filename"
-
-    # Check title
-    if title:
-        title_lower = title.lower()
-        if query_lower in title_lower or all(term in title_lower for term in query_terms):
-            return "title"
-
-    # Check tags
-    if tags:
-        tags_lower = [t.lower() for t in tags]
-        tags_combined = " ".join(tags_lower)
-        if query_lower in tags_combined or any(query_lower in t for t in tags_lower):
-            return "tags"
-
-    # Check path (excluding filename)
-    path_lower = path.lower() if path else ""
-    path_without_filename = "/".join(path_lower.split("/")[:-1]) if "/" in path_lower else ""
-    if query_lower in path_without_filename:
-        return "path"
-
-    # Check description
-    if description:
-        desc_lower = description.lower()
-        if query_lower in desc_lower:
-            return "description"
-
-    # Default to content
-    return "content"
 
 
 def check_exact_match(query: str, text: str) -> bool:

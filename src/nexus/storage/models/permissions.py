@@ -35,9 +35,9 @@ class ReBACTupleModel(Base):
 
     tuple_id: Mapped[str] = mapped_column(String(36), primary_key=True)
 
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
-    subject_zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
-    object_zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
+    subject_zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
+    object_zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
 
     subject_type: Mapped[str] = mapped_column(String(50), nullable=False)
     subject_id: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -212,7 +212,7 @@ class ReBACChangelogModel(Base):
     object_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     object_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default", index=True)
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root", index=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC), nullable=False, index=True
@@ -254,7 +254,7 @@ class ReBACCheckCacheModel(Base):
 
     cache_id: Mapped[str] = mapped_column(String(36), primary_key=True)
 
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
 
     subject_type: Mapped[str] = mapped_column(String(50), nullable=False)
     subject_id: Mapped[str] = mapped_column(String(255), nullable=False)

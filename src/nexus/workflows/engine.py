@@ -6,6 +6,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
+from nexus.raft.zone_manager import ROOT_ZONE_ID
 from nexus.workflows.actions import BUILTIN_ACTIONS
 from nexus.workflows.triggers import BUILTIN_TRIGGERS, TriggerManager
 from nexus.workflows.types import (
@@ -279,12 +280,12 @@ class WorkflowEngine:
             logger.warning(f"No workflow_id found for {workflow_name}, using generated UUID")
 
         # Get zone_id from event context or workflow store
-        zone_id_str = event_context.get("zone_id", "root")
+        zone_id_str = event_context.get("zone_id", ROOT_ZONE_ID)
         try:
             # Try to convert to UUID if it's a valid UUID string
             import uuid as uuid_module
 
-            zone_id = uuid_module.UUID(zone_id_str) if zone_id_str != "root" else None
+            zone_id = uuid_module.UUID(zone_id_str) if zone_id_str != ROOT_ZONE_ID else None
         except (ValueError, AttributeError):
             # If not a valid UUID, use None or default
             zone_id = None

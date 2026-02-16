@@ -24,6 +24,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from nexus.core.event_bus import AckableEvent, FileEvent, FileEventType
+from nexus.raft.zone_manager import ROOT_ZONE_ID
 
 # ============================================================================
 # Fixtures
@@ -204,7 +205,7 @@ class TestNatsEventBusPublish:
         assert headers["zone_id"] == "zone1"
 
     @pytest.mark.asyncio
-    async def test_publish_default_zone(self, mock_nats_connect, make_bus):
+    async def test_publish_root_zone(self, mock_nats_connect, make_bus):
         _, _, js = mock_nats_connect
 
         @dataclass
@@ -219,7 +220,7 @@ class TestNatsEventBusPublish:
         await bus.publish(event)
 
         call_args = js.publish.call_args
-        assert call_args[0][0] == "nexus.events.root.file_write"
+        assert call_args[0][0] == f"nexus.events.{ROOT_ZONE_ID}.file_write"
 
     @pytest.mark.asyncio
     async def test_publish_requires_start(self, make_bus, sample_event):

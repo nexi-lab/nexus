@@ -572,7 +572,7 @@ class PermissionEnforcer:
 
         # Check ReBAC permission using backend-provided object type
         # P0-4: Pass zone_id for multi-zone isolation
-        zone_id = context.zone_id or "default"
+        zone_id = context.zone_id or "root"
         subject = context.get_subject()
 
         logger.debug(
@@ -1019,7 +1019,7 @@ class PermissionEnforcer:
         # Use strategy chain if rebac_manager supports bulk checks
         if self.rebac_manager and hasattr(self.rebac_manager, "rebac_check_bulk"):
             overall_start = time.time()
-            zone_id = context.zone_id or "default"
+            zone_id = context.zone_id or "root"
             subject = context.get_subject()
 
             logger.debug(

@@ -12,7 +12,7 @@ Uses a hybrid heuristic+LLM approach mirroring stability_classifier.py:
 Usage:
     detector = MemoryEvolutionDetector()
     result = detector.detect(
-        session=session, zone_id="default",
+        session=session, zone_id="root",
         new_text="Alice now works at Google",
         new_entities=[{"text": "Alice", "label": "PERSON"}],
         person_refs="Alice", entity_types="PERSON",

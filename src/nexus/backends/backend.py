@@ -410,7 +410,7 @@ class Backend(ABC):
         return result
 
     def stream_content(
-        self, content_hash: str, chunk_size: int = 8192, context: "OperationContext | None" = None
+        self, content_hash: str, chunk_size: int = 65536, context: "OperationContext | None" = None
     ) -> Any:
         """
         Stream content by its hash in chunks (generator).
@@ -447,7 +447,7 @@ class Backend(ABC):
         content_hash: str,
         start: int,
         end: int,
-        chunk_size: int = 8192,
+        chunk_size: int = 65536,
         context: "OperationContext | None" = None,
     ) -> "Iterator[bytes]":
         """Stream a byte range [start, end] inclusive from stored content.
@@ -792,6 +792,6 @@ class AsyncBackend(Protocol):
     def stream_content(
         self,
         content_hash: str,
-        chunk_size: int = 8192,
+        chunk_size: int = 65536,
         context: "OperationContext | None" = None,
     ) -> AsyncIterator[bytes]: ...

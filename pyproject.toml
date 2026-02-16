@@ -385,6 +385,11 @@ module = [
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
+module = "nexus.storage._metadata_mapper_generated"
+# Proto-generated metadata_pb2 resolves to Any on Python 3.13 mypy
+disable_error_code = ["attr-defined"]
+
+[[tool.mypy.overrides]]
 module = "nexus.backends.gcs"
 # Legacy backend - not yet migrated to HandlerResponse
 disable_error_code = ["attr-defined", "override", "return-value"]

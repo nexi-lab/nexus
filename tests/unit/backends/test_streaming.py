@@ -1,5 +1,7 @@
-"""Unit tests for streaming support in backends (Issue #516, #480)."""
+"""Unit tests for streaming support in backends (Issue #516, #480, #1625)."""
 
+import os
+import random
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -7,6 +9,7 @@ import pytest
 
 from nexus.backends.backend import Backend
 from nexus.backends.base_blob_connector import BaseBlobStorageConnector
+from nexus.backends.cas_blob_store import WriteResult
 from nexus.backends.local import LocalBackend
 from nexus.core.hash_fast import create_hasher, hash_content
 from nexus.factory import create_nexus_fs
@@ -193,6 +196,17 @@ class TestLocalBackendStreaming:
         content = local_backend.read_content(content_hash).unwrap()
         assert content == b""
 
+    def test_write_stream_returns_size_in_affected_rows(self, local_backend: LocalBackend) -> None:
+        """Test that write_stream returns file size via affected_rows (Issue #1625)."""
+        content = b"Size tracking test" * 100
+
+        def chunks():
+            yield content
+
+        response = local_backend.write_stream(chunks())
+        assert response.success
+        assert response.affected_rows == len(content)
+
 
 class TestCreateHasher:
     """Test create_hasher utility function."""
@@ -231,6 +245,140 @@ class TestCreateHasher:
         full_hash = hasher2.hexdigest()
 
         assert incremental_hash == full_hash
+
+    def test_incremental_hash_matches_oneshot(self) -> None:
+        """Incremental create_hasher() produces same hash as hash_content() (Issue #1625)."""
+        rng = random.Random(42)  # noqa: S311 — deterministic, not crypto
+        for content in [b"", b"x", b"A" * 100_000, os.urandom(1_000_000)]:
+            hasher = create_hasher()
+            offset = 0
+            while offset < len(content):
+                chunk_size = min(rng.randint(1, 8192), len(content) - offset)
+                hasher.update(content[offset : offset + chunk_size])
+                offset += chunk_size
+            assert hasher.hexdigest() == hash_content(content)
+
+
+class TestCASBlobStoreStreaming:
+    """Test CASBlobStore.store_streaming() (Issue #1625)."""
+
+    @pytest.fixture
+    def cas(self, tmp_path: Path):
+        from nexus.backends.cas_blob_store import CASBlobStore
+
+        cas_root = tmp_path / "cas"
+        cas_root.mkdir()
+        return CASBlobStore(cas_root)
+
+    def test_store_streaming_basic(self, cas) -> None:
+        """store_streaming returns correct WriteResult."""
+        content = b"Hello streaming world!"
+
+        def chunks():
+            yield content[:5]
+            yield content[5:]
+
+        result = cas.store_streaming(chunks())
+
+        assert isinstance(result, WriteResult)
+        assert result.content_hash == hash_content(content)
+        assert result.size == len(content)
+        assert result.is_new is True
+
+        # Verify blob on disk matches
+        assert cas.read_blob(result.content_hash) == content
+
+    def test_store_streaming_dedup(self, cas) -> None:
+        """store_streaming bumps ref_count for existing blobs."""
+        content = b"deduplicated"
+
+        # First write
+        r1 = cas.store_streaming(iter([content]))
+        assert r1.is_new is True
+
+        # Second write — same content
+        r2 = cas.store_streaming(iter([content]))
+        assert r2.is_new is False
+        assert r2.content_hash == r1.content_hash
+
+        # ref_count should be 2
+        meta = cas.read_meta(r1.content_hash)
+        assert meta.ref_count == 2
+
+    def test_store_streaming_empty(self, cas) -> None:
+        """store_streaming handles empty iterator."""
+        result = cas.store_streaming(iter([]))
+        assert result.size == 0
+        assert result.content_hash == hash_content(b"")
+
+    def test_store_streaming_cleanup_on_failure(self, cas) -> None:
+        """Partial write cleans up staging files on exception (Issue #1625)."""
+        staging_dir = cas.cas_root / ".staging"
+
+        def failing_chunks():
+            yield b"chunk1"
+            yield b"chunk2"
+            raise OSError("simulated disk failure")
+
+        with pytest.raises(OSError, match="simulated disk failure"):
+            cas.store_streaming(failing_chunks())
+
+        # No orphaned files in staging directory
+        if staging_dir.exists():
+            orphans = list(staging_dir.iterdir())
+            assert orphans == [], f"Orphaned staging files: {orphans}"
+
+
+class TestStreamingMemoryEfficiency:
+    """Verify write_stream does NOT buffer entire content in memory (Issue #1625)."""
+
+    def test_write_stream_bounded_memory(self, tmp_path: Path) -> None:
+        """Write 10 MB via write_stream; peak memory should stay well under 10 MB.
+
+        Uses 10 MB (below 16 MB CDC threshold) to test the pure streaming
+        path without triggering CDC re-chunking, which intentionally reads
+        the blob back.
+        """
+        import tracemalloc
+
+        backend = LocalBackend(root_path=tmp_path)
+
+        total_bytes = 10 * 1024 * 1024  # 10 MB (below 16 MB CDC threshold)
+        chunk_size = 65536  # 64 KB chunks
+
+        # Pre-create a shared chunk to avoid counting its allocation
+        chunk_data = b"\x00" * chunk_size
+
+        def big_chunks():
+            remaining = total_bytes
+            while remaining > 0:
+                size = min(chunk_size, remaining)
+                if size == chunk_size:
+                    yield chunk_data
+                else:
+                    yield chunk_data[:size]
+                remaining -= size
+
+        # Start tracing AFTER backend init (Bloom filter, etc.)
+        tracemalloc.start()
+        baseline = tracemalloc.get_traced_memory()[0]
+
+        response = backend.write_stream(big_chunks())
+        assert response.success
+
+        _, peak = tracemalloc.get_traced_memory()
+        tracemalloc.stop()
+
+        # Net allocation during write_stream should be far less than the file size.
+        # Allow 2 MB for overhead (hasher state, temp file handle, etc.)
+        net_peak = peak - baseline
+        assert net_peak < 2 * 1024 * 1024, (
+            f"Net peak memory {net_peak / 1024 / 1024:.1f} MB exceeds 2 MB bound — "
+            f"write_stream is likely buffering entire content"
+        )
+
+        # Verify the content hash and size
+        assert response.affected_rows == total_bytes
 
 
 class TestBaseBlobConnectorStreamContent:
@@ -346,7 +494,7 @@ class TestBaseBlobConnectorStreamContent:
             def _download_blob(self, blob_path, version_id=None):
                 return b"should not be called", None
 
-            def _stream_blob(self, blob_path, chunk_size=8192, version_id=None):
+            def _stream_blob(self, blob_path, chunk_size=65536, version_id=None):
                 """Custom streaming implementation."""
                 self.stream_blob_called = True
                 yield b"chunk1"

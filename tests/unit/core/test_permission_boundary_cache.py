@@ -4,7 +4,7 @@ Tests the permission boundary cache that provides O(1) inheritance checks
 by caching the nearest ancestor with an explicit permission grant.
 """
 
-from nexus.services.permissions.permission_boundary_cache import PermissionBoundaryCache
+from nexus.rebac.permission_boundary_cache import PermissionBoundaryCache
 
 
 class TestPermissionBoundaryCache:

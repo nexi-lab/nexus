@@ -55,7 +55,7 @@ def namespace_manager(enhanced_rebac_manager):
         rebac_manager=enhanced_rebac_manager,
         cache_maxsize=100,
         cache_ttl=60,
-        revision_window=2,  # Small window so revision changes are easy to trigger
+        revision_window=5,  # Window of 5: single write stays in same bucket
         dcache_maxsize=1000,
         dcache_positive_ttl=300,
         dcache_negative_ttl=60,

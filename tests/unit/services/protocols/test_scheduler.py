@@ -30,13 +30,35 @@ class TestAgentRequest:
 
     def test_fields(self) -> None:
         fields = {f.name for f in dataclasses.fields(AgentRequest)}
-        assert fields == {"agent_id", "zone_id", "priority", "submitted_at", "payload"}
+        assert fields == {
+            "agent_id",
+            "zone_id",
+            "priority",
+            "submitted_at",
+            "payload",
+            # Astraea extensions (Issue #1274)
+            "executor_id",
+            "task_type",
+            "request_state",
+            "priority_class",
+            "deadline",
+            "boost_amount",
+            "estimated_service_time",
+        }
 
     def test_defaults(self) -> None:
         req = AgentRequest(agent_id="a1", zone_id=None)
         assert req.priority == 0
         assert req.submitted_at == ""
         assert req.payload == {}
+        # Astraea defaults
+        assert req.executor_id is None
+        assert req.task_type == ""
+        assert req.request_state == "pending"
+        assert req.priority_class == "batch"
+        assert req.deadline is None
+        assert req.boost_amount == "0"
+        assert req.estimated_service_time == 30.0
 
     def test_payload_default_factory(self) -> None:
         """Each instance gets its own dict, not a shared one."""
@@ -62,7 +84,16 @@ class TestAgentRequest:
 
 class TestSchedulerProtocol:
     def test_expected_methods(self) -> None:
-        expected = {"submit", "next", "pending_count", "cancel"}
+        expected = {
+            "submit",
+            "next",
+            "pending_count",
+            "cancel",
+            "get_status",
+            "complete",
+            "classify",
+            "metrics",
+        }
         actual = {
             name
             for name in dir(SchedulerProtocol)
@@ -94,7 +125,9 @@ class TestInMemorySchedulerFunctional:
     async def test_submit_and_next(self) -> None:
         scheduler = InMemoryScheduler()
         req = AgentRequest(agent_id="a1", zone_id="z1", submitted_at="t1")
-        await scheduler.submit(req)
+        task_id = await scheduler.submit(req)
+        assert isinstance(task_id, str)
+        assert len(task_id) > 0
         result = await scheduler.next()
         assert result == req
 
@@ -145,3 +178,53 @@ class TestInMemorySchedulerFunctional:
         scheduler = InMemoryScheduler()
         cancelled = await scheduler.cancel("no-such-agent")
         assert cancelled == 0
+
+    async def test_get_status(self) -> None:
+        scheduler = InMemoryScheduler()
+        req = AgentRequest(agent_id="a1", zone_id="z1")
+        task_id = await scheduler.submit(req)
+
+        status = await scheduler.get_status(task_id)
+        assert status is not None
+        assert status["task_id"] == task_id
+        assert status["status"] == "queued"
+
+    async def test_get_status_nonexistent(self) -> None:
+        scheduler = InMemoryScheduler()
+        assert await scheduler.get_status("no-such-id") is None
+
+    async def test_complete(self) -> None:
+        scheduler = InMemoryScheduler()
+        req = AgentRequest(agent_id="a1", zone_id="z1")
+        task_id = await scheduler.submit(req)
+
+        await scheduler.complete(task_id)
+        status = await scheduler.get_status(task_id)
+        assert status is not None
+        assert status["status"] == "completed"
+
+    async def test_complete_with_error(self) -> None:
+        scheduler = InMemoryScheduler()
+        req = AgentRequest(agent_id="a1", zone_id="z1")
+        task_id = await scheduler.submit(req)
+
+        await scheduler.complete(task_id, error="something broke")
+        status = await scheduler.get_status(task_id)
+        assert status is not None
+        assert status["status"] == "failed"
+        assert status["error"] == "something broke"
+
+    async def test_classify(self) -> None:
+        scheduler = InMemoryScheduler()
+        req = AgentRequest(agent_id="a1", zone_id=None, priority=1)
+        result = await scheduler.classify(req)
+        assert isinstance(result, str)
+        assert result in ("interactive", "batch", "background")
+
+    async def test_metrics(self) -> None:
+        scheduler = InMemoryScheduler()
+        await scheduler.submit(AgentRequest(agent_id="a1", zone_id="z1"))
+
+        m = await scheduler.metrics()
+        assert isinstance(m, dict)
+        assert "pending_count" in m

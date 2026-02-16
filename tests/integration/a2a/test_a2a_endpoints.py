@@ -264,6 +264,69 @@ class TestErrorHandling:
 
 
 # ======================================================================
+# Narrowed Exception Handler Regression Tests
+# ======================================================================
+
+
+class TestNarrowedExceptionHandlers:
+    """Regression tests for narrowed ``except Exception`` handlers (#1591).
+
+    Ensures that JSON parse errors, dispatch errors, and boundary handlers
+    all behave correctly after narrowing broad exception catches.
+    """
+
+    def test_invalid_json_returns_parse_error(self, client: TestClient) -> None:
+        """ValueError from request.json() produces JSON-RPC -32700."""
+        resp = client.post(
+            "/a2a",
+            content=b"{invalid json",
+            headers={"content-type": "application/json"},
+        )
+        data = resp.json()
+        assert data["error"]["code"] == -32700
+
+    def test_unicode_decode_error_returns_parse_error(self, client: TestClient) -> None:
+        """UnicodeDecodeError from malformed bytes produces JSON-RPC -32700."""
+        resp = client.post(
+            "/a2a",
+            content=b"\x80\x81\x82",
+            headers={"content-type": "application/json"},
+        )
+        data = resp.json()
+        assert data["error"]["code"] == -32700
+
+    def test_a2a_error_caught_by_specific_handler(self, client: TestClient) -> None:
+        """A2AError subclasses return their own error code (not -32603)."""
+        body = _make_rpc("a2a.tasks.get", {"taskId": "nonexistent"})
+        resp = client.post("/a2a", json=body)
+        data = resp.json()
+        # TaskNotFoundError is an A2AError with code -32001
+        assert data["error"]["code"] == -32001
+
+    def test_unexpected_dispatch_error_returns_internal_error(self) -> None:
+        """Unexpected exceptions in dispatch produce JSON-RPC -32603."""
+        from unittest.mock import AsyncMock, patch
+
+        app = FastAPI()
+        router = build_router(base_url="http://testserver")
+        app.include_router(router)
+        client = TestClient(app)
+
+        body = _make_rpc(
+            "a2a.tasks.send",
+            {"message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]}},
+        )
+        # Mock dispatch to raise an unexpected exception
+        with patch("nexus.a2a.router.dispatch", new_callable=AsyncMock) as mock_dispatch:
+            mock_dispatch.side_effect = RuntimeError("unexpected crash")
+            resp = client.post("/a2a", json=body)
+
+        data = resp.json()
+        assert data["error"]["code"] == -32603
+        assert data["error"]["message"] == "Internal error"
+
+
+# ======================================================================
 # Extended Agent Card
 # ======================================================================
 

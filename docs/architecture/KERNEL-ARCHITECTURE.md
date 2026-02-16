@@ -38,13 +38,42 @@ implementations via DI at startup.
 |------|-----------|-------|----------------|
 | Static kernel | Never | MetastoreABC, VFS `route()`, FileMetadataProtocol, syscall dispatch | vmlinuz core (scheduler, mm, VFS) |
 | Drivers | Config-time (DI at startup) | redb, S3, PostgreSQL, Dragonfly, SearchBrick | compiled-in drivers (`=y`) |
-| Services | Runtime (load/unload) | 22 protocols (ReBAC, Mount, Auth, Agents, Search, Skills, ...) | user-space daemons (systemd units) |
+| Services | Runtime (load/unload) | 22 protocols (ReBAC, Mount, Auth, Agents, Search, Skills, ...) | loadable kernel modules (`insmod`/`rmmod`) |
 
-**Services** depend on kernel interfaces, never the reverse. The kernel operates
-without any services loaded.
+**Invariant:** Services depend on kernel interfaces, never the reverse.
+The kernel operates with zero services loaded.
 
-**Distros:** Once kernel is minimal, different distributions (nexus-server, nexus-embedded,
-nexus-cloud) compose kernel + selected drivers + selected services. Planned, not yet designed.
+**Drivers** use constructor DI at startup — same binary, different config
+(`NEXUS_METASTORE=redb`, `NEXUS_RECORD_STORE=postgresql`). Immutable after init.
+
+**Services** have two maturity phases, both preserving the invariant above:
+
+**Phase 1 — Init-time DI (distro composition).** `factory.py` acts as the init
+system (like systemd): creates selected services and injects them via
+`KernelServices` dataclass. Different distros select different service sets at
+startup — `nexus-server` loads all 22+, `nexus-embedded` loads zero.
+
+> *Gap:* `factory.py` hardcodes all service creation; `_wire_services()` loads
+> everything unconditionally. No selective loading per distro yet.
+
+**Phase 2 — Runtime hot-swap (Linux LKM model).** A `ServiceRegistry` manages
+in-process service modules following the Loadable Kernel Module pattern:
+
+- **Lifecycle protocol**: `service_init()` → `service_start()` → `service_stop()` →
+  `service_cleanup()`, plus `service_name` and `service_dependencies` declarations
+- **Capability registration**: services register the Protocols they implement
+  (like LKMs call `register_filesystem()` or `register_chrdev()`)
+- **Dependency graph**: `load_service()` rejects when dependencies missing;
+  `unload_service()` rejects when dependents still loaded
+- **Reference counting**: prevents unloading while callers hold references
+
+Why LKM, not systemd? Nexus services are **in-process** components (shared memory,
+zero IPC overhead), not separate daemon processes. LKMs have the same property —
+in-kernel modules that register capabilities with subsystems.
+
+> *Gap:* No `ServiceRegistry`, no lifecycle protocol, no `load_service()`/`unload_service()`.
+> Path: extract remaining mixins → standalone service classes (in progress) →
+> introduce `ServiceRegistry` with LKM lifecycle.
 
 ---
 
@@ -114,21 +143,17 @@ between VFS and Metastore. Without it, the kernel cannot describe files.
 
 `NexusFS` is the kernel entry point, analogous to Linux's syscall layer (`sys_open`,
 `sys_read`). It wires VFSRouter + FileMetadataProtocol + ObjectStoreABC into
-user-facing operations (read, write, list, mkdir, mount).
+user-facing operations (read, write, list, mkdir, mount). NexusFS contains
+**no service business logic** — services are accessed through `ServiceRegistry`
+(Phase 2) or thin delegation stubs (Phase 1).
 
-**Current state:** NexusFS is a mixin-based god object that also contains service
-code (ReBAC, OAuth, Skills, MCP, Events, Tasks). Mixins are compile-time composition —
-cannot add/remove at runtime, cannot compose into different distros.
+`factory.py` is the init system (analogous to systemd): constructs kernel + drivers
++ services and wires them together. NexusFS receives pre-built dependencies via its
+constructor and never auto-creates services.
 
-**Target state:** Composition + ServiceRegistry pattern. Kernel provides
-`load_service()` / `unload_service()` for the Services tier (runtime swap).
-Drivers remain config-time DI (static kernel + drivers never change at runtime,
-following Linux's monolithic model). This enables:
-- Distro composition: `nexus-server` loads all services, `nexus-embedded` loads none
-- Clean kernel boundary: NexusFS shrinks to pure syscall dispatch
-
-Migration is incremental: current "move X out of core" tasks extract mixins into
-standalone service classes (Step 1), then a ServiceRegistry replaces inheritance (Step 2).
+> *Gap:* NexusFS still contains 2 event-related mixins and ~40 lazy service imports
+> in `_wire_services()`. Migration: extract remaining mixins → standalone service
+> classes, then replace `KernelServices` dataclass with `ServiceRegistry`.
 
 ### Service Protocols (`nexus.services.protocols`)
 

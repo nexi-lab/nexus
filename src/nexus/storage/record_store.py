@@ -208,12 +208,6 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         """Session factory (sessionmaker)."""
         return self._session_factory
 
-    # Alias for backward compatibility with existing code that uses SessionLocal
-    @property
-    def SessionLocal(self) -> Any:
-        """Session factory (alias for session_factory, backward compat)."""
-        return self._session_factory
-
     @property
     def async_session_factory(self) -> Any:
         """Lazily create async session factory from the same database URL.

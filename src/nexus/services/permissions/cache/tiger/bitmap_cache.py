@@ -114,6 +114,11 @@ class TigerCache:
         # Persistent thread pool for L2 operations (avoid per-operation creation)
         self._l2_executor: Any | None = None
 
+    @property
+    def resource_map(self) -> TigerResourceMap:
+        """Public accessor for the resource map."""
+        return self._resource_map
+
     def set_dragonfly_cache(self, dragonfly_cache: DragonflyTigerCache | None) -> None:
         """Set or update the Dragonfly cache backend.
 

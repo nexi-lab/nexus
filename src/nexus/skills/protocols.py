@@ -74,7 +74,6 @@ class NexusFilesystem(Protocol):
         path: str = "/",
         recursive: bool = True,
         details: bool = False,
-        prefix: str | None = None,
         show_parsed: bool = True,
         context: Any = None,
     ) -> list[str] | list[dict[str, Any]]:
@@ -84,7 +83,6 @@ class NexusFilesystem(Protocol):
             path: Directory path to list
             recursive: If True, list all files recursively
             details: If True, return detailed metadata
-            prefix: Path prefix filter (deprecated)
             show_parsed: If True, include virtual parsed views
             context: Optional operation context
 

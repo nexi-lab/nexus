@@ -11,7 +11,6 @@ Tracked by: #1397, #1241
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from nexus.services.event_log.protocol import EventLogConfig, EventLogProtocol
 
@@ -20,13 +19,11 @@ logger = logging.getLogger(__name__)
 
 def create_event_log(
     config: EventLogConfig,
-    session_factory: Any | None = None,  # noqa: ARG001 — kept for API compat
 ) -> EventLogProtocol | None:
     """Create the best available EventLogProtocol implementation.
 
     Args:
         config: WAL / event log configuration.
-        session_factory: Unused (kept for backward compatibility).
 
     Returns:
         An EventLogProtocol instance, or None if no backend is available.

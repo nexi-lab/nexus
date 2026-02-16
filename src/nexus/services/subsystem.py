@@ -16,10 +16,6 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from nexus.core.types import OperationContext as OperationContext  # noqa: F401
 
-# Issue #1291: ContextIdentity and extract_context_identity moved to nexus.core.types.
-# Re-exported here for backward compatibility.
-from nexus.core.types import ContextIdentity, extract_context_identity  # noqa: F401
-
 
 class Subsystem(ABC):
     """Base class for extracted NexusFS subsystems.

@@ -24,8 +24,6 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
-from nexus.core.reactive_subscriptions import path_matches_pattern
-
 if TYPE_CHECKING:
     from nexus.core.event_bus import EventBusProtocol, FileEvent
     from nexus.core.reactive_subscriptions import ReactiveSubscriptionManager
@@ -48,7 +46,6 @@ class ConnectionInfo:
     user_id: str | None
     connected_at: float = field(default_factory=time.time)
     last_pong: float = field(default_factory=time.time)
-    patterns: list[str] = field(default_factory=list)  # Glob patterns to filter
     event_types: list[str] = field(default_factory=list)  # Event types to filter
     messages_sent: int = 0
     messages_received: int = 0
@@ -174,7 +171,6 @@ class WebSocketManager:
         connection_id: str,
         user_id: str | None = None,
         subscription_id: str | None = None,
-        patterns: list[str] | None = None,
         event_types: list[str] | None = None,
     ) -> ConnectionInfo:
         """Register a new WebSocket connection.
@@ -185,7 +181,6 @@ class WebSocketManager:
             connection_id: Unique connection identifier
             user_id: Optional user ID for logging
             subscription_id: Optional subscription ID for filtering
-            patterns: Glob patterns for path filtering
             event_types: Event types to receive
 
         Returns:
@@ -198,7 +193,6 @@ class WebSocketManager:
             zone_id=zone_id,
             subscription_id=subscription_id,
             user_id=user_id,
-            patterns=patterns or [],
             event_types=event_types or [],
         )
 
@@ -317,25 +311,18 @@ class WebSocketManager:
             await self._send_to_connection(conn_info, {"type": "pong"})
         elif msg_type == "subscribe":
             # Update subscription filters
-            if "patterns" in data:
-                conn_info.patterns = data["patterns"]
             if "event_types" in data:
                 conn_info.event_types = data["event_types"]
-            await self._send_to_connection(
-                conn_info, {"type": "subscribed", "patterns": conn_info.patterns}
-            )
+            await self._send_to_connection(conn_info, {"type": "subscribed"})
         else:
             logger.debug(f"Unknown message type from {connection_id}: {msg_type}")
 
     async def broadcast_to_zone(self, zone_id: str, event: FileEvent) -> int:
         """Broadcast an event to all connections for a zone.
 
-        When a ReactiveSubscriptionManager is configured, uses batch_update
-        messages (#1170) — grouping all affected subscriptions per connection
-        into a single atomic message for consistent client state.
-
-        Falls back to individual event messages when no reactive manager
-        is available (legacy mode).
+        Uses ReactiveSubscriptionManager to send batch_update messages (#1170)
+        grouping all affected subscriptions per connection into a single
+        atomic message for consistent client state.
 
         Args:
             zone_id: The zone ID
@@ -348,12 +335,10 @@ class WebSocketManager:
         if not connections:
             return 0
 
-        # Batch path: group subscriptions per connection for atomic updates
-        if self._reactive_manager:
-            return await self._broadcast_batch(connections, event)
+        if not self._reactive_manager:
+            return 0
 
-        # Legacy path: individual event messages with pattern filtering
-        return await self._broadcast_legacy(connections, event)
+        return await self._broadcast_batch(connections, event)
 
     async def _broadcast_batch(
         self,
@@ -378,8 +363,8 @@ class WebSocketManager:
         try:
             affected_subs = self._reactive_manager.find_affected_subscriptions(event)
         except Exception as e:
-            logger.error(f"Reactive subscription lookup failed, falling back to legacy: {e}")
-            return await self._broadcast_legacy(connections, event)
+            logger.error(f"Reactive subscription lookup failed: {e}")
+            return 0
 
         # Build per-connection batch messages
         event_data = event.to_dict()
@@ -404,34 +389,6 @@ class WebSocketManager:
                 ],
             }
             targets.append((conn_id, conn_info, message))
-
-        return await self._send_and_cleanup(targets)
-
-    async def _broadcast_legacy(
-        self,
-        connections: dict[str, ConnectionInfo],
-        event: FileEvent,
-    ) -> int:
-        """Send individual event messages using pattern filtering (legacy path).
-
-        Used when no ReactiveSubscriptionManager is configured.
-
-        Args:
-            connections: Zone connections dict (connection_id -> ConnectionInfo)
-            event: The file event to broadcast
-
-        Returns:
-            Number of connections that received the event
-        """
-        message: dict[str, Any] = {
-            "type": "event",
-            "data": event.to_dict(),
-        }
-
-        targets: list[tuple[str, ConnectionInfo, dict[str, Any]]] = []
-        for conn_id, conn_info in connections.items():
-            if self._matches_filters(event, conn_info):
-                targets.append((conn_id, conn_info, message))
 
         return await self._send_and_cleanup(targets)
 
@@ -462,49 +419,6 @@ class WebSocketManager:
             await self.disconnect(conn_id)
 
         return sent_count
-
-    def _matches_filters(self, event: FileEvent, conn_info: ConnectionInfo) -> bool:
-        """Check if an event matches the connection's filters.
-
-        Args:
-            event: The file event
-            conn_info: The connection info with filters
-
-        Returns:
-            True if the event matches the filters
-        """
-        # Check event type filter
-        if conn_info.event_types:
-            event_type = event.type.value if hasattr(event.type, "value") else str(event.type)
-            if event_type not in conn_info.event_types:
-                return False
-
-        # Check path pattern filter
-        if conn_info.patterns:
-            matched = False
-            for pattern in conn_info.patterns:
-                if self._path_matches_pattern(event.path, pattern):
-                    matched = True
-                    break
-            if not matched:
-                return False
-
-        return True
-
-    def _path_matches_pattern(self, path: str, pattern: str) -> bool:
-        """Check if a path matches a glob pattern.
-
-        Delegates to the module-level path_matches_pattern function
-        extracted to nexus.core.reactive_subscriptions.
-
-        Args:
-            path: The file path to check
-            pattern: The glob pattern
-
-        Returns:
-            True if the path matches the pattern
-        """
-        return path_matches_pattern(path, pattern)
 
     async def _send_to_connection(self, conn_info: ConnectionInfo, message: dict[str, Any]) -> None:
         """Send a message to a specific connection.

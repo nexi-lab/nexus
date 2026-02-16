@@ -25,11 +25,11 @@ from nexus.core.rpc_decorator import rpc_expose
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.backends.backend import Backend
     from nexus.core.distributed_lock import LockManagerBase
     from nexus.core.event_bus import EventBusBase
     from nexus.core.file_watcher import FileWatcher
     from nexus.core.permissions import OperationContext
+    from nexus.core.protocols.connector import ConnectorProtocol
 
 
 class EventsService:
@@ -47,7 +47,7 @@ class EventsService:
 
     def __init__(
         self,
-        backend: Backend,
+        backend: ConnectorProtocol,
         event_bus: EventBusBase | None = None,
         lock_manager: LockManagerBase | None = None,
         file_watcher: FileWatcher | None = None,

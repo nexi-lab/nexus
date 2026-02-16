@@ -40,7 +40,7 @@ class ManifestEntry:
     def to_dict(self) -> dict[str, Any]:
         """Serialize to JSON-compatible dict."""
         result: dict[str, Any] = {"hash": self.content_hash, "size": self.size}
-        # Always include mime_type for backward compatibility with existing format
+        # Always include mime_type in serialized format
         result["mime_type"] = self.mime_type
         return result
 
@@ -103,9 +103,6 @@ class WorkspaceManifest:
     def to_json(self) -> bytes:
         """Serialize to JSON bytes, sorted by path for deterministic hashing.
 
-        Produces the same JSON format used by existing workspace snapshots,
-        ensuring backward compatibility.
-
         Returns:
             JSON bytes ready for CAS storage
         """
@@ -116,8 +113,6 @@ class WorkspaceManifest:
     @classmethod
     def from_json(cls, data: bytes) -> WorkspaceManifest:
         """Deserialize from JSON bytes.
-
-        Handles the existing snapshot JSON format for backward compatibility.
 
         Args:
             data: JSON bytes from CAS

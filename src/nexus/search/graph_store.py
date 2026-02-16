@@ -1252,16 +1252,20 @@ class GraphStore:
             )
             next_entity = "CASE WHEN r.source_entity_id = gt.entity_id THEN r.target_entity_id ELSE r.source_entity_id END"
 
-        # Build relationship type filter
+        # Build relationship type filter (parameterized)
         rel_type_filter = ""
+        rel_type_params: dict[str, str] = {}
         if rel_types:
-            rel_types_str = ", ".join(f"'{rt}'" for rt in rel_types)
-            rel_type_filter = f"AND r.relationship_type IN ({rel_types_str})"
+            placeholders = ", ".join(f":rt_{i}" for i in range(len(rel_types)))
+            rel_type_filter = f"AND r.relationship_type IN ({placeholders})"
+            rel_type_params = {f"rt_{i}": rt for i, rt in enumerate(rel_types)}
 
-        # Build confidence filter
+        # Build confidence filter (parameterized)
         confidence_filter = ""
+        confidence_params: dict[str, float] = {}
         if min_confidence is not None:
-            confidence_filter = f"AND r.confidence >= {min_confidence}"
+            confidence_filter = "AND r.confidence >= :min_confidence"
+            confidence_params = {"min_confidence": min_confidence}
 
         query = text(f"""
             WITH RECURSIVE graph_traversal(
@@ -1318,6 +1322,8 @@ class GraphStore:
                 "entity_id": entity_id,
                 "zone_id": self.zone_id,
                 "max_hops": hops,
+                **rel_type_params,
+                **confidence_params,
             },
         )
 

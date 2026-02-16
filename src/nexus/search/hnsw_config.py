@@ -18,8 +18,6 @@ from typing import TYPE_CHECKING, ClassVar
 
 # Safe SQL identifier pattern (letters, digits, underscores only)
 _SAFE_IDENTIFIER = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
-# Safe memory size pattern (e.g., "512MB", "4GB", "1024kB")
-_SAFE_MEM_SIZE = re.compile(r"^\d+\s*[kKMGT]?[bB]$")
 
 
 def _validate_identifier(name: str, label: str) -> str:
@@ -187,32 +185,6 @@ class HNSWConfig:
             f"ON {table}\n"
             f"USING hnsw ({column} {operator_class})\n"
             f"WITH (m = {m}, ef_construction = {ef})"
-        )
-
-    def get_search_settings_sql(self) -> str:
-        """Generate SQL to set search parameters.
-
-        Returns:
-            SQL SET statements for ef_search.
-        """
-        return f"SET LOCAL hnsw.ef_search = {int(self.ef_search)}"
-
-    def get_build_settings_sql(self) -> str:
-        """Generate SQL to set index build parameters.
-
-        Returns:
-            SQL SET statements for maintenance_work_mem and parallel workers.
-
-        Raises:
-            ValueError: If maintenance_work_mem is not a valid memory size.
-        """
-        mem = self.maintenance_work_mem
-        if not _SAFE_MEM_SIZE.match(mem):
-            msg = f"Invalid memory size for maintenance_work_mem: {mem!r}"
-            raise ValueError(msg)
-        workers = int(self.max_parallel_workers)
-        return (
-            f"SET maintenance_work_mem = '{mem}';\nSET max_parallel_maintenance_workers = {workers}"
         )
 
     def apply_search_settings(self, session: Session) -> None:

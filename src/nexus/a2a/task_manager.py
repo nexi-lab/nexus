@@ -1,17 +1,14 @@
 """A2A task lifecycle manager.
 
-Handles task CRUD, state machine transitions, and active SSE stream
-tracking.  All persistent state goes through a pluggable
-``TaskStoreProtocol``; active streams are held in an in-memory dict of
-``asyncio.Queue`` objects.
+Handles task CRUD and state machine transitions.  All persistent state
+goes through a pluggable ``TaskStoreProtocol``; active SSE streams are
+managed by a ``StreamRegistry`` (injected via DI).
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
-from contextlib import suppress as _suppress
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -33,13 +30,16 @@ from nexus.a2a.models import (
 )
 
 if TYPE_CHECKING:
+    import asyncio
+
+    from nexus.a2a.stream_registry import StreamRegistry
     from nexus.a2a.task_store import TaskStoreProtocol
 
 logger = logging.getLogger(__name__)
 
 
 class TaskManager:
-    """Manages A2A task lifecycle, persistence, and streaming.
+    """Manages A2A task lifecycle and persistence.
 
     Parameters
     ----------
@@ -47,6 +47,9 @@ class TaskManager:
         A ``TaskStoreProtocol`` implementation.  When *None* an
         ``InMemoryTaskStore`` is used (useful for testing and embedded
         mode).
+    stream_registry:
+        A ``StreamRegistry`` for managing active SSE streams.  When
+        *None* a default instance is created.
     session_factory:
         **Deprecated.**  If provided (and *store* is None), wraps the
         session factory in a ``DatabaseTaskStore`` for backwards
@@ -56,6 +59,7 @@ class TaskManager:
     def __init__(
         self,
         store: TaskStoreProtocol | None = None,
+        stream_registry: StreamRegistry | None = None,
         session_factory: Any = None,
     ) -> None:
         if store is not None:
@@ -69,8 +73,22 @@ class TaskManager:
 
             self._store = InMemoryTaskStore()
 
-        # Active SSE streams: task_id -> list of asyncio.Queue
-        self._active_streams: dict[str, list[asyncio.Queue[dict[str, Any] | None]]] = {}
+        if stream_registry is not None:
+            self._stream_registry = stream_registry
+        else:
+            from nexus.a2a.stream_registry import StreamRegistry as _SR
+
+            self._stream_registry = _SR()
+
+    @property
+    def stream_registry(self) -> StreamRegistry:
+        """Public access to the stream registry."""
+        return self._stream_registry
+
+    @property
+    def store(self) -> TaskStoreProtocol:
+        """Public access to the underlying task store."""
+        return self._store
 
     # ------------------------------------------------------------------
     # Public API
@@ -185,6 +203,9 @@ class TaskManager:
         Raises ``TaskNotFoundError`` if the task does not exist.
         Raises ``InvalidStateTransitionError`` if the transition is invalid.
         """
+        # TODO(race-condition): update_task_state has a TOCTOU race under
+        # concurrent calls.  Fix requires optimistic locking (version column)
+        # in TaskStoreProtocol.
         task = await self._store.get(task_id, zone_id=zone_id)
         if task is None:
             raise TaskNotFoundError(data={"taskId": task_id})
@@ -215,7 +236,7 @@ class TaskManager:
             status=new_status,
             final=new_state in TERMINAL_STATES,
         )
-        await self._push_event(task_id, {"statusUpdate": event.model_dump(mode="json")})
+        self._stream_registry.push_event(task_id, {"statusUpdate": event.model_dump(mode="json")})
 
         return task
 
@@ -244,40 +265,18 @@ class TaskManager:
             artifact=artifact,
             append=append,
         )
-        await self._push_event(task_id, {"artifactUpdate": event.model_dump(mode="json")})
+        self._stream_registry.push_event(task_id, {"artifactUpdate": event.model_dump(mode="json")})
 
         return task
 
     # ------------------------------------------------------------------
-    # Active stream management
+    # Stream management (delegates to StreamRegistry)
     # ------------------------------------------------------------------
 
     def register_stream(self, task_id: str) -> asyncio.Queue[dict[str, Any] | None]:
-        """Register a new SSE stream for a task.
-
-        Returns an ``asyncio.Queue`` that will receive stream events.
-        ``None`` is pushed as a sentinel to signal stream closure.
-        """
-        queue: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
-        self._active_streams.setdefault(task_id, []).append(queue)
-        return queue
+        """Register a new SSE stream for a task."""
+        return self._stream_registry.register(task_id)
 
     def unregister_stream(self, task_id: str, queue: asyncio.Queue[dict[str, Any] | None]) -> None:
         """Remove an SSE stream registration."""
-        streams = self._active_streams.get(task_id)
-        if streams is not None:
-            with _suppress(ValueError):
-                streams.remove(queue)
-            if not streams:
-                del self._active_streams[task_id]
-
-    async def _push_event(self, task_id: str, event: dict[str, Any]) -> None:
-        """Push an event to all active streams for a task."""
-        streams = self._active_streams.get(task_id)
-        if not streams:
-            return
-        for queue in list(streams):
-            try:
-                queue.put_nowait(event)
-            except asyncio.QueueFull:
-                logger.warning("SSE queue full for task %s, dropping event", task_id)
+        self._stream_registry.unregister(task_id, queue)

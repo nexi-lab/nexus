@@ -608,7 +608,7 @@ class Memory:
 
                     await session.commit()
             finally:
-                await _store.dispose()
+                _store.close()
 
         run_sync(_do_store())
 

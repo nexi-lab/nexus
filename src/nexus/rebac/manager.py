@@ -3234,9 +3234,10 @@ class ReBACManager:
     ) -> list[Entity]:
         """Find all subjects that have a relation to obj in the graph."""
         return _find_subjects_in_graph(obj, tupleset_relation, tuples_graph)
-# ====================================================================================
-# Connection Management
-# ====================================================================================
+
+    # ====================================================================================
+    # Connection Management
+    # ====================================================================================
 
     def _get_connection(self) -> Any:
         """Get a DBAPI connection from the pool.
@@ -3278,9 +3279,9 @@ class ReBACManager:
         """Create a cursor with appropriate cursor factory. Delegates to TupleRepository (Issue #1459)."""
         return self._repo.create_cursor(conn)
 
-# ====================================================================================
-# Namespace Management
-# ====================================================================================
+    # ====================================================================================
+    # Namespace Management
+    # ====================================================================================
 
     def _ensure_namespaces_initialized(self) -> None:
         """Ensure default namespaces are initialized (called before first ReBAC operation)."""
@@ -3523,9 +3524,9 @@ class ReBACManager:
                 updated_at=updated_at,
             )
 
-# ====================================================================================
-# Cross-zone Validation
-# ====================================================================================
+    # ====================================================================================
+    # Cross-zone Validation
+    # ====================================================================================
 
     def _validate_cross_zone(
         self,
@@ -3538,9 +3539,9 @@ class ReBACManager:
 
         TupleRepository.validate_cross_zone(zone_id, subject_zone_id, object_zone_id)
 
-# ====================================================================================
-# Write (Base implementation — no zone-aware wrapping)
-# ====================================================================================
+    # ====================================================================================
+    # Write (Base implementation — no zone-aware wrapping)
+    # ====================================================================================
 
     def _rebac_write_base(
         self,
@@ -3651,7 +3652,8 @@ class ReBACManager:
             )
 
             insert_changelog_entry(
-                cursor, self._fix_sql_placeholders,
+                cursor,
+                self._fix_sql_placeholders,
                 change_type="INSERT",
                 tuple_id=tuple_id,
                 subject_type=subject_entity.entity_type,
@@ -3667,20 +3669,30 @@ class ReBACManager:
             self._tuple_version += 1
 
             self._invalidate_cache_for_tuple(
-                subject_entity, relation, object_entity, zone_id,
-                subject_relation, expires_at, conn=conn,
+                subject_entity,
+                relation,
+                object_entity,
+                zone_id,
+                subject_relation,
+                expires_at,
+                conn=conn,
             )
 
             if subject_zone_id is not None and subject_zone_id != zone_id:
                 self._invalidate_cache_for_tuple(
-                    subject_entity, relation, object_entity, subject_zone_id,
-                    subject_relation, expires_at, conn=conn,
+                    subject_entity,
+                    relation,
+                    object_entity,
+                    subject_zone_id,
+                    subject_relation,
+                    expires_at,
+                    conn=conn,
                 )
 
         return tuple_id
 
-# Write Batch (Renamed from rebac_write_batch)
-# ====================================================================================
+    # Write Batch (Renamed from rebac_write_batch)
+    # ====================================================================================
 
     def _rebac_write_batch_base(
         self,
@@ -4000,9 +4012,9 @@ class ReBACManager:
         """Check which tuples already exist. Delegates to TupleRepository (Issue #1459)."""
         return self._repo.bulk_check_tuples_exist(cursor, parsed_tuples)
 
-# ====================================================================================
-# Delete (Renamed from rebac_delete)
-# ====================================================================================
+    # ====================================================================================
+    # Delete (Renamed from rebac_delete)
+    # ====================================================================================
 
     def _rebac_delete_base(self, tuple_id: str) -> bool:
         """Delete a relationship tuple.
@@ -4116,9 +4128,9 @@ class ReBACManager:
 
         return True
 
-# ====================================================================================
-# Update Object Path
-# ====================================================================================
+    # ====================================================================================
+    # Update Object Path
+    # ====================================================================================
 
     def update_object_path(
         self, old_path: str, new_path: str, object_type: str = "file", is_directory: bool = False
@@ -4543,9 +4555,9 @@ class ReBACManager:
 
         return updated_count
 
-# ====================================================================================
-# Check (Renamed from rebac_check)
-# ====================================================================================
+    # ====================================================================================
+    # Check (Renamed from rebac_check)
+    # ====================================================================================
 
     def _rebac_check_base(
         self,
@@ -4727,9 +4739,9 @@ class ReBACManager:
 
         return result
 
-# ====================================================================================
-# Batch Check Methods
-# ====================================================================================
+    # ====================================================================================
+    # Batch Check Methods
+    # ====================================================================================
 
     def rebac_check_batch(
         self,
@@ -5013,9 +5025,9 @@ class ReBACManager:
             logger.debug(f"📦 Fetched {len(tuples)} tuples for batch computation")
             return tuples
 
-# ====================================================================================
-# Explain Methods
-# ====================================================================================
+    # ====================================================================================
+    # Explain Methods
+    # ====================================================================================
 
     def rebac_explain(
         self,
@@ -5239,9 +5251,9 @@ class ReBACManager:
         """Get all subjects with direct relation to object. Delegates to TupleRepository."""
         return self._repo.get_direct_subjects(relation, obj)
 
-# ====================================================================================
-# Cache Methods
-# ====================================================================================
+    # ====================================================================================
+    # Cache Methods
+    # ====================================================================================
 
     def _get_cached_check(
         self, subject: Entity, permission: str, obj: Entity, zone_id: str | None = None
@@ -5859,9 +5871,9 @@ class ReBACManager:
                 f"due to config update (deleted {cursor.rowcount} cache entries)"
             )
 
-# ====================================================================================
-# Maintenance Methods
-# ====================================================================================
+    # ====================================================================================
+    # Maintenance Methods
+    # ====================================================================================
 
     def _cleanup_expired_tuples_if_needed(self) -> None:
         """Clean up expired tuples if enough time has passed since last cleanup.
@@ -5998,9 +6010,9 @@ class ReBACManager:
                 self._tuple_version += 1  # Invalidate Rust graph cache
             return len(expired_tuples)
 
-# ====================================================================================
-# Stats and Monitoring
-# ====================================================================================
+    # ====================================================================================
+    # Stats and Monitoring
+    # ====================================================================================
 
     def get_cache_stats(self) -> dict[str, Any]:
         """Get cache statistics for monitoring and debugging.

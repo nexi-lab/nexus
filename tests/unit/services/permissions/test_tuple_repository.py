@@ -146,9 +146,7 @@ class TestConnectionManagement:
             repo.close_connection(conn)
 
         # Query from a fresh connection
-        results = repo.find_subjects_with_relation(
-            Entity("file", "readme"), "viewer-of"
-        )
+        results = repo.find_subjects_with_relation(Entity("file", "readme"), "viewer-of")
         assert len(results) == 1
         assert results[0].entity_id == "alice"
 
@@ -168,9 +166,7 @@ class TestConnectionManagement:
         finally:
             repo.close_connection(conn)
 
-        results = repo.find_subjects_with_relation(
-            Entity("file", "readme"), "viewer-of"
-        )
+        results = repo.find_subjects_with_relation(Entity("file", "readme"), "viewer-of")
         assert len(results) == 0
 
 
@@ -478,9 +474,7 @@ class TestFindSubjectSets:
     """Tests for find_subject_sets (userset-as-subject queries)."""
 
     def test_empty_when_no_tuples(self, repo: TupleRepository):
-        result = repo.find_subject_sets(
-            "editor-of", Entity("file", "readme"), zone_id=ZONE
-        )
+        result = repo.find_subject_sets("editor-of", Entity("file", "readme"), zone_id=ZONE)
         assert result == []
 
     def test_finds_subject_sets(self, repo: TupleRepository):
@@ -497,9 +491,7 @@ class TestFindSubjectSets:
             )
         finally:
             repo.close_connection(conn)
-        result = repo.find_subject_sets(
-            "editor-of", Entity("file", "readme"), zone_id=ZONE
-        )
+        result = repo.find_subject_sets("editor-of", Entity("file", "readme"), zone_id=ZONE)
         assert len(result) == 1
         assert result[0] == ("group", "eng", "member")
 
@@ -526,9 +518,7 @@ class TestFindSubjectSets:
             )
         finally:
             repo.close_connection(conn)
-        result = repo.find_subject_sets(
-            "editor-of", Entity("file", "readme"), zone_id=ZONE
-        )
+        result = repo.find_subject_sets("editor-of", Entity("file", "readme"), zone_id=ZONE)
         assert len(result) == 1
         assert result[0][0] == "group"
 
@@ -556,9 +546,7 @@ class TestFindSubjectSets:
             )
         finally:
             repo.close_connection(conn)
-        result = repo.find_subject_sets(
-            "editor-of", Entity("file", "readme"), zone_id="z1"
-        )
+        result = repo.find_subject_sets("editor-of", Entity("file", "readme"), zone_id="z1")
         assert len(result) == 1
         assert result[0][1] == "eng"
 
@@ -578,9 +566,7 @@ class TestFindSubjectSets:
             )
         finally:
             repo.close_connection(conn)
-        result = repo.find_subject_sets(
-            "editor-of", Entity("file", "readme"), zone_id=ZONE
-        )
+        result = repo.find_subject_sets("editor-of", Entity("file", "readme"), zone_id=ZONE)
         assert len(result) == 0
 
 
@@ -638,9 +624,7 @@ class TestFindSubjectsWithRelation:
     """Tests for find_subjects_with_relation (reverse lookup)."""
 
     def test_empty_when_no_tuples(self, repo: TupleRepository):
-        result = repo.find_subjects_with_relation(
-            Entity("file", "readme"), "viewer-of"
-        )
+        result = repo.find_subjects_with_relation(Entity("file", "readme"), "viewer-of")
         assert result == []
 
     def test_finds_viewers(self, repo: TupleRepository):
@@ -662,9 +646,7 @@ class TestFindSubjectsWithRelation:
             )
         finally:
             repo.close_connection(conn)
-        result = repo.find_subjects_with_relation(
-            Entity("file", "readme"), "viewer-of"
-        )
+        result = repo.find_subjects_with_relation(Entity("file", "readme"), "viewer-of")
         assert len(result) == 2
         ids = {e.entity_id for e in result}
         assert ids == {"alice", "bob"}
@@ -712,58 +694,49 @@ class TestEvaluateConditions:
 
     def test_time_window_within_range(self):
         conditions = {"time_window": {"start": "09:00:00", "end": "17:00:00"}}
-        assert TupleRepository.evaluate_conditions(
-            conditions, {"time": "12:00:00"}
-        ) is True
+        assert TupleRepository.evaluate_conditions(conditions, {"time": "12:00:00"}) is True
 
     def test_time_window_outside_range(self):
         conditions = {"time_window": {"start": "09:00:00", "end": "17:00:00"}}
-        assert TupleRepository.evaluate_conditions(
-            conditions, {"time": "20:00:00"}
-        ) is False
+        assert TupleRepository.evaluate_conditions(conditions, {"time": "20:00:00"}) is False
 
     def test_time_window_iso_format(self):
         """Handles ISO datetime strings (extracts time component)."""
         conditions = {"time_window": {"start": "09:00:00", "end": "17:00:00"}}
-        assert TupleRepository.evaluate_conditions(
-            conditions, {"time": "2024-01-15T12:00:00+00:00"}
-        ) is True
+        assert (
+            TupleRepository.evaluate_conditions(conditions, {"time": "2024-01-15T12:00:00+00:00"})
+            is True
+        )
 
     def test_ip_allowlist_match(self):
         conditions = {"allowed_ips": ["10.0.0.0/8", "192.168.1.0/24"]}
-        assert TupleRepository.evaluate_conditions(
-            conditions, {"ip": "10.1.2.3"}
-        ) is True
+        assert TupleRepository.evaluate_conditions(conditions, {"ip": "10.1.2.3"}) is True
 
     def test_ip_allowlist_no_match(self):
         conditions = {"allowed_ips": ["10.0.0.0/8"]}
-        assert TupleRepository.evaluate_conditions(
-            conditions, {"ip": "172.16.0.1"}
-        ) is False
+        assert TupleRepository.evaluate_conditions(conditions, {"ip": "172.16.0.1"}) is False
 
     def test_ip_allowlist_missing_ip(self):
         conditions = {"allowed_ips": ["10.0.0.0/8"]}
-        assert TupleRepository.evaluate_conditions(
-            conditions, {"other": "val"}
-        ) is False
+        assert TupleRepository.evaluate_conditions(conditions, {"other": "val"}) is False
 
     def test_device_allowlist(self):
         conditions = {"allowed_devices": ["desktop", "mobile"]}
-        assert TupleRepository.evaluate_conditions(
-            conditions, {"device": "desktop"}
-        ) is True
-        assert TupleRepository.evaluate_conditions(
-            conditions, {"device": "tablet"}
-        ) is False
+        assert TupleRepository.evaluate_conditions(conditions, {"device": "desktop"}) is True
+        assert TupleRepository.evaluate_conditions(conditions, {"device": "tablet"}) is False
 
     def test_custom_attributes(self):
         conditions = {"attributes": {"department": "engineering", "level": 3}}
-        assert TupleRepository.evaluate_conditions(
-            conditions, {"department": "engineering", "level": 3}
-        ) is True
-        assert TupleRepository.evaluate_conditions(
-            conditions, {"department": "marketing", "level": 3}
-        ) is False
+        assert (
+            TupleRepository.evaluate_conditions(
+                conditions, {"department": "engineering", "level": 3}
+            )
+            is True
+        )
+        assert (
+            TupleRepository.evaluate_conditions(conditions, {"department": "marketing", "level": 3})
+            is False
+        )
 
     def test_combined_conditions(self):
         """All conditions must pass (AND semantics)."""
@@ -771,12 +744,18 @@ class TestEvaluateConditions:
             "allowed_devices": ["desktop"],
             "attributes": {"clearance": "top-secret"},
         }
-        assert TupleRepository.evaluate_conditions(
-            conditions, {"device": "desktop", "clearance": "top-secret"}
-        ) is True
-        assert TupleRepository.evaluate_conditions(
-            conditions, {"device": "mobile", "clearance": "top-secret"}
-        ) is False
+        assert (
+            TupleRepository.evaluate_conditions(
+                conditions, {"device": "desktop", "clearance": "top-secret"}
+            )
+            is True
+        )
+        assert (
+            TupleRepository.evaluate_conditions(
+                conditions, {"device": "mobile", "clearance": "top-secret"}
+            )
+            is False
+        )
 
 
 # ============================================================================

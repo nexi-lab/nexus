@@ -90,9 +90,7 @@ class AsyncReBACManager:
         zone_id: str | None = None,
     ) -> list[tuple[str, str]]:
         """Async permission expansion."""
-        return await asyncio.to_thread(
-            self._sync.rebac_expand, permission, object, zone_id
-        )
+        return await asyncio.to_thread(self._sync.rebac_expand, permission, object, zone_id)
 
     # ── Bulk APIs ───────────────────────────────────────────────────
 
@@ -103,9 +101,7 @@ class AsyncReBACManager:
         use_rust: bool = True,
     ) -> list[bool]:
         """Async bulk permission check."""
-        return await asyncio.to_thread(
-            self._sync.rebac_check_bulk, checks, zone_id, use_rust
-        )
+        return await asyncio.to_thread(self._sync.rebac_check_bulk, checks, zone_id, use_rust)
 
     async def rebac_list_objects(
         self,
@@ -166,15 +162,11 @@ class AsyncReBACManager:
         zone_id: str = "default",
     ) -> set[tuple[str, str]]:
         """Async transitive group lookup."""
-        return await asyncio.to_thread(
-            self._sync.get_transitive_groups, subject, zone_id
-        )
+        return await asyncio.to_thread(self._sync.get_transitive_groups, subject, zone_id)
 
     async def invalidate_zone_graph_cache(self, zone_id: str | None = None) -> None:
         """Async cache invalidation."""
-        return await asyncio.to_thread(
-            self._sync.invalidate_zone_graph_cache, zone_id
-        )
+        return await asyncio.to_thread(self._sync.invalidate_zone_graph_cache, zone_id)
 
     async def get_cache_stats(self) -> dict[str, Any]:
         """Async cache stats."""

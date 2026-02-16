@@ -1060,11 +1060,13 @@ class ReBACService:
         for obj_type in known_types:
             ns = await self._run_in_thread(self._rebac_manager.get_namespace, obj_type)
             if ns is not None:
-                result.append({
-                    "namespace_id": ns.namespace_id,
-                    "object_type": ns.object_type,
-                    "config": ns.config,
-                })
+                result.append(
+                    {
+                        "namespace_id": ns.namespace_id,
+                        "object_type": ns.object_type,
+                        "config": ns.config,
+                    }
+                )
         return result
 
     @rpc_expose(description="Delete ReBAC namespace")
@@ -1083,7 +1085,10 @@ class ReBACService:
         # List all tuples of this object type and delete them
         tuples = await self._run_in_thread(
             self._rebac_manager.rebac_list_objects,
-            ("*", "*"), "viewer", object_type, zone_id,
+            ("*", "*"),
+            "viewer",
+            object_type,
+            zone_id,
         )
         deleted = 0
         for _, obj_id in tuples:
@@ -1126,7 +1131,11 @@ class ReBACService:
         for subj in subjects:
             has_consent = await self._run_in_thread(
                 self._rebac_manager.rebac_check,
-                subj, "consent-to-discover", object, None, zone_id,
+                subj,
+                "consent-to-discover",
+                object,
+                None,
+                zone_id,
             )
             if has_consent:
                 consented.append(subj)
@@ -1153,7 +1162,12 @@ class ReBACService:
             raise RuntimeError("ReBAC manager not available")
         result = await self._run_in_thread(
             self._rebac_manager.rebac_write,
-            subject, "consent-to-discover", target, None, None, zone_id,
+            subject,
+            "consent-to-discover",
+            target,
+            None,
+            None,
+            zone_id,
         )
         return {
             "tuple_id": result.tuple_id,
@@ -1205,7 +1219,12 @@ class ReBACService:
             raise RuntimeError("ReBAC manager not available")
         result = await self._run_in_thread(
             self._rebac_manager.rebac_write,
-            ("*", "*"), "viewer", resource, None, None, zone_id,
+            ("*", "*"),
+            "viewer",
+            resource,
+            None,
+            None,
+            zone_id,
         )
         return {
             "tuple_id": result.tuple_id,
@@ -1270,7 +1289,12 @@ class ReBACService:
         self._check_share_permission(resource, context)
         result = await self._run_in_thread(
             self._rebac_manager.rebac_write,
-            ("user", target_user), permission, resource, None, None, zone_id,
+            ("user", target_user),
+            permission,
+            resource,
+            None,
+            None,
+            zone_id,
         )
         return {
             "tuple_id": result.tuple_id,
@@ -1305,7 +1329,12 @@ class ReBACService:
         self._check_share_permission(resource, context)
         result = await self._run_in_thread(
             self._rebac_manager.rebac_write,
-            ("group", target_group), permission, resource, None, None, zone_id,
+            ("group", target_group),
+            permission,
+            resource,
+            None,
+            None,
+            zone_id,
         )
         return {
             "tuple_id": result.tuple_id,
@@ -1386,13 +1415,15 @@ class ReBACService:
                 self._rebac_manager.rebac_expand, perm, resource, zone_id
             )
             for subj_type, subj_id in subjects:
-                shares.append({
-                    "subject_type": subj_type,
-                    "subject_id": subj_id,
-                    "permission": perm,
-                    "resource_type": resource[0],
-                    "resource_id": resource[1],
-                })
+                shares.append(
+                    {
+                        "subject_type": subj_type,
+                        "subject_id": subj_id,
+                        "permission": perm,
+                        "resource_type": resource[0],
+                        "resource_id": resource[1],
+                    }
+                )
         return shares
 
     @rpc_expose(description="List incoming shares")
@@ -1418,16 +1449,21 @@ class ReBACService:
         for perm in ("viewer", "editor", "owner"):
             objects = await self._run_in_thread(
                 self._rebac_manager.rebac_list_objects,
-                subject, perm, object_type, zone_id,
+                subject,
+                perm,
+                object_type,
+                zone_id,
             )
             for obj_type, obj_id in objects:
-                shares.append({
-                    "subject_type": subject[0],
-                    "subject_id": subject[1],
-                    "permission": perm,
-                    "resource_type": obj_type,
-                    "resource_id": obj_id,
-                })
+                shares.append(
+                    {
+                        "subject_type": subject[0],
+                        "subject_id": subject[1],
+                        "permission": perm,
+                        "resource_type": obj_type,
+                        "resource_id": obj_id,
+                    }
+                )
         return shares
 
     # =========================================================================
@@ -1524,7 +1560,9 @@ class ReBACService:
         # Extract column hide list from viewer config
         columns_to_hide: list[str] = []
         for viewer in config.get("viewers", []):
-            if isinstance(viewer.get("subject_id"), str) and viewer["subject_id"].startswith("hide:"):
+            if isinstance(viewer.get("subject_id"), str) and viewer["subject_id"].startswith(
+                "hide:"
+            ):
                 columns_to_hide.append(viewer["subject_id"][5:])
         if not columns_to_hide:
             return content

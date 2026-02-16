@@ -44,7 +44,7 @@ from nexus.storage.models import DocumentChunkModel, FilePathModel
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.core.nexus_fs import NexusFS
+    from nexus.core.filesystem import NexusFilesystem
     from nexus.llm.context_builder import AdaptiveRetrievalConfig
     from nexus.search.ranking import RankingConfig
 
@@ -74,7 +74,7 @@ class SemanticSearch:
 
     def __init__(
         self,
-        nx: NexusFS,
+        nx: NexusFilesystem,
         embedding_provider: EmbeddingProvider | None = None,
         chunk_size: int = 1024,
         chunk_strategy: ChunkStrategy = ChunkStrategy.SEMANTIC,
@@ -91,7 +91,7 @@ class SemanticSearch:
         """Initialize semantic search.
 
         Args:
-            nx: NexusFS instance
+            nx: NexusFilesystem instance
             embedding_provider: Embedding provider (optional - needed for semantic/hybrid search)
             chunk_size: Chunk size in tokens
             chunk_strategy: Chunking strategy

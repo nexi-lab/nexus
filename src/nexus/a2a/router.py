@@ -229,7 +229,7 @@ def _extract_zone_id(auth_result: dict[str, Any] | None) -> str:
     if auth_result and auth_result.get("zone_id"):
         zone_id: str = auth_result["zone_id"]
         return zone_id
-    return "default"
+    return "root"
 
 
 def _extract_agent_id(auth_result: dict[str, Any] | None) -> str | None:

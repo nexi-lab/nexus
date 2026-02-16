@@ -1,12 +1,38 @@
-"""Shared fixtures for FUSE tests."""
+"""Shared fixtures for unit tests."""
 
 from __future__ import annotations
 
 import platform
 import sys
+import time
 from unittest.mock import MagicMock
 
 import pytest
+
+# ---------------------------------------------------------------------------
+# Overall unit-test suite budget: 3 minutes (180 seconds)
+# Individual tests use pytest-timeout; this enforces the *total* wall-clock.
+# ---------------------------------------------------------------------------
+UNIT_TEST_BUDGET_SECONDS = 180
+_suite_start: float | None = None
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    global _suite_start
+    _suite_start = time.monotonic()
+
+
+def pytest_runtest_setup(item: pytest.Item) -> None:
+    if _suite_start is None:
+        return
+    elapsed = time.monotonic() - _suite_start
+    if elapsed > UNIT_TEST_BUDGET_SECONDS:
+        pytest.fail(
+            f"Unit-test suite exceeded {UNIT_TEST_BUDGET_SECONDS}s budget "
+            f"({elapsed:.1f}s elapsed). Aborting.",
+            pytrace=False,
+        )
+
 
 # Conditionally ignore MCP tests if fastmcp is not installed
 # This must be done at collection time, before any imports from test files

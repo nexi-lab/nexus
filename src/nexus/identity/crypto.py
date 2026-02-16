@@ -13,7 +13,7 @@ No additional crypto dependencies required.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import Protocol, runtime_checkable
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -27,8 +27,17 @@ from cryptography.hazmat.primitives.serialization import (
     PublicFormat,
 )
 
-if TYPE_CHECKING:
-    from nexus.server.auth.oauth_crypto import OAuthCrypto
+
+@runtime_checkable
+class TokenEncryptor(Protocol):
+    """Protocol for Fernet token encryption/decryption.
+
+    OAuthCrypto satisfies this protocol — no direct import needed.
+    """
+
+    def encrypt_token(self, plaintext: str) -> str: ...
+    def decrypt_token(self, ciphertext: str) -> str: ...
+
 
 logger = logging.getLogger(__name__)
 
@@ -36,18 +45,18 @@ logger = logging.getLogger(__name__)
 class IdentityCrypto:
     """Ed25519 + Fernet crypto for agent identity.
 
-    Delegates Fernet encryption to OAuthCrypto (reuse, not reinvent).
+    Delegates Fernet encryption to a TokenEncryptor (e.g. OAuthCrypto).
     All methods are deterministic and side-effect free except generate_keypair
     (which uses OS CSPRNG).
 
     Args:
-        oauth_crypto: Optional OAuthCrypto instance for Fernet encryption of
+        token_encryptor: Optional TokenEncryptor for Fernet encryption of
             private keys at rest. If None, private key encryption/decryption
             will raise ValueError.
     """
 
-    def __init__(self, oauth_crypto: OAuthCrypto | None = None) -> None:
-        self._oauth_crypto = oauth_crypto
+    def __init__(self, token_encryptor: TokenEncryptor | None = None) -> None:
+        self._token_encryptor = token_encryptor
 
     def generate_keypair(self) -> tuple[Ed25519PrivateKey, Ed25519PublicKey]:
         """Generate a new Ed25519 keypair using OS CSPRNG.
@@ -74,10 +83,10 @@ class IdentityCrypto:
         Raises:
             ValueError: If OAuthCrypto is not configured.
         """
-        if self._oauth_crypto is None:
+        if self._token_encryptor is None:
             raise ValueError(
-                "OAuthCrypto is required for private key encryption. "
-                "Pass oauth_crypto to IdentityCrypto constructor."
+                "TokenEncryptor is required for private key encryption. "
+                "Pass token_encryptor to IdentityCrypto constructor."
             )
         raw_bytes = private_key.private_bytes(
             encoding=Encoding.Raw,
@@ -85,7 +94,7 @@ class IdentityCrypto:
             encryption_algorithm=NoEncryption(),
         )
         hex_string = raw_bytes.hex()
-        return self._oauth_crypto.encrypt_token(hex_string)
+        return self._token_encryptor.encrypt_token(hex_string)
 
     def decrypt_private_key(self, encrypted: str) -> Ed25519PrivateKey:
         """Decrypt a Fernet-encrypted Ed25519 private key.
@@ -99,12 +108,12 @@ class IdentityCrypto:
         Raises:
             ValueError: If OAuthCrypto is not configured or decryption fails.
         """
-        if self._oauth_crypto is None:
+        if self._token_encryptor is None:
             raise ValueError(
-                "OAuthCrypto is required for private key decryption. "
-                "Pass oauth_crypto to IdentityCrypto constructor."
+                "TokenEncryptor is required for private key decryption. "
+                "Pass token_encryptor to IdentityCrypto constructor."
             )
-        hex_string = self._oauth_crypto.decrypt_token(encrypted)
+        hex_string = self._token_encryptor.decrypt_token(encrypted)
         raw_bytes = bytes.fromhex(hex_string)
         return Ed25519PrivateKey.from_private_bytes(raw_bytes)
 

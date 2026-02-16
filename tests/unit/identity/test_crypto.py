@@ -54,7 +54,7 @@ def mock_oauth_crypto() -> MagicMock:
 @pytest.fixture
 def crypto_with_fernet(mock_oauth_crypto: MagicMock) -> IdentityCrypto:
     """IdentityCrypto with mock Fernet for full key lifecycle."""
-    return IdentityCrypto(oauth_crypto=mock_oauth_crypto)
+    return IdentityCrypto(token_encryptor=mock_oauth_crypto)
 
 
 # ---------------------------------------------------------------------------
@@ -242,7 +242,7 @@ class TestCryptoProperties:
         mock_oauth.encrypt_token.side_effect = encrypt
         mock_oauth.decrypt_token.side_effect = decrypt
 
-        crypto = IdentityCrypto(oauth_crypto=mock_oauth)
+        crypto = IdentityCrypto(token_encryptor=mock_oauth)
         private, public = crypto.generate_keypair()
 
         encrypted = crypto.encrypt_private_key(private)

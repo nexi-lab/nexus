@@ -72,7 +72,7 @@ def mock_oauth_crypto() -> MagicMock:
 
 @pytest.fixture
 def crypto(mock_oauth_crypto: MagicMock) -> IdentityCrypto:
-    return IdentityCrypto(oauth_crypto=mock_oauth_crypto)
+    return IdentityCrypto(token_encryptor=mock_oauth_crypto)
 
 
 @pytest.fixture

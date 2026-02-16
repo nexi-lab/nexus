@@ -60,6 +60,7 @@ class EventDeliveryWorker:
         session_factory: Callable[..., Any],
         event_bus: Any | None = None,
         *,
+        subscription_manager: Any | None = None,
         poll_interval_ms: int = 200,
         batch_size: int = 50,
         max_retries: int = 3,
@@ -67,6 +68,7 @@ class EventDeliveryWorker:
     ) -> None:
         self._session_factory = session_factory
         self._event_bus = event_bus
+        self._subscription_manager = subscription_manager
         self._poll_interval_s = poll_interval_ms / 1000.0
         self._batch_size = batch_size
         self._max_retries = max_retries
@@ -230,39 +232,34 @@ class EventDeliveryWorker:
                 # No running loop — create a temporary one
                 asyncio.run(bus.publish(event))
 
-        # 2. Broadcast to webhook subscriptions
-        try:
-            from nexus.server.subscriptions import get_subscription_manager
+        # 2. Broadcast to webhook subscriptions (via injected subscription_manager)
+        sub_manager = self._subscription_manager
+        if sub_manager is not None:
+            import asyncio as _asyncio
 
-            sub_manager = get_subscription_manager()
-            if sub_manager is not None:
-                import asyncio as _asyncio
+            event_type_str = str(event.type)
 
-                event_type_str = str(event.type)
+            async def _broadcast() -> None:
+                await sub_manager.broadcast(
+                    event_type=event_type_str,
+                    data={
+                        "file_path": event.path,
+                        "old_path": event.old_path,
+                        "size": event.size,
+                        "timestamp": event.timestamp,
+                    },
+                    zone_id=event.zone_id or "default",
+                )
 
-                async def _broadcast() -> None:
-                    await sub_manager.broadcast(
-                        event_type=event_type_str,
-                        data={
-                            "file_path": event.path,
-                            "old_path": event.old_path,
-                            "size": event.size,
-                            "timestamp": event.timestamp,
-                        },
-                        zone_id=event.zone_id or "default",
-                    )
+            try:
+                loop = _asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
 
-                try:
-                    loop = _asyncio.get_running_loop()
-                except RuntimeError:
-                    loop = None
-
-                if loop is not None and loop.is_running():
-                    _asyncio.run_coroutine_threadsafe(_broadcast(), loop)
-                else:
-                    _asyncio.run(_broadcast())
-        except ImportError:
-            pass  # Subscription manager not available
+            if loop is not None and loop.is_running():
+                _asyncio.run_coroutine_threadsafe(_broadcast(), loop)
+            else:
+                _asyncio.run(_broadcast())
 
         logger.debug(
             "[DELIVERY] Dispatched: %s %s (op=%s)",

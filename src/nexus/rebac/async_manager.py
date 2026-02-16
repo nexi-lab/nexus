@@ -172,6 +172,64 @@ class AsyncReBACManager:
         """Async cache stats."""
         return await asyncio.to_thread(self._sync.get_cache_stats)
 
+    def get_l1_cache_stats(self) -> dict[str, Any]:
+        """Synchronous cache stats (alias for bridge compatibility)."""
+        return self._sync.get_cache_stats()  # type: ignore[no-any-return]
+
+    # ── Bridge convenience methods ─────────────────────────────────
+
+    async def write_tuple(
+        self,
+        subject: tuple[str, str],
+        relation: str,
+        object: tuple[str, str],
+        zone_id: str | None = None,
+        subject_relation: str | None = None,  # noqa: ARG002
+    ) -> str:
+        """Write a relationship tuple and return the tuple_id.
+
+        Convenience wrapper around rebac_write for AsyncReBACBridge.
+        """
+        result = await self.rebac_write(
+            subject=subject, relation=relation, object=object, zone_id=zone_id
+        )
+        return result.tuple_id
+
+    async def delete_tuple(
+        self,
+        subject: tuple[str, str],
+        relation: str,
+        object: tuple[str, str],
+        zone_id: str | None = None,
+    ) -> bool:
+        """Delete a relationship tuple by its components.
+
+        Convenience wrapper for AsyncReBACBridge that looks up the tuple_id
+        by (subject, relation, object, zone_id) and deletes it.
+        """
+
+        def _delete_by_components() -> bool:
+            from nexus.rebac.utils.zone import normalize_zone_id
+
+            nz = normalize_zone_id(zone_id)
+            with self._sync._connection() as conn:
+                cursor = self._sync._create_cursor(conn)
+                cursor.execute(
+                    self._sync._fix_sql_placeholders(
+                        "SELECT tuple_id FROM rebac_tuples "
+                        "WHERE subject_type = ? AND subject_id = ? "
+                        "AND relation = ? AND object_type = ? AND object_id = ? "
+                        "AND zone_id = ?"
+                    ),
+                    (subject[0], subject[1], relation, object[0], object[1], nz),
+                )
+                row = cursor.fetchone()
+            if not row:
+                return False
+            return self._sync.rebac_delete(row[0])  # type: ignore[no-any-return]
+
+        return await asyncio.to_thread(_delete_by_components)
+
     # ── Lifecycle ───────────────────────────────────────────────────
 
     async def close(self) -> None:
@@ -188,7 +246,7 @@ class AsyncReBACManager:
     @property
     def enforce_zone_isolation(self) -> bool:
         """Delegate to sync manager's zone isolation setting."""
-        return self._sync.enforce_zone_isolation
+        return self._sync.enforce_zone_isolation  # type: ignore[no-any-return]
 
 
 # ── Utility ─────────────────────────────────────────────────────────

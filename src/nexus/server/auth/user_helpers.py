@@ -225,7 +225,7 @@ def add_user_to_zone(
         object=("group", group_id),
         zone_id=zone_id,
     )
-    return result.tuple_id
+    return result.tuple_id  # type: ignore[no-any-return]
 
 
 def remove_user_from_zone(

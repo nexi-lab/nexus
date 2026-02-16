@@ -346,7 +346,7 @@ def create_nexus_services(
 
     permission_enforcer = PermissionEnforcer(
         metadata_store=metadata_store,
-        rebac_manager=rebac_manager,
+        rebac_manager=rebac_manager,  # type: ignore[arg-type]
         allow_admin_bypass=perm.allow_admin_bypass,
         allow_system_bypass=True,
         audit_store=audit_store,

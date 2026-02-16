@@ -1440,7 +1440,7 @@ class ReBACManager:
             except (RuntimeError, ValueError, KeyError) as e:
                 logger.warning(f"[DIR-VIS-CACHE] Invalidator {callback_id} failed: {e}")
 
-    def rebac_write(  # type: ignore[override]  # Issue #1081: Returns WriteResult instead of str
+    def rebac_write(
         self,
         subject: tuple[str, str] | tuple[str, str, str],
         relation: str,
@@ -4533,7 +4533,7 @@ class ReBACManager:
                     if hasattr(resource_map, "_uuid_to_int"):
                         keys_to_remove = []
                         for key in resource_map._uuid_to_int:
-                            res_type, res_id, zone = key
+                            res_type, res_id = key
                             if res_type == object_type:
                                 if is_directory:
                                     if res_id == old_path or res_id.startswith(old_path + "/"):

@@ -509,7 +509,7 @@ class NamespaceManager:
             # (sqlite3.OperationalError) and any other DB errors. Returns 0
             # which causes a dcache miss — safe because it triggers a fresh check.
             return 0
-        return revision // self._revision_window
+        return revision // self._revision_window  # type: ignore[no-any-return]
 
     def _get_mount_data(
         self,
@@ -721,4 +721,4 @@ class NamespaceManager:
 
         cached_bucket = cached_revision // self._revision_window
         current_bucket = current_revision // self._revision_window
-        return cached_bucket == current_bucket
+        return cached_bucket == current_bucket  # type: ignore[no-any-return]

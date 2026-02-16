@@ -32,15 +32,11 @@ Example (async):
 """
 
 from nexus.remote.async_client import (
-    AsyncACE,
-    AsyncAdminAPI,
-    AsyncRemoteMemory,
     AsyncRemoteNexusFS,
 )
 from nexus.remote.client import (
     RemoteConnectionError,
     RemoteFilesystemError,
-    RemoteMemory,
     RemoteNexusFS,
     RemoteTimeoutError,
 )
@@ -66,11 +62,6 @@ __all__ = [
     # Main clients
     "RemoteNexusFS",
     "AsyncRemoteNexusFS",
-    # Backwards-compat wrapper classes
-    "AsyncRemoteMemory",
-    "AsyncAdminAPI",
-    "AsyncACE",
-    "RemoteMemory",
     # Error classes
     "RemoteFilesystemError",
     "RemoteConnectionError",

@@ -42,7 +42,7 @@ class MemoryModel(Base):
 
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
 
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
     user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
@@ -265,7 +265,7 @@ class EntityModel(Base):
 
     entity_id: Mapped[str] = uuid_pk()
 
-    zone_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
+    zone_id: Mapped[str] = mapped_column(String(64), nullable=False, default="root")
 
     canonical_name: Mapped[str] = mapped_column(String(512), nullable=False)
     entity_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -359,7 +359,7 @@ class RelationshipModel(Base):
 
     relationship_id: Mapped[str] = uuid_pk()
 
-    zone_id: Mapped[str] = mapped_column(String(64), nullable=False, default="default")
+    zone_id: Mapped[str] = mapped_column(String(64), nullable=False, default="root")
 
     source_entity_id: Mapped[str] = mapped_column(
         String(36),

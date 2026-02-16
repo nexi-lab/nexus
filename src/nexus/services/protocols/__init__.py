@@ -27,6 +27,7 @@ References:
 
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from nexus.services.protocols.context_manifest import ContextManifestProtocol
+from nexus.services.protocols.delegation import DelegationProtocol
 from nexus.services.protocols.hook_engine import (
     POST_COPY,
     POST_DELETE,
@@ -54,6 +55,7 @@ __all__ = [
     "AgentRegistryProtocol",
     "AgentRequest",
     "ContextManifestProtocol",
+    "DelegationProtocol",
     "HookContext",
     "HookEngineProtocol",
     "HookId",

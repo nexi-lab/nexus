@@ -2,6 +2,8 @@
 
 use memchr::memmem;
 use memmap2::Mmap;
+use nexus_core::search::grep::GrepMatch;
+use nexus_core::search::literal::is_literal_pattern;
 use pyo3::prelude::*;
 use pyo3::types::{PyDict, PyList};
 use rayon::prelude::*;
@@ -9,26 +11,10 @@ use regex::bytes::RegexBuilder;
 use simdutf8::basic::from_utf8 as simd_from_utf8;
 use std::fs::File;
 
-/// Grep search result.
-#[derive(Debug)]
-struct GrepMatch {
-    file: String,
-    line: usize,
-    content: String,
-    match_text: String,
-}
-
-/// Check if a pattern is a literal string (no regex metacharacters).
-fn is_literal_pattern(pattern: &str) -> bool {
-    !pattern.chars().any(|c| {
-        matches!(
-            c,
-            '.' | '*' | '+' | '?' | '(' | ')' | '[' | ']' | '{' | '}' | '|' | '^' | '$' | '\\'
-        )
-    })
-}
-
-/// Search mode — either SIMD-accelerated literal or regex.
+/// Search mode for PyO3 layer — stores pre-built Finder for SIMD acceleration.
+/// Distinct from `nexus_core::search::SearchMode` which stores owned strings
+/// (suitable for `search_lines()`), while this version holds `memmem::Finder`
+/// references for zero-copy mmap search.
 enum SearchMode<'a> {
     Literal {
         finder: memmem::Finder<'a>,

@@ -1601,14 +1601,16 @@ class EnhancedReBACManager(ReBACManager):
             self._l1_cache.invalidate_subject(subject_type, subject_id, effective_zone)
             self._l1_cache.invalidate_object(object_type, object_id, effective_zone)
 
-        # Issue #1081: Get revision for consistency token (Zanzibar zookie pattern)
-        revision = self._get_zone_revision_for_grant(effective_zone)
+        # Issue #1081: Increment version token for consistency (Zanzibar zookie pattern)
+        consistency_token = self._get_version_token(effective_zone)
+        # Extract numeric revision from token string (e.g., "v3" -> 3)
+        revision = int(consistency_token.lstrip("v")) if consistency_token.startswith("v") else 0
         write_time_ms = (time.perf_counter() - write_start) * 1000
 
         return WriteResult(
             tuple_id=result,
             revision=revision,
-            consistency_token=f"v{revision}",
+            consistency_token=consistency_token,
             written_at_ms=write_time_ms,
         )
 

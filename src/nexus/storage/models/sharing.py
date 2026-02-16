@@ -33,7 +33,7 @@ class ShareLinkModel(Base):
 
     permission_level: Mapped[str] = mapped_column(String(20), nullable=False, default="viewer")
 
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default", index=True)
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root", index=True)
 
     created_by: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
 

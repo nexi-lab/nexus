@@ -13,6 +13,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
+from nexus.raft.zone_manager import ROOT_ZONE_ID
 from nexus.scheduler.constants import TASK_STATUS_QUEUED, PriorityTier
 
 
@@ -58,5 +59,5 @@ class ScheduledTask:
     started_at: datetime | None = None
     completed_at: datetime | None = None
     error_message: str | None = None
-    zone_id: str = "default"
+    zone_id: str = ROOT_ZONE_ID
     idempotency_key: str | None = None

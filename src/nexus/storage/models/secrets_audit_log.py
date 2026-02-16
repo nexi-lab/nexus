@@ -69,7 +69,7 @@ class SecretsAuditLogModel(Base):
     token_family_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
     # Context
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
     ip_address: Mapped[str | None] = mapped_column(String(45), nullable=True)
 
     # Additional details (JSON text — must NEVER contain secrets)

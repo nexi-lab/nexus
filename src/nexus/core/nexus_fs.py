@@ -3681,7 +3681,7 @@ class NexusFS(  # type: ignore[misc]
         context: dict | Any | None,
     ) -> str:
         """Create API key for agent and return the raw key."""
-        from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+        from nexus.identity.api_key_ops import create_api_key
 
         zone_id = self._extract_zone_id(context)
         session = self.SessionLocal()
@@ -3691,7 +3691,7 @@ class NexusFS(  # type: ignore[misc]
             expires_at = self._determine_agent_key_expiration(user_id, session)
 
             # Create the API key
-            _key_id, raw_key = DatabaseAPIKeyAuth.create_key(
+            _key_id, raw_key = create_api_key(
                 session,
                 user_id=user_id,
                 name=agent_id,  # Use agent_id format: <user_id>,<agent_name>
@@ -4864,7 +4864,7 @@ class NexusFS(  # type: ignore[misc]
             if create_api_key:
                 from sqlalchemy import select
 
-                from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+                from nexus.identity.api_key_ops import create_api_key as _create_api_key
                 from nexus.storage.models import APIKeyModel
 
                 # Lock the user row to prevent race conditions during concurrent provisioning
@@ -4892,7 +4892,7 @@ class NexusFS(  # type: ignore[misc]
                     # Use custom key name if provided, otherwise default
                     key_name = api_key_name or f"Primary key for {email}"
 
-                    key_id, api_key = DatabaseAPIKeyAuth.create_key(
+                    key_id, api_key = _create_api_key(
                         session,
                         user_id=user_id,
                         name=key_name,
@@ -7036,7 +7036,7 @@ class NexusFS(  # type: ignore[misc]
 
                 # Check if user is zone admin for this resource's zone
                 if zone_id and op_context.user:
-                    from nexus.server.auth.user_helpers import is_zone_admin
+                    from nexus.services.permissions.utils.zone import is_zone_admin
 
                     if is_zone_admin(self._rebac_manager, op_context.user, zone_id):
                         # Zone admin can share resources in their zone

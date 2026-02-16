@@ -675,6 +675,60 @@ class MemoryViewRouter:
         self.session.commit()
         return memory
 
+    @classmethod
+    def resolve_memory_by_path(cls, session_factory: Any, path: str) -> dict[str, Any] | None:
+        """Resolve a memory by virtual path with managed session lifecycle.
+
+        Service-layer helper: creates and closes its own session so the kernel
+        never touches SessionLocal() directly.
+
+        Args:
+            session_factory: Callable that returns a new SQLAlchemy Session.
+            path: Memory virtual path.
+
+        Returns:
+            Dict with content_hash and created_at, or None if not found.
+        """
+        from nexus.services.permissions.entity_registry import EntityRegistry
+
+        session = session_factory()
+        try:
+            router = cls(session, EntityRegistry(session))
+            memory = router.resolve(path)
+            if memory is None:
+                return None
+            return {"content_hash": memory.content_hash, "created_at": memory.created_at}
+        finally:
+            session.close()
+
+    @classmethod
+    def delete_memory_by_path(cls, session_factory: Any, path: str) -> str | None:
+        """Delete a memory by virtual path with managed session lifecycle.
+
+        Service-layer helper: resolves the path, soft-deletes the memory,
+        and returns the content_hash for ObjectStore cleanup.
+
+        Args:
+            session_factory: Callable that returns a new SQLAlchemy Session.
+            path: Memory virtual path.
+
+        Returns:
+            content_hash of the deleted memory (for ObjectStore cleanup), or None.
+        """
+        from nexus.services.permissions.entity_registry import EntityRegistry
+
+        session = session_factory()
+        try:
+            router = cls(session, EntityRegistry(session))
+            memory = router.resolve(path)
+            if memory is None:
+                return None
+            content_hash = memory.content_hash
+            router.delete_memory(memory.memory_id)
+            return content_hash
+        finally:
+            session.close()
+
     def delete_memory(self, memory_id: str) -> bool:
         """Soft-delete a memory (#1188: non-destructive).
 

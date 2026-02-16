@@ -3912,32 +3912,26 @@ class NexusFSCoreMixin:
             NexusFileNotFoundError: If memory doesn't exist.
         """
         from nexus.services.memory.memory_router import MemoryViewRouter
-        from nexus.services.permissions.entity_registry import EntityRegistry
 
-        # Get memory via router
-        session = self.SessionLocal()
-        try:
-            router = MemoryViewRouter(session, EntityRegistry(session))
-            memory = router.resolve(path)
+        # Delegate session management to service layer (kernel must not call SessionLocal directly)
+        result = MemoryViewRouter.resolve_memory_by_path(self.SessionLocal, path)
 
-            if not memory:
-                raise NexusFileNotFoundError(f"Memory not found at path: {path}")
+        if not result:
+            raise NexusFileNotFoundError(f"Memory not found at path: {path}")
 
-            # Read content from CAS
-            content = self.backend.read_content(memory.content_hash, context=context).unwrap()
+        # Read content from CAS (ObjectStore — kernel layer)
+        content = self.backend.read_content(result["content_hash"], context=context).unwrap()
 
-            if return_metadata:
-                return {
-                    "content": content,
-                    "etag": memory.content_hash,
-                    "version": 1,  # Memories don't version like files
-                    "modified_at": memory.created_at,
-                    "size": len(content),
-                }
+        if return_metadata:
+            return {
+                "content": content,
+                "etag": result["content_hash"],
+                "version": 1,  # Memories don't version like files
+                "modified_at": result["created_at"],
+                "size": len(content),
+            }
 
-            return content
-        finally:
-            session.close()
+        return content
 
     def _write_memory_path(self, path: str, content: bytes) -> dict[str, Any]:
         """Write memory via virtual path (Phase 2 Integration).
@@ -3997,24 +3991,15 @@ class NexusFSCoreMixin:
             NexusFileNotFoundError: If memory doesn't exist.
         """
         from nexus.services.memory.memory_router import MemoryViewRouter
-        from nexus.services.permissions.entity_registry import EntityRegistry
 
-        # Get memory via router
-        session = self.SessionLocal()
-        try:
-            router = MemoryViewRouter(session, EntityRegistry(session))
-            memory = router.resolve(path)
+        # Delegate session management to service layer (kernel must not call SessionLocal directly)
+        content_hash = MemoryViewRouter.delete_memory_by_path(self.SessionLocal, path)
 
-            if not memory:
-                raise NexusFileNotFoundError(f"Memory not found at path: {path}")
+        if content_hash is None:
+            raise NexusFileNotFoundError(f"Memory not found at path: {path}")
 
-            # Delete the memory
-            router.delete_memory(memory.memory_id)
-
-            # Also delete content from CAS (decrement ref count)
-            self.backend.delete_content(memory.content_hash, context=context).unwrap()
-        finally:
-            session.close()
+        # Delete content from CAS (ObjectStore — kernel layer)
+        self.backend.delete_content(content_hash, context=context).unwrap()
 
     @rpc_expose(description="Shutdown background parser threads")
     def shutdown_parser_threads(self, timeout: float = 10.0) -> dict[str, Any]:

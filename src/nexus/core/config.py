@@ -15,9 +15,14 @@ Note: ``CacheConfig`` configures the kernel's **in-memory LRU caches**
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nexus.constants import DEFAULT_NATS_URL
+
+if TYPE_CHECKING:
+    from nexus.core.cache_invalidation import CacheInvalidationObserver
+    from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
+    from nexus.workflows.protocol import WorkflowProtocol
 
 # ---------------------------------------------------------------------------
 # Config dataclasses (frozen — immutable, use dataclasses.replace() to copy)
@@ -136,12 +141,12 @@ class KernelServices:
     wallet_provisioner: Any = None
 
     # Cache invalidation (Issue #1169 / #1519)
-    cache_observer: Any = None  # CacheInvalidationObserver protocol
+    cache_observer: CacheInvalidationObserver | None = None
 
     # Infrastructure (moved from _service_extras dict)
     event_bus: Any = None
     lock_manager: Any = None
-    workflow_engine: Any = None
+    workflow_engine: WorkflowProtocol | None = None
 
     # Server-layer extras — opaque to the kernel, passed through to server
     # code via NexusFS._service_extras. The kernel never inspects these.
@@ -149,7 +154,7 @@ class KernelServices:
 
     # Kernel protocol services (Issue #1502)
     agent_registry: Any = None
-    namespace_manager: Any = None
+    namespace_manager: NamespaceManagerProtocol | None = None
 
     # Async protocol wrappers (Issue #1502)
     async_agent_registry: Any = None

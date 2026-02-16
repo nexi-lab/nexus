@@ -11,12 +11,9 @@ Tests the multi-zone topology:
 
 5 zones: root, corp, corp-eng, corp-sales, family
 
-Prerequisites:
-    docker compose -f dockerfiles/docker-compose.cross-platform-test.yml \
-        up -d postgres dragonfly nexus-1 nexus-2 witness
-
-Run:
-    uv run python -m pytest tests/e2e/test_federation_e2e.py -o "addopts=" -v
+Run (from inside Docker network — production-consistent):
+    docker compose -f dockerfiles/docker-compose.cross-platform-test.yml up -d
+    docker compose -f dockerfiles/docker-compose.cross-platform-test.yml logs -f test
 """
 
 from __future__ import annotations
@@ -34,10 +31,11 @@ import pytest
 pytestmark = [pytest.mark.xdist_group("federation-e2e")]
 
 # ---------------------------------------------------------------------------
-# Configuration
+# Configuration — Docker-internal addresses (same network as Raft nodes)
 # ---------------------------------------------------------------------------
-NODE1_URL = "http://localhost:2026"
-NODE2_URL = "http://localhost:2027"
+NODE1_URL = "http://nexus-1:2026"
+NODE2_URL = "http://nexus-2:2026"
+GRPC_ADDR = "nexus-1:2126"  # gRPC Raft transport
 HEALTH_TIMEOUT = 120  # longer for multi-zone startup
 
 # Map Raft node IDs to HTTP URLs (for leader-hint following)
@@ -166,9 +164,8 @@ def cluster():
     """Ensure the docker-compose cluster is running and healthy."""
     if _health(NODE1_URL) is None:
         pytest.skip(
-            "Docker cluster not running. Start with:\n"
-            "  docker compose -f dockerfiles/docker-compose.cross-platform-test.yml "
-            "up -d postgres dragonfly nexus-1 nexus-2 witness"
+            "Raft cluster not reachable. Ensure this test runs inside the Docker network:\n"
+            "  docker compose -f dockerfiles/docker-compose.cross-platform-test.yml up -d"
         )
     _wait_healthy([NODE1_URL, NODE2_URL])
     return {"node1": NODE1_URL, "node2": NODE2_URL}
@@ -608,29 +605,30 @@ class TestgRPCDirectOperations:
         """Get cluster info via gRPC — verify leader_id, term, is_leader."""
         try:
             from nexus.raft.client import RaftClient
+            from nexus.raft.zone_manager import ROOT_ZONE_ID
         except ImportError:
             pytest.skip("RaftClient not available (requires Rust extension)")
 
-        client = None
         try:
-            client = RaftClient("localhost:2126")
-            info = await client.get_cluster_info()
-            assert info is not None
-            # Verify leader_id is a valid node (1 or 2, NOT 3/witness)
-            if hasattr(info, "leader_id") and info.leader_id:
-                assert info.leader_id in (
-                    1,
-                    2,
-                ), f"Witness became leader: {info.leader_id}"
-            if hasattr(info, "term"):
-                assert info.term >= 1
+            async with RaftClient(GRPC_ADDR, zone_id=ROOT_ZONE_ID) as client:
+                info = await client.get_cluster_info()
+                assert info is not None
+                # get_cluster_info returns a dict
+                leader_id = (
+                    info.get("leader_id")
+                    if isinstance(info, dict)
+                    else getattr(info, "leader_id", None)
+                )
+                term = info.get("term") if isinstance(info, dict) else getattr(info, "term", None)
+                # Verify leader_id is a valid node (1 or 2, NOT 3/witness)
+                if leader_id:
+                    assert leader_id in (1, 2), f"Witness became leader: {leader_id}"
+                if term is not None:
+                    assert term >= 1
         except Exception as e:
             if "connect" in str(e).lower() or "refused" in str(e).lower():
                 pytest.skip(f"gRPC not reachable: {e}")
             raise
-        finally:
-            if client and hasattr(client, "close"):
-                await client.close()
 
     @pytest.mark.asyncio
     async def test_grpc_metadata_roundtrip(self, cluster):
@@ -638,56 +636,49 @@ class TestgRPCDirectOperations:
         try:
             from nexus.core._metadata_generated import FileMetadata
             from nexus.raft.client import RaftClient
+            from nexus.raft.zone_manager import ROOT_ZONE_ID
         except ImportError:
             pytest.skip("RaftClient or FileMetadata not available")
 
         uid = _uid()
-        client = None
         try:
-            client = RaftClient("localhost:2126")
+            async with RaftClient(GRPC_ADDR, zone_id=ROOT_ZONE_ID) as client:
+                meta = FileMetadata(
+                    path=f"/grpc-test-{uid}.txt",
+                    backend_name="local",
+                    physical_path=f"/data/grpc-test-{uid}.txt",
+                    size=42,
+                )
+                await client.put_metadata(meta)
 
-            meta = FileMetadata(
-                path=f"/grpc-test-{uid}.txt",
-                backend_name="local",
-                physical_path=f"/data/grpc-test-{uid}.txt",
-                size=42,
-            )
-            await client.put_metadata(meta)
-
-            result = await client.get_metadata(f"/grpc-test-{uid}.txt")
-            assert result is not None
-            assert result.size == 42
+                result = await client.get_metadata(f"/grpc-test-{uid}.txt")
+                assert result is not None
+                assert result.size == 42
         except Exception as e:
             err = str(e).lower()
             if "connect" in err or "not implemented" in err or "refused" in err:
                 pytest.skip(f"gRPC operation not available: {e}")
             raise
-        finally:
-            if client and hasattr(client, "close"):
-                await client.close()
 
     @pytest.mark.asyncio
     async def test_grpc_list_metadata(self, cluster):
         """List metadata entries via gRPC."""
         try:
             from nexus.raft.client import RaftClient
+            from nexus.raft.zone_manager import ROOT_ZONE_ID
         except ImportError:
             pytest.skip("RaftClient not available")
 
-        client = None
         try:
-            client = RaftClient("localhost:2126")
-            entries = await client.list_metadata(prefix="/")
-            assert entries is not None
-            assert len(entries) >= 0  # Root zone should have at least "/"
+            async with RaftClient(GRPC_ADDR, zone_id=ROOT_ZONE_ID) as client:
+                entries = await client.list_metadata(prefix="/")
+                assert entries is not None
+                assert len(entries) >= 0  # Root zone should have at least "/"
         except Exception as e:
             err = str(e).lower()
             if "connect" in err or "not implemented" in err or "refused" in err:
                 pytest.skip(f"gRPC list not available: {e}")
             raise
-        finally:
-            if client and hasattr(client, "close"):
-                await client.close()
 
 
 # ---------------------------------------------------------------------------

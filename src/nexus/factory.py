@@ -376,7 +376,7 @@ def create_nexus_services(
         deferred_permission_buffer.start()
 
     # --- Workspace Registry ---
-    from nexus.core.workspace_registry import WorkspaceRegistry
+    from nexus.services.workspace.workspace_registry import WorkspaceRegistry
 
     workspace_registry = WorkspaceRegistry(
         metadata=metadata_store,
@@ -385,12 +385,12 @@ def create_nexus_services(
     )
 
     # --- Mount Manager ---
-    from nexus.core.mount_manager import MountManager
+    from nexus.services.mount_manager import MountManager
 
     mount_manager = MountManager(record_store)
 
     # --- Workspace Manager ---
-    from nexus.core.workspace_manager import WorkspaceManager
+    from nexus.services.workspace_manager import WorkspaceManager
 
     workspace_manager = WorkspaceManager(
         metadata=metadata_store,
@@ -707,7 +707,7 @@ def _create_distributed_infra(
             import os
 
             coordination_url_resolved = coordination_url or os.getenv("NEXUS_REDIS_URL")
-            event_url_resolved = coordination_url_resolved or os.getenv("NEXUS_DRAGONFLY_CACHE_URL")
+            event_url_resolved = coordination_url_resolved or os.getenv("NEXUS_DRAGONFLY_URL")
             if event_url_resolved:
                 from nexus.cache.dragonfly import DragonflyClient
                 from nexus.core.event_bus import RedisEventBus, set_global_event_bus

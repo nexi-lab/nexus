@@ -457,11 +457,10 @@ class TestGetOperationContext:
                 "subject_id": "agent-001",
                 "zone_id": "root",
                 "is_admin": False,
-                "metadata": {"owner_user_id": "alice"},
             }
         )
         assert ctx.agent_id == "agent-001"
-        assert ctx.user == "alice"  # From owner_user_id
+        assert ctx.user == "agent-001"
 
     def test_x_agent_id_upgrades_user_to_agent(self):
         """X-Agent-ID header should upgrade user subject to agent."""

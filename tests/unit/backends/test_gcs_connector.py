@@ -517,7 +517,7 @@ class TestCacheMixinInheritance:
         assert hasattr(gcs_connector_backend, "_write_to_cache")
         assert hasattr(gcs_connector_backend, "_invalidate_cache")
         assert hasattr(gcs_connector_backend, "_check_version")
-        assert hasattr(gcs_connector_backend, "sync")
+        assert hasattr(gcs_connector_backend, "sync_content_to_cache")
 
     def test_db_session_attribute(self, mock_storage_client: Mock) -> None:
         """Test db_session is stored as attribute."""

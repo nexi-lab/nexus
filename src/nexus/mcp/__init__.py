@@ -24,7 +24,7 @@ Usage:
     server.run()
 
     # Infrastructure API key management
-    from nexus.mcp import set_request_api_key
+    from nexus.mcp import set_request_api_key, reset_request_api_key
 
     # In middleware/proxy code:
     token = set_request_api_key("sk-user-api-key")
@@ -32,7 +32,7 @@ Usage:
         # Tool calls here will use this API key
         pass
     finally:
-        token.reset()
+        reset_request_api_key(token)
 
     # Unified MCP connection (Klavis or local)
     from nexus.mcp import KlavisClient, MCPProviderRegistry
@@ -54,6 +54,7 @@ from nexus.mcp.provider_registry import (
 from nexus.mcp.server import (
     create_mcp_server,
     get_request_api_key,
+    reset_request_api_key,
     set_request_api_key,
 )
 
@@ -62,6 +63,7 @@ __all__ = [
     "create_mcp_server",
     "set_request_api_key",
     "get_request_api_key",
+    "reset_request_api_key",
     # Connection manager
     "MCPConnectionManager",
     "MCPConnection",

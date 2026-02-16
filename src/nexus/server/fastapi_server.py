@@ -59,6 +59,9 @@ from nexus.core.exceptions import (
     NexusPermissionError,
     ValidationError,
 )
+from nexus.core.rpc_codec import decode_rpc_message, encode_rpc_message
+
+# --- Extracted modules (re-exported for backward compatibility) ---
 from nexus.server.dependencies import (  # noqa: E402
     get_auth_result,
     get_operation_context,
@@ -75,8 +78,6 @@ from nexus.server.path_utils import (
 from nexus.server.protocol import (
     RPCErrorCode,
     RPCRequest,
-    decode_rpc_message,
-    encode_rpc_message,
     parse_method_params,
 )
 from nexus.server.rate_limiting import (  # noqa: E402
@@ -744,7 +745,7 @@ async def lifespan(_app: FastAPI) -> Any:
             # Reuse OAuthCrypto for Fernet encryption of private keys
             _db_url = _app.state.database_url or "sqlite:///nexus.db"
             _identity_oauth_crypto = OAuthCrypto(db_url=_db_url)
-            _identity_crypto = IdentityCrypto(token_encryptor=_identity_oauth_crypto)
+            _identity_crypto = IdentityCrypto(oauth_crypto=_identity_oauth_crypto)
 
             _app.state.key_service = KeyService(
                 record_store=_kya_record_store,

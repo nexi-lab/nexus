@@ -302,9 +302,9 @@ class TestBatchWriteToCache:
             # Call batch write
             result = backend._batch_write_to_cache(entries)
 
-            # Verify all entries written
+            # Verify all entries written (cache_id is "" in disk-only mode)
             assert len(result) == 3
-            assert all(entry.cache_id for entry in result)
+            assert all(entry.content_hash for entry in result)
 
     def test_batch_write_empty_list(self, tmp_path: Path):
         """Test batch write with empty list."""

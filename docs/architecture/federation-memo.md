@@ -410,16 +410,22 @@ Path: /company/engineering/team1/file.txt
 **Node bootstrap flow:**
 ```
 nexus start (first time)
-  → bootstrap(root_zone_id="root", peers=None)
-  → create_zone("root", peers=[])       # single-node Raft group
-  → put("/", DT_DIR, i_links_count=1)   # POSIX root self-reference
+  → bootstrap(root_zone_id=ROOT_ZONE_ID, peers=None)  # ROOT_ZONE_ID = "root"
+  → create_zone(ROOT_ZONE_ID, peers=[])                # single-node Raft group
+  → put("/", DT_DIR, i_links_count=1)                  # POSIX root self-reference
 
 nexus start (multi-node static bootstrap)
   → NEXUS_PEERS="2@node2:2126,3@node3:2126"
-  → bootstrap(root_zone_id="root", peers=[...])
-  → create_zone("root", peers=[...])    # N-node Raft group
+  → bootstrap(root_zone_id=ROOT_ZONE_ID, peers=[...])
+  → create_zone(ROOT_ZONE_ID, peers=[...])             # N-node Raft group
   → put("/", DT_DIR, i_links_count=1)
 ```
+
+**Constants (SSOT):**
+
+| Constant | Value | Location | Usage |
+|----------|-------|----------|-------|
+| `ROOT_ZONE_ID` | `"root"` | `src/nexus/raft/zone_manager.py:30` | Default zone for standalone and root of federation tree. All code MUST import this constant — never hardcode `"root"` or `"default"`. |
 
 **Previous design note**: An earlier draft (§6.5 pre-2026-02-13) proposed DNS-style
 hierarchical zone discovery with a Root Zone acting like DNS root servers, client-side

@@ -16,7 +16,7 @@ import signal
 import socket
 import subprocess
 import sys
-import time
+import threading
 import uuid
 from contextlib import closing, suppress
 from pathlib import Path
@@ -42,19 +42,23 @@ def find_free_port() -> int:
         return s.getsockname()[1]
 
 
-def wait_for_server(url: str, timeout: float = 30.0) -> bool:
-    """Wait for server to be ready by polling /health endpoint."""
-    start = time.time()
-    while time.time() - start < timeout:
-        try:
-            # trust_env=False prevents proxy interference with localhost
-            response = httpx.get(f"{url}/health", timeout=1.0, trust_env=False)
-            if response.status_code == 200:
-                return True
-        except (httpx.ConnectError, httpx.ReadTimeout):
-            pass
-        time.sleep(0.1)
-    return False
+def _drain_pipe(pipe, lines: list[str], ready: threading.Event | None = None):
+    """Read lines from a subprocess pipe (runs in daemon thread).
+
+    If *ready* is provided and a line contains "Application startup complete",
+    the event is set — giving the caller an event-driven readiness signal
+    instead of polling /health.
+    """
+    try:
+        for raw in iter(pipe.readline, b""):
+            decoded = raw.decode(errors="replace")
+            lines.append(decoded)
+            if ready and "Application startup complete" in decoded:
+                ready.set()
+    except ValueError:
+        pass  # pipe closed
+    finally:
+        pipe.close()
 
 
 # Aggressive cleanup to prevent SQLite "database is locked" errors
@@ -156,16 +160,32 @@ def nexus_server(isolated_db, tmp_path):
         preexec_fn=os.setsid if sys.platform != "win32" else None,
     )
 
-    # Wait for server to be ready (PG startup is heavier than SQLite)
-    _startup_timeout = 60.0 if "postgresql" in env.get("NEXUS_DATABASE_URL", "") else 30.0
-    if not wait_for_server(base_url, timeout=_startup_timeout):
-        # Server failed to start, get output for debugging
+    # Event-driven readiness: drain stdout/stderr in background threads and
+    # wait for uvicorn's "Application startup complete" log line.  This is
+    # deterministic (no polling race) and prevents pipe-buffer deadlocks.
+    stderr_lines: list[str] = []
+    stdout_lines: list[str] = []
+    ready = threading.Event()
+
+    t_err = threading.Thread(
+        target=_drain_pipe, args=(process.stderr, stderr_lines, ready), daemon=True
+    )
+    t_out = threading.Thread(target=_drain_pipe, args=(process.stdout, stdout_lines), daemon=True)
+    t_err.start()
+    t_out.start()
+
+    # 120s safety ceiling — NOT a polling interval.  The event fires the
+    # instant the server emits the log line, so this only triggers on a
+    # genuine hang.
+    if not ready.wait(timeout=120.0):
         process.terminate()
-        stdout, stderr = process.communicate(timeout=5)
+        t_err.join(timeout=2)
+        t_out.join(timeout=2)
         pytest.fail(
-            f"Server failed to start on port {port}.\n"
-            f"stdout: {stdout.decode()}\n"
-            f"stderr: {stderr.decode()}"
+            f"Server failed to start on port {port} "
+            f"(never saw 'Application startup complete').\n"
+            f"stdout: {''.join(stdout_lines)}\n"
+            f"stderr: {''.join(stderr_lines)}"
         )
 
     yield {

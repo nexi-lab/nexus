@@ -15,7 +15,6 @@
 #
 # Optional profiles:
 #   - zoekt: Trigram-based code search (sub-50ms on large codebases)
-#   - test: Linux test runner (pytest in container)
 #
 # Usage:
 #   docker compose -f dockerfiles/docker-compose.cross-platform-test.yml up -d
@@ -364,6 +363,7 @@ services:
       NEXUS_BIND_ADDR: 0.0.0.0:2126
       NEXUS_PEERS: "1@nexus-1:2126,2@nexus-2:2126,3@witness:2126"
       NEXUS_DATA_DIR: /home/nexus/data
+      NEXUS_FEDERATION_ZONES: "corp,corp-eng,corp-sales,family"
       RUST_LOG: info,nexus_raft=debug
     ports:
       - "2128:2126"   # Raft gRPC (host:2128 → container:2126)
@@ -556,37 +556,38 @@ services:
       - nexus-network
 
   # ==========================================================================
-  # Test Runner — pytest in Linux container (Optional)
+  # E2E Test Runner — runs inside Docker network (production-consistent)
+  #
+  # Uses the same nexus-fullnode image (Rust extension pre-compiled).
+  # Runs after cluster is healthy — same network as Raft nodes, so
+  # Docker-internal hostnames (nexus-1:2026, nexus-2:2126) resolve directly.
+  # This matches production where clients are on the same network as servers.
   #
   # Usage:
-  #   docker compose --profile test -f dockerfiles/docker-compose.cross-platform-test.yml run --rm test
+  #   docker compose -f dockerfiles/docker-compose.cross-platform-test.yml up -d
+  #   # test service runs automatically after cluster is healthy
+  #   docker compose -f dockerfiles/docker-compose.cross-platform-test.yml logs -f test
   # ==========================================================================
   test:
-    image: python:3.13
+    image: nexus-fullnode:latest
     container_name: nexus-test
     working_dir: /app
-    profiles:
-      - test
+    depends_on:
+      nexus-1:
+        condition: service_healthy
+      nexus-2:
+        condition: service_healthy
+    entrypoint: []
     volumes:
       - ..:/app
-      - test_cache:/root/.cache
     environment:
       PYTHONUNBUFFERED: "1"
     command: >
       bash -c '
-        echo "Installing Rust toolchain..."
-        curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-        . $$HOME/.cargo/env
-        echo "Installing dependencies..."
-        pip install -q uv
-        uv pip install --system -e ".[dev,test]" -q
-        echo "Platform: $$(python -c "import sys; print(sys.platform)")"
-        echo "Running tests..."
-        if [ -z "$$@" ]; then
-          pytest tests/unit/ -v --no-header -o "addopts=" -x --timeout=60
-        else
-          pytest "$$@"
-        fi
+        echo "Installing test dependencies..."
+        pip install -q pytest pytest-asyncio pytest-timeout httpx grpcio grpcio-tools protobuf
+        echo "Running E2E tests..."
+        python -m pytest tests/e2e/ -v --no-header -o "addopts=" -x --timeout=120
       '
     networks:
       - nexus-network
@@ -624,8 +625,6 @@ volumes:
     name: nexus-cluster-zoekt-index
   langgraph_data:
     name: nexus-cluster-langgraph-data
-  test_cache:
-    name: nexus-cluster-test-cache
 
 # ==========================================================================
 # Quick Reference
@@ -673,8 +672,9 @@ volumes:
 #     -H "Content-Type: application/json" \
 #     -d '{"jsonrpc":"2.0","method":"read","params":{"path":"/test.txt"},"id":1}'
 #
-# Run Linux tests:
-#   docker compose -f dockerfiles/docker-compose.cross-platform-test.yml --profile test run --rm test
+# Run E2E tests (automatic — test service starts after cluster is healthy):
+#   docker compose -f dockerfiles/docker-compose.cross-platform-test.yml up -d
+#   docker compose -f dockerfiles/docker-compose.cross-platform-test.yml logs -f test
 #
 # Cleanup:
 #   docker compose -f dockerfiles/docker-compose.cross-platform-test.yml down -v

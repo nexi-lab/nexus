@@ -65,26 +65,30 @@ class SkillRegistry:
         "system": "/skill/",
     }
 
-    @staticmethod
-    def get_tier_paths(context: OperationContext | None = None) -> dict[str, str]:
+    @classmethod
+    def get_tier_paths(cls, context: OperationContext | None = None) -> dict[str, str]:
         """Get context-aware tier paths for skill discovery.
+
+        Always includes TIER_PATHS as baseline defaults. When a context is
+        provided, context-aware paths override the defaults for their tier.
 
         Structure (new namespace convention):
             /skill/                                            - System-wide skills (priority 1)
             /zone/{zone_id}/skill/                           - Zone shared skills (priority 2)
             /zone/{zone_id}/user/{user_id}/skill/            - User personal skills (priority 3)
 
-        Legacy paths (for backward compatibility):
-            /skills/zones/{zone_id}/                          - Old zone path
-            /skills/users/{user_id}/                            - Old user path
+        Without context, falls back to TIER_PATHS which provides default
+        paths for user, zone, and system tiers.
 
         Args:
             context: Operation context with user_id, zone_id, agent_id
 
         Returns:
-            Dict mapping tier name to path (only tiers available for this context)
+            Dict mapping tier name to path (all tiers from TIER_PATHS plus
+            any context-specific overrides)
         """
-        paths = {"system": "/skill/"}
+        # Start with static TIER_PATHS as baseline defaults
+        paths: dict[str, str] = {**cls.TIER_PATHS}
 
         if context:
             zone_id = context.zone_id or "root"
@@ -97,6 +101,8 @@ class SkillRegistry:
             if user_id:
                 # Personal skills: /zone/{tid}/user/{uid}/skill/
                 paths["personal"] = f"/zone/{zone_id}/user/{user_id}/skill/"
+                # Override the default user path with context-aware path
+                paths["user"] = f"/zone/{zone_id}/user/{user_id}/skill/"
 
         return paths
 
@@ -149,18 +155,14 @@ class SkillRegistry:
         """
         tier_paths = self.get_tier_paths(context)
 
-        # Merge with static TIER_PATHS for backward compatibility
-        # Context-aware paths take precedence over static paths
-        merged_paths = {**self.TIER_PATHS, **tier_paths}
-
         if tiers is None:
-            tiers = list(merged_paths.keys())
+            tiers = list(tier_paths.keys())
 
         discovered_count = 0
 
         # Discover from each tier (in priority order - higher priority first)
         for tier in sorted(tiers, key=lambda t: self.TIER_PRIORITY.get(t, 0), reverse=True):
-            tier_path = merged_paths.get(tier)
+            tier_path = tier_paths.get(tier)
             if not tier_path:
                 logger.debug(f"Tier {tier} not available for context")
                 continue

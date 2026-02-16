@@ -1046,7 +1046,7 @@ class ReBACService:
         """Extract subject from operation context.
 
         Args:
-            context: Operation context (OperationContext, EnhancedOperationContext, or dict)
+            context: Operation context (OperationContext or dict)
 
         Returns:
             Subject tuple (type, id) or None if not found
@@ -1110,7 +1110,7 @@ class ReBACService:
 
         Args:
             resource: Resource tuple (object_type, object_id)
-            context: Operation context (OperationContext, EnhancedOperationContext, or dict)
+            context: Operation context (OperationContext or dict)
             required_permission: Permission level required (default: "execute" for ownership)
 
         Raises:

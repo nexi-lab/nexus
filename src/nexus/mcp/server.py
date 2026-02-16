@@ -39,8 +39,7 @@ def set_request_api_key(api_key: str) -> contextvars.Token[str | None]:
         A token that can be used to reset the context variable
 
     Example:
-        >>> from nexus.mcp import set_request_api_key
-        >>> from nexus.mcp.server import _request_api_key
+        >>> from nexus.mcp import set_request_api_key, reset_request_api_key
         >>>
         >>> # In middleware or proxy code:
         >>> token = set_request_api_key("sk-user-api-key-xyz")
@@ -49,7 +48,7 @@ def set_request_api_key(api_key: str) -> contextvars.Token[str | None]:
         ...     result = mcp_server.call_tool("nexus_read_file", path="/data.txt")
         ... finally:
         ...     # Clean up context
-        ...     _request_api_key.reset(token)
+        ...     reset_request_api_key(token)
     """
     return _request_api_key.set(api_key)
 
@@ -64,6 +63,15 @@ def get_request_api_key() -> str | None:
         The current request API key, or None if not set
     """
     return _request_api_key.get()
+
+
+def reset_request_api_key(token: contextvars.Token[str | None]) -> None:
+    """Reset the request API key context variable using a previously saved token.
+
+    Args:
+        token: The token returned by set_request_api_key()
+    """
+    _request_api_key.reset(token)
 
 
 def create_mcp_server(
@@ -92,13 +100,13 @@ def create_mcp_server(
         (e.g., HTTP middleware, proxy, gateway) without exposing them to AI agents.
 
         Infrastructure should set the API key using:
-            from nexus.mcp.server import set_request_api_key
+            from nexus.mcp import set_request_api_key, reset_request_api_key
             token = set_request_api_key("sk-user-api-key-xyz")
             try:
                 # Make MCP tool calls here
                 pass
             finally:
-                token.reset()
+                reset_request_api_key(token)
 
         The api_key parameter serves as the default when no per-request key is set.
 
@@ -1405,7 +1413,7 @@ def main() -> None:
                         return response
                     finally:
                         if token:
-                            _request_api_key.reset(token)
+                            reset_request_api_key(token)
 
             # Add middleware to the underlying Starlette app
             # FastMCP's http_app is a method that returns the Starlette application

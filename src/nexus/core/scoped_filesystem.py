@@ -225,15 +225,11 @@ class ScopedFilesystem:
         path: str = "/",
         recursive: bool = True,
         details: bool = False,
-        prefix: str | None = None,
         show_parsed: bool = True,
         context: Any = None,
     ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
         """List files in a directory."""
-        scoped_prefix = self._scope_path(prefix) if prefix else None
-        result = self._fs.list(
-            self._scope_path(path), recursive, details, scoped_prefix, show_parsed, context
-        )
+        result = self._fs.list(self._scope_path(path), recursive, details, show_parsed, context)
         if details:
             return [self._unscope_dict(r, ["path", "virtual_path"]) for r in result]  # type: ignore
         return self._unscope_paths(result)  # type: ignore

@@ -16,7 +16,6 @@ Only VFSRouterProtocol remains in core/protocols/ as it is a kernel concern
 
 Storage Affinity (per data-storage-matrix.md):
     - AgentRegistryProtocol  → RecordStore (relational agent identity)
-    - EventLogProtocol       → RecordStore (append-only BRIN audit log)
     - HookEngineProtocol     → CacheStore (ephemeral hook registration)
     - NamespaceManagerProtocol → RecordStore + CacheStore (ReBAC views)
     - SchedulerProtocol      → CacheStore or RecordStore (work queue)
@@ -28,7 +27,6 @@ References:
 
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from nexus.services.protocols.context_manifest import ContextManifestProtocol
-from nexus.services.protocols.event_log import EventId, EventLogProtocol, KernelEvent
 from nexus.services.protocols.hook_engine import (
     POST_COPY,
     POST_DELETE,
@@ -56,14 +54,11 @@ __all__ = [
     "AgentRegistryProtocol",
     "AgentRequest",
     "ContextManifestProtocol",
-    "EventId",
-    "EventLogProtocol",
     "HookContext",
     "HookEngineProtocol",
     "HookId",
     "HookResult",
     "HookSpec",
-    "KernelEvent",
     "NamespaceManagerProtocol",
     "NamespaceMount",
     "POST_COPY",

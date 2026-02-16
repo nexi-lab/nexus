@@ -6,7 +6,7 @@ of truth for memory response shapes.
 
 Usage:
     model = MemoryDetailResponse.from_memory_model(memory, content="...")
-    return model.model_dump()  # backward-compatible dict
+    return model.model_dump()
 """
 
 from __future__ import annotations
@@ -265,7 +265,7 @@ class BatchOperationResult(BaseModel):
     failed_ids: list[str]
 
     def to_dict(self, success_key: str = "success", failed_key: str = "failed") -> dict[str, Any]:
-        """Convert to legacy dict format with custom key names.
+        """Convert to dict format with custom key names.
 
         Args:
             success_key: Name for the success count field (e.g., 'approved', 'deleted').

@@ -21,6 +21,7 @@ Subsystem ABC (Issue #1287):
 Phase 2: Core Refactoring (Issue #988)
 """
 
+from nexus.core.types import ContextIdentity, extract_context_identity
 from nexus.services.llm_service import LLMService
 from nexus.services.mcp_service import MCPService
 from nexus.services.mount_service import MountService
@@ -28,7 +29,7 @@ from nexus.services.oauth_service import OAuthService
 from nexus.services.rebac_service import ReBACService
 from nexus.services.search_service import SearchService
 from nexus.services.skill_service import SkillService
-from nexus.services.subsystem import ContextIdentity, Subsystem, extract_context_identity
+from nexus.services.subsystem import Subsystem
 from nexus.services.version_service import VersionService
 
 __all__ = [

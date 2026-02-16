@@ -97,8 +97,7 @@ class WorkspaceManager:
             - snapshot:list, snapshot:diff -> read (read-only)
         """
         if not self.rebac_manager:
-            # No ReBAC manager configured - allow operation
-            # This maintains backward compatibility for deployments without ReBAC
+            # No ReBAC manager configured — allow operation
             logger.warning(
                 f"WorkspaceManager: No ReBAC manager configured, allowing {permission} on {workspace_path}"
             )

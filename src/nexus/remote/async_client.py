@@ -738,7 +738,6 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         path: str = "/",
         recursive: bool = True,
         details: bool = False,
-        prefix: str | None = None,
         show_parsed: bool = True,
         context: Any = None,  # noqa: ARG002
     ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
@@ -748,7 +747,6 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
                 "path": path,
                 "recursive": recursive,
                 "details": details,
-                "prefix": prefix,
                 "show_parsed": show_parsed,
             },
         )

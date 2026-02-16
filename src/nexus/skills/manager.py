@@ -151,7 +151,7 @@ class SkillManager:
 
         try:
             # Get zone_id from context if not provided
-            effective_zone_id = zone_id or (context.zone_id if context else None) or "default"
+            effective_zone_id = zone_id or (context.zone_id if context else None) or "root"
 
             # For user-level skills: Owner gets direct_owner on the skill directory
             # This allows them full control (read, write, delete)
@@ -184,7 +184,7 @@ class SkillManager:
                     subject=("role", "public"),
                     relation="viewer",
                     object=("file", skill_dir.rstrip("/")),
-                    zone_id="default",  # System skills use default zone
+                    zone_id="root",  # System skills use root zone
                 )
                 logger.debug(f"Created public viewer permission on {skill_dir}")
 

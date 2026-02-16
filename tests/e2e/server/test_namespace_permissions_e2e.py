@@ -292,9 +292,7 @@ def test_health(base_url: str, client: httpx.Client) -> None:
     assert resp.json()["status"] == "healthy"
 
 
-def test_zero_grants_zero_visibility(
-    base_url: str, client: httpx.Client
-) -> None:
+def test_zero_grants_zero_visibility(base_url: str, client: httpx.Client) -> None:
     """Subject with no grants sees nothing (fail-closed).
 
     A user with no ReBAC grants → all paths return 404 (invisible).
@@ -346,10 +344,14 @@ def test_per_subject_namespace_isolation(
     assert resp.status_code == 200, f"Admin write failed: {resp.text}"
 
     # Admin grants ReBAC permissions via JSON-RPC
-    alice_tid = _rebac_grant(client, base_url, "alice", "direct_viewer", alice_path, headers=admin_headers)
+    alice_tid = _rebac_grant(
+        client, base_url, "alice", "direct_viewer", alice_path, headers=admin_headers
+    )
     assert alice_tid, "Grant alice failed"
 
-    bob_tid = _rebac_grant(client, base_url, "bob", "direct_viewer", bob_path, headers=admin_headers)
+    bob_tid = _rebac_grant(
+        client, base_url, "bob", "direct_viewer", bob_path, headers=admin_headers
+    )
     assert bob_tid, "Grant bob failed"
 
     # Wait for cache to settle (namespace manager rebuild)
@@ -390,9 +392,7 @@ def test_per_subject_namespace_isolation(
     assert resp.status_code == 404, f"Bob should NOT see {alice_path}: {resp.text}"
 
 
-def test_admin_bypasses_namespace(
-    base_url: str, client: httpx.Client, admin_headers: dict
-) -> None:
+def test_admin_bypasses_namespace(base_url: str, client: httpx.Client, admin_headers: dict) -> None:
     """Admin user bypasses namespace visibility checks.
 
     Admin creates a file that frank has no grant for, but admin can still access it.
@@ -498,7 +498,9 @@ def test_grant_revocation_makes_path_invisible(
     assert resp.status_code == 200
 
     # Admin grants eve viewer via JSON-RPC
-    tuple_id = _rebac_grant(client, base_url, "eve", "direct_viewer", project_path, headers=admin_headers)
+    tuple_id = _rebac_grant(
+        client, base_url, "eve", "direct_viewer", project_path, headers=admin_headers
+    )
     assert tuple_id, "Grant eve viewer failed"
 
     time.sleep(0.5)  # Cache settle

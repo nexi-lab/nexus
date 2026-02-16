@@ -147,8 +147,8 @@ async def _startup_event_bus(app: FastAPI) -> None:
     app.state.nexus_fs._main_event_loop = asyncio.get_running_loop()
 
     # Wire event_log into EventBus for WAL-first durability (Issue #1397)
-    if app.state.event_log is not None:
-        event_bus_ref._event_log = app.state.event_log
+    if app.state.event_log is not None and hasattr(event_bus_ref, "set_event_log"):
+        event_bus_ref.set_event_log(app.state.event_log)
         logger.info("Event log wired into EventBus (WAL-first before pub/sub)")
 
 

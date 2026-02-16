@@ -11,8 +11,6 @@ Extracted from:
     - tiger_cache.py (TigerCache, ResourceMapCache)
 """
 
-from __future__ import annotations
-
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -40,15 +38,7 @@ _PERM_GET = text("""
       AND expires_at > :now
 """)
 
-_PERM_DELETE_EXACT = text("""
-    DELETE FROM rebac_check_cache
-    WHERE zone_id = :zone_id
-      AND subject_type = :subject_type AND subject_id = :subject_id
-      AND permission = :permission
-      AND object_type = :object_type AND object_id = :object_id
-""")
-
-_PERM_INSERT = text("""
+_PERM_UPSERT = text("""
     INSERT INTO rebac_check_cache (
         cache_id, zone_id, subject_type, subject_id, permission,
         object_type, object_id, result, computed_at, expires_at
@@ -57,6 +47,12 @@ _PERM_INSERT = text("""
         :cache_id, :zone_id, :subject_type, :subject_id, :permission,
         :object_type, :object_id, :result, :computed_at, :expires_at
     )
+    ON CONFLICT (zone_id, subject_type, subject_id, permission, object_type, object_id)
+    DO UPDATE SET
+        cache_id = EXCLUDED.cache_id,
+        result = EXCLUDED.result,
+        computed_at = EXCLUDED.computed_at,
+        expires_at = EXCLUDED.expires_at
 """)
 
 _PERM_DELETE_SUBJECT = text("""
@@ -92,7 +88,6 @@ _PERM_COUNT_VALID = text("""
     FROM rebac_check_cache
     WHERE expires_at > :now
 """)
-
 
 # ---------------------------------------------------------------------------
 # SQL Queries — Tiger Cache (tiger_cache table)
@@ -146,11 +141,9 @@ _RESMAP_BULK_GET = text("""
     )
 """)
 
-
 # ===========================================================================
 # PostgresPermissionCache
 # ===========================================================================
-
 
 class PostgresPermissionCache:
     """PostgreSQL-backed permission cache using rebac_check_cache table.
@@ -216,24 +209,17 @@ class PostgresPermissionCache:
         expires_at = now + timedelta(seconds=ttl)
         cache_id = str(uuid.uuid4())
 
-        params: dict[str, Any] = {
-            "zone_id": zone_id,
-            "subject_type": subject_type,
-            "subject_id": subject_id,
-            "permission": permission,
-            "object_type": object_type,
-            "object_id": object_id,
-        }
-
         with self._engine.begin() as conn:
-            # Delete existing entry (idempotent upsert via DELETE + INSERT)
-            conn.execute(_PERM_DELETE_EXACT, params)
-            # Insert new entry
             conn.execute(
-                _PERM_INSERT,
+                _PERM_UPSERT,
                 {
-                    **params,
                     "cache_id": cache_id,
+                    "zone_id": zone_id,
+                    "subject_type": subject_type,
+                    "subject_id": subject_id,
+                    "permission": permission,
+                    "object_type": object_type,
+                    "object_id": object_id,
                     "result": int(result),
                     "computed_at": now,
                     "expires_at": expires_at,
@@ -335,11 +321,9 @@ class PostgresPermissionCache:
             "valid_entries": count,
         }
 
-
 # ===========================================================================
 # PostgresTigerCache
 # ===========================================================================
-
 
 class PostgresTigerCache:
     """PostgreSQL-backed Tiger cache using tiger_cache table.
@@ -443,11 +427,9 @@ class PostgresTigerCache:
         except Exception:
             return False
 
-
 # ===========================================================================
 # PostgresResourceMapCache
 # ===========================================================================
-
 
 class PostgresResourceMapCache:
     """PostgreSQL-backed resource map cache using tiger_resource_map table.

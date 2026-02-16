@@ -319,9 +319,18 @@ class DragonflyCacheStore(CacheStoreABC):
 
     async def delete_by_pattern(self, pattern: str) -> int:
         deleted = 0
+        pipe = self._client.client.pipeline()
+        batch_size = 0
         async for key in self._client.client.scan_iter(match=pattern, count=1000):
-            await self._client.client.delete(key)
+            pipe.delete(key)
+            batch_size += 1
             deleted += 1
+            if batch_size >= 500:
+                await pipe.execute()
+                pipe = self._client.client.pipeline()
+                batch_size = 0
+        if batch_size > 0:
+            await pipe.execute()
         return deleted
 
     # --- PubSub operations ---

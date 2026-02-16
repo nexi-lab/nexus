@@ -1332,11 +1332,13 @@ class CacheConnectorMixin:
         if path:
             # Remove specific path from memory cache
             memory_key = f"cache_entry:{path}"
-            memory_cache.remove(memory_key)
+            if memory_cache is not None:
+                memory_cache.remove(memory_key)
         elif mount_prefix:
             # For prefix invalidation, clear entire memory cache
             # (More targeted invalidation would require iterating all keys)
-            memory_cache.clear()
+            if memory_cache is not None:
+                memory_cache.clear()
 
         # Invalidate L2 database cache
         session = self._get_db_session()

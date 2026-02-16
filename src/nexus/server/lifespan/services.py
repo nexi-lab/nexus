@@ -442,3 +442,6 @@ async def _startup_workflow_engine(app: FastAPI) -> None:
             logger.info("Workflow engine started — loaded workflows from storage")
         except Exception as e:
             logger.warning(f"Workflow engine startup failed (non-fatal): {e}")
+
+    # Expose on app.state so routers can access without reaching into NexusFS
+    app.state.workflow_engine = engine

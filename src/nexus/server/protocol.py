@@ -307,14 +307,6 @@ def decode_rpc_message(data: bytes) -> dict[str, Any]:
 
 
 # ============================================================
-# RPC Exposure Decorator
-# ============================================================
-
-# Import decorator from core module to avoid circular imports
-# Re-export here for backward compatibility
-from nexus.core.rpc_decorator import rpc_expose  # noqa: F401, E402
-
-# ============================================================
 # Method-specific parameter schemas
 # ============================================================
 

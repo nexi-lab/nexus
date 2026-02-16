@@ -148,16 +148,10 @@ class SemanticSearchMixin:
             )
             await self._async_search.initialize()
 
-            self._semantic_search = SemanticSearch(
-                nx=nx,
-                embedding_provider=emb_provider,
-                chunk_size=chunk_size,
-                chunk_strategy=chunk_strat,
-                engine=record_store_engine,
-            )
-            self._semantic_search.initialize()
-        else:
-            from nexus.search.semantic import SemanticSearch
+            # Issue #1520: Inject FileReaderProtocol when available
+            from nexus.factory import _NexusFSFileReader
+
+            _file_reader = _NexusFSFileReader(nx) if nx is not None else None
 
             self._semantic_search = SemanticSearch(
                 nx=nx,
@@ -165,6 +159,24 @@ class SemanticSearchMixin:
                 chunk_size=chunk_size,
                 chunk_strategy=chunk_strat,
                 engine=record_store_engine,
+                file_reader=_file_reader,
+            )
+            self._semantic_search.initialize()
+        else:
+            from nexus.search.semantic import SemanticSearch
+
+            # Issue #1520: Inject FileReaderProtocol when available
+            from nexus.factory import _NexusFSFileReader
+
+            _file_reader = _NexusFSFileReader(nx) if nx is not None else None
+
+            self._semantic_search = SemanticSearch(
+                nx=nx,
+                embedding_provider=emb_provider,
+                chunk_size=chunk_size,
+                chunk_strategy=chunk_strat,
+                engine=record_store_engine,
+                file_reader=_file_reader,
             )
             self._semantic_search.initialize()
             self._async_search = None

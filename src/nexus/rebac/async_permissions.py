@@ -236,8 +236,8 @@ class AsyncPermissionEnforcer:
 
         # Filter paths based on results
         filtered = []
-        for path, allowed in zip(paths, results, strict=True):
-            if allowed:
+        for path, check in zip(paths, checks, strict=True):
+            if results.get(check, False):
                 filtered.append(path)
 
         logger.info(

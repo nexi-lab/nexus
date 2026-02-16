@@ -228,7 +228,7 @@ class TestBackfillLiveServer:
         response = client.post(
             "/api/nfs/backfill_directory_index",
             headers={"Authorization": f"Bearer {user_key}"},
-            json={"params": {"prefix": "/skills", "zone_id": "default"}},
+            json={"params": {"prefix": "/skills", "zone_id": "root"}},
         )
 
         body = response.json()

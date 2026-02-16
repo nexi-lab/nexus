@@ -116,7 +116,7 @@ class HotspotDetector:
         subject_id: str,
         resource_type: str,
         permission: str,
-        zone_id: str = "default",
+        zone_id: str = "root",
     ) -> None:
         """Record a permission check access.
 
@@ -220,7 +220,7 @@ class HotspotDetector:
         subject_id: str,
         resource_type: str,
         permission: str,
-        zone_id: str = "default",
+        zone_id: str = "root",
     ) -> int:
         """Get current access count for a specific key within the window.
 
@@ -249,7 +249,7 @@ class HotspotDetector:
         subject_id: str,
         resource_type: str,
         permission: str,
-        zone_id: str = "default",
+        zone_id: str = "root",
     ) -> bool:
         """Check if a specific key is currently hot.
 

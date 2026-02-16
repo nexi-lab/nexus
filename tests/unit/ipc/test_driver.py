@@ -51,19 +51,19 @@ class TestIPCVFSDriverProperties:
     """Tests for driver identity and capability flags."""
 
     def test_name_is_ipc(self) -> None:
-        driver = IPCVFSDriver(storage=InMemoryStorageDriver())
+        driver = IPCVFSDriver(storage=InMemoryStorageDriver(), zone_id=ZONE)
         assert driver.name == "ipc"
 
     def test_has_virtual_filesystem(self) -> None:
-        driver = IPCVFSDriver(storage=InMemoryStorageDriver())
+        driver = IPCVFSDriver(storage=InMemoryStorageDriver(), zone_id=ZONE)
         assert driver.has_virtual_filesystem is True
 
     def test_supports_rename(self) -> None:
-        driver = IPCVFSDriver(storage=InMemoryStorageDriver())
+        driver = IPCVFSDriver(storage=InMemoryStorageDriver(), zone_id=ZONE)
         assert driver.supports_rename is True
 
     def test_is_connected(self) -> None:
-        driver = IPCVFSDriver(storage=InMemoryStorageDriver())
+        driver = IPCVFSDriver(storage=InMemoryStorageDriver(), zone_id=ZONE)
         assert driver.is_connected is True
 
 
@@ -297,13 +297,13 @@ class TestIPCVFSDriverReBAC:
     """Tests for ReBAC object type mapping."""
 
     def test_object_type_is_ipc_message(self) -> None:
-        driver = IPCVFSDriver(storage=InMemoryStorageDriver())
+        driver = IPCVFSDriver(storage=InMemoryStorageDriver(), zone_id=ZONE)
         assert driver.get_object_type("agent:bob/inbox/msg.json") == "ipc:message"
 
     def test_object_type_agent_card(self) -> None:
-        driver = IPCVFSDriver(storage=InMemoryStorageDriver())
+        driver = IPCVFSDriver(storage=InMemoryStorageDriver(), zone_id=ZONE)
         assert driver.get_object_type("agent:bob/AGENT.json") == "ipc:agent"
 
     def test_object_type_directory(self) -> None:
-        driver = IPCVFSDriver(storage=InMemoryStorageDriver())
+        driver = IPCVFSDriver(storage=InMemoryStorageDriver(), zone_id=ZONE)
         assert driver.get_object_type("agent:bob/inbox") == "ipc:directory"

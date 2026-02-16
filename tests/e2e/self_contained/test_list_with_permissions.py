@@ -18,7 +18,7 @@ from nexus.storage.raft_metadata_store import RaftMetadataStore
 # ---------------------------------------------------------------------------
 
 
-def _make_store(zone_id: str = "default") -> RaftMetadataStore:
+def _make_store(zone_id: str = "root") -> RaftMetadataStore:
     """Create a RaftMetadataStore with a temp directory."""
     tmpdir = tempfile.mkdtemp()
     return RaftMetadataStore.embedded(str(Path(tmpdir) / "meta"), zone_id=zone_id)
@@ -98,7 +98,7 @@ class TestListWithZoneAndPermissions:
             store.put(_make_meta("/b/file3.txt"))
 
             svc = _make_search_service(store)
-            results = svc.list(prefix="/a/")
+            results = svc.list(path="/a/", recursive=True)
 
             assert "/a/file1.txt" in results
             assert "/a/file2.txt" in results

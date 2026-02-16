@@ -637,7 +637,7 @@ class TestDeltaSyncWithPostgres:
 
         # Delete file1's change log entry (simulating what _sync_deletions does)
         service._change_log.delete_change_log(
-            "/mnt/test/file1.txt", "LocalConnectorBackend", "default"
+            "/mnt/test/file1.txt", "LocalConnectorBackend", "root"
         )
 
         # Re-create file1 with different content

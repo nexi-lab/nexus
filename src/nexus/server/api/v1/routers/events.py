@@ -75,18 +75,16 @@ async def websocket_events(
         )
         return
 
-    zone_id = (auth_result or {}).get("zone_id") or "default"
+    zone_id = (auth_result or {}).get("zone_id") or "root"
     user_id = (auth_result or {}).get("subject_id")
 
-    # Resolve subscription filters (patterns / event_types)
-    patterns: list[str] = []
+    # Resolve subscription filters
     event_types: list[str] = []
 
     subscription_manager = getattr(app_state, "subscription_manager", None)
     if subscription_manager and subscription_id != "all":
         subscription = subscription_manager.get(subscription_id, zone_id)
         if subscription:
-            patterns = subscription.patterns or []
             event_types = subscription.event_types or []
         else:
             logger.debug(
@@ -102,7 +100,6 @@ async def websocket_events(
         connection_id=connection_id,
         user_id=user_id,
         subscription_id=subscription_id if subscription_id != "all" else None,
-        patterns=patterns,
         event_types=event_types,
     )
 
@@ -111,7 +108,6 @@ async def websocket_events(
             "type": "connected",
             "connection_id": connection_id,
             "zone_id": zone_id,
-            "patterns": patterns,
             "event_types": event_types,
         }
     )

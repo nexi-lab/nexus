@@ -218,7 +218,7 @@ class BaseBlobStorageConnector(Backend):
         """
         pass
 
-    def _batch_get_versions(
+    def batch_get_versions(
         self,
         backend_paths: list[str],
         contexts: dict[str, "OperationContext"] | None = None,

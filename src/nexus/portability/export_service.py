@@ -344,7 +344,7 @@ class ZoneExportService:
         perm_count = 0
 
         # Get ReBAC manager if available
-        rebac_manager = getattr(self.nexus_fs, "_rebac_manager", None)
+        rebac_manager = getattr(self.nexus_fs, "rebac_manager", None)
         if rebac_manager is None:
             logger.info("No ReBAC manager available, skipping permission export")
             return 0

@@ -13,6 +13,7 @@ Authentication (Recommended):
 """
 
 import json
+import logging
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
@@ -27,6 +28,8 @@ from nexus.core.hash_fast import hash_content
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.rebac.permissions_enhanced import EnhancedOperationContext
+
+logger = logging.getLogger(__name__)
 
 
 @register_connector(
@@ -242,6 +245,10 @@ class GCSBackend(Backend):
                 f"Failed to write content: {e}", backend="gcs", path=content_hash
             ) from e
 
+    # Default: 10 concurrent workers for GCS batch reads.
+    # GCS uses HTTP/2 multiplexing, so moderate concurrency is optimal.
+    batch_read_workers: int = 10
+
     def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
         """Read content by its hash.
 
@@ -278,6 +285,67 @@ class GCSBackend(Backend):
             raise BackendError(
                 f"Failed to read content: {e}", backend="gcs", path=content_hash
             ) from e
+
+    def batch_read_content(
+        self,
+        content_hashes: list[str],
+        context: "OperationContext | None" = None,
+        *,
+        contexts: "dict[str, OperationContext] | None" = None,
+    ) -> dict[str, bytes | None]:
+        """
+        Optimized batch read for GCS backend with parallel downloads.
+
+        Uses ThreadPoolExecutor to download multiple CAS objects concurrently.
+        The google-cloud-storage Client is thread-safe for independent blob reads.
+
+        Args:
+            content_hashes: List of content hashes (BLAKE3 hex strings)
+            context: Shared operation context (ignored for CAS-based GCS backend)
+            contexts: Per-hash contexts (ignored -- GCS uses CAS hash-based paths)
+
+        Performance:
+            - Parallel downloads: up to 10 concurrent (configurable via batch_read_workers)
+            - Single file: skips thread pool overhead
+            - Expected speedup: 5-10x for batch reads over sequential
+        """
+        if not content_hashes:
+            return {}
+
+        result: dict[str, bytes | None] = {}
+
+        # Single file -- skip thread pool overhead
+        if len(content_hashes) == 1:
+            response = self.read_content(content_hashes[0], context=context)
+            return {content_hashes[0]: response.data if response.success else None}
+
+        # Parallel downloads via ThreadPoolExecutor
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        max_workers = min(self.batch_read_workers, len(content_hashes))
+
+        def read_one(content_hash: str) -> tuple[str, bytes | None]:
+            """Read a single CAS object, returning (hash, content) or (hash, None)."""
+            try:
+                ctx = contexts.get(content_hash, context) if contexts else context
+                response = self.read_content(content_hash, context=ctx)
+                return (content_hash, response.data if response.success else None)
+            except Exception as e:
+                logger.warning(f"[GCS] batch_read_content failed for {content_hash}: {e}")
+                return (content_hash, None)
+
+        logger.info(f"[GCS] Batch reading {len(content_hashes)} objects with {max_workers} workers")
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(read_one, h): h for h in content_hashes}
+            for future in as_completed(futures):
+                hash_key, file_content = future.result()
+                result[hash_key] = file_content
+
+        successful = sum(1 for v in result.values() if v is not None)
+        logger.info(f"[GCS] Batch read complete: {successful}/{len(content_hashes)} successful")
+
+        return result
 
     def stream_content(
         self,

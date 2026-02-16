@@ -14,24 +14,23 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from nexus.backends.backend import Backend
-from nexus.constants import DEFAULT_NEXUS_URL, DEFAULT_OAUTH_REDIRECT_URI
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
+from nexus.raft.zone_manager import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from nexus.services.memory.memory_api import Memory
-    from nexus.core.mount_manager import MountManager
-    from nexus.core.permissions import PermissionEnforcer
-    from nexus.core.workspace_manager import WorkspaceManager
-    from nexus.core.workspace_registry import WorkspaceRegistry
-    from nexus.rebac.deferred_permission_buffer import DeferredPermissionBuffer
-    from nexus.rebac.dir_visibility_cache import DirectoryVisibilityCache
-    from nexus.rebac.entity_registry import EntityRegistry
-    from nexus.rebac.hierarchy_manager import HierarchyManager
-    from nexus.rebac.permissions_enhanced import AuditStore
-    from nexus.rebac.manager import EnhancedReBACManager
+    from nexus.services.permissions.entity_registry import EntityRegistry
 from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol
 from nexus.core.cache_store import CacheStoreABC, NullCacheStore
+from nexus.core.config import (
+    CacheConfig,
+    DistributedConfig,
+    KernelServices,
+    MemoryConfig,
+    ParseConfig,
+    PermissionConfig,
+)
 from nexus.core.export_import import (
     CollisionDetail,
     ExportFilter,
@@ -58,15 +57,8 @@ from nexus.core.rpc_decorator import rpc_expose
 from nexus.parsers import MarkItDownParser, ParserRegistry
 from nexus.parsers.types import ParseResult
 
-# Phase 2: Service imports - Independent, testable services extracted from mixins
-from nexus.services.llm_service import LLMService
-from nexus.services.mcp_service import MCPService
-from nexus.services.mount_service import MountService
-from nexus.services.oauth_service import OAuthService
-
+# Phase 2: Service imports moved to _wire_services() as lazy imports (Issue #1519)
 # NexusFSReBACMixin import removed (Issue #1387)
-from nexus.services.rebac_service import ReBACService
-from nexus.services.search_service import SearchService
 from nexus.storage.content_cache import ContentCache
 from nexus.storage.record_store import RecordStoreABC
 
@@ -104,251 +96,77 @@ class NexusFS(  # type: ignore[misc]
     def __init__(
         self,
         backend: Backend,
-        metadata_store: FileMetadataProtocol,  # Task #14: Explicit injection (breaking change)
-        record_store: RecordStoreABC
-        | None = None,  # Task #14: Optional — Services layer (ReBAC, Auth, Audit, etc.)
-        cache_store: CacheStoreABC
-        | None = None,  # Task #22: Optional — Ephemeral KV+PubSub (defaults to NullCacheStore)
+        metadata_store: FileMetadataProtocol,
+        record_store: RecordStoreABC | None = None,
+        cache_store: CacheStoreABC | None = None,
+        *,
         is_admin: bool = False,
-        zone_id: str | None = None,  # Default zone ID for operations
-        agent_id: str | None = None,  # Default agent ID for operations
         custom_namespaces: list[NamespaceConfig] | None = None,
-        enable_metadata_cache: bool = True,
-        cache_path_size: int = 512,
-        cache_list_size: int = 1024,  # Increased from 128 for better descendant caching
-        cache_kv_size: int = 256,
-        cache_exists_size: int = 1024,
-        cache_ttl_seconds: int | None = 300,
-        enable_content_cache: bool = True,
-        content_cache_size_mb: int = 256,
-        auto_parse: bool = True,
-        custom_parsers: list[dict[str, Any]] | None = None,
-        parse_providers: list[dict[str, Any]] | None = None,
-        enforce_permissions: bool = True,  # P0-6: ENABLED by default for security
-        inherit_permissions: bool = True,  # P0-3: Enable automatic parent tuple creation for directory inheritance
-        allow_admin_bypass: bool = False,  # P0-4: Allow admin bypass (DEFAULT OFF for production security)
-        enforce_zone_isolation: bool = True,  # P0-2: Enable zone isolation (DEFAULT ON for security)
-        audit_strict_mode: bool = True,  # P0 COMPLIANCE: Fail writes if audit logging fails (DEFAULT ON)
-        enable_workflows: bool = True,  # v0.7.0: Enable automatic workflow triggering (DEFAULT ON)
-        workflow_engine: Any
-        | None = None,  # v0.7.0: Optional workflow engine (auto-created if None)
-        enable_tiger_cache: bool = True,  # Enable Tiger Cache for materialized permissions (default: True)
-        enable_deferred_permissions: bool = True,  # Issue #1071: Defer permission ops for faster writes (default: True)
-        deferred_flush_interval: float = 0.05,  # Flush interval in seconds (50ms default - balance latency vs batching)
-        # Issue #1106 Block 2: Distributed event system (coordination layer)
-        coordination_url: str
-        | None = None,  # Dragonfly coordination URL (requires noeviction policy for locks)
-        enable_distributed_events: bool = True,  # Enable GlobalEventBus if coordination available (default: True)
-        enable_distributed_locks: bool = True,  # Enable DistributedLockManager if coordination available (default: True)
-        # Issue #1258: MemGPT 3-tier memory paging
-        enable_memory_paging: bool = True,  # Enable MemGPT-style 3-tier memory paging (default: True)
-        memory_main_capacity: int = 100,  # Max memories in main context (default: 100)
-        memory_recall_max_age_hours: float = 24.0,  # Age threshold for archival (default: 24h)
-        # Task #23: Dependency injection for services and router.
-        # Kernel does NOT auto-create services. Use nexus.factory.create_nexus_fs()
-        # or nexus.factory.create_nexus_services() for convenience.
-        router: PathRouter | None = None,
-        rebac_manager: EnhancedReBACManager | None = None,
-        dir_visibility_cache: DirectoryVisibilityCache | None = None,
-        audit_store: AuditStore | None = None,
-        entity_registry: EntityRegistry | None = None,
-        permission_enforcer: PermissionEnforcer | None = None,
-        hierarchy_manager: HierarchyManager | None = None,
-        deferred_permission_buffer: DeferredPermissionBuffer | None = None,
-        workspace_registry: WorkspaceRegistry | None = None,
-        mount_manager: MountManager | None = None,
-        workspace_manager: WorkspaceManager | None = None,
-        # Task #45: Optional RecordStore write-through observer (duck-typed).
-        # Created by factory.py (RecordStoreSyncer), injected here.
-        # Kernel calls on_write()/on_delete() — never imports the concrete class.
-        write_observer: Any | None = None,
-        # Task #45: VersionService (created by factory, not kernel)
-        version_service: Any | None = None,
-        # Issue #1264: OverlayResolver for ComposeFS-style workspace overlays
-        overlay_resolver: Any | None = None,
-        # Issue #1210: Wallet provisioner for auto-creating TigerBeetle accounts
-        # on agent registration. Duck-typed callable: (agent_id: str, zone_id: str) -> None.
-        # Injected by factory.py when NEXUS_PAY is available.
-        wallet_provisioner: Any | None = None,
-        # Config-object API (used by factory.py create_nexus_fs)
-        # When provided, these override the flat params above.
-        cache: Any | None = None,
-        permissions: Any | None = None,
-        distributed: Any | None = None,
-        memory: Any | None = None,
-        parsing: Any | None = None,
-        services: Any | None = None,
+        cache: CacheConfig | None = None,
+        permissions: PermissionConfig | None = None,
+        distributed: DistributedConfig | None = None,
+        memory: MemoryConfig | None = None,
+        parsing: ParseConfig | None = None,
+        services: KernelServices | None = None,
     ):
-        logger = logging.getLogger(__name__)
+        """Initialize NexusFS kernel.
 
-        # Map config objects to flat params (backward compat bridge)
-        if cache is not None:
-            enable_metadata_cache = getattr(cache, "enable_metadata_cache", enable_metadata_cache)
-            cache_path_size = getattr(cache, "path_size", cache_path_size)
-            cache_list_size = getattr(cache, "list_size", cache_list_size)
-            cache_kv_size = getattr(cache, "kv_size", cache_kv_size)
-            cache_exists_size = getattr(cache, "exists_size", cache_exists_size)
-            cache_ttl_seconds = getattr(cache, "ttl_seconds", cache_ttl_seconds)
-            enable_content_cache = getattr(cache, "enable_content_cache", enable_content_cache)
-            content_cache_size_mb = getattr(cache, "content_cache_size_mb", content_cache_size_mb)
-        if permissions is not None:
-            enforce_permissions = getattr(permissions, "enforce", enforce_permissions)
-            inherit_permissions = getattr(permissions, "inherit", inherit_permissions)
-            allow_admin_bypass = getattr(permissions, "allow_admin_bypass", allow_admin_bypass)
-            enforce_zone_isolation = getattr(
-                permissions, "enforce_zone_isolation", enforce_zone_isolation
-            )
-            audit_strict_mode = getattr(permissions, "audit_strict_mode", audit_strict_mode)
-            enable_tiger_cache = getattr(permissions, "enable_tiger_cache", enable_tiger_cache)
-            enable_deferred_permissions = getattr(
-                permissions, "enable_deferred", enable_deferred_permissions
-            )
-            deferred_flush_interval = getattr(
-                permissions, "deferred_flush_interval", deferred_flush_interval
-            )
-        if distributed is not None:
-            coordination_url = getattr(distributed, "coordination_url", coordination_url)
-            enable_distributed_events = getattr(
-                distributed, "enable_events", enable_distributed_events
-            )
-            enable_distributed_locks = getattr(
-                distributed, "enable_locks", enable_distributed_locks
-            )
-            enable_workflows = getattr(distributed, "enable_workflows", enable_workflows)
-        if memory is not None:
-            enable_memory_paging = getattr(memory, "enable_paging", enable_memory_paging)
-            memory_main_capacity = getattr(memory, "main_capacity", memory_main_capacity)
-            memory_recall_max_age_hours = getattr(
-                memory, "recall_max_age_hours", memory_recall_max_age_hours
-            )
-        if parsing is not None:
-            auto_parse = getattr(parsing, "auto_parse", auto_parse)
-            providers = getattr(parsing, "providers", None)
-            if providers is not None:
-                parse_providers = [dict(p) for p in providers]
-        if services is not None:
-            router = getattr(services, "router", router)
-            rebac_manager = getattr(services, "rebac_manager", rebac_manager)
-            dir_visibility_cache = getattr(services, "dir_visibility_cache", dir_visibility_cache)
-            audit_store = getattr(services, "audit_store", audit_store)
-            entity_registry = getattr(services, "entity_registry", entity_registry)
-            permission_enforcer = getattr(services, "permission_enforcer", permission_enforcer)
-            hierarchy_manager = getattr(services, "hierarchy_manager", hierarchy_manager)
-            deferred_permission_buffer = getattr(
-                services, "deferred_permission_buffer", deferred_permission_buffer
-            )
-            workspace_registry = getattr(services, "workspace_registry", workspace_registry)
-            mount_manager = getattr(services, "mount_manager", mount_manager)
-            workspace_manager = getattr(services, "workspace_manager", workspace_manager)
-            write_observer = getattr(services, "write_observer", write_observer)
-            version_service = getattr(services, "version_service", version_service)
-            overlay_resolver = getattr(services, "overlay_resolver", overlay_resolver)
-            wallet_provisioner = getattr(services, "wallet_provisioner", wallet_provisioner)
-            workflow_engine = getattr(services, "workflow_engine", workflow_engine)
+        Args:
+            backend: Backend instance for file storage (LocalBackend, GCSBackend, etc.)
+            metadata_store: FileMetadataProtocol instance (RaftMetadataStore or custom)
+            record_store: Optional RecordStoreABC for Services layer (ReBAC, Audit, etc.)
+            cache_store: Optional CacheStoreABC for ephemeral KV+PubSub. Defaults to NullCacheStore.
+            is_admin: Whether this instance has admin privileges (default: False)
+            custom_namespaces: Additional custom namespace configurations
+            cache: Cache configuration (LRU sizes, content cache). Defaults to CacheConfig().
+            permissions: Permission enforcement config. Defaults to PermissionConfig().
+            distributed: Distributed coordination config. Defaults to DistributedConfig().
+            memory: Memory paging config. Defaults to MemoryConfig().
+            parsing: File parsing config. Defaults to ParseConfig().
+            services: Injected service dependencies. Defaults to KernelServices().
+        """
+        # Apply defaults — config dataclasses are SSOT for default values
+        cache = cache or CacheConfig()
+        permissions = permissions or PermissionConfig()
+        distributed = distributed or DistributedConfig()
+        memory = memory or MemoryConfig()
+        parsing = parsing or ParseConfig()
+        svc = services or KernelServices()
 
-        # Stash services object for deferred field injection (event_bus, lock_manager, etc.)
-        self._injected_services = services
+        # Store config objects for introspection
+        self._cache_config = cache
+        self._perm_config = permissions
+        self._distributed_config = distributed
+        self._memory_config_obj = memory
+        self._parse_config = parsing
+        self._services = svc
 
         # Store config for OAuth factory and other components that need it
         self._config: Any | None = None
 
-        # Service extras: services created by factory.py that NexusFS carries
-        # but does not use directly (e.g., manifest_resolver, chunked_upload).
-        # Avoids monkey-patching arbitrary attributes onto the kernel.
-        self._service_extras: dict[str, Any] = {}
-
-        # Store memory paging config (Issue #1258)
-        self._enable_memory_paging = enable_memory_paging
-        self._memory_main_capacity = memory_main_capacity
-        self._memory_recall_max_age_hours = memory_recall_max_age_hours
-        """
-        Initialize filesystem.
-
-        Args:
-            backend: Backend instance for storing file content (LocalBackend, GCSBackend, etc.)
-            metadata_store: FileMetadataProtocol instance (RaftMetadataStore or custom)
-                           User Space controls driver selection via Dependency Injection (Task #14)
-            record_store: Optional RecordStoreABC instance for Services layer (ReBAC, Auth, Audit, etc.)
-                         Not required for pure file operations. User Space injects when Services are needed.
-            cache_store: Optional CacheStoreABC instance for ephemeral KV + PubSub (permission cache,
-                        tiger cache, event bus). Defaults to NullCacheStore (no-op, graceful degrade).
-            is_admin: Whether this instance has admin privileges (default: False)
-            zone_id: DEPRECATED - Default zone ID (for embedded mode only). Server mode should pass via context parameter.
-            agent_id: DEPRECATED - Default agent ID (for embedded mode only). Server mode should pass via context parameter.
-            custom_namespaces: Additional custom namespace configurations (optional)
-            enable_metadata_cache: Enable in-memory metadata caching (default: True)
-            cache_path_size: Max entries for path metadata cache (default: 512)
-            cache_list_size: Max entries for directory listing cache (default: 1024)
-            cache_kv_size: Max entries for file metadata KV cache (default: 256)
-            cache_exists_size: Max entries for existence check cache (default: 1024)
-            cache_ttl_seconds: Cache TTL in seconds, None = no expiry (default: 300)
-            enable_content_cache: Enable in-memory content caching for faster reads (default: True)
-            content_cache_size_mb: Maximum content cache size in megabytes (default: 256)
-            auto_parse: Automatically parse files on write (default: True)
-            custom_parsers: (Deprecated) Custom parser configurations. Use parse_providers instead.
-            parse_providers: Parse provider configurations (list of dicts with name, priority, api_key, etc.)
-                           Supports: unstructured (API), llamaparse (API), markitdown (local fallback)
-            enforce_permissions: Enable permission enforcement on file operations (default: True)
-            inherit_permissions: Enable automatic parent tuple creation for directory inheritance (default: True, P0-3)
-            allow_admin_bypass: Allow admin users to bypass permission checks (default: False for security, P0-4)
-            enforce_zone_isolation: Enable zone isolation to prevent cross-zone access (default: True for security, P0-2)
-            enable_workflows: Enable automatic workflow triggering on file operations (default: True, v0.7.0)
-            workflow_engine: Optional workflow engine instance. If None and enable_workflows=True, auto-creates engine (v0.7.0)
-
-        Note:
-            When zone_id or agent_id are provided, they set the default context for all operations.
-            Individual operations can still override context by passing context parameter.
-
-        Warning:
-            Using zone_id/agent_id in __init__ is DEPRECATED and unsafe for server mode!
-            In server/multi-zone mode, these should ALWAYS be None and passed via context parameter.
-
-            IMPORTANT: These parameters should ONLY be used in embedded/CLI mode where a single
-            NexusFS instance serves one user. In server mode, a shared NexusFS instance serves
-            multiple users/zones, so instance-level zone_id/agent_id creates security risks!
-        """
-        # Warn about deprecated parameters
-        if zone_id is not None or agent_id is not None:
-            import warnings
-
-            warnings.warn(
-                "zone_id and agent_id parameters in NexusFS.__init__() are DEPRECATED. "
-                "They should only be used in embedded/CLI mode where a single NexusFS instance "
-                "serves one user. For server mode (shared NexusFS instance serving multiple users), "
-                "these MUST be None and context must be passed to each method call instead. "
-                "Using instance-level zone_id/agent_id in server mode creates SECURITY RISKS!",
-                DeprecationWarning,
-                stacklevel=2,
-            )
+        # Map config fields to internal attributes used throughout codebase
+        self._enable_memory_paging = memory.enable_paging
+        self._memory_main_capacity = memory.main_capacity
+        self._memory_recall_max_age_hours = memory.recall_max_age_hours
+        self._enforce_permissions = permissions.enforce
+        self._enforce_zone_isolation = permissions.enforce_zone_isolation
+        self._audit_strict_mode = permissions.audit_strict_mode
+        self.allow_admin_bypass = permissions.allow_admin_bypass
+        self.auto_parse = parsing.auto_parse
+        self.is_admin = is_admin
 
         # Initialize content cache if enabled and backend supports it
-        if enable_content_cache and backend.has_root_path is True:
-            # Create content cache and attach to LocalBackend
-            content_cache = ContentCache(max_size_mb=content_cache_size_mb)
+        if cache.enable_content_cache and backend.has_root_path is True:
+            content_cache = ContentCache(max_size_mb=cache.content_cache_size_mb)
             backend.content_cache = content_cache
 
         # Store backend
         self.backend = backend
 
-        # Store admin flag and auto-parse setting
-        self.is_admin = is_admin
-        self.auto_parse = auto_parse
-
-        # Store allow_admin_bypass flag as public attribute for backward compatibility
-        self.allow_admin_bypass = allow_admin_bypass
-
-        # P0 COMPLIANCE: Store audit_strict_mode flag
-        # When True (default): Write operations FAIL if audit logging fails
-        # When False: Write operations succeed but log at CRITICAL level
-        self._audit_strict_mode = audit_strict_mode
-
         # Initialize metadata store (Task #14: Dependency Injection)
-        # Kernel core: ordered KV for inodes, dentries, config, topology
         self.metadata: FileMetadataProtocol = metadata_store
 
         # Initialize record store (Task #14: Four Pillars)
-        # Services layer: relational DB for ReBAC, Auth, Audit, etc.
-        # Optional — pure file operations (inode CRUD) don't need it.
         self._record_store = record_store
         if record_store is not None:
             self._sql_engine = record_store.engine
@@ -360,15 +178,13 @@ class NexusFS(  # type: ignore[misc]
             self.SessionLocal = None
 
         # Initialize cache store (Task #22: Fourth Pillar)
-        # Ephemeral KV + PubSub for permission cache, tiger cache, event bus.
-        # NullCacheStore is the default — all ops are no-ops (graceful degrade).
         self.cache_store: CacheStoreABC = (
             cache_store if cache_store is not None else NullCacheStore()
         )
 
         # Initialize path router (Task #23: injectable)
-        if router is not None:
-            self.router = router
+        if svc.router is not None:
+            self.router = svc.router
         else:
             self.router = PathRouter()
             if custom_namespaces:
@@ -382,9 +198,10 @@ class NexusFS(  # type: ignore[misc]
         self.parser_registry = ParserRegistry()
         self.parser_registry.register(MarkItDownParser())
 
-        # Load custom parsers from config (deprecated)
-        if custom_parsers:
-            self._load_custom_parsers(custom_parsers)
+        # Provide parse callback for virtual views (core/ must not import parsers directly)
+        from nexus.parsers import create_default_parse_fn
+
+        self._virtual_view_parse_fn = create_default_parse_fn()
 
         # Initialize new provider registry for read(parsed=True) support
         from nexus.parsers.providers import ProviderRegistry
@@ -392,8 +209,8 @@ class NexusFS(  # type: ignore[misc]
 
         self.provider_registry = ProviderRegistry()
 
+        parse_providers = [dict(p) for p in parsing.providers] if parsing.providers else None
         if parse_providers:
-            # Use explicitly configured providers
             configs = []
             for p in parse_providers:
                 configs.append(
@@ -408,75 +225,64 @@ class NexusFS(  # type: ignore[misc]
                 )
             self.provider_registry.auto_discover(configs)
         else:
-            # Auto-discover from environment
             self.provider_registry.auto_discover()
 
         # Track active parser threads for graceful shutdown
         self._parser_threads: list[threading.Thread] = []
         self._parser_threads_lock = threading.Lock()
 
-        # P0 Fixes: Use OperationContext for GA features
-        from nexus.core.permissions import OperationContext
-
-        # Create default context using provided zone_id/agent_id
-        # If zone_id is None, default to "default" for multi-zone compatibility
-        # This prevents warnings during cache warming and other internal operations
-        effective_zone_id = zone_id if zone_id is not None else "default"
+        # Create default context
         self._default_context = OperationContext(
             user="anonymous",
             groups=[],
-            zone_id=effective_zone_id,
-            agent_id=agent_id,
+            zone_id=ROOT_ZONE_ID,
+            agent_id=None,
             is_admin=is_admin,
-            is_system=False,  # SECURITY: Prevent privilege escalation
-            admin_capabilities=set(),  # No capabilities for default context
+            is_system=False,
+            admin_capabilities=set(),
         )
 
         # =====================================================================
-        # Services layer (Task #23: pure dependency injection).
-        # Kernel never creates services — use nexus.factory.create_nexus_fs()
-        # or nexus.factory.create_nexus_services() to build them externally.
-        # None = feature not available (no fallback, no auto-creation).
+        # Services layer (Task #23: pure dependency injection via KernelServices)
         # =====================================================================
-        self._rebac_manager = rebac_manager
-        self._dir_visibility_cache = dir_visibility_cache
-        self._audit_store = audit_store
-        self._entity_registry = entity_registry
-        self._permission_enforcer = permission_enforcer
-        self._hierarchy_manager = hierarchy_manager
-        self._deferred_permission_buffer = deferred_permission_buffer
-        self._workspace_registry = workspace_registry
-        self.mount_manager = mount_manager
-        self._workspace_manager = workspace_manager
-        self._write_observer = write_observer  # Task #45: RecordStore sync
-        self._overlay_resolver = overlay_resolver  # Issue #1264: workspace overlays
-        self._wallet_provisioner = wallet_provisioner  # Issue #1210: auto-wallet on registration
+        self._rebac_manager = svc.rebac_manager
+        self._dir_visibility_cache = svc.dir_visibility_cache
+        self._audit_store = svc.audit_store
+        self._entity_registry = svc.entity_registry
+        self._permission_enforcer = svc.permission_enforcer
+        self._hierarchy_manager = svc.hierarchy_manager
+        self._deferred_permission_buffer = svc.deferred_permission_buffer
+        self._workspace_registry = svc.workspace_registry
+        self.mount_manager = svc.mount_manager
+        self._workspace_manager = svc.workspace_manager
+        self._write_observer = svc.write_observer
+        self._overlay_resolver = svc.overlay_resolver
+        self._wallet_provisioner = svc.wallet_provisioner
 
-        # Permission enforcement is opt-in for backward compatibility
-        # Set enforce_permissions=True in init to enable permission checks
-        self._enforce_permissions = enforce_permissions
+        # Kernel protocol services + async wrappers (Issue #1502)
+        self._agent_registry = svc.agent_registry
+        self._namespace_manager = svc.namespace_manager
+        self._async_agent_registry = svc.async_agent_registry
+        self._async_namespace_manager = svc.async_namespace_manager
+        self._async_vfs_router = svc.async_vfs_router
 
-        # P0-2: Zone isolation enforcement
-        # Set enforce_zone_isolation=False ONLY for single-zone environments
-        self._enforce_zone_isolation = enforce_zone_isolation
+        # Infrastructure services (previously created inline, now injected)
+        self._event_bus = svc.event_bus
+        self._lock_manager = svc.lock_manager
+        self.enable_workflows = distributed.enable_workflows
+        self.workflow_engine = svc.workflow_engine
+
+        # Auth services — injected from server layer (Issue #1519, 3A)
+        self._api_key_creator = svc.api_key_creator
 
         # Initialize OAuth token manager (lazy initialization in mixin)
         self._token_manager = None
-
-        # Load workspace/memory configs from custom config if provided
-        if custom_namespaces and hasattr(custom_namespaces, "__iter__"):
-            # Check if this came from a config object with workspaces/memories
-            # This is a bit hacky but works for now
-            pass  # Will be handled by separate load method
 
         # Initialize semantic search - lazy initialization
         self._semantic_search = None
 
         # Initialize Memory API
-        # Memory operations should use subject parameter
-        self._memory_api: Memory | None = None  # Lazy initialization
-        # Note: _entity_registry initialized earlier for agent permission inheritance
-        # Store config for lazy init
+        self._memory_api: Memory | None = None
         self._memory_config: dict[str, str | None] = {
             "zone_id": None,
             "user_id": None,
@@ -488,130 +294,21 @@ class NexusFS(  # type: ignore[misc]
 
         self._sandbox_manager: SandboxManager | None = None
 
-        # v0.7.0: Initialize workflow engine for automatic event triggering
-        self.enable_workflows = enable_workflows
-        self.workflow_engine = workflow_engine
-
         # v0.8.0: Subscription manager for webhook notifications (set by server)
         self.subscription_manager: Any = None
 
         # Issue #913: Track async event tasks to prevent memory leaks
-        # Tasks are auto-removed via done callback when completed
         self._event_tasks: set[asyncio.Task[Any]] = set()
 
         # Issue #1106: File watcher for same-box event detection (lazy initialized)
         self._file_watcher: Any = None
 
-        # Issue #1106 Block 2: Distributed event bus and lock manager
-        # Locks: MUST use noeviction dragonfly (coordination_url)
-        # Events: CAN fallback to evictable dragonfly (has PG SSOT backup)
-        self._event_bus: Any = None
-        self._lock_manager: Any = None
+        # Distributed coordination clients (may be set by factory)
         self._coordination_client: Any = None
-        self._event_client: Any = None  # May be same as coordination or separate
-
-        # Inject pre-built services from KernelServices (if provided)
-        _svc = getattr(self, "_injected_services", None)
-        if _svc is not None:
-            if getattr(_svc, "event_bus", None) is not None:
-                self._event_bus = _svc.event_bus
-            if getattr(_svc, "lock_manager", None) is not None:
-                self._lock_manager = _svc.lock_manager
-            self._service_extras = getattr(_svc, "server_extras", {}) or {}
-            if getattr(_svc, "agent_registry", None) is not None:
-                self._agent_registry = _svc.agent_registry
-            if getattr(_svc, "namespace_manager", None) is not None:
-                self._namespace_manager = _svc.namespace_manager
-            if getattr(_svc, "cache_observer", None) is not None:
-                self._cache_observer = _svc.cache_observer
+        self._event_client: Any = None
 
         # Issue #1106: Auto-start flag for cache invalidation
-        # Note: Event bus has its own _started flag, so we don't duplicate it here
-        # This flag tracks whether _start_cache_invalidation() has been called
         self._cache_invalidation_started: bool = False
-
-        # Skip inline creation if already injected from services
-        if (
-            (enable_distributed_locks or enable_distributed_events)
-            and self._event_bus is None
-            and self._lock_manager is None
-        ):
-            try:
-                import os
-
-                from nexus.cache.dragonfly import DragonflyClient
-
-                # Coordination URL (noeviction) - required for locks
-                coordination_url_resolved = coordination_url or os.getenv("NEXUS_REDIS_URL")
-
-                # Event URL - can fallback to cache URL (has PG SSOT backup)
-                event_url_resolved = coordination_url_resolved or os.getenv(
-                    "NEXUS_DRAGONFLY_CACHE_URL"
-                )
-
-                # Initialize lock manager if enabled (uses Raft via metadata store)
-                if enable_distributed_locks:
-                    from nexus.core.distributed_lock import (
-                        RaftLockManager,
-                        set_distributed_lock_manager,
-                    )
-                    from nexus.storage.raft_metadata_store import RaftMetadataStore
-
-                    # Locks use Raft consensus via metadata store (no Redis needed)
-                    if isinstance(self.metadata, RaftMetadataStore):
-                        self._lock_manager = RaftLockManager(self.metadata)
-                        set_distributed_lock_manager(self._lock_manager)
-                        logger.info("🔐 Distributed lock manager initialized (Raft consensus)")
-                    else:
-                        logger.warning(
-                            f"Distributed locks require RaftMetadataStore, got {type(self.metadata).__name__}. "
-                            "Lock manager will not be initialized."
-                        )
-
-                # Initialize event bus if enabled
-                import os as _os
-
-                event_bus_backend = _os.environ.get("NEXUS_EVENT_BUS_BACKEND", "redis")
-
-                if event_bus_backend == "nats":
-                    # NATS JetStream event bus (Issue #1331)
-                    from nexus.core.event_bus import create_event_bus, set_global_event_bus
-
-                    nats_url = _os.environ.get("NEXUS_NATS_URL", "nats://localhost:4222")
-                    self._event_bus = create_event_bus(
-                        backend="nats",
-                        nats_url=nats_url,
-                        session_factory=self.SessionLocal,
-                    )
-                    set_global_event_bus(self._event_bus)
-                    logger.info(
-                        f"🔔 Distributed event bus initialized (NATS JetStream: {nats_url}, SSOT: PostgreSQL)"
-                    )
-                elif enable_distributed_events and event_url_resolved:
-                    from nexus.core.event_bus import RedisEventBus, set_global_event_bus
-
-                    # Reuse coordination client if same URL, otherwise create new
-                    if (
-                        self._coordination_client is not None
-                        and coordination_url_resolved
-                        and event_url_resolved == coordination_url_resolved
-                    ):
-                        self._event_client = self._coordination_client
-                    else:
-                        self._event_client = DragonflyClient(url=event_url_resolved)
-
-                    # Pass metadata session for PG SSOT persistence
-                    self._event_bus = RedisEventBus(
-                        self._event_client,
-                        session_factory=self.SessionLocal,
-                    )
-                    set_global_event_bus(self._event_bus)
-                    logger.info(
-                        f"🔔 Distributed event bus initialized (dragonfly: {event_url_resolved}, SSOT: PostgreSQL)"
-                    )
-
-            except ImportError as e:
-                logger.warning(f"Could not initialize distributed event system: {e}")
 
         # VFS lock manager — local, in-process path-level locking (Issue #1398)
         from nexus.core.lock_fast import create_vfs_lock_manager
@@ -619,105 +316,92 @@ class NexusFS(  # type: ignore[misc]
         self._vfs_lock_manager = create_vfs_lock_manager()
         logger.info("VFS lock manager initialized (%s)", type(self._vfs_lock_manager).__name__)
 
-        if enable_workflows and workflow_engine is None:
-            # Auto-create workflow engine with persistent storage using global engine
-            # Skip if no record store (SessionLocal is None)
-            if self.SessionLocal is None:
-                logger.warning("Workflows require record_store, disabling workflows")
-                self.enable_workflows = False
-                self.workflow_engine = None
-            else:
-                try:
-                    from nexus.workflows.engine import init_engine
-                    from nexus.workflows.storage import WorkflowStore
+        # Wire self-dependent services (require self reference)
+        self._wire_services()
 
-                    workflow_store = WorkflowStore(
-                        session_factory=self.SessionLocal,
-                        zone_id=zone_id or "default",
-                    )
+        # Issue #1169: Read Set-Aware Cache for precise invalidation
+        # Wraps the metadata cache with read-set-aware invalidation.
+        # Falls back to path-based invalidation for entries without read sets.
+        self._read_set_cache = None
+        metadata_cache = None
+        if hasattr(self.metadata, "_cache"):
+            metadata_cache = self.metadata._cache
 
-                    # Use init_engine to set the global engine so WorkflowAPI uses the same instance
-                    self.workflow_engine = init_engine(
-                        metadata_store=self.metadata,
-                        plugin_registry=None,  # TODO: Hook up plugin registry if available
-                        workflow_store=workflow_store,
-                    )
-                except Exception:
-                    # Workflow system not available or misconfigured, disable workflows
-                    self.enable_workflows = False
-                    self.workflow_engine = None
+        if metadata_cache is not None and self._cache_config.enable_metadata_cache:
+            from nexus.core.read_set import ReadSetRegistry
+            from nexus.storage.read_set_cache import ReadSetAwareCache
 
-        # Load all saved mounts from database and activate them
-        # This ensures persisted mounts are restored on server startup
-        # By default, skip auto-sync for fast startup (set NEXUS_AUTO_SYNC_MOUNTS=true to enable)
-        try:
-            if hasattr(self, "load_all_saved_mounts"):
-                import os
+            self._read_set_registry = ReadSetRegistry()
+            self._read_set_cache = ReadSetAwareCache(
+                base_cache=metadata_cache,
+                registry=self._read_set_registry,
+            )
+            self._read_tracking_enabled = True
 
-                # Check environment variable for auto-sync (default: False for fast startup)
-                auto_sync = os.getenv("NEXUS_AUTO_SYNC_MOUNTS", "false").lower() in (
-                    "true",
-                    "1",
-                    "yes",
-                )
+        # Issue #1519: Cache observer — decouples kernel from ReadSetAwareCache
+        self._cache_observer = svc.cache_observer
+        if self._cache_observer is None and self._read_set_cache is not None:
+            from nexus.core.cache_invalidation import ReadSetCacheObserver
 
-                mount_result = self.load_all_saved_mounts(auto_sync=auto_sync)
-                if mount_result["loaded"] > 0 or mount_result["failed"] > 0:
-                    sync_msg = (
-                        f", {mount_result['synced']} synced" if mount_result["synced"] > 0 else ""
-                    )
-                    logger.info(
-                        f"🔄 Mount restoration: {mount_result['loaded']} loaded{sync_msg}, {mount_result['failed']} failed"
-                    )
-                    if not auto_sync and mount_result["loaded"] > 0:
-                        logger.info(
-                            "💡 Auto-sync disabled for fast startup. Use sync_mount() to sync manually or set NEXUS_AUTO_SYNC_MOUNTS=true"
-                        )
-                    if mount_result["errors"]:
-                        for error in mount_result["errors"]:
-                            logger.error(f"  ❌ {error}")
-        except Exception as e:
-            # Log warning but don't fail initialization if mount loading fails
-            logger.warning(f"Failed to load saved mounts during initialization: {e}")
+            self._cache_observer = ReadSetCacheObserver(self._read_set_cache)
 
-        # Phase 2: Service Composition - Extract from mixins into services
-        # These services are independent, testable, and follow single-responsibility principle
-        # All services use async-first architecture with asyncio.to_thread() for blocking operations
-        # TODO(Task #40-44): Move remaining service creation to factory.py
+        # OPTIMIZATION: Initialize TRAVERSE permissions and Tiger Cache
+        self._init_performance_optimizations()
+
+    def _wire_services(self) -> None:
+        """Wire services that require a reference to self (NexusFS).
+
+        Called at end of __init__. Services follow "accept or build" pattern
+        (Issue #1519, 4B): if pre-built via KernelServices, use that instance;
+        otherwise build internally. This enables factory pre-wiring and
+        test-time mock injection.
+        """
+        svc = self._services
 
         # VersionService: injected by factory (Task #45)
-        self.version_service = version_service
+        self.version_service = svc.version_service
 
-        # ReBACService: Permission and access control operations (12 core + 15 advanced methods)
-        self.rebac_service = ReBACService(
-            rebac_manager=self._rebac_manager,
-            enforce_permissions=self._enforce_permissions,
-            enable_audit_logging=True,  # Production default
-        )
+        # Lazy-import services to avoid core/ → services/ top-level coupling (#1519)
+        from nexus.services.llm_service import LLMService
+        from nexus.services.mcp_service import MCPService
+        from nexus.services.mount_service import MountService
+        from nexus.services.oauth_service import OAuthService
+        from nexus.services.search_service import SearchService
 
-        # MountService: Dynamic backend mounting operations (17 methods)
+        # ReBACService: Permission and access control operations
+        if svc.rebac_service is not None:
+            self.rebac_service = svc.rebac_service
+        else:
+            from nexus.services.rebac_service import ReBACService
+
+            self.rebac_service = ReBACService(
+                rebac_manager=self._rebac_manager,
+                enforce_permissions=self._enforce_permissions,
+                enable_audit_logging=True,
+                circuit_breaker=self._services.rebac_circuit_breaker,
+            )
+
+        # MountService: Dynamic backend mounting operations
         self.mount_service = MountService(
             router=self.router,
-            mount_manager=self.mount_manager,  # Persistent storage
-            nexus_fs=self,  # Required for sync operations
+            mount_manager=self.mount_manager,
+            nexus_fs=self,
         )
 
-        # MCPService: Model Context Protocol operations (5 methods)
+        # MCPService: Model Context Protocol operations
         self.mcp_service = MCPService(nexus_fs=self)
 
-        # LLMService: LLM integration operations (4 methods)
-        # Issue #1287 Phase B: Wrapped in LLMSubsystem for lifecycle management
+        # LLMService: LLM integration operations
         self.llm_service = LLMService(nexus_fs=self)
         from nexus.services.subsystems.llm_subsystem import LLMSubsystem
 
         self._llm_subsystem = LLMSubsystem(llm_service=self.llm_service)
 
-        # OAuthService: OAuth authentication operations (7 methods)
-        # Lazy initialization of oauth_factory and token_manager happens in service
+        # OAuthService: OAuth authentication operations
         self.oauth_service = OAuthService(
-            oauth_factory=None,  # Lazy init from config
-            token_manager=None,  # Lazy init from db_path
-            nexus_fs=self,  # Required for mcp_connect() filesystem operations
+            oauth_factory=None,
+            token_manager=None,
+            nexus_fs=self,
         )
 
         # Shared gateway for all extracted services (Issue #1287)
@@ -725,26 +409,27 @@ class NexusFS(  # type: ignore[misc]
 
         self._gateway = NexusFSGateway(self)
 
-        # SkillService: Skill management (10 methods)
-        # Issue #1287 Phase 1.5: NexusFSSkillsMixin removed, replaced by SkillService delegation
+        # SkillService: Skill management
         from nexus.services.skill_service import SkillService as _SkillService
 
         self.skill_service = _SkillService(gateway=self._gateway)
 
-        # SearchService: Search operations - semantic (4) + basic (3, deferred to Phase 2.2)
-        self.search_service = SearchService(
-            metadata_store=self.metadata,
-            permission_enforcer=self._permission_enforcer,
-            router=self.router,
-            rebac_manager=self._rebac_manager,
-            enforce_permissions=self._enforce_permissions,
-            default_context=self._default_context,
-            record_store=self._record_store,
-            gateway=self._gateway,
-        )
+        # SearchService: Search operations
+        if svc.search_service is not None:
+            self.search_service = svc.search_service
+        else:
+            self.search_service = SearchService(
+                metadata_store=self.metadata,
+                permission_enforcer=self._permission_enforcer,
+                router=self.router,
+                rebac_manager=self._rebac_manager,
+                enforce_permissions=self._enforce_permissions,
+                default_context=self._default_context,
+                record_store=self._record_store,
+                gateway=self._gateway,
+            )
 
-        # ShareLinkService: Share link operations (6 methods)
-        # Issue #1287 Phase 2: Extracted from NexusFSShareLinksMixin
+        # ShareLinkService: Share link operations
         from nexus.services.share_link_service import ShareLinkService
 
         self.share_link_service = ShareLinkService(
@@ -752,26 +437,79 @@ class NexusFS(  # type: ignore[misc]
             enforce_permissions=self._enforce_permissions,
         )
 
-        # EventsService: File watching + advisory locking (4 methods)
-        # Issue #1287 Phase 2: Extracted from NexusFSEventsMixin
-        from nexus.services.events_service import EventsService
+        # EventsService: File watching + advisory locking
+        if svc.events_service is not None:
+            self.events_service = svc.events_service
+        else:
+            from nexus.services.events_service import EventsService
 
-        metadata_cache = None
-        if hasattr(self.metadata, "_cache"):
-            metadata_cache = self.metadata._cache
+            metadata_cache = None
+            if hasattr(self.metadata, "_cache"):
+                metadata_cache = self.metadata._cache
 
-        self.events_service = EventsService(
-            backend=self.backend,
-            event_bus=getattr(self, "_event_bus", None),
-            lock_manager=getattr(self, "_lock_manager", None),
-            file_watcher=getattr(self, "_file_watcher", None),
-            zone_id=getattr(self, "zone_id", None),
-            metadata_cache=metadata_cache,
+            self.events_service = EventsService(
+                backend=self.backend,
+                event_bus=self._event_bus,
+                lock_manager=self._lock_manager,
+                file_watcher=self._file_watcher,
+                zone_id=None,
+                metadata_cache=metadata_cache,
+            )
+
+    @property
+    def _service_extras(self) -> dict[str, Any]:
+        """Server layer reads typed service fields as a dict interface."""
+        _fields = (
+            "observability_subsystem",
+            "chunked_upload_service",
+            "manifest_resolver",
+            "manifest_metrics",
+            "rebac_circuit_breaker",
+            "tool_namespace_middleware",
+            "resiliency_manager",
+            "delivery_worker",
         )
+        return {
+            k: getattr(self._services, k) for k in _fields if getattr(self._services, k) is not None
+        }
 
-        # OPTIMIZATION: Initialize TRAVERSE permissions and Tiger Cache
-        # This enables O(1) permission checks for FUSE path resolution
-        self._init_performance_optimizations()
+    @property
+    def read_set_cache(self) -> Any | None:
+        """Public accessor for the read-set-aware cache (Issue #1169)."""
+        return self._read_set_cache
+
+    @property
+    def read_set_registry(self) -> Any | None:
+        """Public accessor for the ReadSetRegistry (Issue #1169)."""
+        return getattr(self, "_read_set_registry", None)
+
+    @property
+    def metadata_cache(self) -> Any | None:
+        """Public accessor for the underlying MetadataCache on the metadata store."""
+        return getattr(self.metadata, "_cache", None)
+
+    @property
+    def namespace_manager(self) -> Any | None:
+        """Public accessor for the NamespaceManager (via PermissionEnforcer)."""
+        enforcer = self._permission_enforcer
+        if enforcer is not None:
+            return getattr(enforcer, "namespace_manager", None)
+        return None
+
+    @property
+    def config(self) -> Any | None:
+        """Public accessor for the runtime configuration object."""
+        return self._config
+
+    @property
+    def rebac_manager(self) -> Any | None:
+        """Public accessor for the ReBACManager instance."""
+        return getattr(self, "_rebac_manager", None)
+
+    @property
+    def semantic_search_engine(self) -> Any | None:
+        """Public accessor for the semantic search engine instance."""
+        return self._semantic_search
 
     def _init_performance_optimizations(self) -> None:
         """Initialize performance optimizations for permission checks.
@@ -1047,11 +785,8 @@ class NexusFS(  # type: ignore[misc]
             >>> results = nx.memory.query(memory_type="preference")
         """
         if self._memory_api is None:
-            from nexus.rebac.entity_registry import EntityRegistry
-
             # Get or create entity registry (v0.5.0: Pass SessionFactory instead of Session)
-            if self._entity_registry is None:
-                self._entity_registry = EntityRegistry(self.SessionLocal)
+            self._ensure_entity_registry()
 
             # Create a session from SessionLocal
             session = self.SessionLocal()
@@ -1169,20 +904,19 @@ class NexusFS(  # type: ignore[misc]
             self._default_context.is_admin,
         )
 
-    # Backward compatibility properties for deprecated instance fields
     @property
     def zone_id(self) -> str | None:
-        """DEPRECATED: Access via context parameter instead. Returns default zone_id for embedded mode."""
+        """Default zone_id from the instance context."""
         return self._default_context.zone_id
 
     @property
     def agent_id(self) -> str | None:
-        """DEPRECATED: Access via context parameter instead. Returns default agent_id for embedded mode."""
+        """Default agent_id from the instance context."""
         return self._default_context.agent_id
 
     @property
     def user_id(self) -> str | None:
-        """DEPRECATED: Access via context parameter instead. Returns default user_id for embedded mode."""
+        """Default user_id from the instance context."""
         return getattr(self._default_context, "user", None)
 
     def _get_memory_api(self, context: dict | None = None) -> Memory:
@@ -1195,11 +929,9 @@ class NexusFS(  # type: ignore[misc]
             Memory API instance
         """
         from nexus.services.memory.memory_api import Memory
-        from nexus.rebac.entity_registry import EntityRegistry
 
         # Get or create entity registry
-        if self._entity_registry is None:
-            self._entity_registry = EntityRegistry(self.SessionLocal)
+        self._ensure_entity_registry()
 
         # Create a session
         session = self.SessionLocal()
@@ -1225,8 +957,6 @@ class NexusFS(  # type: ignore[misc]
         Returns:
             OperationContext instance
         """
-        from nexus.core.permissions import OperationContext
-
         # If already an OperationContext, return as-is
         if isinstance(context, OperationContext):
             return context
@@ -1242,6 +972,17 @@ class NexusFS(  # type: ignore[misc]
             is_admin=context.get("is_admin", False),
             is_system=context.get("is_system", False),
         )
+
+    def _ensure_entity_registry(self) -> EntityRegistry:
+        """Lazily create and cache an EntityRegistry instance.
+
+        Consolidates 7 deferred import sites (Issue #1291).
+        """
+        if self._entity_registry is None:
+            from nexus.services.permissions.entity_registry import EntityRegistry
+
+            self._entity_registry = EntityRegistry(self.SessionLocal)
+        return self._entity_registry
 
     def _validate_path(self, path: str, allow_root: bool = False) -> str:
         """
@@ -1390,8 +1131,6 @@ class NexusFS(  # type: ignore[misc]
             return
 
         # Use default context if none provided
-        from nexus.core.permissions import OperationContext
-
         ctx_raw = context or self._default_context
         assert isinstance(ctx_raw, OperationContext), "Context must be OperationContext"
         ctx: OperationContext = ctx_raw
@@ -1399,7 +1138,7 @@ class NexusFS(  # type: ignore[misc]
         # P0-4: Zone boundary security check (Issue #819)
         # Even admins need zone boundary checks (unless they have MANAGE_ZONES capability)
         if ctx.is_admin and self._permission_enforcer:
-            from nexus.rebac.permissions_enhanced import AdminCapability
+            from nexus.services.permissions.permissions_enhanced import AdminCapability
 
             # Extract zone from path (format: /zone/{zone_id}/...)
             path_zone_id = None
@@ -1569,7 +1308,6 @@ class NexusFS(  # type: ignore[misc]
         route = self.router.route(
             path,
             zone_id=ctx.zone_id,
-            agent_id=ctx.agent_id,
             is_admin=ctx.is_admin,
             check_write=True,
         )
@@ -1730,8 +1468,6 @@ class NexusFS(  # type: ignore[misc]
         path = self._validate_path(path)
 
         # P0 Fixes: Create OperationContext
-        from nexus.core.permissions import OperationContext
-
         if context is not None:
             ctx = (
                 context
@@ -1785,7 +1521,6 @@ class NexusFS(  # type: ignore[misc]
         route = self.router.route(
             path,
             zone_id=ctx.zone_id,
-            agent_id=ctx.agent_id,
             is_admin=ctx.is_admin,
             check_write=True,
         )
@@ -1887,8 +1622,6 @@ class NexusFS(  # type: ignore[misc]
 
         if not has_rebac:
             # Fallback to permission enforcer if no ReBAC
-            from nexus.core.permissions import OperationContext
-
             assert isinstance(context, OperationContext), "Context must be OperationContext"
             return self._permission_enforcer.check(path, permission, context)
 
@@ -2003,8 +1736,9 @@ class NexusFS(  # type: ignore[misc]
 
         try:
             all_descendants = self.metadata.list(prefix)
-        except Exception:
+        except Exception as exc:
             # If metadata query fails, return False
+            logger.debug("Metadata query failed for prefix %s: %s", prefix, exc)
             return False
 
         # OPTIMIZATION 5 (legacy): Use Tiger Cache for batch descendant check
@@ -2349,9 +2083,8 @@ class NexusFS(  # type: ignore[misc]
             # Route with access control (read permission needed to check)
             route = self.router.route(
                 path,
-                zone_id=ctx.zone_id,  # v0.6.0: from context
-                agent_id=ctx.agent_id,  # v0.6.0: from context
-                is_admin=ctx.is_admin,  # v0.6.0: from context
+                zone_id=ctx.zone_id,
+                is_admin=ctx.is_admin,
                 check_write=False,
             )
             # Check if it's an explicit directory in the backend
@@ -2542,11 +2275,10 @@ class NexusFS(  # type: ignore[misc]
                     pass
             else:
                 # Non-root path - use router with context
-                zone_id, agent_id, is_admin = self._get_routing_params(context)
+                zone_id, _agent_id, is_admin = self._get_routing_params(context)
                 route = self.router.route(
                     path.rstrip("/"),
                     zone_id=zone_id,
-                    agent_id=agent_id,
                     is_admin=is_admin,
                     check_write=False,
                 )
@@ -3107,8 +2839,6 @@ class NexusFS(  # type: ignore[misc]
 
         # Read file content with system bypass for background parsing
         # Auto-parse is a system operation that should not be subject to user permissions
-        from nexus.core.permissions import OperationContext
-
         parse_ctx = OperationContext(user="system_parser", groups=[], zone_id=None, is_system=True)
         content = self.read(path, context=parse_ctx)
 
@@ -3151,7 +2881,6 @@ class NexusFS(  # type: ignore[misc]
     def workspace_snapshot(
         self,
         workspace_path: str | None = None,
-        agent_id: str | None = None,  # DEPRECATED: For backward compatibility
         description: str | None = None,
         tags: list[str] | None = None,
         created_by: str | None = None,
@@ -3161,7 +2890,6 @@ class NexusFS(  # type: ignore[misc]
 
         Args:
             workspace_path: Path to registered workspace (e.g., "/my-workspace")
-            agent_id: DEPRECATED - Use workspace_path instead
             description: Human-readable description of snapshot
             tags: List of tags for categorization
             created_by: User/agent who created the snapshot
@@ -3180,27 +2908,6 @@ class NexusFS(  # type: ignore[misc]
             >>> snapshot = nx.workspace_snapshot("/my-workspace", description="Initial state")
             >>> print(f"Created snapshot #{snapshot['snapshot_number']}")
         """
-        # Backward compatibility: support old agent_id parameter
-        if workspace_path is None and agent_id:
-            import warnings
-
-            warnings.warn(
-                "agent_id parameter is deprecated. Use workspace_path parameter instead. "
-                "Auto-registering workspace for backward compatibility.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            # Auto-construct path from agent_id (simple format, no zone in path)
-            workspace_path = f"/workspace/{agent_id}"
-
-            # Auto-register if not exists
-            if not self._workspace_registry.get_workspace(workspace_path):
-                self._workspace_registry.register_workspace(
-                    workspace_path,
-                    name=f"auto-{agent_id}",
-                    description=f"Auto-registered workspace for agent {agent_id}",
-                )
-
         if not workspace_path:
             raise ValueError("workspace_path must be provided")
 
@@ -3229,7 +2936,6 @@ class NexusFS(  # type: ignore[misc]
         self,
         snapshot_number: int,
         workspace_path: str | None = None,
-        agent_id: str | None = None,  # DEPRECATED: For backward compatibility
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Restore workspace to a previous snapshot.
@@ -3237,7 +2943,6 @@ class NexusFS(  # type: ignore[misc]
         Args:
             snapshot_number: Snapshot version number to restore
             workspace_path: Path to registered workspace
-            agent_id: DEPRECATED - Use workspace_path instead
             context: Operation context with user, permissions, zone info (uses default if None)
 
         Returns:
@@ -3254,23 +2959,6 @@ class NexusFS(  # type: ignore[misc]
         """
         # Use provided context or default
         ctx = context if context is not None else self._default_context
-
-        # Backward compatibility: support old agent_id parameter
-        if workspace_path is None and agent_id:
-            import warnings
-
-            warnings.warn(
-                "agent_id parameter is deprecated. Use workspace_path parameter instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            workspace_path = f"/workspace/{agent_id}"
-
-        if workspace_path is None:
-            # Fallback to context agent_id, then default context
-            fallback_agent_id = ctx.agent_id or self._default_context.agent_id
-            if fallback_agent_id:
-                workspace_path = f"/workspace/{fallback_agent_id}"
 
         if not workspace_path:
             raise ValueError("workspace_path must be provided")
@@ -3291,7 +2979,6 @@ class NexusFS(  # type: ignore[misc]
     def workspace_log(
         self,
         workspace_path: str | None = None,
-        agent_id: str | None = None,  # DEPRECATED: For backward compatibility
         limit: int = 100,
         context: OperationContext | None = None,
     ) -> list[dict[str, Any]]:
@@ -3299,7 +2986,6 @@ class NexusFS(  # type: ignore[misc]
 
         Args:
             workspace_path: Path to registered workspace
-            agent_id: DEPRECATED - Use workspace_path instead
             limit: Maximum number of snapshots to return
             context: Operation context with user, permissions, zone info (uses default if None)
 
@@ -3317,23 +3003,6 @@ class NexusFS(  # type: ignore[misc]
         """
         # Parse context properly
         ctx = self._parse_context(context)
-
-        # Backward compatibility: support old agent_id parameter
-        if workspace_path is None and agent_id:
-            import warnings
-
-            warnings.warn(
-                "agent_id parameter is deprecated. Use workspace_path parameter instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            workspace_path = f"/workspace/{agent_id}"
-
-        if workspace_path is None:
-            # Fallback to context agent_id, then default context
-            fallback_agent_id = ctx.agent_id or self._default_context.agent_id
-            if fallback_agent_id:
-                workspace_path = f"/workspace/{fallback_agent_id}"
 
         if not workspace_path:
             raise ValueError("workspace_path must be provided")
@@ -3356,7 +3025,6 @@ class NexusFS(  # type: ignore[misc]
         snapshot_1: int,
         snapshot_2: int,
         workspace_path: str | None = None,
-        agent_id: str | None = None,  # DEPRECATED: For backward compatibility
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Compare two workspace snapshots.
@@ -3365,7 +3033,6 @@ class NexusFS(  # type: ignore[misc]
             snapshot_1: First snapshot number
             snapshot_2: Second snapshot number
             workspace_path: Path to registered workspace
-            agent_id: DEPRECATED - Use workspace_path instead
             context: Operation context with user, permissions, zone info (uses default if None)
 
         Returns:
@@ -3382,23 +3049,6 @@ class NexusFS(  # type: ignore[misc]
         """
         # Parse context properly
         ctx = self._parse_context(context)
-
-        # Backward compatibility: support old agent_id parameter
-        if workspace_path is None and agent_id:
-            import warnings
-
-            warnings.warn(
-                "agent_id parameter is deprecated. Use workspace_path parameter instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            workspace_path = f"/workspace/{agent_id}"
-
-        if workspace_path is None:
-            # Fallback to context agent_id, then default context
-            fallback_agent_id = ctx.agent_id or self._default_context.agent_id
-            if fallback_agent_id:
-                workspace_path = f"/workspace/{fallback_agent_id}"
 
         if not workspace_path:
             raise ValueError("workspace_path must be provided")
@@ -4001,7 +3651,11 @@ class NexusFS(  # type: ignore[misc]
         context: dict | Any | None,
     ) -> str:
         """Create API key for agent and return the raw key."""
-        from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+        if self._api_key_creator is None:
+            raise RuntimeError(
+                "API key creator not injected. "
+                "Use factory.create_nexus_services() to wire auth services."
+            )
 
         zone_id = self._extract_zone_id(context)
         session = self.SessionLocal()
@@ -4010,8 +3664,8 @@ class NexusFS(  # type: ignore[misc]
             # Determine expiration based on owner's key
             expires_at = self._determine_agent_key_expiration(user_id, session)
 
-            # Create the API key
-            _key_id, raw_key = DatabaseAPIKeyAuth.create_key(
+            # Create the API key (Issue #1519, 3A: uses injected protocol)
+            _key_id, raw_key = self._api_key_creator.create_key(
                 session,
                 user_id=user_id,
                 name=agent_id,  # Use agent_id format: <user_id>,<agent_name>
@@ -4024,6 +3678,29 @@ class NexusFS(  # type: ignore[misc]
             return raw_key
         finally:
             session.close()
+
+    def _ensure_agent_registry(self) -> None:
+        """Lazily create AgentRegistry if not already set.
+
+        The registry is normally injected by the FastAPI server lifespan,
+        but for tests or standalone usage we auto-create it from the
+        available SessionLocal and EntityRegistry.
+        """
+        if self._agent_registry is not None:
+            return
+
+        if self.SessionLocal is None:
+            raise RuntimeError(
+                "AgentRegistry not initialized and no SessionLocal available "
+                "to create one. Provide a record_store when constructing NexusFS."
+            )
+
+        from nexus.services.agents.agent_registry import AgentRegistry
+
+        self._agent_registry = AgentRegistry(
+            session_factory=self.SessionLocal,
+            entity_registry=self._entity_registry,
+        )
 
     @rpc_expose(description="Register an AI agent")
     def register_agent(
@@ -4069,8 +3746,6 @@ class NexusFS(  # type: ignore[misc]
         """
         import logging
 
-        from nexus.core.agents import register_agent
-
         logger = logging.getLogger(__name__)
 
         # Extract user_id and zone_id from context
@@ -4080,86 +3755,33 @@ class NexusFS(  # type: ignore[misc]
 
         zone_id = self._extract_zone_id(context) or "default"
 
-        # Check if agent config already exists BEFORE modifying entity registry
-        # Extract agent name from agent_id (format: user_id,agent_name)
+        # Derive agent namespace paths
         agent_name_part = agent_id.split(",", 1)[1] if "," in agent_id else agent_id
         agent_dir = f"/zone/{zone_id}/user/{user_id}/agent/{agent_name_part}"
-        config_path = f"{agent_dir}/config.yaml"
 
-        try:
-            existing_meta = self.metadata.get(config_path)
-            if existing_meta:
-                raise ValueError(
-                    f"Agent already exists at {config_path}. "
-                    f"Cannot re-register existing agent. Delete the agent first if you want to recreate it."
-                )
-        except FileNotFoundError:
-            # Config doesn't exist, this is expected for new agents
-            pass
+        # Pre-flight: ensure agent does not already exist
+        self._check_agent_not_exists(agent_id, user_id, zone_id)
 
-        # Ensure EntityRegistry is initialized
-        if not self._entity_registry:
-            from nexus.rebac.entity_registry import EntityRegistry
+        # Lazily initialise AgentRegistry if not injected (e.g. in tests)
+        self._ensure_agent_registry()
 
-            self._entity_registry = EntityRegistry(self.SessionLocal)
-
-        # Register agent entity (always without API key first)
-        agent = register_agent(
-            user_id=user_id,
+        # --- Single registration path (Issue #1588) ---
+        # AgentRegistry.register() handles BOTH the DB write AND the EntityRegistry bridge.
+        record = self._agent_registry.register(
             agent_id=agent_id,
-            name=name,
+            owner_id=user_id,
             zone_id=zone_id,
-            metadata={"description": description} if description else None,
-            entity_registry=self._entity_registry,
+            name=name,
+            metadata=metadata,
+            capabilities=capabilities,
         )
+        agent = record.to_dict()
 
-        # Issue #1240: Dual-write to AgentRegistry for lifecycle tracking
-        if hasattr(self, "_agent_registry") and self._agent_registry:
-            try:
-                self._agent_registry.register(
-                    agent_id=agent_id,
-                    owner_id=user_id,
-                    zone_id=zone_id,
-                    name=name,
-                    metadata=metadata,
-                    capabilities=capabilities,
-                )
-            except Exception as reg_err:
-                logger.debug(f"[AGENT-REGISTRY] Dual-write register: {reg_err}")
+        # Provision identity, wallet, config, permissions, identity doc, API key
+        agent_did = self._provision_agent_identity(agent_id, agent, logger)
+        self._provision_agent_wallet(agent_id, zone_id, logger)
 
-        # Issue #1355: Provision cryptographic identity (Ed25519 keypair + DID)
-        agent_did: str | None = None
-        if hasattr(self, "_key_service") and self._key_service:
-            try:
-                key_record = self._key_service.ensure_keypair(agent_id)
-                agent_did = key_record.did
-                agent = {**agent, "did": agent_did, "key_id": key_record.key_id}
-                logger.info(
-                    "[KYA] Provisioned identity for agent %s (did=%s)",
-                    agent_id,
-                    agent_did,
-                )
-            except Exception as kya_err:
-                logger.warning(
-                    "[KYA] Failed to provision identity for agent %s: %s",
-                    agent_id,
-                    kya_err,
-                )
-
-        # Issue #1210: Auto-provision wallet (sync, non-blocking on failure)
-        if self._wallet_provisioner is not None:
-            try:
-                self._wallet_provisioner(agent_id, zone_id)
-                logger.info(f"[WALLET] Provisioned wallet for agent {agent_id}")
-            except Exception as wallet_err:
-                logger.warning(
-                    f"[WALLET] Failed to provision wallet for agent {agent_id}: {wallet_err}"
-                )
-
-        # Store capabilities in agent return dict for caller convenience
-        if capabilities:
-            agent["capabilities"] = list(capabilities)
-        # Create initial config data
+        config_path = f"{agent_dir}/config.yaml"
         config_data = self._create_agent_config_data(
             agent_id=agent_id,
             name=name,
@@ -4168,8 +3790,6 @@ class NexusFS(  # type: ignore[misc]
             created_at=agent.get("created_at"),
             metadata=metadata,
         )
-
-        # Create directory, config file, and grant ReBAC permissions
         self._create_agent_directory(
             agent_id=agent_id,
             user_id=user_id,
@@ -4180,8 +3800,113 @@ class NexusFS(  # type: ignore[misc]
         )
         agent["config_path"] = config_path
 
-        # Grant agent viewer permission on its own config directory
-        # This allows the agent to read its own configuration
+        self._grant_agent_self_permission(agent_id, agent_dir, zone_id, context, logger)
+
+        if agent_did:
+            self._write_agent_identity_document(agent_id, agent_did, agent_dir, context, logger)
+
+        if generate_api_key:
+            self._provision_agent_api_key(
+                agent_id=agent_id,
+                user_id=user_id,
+                name=name,
+                description=description,
+                metadata=metadata,
+                agent=agent,
+                config_path=config_path,
+                context=context,
+                logger=logger,
+            )
+        else:
+            agent["has_api_key"] = False
+
+        if capabilities:
+            agent["capabilities"] = list(capabilities)
+
+        return agent
+
+    # ------------------------------------------------------------------
+    # register_agent helper methods (Issue #1588: extracted for clarity)
+    # ------------------------------------------------------------------
+
+    def _check_agent_not_exists(
+        self,
+        agent_id: str,
+        user_id: str,
+        zone_id: str,
+    ) -> None:
+        """Raise ValueError if agent config already exists on the filesystem."""
+        agent_name_part = agent_id.split(",", 1)[1] if "," in agent_id else agent_id
+        agent_dir = f"/zone/{zone_id}/user/{user_id}/agent/{agent_name_part}"
+        config_path = f"{agent_dir}/config.yaml"
+        try:
+            existing_meta = self.metadata.get(config_path)
+            if existing_meta:
+                raise ValueError(
+                    f"Agent already exists at {config_path}. "
+                    f"Cannot re-register existing agent. Delete the agent first if you want to recreate it."
+                )
+        except FileNotFoundError:
+            pass  # Config doesn't exist — expected for new agents
+
+    def _provision_agent_identity(
+        self,
+        agent_id: str,
+        agent: dict,
+        logger: logging.Logger,
+    ) -> str | None:
+        """Provision Ed25519 keypair + DID for the agent (Issue #1355).
+
+        Returns the agent DID string if successful, None otherwise.
+        Mutates *agent* dict in-place to add ``did`` and ``key_id`` keys.
+        """
+        if not (hasattr(self, "_key_service") and self._key_service):
+            return None
+        try:
+            key_record = self._key_service.ensure_keypair(agent_id)
+            agent_did = key_record.did
+            agent["did"] = agent_did
+            agent["key_id"] = key_record.key_id
+            logger.info(
+                "[KYA] Provisioned identity for agent %s (did=%s)",
+                agent_id,
+                agent_did,
+            )
+            return agent_did
+        except Exception as kya_err:
+            logger.warning(
+                "[KYA] Failed to provision identity for agent %s: %s",
+                agent_id,
+                kya_err,
+            )
+            return None
+
+    def _provision_agent_wallet(
+        self,
+        agent_id: str,
+        zone_id: str,
+        logger: logging.Logger,
+    ) -> None:
+        """Auto-provision a TigerBeetle wallet for the agent (Issue #1210)."""
+        if self._wallet_provisioner is None:
+            return
+        try:
+            self._wallet_provisioner(agent_id, zone_id)
+            logger.info(f"[WALLET] Provisioned wallet for agent {agent_id}")
+        except Exception as wallet_err:
+            logger.warning(
+                f"[WALLET] Failed to provision wallet for agent {agent_id}: {wallet_err}"
+            )
+
+    def _grant_agent_self_permission(
+        self,
+        agent_id: str,
+        agent_dir: str,
+        zone_id: str,
+        context: dict | None,
+        logger: logging.Logger,
+    ) -> None:
+        """Grant the agent viewer permission on its own config directory."""
         try:
             self.rebac_create(
                 subject=("agent", agent_id),
@@ -4194,60 +3919,74 @@ class NexusFS(  # type: ignore[misc]
         except Exception as e:
             logger.warning(f"Failed to grant viewer permission to agent: {e}")
 
-        # Issue #1355: Write public identity document to agent namespace
-        if agent_did:
-            try:
-                from nexus.identity.did import create_did_document
+    def _write_agent_identity_document(
+        self,
+        agent_id: str,
+        agent_did: str,
+        agent_dir: str,
+        context: dict | None,
+        logger: logging.Logger,
+    ) -> None:
+        """Write public DID document to the agent's .identity namespace (Issue #1355)."""
+        try:
+            from nexus.identity.did import create_did_document
 
-                key_record = self._key_service.get_active_keys(agent_id)[0]
-                public_key = self._key_service._crypto.public_key_from_bytes(
-                    key_record.public_key_bytes
-                )
-                did_doc = create_did_document(agent_did, public_key)
-                identity_dir = f"{agent_dir}/.identity"
-                ctx = self._parse_context(context)
-                self.mkdir(identity_dir, parents=True, exist_ok=True, context=ctx)
-                self.write(
-                    f"{identity_dir}/did.json",
-                    json.dumps(did_doc, indent=2),
-                    context=ctx,
-                )
-                logger.info("[KYA] Wrote DID document to %s/did.json", identity_dir)
-            except Exception as did_err:
-                logger.warning("[KYA] Failed to write DID document: %s", did_err)
+            key_record = self._key_service.get_active_keys(agent_id)[0]
+            public_key = self._key_service._crypto.public_key_from_bytes(
+                key_record.public_key_bytes
+            )
+            did_doc = create_did_document(agent_did, public_key)
+            identity_dir = f"{agent_dir}/.identity"
+            ctx = self._parse_context(context)
+            self.mkdir(identity_dir, parents=True, exist_ok=True, context=ctx)
+            self.write(
+                f"{identity_dir}/did.json",
+                json.dumps(did_doc, indent=2),
+                context=ctx,
+            )
+            logger.info("[KYA] Wrote DID document to %s/did.json", identity_dir)
+        except Exception as did_err:
+            logger.warning("[KYA] Failed to write DID document: %s", did_err)
 
-        # Optionally generate API key
-        if generate_api_key:
+    def _provision_agent_api_key(
+        self,
+        agent_id: str,
+        user_id: str,
+        name: str,
+        description: str | None,
+        metadata: dict | None,
+        agent: dict,
+        config_path: str,
+        context: dict | None,
+        logger: logging.Logger,
+    ) -> None:
+        """Generate an API key for the agent and update its config.yaml."""
+        try:
+            raw_key = self._create_agent_api_key(
+                agent_id=agent_id,
+                user_id=user_id,
+                context=context,
+            )
+            agent["api_key"] = raw_key
+            agent["has_api_key"] = True
+
+            # Update config.yaml with API key information
             try:
-                raw_key = self._create_agent_api_key(
+                updated_config_data = self._create_agent_config_data(
                     agent_id=agent_id,
+                    name=name,
                     user_id=user_id,
-                    context=context,
+                    description=description,
+                    created_at=agent.get("created_at"),
+                    metadata=metadata,
+                    api_key=raw_key,
                 )
-                agent["api_key"] = raw_key
-                agent["has_api_key"] = True
-
-                # Update config.yaml with API key information
-                try:
-                    updated_config_data = self._create_agent_config_data(
-                        agent_id=agent_id,
-                        name=name,
-                        user_id=user_id,
-                        description=description,
-                        created_at=agent.get("created_at"),
-                        metadata=metadata,
-                        api_key=raw_key,
-                    )
-                    self._write_agent_config(config_path, updated_config_data, context)
-                except Exception as e:
-                    logger.warning(f"Failed to update config with API key: {e}")
+                self._write_agent_config(config_path, updated_config_data, context)
             except Exception as e:
-                logger.error(f"Failed to create API key for agent: {e}")
-                raise
-        else:
-            agent["has_api_key"] = False
-
-        return agent
+                logger.warning(f"Failed to update config with API key: {e}")
+        except Exception as e:
+            logger.error(f"Failed to create API key for agent: {e}")
+            raise
 
     @rpc_expose(description="Update agent configuration")
     def update_agent(
@@ -4390,10 +4129,7 @@ class NexusFS(  # type: ignore[misc]
             >>> for agent in agents:
             ...     print(f"{agent['agent_id']}: {agent['name']}")
         """
-        if not self._entity_registry:
-            from nexus.rebac.entity_registry import EntityRegistry
-
-            self._entity_registry = EntityRegistry(self.SessionLocal)
+        self._ensure_entity_registry()
 
         entities = self._entity_registry.get_entities_by_type("agent")
         result = []
@@ -4461,10 +4197,10 @@ class NexusFS(  # type: ignore[misc]
                             if isinstance(config_content, bytes):
                                 config_data = yaml.safe_load(config_content.decode("utf-8"))
                                 inherit_perms = config_data.get("inherit_permissions")
-                        except Exception:
-                            pass  # If can't read config, will use default
-                except Exception:
-                    pass
+                        except Exception as exc:
+                            logger.debug("Failed to read agent config at %s: %s", config_path, exc)
+                except Exception as exc:
+                    logger.debug("Failed to parse agent entity_id for config lookup: %s", exc)
 
                 # Default to True if not found (agents without API keys inherit by default)
                 agent_info["inherit_permissions"] = (
@@ -4493,10 +4229,7 @@ class NexusFS(  # type: ignore[misc]
             ...     if agent.get('api_key'):
             ...         print(f"Has API key: {agent['api_key'][:10]}...")
         """
-        if not self._entity_registry:
-            from nexus.rebac.entity_registry import EntityRegistry
-
-            self._entity_registry = EntityRegistry(self.SessionLocal)
+        self._ensure_entity_registry()
 
         entity = self._entity_registry.get_entity("agent", agent_id)
         if not entity:
@@ -4596,11 +4329,10 @@ class NexusFS(  # type: ignore[misc]
                                 agent_info["system_prompt"] = config_data["system_prompt"]
                             if config_data.get("tools"):
                                 agent_info["tools"] = config_data["tools"]
-                        except Exception:
-                            # If can't read config, that's okay - agent might not have config file yet
-                            pass
-                except Exception:
-                    pass
+                        except Exception as exc:
+                            logger.debug("Failed to read agent config for %s: %s", agent_id, exc)
+                except Exception as exc:
+                    logger.debug("Failed to parse agent_id %s for config lookup: %s", agent_id, exc)
             else:
                 agent_info["has_api_key"] = False
                 # If no API key, try to read from config.yaml or use default True
@@ -4651,10 +4383,10 @@ class NexusFS(  # type: ignore[misc]
                                     agent_info["system_prompt"] = config_data["system_prompt"]
                                 if config_data.get("tools"):
                                     agent_info["tools"] = config_data["tools"]
-                        except Exception:
-                            pass  # If can't read config, will use default
-                except Exception:
-                    pass
+                        except Exception as exc:
+                            logger.debug("Failed to read agent config at %s: %s", config_path, exc)
+                except Exception as exc:
+                    logger.debug("Failed to parse agent entity_id for config lookup: %s", exc)
 
                 # Default to True if not found (agents without API keys inherit by default)
                 agent_info["inherit_permissions"] = (
@@ -4681,12 +4413,6 @@ class NexusFS(  # type: ignore[misc]
             >>> if deleted:
             ...     print("Agent deleted")
         """
-        if not self._entity_registry:
-            from nexus.rebac.entity_registry import EntityRegistry
-
-            self._entity_registry = EntityRegistry(self.SessionLocal)
-
-        # Get agent info before deletion to extract user_id and zone_id
         import logging
 
         logger = logging.getLogger(__name__)
@@ -4805,17 +4531,12 @@ class NexusFS(  # type: ignore[misc]
                     f"[WALLET] Failed to cleanup wallet for agent {agent_id}: {wallet_err}"
                 )
 
-        # Delete from entity registry first (primary source of truth)
-        deleted = self._entity_registry.delete_entity("agent", agent_id)
+        # Lazily initialise AgentRegistry if not injected (e.g. in tests)
+        self._ensure_agent_registry()
 
-        # Issue #1240: Dual-write to AgentRegistry for lifecycle tracking
-        # Note: AgentRegistry.unregister() has a bridge that also calls
-        # entity_registry.delete_entity(), but the entity is already gone above.
-        if hasattr(self, "_agent_registry") and self._agent_registry:
-            try:
-                self._agent_registry.unregister(agent_id)
-            except Exception as unreg_err:
-                logger.debug(f"[AGENT-REGISTRY] Dual-write unregister: {unreg_err}")
+        # Single unregister path (Issue #1588): AgentRegistry.unregister() handles
+        # BOTH the agent_records DB delete AND the EntityRegistry bridge delete.
+        deleted = self._agent_registry.unregister(agent_id)
 
         return deleted
 
@@ -5035,10 +4756,7 @@ class NexusFS(  # type: ignore[misc]
         }
 
         # Initialize entity registry
-        if not self._entity_registry:
-            from nexus.rebac.entity_registry import EntityRegistry
-
-            self._entity_registry = EntityRegistry(self.SessionLocal)
+        self._ensure_entity_registry()
 
         session = self.SessionLocal()
         api_key = None
@@ -5110,8 +4828,13 @@ class NexusFS(  # type: ignore[misc]
             if create_api_key:
                 from sqlalchemy import select
 
-                from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
                 from nexus.storage.models import APIKeyModel
+
+                if self._api_key_creator is None:
+                    raise RuntimeError(
+                        "API key creator not injected. "
+                        "Use factory.create_nexus_services() to wire auth services."
+                    )
 
                 # Lock the user row to prevent race conditions during concurrent provisioning
                 # This ensures only one thread can check and create API keys at a time
@@ -5138,7 +4861,8 @@ class NexusFS(  # type: ignore[misc]
                     # Use custom key name if provided, otherwise default
                     key_name = api_key_name or f"Primary key for {email}"
 
-                    key_id, api_key = DatabaseAPIKeyAuth.create_key(
+                    # Issue #1519, 3A: uses injected protocol
+                    key_id, api_key = self._api_key_creator.create_key(
                         session,
                         user_id=user_id,
                         name=key_name,
@@ -5497,8 +5221,8 @@ class NexusFS(  # type: ignore[misc]
                             try:
                                 self.rebac_delete(tuple_id)
                                 deleted_count += 1
-                            except Exception:
-                                pass  # Continue with other tuples
+                            except Exception as exc:
+                                logger.warning("Failed to delete ReBAC tuple %s: %s", tuple_id, exc)
                     result["deleted_permissions"] = deleted_count
                     logger.info(f"Deleted {deleted_count} ReBAC permissions for user {user_id}")
                 else:
@@ -5559,8 +5283,8 @@ class NexusFS(  # type: ignore[misc]
         """Recursively delete a directory and all its contents.
 
         Strategy:
-        1. Try physical deletion first (for LocalBackend) - fastest and most reliable
-        2. Fall back to virtual filesystem deletion if physical deletion fails
+        1. Delegate to backend's rmdir(recursive=True) - backend handles physical deletion
+        2. Fall back to virtual filesystem deletion if backend deletion fails
 
         Args:
             dir_path: Directory path to delete
@@ -5570,46 +5294,22 @@ class NexusFS(  # type: ignore[misc]
             True if directory was deleted (or had content deleted), False otherwise
         """
         import logging
-        import os
-        import shutil
 
         logger = logging.getLogger(__name__)
 
         directory_removed = False
         had_content = False  # Track if directory had any content
 
-        # Approach 1: Physical deletion (for LocalBackend) - Try first for efficiency
-        if hasattr(self, "backend") and self.backend.has_root_path is True:
+        # Approach 1: Delegate to backend's rmdir (handles physical deletion internally)
+        if hasattr(self, "backend"):
             try:
-                # Convert virtual path to physical path
-                # LocalBackend stores directories under "dirs" subdirectory
-                physical_path = self.backend.root_path / "dirs" / dir_path.lstrip("/")
-                if physical_path.exists() and physical_path.is_dir():
-                    # Check if directory actually has content (not just an empty stub)
-                    from contextlib import suppress
-
-                    with suppress(OSError):
-                        # Use os.listdir to check if directory has any files/subdirs
-                        dir_contents = os.listdir(physical_path)
-                        if dir_contents:
-                            had_content = True  # Directory has actual content
-
-                    try:
-                        # shutil.rmtree() removes entire directory tree in one go
-                        shutil.rmtree(physical_path)
-                        directory_removed = True
-                        logger.info(f"Deleted physical directory: {dir_path}")
-                    except OSError as e:
-                        logger.debug(f"shutil.rmtree failed for {physical_path}: {e}")
-                        # Try os.rmdir() for empty directories
-                        try:
-                            os.rmdir(physical_path)
-                            directory_removed = True
-                            logger.info(f"Deleted empty physical directory: {dir_path}")
-                        except OSError as e2:
-                            logger.debug(f"os.rmdir failed for {physical_path}: {e2}")
+                response = self.backend.rmdir(dir_path, recursive=True, context=context)
+                if response.success:
+                    directory_removed = True
+                    had_content = True
+                    logger.info(f"Deleted directory via backend: {dir_path}")
             except Exception as e:
-                logger.debug(f"Physical deletion failed for {dir_path}: {e}")
+                logger.debug(f"Backend rmdir failed for {dir_path}: {e}")
 
         # If physical deletion worked, still need to clean up metadata and permissions
         if directory_removed:
@@ -5668,8 +5368,10 @@ class NexusFS(  # type: ignore[misc]
                     # Clear cache for parent too
                     if parent_path:
                         self._exists_cache.pop(parent_path, None)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug(
+                    "Failed to invalidate caches after directory deletion of %s: %s", dir_path, exc
+                )
 
             # Clear tiger cache entries for the directory and children
             if hasattr(self, "rebac_manager") and hasattr(self.rebac_manager, "_tiger_cache"):
@@ -5722,8 +5424,8 @@ class NexusFS(  # type: ignore[misc]
                     try:
                         self.list(child_path, recursive=False, context=context)
                         is_dir = True
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.debug("Path %s is not a listable directory: %s", child_path, exc)
                 elif isinstance(item, dict):
                     child_path = item.get("path")
                     if not child_path:
@@ -6216,6 +5918,15 @@ class NexusFS(  # type: ignore[misc]
     # Sandbox Management (Issue #372)
     # ========================================================================
 
+    @property
+    def sandbox_available(self) -> bool:
+        """Whether sandbox execution is available."""
+        try:
+            self._ensure_sandbox_manager()
+        except Exception:
+            return False
+        return bool(self._sandbox_manager and self._sandbox_manager.providers)
+
     def _ensure_sandbox_manager(self) -> None:
         """Ensure sandbox manager is initialized (lazy initialization)."""
         if not hasattr(self, "_sandbox_manager") or self._sandbox_manager is None:
@@ -6234,8 +5945,13 @@ class NexusFS(  # type: ignore[misc]
                 config=config,  # Pass config for Docker provider
             )
 
-            # Attach smart router for Monty -> Docker -> E2B routing (Issue #1317)
-            self._sandbox_manager.wire_router()
+            # Attach smart router if providers are available (Issue #1317)
+            if self._sandbox_manager.providers:
+                from nexus.sandbox.sandbox_router import SandboxRouter
+
+                self._sandbox_manager._router = SandboxRouter(
+                    available_providers=self._sandbox_manager.providers,
+                )
 
     @staticmethod
     def _run_async(coro: Any) -> Any:
@@ -6618,7 +6334,9 @@ class NexusFS(  # type: ignore[misc]
             import os
 
             # Check NEXUS_SERVER_URL first (for Docker deployments), then NEXUS_URL
-            nexus_url = os.getenv("NEXUS_SERVER_URL") or os.getenv("NEXUS_URL", DEFAULT_NEXUS_URL)
+            nexus_url = os.getenv("NEXUS_SERVER_URL") or os.getenv(
+                "NEXUS_URL", "http://localhost:2026"
+            )
 
         # Get Nexus API key from context if not provided
         if not nexus_api_key:
@@ -7126,7 +6844,7 @@ class NexusFS(  # type: ignore[misc]
         """Extract subject from operation context.
 
         Args:
-            context: Operation context (OperationContext, EnhancedOperationContext, or dict)
+            context: Operation context (OperationContext or dict)
 
         Returns:
             Subject tuple (type, id) or None if not found
@@ -7190,7 +6908,7 @@ class NexusFS(  # type: ignore[misc]
 
         Args:
             resource: Resource tuple (object_type, object_id)
-            context: Operation context (OperationContext, EnhancedOperationContext, or dict)
+            context: Operation context (OperationContext or dict)
             required_permission: Permission level required (default: "execute" for ownership)
 
         Raises:
@@ -7275,7 +6993,7 @@ class NexusFS(  # type: ignore[misc]
 
                 # Check if user is zone admin for this resource's zone
                 if zone_id and op_context.user:
-                    from nexus.server.auth.user_helpers import is_zone_admin
+                    from nexus.core.zone_helpers import is_zone_admin
 
                     if is_zone_admin(self._rebac_manager, op_context.user, zone_id):
                         # Zone admin can share resources in their zone
@@ -7297,7 +7015,7 @@ class NexusFS(  # type: ignore[misc]
         object: tuple[str, str],
         expires_at: datetime | None = None,
         zone_id: str | None = None,
-        context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
+        context: Any = None,  # Accept OperationContext or dict
         column_config: dict[str, Any] | None = None,  # Column-level permissions for dynamic_viewer
     ) -> dict[str, Any]:
         """Create a relationship tuple in ReBAC system.
@@ -7392,7 +7110,7 @@ class NexusFS(  # type: ignore[misc]
         # Use zone_id from context if not explicitly provided
         effective_zone_id = zone_id
         if effective_zone_id is None and context:
-            # Handle both dict and OperationContext/EnhancedOperationContext
+            # Handle both dict and OperationContext
             if isinstance(context, dict):
                 effective_zone_id = context.get("zone")
             elif hasattr(context, "zone_id"):
@@ -7579,7 +7297,7 @@ class NexusFS(  # type: ignore[misc]
         Returns:
             True if user has READ on any descendant, False otherwise
         """
-        from nexus.rebac.utils.zone import normalize_zone_id
+        from nexus.services.permissions.utils.zone import normalize_zone_id
 
         # Normalize path prefix for matching
         prefix = path if path.endswith("/") else path + "/"
@@ -7638,7 +7356,7 @@ class NexusFS(  # type: ignore[misc]
         subject: tuple[str, str],
         permission: str,
         object: tuple[str, str],
-        context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
+        context: Any = None,  # Accept OperationContext or dict
         zone_id: str | None = None,
     ) -> bool:
         """Check if subject has permission on object via ReBAC.
@@ -7707,7 +7425,7 @@ class NexusFS(  # type: ignore[misc]
         # Use zone_id from operation context if not explicitly provided
         effective_zone_id = zone_id
         if effective_zone_id is None and context:
-            # Handle both dict and OperationContext/EnhancedOperationContext
+            # Handle both dict and OperationContext
             if isinstance(context, dict):
                 effective_zone_id = context.get("zone")
             elif hasattr(context, "zone_id"):
@@ -7792,7 +7510,7 @@ class NexusFS(  # type: ignore[misc]
         permission: str,
         object: tuple[str, str],
         zone_id: str | None = None,
-        context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
+        context: Any = None,  # Accept OperationContext or dict
     ) -> dict:
         """Explain why a subject has or doesn't have permission on an object.
 
@@ -7853,7 +7571,7 @@ class NexusFS(  # type: ignore[misc]
         # Use zone_id from context if not explicitly provided
         effective_zone_id = zone_id
         if effective_zone_id is None and context:
-            # Handle both dict and OperationContext/EnhancedOperationContext
+            # Handle both dict and OperationContext
             if isinstance(context, dict):
                 effective_zone_id = context.get("zone")
             elif hasattr(context, "zone_id"):
@@ -8624,7 +8342,7 @@ class NexusFS(  # type: ignore[misc]
         zone_id: str | None = None,
         user_zone_id: str | None = None,
         expires_at: datetime | None = None,
-        context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
+        context: Any = None,  # Accept OperationContext or dict
     ) -> dict[str, Any]:
         """Share a resource with a specific user, regardless of zone.
 
@@ -8723,7 +8441,7 @@ class NexusFS(  # type: ignore[misc]
         zone_id: str | None = None,
         group_zone_id: str | None = None,
         expires_at: datetime | None = None,
-        context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
+        context: Any = None,  # Accept OperationContext or dict
     ) -> dict[str, Any]:
         """Share a resource with a group (all members get access).
 
@@ -8935,7 +8653,7 @@ class NexusFS(  # type: ignore[misc]
                 "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
-        from nexus.rebac.rebac_iterator_cache import CursorExpiredError
+        from nexus.services.permissions.rebac_iterator_cache import CursorExpiredError
 
         # Map relation back to permission level
         relation_to_level = {
@@ -9064,7 +8782,7 @@ class NexusFS(  # type: ignore[misc]
                 "ReBAC is not available. Ensure NexusFS is initialized in standalone mode."
             )
 
-        from nexus.rebac.rebac_iterator_cache import CursorExpiredError
+        from nexus.services.permissions.rebac_iterator_cache import CursorExpiredError
 
         # Map relation back to permission level
         relation_to_level = {
@@ -9423,12 +9141,10 @@ class NexusFS(  # type: ignore[misc]
             and hasattr(self, "router")
             and hasattr(self, "_get_routing_params")
         ):
-            # NexusFS instance - read directly from backend to bypass filtering
-            zone_id, agent_id, is_admin = self._get_routing_params(context)
+            zone_id, _agent_id, is_admin = self._get_routing_params(context)
             route = self.router.route(
                 file_path,
                 zone_id=zone_id,
-                agent_id=agent_id,
                 is_admin=is_admin,
                 check_write=False,
             )
@@ -9512,7 +9228,7 @@ class NexusFS(  # type: ignore[misc]
         """
         from sqlalchemy.exc import OperationalError
 
-        from nexus.rebac.utils.zone import normalize_zone_id
+        from nexus.services.permissions.utils.zone import normalize_zone_id
 
         if not hasattr(self, "_rebac_manager"):
             raise RuntimeError(
@@ -9551,13 +9267,13 @@ class NexusFS(  # type: ignore[misc]
                     continue
 
                 # Create TRAVERSE permission
-                write_result = self._require_rebac.rebac_write(
+                tuple_id = self._require_rebac.rebac_write(
                     subject=subject,
                     relation="traverser-of",
                     object=("file", dir_path),
                     zone_id=effective_zone_id,
                 )
-                tuple_ids.append(write_result.tuple_id)
+                tuple_ids.append(tuple_id)
             except (RuntimeError, ValueError, OperationalError) as e:
                 logger.warning(f"Failed to grant TRAVERSE on {dir_path}: {e}")
 
@@ -9629,7 +9345,7 @@ class NexusFS(  # type: ignore[misc]
         """
         from sqlalchemy.exc import OperationalError
 
-        from nexus.rebac.utils.zone import normalize_zone_id
+        from nexus.services.permissions.utils.zone import normalize_zone_id
 
         if not hasattr(self, "_rebac_manager"):
             return 0
@@ -9694,9 +9410,6 @@ class NexusFS(  # type: ignore[misc]
             context=_context,
         )
 
-    # Backward-compat alias
-    amcp_list_mounts = mcp_list_mounts
-
     @rpc_expose(description="List tools from MCP mount")
     async def mcp_list_tools(
         self,
@@ -9708,9 +9421,6 @@ class NexusFS(  # type: ignore[misc]
             name=name,
             context=_context,
         )
-
-    # Backward-compat alias
-    amcp_list_tools = mcp_list_tools
 
     @rpc_expose(description="Mount MCP server")
     async def mcp_mount(
@@ -9740,9 +9450,6 @@ class NexusFS(  # type: ignore[misc]
             context=_context,
         )
 
-    # Backward-compat alias
-    amcp_mount = mcp_mount
-
     @rpc_expose(description="Unmount MCP server")
     async def mcp_unmount(
         self,
@@ -9751,9 +9458,6 @@ class NexusFS(  # type: ignore[misc]
     ) -> dict[str, Any]:
         """Unmount an MCP server - delegates to MCPService."""
         return await self.mcp_service.mcp_unmount(name=name, _context=_context)
-
-    # Backward-compat alias
-    amcp_unmount = mcp_unmount
 
     @rpc_expose(description="Sync tools from MCP server")
     async def mcp_sync(
@@ -9766,9 +9470,6 @@ class NexusFS(  # type: ignore[misc]
             name=name,
             context=_context,
         )
-
-    # Backward-compat alias
-    amcp_sync = mcp_sync
 
     # -------------------------------------------------------------------------
     # SkillService Delegation Methods (10 methods)
@@ -9954,9 +9655,6 @@ class NexusFS(  # type: ignore[misc]
             provider=provider,
         )
 
-    # Backward-compat alias
-    allm_read = llm_read
-
     @rpc_expose(description="Read document with LLM and return detailed result")
     async def llm_read_detailed(
         self,
@@ -9980,9 +9678,6 @@ class NexusFS(  # type: ignore[misc]
             search_mode=search_mode,
             provider=provider,
         )
-
-    # Backward-compat alias
-    allm_read_detailed = llm_read_detailed
 
     @rpc_expose(description="Stream document reading response")
     async def llm_read_stream(
@@ -10008,9 +9703,6 @@ class NexusFS(  # type: ignore[misc]
             provider=provider,
         )
 
-    # Backward-compat alias
-    allm_read_stream = llm_read_stream
-
     @rpc_expose(description="Create an LLM document reader for advanced usage")
     def create_llm_reader(
         self,
@@ -10029,9 +9721,6 @@ class NexusFS(  # type: ignore[misc]
             max_context_tokens=max_context_tokens,
         )
 
-    # Backward-compat alias
-    acreate_llm_reader = create_llm_reader
-
     # -------------------------------------------------------------------------
     # OAuthService Delegation Methods (7 methods)
     # Issue #1287 Phase 1.3: NexusFSOAuthMixin removed, replaced by OAuthService delegation
@@ -10045,14 +9734,11 @@ class NexusFS(  # type: ignore[misc]
         """List available OAuth providers - delegates to OAuthService."""
         return await self.oauth_service.oauth_list_providers(context=_context)
 
-    # Backward-compat alias
-    aoauth_list_providers = oauth_list_providers
-
     @rpc_expose(description="Get OAuth authorization URL")
     async def oauth_get_auth_url(
         self,
         provider: str,
-        redirect_uri: str = DEFAULT_OAUTH_REDIRECT_URI,
+        redirect_uri: str = "http://localhost:3000/oauth/callback",
         scopes: list[str] | None = None,
     ) -> dict[str, Any]:
         """Get OAuth authorization URL - delegates to OAuthService."""
@@ -10061,9 +9747,6 @@ class NexusFS(  # type: ignore[misc]
             redirect_uri=redirect_uri,
             scopes=scopes,
         )
-
-    # Backward-compat alias
-    aoauth_get_auth_url = oauth_get_auth_url
 
     @rpc_expose(description="Exchange OAuth authorization code for tokens")
     async def oauth_exchange_code(
@@ -10087,9 +9770,6 @@ class NexusFS(  # type: ignore[misc]
             context=context,
         )
 
-    # Backward-compat alias
-    aoauth_exchange_code = oauth_exchange_code
-
     @rpc_expose(description="List OAuth credentials")
     async def oauth_list_credentials(
         self,
@@ -10103,9 +9783,6 @@ class NexusFS(  # type: ignore[misc]
             include_revoked=include_revoked,
             context=context,
         )
-
-    # Backward-compat alias
-    aoauth_list_credentials = oauth_list_credentials
 
     @rpc_expose(description="Revoke OAuth credential")
     async def oauth_revoke_credential(
@@ -10121,9 +9798,6 @@ class NexusFS(  # type: ignore[misc]
             context=context,
         )
 
-    # Backward-compat alias
-    aoauth_revoke_credential = oauth_revoke_credential
-
     @rpc_expose(description="Test OAuth credential validity")
     async def oauth_test_credential(
         self,
@@ -10138,9 +9812,6 @@ class NexusFS(  # type: ignore[misc]
             context=context,
         )
 
-    # Backward-compat alias
-    aoauth_test_credential = oauth_test_credential
-
     @rpc_expose(description="Connect to MCP provider via Klavis OAuth")
     async def mcp_connect(
         self,
@@ -10154,9 +9825,6 @@ class NexusFS(  # type: ignore[misc]
             redirect_url=redirect_url,
             context=context,
         )
-
-    # Backward-compat alias
-    amcp_connect = mcp_connect
 
     # =========================================================================
     # MountService Delegation Methods
@@ -10726,7 +10394,6 @@ class NexusFS(  # type: ignore[misc]
         path: str = "/",
         recursive: bool = True,
         details: bool = False,
-        prefix: str | None = None,
         show_parsed: bool = True,
         context: Any = None,
         limit: int | None = None,
@@ -10737,7 +10404,6 @@ class NexusFS(  # type: ignore[misc]
             path=path,
             recursive=recursive,
             details=details,
-            prefix=prefix,
             show_parsed=show_parsed,
             context=context,
             limit=limit,
@@ -10847,11 +10513,56 @@ class NexusFS(  # type: ignore[misc]
         # Keep backward-compat reference on NexusFS
         self._semantic_search = self.search_service._semantic_search  # type: ignore[assignment]
 
-    # Non-prefixed aliases (backward compat — mixin used these names)
-    semantic_search = asemantic_search
-    semantic_search_index = asemantic_search_index
-    semantic_search_stats = asemantic_search_stats
-    initialize_semantic_search = ainitialize_semantic_search
+    # Non-prefixed aliases (backward compat — remove in v0.8.0)
+    # Issue #1519, 8A: emit DeprecationWarning so callers get advance notice.
+
+    @property
+    def semantic_search(self) -> Any:  # type: ignore[override]
+        """Deprecated: use ``asemantic_search`` instead."""
+        import warnings
+
+        warnings.warn(
+            "semantic_search is deprecated, use asemantic_search(); will be removed in v0.8.0",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.asemantic_search
+
+    @property
+    def semantic_search_index(self) -> Any:  # type: ignore[override]
+        """Deprecated: use ``asemantic_search_index`` instead."""
+        import warnings
+
+        warnings.warn(
+            "semantic_search_index is deprecated, use asemantic_search_index(); will be removed in v0.8.0",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.asemantic_search_index
+
+    @property
+    def semantic_search_stats(self) -> Any:  # type: ignore[override]
+        """Deprecated: use ``asemantic_search_stats`` instead."""
+        import warnings
+
+        warnings.warn(
+            "semantic_search_stats is deprecated, use asemantic_search_stats(); will be removed in v0.8.0",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.asemantic_search_stats
+
+    @property
+    def initialize_semantic_search(self) -> Any:  # type: ignore[override]
+        """Deprecated: use ``ainitialize_semantic_search`` instead."""
+        import warnings
+
+        warnings.warn(
+            "initialize_semantic_search is deprecated, use ainitialize_semantic_search(); will be removed in v0.8.0",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.ainitialize_semantic_search
 
     # =========================================================================
     # ShareLinkService Delegation Methods (6 methods)
@@ -11100,7 +10811,9 @@ class NexusFS(  # type: ignore[misc]
         if hasattr(self, "router"):
             import contextlib
 
+            from nexus.core.protocols.connector import OAuthCapableProtocol
+
             for mount in self.router.list_mounts():
                 with contextlib.suppress(Exception):
-                    if hasattr(mount.backend, "token_manager"):
+                    if isinstance(mount.backend, OAuthCapableProtocol):
                         mount.backend.token_manager.close()

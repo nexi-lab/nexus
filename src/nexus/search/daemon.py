@@ -128,11 +128,18 @@ class SearchDaemon:
         await daemon.shutdown()
     """
 
-    def __init__(self, config: DaemonConfig | None = None):
+    def __init__(
+        self,
+        config: DaemonConfig | None = None,
+        *,
+        async_session_factory: Any | None = None,
+    ):
         """Initialize the search daemon.
 
         Args:
             config: Daemon configuration (uses defaults if not provided)
+            async_session_factory: Injected async_sessionmaker from RecordStoreABC.
+                When provided, skips creating a private engine (Issue #1597).
         """
         self.config = config or DaemonConfig()
         self.stats = DaemonStats()
@@ -143,6 +150,11 @@ class SearchDaemon:
         self._async_session: Any | None = None  # async_sessionmaker (Issue #1597)
         self._async_search: AsyncSemanticSearch | None = None
         self._embedding_provider: Any = None
+        self._owns_engine = False  # True only when we created the engine ourselves
+
+        # Accept injected session factory from RecordStoreABC
+        if async_session_factory is not None:
+            self._async_session = async_session_factory
 
         # Entropy-aware chunker for filtering redundant content (Issue #1024)
         self._entropy_chunker: EntropyAwareChunker | None = None
@@ -156,8 +168,9 @@ class SearchDaemon:
         self._pending_refresh_paths: set[str] = set()
         self._refresh_lock = asyncio.Lock()
 
-        # NexusFS reference for reading file content (set by FastAPI server)
-        self._nexus_fs: Any = None
+        # FileReaderProtocol reference for reading file content (set by FastAPI server)
+        # Issue #1520: Replaces direct NexusFS dependency
+        self._file_reader: Any = None
 
         # Latency tracking (circular buffer)
         self._latencies: list[float] = []
@@ -240,11 +253,11 @@ class SearchDaemon:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._refresh_task
 
-        # Close database connections
-        if self._async_engine:
+        # Close database connections (only if we created the engine)
+        if self._async_engine and self._owns_engine:
             await self._async_engine.dispose()
-            self._async_engine = None
-            self._async_session = None
+        self._async_engine = None
+        self._async_session = None
 
         self._initialized = False
         logger.info("SearchDaemon shutdown complete")
@@ -290,6 +303,11 @@ class SearchDaemon:
 
     async def _init_database_pool(self) -> None:
         """Initialize and warm the database connection pool."""
+        # If session factory was injected via __init__, skip engine creation
+        if self._async_session is not None:
+            logger.info("Using injected async_session_factory (RecordStoreABC)")
+            return
+
         if not self.config.database_url:
             logger.debug("No database URL configured, skipping DB pool init")
             return
@@ -313,6 +331,7 @@ class SearchDaemon:
                 max_overflow=self.config.db_pool_max_size - self.config.db_pool_min_size,
                 pool_recycle=self.config.db_pool_recycle,
             )
+            self._owns_engine = True
 
             # Create session factory once (Issue #1597: avoid per-method creation).
             # expire_on_commit=False matches RecordStoreABC convention and avoids
@@ -864,8 +883,8 @@ class SearchDaemon:
         """
         logger.debug(f"Refreshing indexes for {len(paths)} files")
 
-        if not self._bm25s_index or not self._nexus_fs:
-            logger.debug("BM25S index or NexusFS not available, skipping refresh")
+        if not self._bm25s_index or not self._file_reader:
+            logger.debug("BM25S index or file reader not available, skipping refresh")
             return
 
         indexed_count = 0
@@ -874,11 +893,10 @@ class SearchDaemon:
 
         for path in paths:
             try:
-                # Read file content
-                content_bytes = self._nexus_fs.read(path)
-                if not content_bytes:
+                # Read file content (Issue #1520: FileReaderProtocol returns str)
+                content = self._file_reader.read_text(path)
+                if not content:
                     continue
-                content = content_bytes.decode("utf-8", errors="replace")
 
                 # Get path_id for indexing
                 path_id = path  # Use path as ID for now

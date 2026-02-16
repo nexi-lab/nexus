@@ -60,7 +60,7 @@ def _make_metadata(
         created_at=datetime.now(UTC),
         modified_at=datetime.now(UTC),
         version=version,
-        zone_id="default",
+        zone_id="root",
         created_by="test_user",
         owner_id="user1",
     )
@@ -79,7 +79,7 @@ class TestTransactionalOutboxIntegration:
 
         # Step 1: Write file via syncer (transactional)
         metadata = _make_metadata("/integration.txt", etag="ihash")
-        syncer.on_write(metadata, is_new=True, path="/integration.txt", zone_id="default")
+        syncer.on_write(metadata, is_new=True, path="/integration.txt", zone_id="root")
 
         # Verify: delivered=FALSE in operation_log
         with record_store.session_factory() as session:
@@ -117,7 +117,7 @@ class TestTransactionalOutboxIntegration:
         event = published_events[0]
         assert event.type == FileEventType.FILE_WRITE
         assert event.path == "/integration.txt"
-        assert event.zone_id == "default"
+        assert event.zone_id == "root"
 
         # Step 5: Verify delivered=TRUE in operation_log
         with record_store.session_factory() as session:
@@ -134,12 +134,12 @@ class TestTransactionalOutboxIntegration:
 
         # Create multiple operations
         m1 = _make_metadata("/a.txt", etag="h1")
-        syncer.on_write(m1, is_new=True, path="/a.txt", zone_id="default")
+        syncer.on_write(m1, is_new=True, path="/a.txt", zone_id="root")
 
         m2 = _make_metadata("/b.txt", etag="h2")
-        syncer.on_write(m2, is_new=True, path="/b.txt", zone_id="default")
+        syncer.on_write(m2, is_new=True, path="/b.txt", zone_id="root")
 
-        syncer.on_delete(path="/a.txt", zone_id="default")
+        syncer.on_delete(path="/a.txt", zone_id="root")
 
         # Verify 3 undelivered records
         with record_store.session_factory() as session:
@@ -195,7 +195,7 @@ class TestTransactionalOutboxIntegration:
 
         # Write a file
         m = _make_metadata("/crash.txt", etag="crash")
-        syncer.on_write(m, is_new=True, path="/crash.txt", zone_id="default")
+        syncer.on_write(m, is_new=True, path="/crash.txt", zone_id="root")
 
         # First delivery attempt fails (simulating crash mid-dispatch)
         failing_bus = MagicMock()
@@ -244,7 +244,7 @@ class TestTransactionalOutboxIntegration:
         try:
             # Write file while worker is running
             m = _make_metadata("/bg.txt", etag="bghash")
-            syncer.on_write(m, is_new=True, path="/bg.txt", zone_id="default")
+            syncer.on_write(m, is_new=True, path="/bg.txt", zone_id="root")
 
             # Wait for delivery
             deadline = time.monotonic() + 5.0

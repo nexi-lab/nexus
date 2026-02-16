@@ -58,20 +58,11 @@ if TYPE_CHECKING:
     from nexus.fuse.mount import MountMode
     from nexus.rebac.namespace_manager import NamespaceManager
 
-# Import remote exceptions for better error handling (may not be available in all contexts)
-try:
-    from nexus.remote.client import (
-        RemoteConnectionError,
-        RemoteFilesystemError,
-        RemoteTimeoutError,
-    )
-
-    HAS_REMOTE_EXCEPTIONS = True
-except ImportError:
-    HAS_REMOTE_EXCEPTIONS = False
-    RemoteConnectionError = None  # type: ignore[misc,assignment]
-    RemoteFilesystemError = None  # type: ignore[misc,assignment]
-    RemoteTimeoutError = None  # type: ignore[misc,assignment]
+from nexus.core.exceptions import (
+    RemoteConnectionError,
+    RemoteFilesystemError,
+    RemoteTimeoutError,
+)
 
 # Import event system for firing events from FUSE operations (Issue #1115)
 try:
@@ -100,16 +91,15 @@ def _handle_remote_exception(e: Exception, operation: str, path: str, **context:
     """
     context_str = ", ".join(f"{k}={v}" for k, v in context.items()) if context else ""
 
-    if HAS_REMOTE_EXCEPTIONS:
-        if RemoteTimeoutError is not None and isinstance(e, RemoteTimeoutError):
-            logger.error(f"[FUSE-{operation}] Timeout: {path} - {e} ({context_str})")
-            raise FuseOSError(errno.ETIMEDOUT) from e
-        if RemoteConnectionError is not None and isinstance(e, RemoteConnectionError):
-            logger.error(f"[FUSE-{operation}] Connection error: {path} - {e}")
-            raise FuseOSError(errno.ECONNREFUSED) from e
-        if RemoteFilesystemError is not None and isinstance(e, RemoteFilesystemError):
-            logger.error(f"[FUSE-{operation}] Remote error: {path} - {e}")
-            raise FuseOSError(errno.EIO) from e
+    if isinstance(e, RemoteTimeoutError):
+        logger.error(f"[FUSE-{operation}] Timeout: {path} - {e} ({context_str})")
+        raise FuseOSError(errno.ETIMEDOUT) from e
+    if isinstance(e, RemoteConnectionError):
+        logger.error(f"[FUSE-{operation}] Connection error: {path} - {e}")
+        raise FuseOSError(errno.ECONNREFUSED) from e
+    if isinstance(e, RemoteFilesystemError):
+        logger.error(f"[FUSE-{operation}] Remote error: {path} - {e}")
+        raise FuseOSError(errno.EIO) from e
 
     # Log with stack trace for debugging unexpected errors
     logger.exception(f"[FUSE-{operation}] Unexpected error: {path} ({context_str})")
@@ -361,7 +351,7 @@ class NexusFUSEOperations(Operations):
 
         This queues an event for async dispatch without blocking the FUSE operation.
         Events are delivered to:
-        - GlobalEventBus (Redis Pub/Sub for distributed cache invalidation)
+        - RedisEventBus (Redis Pub/Sub for distributed cache invalidation)
         - SubscriptionManager (webhook delivery)
         - TriggerManager (workflow triggers)
 

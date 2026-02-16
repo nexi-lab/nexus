@@ -141,9 +141,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
         access_key_id: str | None = None,
         secret_access_key: str | None = None,
         session_token: str | None = None,
-        # Database session for caching support (deprecated, use session_factory)
-        db_session: "Session | None" = None,
-        # Session factory for caching support (preferred)
+        # Session factory for caching support
         session_factory: "type[Session] | None" = None,
     ):
         """
@@ -157,17 +155,20 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
             access_key_id: AWS access key (alternative to credentials_path)
             secret_access_key: AWS secret key (alternative to credentials_path)
             session_token: AWS session token (for temporary credentials)
-            db_session: Optional SQLAlchemy session for caching (deprecated)
-            session_factory: Optional session factory (e.g., metadata_store.SessionLocal)
-                           for caching support. Preferred over db_session.
+            session_factory: Optional session factory (e.g., metadata_store.session_factory)
+                           for caching support.
         """
         try:
-            # Configure retry behavior for transient errors
+            # Configure retry behavior and connection pool for concurrent operations.
+            # max_pool_connections must match or exceed batch_read_workers to avoid
+            # threads blocking on connection acquisition. Default boto3 is 10, too low
+            # for parallel batch reads.
             boto_config = Config(
                 retries={
                     "max_attempts": 3,
                     "mode": "adaptive",  # Adaptive retry mode for better handling
-                }
+                },
+                max_pool_connections=25,  # Supports 20 batch_read_workers + headroom
             )
 
             # Priority: explicit credentials > credentials_path > default chain
@@ -243,9 +244,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
             )
 
             # Store session info for caching support (CacheConnectorMixin)
-            # Prefer session_factory (creates fresh sessions) over db_session
             self.session_factory = session_factory
-            self.db_session = db_session  # Legacy support
 
         except Exception as e:
             if isinstance(e, BackendError):
@@ -675,7 +674,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
                 path=blob_path,
             ) from e
 
-    def _batch_get_versions(
+    def batch_get_versions(
         self,
         backend_paths: list[str],
         contexts: dict[str, "OperationContext"] | None = None,
@@ -1003,7 +1002,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
         """
         Read content from S3 with caching support.
 
-        When caching is enabled (db_session provided):
+        When caching is enabled (session_factory provided):
         1. Check cache for non-stale entry with matching version
         2. If cache hit, return cached content
         3. If cache miss, read from S3 and cache result
@@ -1076,6 +1075,78 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
             backend_name=self.name,
             path=blob_path,
         )
+
+    # Default: 20 concurrent workers for S3 batch reads.
+    # S3 tolerates higher concurrency than GCS (HTTP/1.1, high per-prefix throughput).
+    # max_pool_connections in boto3 Config is set to 25 to match.
+    batch_read_workers: int = 20
+
+    def batch_read_content(
+        self,
+        content_hashes: list[str],
+        context: "OperationContext | None" = None,
+        *,
+        contexts: "dict[str, OperationContext] | None" = None,
+    ) -> dict[str, bytes | None]:
+        """
+        Optimized batch read for S3 backend with parallel downloads.
+
+        Uses ThreadPoolExecutor to download multiple objects concurrently.
+        boto3 client is thread-safe and has built-in connection pooling.
+
+        For path-based access, each hash needs its own OperationContext with
+        backend_path. Pass these via the ``contexts`` parameter.
+
+        Args:
+            content_hashes: List of version IDs or content hashes
+            context: Shared operation context (fallback when per-hash context unavailable)
+            contexts: Per-hash operation contexts mapping hash -> OperationContext.
+                     Each context must include backend_path for S3 path resolution.
+
+        Performance:
+            - Parallel downloads: up to 20 concurrent (configurable via batch_read_workers)
+            - Includes S3 cache layer (TTL-based L1 check per read_content)
+            - Single file: skips thread pool overhead
+            - Expected speedup: 10-20x for batch reads over sequential
+        """
+        if not content_hashes:
+            return {}
+
+        result: dict[str, bytes | None] = {}
+
+        # Single file — skip thread pool overhead
+        if len(content_hashes) == 1:
+            ctx = contexts.get(content_hashes[0], context) if contexts else context
+            response = self.read_content(content_hashes[0], context=ctx)
+            return {content_hashes[0]: response.data if response.success else None}
+
+        # Parallel downloads via ThreadPoolExecutor
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        max_workers = min(self.batch_read_workers, len(content_hashes))
+
+        def read_one(content_hash: str) -> tuple[str, bytes | None]:
+            """Read a single S3 object with per-hash context."""
+            try:
+                ctx = contexts.get(content_hash, context) if contexts else context
+                response = self.read_content(content_hash, context=ctx)
+                return (content_hash, response.data if response.success else None)
+            except Exception as e:
+                logger.warning(f"[S3] batch_read_content failed for {content_hash}: {e}")
+                return (content_hash, None)
+
+        logger.info(f"[S3] Batch reading {len(content_hashes)} objects with {max_workers} workers")
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(read_one, h): h for h in content_hashes}
+            for future in as_completed(futures):
+                hash_key, file_content = future.result()
+                result[hash_key] = file_content
+
+        successful = sum(1 for v in result.values() if v is not None)
+        logger.info(f"[S3] Batch read complete: {successful}/{len(content_hashes)} successful")
+
+        return result
 
     @timed_response
     def write_content(

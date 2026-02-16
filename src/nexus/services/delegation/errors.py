@@ -39,4 +39,13 @@ class DelegationChainError(DelegationError):
     """Raised when a delegated agent attempts to delegate.
 
     v1 constraint: no delegation chains (A -> B -> C is forbidden).
+    With #1618: chains allowed when can_sub_delegate=True and depth < max_depth.
     """
+
+
+class DepthExceededError(DelegationError):
+    """Raised when sub-delegation would exceed the max_depth limit."""
+
+
+class InvalidPrefixError(DelegationError):
+    """Raised when scope_prefix fails validation (empty, relative, malformed)."""

@@ -31,9 +31,9 @@ class TestProtocolConformance:
         driver = VFSStorageDriver(vfs=InMemoryVFS())
         assert isinstance(driver, IPCStorageDriver)
 
-    def test_postgresql_storage_driver_satisfies_protocol(self) -> None:
-        from nexus.ipc.storage.postgresql_driver import PostgreSQLStorageDriver
+    def test_recordstore_storage_driver_satisfies_protocol(self) -> None:
+        from nexus.ipc.storage.recordstore_driver import RecordStoreStorageDriver
 
         # Use a mock session_factory — we only check structural protocol conformance
-        driver = PostgreSQLStorageDriver(session_factory=None)
+        driver = RecordStoreStorageDriver(session_factory=None)
         assert isinstance(driver, IPCStorageDriver)

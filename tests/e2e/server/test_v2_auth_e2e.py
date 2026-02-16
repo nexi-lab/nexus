@@ -87,7 +87,7 @@ def db_and_keys(tmp_path_factory):
             session,
             user_id="admin",
             name="Admin E2E Key",
-            zone_id="default",
+            zone_id="root",
             is_admin=True,
         )
 

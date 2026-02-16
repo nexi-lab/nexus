@@ -209,7 +209,7 @@ class TestStaleSessionWithRealServer:
             {
                 "subject_type": "agent",
                 "subject_id": "agent-e2e-001",
-                "zone_id": "default",
+                "zone_id": "root",
                 "is_admin": False,
                 "agent_generation": 1,
             },
@@ -230,7 +230,7 @@ class TestStaleSessionWithRealServer:
             {
                 "subject_type": "user",
                 "subject_id": "alice",
-                "zone_id": "default",
+                "zone_id": "root",
                 "is_admin": False,
             },
         )
@@ -249,7 +249,7 @@ class TestStaleSessionWithRealServer:
             {
                 "subject_type": "user",
                 "subject_id": "admin",
-                "zone_id": "default",
+                "zone_id": "root",
                 "is_admin": True,
             },
         )
@@ -271,7 +271,7 @@ class TestStaleSessionWithRealServer:
             {
                 "subject_type": "agent",
                 "subject_id": "agent-gen-test",
-                "zone_id": "default",
+                "zone_id": "root",
                 "is_admin": False,
                 "agent_generation": 42,
             },
@@ -362,7 +362,7 @@ class TestPerformanceBaseline:
             {
                 "subject_type": "user",
                 "subject_id": "admin",
-                "zone_id": "default",
+                "zone_id": "root",
                 "is_admin": True,
             },
         )
@@ -403,7 +403,7 @@ class TestPerformanceBaseline:
             {
                 "subject_type": "agent",
                 "subject_id": "perf-agent",
-                "zone_id": "default",
+                "zone_id": "root",
                 "is_admin": False,
                 "agent_generation": 5,
             },
@@ -429,7 +429,7 @@ class TestPerformanceBaseline:
                 {
                     "subject_type": "user",
                     "subject_id": "admin",
-                    "zone_id": "default",
+                    "zone_id": "root",
                     "is_admin": True,
                 },
             )

@@ -1,8 +1,10 @@
-"""End-to-end tests for delegation API (Issue #1271).
+"""End-to-end tests for delegation API (Issue #1271, #1618).
 
-Tests the HTTP API surface using FastAPI TestClient with dependency
-overrides for auth. Validates request/response schemas, auth enforcement,
-and error mapping.
+Tests the HTTP API surface using FastAPI TestClient with the real
+router and dependency overrides for auth. Validates request/response
+schemas, auth enforcement, error mapping, pagination, and new #1618 fields.
+
+Issue 6A: Uses real router from delegation.py (no test router copy).
 """
 
 from datetime import UTC, datetime, timedelta
@@ -10,127 +12,16 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from fastapi import APIRouter, Depends, FastAPI, HTTPException
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from nexus.services.delegation.models import DelegationMode, DelegationResult
-
-# ---------------------------------------------------------------------------
-# We rebuild the delegation endpoints with test-controllable dependencies
-# to avoid import-time resolution issues with _get_require_auth()
-# ---------------------------------------------------------------------------
-
-
-def _create_test_router(
-    auth_result_provider,
-    service_provider,
-) -> APIRouter:
-    """Create a delegation router with injected auth and service providers."""
-    from nexus.server.api.v2.routers.delegation import (
-        DelegateRequest,
-        DelegateResponse,
-        DelegationListItem,
-        DelegationListResponse,
-        _handle_delegation_error,
-    )
-
-    test_router = APIRouter(prefix="/api/v2/agents/delegate", tags=["delegation"])
-
-    @test_router.post("", response_model=DelegateResponse)
-    async def create_delegation(
-        request: DelegateRequest,
-        auth_result: dict[str, Any] = Depends(auth_result_provider),
-    ) -> DelegateResponse:
-        subject_type = auth_result.get("subject_type", "")
-        if subject_type != "agent":
-            raise HTTPException(
-                status_code=403,
-                detail="Only agents can delegate. Caller subject_type must be 'agent'.",
-            )
-
-        coordinator_agent_id = auth_result.get("subject_id", "")
-        coordinator_owner_id = auth_result.get("user_id") or auth_result.get("metadata", {}).get(
-            "user_id", ""
-        )
-        zone_id = auth_result.get("zone_id")
-
-        try:
-            mode = DelegationMode(request.namespace_mode)
-        except ValueError as exc:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid namespace_mode: {request.namespace_mode!r}. Must be 'copy', 'clean', or 'shared'.",
-            ) from exc
-
-        service = service_provider()
-        try:
-            result = service.delegate(
-                coordinator_agent_id=coordinator_agent_id,
-                coordinator_owner_id=coordinator_owner_id,
-                worker_id=request.worker_id,
-                worker_name=request.worker_name,
-                delegation_mode=mode,
-                zone_id=zone_id,
-                scope_prefix=request.scope_prefix,
-                remove_grants=request.remove_grants,
-                add_grants=request.add_grants,
-                readonly_paths=request.readonly_paths,
-                ttl_seconds=request.ttl_seconds,
-            )
-        except Exception as e:
-            _handle_delegation_error(e)
-            raise
-
-        return DelegateResponse(
-            delegation_id=result.delegation_id,
-            worker_agent_id=result.worker_agent_id,
-            api_key=result.api_key,
-            mount_table=result.mount_table,
-            expires_at=result.expires_at,
-            delegation_mode=result.delegation_mode.value,
-        )
-
-    @test_router.delete("/{delegation_id}")
-    async def revoke_delegation(
-        delegation_id: str,
-        auth_result: dict[str, Any] = Depends(auth_result_provider),
-    ) -> dict[str, Any]:
-        if auth_result.get("subject_type", "") != "agent":
-            raise HTTPException(status_code=403, detail="Only agents can revoke delegations.")
-        service = service_provider()
-        try:
-            service.revoke_delegation(delegation_id)
-        except Exception as e:
-            _handle_delegation_error(e)
-            raise
-        return {"status": "revoked", "delegation_id": delegation_id}
-
-    @test_router.get("", response_model=DelegationListResponse)
-    async def list_delegations(
-        auth_result: dict[str, Any] = Depends(auth_result_provider),
-    ) -> DelegationListResponse:
-        if auth_result.get("subject_type", "") != "agent":
-            raise HTTPException(status_code=403, detail="Only agents can list delegations.")
-        coordinator_agent_id = auth_result.get("subject_id", "")
-        service = service_provider()
-        records = service.list_delegations(coordinator_agent_id)
-        items = [
-            DelegationListItem(
-                delegation_id=r.delegation_id,
-                agent_id=r.agent_id,
-                parent_agent_id=r.parent_agent_id,
-                delegation_mode=r.delegation_mode.value,
-                scope_prefix=r.scope_prefix,
-                lease_expires_at=r.lease_expires_at,
-                zone_id=r.zone_id,
-                created_at=r.created_at,
-            )
-            for r in records
-        ]
-        return DelegationListResponse(delegations=items, count=len(items))
-
-    return test_router
-
+from nexus.server.api.v2.routers.delegation import router
+from nexus.services.delegation.models import (
+    DelegationMode,
+    DelegationRecord,
+    DelegationResult,
+    DelegationStatus,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -149,8 +40,18 @@ def mock_delegation_service():
         expires_at=datetime.now(UTC) + timedelta(hours=1),
         delegation_mode=DelegationMode.COPY,
     )
-    service.list_delegations.return_value = []
+    # #1618: list_delegations returns (records, total)
+    service.list_delegations.return_value = ([], 0)
     service.revoke_delegation.return_value = True
+    service.get_delegation_by_id.return_value = DelegationRecord(
+        delegation_id="del_123",
+        agent_id="worker_rev",
+        parent_agent_id="coordinator_e2e",
+        delegation_mode=DelegationMode.COPY,
+        status=DelegationStatus.ACTIVE,
+        created_at=datetime.now(UTC),
+    )
+    service.get_delegation_chain.return_value = []
     return service
 
 
@@ -162,7 +63,7 @@ def agent_auth() -> dict[str, Any]:
         "subject_type": "agent",
         "subject_id": "coordinator_e2e",
         "user_id": "alice",
-        "zone_id": "default",
+        "zone_id": "root",
         "is_admin": False,
         "metadata": {"user_id": "alice"},
     }
@@ -176,32 +77,45 @@ def user_auth() -> dict[str, Any]:
         "subject_type": "user",
         "subject_id": "alice",
         "user_id": "alice",
-        "zone_id": "default",
+        "zone_id": "root",
         "is_admin": False,
     }
 
 
-@pytest.fixture()
-def client(mock_delegation_service, agent_auth):
-    """TestClient with agent auth."""
+def _create_test_app(mock_service: Any, auth_result: dict[str, Any]) -> FastAPI:
+    """Create FastAPI app with real router and dependency overrides.
 
-    async def auth_provider():
-        return agent_auth
+    Issue 6A: Uses real router from delegation.py with FastAPI
+    dependency_overrides for auth (no test router copy).
+    """
+    from nexus.server.api.v2.routers.delegation import _get_require_auth
 
     app = FastAPI()
-    app.include_router(_create_test_router(auth_provider, lambda: mock_delegation_service))
+    app.state.delegation_service = mock_service
+
+    # Get the actual auth dependency resolved at module load time
+    actual_auth_dep = _get_require_auth()
+
+    async def _mock_auth():
+        return auth_result
+
+    app.include_router(router)
+    app.dependency_overrides[actual_auth_dep] = _mock_auth
+
+    return app
+
+
+@pytest.fixture()
+def client(mock_delegation_service, agent_auth):
+    """TestClient with agent auth using real router."""
+    app = _create_test_app(mock_delegation_service, agent_auth)
     return TestClient(app)
 
 
 @pytest.fixture()
 def user_client(mock_delegation_service, user_auth):
     """TestClient with user auth (for rejection tests)."""
-
-    async def auth_provider():
-        return user_auth
-
-    app = FastAPI()
-    app.include_router(_create_test_router(auth_provider, lambda: mock_delegation_service))
+    app = _create_test_app(mock_delegation_service, user_auth)
     return TestClient(app)
 
 
@@ -231,6 +145,31 @@ class TestCreateDelegation:
         assert data["delegation_mode"] == "copy"
         assert data["mount_table"] == ["/workspace/proj"]
         assert data["expires_at"] is not None
+
+    def test_with_intent_and_scope(self, client, mock_delegation_service):
+        """POST with #1618 fields: intent, can_sub_delegate, scope."""
+        response = client.post(
+            "/api/v2/agents/delegate",
+            json={
+                "worker_id": "worker_scoped",
+                "worker_name": "Worker Scoped",
+                "namespace_mode": "copy",
+                "intent": "Run unit tests",
+                "can_sub_delegate": True,
+                "scope": {
+                    "allowed_operations": ["read", "execute"],
+                    "resource_patterns": ["*.py"],
+                    "max_depth": 2,
+                },
+            },
+        )
+
+        assert response.status_code == 200
+        # Verify service was called with new fields
+        call_kwargs = mock_delegation_service.delegate.call_args.kwargs
+        assert call_kwargs["intent"] == "Run unit tests"
+        assert call_kwargs["can_sub_delegate"] is True
+        assert call_kwargs["scope"] is not None
 
     def test_clean_mode(self, client):
         """POST with clean mode and add_grants."""
@@ -335,6 +274,37 @@ class TestCreateDelegation:
         )
         assert response.status_code == 403
 
+    def test_depth_exceeded_returns_403(self, client, mock_delegation_service):
+        """DepthExceededError maps to HTTP 403 (#1618)."""
+        from nexus.services.delegation.errors import DepthExceededError
+
+        mock_delegation_service.delegate.side_effect = DepthExceededError("too deep")
+        response = client.post(
+            "/api/v2/agents/delegate",
+            json={
+                "worker_id": "worker_deep",
+                "worker_name": "Worker Deep",
+                "namespace_mode": "copy",
+            },
+        )
+        assert response.status_code == 403
+
+    def test_invalid_prefix_returns_400(self, client, mock_delegation_service):
+        """InvalidPrefixError maps to HTTP 400 (#1618)."""
+        from nexus.services.delegation.errors import InvalidPrefixError
+
+        mock_delegation_service.delegate.side_effect = InvalidPrefixError("bad prefix")
+        response = client.post(
+            "/api/v2/agents/delegate",
+            json={
+                "worker_id": "worker_prefix",
+                "worker_name": "Worker Prefix",
+                "namespace_mode": "copy",
+                "scope_prefix": "relative/path",
+            },
+        )
+        assert response.status_code == 400
+
 
 # ---------------------------------------------------------------------------
 # DELETE /api/v2/agents/delegate/{delegation_id}
@@ -352,11 +322,22 @@ class TestRevokeDelegation:
 
     def test_revoke_not_found(self, client, mock_delegation_service):
         """DELETE for non-existent delegation returns 404."""
-        from nexus.services.delegation.errors import DelegationNotFoundError
-
-        mock_delegation_service.revoke_delegation.side_effect = DelegationNotFoundError("not found")
+        mock_delegation_service.get_delegation_by_id.return_value = None
         response = client.delete("/api/v2/agents/delegate/nonexistent")
         assert response.status_code == 404
+
+    def test_revoke_not_owner(self, client, mock_delegation_service):
+        """DELETE by non-owner agent returns 403."""
+        mock_delegation_service.get_delegation_by_id.return_value = DelegationRecord(
+            delegation_id="del_other",
+            agent_id="other_worker",
+            parent_agent_id="other_coordinator",  # not coordinator_e2e
+            delegation_mode=DelegationMode.COPY,
+            status=DelegationStatus.ACTIVE,
+            created_at=datetime.now(UTC),
+        )
+        response = client.delete("/api/v2/agents/delegate/del_other")
+        assert response.status_code == 403
 
 
 # ---------------------------------------------------------------------------
@@ -371,7 +352,76 @@ class TestListDelegations:
         assert response.status_code == 200
         data = response.json()
         assert data["delegations"] == []
-        assert data["count"] == 0
+        assert data["total"] == 0
+        assert data["limit"] == 50
+        assert data["offset"] == 0
+
+    def test_list_with_pagination(self, client, mock_delegation_service):
+        """GET with pagination params."""
+        now = datetime.now(UTC)
+        records = [
+            DelegationRecord(
+                delegation_id=f"del_{i}",
+                agent_id=f"worker_{i}",
+                parent_agent_id="coordinator_e2e",
+                delegation_mode=DelegationMode.COPY,
+                status=DelegationStatus.ACTIVE,
+                created_at=now,
+            )
+            for i in range(3)
+        ]
+        mock_delegation_service.list_delegations.return_value = (records, 10)
+
+        response = client.get("/api/v2/agents/delegate?limit=3&offset=5")
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["delegations"]) == 3
+        assert data["total"] == 10
+        assert data["limit"] == 3
+        assert data["offset"] == 5
+
+    def test_list_with_status_filter(self, client, mock_delegation_service):
+        """GET with status filter."""
+        mock_delegation_service.list_delegations.return_value = ([], 0)
+
+        response = client.get("/api/v2/agents/delegate?status=revoked")
+        assert response.status_code == 200
+
+        # Verify status_filter was passed to service
+        call_kwargs = mock_delegation_service.list_delegations.call_args.kwargs
+        assert call_kwargs["status_filter"] == DelegationStatus.REVOKED
+
+    def test_list_with_invalid_status(self, client):
+        """GET with invalid status returns 400."""
+        response = client.get("/api/v2/agents/delegate?status=invalid")
+        assert response.status_code == 400
+        assert "invalid" in response.json()["detail"].lower()
+
+    def test_list_response_includes_new_fields(self, client, mock_delegation_service):
+        """#1618: List response includes status, intent, depth, can_sub_delegate."""
+        now = datetime.now(UTC)
+        records = [
+            DelegationRecord(
+                delegation_id="del_enriched",
+                agent_id="worker_enriched",
+                parent_agent_id="coordinator_e2e",
+                delegation_mode=DelegationMode.COPY,
+                status=DelegationStatus.ACTIVE,
+                intent="Analyze code quality",
+                depth=1,
+                can_sub_delegate=True,
+                created_at=now,
+            )
+        ]
+        mock_delegation_service.list_delegations.return_value = (records, 1)
+
+        response = client.get("/api/v2/agents/delegate")
+        assert response.status_code == 200
+        item = response.json()["delegations"][0]
+        assert item["status"] == "active"
+        assert item["intent"] == "Analyze code quality"
+        assert item["depth"] == 1
+        assert item["can_sub_delegate"] is True
 
 
 # ---------------------------------------------------------------------------

@@ -24,6 +24,7 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
+from nexus.constants import DEFAULT_GRPC_BIND_ADDR
 
 
 def start_background_mount_sync(nx: NexusFilesystem) -> None:
@@ -149,7 +150,7 @@ def _is_federation_syntax(source: str, target: str | None) -> bool:
     "--bind",
     type=str,
     envvar="NEXUS_BIND_ADDR",
-    default="0.0.0.0:2126",
+    default=DEFAULT_GRPC_BIND_ADDR,
     show_default=True,
     help="[Federation] gRPC bind address",
 )
@@ -368,12 +369,17 @@ def _mount_fuse(
             # log_file must be set when daemon=True
             assert log_file is not None, "log_file must be set in daemon mode"
 
-            # Configure logging to file
-            logging.basicConfig(
-                filename=log_file,
-                level=logging.DEBUG if debug else logging.INFO,
-                format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+            # Configure logging to file with secret redaction (Issue #86)
+            from nexus.core.logging_utils import RedactingFormatter
+
+            _fuse_formatter = RedactingFormatter(
+                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
             )
+            _fuse_handler = logging.FileHandler(log_file)
+            _fuse_handler.setFormatter(_fuse_formatter)
+            logging.root.handlers.clear()
+            logging.root.addHandler(_fuse_handler)
+            logging.root.setLevel(logging.DEBUG if debug else logging.INFO)
 
             # Redirect stdout/stderr to log file (for any print statements or uncaught errors)
             sys.stdout = open(log_file, "a")  # noqa: SIM115
@@ -588,11 +594,13 @@ def serve(
     import os
     import subprocess
 
-    # Set up logging
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
+    from nexus.core.logging_utils import setup_logging
+
+    # Set up logging with secret redaction (Issue #86)
+    # Read redaction setting from env var (config hasn't loaded yet at this point)
+    _redaction_env = os.getenv("NEXUS_LOG_REDACTION_ENABLED", "true").lower()
+    _redaction_enabled = _redaction_env in ("true", "1", "yes", "on")
+    setup_logging(level=logging.INFO, redaction_enabled=_redaction_enabled)
 
     try:
         # ============================================
@@ -958,12 +966,10 @@ def serve(
             # Database authentication with both API keys (sk-*) and JWT tokens
             import os
 
-            from sqlalchemy import create_engine
-            from sqlalchemy.orm import sessionmaker
-
             from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
             from nexus.auth.providers.database_local import DatabaseLocalAuth
             from nexus.auth.providers.discriminator import DiscriminatingAuthProvider
+            from nexus.storage.record_store import SQLAlchemyRecordStore
 
             db_url = os.getenv("NEXUS_DATABASE_URL")
             if not db_url:
@@ -984,13 +990,8 @@ def serve(
                     "[yellow]   For production, set: export NEXUS_JWT_SECRET='your-secret-key'[/yellow]"
                 )
 
-            engine = create_engine(
-                db_url,
-                pool_pre_ping=True,
-                pool_recycle=1800,
-                pool_size=5,
-            )
-            session_factory = sessionmaker(bind=engine)
+            _record_store = SQLAlchemyRecordStore(db_url=db_url)
+            session_factory = _record_store.session_factory
 
             # Create composite provider that routes tokens to appropriate handler
             auth_provider = DiscriminatingAuthProvider(
@@ -1009,10 +1010,8 @@ def serve(
             # Local username/password authentication with JWT tokens (database-backed)
             import os
 
-            from sqlalchemy import create_engine
-            from sqlalchemy.orm import sessionmaker
-
             from nexus.auth.providers.database_local import DatabaseLocalAuth
+            from nexus.storage.record_store import SQLAlchemyRecordStore
 
             db_url = os.getenv("NEXUS_DATABASE_URL")
             if not db_url:
@@ -1031,13 +1030,8 @@ def serve(
 
                 jwt_secret = secrets.token_urlsafe(32)
 
-            engine = create_engine(
-                db_url,
-                pool_pre_ping=True,  # Test connections before use (fixes stale connection errors)
-                pool_recycle=1800,  # Recycle connections every 30 min
-                pool_size=5,  # Auth doesn't need many connections
-            )
-            session_factory = sessionmaker(bind=engine)
+            _record_store = SQLAlchemyRecordStore(db_url=db_url)
+            session_factory = _record_store.session_factory
             # Use DatabaseLocalAuth directly (not LocalAuth) for user registration/login endpoints
             auth_provider = DatabaseLocalAuth(
                 session_factory=session_factory,
@@ -1137,9 +1131,13 @@ def serve(
             console.print("  • All permissions and relationships")
             console.print()
 
-            from sqlalchemy import create_engine, text
+            from sqlalchemy import delete
+            from sqlalchemy import table as sa_table
 
-            engine = create_engine(db_url)
+            from nexus.storage.record_store import SQLAlchemyRecordStore
+
+            _reset_store = SQLAlchemyRecordStore(db_url=db_url, create_tables=False)
+            engine = _reset_store.engine
 
             # List of tables to clear (in dependency order)
             tables_to_clear = [
@@ -1180,7 +1178,7 @@ def serve(
                     with engine.connect() as conn:
                         trans = conn.begin()
                         try:
-                            cursor_result = conn.execute(text(f"DELETE FROM {table_name}"))
+                            cursor_result = conn.execute(delete(sa_table(table_name)))
                             count = cursor_result.rowcount
                             trans.commit()
                             deleted_counts[table_name] = count
@@ -1236,18 +1234,16 @@ def serve(
 
             from datetime import UTC, datetime, timedelta
 
-            from sqlalchemy import create_engine
-            from sqlalchemy.orm import sessionmaker
-
             from nexus.rebac.entity_registry import EntityRegistry
             from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+            from nexus.storage.record_store import SQLAlchemyRecordStore
 
-            engine = create_engine(db_url)
-            Session = sessionmaker(bind=engine)
+            _init_store = SQLAlchemyRecordStore(db_url=db_url)
+            Session = _init_store.session_factory
 
             # Register user in entity registry (for agent permission inheritance)
             entity_registry = EntityRegistry(Session)
-            zone_id = "default"
+            zone_id = "root"
 
             # User might already exist, ignore errors
             with contextlib.suppress(Exception):
@@ -1311,7 +1307,7 @@ def serve(
                         subject=("user", admin_user),
                         relation="direct_owner",
                         object=("file", "/workspace"),
-                        zone_id="default",
+                        zone_id="root",
                     )
                     console.print(
                         f"[green]✓[/green] Granted '{admin_user}' ownership of /workspace"

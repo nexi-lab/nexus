@@ -33,9 +33,16 @@ if TYPE_CHECKING:
 class SearchBrickProtocol(Protocol):
     """Brick contract for search operations (Issue #1520).
 
-    Defines the interface that search brick implementations must satisfy.
-    Used by the kernel/services layer to interact with the search brick
-    without hard-coupling to its internals.
+    This is the **external brick API** — the interface that the search brick
+    exposes to the kernel/services layer. The kernel interacts with search
+    exclusively through this protocol.
+
+    Layering:
+        SearchBrickProtocol = brick API (this protocol)
+        SearchProtocol      = kernel service adapter (see below)
+
+    The SearchService in nexus.services implements SearchProtocol and
+    delegates to an object satisfying SearchBrickProtocol internally.
     """
 
     async def search(
@@ -54,6 +61,18 @@ class SearchBrickProtocol(Protocol):
         *,
         zone_id: str | None = None,
     ) -> int: ...
+
+    async def index_directory(
+        self,
+        path: str = "/",
+    ) -> dict[str, int]: ...
+
+    async def delete_document_index(
+        self,
+        path: str,
+    ) -> None: ...
+
+    async def get_index_stats(self) -> dict[str, Any]: ...
 
     async def get_stats(self) -> dict[str, Any]: ...
 
@@ -87,7 +106,6 @@ class SearchProtocol(Protocol):
         path: str = "/",
         recursive: bool = True,
         details: bool = False,
-        prefix: str | None = None,
         show_parsed: bool = True,
         context: OperationContext | None = None,
         limit: int | None = None,

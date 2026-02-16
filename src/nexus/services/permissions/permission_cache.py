@@ -15,13 +15,14 @@ from __future__ import annotations
 
 import logging
 import os
-import time
 from typing import TYPE_CHECKING, Any
 
+from cachetools import TTLCache
+
 if TYPE_CHECKING:
+    from nexus.rebac.manager import ReBACManager
     from nexus.services.permissions.hotspot_detector import HotspotDetector
     from nexus.services.permissions.permission_boundary_cache import PermissionBoundaryCache
-    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
 
@@ -35,14 +36,16 @@ class PermissionCacheCoordinator:
 
     def __init__(
         self,
-        rebac_manager: EnhancedReBACManager | None = None,
+        rebac_manager: ReBACManager | None = None,
         *,
         boundary_cache: PermissionBoundaryCache | None = None,
         enable_boundary_cache: bool = True,
         hotspot_detector: HotspotDetector | None = None,
         enable_hotspot_tracking: bool = True,
         bitmap_completeness_ttl: float = 3600.0,
+        bitmap_completeness_maxsize: int = 4096,
         leopard_dir_ttl: float = 3600.0,
+        leopard_dir_maxsize: int = 4096,
     ) -> None:
         self._rebac_manager = rebac_manager
 
@@ -68,13 +71,15 @@ class PermissionCacheCoordinator:
 
         # perf19: Bitmap completeness cache
         # Tracks users whose Tiger bitmap contains ALL their permissions
-        self._bitmap_completeness_cache: dict[tuple[str, str, str], tuple[bool, float]] = {}
-        self._bitmap_completeness_ttl = bitmap_completeness_ttl
+        self._bitmap_completeness_cache: TTLCache[tuple[str, str, str], bool] = TTLCache(
+            maxsize=bitmap_completeness_maxsize, ttl=bitmap_completeness_ttl
+        )
 
         # perf19: Leopard Directory Index (Option 4)
         # Caches which directories a user can access (for inheritance checks)
-        self._leopard_dir_index: dict[tuple[str, str, str], tuple[set[str], float]] = {}
-        self._leopard_dir_ttl = leopard_dir_ttl
+        self._leopard_dir_index: TTLCache[tuple[str, str, str], set[str]] = TTLCache(
+            maxsize=leopard_dir_maxsize, ttl=leopard_dir_ttl
+        )
 
     @property
     def boundary_cache(self) -> PermissionBoundaryCache | None:
@@ -116,10 +121,9 @@ class PermissionCacheCoordinator:
                 return None
 
             # Get path int IDs from resource map
-            resource_map = tiger_cache._resource_map
+            resource_map = tiger_cache.resource_map
             resource_keys = [("file", path) for path in paths]
-            with resource_map._engine.connect() as conn:
-                int_id_map = resource_map.bulk_get_int_ids(resource_keys, conn)
+            int_id_map = resource_map.get_int_ids_batch(resource_keys)
 
             path_to_int: dict[str, int] = {}
             int_to_path: dict[int, str] = {}
@@ -169,11 +173,8 @@ class PermissionCacheCoordinator:
         """Check if this user's bitmap contains all their permissions (no dir grants)."""
         subject_type, subject_id = subject
         key = (subject_type, subject_id, zone_id)
-        cached = self._bitmap_completeness_cache.get(key)
-        if cached:
-            is_complete, cached_at = cached
-            if is_complete and (time.time() - cached_at) < self._bitmap_completeness_ttl:
-                return True
+        if self._bitmap_completeness_cache.get(key):
+            return True
 
         # Check if user has directory grants in Tiger cache
         tiger_cache = getattr(self._rebac_manager, "_tiger_cache", None)
@@ -189,7 +190,7 @@ class PermissionCacheCoordinator:
         )
         if dir_bitmap_bytes is None:
             # No directory grants -> bitmap is complete
-            self._bitmap_completeness_cache[key] = (True, time.time())
+            self._bitmap_completeness_cache[key] = True
             return True
 
         return False
@@ -202,7 +203,7 @@ class PermissionCacheCoordinator:
         """Mark a user's bitmap as complete (all permissions are direct grants)."""
         subject_type, subject_id = subject
         key = (subject_type, subject_id, zone_id)
-        self._bitmap_completeness_cache[key] = (True, time.time())
+        self._bitmap_completeness_cache[key] = True
 
     # =========================================================================
     # Leopard Directory Index
@@ -221,12 +222,8 @@ class PermissionCacheCoordinator:
         """
         subject_type, subject_id = subject
         key = (subject_type, subject_id, zone_id)
-        cached = self._leopard_dir_index.get(key)
-        if not cached:
-            return ([], paths)
-
-        accessible_dirs, cached_at = cached
-        if (time.time() - cached_at) >= self._leopard_dir_ttl or not accessible_dirs:
+        accessible_dirs = self._leopard_dir_index.get(key)
+        if not accessible_dirs:
             return ([], paths)
 
         allowed: list[str] = []
@@ -264,14 +261,10 @@ class PermissionCacheCoordinator:
 
         subject_type, subject_id = subject
         key = (subject_type, subject_id, zone_id)
-        cached = self._leopard_dir_index.get(key)
-
-        existing_dirs: set[str] = set()
-        if cached and (time.time() - cached[1]) < self._leopard_dir_ttl:
-            existing_dirs = cached[0]
+        existing_dirs = self._leopard_dir_index.get(key) or set()
 
         new_dirs = existing_dirs | dirs
-        self._leopard_dir_index[key] = (new_dirs, time.time())
+        self._leopard_dir_index[key] = new_dirs
         logger.info(
             f"[LEOPARD-INDEX] Cached {len(dirs)} accessible directories "
             f"for {subject_type}:{subject_id} (total: {len(new_dirs)})"

@@ -127,7 +127,7 @@ def api_keys(db_session_factory):
             session,
             user_id="test-user",
             name="Test User Key",
-            zone_id="default",
+            zone_id="root",
             is_admin=False,
         )
         agent_key_id, agent_raw = DatabaseAPIKeyAuth.create_key(
@@ -136,7 +136,7 @@ def api_keys(db_session_factory):
             name="Test Agent Key",
             subject_type="agent",
             subject_id="agent-007",
-            zone_id="default",
+            zone_id="root",
             is_admin=False,
             inherit_permissions=True,
         )
@@ -144,7 +144,7 @@ def api_keys(db_session_factory):
             session,
             user_id="admin-user",
             name="Admin Key",
-            zone_id="default",
+            zone_id="root",
             is_admin=True,
         )
         session.commit()

@@ -24,12 +24,14 @@ import json
 import logging
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 from cachetools import TTLCache
 from sqlalchemy import select
 
 from nexus.core.exceptions import AuthenticationError
+from nexus.raft.zone_manager import ROOT_ZONE_ID
 from nexus.storage.models import OAuthCredentialModel
 from nexus.storage.token_rotation_store import TokenRotationStore
 
@@ -77,28 +79,44 @@ class TokenManager:
 
     def __init__(
         self,
-        session_factory: Any,
+        db_path: str | Path | None = None,
+        db_url: str | None = None,
         encryption_key: str | None = None,
         audit_logger: Any | None = None,
+        session_factory: Any | None = None,
     ):
         """Initialize token manager.
 
         Args:
-            session_factory: SQLAlchemy sessionmaker. Reuses the app-level
-                connection pool (Issue #1597).
-            encryption_key: Fernet encryption key (base64-encoded)
-            audit_logger: Optional SecretsAuditLogger instance for audit trail
+            db_path: Path to SQLite database.
+            db_url: Database URL.
+            encryption_key: Fernet encryption key (base64-encoded).
+            audit_logger: Optional SecretsAuditLogger instance for audit trail.
+            session_factory: Optional SQLAlchemy sessionmaker. When provided,
+                reuses the app-level connection pool instead of creating a
+                separate engine (Issue #1597).
         """
-        self.SessionLocal = session_factory
-        # Derive database_url for OAuthCrypto; engine is owned externally
-        self.engine = session_factory.kw.get("bind") if hasattr(session_factory, "kw") else None
-        self.database_url = str(self.engine.url) if self.engine else ""
-        self._owns_engine = False
+        if session_factory is not None:
+            self.SessionLocal = session_factory
+            # Derive database_url for OAuthCrypto; engine is owned externally
+            self.engine = session_factory.kw.get("bind") if hasattr(session_factory, "kw") else None
+            self.database_url = db_url or (str(self.engine.url) if self.engine else "")
+            self._owns_engine = False
+        elif db_url or db_path:
+            from nexus.storage.record_store import SQLAlchemyRecordStore
+
+            url = db_url or f"sqlite:///{db_path}"
+            self._record_store = SQLAlchemyRecordStore(db_url=url)
+            self.SessionLocal = self._record_store.session_factory
+            self.engine = self._record_store.engine
+            self.database_url = url
+            self._owns_engine = True
+        else:
+            raise ValueError("One of db_path, db_url, or session_factory must be provided")
 
         # Pass session_factory to OAuthCrypto for shared pool (Issue #1597)
         self.crypto = OAuthCrypto(
             encryption_key=encryption_key,
-            db_url=self.database_url,
             session_factory=session_factory,
         )
         self.providers: dict[str, OAuthProvider] = {}
@@ -126,7 +144,7 @@ class TokenManager:
         provider: str,
         user_email: str,
         credential: OAuthCredential,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         created_by: str | None = None,
         user_id: str | None = None,
         ip_address: str | None = None,
@@ -139,7 +157,7 @@ class TokenManager:
         if not provider or not provider.strip():
             raise ValueError("Provider name cannot be empty")
         if zone_id is None:
-            zone_id = "root"
+            zone_id = ROOT_ZONE_ID
 
         encrypted_access_token = self.crypto.encrypt_token(credential.access_token)
         encrypted_refresh_token = None
@@ -232,7 +250,7 @@ class TokenManager:
         self,
         provider: str,
         user_email: str,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         ip_address: str | None = None,
     ) -> str:
         """Get a valid access token (with automatic refresh and rotation).
@@ -248,7 +266,7 @@ class TokenManager:
         8. Return valid access_token
         """
         if zone_id is None:
-            zone_id = "root"
+            zone_id = ROOT_ZONE_ID
 
         # Check cache first (fast path — no lock needed)
         cache_key = (provider, user_email, zone_id)
@@ -477,7 +495,7 @@ class TokenManager:
             return count
 
     async def get_credential(
-        self, provider: str, user_email: str, zone_id: str = "root"
+        self, provider: str, user_email: str, zone_id: str = ROOT_ZONE_ID
     ) -> OAuthCredential | None:
         """Get credential (decrypted) without automatic refresh."""
         with self.SessionLocal() as session:
@@ -498,12 +516,12 @@ class TokenManager:
         self,
         provider: str,
         user_email: str,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         ip_address: str | None = None,
     ) -> bool:
         """Revoke an OAuth credential."""
         if zone_id is None:
-            zone_id = "root"
+            zone_id = ROOT_ZONE_ID
         with self.SessionLocal() as session:
             stmt = select(OAuthCredentialModel).where(
                 OAuthCredentialModel.provider == provider,
@@ -662,7 +680,7 @@ class TokenManager:
                     provider=provider or None,
                     credential_id=credential_id,
                     token_family_id=token_family_id,
-                    zone_id=zone_id or "root",
+                    zone_id=zone_id or ROOT_ZONE_ID,
                     ip_address=ip_address,
                     details=details,
                 )
@@ -670,52 +688,22 @@ class TokenManager:
                 logger.warning("Failed to write secrets audit log", exc_info=True)
 
     def close(self) -> None:
-        """Cleanup resources.
+        """Cleanup resources."""
+        if getattr(self, "_closed", False):
+            return
+        self._closed = True
 
-        When created via from_database_url(), disposes the owned engine.
-        When created with an external session_factory, only clears caches.
-        """
-        self._token_cache.clear()
-        self._refresh_locks.clear()
+        if not getattr(self, "_owns_engine", True):
+            return
 
-        if getattr(self, "_owns_engine", False) and self.engine is not None:
+        record_store = getattr(self, "_record_store", None)
+        if record_store is not None:
+            try:
+                record_store.close()
+            except Exception:
+                logger.debug("RecordStore close failed (non-critical)", exc_info=True)
+        elif self.engine is not None:
             try:
                 self.engine.dispose()
             except Exception:
                 logger.debug("Engine dispose failed (non-critical)", exc_info=True)
-
-    @classmethod
-    def from_database_url(
-        cls,
-        db_url: str,
-        encryption_key: str | None = None,
-        audit_logger: Any | None = None,
-    ) -> "TokenManager":
-        """Create TokenManager from a database URL.
-
-        Convenience factory for callers that don't have a pre-existing
-        session_factory (e.g. CLI commands, standalone scripts).
-        The engine is owned by this instance and disposed on close().
-        """
-        from sqlalchemy import create_engine
-        from sqlalchemy.orm import sessionmaker
-
-        from nexus.storage.models import Base
-
-        connect_args: dict[str, Any] = {}
-        if "sqlite" in db_url:
-            connect_args["check_same_thread"] = False
-
-        engine = create_engine(db_url, connect_args=connect_args)
-        Base.metadata.create_all(engine)
-        factory = sessionmaker(bind=engine)
-
-        instance = cls(
-            session_factory=factory,
-            encryption_key=encryption_key,
-            audit_logger=audit_logger,
-        )
-        # Mark that this instance owns the engine (for cleanup)
-        instance._owns_engine = True  # noqa: SLF001
-        instance.database_url = db_url
-        return instance

@@ -97,7 +97,7 @@ class AsyncReBACManager:
     async def rebac_check_bulk(
         self,
         checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
-        zone_id: str = "default",
+        zone_id: str = "root",
     ) -> dict[tuple[tuple[str, str], str, tuple[str, str]], bool]:
         """Async bulk permission check."""
         return await asyncio.to_thread(self._sync.rebac_check_bulk, checks, zone_id)
@@ -158,7 +158,7 @@ class AsyncReBACManager:
     async def get_transitive_groups(
         self,
         subject: tuple[str, str],
-        zone_id: str = "default",
+        zone_id: str = "root",
     ) -> set[tuple[str, str]]:
         """Async transitive group lookup."""
         return await asyncio.to_thread(self._sync.get_transitive_groups, subject, zone_id)

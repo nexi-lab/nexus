@@ -147,9 +147,9 @@ class NexusFSCoreMixin:
             try:
                 return await asyncio.wait_for(coro, timeout=timeout)
             except TimeoutError:
-                logger.warning(f"Event task timed out after {timeout}s: {name or 'unnamed'}")
+                logger.warning("Event task timed out after %ss: %s", timeout, name or "unnamed")
             except Exception as e:
-                logger.error(f"Event task failed: {name or 'unnamed'}: {e}")
+                logger.error("Event task failed: %s: %s", name or "unnamed", e, exc_info=True)
 
         task = asyncio.create_task(wrapped_coro(), name=name)
         self._event_tasks.add(task)
@@ -175,7 +175,7 @@ class NexusFSCoreMixin:
         Args:
             event_type: Event type string (e.g., "file_write", "file_delete", "file_rename")
             path: Path of the affected file
-            zone_id: Zone ID (defaults to "default" if None)
+            zone_id: Zone ID (defaults to "root" if None)
             size: File size in bytes (optional)
             etag: Content hash (optional)
             agent_id: Agent that performed the operation (optional)
@@ -201,7 +201,7 @@ class NexusFSCoreMixin:
             event = FileEvent(
                 type=file_event_type,
                 path=path,
-                zone_id=zone_id or "default",
+                zone_id=zone_id or "root",
                 size=size,
                 etag=etag,
                 agent_id=agent_id,
@@ -224,11 +224,11 @@ class NexusFSCoreMixin:
 
             fire_and_forget(self._event_bus.publish(event))
         except Exception as e:
-            logger.warning(f"Failed to create {event_type} event: {e}")
+            logger.warning("Failed to create %s event: %s", event_type, e, exc_info=True)
 
     def _fire_workflow_event(
         self,
-        trigger_type: Any,
+        trigger_type: str,
         event_context: dict[str, Any],
         label: str,
     ) -> None:
@@ -238,7 +238,7 @@ class NexusFSCoreMixin:
         Does nothing if workflows are not enabled.
 
         Args:
-            trigger_type: TriggerType enum value (FILE_WRITE, FILE_DELETE, FILE_RENAME).
+            trigger_type: String trigger type (e.g. "file_write", "file_delete").
             event_context: Event payload dict.
             label: Human-readable label for task/thread naming (e.g. "file_write:/foo.txt").
         """
@@ -250,13 +250,14 @@ class NexusFSCoreMixin:
         fire_and_forget(
             self.workflow_engine.fire_event(trigger_type, event_context)  # type: ignore[attr-defined]
         )
+
         if self.subscription_manager:  # type: ignore[attr-defined]
             event_type = label.split(":")[0] if ":" in label else label
             fire_and_forget(
                 self.subscription_manager.broadcast(  # type: ignore[attr-defined]
                     event_type,
                     event_context,
-                    event_context.get("zone_id", "default"),
+                    event_context.get("zone_id", "root"),
                 )
             )
 
@@ -282,6 +283,22 @@ class NexusFSCoreMixin:
                 logger.warning("Failed to create RevisionNotifier; using NullRevisionNotifier")
                 NexusFSCoreMixin._revision_notifier = NullRevisionNotifier()
         return self._revision_notifier
+
+    @staticmethod
+    def _revision_fallback(zone_id: str, operation: str, default: int, exc: Exception) -> int:
+        """Log a revision operation failure and return *default*.
+
+        Consolidates the duplicated fallback logic for ``_increment_and_get_revision``
+        and ``_get_current_revision`` (Issue #1519, 5B).
+        """
+        logger.warning(
+            "Failed to %s revision for zone %s: %s",
+            operation,
+            zone_id,
+            exc,
+            exc_info=True,
+        )
+        return default
 
     def _get_revision_lock(self, zone_id: str) -> threading.Lock:
         """Get or create a per-zone lock for revision increments (Issue #1180).
@@ -325,8 +342,7 @@ class NexusFSCoreMixin:
             try:
                 return self.metadata.increment_revision(zone_id)
             except Exception as e:
-                logger.warning(f"Failed to increment revision for zone {zone_id}: {e}")
-                return int(time.time() * 1000)
+                return self._revision_fallback(zone_id, "increment", int(time.time() * 1000), e)
 
         # Legacy fallback: FileMetadata-based counter (requires lock)
         from nexus.core._metadata_generated import FileMetadata
@@ -352,9 +368,7 @@ class NexusFSCoreMixin:
                 self._get_revision_notifier().notify_revision(zone_id, new_rev)
                 return new_rev
             except Exception as e:
-                logger.warning(f"Failed to increment revision for zone {zone_id}: {e}")
-                # Fallback: return timestamp-based pseudo-revision
-                return int(time.time() * 1000)
+                return self._revision_fallback(zone_id, "increment", int(time.time() * 1000), e)
 
     def _get_current_revision(self, zone_id: str) -> int:
         """Get the current revision for a zone.
@@ -373,8 +387,7 @@ class NexusFSCoreMixin:
             try:
                 return self.metadata.get_revision(zone_id)
             except Exception as e:
-                logger.warning(f"Failed to get revision for zone {zone_id}: {e}")
-                return 0
+                return self._revision_fallback(zone_id, "get", 0, e)
 
         # Legacy fallback: FileMetadata-based lookup
         rev_path = f"{SYSTEM_PATH_PREFIX}zone_rev/{zone_id}"
@@ -382,8 +395,7 @@ class NexusFSCoreMixin:
             meta = self.metadata.get(rev_path)
             return meta.version if meta else 0
         except Exception as e:
-            logger.warning(f"Failed to get revision for zone {zone_id}: {e}")
-            return 0
+            return self._revision_fallback(zone_id, "get", 0, e)
 
     def _wait_for_revision(
         self,
@@ -535,7 +547,7 @@ class NexusFSCoreMixin:
         if cache_observer is None or metadata is None:
             return
 
-        zone_id = getattr(self, "zone_id", None) or "default"
+        zone_id = getattr(self, "zone_id", None) or "root"
         revision = self._get_zone_revision()
         cache_observer.on_read(path, metadata, revision, zone_id, resource_type)
 
@@ -1116,7 +1128,8 @@ class NexusFSCoreMixin:
             try:
                 validated_path = self._validate_path(path)
                 validated_paths.append(validated_path)
-            except Exception:
+            except Exception as exc:
+                logger.debug("Path validation failed in read_bulk for %s: %s", path, exc)
                 if skip_errors:
                     results[path] = None
                     continue
@@ -1211,13 +1224,13 @@ class NexusFSCoreMixin:
 
         # Try bulk read for backends that support it (CacheConnectorMixin)
         for backend, paths_for_backend in backend_paths.items():
-            if hasattr(backend, "_read_bulk_from_cache") and len(paths_for_backend) > 1:
+            if hasattr(backend, "read_bulk_from_cache") and len(paths_for_backend) > 1:
                 # Use bulk cache lookup
                 logger.info(
                     f"[READ-BULK] Using bulk cache for {len(paths_for_backend)} files on {type(backend).__name__}"
                 )
                 try:
-                    cache_entries = backend._read_bulk_from_cache(paths_for_backend, original=True)
+                    cache_entries = backend.read_bulk_from_cache(paths_for_backend, original=True)
 
                     # Process cache hits
                     paths_needing_backend: list[str] = []
@@ -1391,7 +1404,10 @@ class NexusFSCoreMixin:
                                         "size": len(content),
                                     }
                                 )
-                            except Exception:
+                            except Exception as exc:
+                                logger.debug(
+                                    "Failed to read content for %s during batch read: %s", path, exc
+                                )
                                 if skip_errors:
                                     results[path] = None
                                 else:
@@ -1528,7 +1544,7 @@ class NexusFSCoreMixin:
 
     @rpc_expose(description="Stream file content in chunks")
     def stream(
-        self, path: str, chunk_size: int = 8192, context: OperationContext | None = None
+        self, path: str, chunk_size: int = 65536, context: OperationContext | None = None
     ) -> Any:
         """
         Stream file content in chunks without loading entire file into memory.
@@ -1589,7 +1605,7 @@ class NexusFSCoreMixin:
         path: str,
         start: int,
         end: int,
-        chunk_size: int = 8192,
+        chunk_size: int = 65536,
         context: OperationContext | None = None,
     ) -> Any:
         """Stream a byte range [start, end] of file content.
@@ -1689,15 +1705,15 @@ class NexusFSCoreMixin:
         meta = self.metadata.get(path)
 
         # Write content via streaming
-        content_hash = route.backend.write_stream(chunks, context=context).unwrap()
+        write_response = route.backend.write_stream(chunks, context=context)
+        content_hash = write_response.unwrap()
 
-        # Get size from backend metadata (written during streaming)
-        # For now, we can't easily get size without reading - set to 0 and update on next read
-        # A better approach would be for write_stream to return (hash, size) tuple
-        size = 0
-        # get_content_size is an abstract method on Backend, always available
-        with contextlib.suppress(Exception):
-            size = route.backend.get_content_size(content_hash, context=context).unwrap()
+        # WriteResult-aware backends (LocalBackend, GCS) store the byte count
+        # in affected_rows to avoid a redundant get_content_size() round-trip.
+        size = write_response.affected_rows
+        if size <= 0:
+            with contextlib.suppress(Exception):
+                size = route.backend.get_content_size(content_hash, context=context).unwrap()
 
         # Update metadata
         new_version = (meta.version + 1) if meta else 1
@@ -1711,7 +1727,7 @@ class NexusFSCoreMixin:
             created_at=meta.created_at if meta else now,
             modified_at=now,
             created_by=self._get_created_by(context),
-            zone_id=zone_id or "default",  # Issue #904, #773: Store zone_id for PREWHERE filtering
+            zone_id=zone_id or "root",  # Issue #904, #773: Store zone_id for PREWHERE filtering
         )
 
         self.metadata.put(new_meta)
@@ -1958,7 +1974,7 @@ class NexusFSCoreMixin:
             modified_at=now,
             version=new_version,
             created_by=self._get_created_by(context),  # Track who created/modified this version
-            zone_id=zone_id or "default",  # Issue #904, #773: Store zone_id for PREWHERE filtering
+            zone_id=zone_id or "root",  # Issue #904, #773: Store zone_id for PREWHERE filtering
             owner_id=owner_id,  # Issue #920: O(1) owner permission checks
         )
 
@@ -1970,7 +1986,7 @@ class NexusFSCoreMixin:
         # Issue #1169: Precise cache invalidation via cache observer
         cache_observer = getattr(self, "_cache_observer", None)
         if cache_observer is not None:
-            cache_observer.on_write(path, new_revision, zone_id or "default")
+            cache_observer.on_write(path, new_revision, zone_id or "root")
 
         # Leopard-style: Add new file to ancestor directory grants
         # When a file is created in a directory that has been granted to users,
@@ -1982,7 +1998,7 @@ class NexusFSCoreMixin:
                 if tiger_cache:
                     added_count = tiger_cache.add_file_to_ancestor_grants(
                         file_path=path,
-                        zone_id=zone_id or "default",
+                        zone_id=zone_id or "root",
                     )
                     if added_count > 0:
                         import logging
@@ -2005,8 +2021,8 @@ class NexusFSCoreMixin:
                 self.metadata.set_file_metadata(path, "parsed_text", None)
                 self.metadata.set_file_metadata(path, "parsed_at", None)
                 self.metadata.set_file_metadata(path, "parser_name", None)
-            except Exception:
-                pass  # Ignore errors - cache invalidation is best-effort
+            except Exception as e:
+                logger.debug("Failed to invalidate parsed_text cache for %s: %s", path, e)
 
         # P0-3: Create parent relationship tuples for file inheritance
         # This enables permission inheritance from parent directories
@@ -2025,9 +2041,9 @@ class NexusFSCoreMixin:
             # DEFERRED PATH: Queue permission operations for background batch processing
             # Owner can still access file immediately via owner_id fast-path
             try:
-                deferred_buffer.queue_hierarchy(path, ctx.zone_id or "default")
+                deferred_buffer.queue_hierarchy(path, ctx.zone_id or "root")
                 if meta is None and ctx.user and not ctx.is_system:
-                    deferred_buffer.queue_owner_grant(ctx.user, path, ctx.zone_id or "default")
+                    deferred_buffer.queue_owner_grant(ctx.user, path, ctx.zone_id or "root")
             except Exception as e:
                 logger.warning(f"write: Failed to queue deferred permissions for {path}: {e}")
         else:
@@ -2038,7 +2054,7 @@ class NexusFSCoreMixin:
                         f"write: Calling ensure_parent_tuples for {path}, zone_id={ctx.zone_id or 'default'}"
                     )
                     created_count = self._hierarchy_manager.ensure_parent_tuples(
-                        path, zone_id=ctx.zone_id or "default"
+                        path, zone_id=ctx.zone_id or "root"
                     )
                     logger.info(f"write: Created {created_count} parent tuples for {path}")
                 except Exception as e:
@@ -2057,7 +2073,7 @@ class NexusFSCoreMixin:
                             subject=("user", ctx.user),
                             relation="direct_owner",
                             object=("file", path),
-                            zone_id=ctx.zone_id or "default",
+                            zone_id=ctx.zone_id or "root",
                         )
                         logger.debug(
                             f"write: Granted direct_owner permission to {ctx.user} for {path}"
@@ -2087,17 +2103,15 @@ class NexusFSCoreMixin:
         )
 
         # v0.7.0: Fire workflow event for automatic trigger execution
-        from nexus.workflows.types import TriggerType
-
         is_new_file = meta is None or meta.etag is None
         self._fire_workflow_event(
-            TriggerType.FILE_WRITE,
+            "file_write",
             {
                 "file_path": path,
                 "size": len(content),
                 "etag": content_hash,
                 "version": new_version,
-                "zone_id": zone_id or "default",
+                "zone_id": zone_id or "root",
                 "agent_id": agent_id,
                 "user_id": context.user_id if context and hasattr(context, "user_id") else None,
                 "created": is_new_file,
@@ -2639,8 +2653,7 @@ class NexusFSCoreMixin:
                 version=new_version,
                 created_by=getattr(self, "agent_id", None)
                 or getattr(self, "user_id", None),  # Track who created/modified this version
-                zone_id=zone_id
-                or "default",  # Issue #904, #773: Store zone_id for PREWHERE filtering
+                zone_id=zone_id or "root",  # Issue #904, #773: Store zone_id for PREWHERE filtering
             )
             metadata_list.append(metadata)
 
@@ -2678,7 +2691,7 @@ class NexusFSCoreMixin:
 
         logger = logging.getLogger(__name__)
         ctx = context if context is not None else self._default_context
-        zone_id_for_perms = ctx.zone_id or "default"
+        zone_id_for_perms = ctx.zone_id or "root"
 
         # PERF: Batch hierarchy tuple creation (single transaction instead of N)
         _hierarchy_start = _time.perf_counter()
@@ -3008,18 +3021,16 @@ class NexusFSCoreMixin:
         # Issue #1169: Precise cache invalidation via cache observer
         cache_observer = getattr(self, "_cache_observer", None)
         if cache_observer is not None:
-            cache_observer.on_delete(path, new_revision, zone_id or "default")
+            cache_observer.on_delete(path, new_revision, zone_id or "root")
 
         # v0.7.0: Fire workflow event for automatic trigger execution
-        from nexus.workflows.types import TriggerType
-
         self._fire_workflow_event(
-            TriggerType.FILE_DELETE,
+            "file_delete",
             {
                 "file_path": path,
                 "size": meta.size,
                 "etag": meta.etag,
-                "zone_id": zone_id or "default",
+                "zone_id": zone_id or "root",
                 "agent_id": agent_id,
                 "user_id": context.user_id if context and hasattr(context, "user_id") else None,
                 "timestamp": datetime.now(UTC).isoformat(),
@@ -3185,7 +3196,7 @@ class NexusFSCoreMixin:
         new_revision = self._increment_zone_revision()
         cache_observer = getattr(self, "_cache_observer", None)
         if cache_observer is not None:
-            cache_observer.on_rename(old_path, new_path, new_revision, zone_id or "default")
+            cache_observer.on_rename(old_path, new_path, new_revision, zone_id or "root")
 
         # Update ReBAC permissions to follow the renamed file/directory
         # This ensures permissions are preserved when files are moved
@@ -3238,7 +3249,7 @@ class NexusFSCoreMixin:
                         old_path=old_path,
                         new_path=new_path,
                         is_directory=bool(is_directory),
-                        zone_id=zone_id or "default",
+                        zone_id=zone_id or "root",
                     )
             except Exception as e:
                 # Log but don't fail the rename operation
@@ -3258,16 +3269,14 @@ class NexusFSCoreMixin:
         )
 
         # v0.7.0: Fire workflow event for automatic trigger execution
-        from nexus.workflows.types import TriggerType
-
         self._fire_workflow_event(
-            TriggerType.FILE_RENAME,
+            "file_rename",
             {
                 "old_path": old_path,
                 "new_path": new_path,
                 "size": meta.size if meta else 0,
                 "etag": meta.etag if meta else None,
-                "zone_id": zone_id or "default",
+                "zone_id": zone_id or "root",
                 "agent_id": agent_id,
                 "user_id": context.user_id if context and hasattr(context, "user_id") else None,
                 "timestamp": datetime.now(UTC).isoformat(),
@@ -3543,7 +3552,8 @@ class NexusFSCoreMixin:
 
                     size_context = replace(context, backend_path=route.backend_path)
                 size = route.backend.get_content_size(meta.etag, context=size_context).unwrap()
-            except Exception:
+            except Exception as exc:
+                logger.debug("Failed to get content size for %s: %s", path, exc)
                 size = None
 
         # Convert datetime to ISO string for wire compatibility with Rust FUSE client
@@ -3604,7 +3614,8 @@ class NexusFSCoreMixin:
             try:
                 validated_path = self._validate_path(path)
                 validated_paths.append(validated_path)
-            except Exception:
+            except Exception as exc:
+                logger.debug("Path validation failed in metadata_bulk for %s: %s", path, exc)
                 if skip_errors:
                     results[path] = None
                     continue
@@ -3785,8 +3796,9 @@ class NexusFSCoreMixin:
         for path in paths:
             try:
                 results[path] = self.exists(path, context=context)
-            except Exception:
+            except Exception as exc:
                 # Any error means file doesn't exist or isn't accessible
+                logger.debug("Exists check failed for %s: %s", path, exc)
                 results[path] = False
         return results
 
@@ -3829,7 +3841,8 @@ class NexusFSCoreMixin:
             try:
                 validated = self._validate_path(path)
                 valid_paths.append(validated)
-            except Exception:
+            except Exception as exc:
+                logger.debug("Path validation failed in metadata_batch for %s: %s", path, exc)
                 results[path] = None
 
         # Batch fetch metadata from database
@@ -3871,7 +3884,8 @@ class NexusFSCoreMixin:
                     "zone_id": meta.zone_id,
                     "is_directory": is_dir,
                 }
-            except Exception:
+            except Exception as exc:
+                logger.debug("Failed to build metadata result for %s: %s", path, exc)
                 results[path] = None
 
         return results

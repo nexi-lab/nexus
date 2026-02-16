@@ -18,7 +18,8 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import text
+from sqlalchemy import column, delete, text
+from sqlalchemy import table as sa_table
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -415,30 +416,22 @@ class PostgresTigerCache:
         Builds a dynamic WHERE clause from non-None parameters.
         If all are None, deletes everything.
         """
-        conditions: list[str] = []
-        params: dict[str, Any] = {}
+        tbl = sa_table("tiger_cache")
+        stmt = delete(tbl)
 
         if subject_type is not None:
-            conditions.append("subject_type = :subject_type")
-            params["subject_type"] = subject_type
+            stmt = stmt.where(column("subject_type") == subject_type)
         if subject_id is not None:
-            conditions.append("subject_id = :subject_id")
-            params["subject_id"] = subject_id
+            stmt = stmt.where(column("subject_id") == subject_id)
         if permission is not None:
-            conditions.append("permission = :permission")
-            params["permission"] = permission
+            stmt = stmt.where(column("permission") == permission)
         if resource_type is not None:
-            conditions.append("resource_type = :resource_type")
-            params["resource_type"] = resource_type
+            stmt = stmt.where(column("resource_type") == resource_type)
         if zone_id is not None:
-            conditions.append("zone_id = :zone_id")
-            params["zone_id"] = zone_id
-
-        where_clause = " AND ".join(conditions) if conditions else "1=1"
-        query = text(f"DELETE FROM tiger_cache WHERE {where_clause}")  # noqa: S608
+            stmt = stmt.where(column("zone_id") == zone_id)
 
         with self._engine.begin() as conn:
-            result = conn.execute(query, params)
+            result = conn.execute(stmt)
             return result.rowcount
 
     async def health_check(self) -> bool:

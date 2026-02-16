@@ -35,6 +35,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
+from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from nexus.core.rebac import Entity, NamespaceConfig
@@ -79,11 +80,12 @@ from nexus.services.permissions.types import (
 )
 from nexus.services.permissions.utils.changelog import insert_changelog_entry
 from nexus.services.permissions.utils.zone import normalize_zone_id
+from nexus.storage.models.permissions import ReBACTupleModel as RT
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
-    from nexus.services.permissions.leopard import LeopardIndex
+    from nexus.services.permissions.cache.leopard import LeopardIndex
     from nexus.services.permissions.rebac_iterator_cache import IteratorCache
     from nexus.services.permissions.tiger_cache import TigerCache, TigerCacheUpdater
 
@@ -155,7 +157,7 @@ class EnhancedReBACManager(ReBACManager):
         # Leopard index for O(1) transitive group lookups (Issue #692)
         self._leopard: LeopardIndex | None = None
         if enable_leopard:
-            from nexus.services.permissions.leopard import LeopardIndex
+            from nexus.services.permissions.cache.leopard import LeopardIndex
 
             self._leopard = LeopardIndex(
                 engine=engine,
@@ -200,9 +202,7 @@ class EnhancedReBACManager(ReBACManager):
 
         # Issue #1459 Phase 15+: Zone-aware graph traversal
         self._zone_traversal = ZoneAwareTraversal(
-            connection_factory=self._connection,
-            create_cursor=self._create_cursor,
-            fix_sql=self._fix_sql_placeholders,
+            engine=engine,
             get_namespace=self.get_namespace,
             evaluate_conditions=self._evaluate_conditions,
             zone_manager=self._zone_manager,
@@ -212,9 +212,6 @@ class EnhancedReBACManager(ReBACManager):
         # Issue #1459 Phase 15+: Bulk permission checker
         self._bulk_checker = BulkPermissionChecker(
             engine=engine,
-            connection_factory=self._connection,
-            create_cursor=self._create_cursor,
-            fix_sql=self._fix_sql_placeholders,
             get_namespace=self.get_namespace,
             enforce_zone_isolation=enforce_zone_isolation,
             l1_cache=self._l1_cache,
@@ -263,7 +260,7 @@ class EnhancedReBACManager(ReBACManager):
         permission: str,
         object: tuple[str, str],
         context: dict[str, Any] | None = None,
-        zone_id: str | None = None,  # Issue #773: Defaults to "default" internally
+        zone_id: str | None = None,  # Issue #773: Defaults to "root" internally
         consistency: ConsistencyLevel | ConsistencyRequirement | None = None,
     ) -> bool:
         """Check permission with explicit consistency control (P0-1, Issue #1081).
@@ -632,7 +629,7 @@ class EnhancedReBACManager(ReBACManager):
         permission: str,
         object: tuple[str, str],
         context: dict[str, Any] | None = None,
-        zone_id: str | None = None,  # Issue #773: Defaults to "default" internally
+        zone_id: str | None = None,  # Issue #773: Defaults to "root" internally
         consistency: ConsistencyLevel = ConsistencyLevel.EVENTUAL,
         min_revision: int | None = None,  # Issue #1081: For AT_LEAST_AS_FRESH mode
     ) -> CheckResult:
@@ -681,7 +678,7 @@ class EnhancedReBACManager(ReBACManager):
                     f"rebac_check called without zone_id, defaulting to 'default'. "
                     f"This is only allowed in development. Stack:\n{''.join(traceback.format_stack()[-5:])}"
                 )
-            zone_id = "default"
+            zone_id = "root"
 
         subject_entity = Entity(subject[0], subject[1])
         object_entity = Entity(object[0], object[1])
@@ -1435,7 +1432,7 @@ class EnhancedReBACManager(ReBACManager):
         object: tuple[str, str],
         expires_at: datetime | None = None,
         conditions: dict[str, Any] | None = None,
-        zone_id: str | None = None,  # Issue #773: Defaults to "default" internally
+        zone_id: str | None = None,  # Issue #773: Defaults to "root" internally
         subject_zone_id: str | None = None,  # Defaults to zone_id if not provided
         object_zone_id: str | None = None,  # Defaults to zone_id if not provided
     ) -> WriteResult:
@@ -1604,14 +1601,16 @@ class EnhancedReBACManager(ReBACManager):
             self._l1_cache.invalidate_subject(subject_type, subject_id, effective_zone)
             self._l1_cache.invalidate_object(object_type, object_id, effective_zone)
 
-        # Issue #1081: Get revision for consistency token (Zanzibar zookie pattern)
-        revision = self._get_zone_revision_for_grant(effective_zone)
+        # Issue #1081: Increment version token for consistency (Zanzibar zookie pattern)
+        consistency_token = self._get_version_token(effective_zone)
+        # Extract numeric revision from token string (e.g., "v3" -> 3)
+        revision = int(consistency_token.lstrip("v")) if consistency_token.startswith("v") else 0
         write_time_ms = (time.perf_counter() - write_start) * 1000
 
         return WriteResult(
             tuple_id=result,
             revision=revision,
-            consistency_token=f"v{revision}",
+            consistency_token=consistency_token,
             written_at_ms=write_time_ms,
         )
 
@@ -1935,7 +1934,7 @@ class EnhancedReBACManager(ReBACManager):
         self,
         permission: str,
         object: tuple[str, str],
-        zone_id: str = "default",
+        zone_id: str = "root",
     ) -> list[tuple[str, str]]:
         """Find all subjects with permission on object (zone-scoped).
 
@@ -1952,7 +1951,7 @@ class EnhancedReBACManager(ReBACManager):
             return ReBACManager.rebac_expand(self, permission, object)
 
         if not zone_id:
-            zone_id = "default"
+            zone_id = "root"
 
         object_entity = Entity(object[0], object[1])
         subjects: set[tuple[str, str]] = set()
@@ -2357,15 +2356,9 @@ class EnhancedReBACManager(ReBACManager):
         Returns:
             Set of (group_type, group_id) tuples
         """
-        from sqlalchemy import text
-
         groups: set[tuple[str, str]] = set()
         visited: set[tuple[str, str]] = set()
         queue: list[tuple[str, str]] = [(subject_type, subject_id)]
-
-        # Determine SQL NOW function based on database type
-        is_postgresql = "postgresql" in str(self.engine.url)
-        now_sql = "NOW()" if is_postgresql else "datetime('now')"
 
         with self.engine.connect() as conn:
             while queue:
@@ -2374,20 +2367,15 @@ class EnhancedReBACManager(ReBACManager):
                     continue
                 visited.add((curr_type, curr_id))
 
-                # Find direct memberships
-                query = text(f"""
-                    SELECT object_type, object_id
-                    FROM rebac_tuples
-                    WHERE subject_type = :subj_type
-                      AND subject_id = :subj_id
-                      AND relation IN ('member-of', 'member', 'belongs-to')
-                      AND zone_id = :zone_id
-                      AND (expires_at IS NULL OR expires_at > {now_sql})
-                """)
-                result = conn.execute(
-                    query,
-                    {"subj_type": curr_type, "subj_id": curr_id, "zone_id": zone_id},
+                # Find direct memberships (ORM — no f-string SQL injection)
+                stmt = select(RT.object_type, RT.object_id).where(
+                    RT.subject_type == curr_type,
+                    RT.subject_id == curr_id,
+                    RT.relation.in_(["member-of", "member", "belongs-to"]),
+                    RT.zone_id == zone_id,
+                    or_(RT.expires_at.is_(None), RT.expires_at > datetime.now(UTC)),
                 )
+                result = conn.execute(stmt)
 
                 for row in result:
                     group = (row.object_type, row.object_id)
@@ -2532,7 +2520,7 @@ class EnhancedReBACManager(ReBACManager):
                 return True
 
         # Try Boundary Cache (O(1) inheritance shortcut for files)
-        effective_zone = zone_id or "default"
+        effective_zone = zone_id or "root"
         if (
             object[0] == "file"
             and permission in ("read", "write", "execute")
@@ -2745,12 +2733,12 @@ class EnhancedReBACManager(ReBACManager):
             context,
         )
 
-    def _get_version_token(self, zone_id: str = "default") -> str:
+    def _get_version_token(self, zone_id: str = "root") -> str:
         """Get current version token (P0-1).
 
         Delegates to consistency.revision module (Issue #1459).
         """
-        return increment_version_token(self.engine, self._repo, zone_id)
+        return increment_version_token(self.engine, zone_id)
 
     def _get_cached_check_zone_aware_bounded(
         self,
@@ -3114,50 +3102,39 @@ class EnhancedReBACManager(ReBACManager):
         Returns:
             List of tuple dictionaries for graph traversal
         """
-        from sqlalchemy import bindparam, text
+        _cols = (
+            RT.subject_type,
+            RT.subject_id,
+            RT.subject_relation,
+            RT.relation,
+            RT.object_type,
+            RT.object_id,
+        )
+        _not_expired = or_(RT.expires_at.is_(None), RT.expires_at > datetime.now(UTC))
 
         with self.engine.connect() as conn:
             if include_cross_zone_for_user:
                 # Include same-zone tuples AND cross-zone shares to this user
-                # Cross-zone shares have relation in CROSS_ZONE_ALLOWED_RELATIONS
                 cross_zone_relations = list(CROSS_ZONE_ALLOWED_RELATIONS)
-                # Use bindparam with expanding=True for IN clause compatibility with SQLite
-                result = conn.execute(
-                    text("""
-                        SELECT subject_type, subject_id, subject_relation,
-                               relation, object_type, object_id
-                        FROM rebac_tuples
-                        WHERE (expires_at IS NULL OR expires_at > :now)
-                          AND (
-                              -- Same zone tuples
-                              zone_id = :zone_id
-                              -- OR cross-zone shares where this user is the recipient
-                              OR (
-                                  relation IN :cross_zone_relations
-                                  AND subject_type = 'user'
-                                  AND subject_id = :user_id
-                              )
-                          )
-                    """).bindparams(bindparam("cross_zone_relations", expanding=True)),
-                    {
-                        "zone_id": zone_id,
-                        "now": datetime.now(UTC),
-                        "cross_zone_relations": cross_zone_relations,
-                        "user_id": include_cross_zone_for_user,
-                    },
+                stmt = select(*_cols).where(
+                    _not_expired,
+                    or_(
+                        RT.zone_id == zone_id,
+                        and_(
+                            RT.relation.in_(cross_zone_relations),
+                            RT.subject_type == "user",
+                            RT.subject_id == include_cross_zone_for_user,
+                        ),
+                    ),
                 )
+                result = conn.execute(stmt)
             else:
                 # Original behavior: only same-zone tuples
-                result = conn.execute(
-                    text("""
-                        SELECT subject_type, subject_id, subject_relation,
-                               relation, object_type, object_id
-                        FROM rebac_tuples
-                        WHERE zone_id = :zone_id
-                          AND (expires_at IS NULL OR expires_at > :now)
-                    """),
-                    {"zone_id": zone_id, "now": datetime.now(UTC)},
+                stmt = select(*_cols).where(
+                    RT.zone_id == zone_id,
+                    _not_expired,
                 )
+                result = conn.execute(stmt)
             return [
                 {
                     "subject_type": row.subject_type,
@@ -3317,7 +3294,7 @@ class EnhancedReBACManager(ReBACManager):
                         row["relation"],
                         row["object_type"],
                         row["object_id"],
-                        row["zone_id"] or "default",
+                        row["zone_id"] or "root",
                         now,
                     ),
                 )

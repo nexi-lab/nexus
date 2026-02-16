@@ -141,6 +141,33 @@ class Memory:
             is_admin=False,
         )
 
+        # Composed services (#1498)
+        from nexus.services.memory.ace_facade import AceFacade
+        from nexus.services.memory.state import MemoryStateManager
+        from nexus.services.memory.versioning import MemoryVersioning
+
+        self._versioning = MemoryVersioning(
+            session_factory=lambda: session,
+            memory_router=self.memory_router,
+            permission_enforcer=self.permission_enforcer,
+            backend=backend,
+            context=self.context,
+        )
+        self._state = MemoryStateManager(
+            memory_router=self.memory_router,
+            permission_enforcer=self.permission_enforcer,
+            context=self.context,
+        )
+        self._ace = AceFacade(
+            session=session,
+            backend=backend,
+            llm_provider=llm_provider,
+            user_id=user_id or "system",
+            agent_id=agent_id,
+            zone_id=zone_id,
+        )
+
+
     @staticmethod
     def _get_text_content(content: str | bytes | dict[str, Any]) -> str | None:
         """Extract text from content for enrichment pipeline.
@@ -194,7 +221,7 @@ class Memory:
             importance: Importance score (0.0-1.0).
             namespace: Hierarchical namespace for organization (e.g., "knowledge/geography/facts"). v0.8.0
             path_key: Optional unique key within namespace for upsert mode. v0.8.0
-            state: Memory state ('inactive', 'active'). Defaults to 'active' for backward compatibility. #368
+            state: Memory state ('inactive', 'active'). Defaults to 'active'. #368
             _metadata: Additional metadata (deprecated, use structured content dict instead).
             context: Optional operation context to override identity (v0.7.1+).
             resolve_coreferences: Resolve pronouns to entity names for context-independence. #1027
@@ -556,44 +583,33 @@ class Memory:
         import json
         import os
 
-        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
         from nexus.core.sync_bridge import run_sync
         from nexus.search.graph_store import GraphStore
+        from nexus.storage.record_store import SQLAlchemyRecordStore
 
         # Get database URL from session's engine
-        sync_url = os.environ.get("NEXUS_DATABASE_URL", "")
-        if not sync_url:
+        db_url = os.environ.get("NEXUS_DATABASE_URL", "")
+        if not db_url:
             # Try to get from the session's engine bind
             try:
                 bind = self.session.get_bind()
                 url = getattr(bind, "url", None)
                 if url:
-                    sync_url = str(url)
-            except Exception:
+                    db_url = str(url)
+            except Exception as e:
+                logger.debug("Failed to extract database URL from session: %s", e)
                 return
 
-        if not sync_url:
+        if not db_url:
             return
 
-        # Convert to async URL
-        if sync_url.startswith("postgresql://"):
-            async_url = sync_url.replace("postgresql://", "postgresql+asyncpg://")
-        elif sync_url.startswith("sqlite:///"):
-            async_url = sync_url.replace("sqlite:///", "sqlite+aiosqlite:///")
-        else:
-            async_url = sync_url
-
         # Use default zone if not provided
-        effective_zone_id = zone_id or "default"
+        effective_zone_id = zone_id or "root"
 
         async def _do_store() -> None:
-            engine = create_async_engine(async_url)
-            async_session_factory = async_sessionmaker(
-                engine, class_=AsyncSession, expire_on_commit=False
-            )
+            _store = SQLAlchemyRecordStore(db_url=db_url)
             try:
-                async with async_session_factory() as session:
+                async with _store.async_session_factory() as session:
                     graph_store = GraphStore(session, zone_id=effective_zone_id)
 
                     # Store entities
@@ -654,7 +670,7 @@ class Memory:
 
                     await session.commit()
             finally:
-                await engine.dispose()
+                _store.close()
 
         run_sync(_do_store())
 
@@ -767,7 +783,7 @@ class Memory:
                 event_before_dt = event_before
 
         # #1185: Parse as_of_event and as_of_system for bi-temporal queries
-        # Fall back to as_of for backward compatibility
+        # Fall back to as_of if as_of_event not specified
         effective_as_of_event = as_of_event or as_of
         valid_at_point = (
             (

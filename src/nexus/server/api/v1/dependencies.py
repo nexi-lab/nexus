@@ -42,13 +42,14 @@ def get_async_nexus_fs(request: Request) -> Any:
 def get_lock_manager(request: Request) -> Any:
     """Get the distributed lock manager from NexusFS, raising 503 if not configured."""
     fs = get_nexus_fs(request)
-    if not fs._has_distributed_locks():
+    lock_mgr = getattr(fs, "_lock_manager", None)
+    if lock_mgr is None:
         raise HTTPException(
             status_code=503,
             detail="Distributed lock manager not configured. "
             "Enable Redis/Dragonfly for distributed locking.",
         )
-    return fs._lock_manager
+    return lock_mgr
 
 
 def get_subscription_manager(request: Request) -> Any:
@@ -87,12 +88,7 @@ def get_key_service(request: Request) -> Any:
 
 
 def get_database_url(request: Request) -> str:
-    """Get database URL from app.state, raising 503 if not configured.
-
-    .. deprecated::
-        Prefer ``get_async_session_factory()`` — services should not construct
-        their own engines from raw URLs (RecordStoreABC bypass).
-    """
+    """Get database URL from app.state, raising 503 if not configured."""
     url: str | None = getattr(request.app.state, "database_url", None)
     if not url:
         raise HTTPException(status_code=503, detail="Database URL not configured")

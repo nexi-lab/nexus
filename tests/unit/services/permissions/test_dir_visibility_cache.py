@@ -16,7 +16,7 @@ import time
 from threading import Thread
 from unittest.mock import MagicMock
 
-from nexus.services.permissions.dir_visibility_cache import (
+from nexus.services.permissions.cache.visibility import (
     DirectoryVisibilityCache,
 )
 

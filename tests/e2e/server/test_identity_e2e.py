@@ -122,14 +122,14 @@ def api_keys(session_factory: Any) -> dict[str, Any]:
             session,
             user_id="e2e-admin",
             name="E2E Admin Key",
-            zone_id="default",
+            zone_id="root",
             is_admin=True,
         )
         normal_key_id, normal_raw = DatabaseAPIKeyAuth.create_key(
             session,
             user_id="e2e-user",
             name="E2E User Key",
-            zone_id="default",
+            zone_id="root",
             is_admin=False,
         )
         session.commit()
@@ -260,7 +260,7 @@ class TestIdentityE2EServerLevel:
                 "agent_id": agent_id,
                 "name": "E2E Test Agent",
                 "description": "Agent for identity e2e test",
-                "context": {"user_id": "e2e-admin", "zone_id": "default"},
+                "context": {"user_id": "e2e-admin", "zone_id": "root"},
             },
             admin_headers,
         )
@@ -279,7 +279,7 @@ class TestIdentityE2EServerLevel:
             {
                 "agent_id": agent_id,
                 "name": "Identity Query Agent",
-                "context": {"user_id": "e2e-admin", "zone_id": "default"},
+                "context": {"user_id": "e2e-admin", "zone_id": "root"},
             },
             admin_headers,
         )
@@ -306,7 +306,7 @@ class TestIdentityE2EServerLevel:
             {
                 "agent_id": agent_id,
                 "name": "Verify Agent",
-                "context": {"user_id": "e2e-admin", "zone_id": "default"},
+                "context": {"user_id": "e2e-admin", "zone_id": "root"},
             },
             admin_headers,
         )
@@ -349,7 +349,7 @@ class TestIdentityE2EServerLevel:
             {
                 "agent_id": agent_id,
                 "name": "Tamper Agent",
-                "context": {"user_id": "e2e-admin", "zone_id": "default"},
+                "context": {"user_id": "e2e-admin", "zone_id": "root"},
             },
             admin_headers,
         )
@@ -386,7 +386,7 @@ class TestIdentityE2EServerLevel:
             {
                 "agent_id": agent_a,
                 "name": "Agent A",
-                "context": {"user_id": "e2e-admin", "zone_id": "default"},
+                "context": {"user_id": "e2e-admin", "zone_id": "root"},
             },
             admin_headers,
         )
@@ -396,7 +396,7 @@ class TestIdentityE2EServerLevel:
             {
                 "agent_id": agent_b,
                 "name": "Agent B",
-                "context": {"user_id": "e2e-admin", "zone_id": "default"},
+                "context": {"user_id": "e2e-admin", "zone_id": "root"},
             },
             admin_headers,
         )
@@ -448,7 +448,7 @@ class TestIdentityE2EServerLevel:
             {
                 "agent_id": agent_id,
                 "name": "Normal Access Agent",
-                "context": {"user_id": "e2e-admin", "zone_id": "default"},
+                "context": {"user_id": "e2e-admin", "zone_id": "root"},
             },
             admin_headers,
         )

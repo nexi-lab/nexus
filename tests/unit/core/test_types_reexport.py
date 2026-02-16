@@ -62,36 +62,14 @@ class TestContextIdentityReExport:
 
         assert ContextIdentity is not None
 
-    def test_importable_from_subsystem(self) -> None:
-        from nexus.services.subsystem import ContextIdentity
 
-        assert ContextIdentity is not None
-
-    def test_same_class_identity(self) -> None:
-        from nexus.core.types import ContextIdentity as CI_types
-        from nexus.services.subsystem import ContextIdentity as CI_sub
-
-        assert CI_types is CI_sub
-
-
-class TestExtractContextIdentityReExport:
-    """extract_context_identity importable from both modules."""
+class TestExtractContextIdentityExport:
+    """extract_context_identity importable from core.types."""
 
     def test_importable_from_types(self) -> None:
         from nexus.core.types import extract_context_identity
 
         assert extract_context_identity is not None
-
-    def test_importable_from_subsystem(self) -> None:
-        from nexus.services.subsystem import extract_context_identity
-
-        assert extract_context_identity is not None
-
-    def test_same_function_identity(self) -> None:
-        from nexus.core.types import extract_context_identity as eci_types
-        from nexus.services.subsystem import extract_context_identity as eci_sub
-
-        assert eci_types is eci_sub
 
 
 class TestTypesIsLeafModule:

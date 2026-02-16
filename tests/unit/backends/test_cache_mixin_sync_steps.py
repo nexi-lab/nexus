@@ -66,7 +66,7 @@ class MockConnector(CacheConnectorMixin):
     def _list_files_recursive(self, path, context=None):
         return list(self.files.keys())
 
-    def _batch_get_versions(self, paths, contexts):
+    def batch_get_versions(self, paths, contexts):
         """Batch version fetch (10-25x faster than sequential)."""
         return {path: self.versions.get(path) for path in paths}
 
@@ -244,7 +244,7 @@ class TestStep2LoadCache:
 
         # Patch get_file_cache to use a fresh empty disk cache (no stale data)
         file_cache = FileContentCache(tmp_path / "empty_cache")
-        with patch("nexus.backends.cache_mixin.get_file_cache", return_value=file_cache):
+        with patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache):
             cached = pipeline._step2_load_cache(virtual_paths)
 
         assert len(cached) == 0
@@ -274,7 +274,7 @@ class TestStep2LoadCache:
 
         # Write disk cache metadata for file1 only (replaces ContentCacheModel)
         # Use "root" zone because MockConnector has no zone_id attribute
-        # and the fallback in _read_bulk_from_cache is "root"
+        # and the fallback in read_bulk_from_cache is "root"
         file_cache = FileContentCache(tmp_path / "cache")
         file_cache.write(
             "root",
@@ -292,7 +292,7 @@ class TestStep2LoadCache:
             },
         )
 
-        with patch("nexus.backends.cache_mixin.get_file_cache", return_value=file_cache):
+        with patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache):
             # Load cache
             virtual_paths = ["/test/file1.txt", "/test/file2.txt"]
             cached = pipeline._step2_load_cache(virtual_paths)
@@ -307,7 +307,7 @@ class TestStep2LoadCache:
 
         file_cache = FileContentCache(tmp_path / "cache")
         with (
-            patch("nexus.backends.cache_mixin.get_file_cache", return_value=file_cache),
+            patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache),
             patch.object(file_cache, "read_meta_bulk", return_value={}) as mock_bulk,
         ):
             pipeline._step2_load_cache(virtual_paths)
@@ -427,7 +427,7 @@ class TestStep3CheckVersions:
         backend_to_virtual = {f: f"/test/{f}" for f in files}
         cached_entries = {}
 
-        with patch.object(connector, "_batch_get_versions") as mock_batch:
+        with patch.object(connector, "batch_get_versions") as mock_batch:
             mock_batch.return_value = connector.versions
 
             result = SyncResult()
@@ -609,7 +609,7 @@ class TestStep6WriteCache:
         ]
 
         file_cache = FileContentCache(tmp_path / "cache")
-        with patch("nexus.backends.cache_mixin.get_file_cache", return_value=file_cache):
+        with patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache):
             result = SyncResult()
             pipeline._step6_write_cache(cache_entries, result)
 
@@ -652,7 +652,7 @@ class TestStep7GenerateEmbeddings:
         """Test embedding generation for files."""
         files = ["/test/file1.txt", "/test/file2.txt"]
 
-        with patch.object(connector, "_generate_embeddings") as mock_gen:
+        with patch.object(connector, "generate_embeddings_for_path") as mock_gen:
             result = SyncResult()
             pipeline._step7_generate_embeddings(files, result)
 
@@ -665,7 +665,7 @@ class TestStep7GenerateEmbeddings:
         files = ["/test/file1.txt"]
 
         with patch.object(
-            connector, "_generate_embeddings", side_effect=Exception("Embedding error")
+            connector, "generate_embeddings_for_path", side_effect=Exception("Embedding error")
         ):
             result = SyncResult()
             pipeline._step7_generate_embeddings(files, result)
@@ -713,7 +713,7 @@ class TestSyncIntegration:
         }
 
         file_cache = FileContentCache(tmp_path / "cache")
-        with patch("nexus.backends.cache_mixin.get_file_cache", return_value=file_cache):
+        with patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache):
             # Run full sync
             result = connector.sync_content_to_cache(
                 mount_point="/test",

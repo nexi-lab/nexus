@@ -317,7 +317,6 @@ class NexusFilesystem(ABC):
         path: str = "/",
         recursive: bool = True,
         details: bool = False,
-        prefix: str | None = None,
         show_parsed: bool = True,
         context: Any = None,
     ) -> builtins.list[str] | builtins.list[dict[str, Any]]:
@@ -328,7 +327,6 @@ class NexusFilesystem(ABC):
             path: Directory path to list (default: "/")
             recursive: If True, list all files recursively; if False, list only direct children
             details: If True, return detailed metadata; if False, return paths only
-            prefix: (Deprecated) Path prefix to filter by - for backward compatibility
             show_parsed: If True, include virtual _parsed.{ext}.md views; if False, exclude them (default: True)
 
         Returns:
@@ -813,6 +811,15 @@ class NexusFilesystem(ABC):
         ...
 
     # === Sandbox Operations ===
+
+    @property
+    def sandbox_available(self) -> bool:
+        """Whether sandbox execution is available.
+
+        Returns True if at least one sandbox provider is configured.
+        Subclasses should override this to check their sandbox manager.
+        """
+        return False
 
     @abstractmethod
     def sandbox_create(

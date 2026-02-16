@@ -981,7 +981,7 @@ class GmailConnectorBackend(
             logger.debug("Gmail version check failed: %s", e)
             return None
 
-    def _batch_get_versions(
+    def batch_get_versions(
         self,
         backend_paths: list[str],
         contexts: dict[str, "OperationContext"] | None = None,

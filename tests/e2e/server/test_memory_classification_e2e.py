@@ -125,7 +125,7 @@ def api_keys(db_session_factory):
             session,
             user_id="test-user",
             name="Test User Key",
-            zone_id="default",
+            zone_id="root",
             is_admin=False,
         )
         session.commit()

@@ -133,7 +133,7 @@ def operations_server(tmp_path_factory):
                 session,
                 user_id="admin",
                 name="Operations E2E key",
-                zone_id="default",
+                zone_id="root",
                 is_admin=True,
             )
             session.commit()

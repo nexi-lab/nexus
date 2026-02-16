@@ -48,11 +48,11 @@ def mock_rebac():
 
 @pytest.fixture
 def ctx(mock_cache, mock_rebac):
-    context = OperationContext(user="alice", groups=[], zone_id="default")
+    context = OperationContext(user="alice", groups=[], zone_id="root")
     return FilterContext(
         paths=["/workspace/a.txt", "/workspace/b.txt"],
         subject=("user", "alice"),
-        zone_id="default",
+        zone_id="root",
         context=context,
         cache=mock_cache,
         rebac_manager=mock_rebac,
@@ -63,7 +63,7 @@ def _make_ctx(
     paths: list[str],
     mock_cache: MagicMock,
     mock_rebac: MagicMock,
-    zone_id: str = "default",
+    zone_id: str = "root",
     router: object | None = None,
 ) -> FilterContext:
     """Helper to build a FilterContext with custom paths."""
@@ -244,9 +244,9 @@ class TestZonePreFilterStrategy:
         paths = [
             "/zones/other_zone/secret.txt",
             "/workspace/ok.txt",
-            "/zones/default/mine.txt",
+            "/zones/root/mine.txt",
         ]
-        ctx = _make_ctx(paths, mock_cache, mock_rebac, zone_id="default")
+        ctx = _make_ctx(paths, mock_cache, mock_rebac, zone_id="root")
 
         strategy = ZonePreFilterStrategy()
         result = strategy.apply(ctx, paths)
@@ -254,7 +254,7 @@ class TestZonePreFilterStrategy:
         assert result.allowed == []
         assert "/zones/other_zone/secret.txt" not in result.remaining
         assert "/workspace/ok.txt" in result.remaining
-        assert "/zones/default/mine.txt" in result.remaining
+        assert "/zones/root/mine.txt" in result.remaining
         assert len(result.remaining) == 2
 
     def test_same_zone_kept(self, mock_cache, mock_rebac):

@@ -1,4 +1,4 @@
-"""PostgreSQL-backed storage driver for IPC messages.
+"""RecordStore-backed storage driver for IPC messages.
 
 Service-layer adapter that implements ``IPCStorageDriver`` by delegating
 to RecordStoreABC's session factory.  All SQL access goes through
@@ -52,8 +52,8 @@ def _dialect_insert(session: Any) -> Any:
     return sqlite.insert
 
 
-class PostgreSQLStorageDriver:
-    """Stores IPC messages in PostgreSQL via RecordStoreABC.
+class RecordStoreStorageDriver:
+    """Stores IPC messages via RecordStoreABC.
 
     Accepts a sync SQLAlchemy session factory (from
     ``RecordStoreABC.session_factory``) and wraps calls in

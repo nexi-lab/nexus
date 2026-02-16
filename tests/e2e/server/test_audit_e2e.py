@@ -142,7 +142,7 @@ def audit_server(tmp_path_factory):
                 session,
                 user_id="admin",
                 name="Audit E2E admin key",
-                zone_id="default",
+                zone_id="root",
                 is_admin=True,
             )
             session.commit()
@@ -161,7 +161,7 @@ def audit_server(tmp_path_factory):
                 session,
                 user_id="normaluser",
                 name="Audit E2E normal user key",
-                zone_id="default",
+                zone_id="root",
                 is_admin=False,
             )
             session.commit()
@@ -187,7 +187,7 @@ def audit_server(tmp_path_factory):
                 currency="credits",
                 status="settled" if i < 4 else "failed",
                 application="gateway",
-                zone_id="default",
+                zone_id="root",
                 transfer_id=f"audit-e2e-tx-{i}",
             )
         seeded = True

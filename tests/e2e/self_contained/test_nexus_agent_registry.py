@@ -97,7 +97,7 @@ class TestFullLifecycleIntegration:
         entity_registry.register_entity("user", "alice")
 
         # Register
-        record = agent_registry.register("agent-lc", "alice", zone_id="default", name="LC Agent")
+        record = agent_registry.register("agent-lc", "alice", zone_id="root", name="LC Agent")
         assert record.state is AgentState.UNKNOWN
         assert record.generation == 0
 

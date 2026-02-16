@@ -33,6 +33,7 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
+from nexus.constants import DEFAULT_GRPC_BIND_ADDR
 
 
 @click.group()
@@ -94,7 +95,7 @@ def _get_zone_manager(
     "--bind",
     type=str,
     envvar="NEXUS_BIND_ADDR",
-    default="0.0.0.0:2126",
+    default=DEFAULT_GRPC_BIND_ADDR,
     show_default=True,
     help="gRPC bind address",
 )
@@ -162,7 +163,7 @@ def create_zone_cmd(
     "--bind",
     type=str,
     envvar="NEXUS_BIND_ADDR",
-    default="0.0.0.0:2126",
+    default=DEFAULT_GRPC_BIND_ADDR,
     show_default=True,
     help="gRPC bind address",
 )
@@ -224,7 +225,7 @@ def join_zone_cmd(
     "--bind",
     type=str,
     envvar="NEXUS_BIND_ADDR",
-    default="0.0.0.0:2126",
+    default=DEFAULT_GRPC_BIND_ADDR,
     show_default=True,
     help="gRPC bind address",
 )
@@ -289,7 +290,7 @@ def list_zones_cmd(
     "--bind",
     type=str,
     envvar="NEXUS_BIND_ADDR",
-    default="0.0.0.0:2126",
+    default=DEFAULT_GRPC_BIND_ADDR,
     show_default=True,
     help="gRPC bind address",
 )
@@ -355,7 +356,7 @@ def mount_zone_cmd(
     "--bind",
     type=str,
     envvar="NEXUS_BIND_ADDR",
-    default="0.0.0.0:2126",
+    default=DEFAULT_GRPC_BIND_ADDR,
     show_default=True,
     help="gRPC bind address",
 )

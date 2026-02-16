@@ -427,7 +427,7 @@ class TestCachingPermissions:
                 subject=("user", "alice"),
                 relation="direct_viewer",
                 object=("file", "/test/public.txt"),
-                zone_id="default",
+                zone_id="root",
             )
 
         # Alice should STILL be denied on private.txt even though it's cached
@@ -587,13 +587,13 @@ class TestCachingWithFastAPIServer:
             subject=("user", "alice"),
             relation="direct_viewer",
             object=("file", "/alice_area/readme.md"),
-            zone_id="default",
+            zone_id="root",
         )
         rebac.rebac_write(
             subject=("user", "alice"),
             relation="direct_viewer",
             object=("file", "/shared_area/shared.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # bob can only read shared.txt
@@ -601,7 +601,7 @@ class TestCachingWithFastAPIServer:
             subject=("user", "bob"),
             relation="direct_viewer",
             object=("file", "/shared_area/shared.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Clear cache stats from setup writes/reads
@@ -621,7 +621,7 @@ class TestCachingWithFastAPIServer:
         method: str,
         params: dict,
         subject: str = "user:anonymous",
-        zone_id: str = "default",
+        zone_id: str = "root",
     ) -> dict:
         """Make a JSON-RPC call to the FastAPI server."""
         resp = client.post(

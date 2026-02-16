@@ -111,7 +111,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         self._cas_bloom = None
         self._bloom_capacity = bloom_capacity
         self._bloom_fp_rate = bloom_fp_rate
-        self._on_write_callback = on_write_callback
+        self.on_write_callback = on_write_callback
         self._ensure_roots()
         self._cas = CASBlobStore(self.cas_root)
         self._init_cas_bloom_filter()
@@ -300,9 +300,9 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
             self._cas_bloom_add(content_hash)
 
             # Notify search brick of write (e.g., Zoekt reindex) via callback (Issue #1520)
-            if is_new and self._on_write_callback is not None:
+            if is_new and self.on_write_callback is not None:
                 content_path = self._hash_to_path(content_hash)
-                self._on_write_callback(str(content_path))
+                self.on_write_callback(str(content_path))
 
             return HandlerResponse.ok(
                 data=content_hash,
@@ -470,7 +470,11 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         )
 
     def batch_read_content(
-        self, content_hashes: list[str], context: "OperationContext | None" = None
+        self,
+        content_hashes: list[str],
+        context: "OperationContext | None" = None,
+        *,
+        contexts: "dict[str, OperationContext] | None" = None,
     ) -> dict[str, bytes | None]:
         """
         Optimized batch read for local backend with parallel disk I/O.
@@ -482,6 +486,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         Args:
             content_hashes: List of SHA-256 hashes as hex strings
             context: Operation context (ignored for local backend)
+            contexts: Per-hash contexts (ignored — local backend uses CAS paths)
 
         Performance:
             - Cache hits: O(1) per file
@@ -518,8 +523,11 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
 
                 def read_one(content_hash: str) -> tuple[str, bytes | None]:
                     """Read a single file, returning (hash, content) or (hash, None) on error."""
-                    response = self.read_content(content_hash, context=context)
-                    return (content_hash, response.data if response.success else None)
+                    try:
+                        response = self.read_content(content_hash, context=context)
+                        return (content_hash, response.data if response.success else None)
+                    except Exception:
+                        return (content_hash, None)
 
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
                     futures = {executor.submit(read_one, h): h for h in uncached_hashes}

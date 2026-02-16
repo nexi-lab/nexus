@@ -13,37 +13,35 @@ from nexus.cli.utils import console, handle_error
 
 
 def _get_engine_with_storage():  # type: ignore[no-untyped-def]
-    """Get or create workflow engine with persistent storage.
+    """Get workflow engine from NexusFS (factory-created, no private access).
 
-    This initializes the workflow engine with database persistence enabled.
+    Uses the public ``workflow_engine`` attribute already wired by the factory
+    via ``_create_workflow_engine()``.  No private attribute access, no concrete
+    storage-model imports, no global singleton creation.
     """
     import nexus
-    from nexus.workflows import init_engine
-    from nexus.workflows.storage import WorkflowStore
 
     # Get data directory from env or default
     data_dir = os.getenv("NEXUS_DATA_DIR", "./nexus-data")
 
-    # Connect to Nexus to get the metadata store
+    # Connect to Nexus — factory creates workflow_engine via _create_workflow_engine()
     nx = nexus.connect(config={"data_dir": str(data_dir)})
 
-    # Get session factory from NexusFS
-    session_factory = getattr(nx, "SessionLocal", None)
-    if session_factory is None:
-        raise RuntimeError("Workflow storage requires a local NexusFS instance with SessionLocal")
+    engine = getattr(nx, "workflow_engine", None)
+    if engine is None:
+        raise RuntimeError(
+            "Workflow engine not available. Ensure workflows are enabled "
+            "and a record store is configured."
+        )
 
-    # Get zone_id from Nexus filesystem (or use default)
-    zone_id = getattr(nx, "zone_id", None) or "default"
+    # Load workflows from persistent storage (async startup)
+    asyncio.run(engine.startup())
 
-    # Create workflow store with zone_id
-    workflow_store = WorkflowStore(session_factory, zone_id=zone_id)
+    services = WorkflowServices(glob_match=glob_match_fn)
+    engine = WorkflowEngine(workflow_store=workflow_store, services=services)
 
-    # Initialize engine with storage
-    engine = init_engine(
-        metadata_store=getattr(nx, "metadata", None),
-        plugin_registry=None,
-        workflow_store=workflow_store,
-    )
+    # Load workflows from storage (async startup)
+    asyncio.run(engine.startup())
 
     return engine
 
@@ -213,12 +211,7 @@ def workflows_runs(workflow_name: str, limit: int) -> None:
     try:
         console.print("[yellow]Workflow execution history not yet implemented.[/yellow]")
         console.print(f"This will show the last {limit} executions of '{workflow_name}'")
-
-        # TODO: Implement when database storage is ready
-        # from nexus.workflows import get_engine
-        # engine = get_engine()
-        # executions = engine.get_executions(workflow_name, limit=limit)
-        # ... display in table ...
+        # TODO(#1443): implement workflow execution history when database storage is ready
 
     except Exception as e:
         handle_error(e)

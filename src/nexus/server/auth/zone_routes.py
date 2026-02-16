@@ -195,20 +195,11 @@ async def get_zone(
         is_global_admin = user and user.is_global_admin == 1
 
         # Check zone access (global admins can access any zone)
-        if not is_global_admin:
-            nx = get_nexus_instance()
-            if nx and hasattr(nx, "_rebac_manager"):
-                if not user_belongs_to_zone(nx._rebac_manager, user_id, zone_id):
-                    raise HTTPException(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        detail=f"Access denied: you are not a member of zone '{zone_id}'",
-                    )
-            else:
-                # If ReBAC not available, deny access for non-admins
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Access denied: zone membership verification unavailable",
-                )
+        if not is_global_admin and not user_belongs_to_zone(session, user_id, zone_id):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Access denied: you are not a member of zone '{zone_id}'",
+            )
 
         zone = session.get(ZoneModel, zone_id)
         if not zone:
@@ -275,11 +266,7 @@ async def list_zones(
             total = len(session.scalars(total_stmt).all())
         else:
             # Regular users only see zones they belong to
-            nx = get_nexus_instance()
-            if nx and hasattr(nx, "_rebac_manager"):
-                user_zone_ids = get_user_zones(nx._rebac_manager, user_id)
-            else:
-                user_zone_ids = []
+            user_zone_ids = get_user_zones(session, user_id)
 
             if not user_zone_ids:
                 return ZoneListResponse(zones=[], total=0)

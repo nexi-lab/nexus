@@ -175,11 +175,15 @@ def _startup_tiger_cache(app: FastAPI) -> list[asyncio.Task]:
         try:
             from nexus.server.background_tasks import tiger_cache_queue_task
 
-            task = asyncio.create_task(
-                tiger_cache_queue_task(app.state.nexus_fs, interval_seconds=60, batch_size=1)
-            )
-            bg_tasks.append(task)
-            logger.info("Tiger Cache queue processor started (explicit enable)")
+            _rebac_mgr = getattr(app.state.nexus_fs, "_rebac_manager", None)
+            if _rebac_mgr is not None:
+                task = asyncio.create_task(
+                    tiger_cache_queue_task(_rebac_mgr, interval_seconds=60, batch_size=1)
+                )
+                bg_tasks.append(task)
+                logger.info("Tiger Cache queue processor started (explicit enable)")
+            else:
+                logger.debug("Tiger Cache queue processor skipped: no rebac_manager")
         except Exception as e:
             logger.warning("Failed to start Tiger Cache queue processor: %s", e, exc_info=True)
     else:
@@ -188,7 +192,8 @@ def _startup_tiger_cache(app: FastAPI) -> list[asyncio.Task]:
     # Tiger Cache warm-up on startup (Issue #979)
     if app.state.nexus_fs:
         try:
-            tiger_cache = getattr(app.state.nexus_fs._rebac_manager, "_tiger_cache", None)
+            _rebac = getattr(app.state.nexus_fs, "_rebac_manager", None)
+            tiger_cache = getattr(_rebac, "_tiger_cache", None) if _rebac is not None else None
             if tiger_cache:
                 warm_limit = int(os.getenv("NEXUS_TIGER_CACHE_WARM_LIMIT", "500"))
 
@@ -202,10 +207,15 @@ def _startup_tiger_cache(app: FastAPI) -> list[asyncio.Task]:
 
                 # Start DirectoryGrantExpander worker
                 try:
+                    from typing import cast
+
+                    from sqlalchemy.engine import Engine
+
                     from nexus.services.permissions.tiger_cache import DirectoryGrantExpander
 
+                    _rebac_engine = cast(Engine, getattr(_rebac, "engine", None))
                     expander = DirectoryGrantExpander(
-                        engine=app.state.nexus_fs._rebac_manager.engine,
+                        engine=_rebac_engine,
                         tiger_cache=tiger_cache,
                         metadata_store=app.state.nexus_fs.metadata,
                     )

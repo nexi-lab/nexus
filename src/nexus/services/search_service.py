@@ -16,10 +16,13 @@ import builtins
 import fnmatch
 import logging
 import re
+import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any, cast
 
-from nexus.core import glob_fast, grep_fast
+from cachetools import TTLCache
+
+from nexus.core import glob_fast, grep_fast, trigram_fast
 from nexus.core.exceptions import PermissionDeniedError
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
@@ -164,8 +167,16 @@ class SearchService(SemanticSearchMixin):
         # Shared thread pool for parallel grep (Issue #929, fix #14)
         self._thread_pool: ThreadPoolExecutor | None = None
 
-        # TTL cache for cross-zone sharing queries (Issue #904)
-        self._cross_zone_cache: dict[tuple[str, ...], tuple[float, builtins.list[str]]] = {}
+        # Shared thread pool for parallel directory listing (Issue #899)
+        self._list_thread_pool: ThreadPoolExecutor | None = None
+
+        # Lock for lazy thread pool initialization (prevents TOCTOU race)
+        self._pool_lock = threading.Lock()
+
+        # Bounded TTL cache for cross-zone sharing queries (Issue #904)
+        self._cross_zone_cache: TTLCache[tuple[str, ...], builtins.list[str]] = TTLCache(
+            maxsize=1024, ttl=5.0
+        )
 
         logger.info("[SearchService] Initialized")
 
@@ -269,7 +280,6 @@ class SearchService(SemanticSearchMixin):
         path: str = "/",
         recursive: bool = True,
         details: bool = False,
-        prefix: str | None = None,
         show_parsed: bool = True,  # noqa: ARG002
         context: Any = None,
         limit: int | None = None,
@@ -284,7 +294,6 @@ class SearchService(SemanticSearchMixin):
             path: Directory path to list (default: "/", supports memory paths)
             recursive: If True, list all files recursively (default: True)
             details: If True, return detailed metadata dicts (default: False)
-            prefix: (Deprecated) Path prefix filter for backward compat
             show_parsed: If True, include parsed virtual views (default: True)
             context: Operation context for permission filtering
             limit: Max items per page (enables pagination mode)
@@ -335,64 +344,53 @@ class SearchService(SemanticSearchMixin):
         # Issue #904: Extract zone_id for PREWHERE-style DB filtering
         list_zone_id, subject_type, subject_id = self._extract_zone_info(context)
 
-        # Handle backward compatibility with old 'prefix' parameter
         import time as _time
 
         _list_start = _time.time()
         _preapproved_dirs: set[str] = set()
         _accessible_int_ids: set[int] | None = None
 
-        if prefix is not None:
-            if prefix:
-                prefix = self._validate_path(prefix)
-            _meta_start = _time.time()
-            all_files = self.metadata.list(prefix, zone_id=list_zone_id)
-            logger.info(
-                f"[LIST-TIMING] metadata.list(): {(_time.time() - _meta_start) * 1000:.1f}ms, {len(all_files)} files"
-            )
-            list_prefix = prefix or ""
-        else:
-            if path and path != "/":
-                path = self._validate_path(path)
-            if path and not path.endswith("/"):
-                path = path + "/"
-            list_prefix = path if path != "/" else ""
+        if path and path != "/":
+            path = self._validate_path(path)
+        if path and not path.endswith("/"):
+            path = path + "/"
+        list_prefix = path if path != "/" else ""
 
-            # OPTIMIZATION: For non-recursive, try sparse directory index + Tiger bitmap
-            _use_fast_path = False
-            _revision_before: int | None = None
-            _rebac_manager = (
-                getattr(self._permission_enforcer, "rebac_manager", None)
-                if self._permission_enforcer
-                else None
+        # OPTIMIZATION: For non-recursive, try sparse directory index + Tiger bitmap
+        _use_fast_path = False
+        _revision_before: int | None = None
+        _rebac_manager = (
+            getattr(self._permission_enforcer, "rebac_manager", None)
+            if self._permission_enforcer
+            else None
+        )
+
+        logger.info(
+            f"[LIST-DEBUG] START path={path}, recursive={recursive}, zone={list_zone_id}, "
+            f"details={details}, has_list_dir_entries={hasattr(self.metadata, 'list_directory_entries')}, "
+            f"has_context={context is not None}"
+        )
+        if (
+            not recursive
+            and not details
+            and hasattr(self.metadata, "list_directory_entries")
+            and context
+        ):
+            all_files, _preapproved_dirs, _use_fast_path, _revision_before = self._list_fast_path(
+                path, list_zone_id, context, _rebac_manager
             )
 
-            logger.info(
-                f"[LIST-DEBUG] START path={path}, recursive={recursive}, zone={list_zone_id}, "
-                f"details={details}, has_list_dir_entries={hasattr(self.metadata, 'list_directory_entries')}, "
-                f"has_context={context is not None}"
+        if not _use_fast_path:
+            all_files, _accessible_int_ids = self._list_slow_path(
+                list_prefix,
+                list_zone_id,
+                subject_type,
+                subject_id,
+                _revision_before,
+                _rebac_manager,
             )
-            if (
-                not recursive
-                and not details
-                and hasattr(self.metadata, "list_directory_entries")
-                and context
-            ):
-                all_files, _preapproved_dirs, _use_fast_path, _revision_before = (
-                    self._list_fast_path(path, list_zone_id, context, _rebac_manager)
-                )
-
-            if not _use_fast_path:
-                all_files, _accessible_int_ids = self._list_slow_path(
-                    list_prefix,
-                    list_zone_id,
-                    subject_type,
-                    subject_id,
-                    _revision_before,
-                    _rebac_manager,
-                )
-                sample_paths = [m.path for m in all_files[:5]]
-                logger.info(f"[LIST-DEBUG] FALLBACK all_files sample: {sample_paths}")
+            sample_paths = [m.path for m in all_files[:5]]
+            logger.info(f"[LIST-DEBUG] FALLBACK all_files sample: {sample_paths}")
 
         # Issue #904: Fetch cross-zone shared files
         if list_zone_id and subject_type and subject_id:
@@ -424,7 +422,7 @@ class SearchService(SemanticSearchMixin):
         all_files = [m for m in all_files if not m.path.startswith(SYSTEM_PATH_PREFIX)]
 
         # Apply recursive filter
-        if prefix is not None or recursive:
+        if recursive:
             results = all_files
         else:
             results = []
@@ -489,9 +487,9 @@ class SearchService(SemanticSearchMixin):
     def _extract_zone_info(self, context: Any) -> tuple[str, str | None, str | None]:
         """Extract zone_id, subject_type, subject_id from context for DB filtering.
 
-        zone_id always returns a non-None value (defaults to "default").
+        zone_id always returns a non-None value (defaults to "root").
         """
-        list_zone_id: str = "default"
+        list_zone_id: str = "root"
         subject_type: str | None = None
         subject_id: str | None = None
         if self._enforce_permissions and context:
@@ -981,7 +979,7 @@ class SearchService(SemanticSearchMixin):
         allowed_set: set[str],
         backend_dirs: set[str],
         context: Any,
-        zone_id: str = "default",
+        zone_id: str = "root",
     ) -> set[str]:
         """Infer directory entries from file paths and backend."""
         import time as _time
@@ -1031,7 +1029,7 @@ class SearchService(SemanticSearchMixin):
         allowed_set: set[str],
         directories: set[str],
         context: Any,
-        zone_id: str = "default",
+        zone_id: str = "root",
     ) -> None:
         """Check backend directories for access using bulk TRAVERSE check."""
         import time as _time
@@ -1336,7 +1334,6 @@ class SearchService(SemanticSearchMixin):
     ) -> builtins.list[str]:
         """Fetch file paths shared with a user from other zones (Issue #904)."""
         import sqlite3
-        import time as _time
         from datetime import UTC, datetime
 
         from nexus.core.rebac import CROSS_ZONE_ALLOWED_RELATIONS
@@ -1344,13 +1341,10 @@ class SearchService(SemanticSearchMixin):
         if not self._rebac_manager:
             return []
 
-        # Check TTL cache (5-second TTL)
         cache_key = (subject_type, subject_id, zone_id, prefix)
-        now = _time.monotonic()
-        if cache_key in self._cross_zone_cache:
-            cached_time, cached_paths = self._cross_zone_cache[cache_key]
-            if now - cached_time < 5.0:
-                return cached_paths
+        cached = self._cross_zone_cache.get(cache_key)
+        if cached is not None:
+            return cached
 
         try:
             with self._rebac_manager._connection() as conn:
@@ -1388,7 +1382,7 @@ class SearchService(SemanticSearchMixin):
                         f"[CROSS-ZONE] Found {len(paths)} shared paths "
                         f"for {subject_type}:{subject_id}"
                     )
-                self._cross_zone_cache[cache_key] = (now, paths)
+                self._cross_zone_cache[cache_key] = paths
                 return paths
         except (sqlite3.OperationalError, sqlite3.InterfaceError) as e:
             logger.error("Cross-zone sharing DB error for %s/%s: %s", subject_type, subject_id, e)
@@ -1619,7 +1613,7 @@ class SearchService(SemanticSearchMixin):
             file_pattern: Optional glob pattern to filter files (e.g., "*.py")
             ignore_case: If True, case-insensitive search
             max_results: Maximum number of results (default: 100)
-            search_mode: Deprecated, kept for backward compat
+            search_mode: Unused (reserved for future search mode selection)
             context: Operation context for permission filtering
         """
         if path and path != "/":

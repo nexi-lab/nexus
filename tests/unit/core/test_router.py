@@ -347,7 +347,6 @@ def test_parse_path_workspace(router: PathRouter) -> None:
 
     assert path_info.namespace == "workspace"
     assert path_info.zone_id is None  # No zone in path for workspace
-    assert path_info.agent_id is None  # No agent in path for workspace
     assert path_info.relative_path == "my-project/data/file.txt"
 
 
@@ -357,7 +356,6 @@ def test_parse_path_shared(router: PathRouter) -> None:
 
     assert path_info.namespace == "shared"
     assert path_info.zone_id == "acme"
-    assert path_info.agent_id is None
     assert path_info.relative_path == "datasets/model.pkl"
 
 
@@ -367,7 +365,6 @@ def test_parse_path_archives(router: PathRouter) -> None:
 
     assert path_info.namespace == "archives"
     assert path_info.zone_id == "acme"
-    assert path_info.agent_id is None
     assert path_info.relative_path == "2024/01/backup.tar"
 
 
@@ -377,7 +374,6 @@ def test_parse_path_external(router: PathRouter) -> None:
 
     assert path_info.namespace == "external"
     assert path_info.zone_id is None
-    assert path_info.agent_id is None
     assert path_info.relative_path == "s3/bucket/file.txt"
 
 
@@ -387,7 +383,6 @@ def test_parse_path_system(router: PathRouter) -> None:
 
     assert path_info.namespace == "system"
     assert path_info.zone_id is None
-    assert path_info.agent_id is None
     assert path_info.relative_path == "config/settings.json"
 
 
@@ -397,14 +392,12 @@ def test_parse_path_workspace_partial_paths(router: PathRouter) -> None:
     path_info = router.parse_path("/workspace")
     assert path_info.namespace == "workspace"
     assert path_info.zone_id is None
-    assert path_info.agent_id is None
     assert path_info.relative_path == ""
 
     # /workspace/project-dir - simple path, no zone/agent parsing
     path_info = router.parse_path("/workspace/project-dir")
     assert path_info.namespace == "workspace"
     assert path_info.zone_id is None  # No zone parsing for workspace
-    assert path_info.agent_id is None  # No agent parsing for workspace
     assert path_info.relative_path == "project-dir"
 
 

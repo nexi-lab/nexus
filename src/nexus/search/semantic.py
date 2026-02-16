@@ -37,14 +37,14 @@ from nexus.search.contextual_chunking import (
     ContextualChunkingConfig,
 )
 from nexus.search.embeddings import EmbeddingProvider
+from nexus.search.models import DocumentChunkModel, FilePathModel
+from nexus.search.protocols import FileReaderProtocol
 from nexus.search.results import BaseSearchResult
 from nexus.search.vector_db import VectorDatabase
-from nexus.storage.models import DocumentChunkModel, FilePathModel
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.core.filesystem import NexusFilesystem
     from nexus.llm.context_builder import AdaptiveRetrievalConfig
     from nexus.search.ranking import RankingConfig
 
@@ -74,7 +74,7 @@ class SemanticSearch:
 
     def __init__(
         self,
-        nx: NexusFilesystem,
+        nx: Any = None,
         embedding_provider: EmbeddingProvider | None = None,
         chunk_size: int = 1024,
         chunk_strategy: ChunkStrategy = ChunkStrategy.SEMANTIC,
@@ -87,11 +87,13 @@ class SemanticSearch:
         contextual_chunking: bool = False,
         contextual_config: ContextualChunkingConfig | None = None,
         context_generator: ContextGenerator | None = None,
+        *,
+        file_reader: FileReaderProtocol | None = None,
     ):
         """Initialize semantic search.
 
         Args:
-            nx: NexusFilesystem instance
+            nx: DEPRECATED — use file_reader instead. Legacy NexusFilesystem instance.
             embedding_provider: Embedding provider (optional - needed for semantic/hybrid search)
             chunk_size: Chunk size in tokens
             chunk_strategy: Chunking strategy
@@ -106,8 +108,12 @@ class SemanticSearch:
             contextual_chunking: Enable contextual chunking (Issue #1192)
             contextual_config: Configuration for contextual chunking
             context_generator: Callable that generates context for each chunk
+            file_reader: FileReaderProtocol instance (preferred over nx).
+                         If provided, nx is ignored.
         """
-        self.nx = nx
+        # Issue #1520: Prefer FileReaderProtocol, fall back to legacy nx
+        self.file_reader: FileReaderProtocol | None = file_reader
+        self.nx = nx  # Backward compat — used if file_reader is None
         self.chunk_size = chunk_size
         self.chunk_strategy = chunk_strategy
 
@@ -168,6 +174,37 @@ class SemanticSearch:
 
         self.ranking_config = ranking_config or RankingConfig()
 
+    # =========================================================================
+    # Issue #1520: FileReaderProtocol helpers (prefer file_reader over nx)
+    # =========================================================================
+
+    def _get_session(self) -> Any:
+        """Get a database session context manager."""
+        if self.file_reader is not None:
+            return self.file_reader.get_session()
+        return self.nx.SessionLocal()
+
+    def _read_text(self, path: str) -> str:
+        """Read file content as text."""
+        if self.file_reader is not None:
+            return self.file_reader.read_text(path)
+        content_raw = self.nx.read(path)
+        if isinstance(content_raw, bytes):
+            return content_raw.decode("utf-8", errors="ignore")
+        return str(content_raw)
+
+    def _get_searchable_text(self, path: str) -> str | None:
+        """Get pre-processed searchable text."""
+        if self.file_reader is not None:
+            return self.file_reader.get_searchable_text(path)
+        return self.nx.metadata.get_searchable_text(path)
+
+    def _list_files(self, path: str, recursive: bool = True) -> list[Any]:
+        """List files in a directory."""
+        if self.file_reader is not None:
+            return self.file_reader.list_files(path, recursive=recursive)
+        return self.nx.list(path, recursive=recursive)
+
     def initialize(self) -> None:
         """Initialize the search engine (create vector extensions and FTS tables)."""
         self.vector_db.initialize()
@@ -196,7 +233,7 @@ class SemanticSearch:
             NexusFileNotFoundError: If file doesn't exist
         """
         # Get path_id and check if re-indexing is needed (Issue #865)
-        with self.nx.SessionLocal() as session:
+        with self._get_session() as session:
             stmt = select(FilePathModel).where(
                 FilePathModel.virtual_path == path,
                 FilePathModel.deleted_at.is_(None),
@@ -228,18 +265,14 @@ class SemanticSearch:
                 return existing_count
 
         # Try to get searchable text from cache first (content_cache or file_metadata)
-        content = self.nx.metadata.get_searchable_text(path)
+        content = self._get_searchable_text(path)
 
         # Fall back to reading raw content if no cached text
         if content is None:
-            content_raw = self.nx.read(path)
-            if isinstance(content_raw, bytes):
-                content = content_raw.decode("utf-8", errors="ignore")
-            else:
-                content = str(content_raw)  # Handle dict or other types
+            content = self._read_text(path)
 
         # Delete existing chunks for this file (bulk DELETE - skip object hydration)
-        with self.nx.SessionLocal() as session:
+        with self._get_session() as session:
             session.execute(delete(DocumentChunkModel).where(DocumentChunkModel.path_id == path_id))
             session.commit()
 
@@ -278,7 +311,7 @@ class SemanticSearch:
 
         if not chunks:
             # Update tracking even for empty files (Issue #865)
-            with self.nx.SessionLocal() as session:
+            with self._get_session() as session:
                 file_model = session.get(FilePathModel, path_id)
                 if file_model:
                     file_model.indexed_content_hash = current_content_hash
@@ -307,7 +340,7 @@ class SemanticSearch:
                 )
 
         # Store chunks in database with optional embeddings
-        with self.nx.SessionLocal() as session:
+        with self._get_session() as session:
             chunk_ids = []
             for i, chunk in enumerate(chunks):
                 chunk_id = str(uuid.uuid4())
@@ -360,7 +393,7 @@ class SemanticSearch:
             Dictionary mapping file paths to number of chunks indexed
         """
         # List all files
-        files_result = self.nx.list(path, recursive=True)
+        files_result = self._list_files(path, recursive=True)
 
         # Handle PaginatedResult if returned
         files = files_result.items if hasattr(files_result, "items") else files_result
@@ -461,7 +494,7 @@ class SemanticSearch:
         # Build path filter
         path_filter = path if path != "/" else None
 
-        with self.nx.SessionLocal() as session:
+        with self._get_session() as session:
             if search_mode == "keyword":
                 # Keyword-only search using FTS (no embeddings needed)
                 results = self.vector_db.keyword_search(
@@ -581,7 +614,7 @@ class SemanticSearch:
             path: Path to the document
         """
         # Get path_id from database
-        with self.nx.SessionLocal() as session:
+        with self._get_session() as session:
             stmt = select(FilePathModel).where(
                 FilePathModel.virtual_path == path,
                 FilePathModel.deleted_at.is_(None),
@@ -612,7 +645,7 @@ class SemanticSearch:
         """
         # Count total chunks (projection pushdown - COUNT() instead of loading 3KB embeddings)
         # For 100K chunks, this saves ~300-600MB of memory/transfer
-        with self.nx.SessionLocal() as session:
+        with self._get_session() as session:
             total_chunks = (
                 session.execute(select(func.count()).select_from(DocumentChunkModel)).scalar() or 0
             )
@@ -716,7 +749,7 @@ class SemanticSearch:
 
     async def clear_index(self) -> None:
         """Clear the entire search index."""
-        with self.nx.SessionLocal() as session:
+        with self._get_session() as session:
             # Delete all chunks
             session.query(DocumentChunkModel).delete()
             session.commit()

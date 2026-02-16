@@ -13,7 +13,7 @@ import contextlib
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import select
 
@@ -222,22 +222,6 @@ class CacheConnectorMixin:
         if cls._l1_cache is not None:
             cls._l1_cache.clear()
 
-    # Backward compatibility aliases
-    @classmethod
-    def _get_memory_cache(cls) -> L1MetadataCache:
-        """Deprecated: Use _get_l1_cache() instead."""
-        return cls._get_l1_cache()
-
-    @classmethod
-    def get_memory_cache_stats(cls) -> dict[str, Any]:
-        """Deprecated: Use get_l1_cache_stats() instead."""
-        return cls.get_l1_cache_stats()
-
-    @classmethod
-    def clear_memory_cache(cls) -> None:
-        """Deprecated: Use clear_l1_cache() instead."""
-        cls.clear_l1_cache()
-
     # Maximum text size to store as 'full' (default 10MB)
     MAX_FULL_TEXT_SIZE: int = 10 * 1024 * 1024
 
@@ -312,12 +296,12 @@ class CacheConnectorMixin:
         """
         # Prefer session factory pattern (creates session per operation)
         if hasattr(self, "session_factory") and self.session_factory is not None:
-            return self.session_factory()  # type: ignore[no-any-return]
+            return cast("Session", self.session_factory())
         # Fall back to existing session
         if hasattr(self, "db_session") and self.db_session is not None:
-            return self.db_session  # type: ignore[no-any-return]
+            return cast("Session", self.db_session)
         if hasattr(self, "_db_session") and self._db_session is not None:
-            return self._db_session  # type: ignore[no-any-return]
+            return cast("Session", self._db_session)
         raise RuntimeError("No database session available for caching")
 
     def _get_path_id(self, path: str, session: Session) -> str | None:
@@ -327,7 +311,7 @@ class CacheConnectorMixin:
             FilePathModel.deleted_at.is_(None),
         )
         result = session.execute(stmt)
-        row = result.scalar_one_or_none()
+        row: str | None = result.scalar_one_or_none()
         return row
 
     def _get_path_ids_bulk(self, paths: list[str], session: Session) -> dict[str, str]:
@@ -1215,14 +1199,15 @@ class CacheConnectorMixin:
             Number of entries invalidated
         """
         # Invalidate L1 memory cache
-        memory_cache = self._get_memory_cache()
+        memory_cache = self._get_l1_cache()
         file_cache = get_file_cache()
         cache_zone = getattr(self, "zone_id", None) or "default"
 
         if path:
             # Remove specific path from memory cache
             memory_key = f"cache_entry:{path}"
-            memory_cache.remove(memory_key)
+            if memory_cache is not None:
+                memory_cache.remove(memory_key)
 
             # Delete from disk cache (both content and metadata sidecar)
             file_cache.delete(cache_zone, path)
@@ -1231,7 +1216,8 @@ class CacheConnectorMixin:
         elif mount_prefix:
             # For prefix invalidation, clear entire memory cache
             # (More targeted invalidation would require iterating all keys)
-            memory_cache.clear()
+            if memory_cache is not None:
+                memory_cache.clear()
 
             # Find all paths under mount prefix via FilePathModel, then delete from disk
             session = self._get_db_session()
@@ -1331,18 +1317,6 @@ class CacheConnectorMixin:
             self.on_sync_callback(result.files_synced)
 
         return result
-
-    # Backward compatibility alias
-    def sync(self, *args: Any, **kwargs: Any) -> SyncResult:
-        """Deprecated: Use sync_content_to_cache() instead."""
-        import warnings
-
-        warnings.warn(
-            "CacheConnectorMixin.sync() is deprecated. Use sync_content_to_cache() instead.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self.sync_content_to_cache(*args, **kwargs)
 
     def _batch_read_from_backend(
         self,

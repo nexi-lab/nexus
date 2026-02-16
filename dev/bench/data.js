@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771212595415,
+  "lastUpdate": 1771212670963,
   "repoUrl": "https://github.com/nexi-lab/nexus",
   "entries": {
     "Benchmark": [
@@ -600,6 +600,156 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00673973151935508",
             "extra": "mean: 1.7810848854968968 msec\nrounds: 655"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "taofeng.nju@gmail.com",
+            "name": "oliverfeng",
+            "username": "windoliver"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "6528279ed87ef8523e3f12b24518f76bc5dfacc7",
+          "message": "feat(#954): Memory-mapped trigram index for sub-20ms grep (#1605)\n\n* feat(#954): Memory-mapped trigram index for sub-20ms grep\n\nImplement a trigram-based inverted index in Rust for O(1) index lookup\n+ O(k) candidate verification, replacing sequential file scanning.\n\nCore library (nexus_core::trigram):\n- Binary index format with CRC32 integrity per section (header, file\n  table, trigram table, posting lists)\n- Roaring bitmap posting lists for efficient intersection/union\n- Trigram extraction from both content and regex patterns via\n  regex_syntax HIR tree walking\n- Case-insensitive support via dual-indexed trigrams (original +\n  lowercased)\n- Builder, writer (WASM-safe, no I/O), and comprehensive error types\n- 90 Rust tests including proptest roundtrip verification\n\nPyO3 reader (nexus_pyo3::trigram):\n- Memory-mapped index reader with binary search in trigram table\n- Thread-safe index cache with parking_lot::RwLock\n- Parallel candidate verification via rayon (>10 candidates)\n- Functions: build_trigram_index, trigram_grep, trigram_index_stats,\n  invalidate_trigram_cache\n\nPython integration:\n- trigram_fast.py wrapper following grep_fast.py pattern\n- TRIGRAM_INDEX strategy in SearchStrategy enum\n- Strategy selection in search_service when file_count > 500\n- Zone management: build/status/invalidate per zone\n- Fallback to RUST_BULK on trigram failure\n\nAlso fixes DRY violation: de-duplicated GrepMatch and\nis_literal_pattern between nexus_core and nexus_pyo3.\n\nTest suite: 90 Rust + 50 Python tests (unit, regression with superset\ninvariant, integration, benchmarks).\n\n* feat(#954): CAS-compatible trigram search + E2E validation\n\nAdd build_trigram_index_from_entries() and trigram_search_candidates()\nPyO3 functions to support NexusFS CAS backends where virtual paths\ndon't correspond to real filesystem paths. Update Python integration\nto read content through NexusFS for both indexing and verification.\n\n- Rust: build_trigram_index_from_entries accepts (path, content) pairs\n- Rust: trigram_search_candidates returns candidate paths without I/O\n- Python: build_trigram_index_for_zone reads via NexusFS CAS backend\n- Python: _try_grep_with_trigram uses candidates + Python verification\n- E2E: 7 tests validating full HTTP → NexusFS → Trigram pipeline\n- All 101 tests passing (44 Rust + 42 unit + 8 integration + 7 E2E)\n\n* chore(#954): Fix ruff lint/format and mypy issues\n\n- Fix import sorting (I001) and formatting for ruff compliance\n- Fix SIM102 nested if → combined if in _select_grep_strategy\n- Remove unused import (MagicMock) and f-string without placeholder\n- Add type: ignore[no-redef] on all try/except import lines for mypy\n- Fix integration test to mock _read() for CAS-compatible verification\n\n* fix(#954): CI fixes — cargo fmt, file size exception\n\n- Apply cargo fmt to trigram Rust files (writer.rs, builder.rs, trigram.rs)\n- Add search_service.py to file size check exceptions (2,290 lines)\n\n* chore(#954): Fix ruff format across cherry-picked files\n\nApply ruff format + isort fixes to files carried over from parent\nbranch cherry-pick that had pre-existing formatting issues.\n\n* fix(#954): Resolve Rust clippy warnings for CI\n\n- Use or_default() instead of or_insert_with(RoaringBitmap::new)\n- Remove identical if/else branches in query.rs\n\n* fix(#954): Fix test failures — read_set_cache import path + StaticPool for rebac test\n\n- Update test_read_set_cache.py import from nexus.storage to nexus.core\n  (module was moved in refactor #1519)\n- Add StaticPool to test_rebac_manager_snapshot engine fixture to ensure\n  single-connection SQLite in-memory database sharing\n\n* fix(#954): mark flaky test_bulk_check as xfail on Ubuntu CI\n\nThe Rust bulk checker has a race condition with in-memory SQLite\nthat causes intermittent failures on Ubuntu CI. Same failure\nobserved on main (run 22047883167). Passes on macOS CI and locally.",
+          "timestamp": "2026-02-15T19:26:50-08:00",
+          "tree_id": "b51e610c47a4540dd8e74804b1de2a4e8868ea18",
+          "url": "https://github.com/nexi-lab/nexus/commit/6528279ed87ef8523e3f12b24518f76bc5dfacc7"
+        },
+        "date": 1771212670398,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/benchmarks/test_async_permission_performance.py::test_permission_overhead_acceptable",
+            "value": 367.38854005930153,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00522559846177571",
+            "extra": "mean: 2.7219139710742914 msec\nrounds: 484"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_write_small_file",
+            "value": 329.77285712105237,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0009410878355485842",
+            "extra": "mean: 3.032390260162989 msec\nrounds: 369"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_read_small_file",
+            "value": 16109.567636833039,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001938114377661116",
+            "extra": "mean: 62.07491240879689 usec\nrounds: 17536"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_read_cached_file",
+            "value": 15127.07490061728,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001754101950905762",
+            "extra": "mean: 66.10663373916353 usec\nrounds: 19295"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_exists_check",
+            "value": 53054.753801447674,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00002740938368735441",
+            "extra": "mean: 18.84845236945975 usec\nrounds: 45538"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestGlobBenchmarks::test_list_large_directory",
+            "value": 244.6865448156539,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00041177211324609216",
+            "extra": "mean: 4.086861419999195 msec\nrounds: 250"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestGlobBenchmarks::test_glob_simple_pattern",
+            "value": 187.26059970462626,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0003897739410078975",
+            "extra": "mean: 5.3401516473691775 msec\nrounds: 190"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestGlobBenchmarks::test_list_1k_files",
+            "value": 61.306525935001,
+            "unit": "iter/sec",
+            "range": "stddev: 0.021855074969339618",
+            "extra": "mean: 16.31147720000037 msec\nrounds: 80"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestHashingBenchmarks::test_sha256_medium",
+            "value": 23706.952409277295,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000017179528073238714",
+            "extra": "mean: 42.181718794384885 usec\nrounds: 23954"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestPermissionBenchmarks::test_permission_check_bulk_python",
+            "value": 2662.4628032242617,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000304718445465916",
+            "extra": "mean: 375.59210171462036 usec\nrounds: 1691"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestPermissionBenchmarks::test_permission_check_bulk_rust",
+            "value": 5100.654294418441,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000023337041298070565",
+            "extra": "mean: 196.05327910465974 usec\nrounds: 4020"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBulkOperationBenchmarks::test_write_batch_10",
+            "value": 41.01281466629862,
+            "unit": "iter/sec",
+            "range": "stddev: 0.004312766470919749",
+            "extra": "mean: 24.382623044443918 msec\nrounds: 45"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBulkOperationBenchmarks::test_read_bulk_10",
+            "value": 1449.3525448935568,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0003095239769354842",
+            "extra": "mean: 689.9632553330507 usec\nrounds: 1547"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBlake3HashingBenchmarks::test_hash_1mb_content",
+            "value": 3923.0662362390453,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003667372618173692",
+            "extra": "mean: 254.9026551635991 usec\nrounds: 3970"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBlake3HashingBenchmarks::test_hash_smart_1mb_content",
+            "value": 18226.25775100136,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000004176202905327804",
+            "extra": "mean: 54.86589807197583 usec\nrounds: 18258"
+          },
+          {
+            "name": "tests/benchmarks/test_search_benchmarks.py::TestPythonRegexBenchmarks::test_python_regex_simple_10k_lines",
+            "value": 3956.1497131391548,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000009912201451055008",
+            "extra": "mean: 252.77102043909068 usec\nrounds: 3963"
+          },
+          {
+            "name": "tests/benchmarks/test_search_benchmarks.py::TestRustGrepBenchmarks::test_rust_grep_10k_lines",
+            "value": 1031.186294891336,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000019864530951135324",
+            "extra": "mean: 969.7568760893757 usec\nrounds: 1033"
+          },
+          {
+            "name": "tests/benchmarks/test_search_benchmarks.py::TestHybridSearchFusionBenchmarks::test_rrf_fusion_1k_results",
+            "value": 647.7568824453617,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000046133462586859816",
+            "extra": "mean: 1.5437890775083352 msec\nrounds: 658"
           }
         ]
       }

@@ -29,6 +29,20 @@ class DelegationMode(Enum):
     SHARED = "shared"
 
 
+class DelegationOutcome(Enum):
+    """Outcome of a completed delegation (#1619).
+
+    Used by ``complete_delegation()`` to determine feedback signal:
+    - COMPLETED: Positive feedback on reliability + quality.
+    - FAILED: Negative feedback on reliability.
+    - TIMEOUT: Negative feedback on timeliness.
+    """
+
+    COMPLETED = "completed"
+    FAILED = "failed"
+    TIMEOUT = "timeout"
+
+
 class DelegationStatus(Enum):
     """Delegation lifecycle state.
 

@@ -169,12 +169,7 @@ class NexusFUSE:
             )
 
             # A2-B: Try to obtain NamespaceManager for direct visibility checks
-            try:
-                enforcer = getattr(self.nexus_fs, "_permission_enforcer", None)
-                if enforcer is not None:
-                    namespace_manager = getattr(enforcer, "namespace_manager", None)
-            except Exception:
-                pass  # Not available — fallback to is_directory() proxy
+            namespace_manager = getattr(self.nexus_fs, "namespace_manager", None)
 
         # Create FUSE operations
         event_bus = getattr(self.nexus_fs, "_event_bus", None)

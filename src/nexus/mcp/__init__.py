@@ -52,7 +52,6 @@ from nexus.mcp.provider_registry import (
     ProviderType,
 )
 from nexus.mcp.server import (
-    _request_api_key,
     create_mcp_server,
     get_request_api_key,
     set_request_api_key,
@@ -63,7 +62,6 @@ __all__ = [
     "create_mcp_server",
     "set_request_api_key",
     "get_request_api_key",
-    "_request_api_key",
     # Connection manager
     "MCPConnectionManager",
     "MCPConnection",

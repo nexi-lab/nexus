@@ -1,4 +1,9 @@
-"""Workflow storage layer for database persistence."""
+"""Workflow storage layer — async, zero model imports.
+
+Model classes (WorkflowModel, WorkflowExecutionModel) are injected via
+the constructor so this module has no imports from nexus.storage.
+All methods are async using SQLAlchemy AsyncSession.
+"""
 
 import hashlib
 import json
@@ -11,8 +16,6 @@ from typing import Any
 import yaml
 from sqlalchemy import select
 
-from nexus.raft.zone_manager import ROOT_ZONE_ID
-from nexus.storage.models import WorkflowExecutionModel, WorkflowModel
 from nexus.workflows.loader import WorkflowLoader
 from nexus.workflows.types import WorkflowDefinition, WorkflowExecution
 
@@ -20,45 +23,60 @@ logger = logging.getLogger(__name__)
 
 
 class WorkflowStore:
-    """Storage layer for workflow persistence."""
+    """Async storage layer for workflow persistence."""
 
-    def __init__(self, session_factory: Callable[..., Any], zone_id: str | None = None) -> None:
+    def __init__(
+        self,
+        session_factory: Callable[..., Any],
+        *,
+        workflow_model: type[Any],
+        execution_model: type[Any],
+        zone_id: str | None = None,
+    ) -> None:
         """Initialize workflow store.
 
         Args:
-            session_factory: SQLAlchemy session factory
-            zone_id: Zone ID (optional, defaults to ROOT_ZONE_ID)
+            session_factory: Async session factory (returns AsyncSession context manager).
+            workflow_model: SQLAlchemy model class for workflows.
+            execution_model: SQLAlchemy model class for workflow executions.
+            zone_id: Zone ID (defaults to "default").
         """
         self.session_factory = session_factory
-        self.zone_id = zone_id or ROOT_ZONE_ID
+        self._workflow_model = workflow_model
+        self._execution_model = execution_model
+        self.zone_id = zone_id or "default"
 
     def _get_zone_id(self) -> str:
-        """Get current zone ID."""
         return self.zone_id
 
     def _compute_hash(self, definition_yaml: str) -> str:
-        """Compute SHA256 hash of workflow definition.
-
-        Args:
-            definition_yaml: YAML workflow definition
-
-        Returns:
-            SHA256 hash hex string
-        """
         return hashlib.sha256(definition_yaml.encode()).hexdigest()
 
-    def save_workflow(self, definition: WorkflowDefinition, enabled: bool = True) -> str:
-        """Save a workflow definition to database.
+    async def _get_workflow(
+        self,
+        session: Any,
+        *,
+        workflow_id: str | None = None,
+        name: str | None = None,
+    ) -> Any | None:
+        """Fetch a single workflow by ID or name (DRY helper)."""
+        if workflow_id is not None:
+            stmt = select(self._workflow_model).where(
+                self._workflow_model.workflow_id == workflow_id
+            )
+        elif name is not None:
+            stmt = select(self._workflow_model).where(
+                self._workflow_model.zone_id == self._get_zone_id(),
+                self._workflow_model.name == name,
+            )
+        else:
+            return None
+        result = await session.execute(stmt)
+        return result.scalar_one_or_none()
 
-        Args:
-            definition: Workflow definition
-            enabled: Whether workflow is enabled
-
-        Returns:
-            Workflow ID (UUID string)
-        """
-        with self.session_factory() as session:
-            # Convert definition to YAML
+    async def save_workflow(self, definition: WorkflowDefinition, enabled: bool = True) -> str:
+        """Save a workflow definition to database."""
+        async with self.session_factory() as session:
             definition_dict: dict[str, Any] = {
                 "name": definition.name,
                 "version": definition.version,
@@ -82,15 +100,9 @@ class WorkflowStore:
             definition_yaml = yaml.dump(definition_dict, default_flow_style=False)
             definition_hash = self._compute_hash(definition_yaml)
 
-            # Check if workflow already exists
-            stmt = select(WorkflowModel).where(
-                WorkflowModel.zone_id == self._get_zone_id(),
-                WorkflowModel.name == definition.name,
-            )
-            existing = session.execute(stmt).scalar_one_or_none()
+            existing = await self._get_workflow(session, name=definition.name)
 
             if existing:
-                # Update existing workflow
                 existing.version = definition.version
                 existing.description = definition.description
                 existing.definition = definition_yaml
@@ -100,8 +112,7 @@ class WorkflowStore:
                 workflow_id = str(existing.workflow_id)
                 logger.info(f"Updated workflow: {definition.name} (id={workflow_id})")
             else:
-                # Create new workflow
-                workflow = WorkflowModel(
+                workflow = self._workflow_model(
                     workflow_id=str(uuid.uuid4()),
                     zone_id=self._get_zone_id(),
                     name=definition.name,
@@ -115,72 +126,47 @@ class WorkflowStore:
                 workflow_id = str(workflow.workflow_id)
                 logger.info(f"Created workflow: {definition.name} (id={workflow_id})")
 
-            session.commit()
+            await session.commit()
             return workflow_id
 
-    def load_workflow(self, workflow_id: str) -> WorkflowDefinition | None:
-        """Load a workflow definition from database.
-
-        Args:
-            workflow_id: Workflow UUID
-
-        Returns:
-            WorkflowDefinition or None if not found
-        """
-        with self.session_factory() as session:
-            stmt = select(WorkflowModel).where(WorkflowModel.workflow_id == workflow_id)
-            workflow = session.execute(stmt).scalar_one_or_none()
-
+    async def load_workflow(self, workflow_id: str) -> WorkflowDefinition | None:
+        """Load a workflow definition by ID."""
+        async with self.session_factory() as session:
+            workflow = await self._get_workflow(session, workflow_id=workflow_id)
             if not workflow:
                 return None
-
-            # Parse YAML definition
             try:
                 return WorkflowLoader.load_from_string(workflow.definition)
             except Exception as e:
                 logger.error(f"Failed to parse workflow {workflow_id}: {e}")
                 return None
 
-    def load_workflow_by_name(self, name: str) -> WorkflowDefinition | None:
-        """Load a workflow by name.
-
-        Args:
-            name: Workflow name
-
-        Returns:
-            WorkflowDefinition or None if not found
-        """
-        with self.session_factory() as session:
-            stmt = select(WorkflowModel).where(
-                WorkflowModel.zone_id == self._get_zone_id(),
-                WorkflowModel.name == name,
-            )
-            workflow = session.execute(stmt).scalar_one_or_none()
-
+    async def load_workflow_by_name(self, name: str) -> WorkflowDefinition | None:
+        """Load a workflow by name."""
+        async with self.session_factory() as session:
+            workflow = await self._get_workflow(session, name=name)
             if not workflow:
                 return None
-
             try:
                 return WorkflowLoader.load_from_string(workflow.definition)
             except Exception as e:
                 logger.error(f"Failed to parse workflow {name}: {e}")
                 return None
 
-    def list_workflows(self) -> list[dict[str, Any]]:
-        """List all workflows.
+    async def list_workflows(self) -> list[dict[str, Any]]:
+        """List all workflows."""
+        async with self.session_factory() as session:
+            stmt = select(self._workflow_model).where(
+                self._workflow_model.zone_id == self._get_zone_id()
+            )
+            result = await session.execute(stmt)
+            workflows = result.scalars().all()
 
-        Returns:
-            List of workflow info dictionaries
-        """
-        with self.session_factory() as session:
-            stmt = select(WorkflowModel).where(WorkflowModel.zone_id == self._get_zone_id())
-            workflows = session.execute(stmt).scalars().all()
-
-            result = []
+            items = []
             for workflow in workflows:
                 try:
                     definition = WorkflowLoader.load_from_string(workflow.definition)
-                    result.append(
+                    items.append(
                         {
                             "workflow_id": workflow.workflow_id,
                             "name": workflow.name,
@@ -196,113 +182,57 @@ class WorkflowStore:
                 except Exception as e:
                     logger.error(f"Failed to parse workflow {workflow.workflow_id}: {e}")
 
-            return result
+            return items
 
-    def delete_workflow(self, workflow_id: str) -> bool:
-        """Delete a workflow.
-
-        Args:
-            workflow_id: Workflow UUID
-
-        Returns:
-            True if deleted, False if not found
-        """
-        with self.session_factory() as session:
-            stmt = select(WorkflowModel).where(WorkflowModel.workflow_id == workflow_id)
-            workflow = session.execute(stmt).scalar_one_or_none()
-
+    async def delete_workflow(self, workflow_id: str) -> bool:
+        """Delete a workflow by ID."""
+        async with self.session_factory() as session:
+            workflow = await self._get_workflow(session, workflow_id=workflow_id)
             if not workflow:
                 return False
-
-            session.delete(workflow)
-            session.commit()
+            await session.delete(workflow)
+            await session.commit()
             logger.info(f"Deleted workflow: {workflow.name} (id={workflow_id})")
             return True
 
-    def delete_workflow_by_name(self, name: str) -> bool:
-        """Delete a workflow by name.
-
-        Args:
-            name: Workflow name
-
-        Returns:
-            True if deleted, False if not found
-        """
-        with self.session_factory() as session:
-            stmt = select(WorkflowModel).where(
-                WorkflowModel.zone_id == self._get_zone_id(),
-                WorkflowModel.name == name,
-            )
-            workflow = session.execute(stmt).scalar_one_or_none()
-
+    async def delete_workflow_by_name(self, name: str) -> bool:
+        """Delete a workflow by name."""
+        async with self.session_factory() as session:
+            workflow = await self._get_workflow(session, name=name)
             if not workflow:
                 return False
-
-            session.delete(workflow)
-            session.commit()
+            await session.delete(workflow)
+            await session.commit()
             logger.info(f"Deleted workflow: {name}")
             return True
 
-    def set_enabled(self, workflow_id: str, enabled: bool) -> bool:
-        """Enable or disable a workflow.
-
-        Args:
-            workflow_id: Workflow UUID
-            enabled: True to enable, False to disable
-
-        Returns:
-            True if updated, False if not found
-        """
-        with self.session_factory() as session:
-            stmt = select(WorkflowModel).where(WorkflowModel.workflow_id == workflow_id)
-            workflow = session.execute(stmt).scalar_one_or_none()
-
+    async def set_enabled(self, workflow_id: str, enabled: bool) -> bool:
+        """Enable or disable a workflow by ID."""
+        async with self.session_factory() as session:
+            workflow = await self._get_workflow(session, workflow_id=workflow_id)
             if not workflow:
                 return False
-
             workflow.enabled = 1 if enabled else 0
             workflow.updated_at = datetime.now(UTC)
-            session.commit()
+            await session.commit()
             logger.info(f"Set workflow {workflow.name} enabled={enabled}")
             return True
 
-    def set_enabled_by_name(self, name: str, enabled: bool) -> bool:
-        """Enable or disable a workflow by name.
-
-        Args:
-            name: Workflow name
-            enabled: True to enable, False to disable
-
-        Returns:
-            True if updated, False if not found
-        """
-        with self.session_factory() as session:
-            stmt = select(WorkflowModel).where(
-                WorkflowModel.zone_id == self._get_zone_id(),
-                WorkflowModel.name == name,
-            )
-            workflow = session.execute(stmt).scalar_one_or_none()
-
+    async def set_enabled_by_name(self, name: str, enabled: bool) -> bool:
+        """Enable or disable a workflow by name."""
+        async with self.session_factory() as session:
+            workflow = await self._get_workflow(session, name=name)
             if not workflow:
                 return False
-
             workflow.enabled = 1 if enabled else 0
             workflow.updated_at = datetime.now(UTC)
-            session.commit()
+            await session.commit()
             logger.info(f"Set workflow {name} enabled={enabled}")
             return True
 
-    def save_execution(self, execution: WorkflowExecution) -> str:
-        """Save workflow execution record.
-
-        Args:
-            execution: Workflow execution record
-
-        Returns:
-            Execution ID (UUID string)
-        """
-        with self.session_factory() as session:
-            # Convert action results to JSON
+    async def save_execution(self, execution: WorkflowExecution) -> str:
+        """Save workflow execution record."""
+        async with self.session_factory() as session:
             action_results_json = json.dumps(
                 [
                     {
@@ -316,10 +246,9 @@ class WorkflowStore:
                 ]
             )
 
-            # Combine context with action results
             context_dict = {**execution.context, "action_results": action_results_json}
 
-            execution_model = WorkflowExecutionModel(
+            execution_model = self._execution_model(
                 execution_id=str(execution.execution_id),
                 workflow_id=str(execution.workflow_id),
                 trigger_type=execution.trigger_type.value,
@@ -334,34 +263,27 @@ class WorkflowStore:
             )
 
             session.add(execution_model)
-            session.commit()
+            await session.commit()
             logger.info(
                 f"Saved execution: {execution.execution_id} (status={execution.status.value})"
             )
             return str(execution.execution_id)
 
-    def get_executions(self, workflow_id: str, limit: int = 10) -> list[dict[str, Any]]:
-        """Get execution history for a workflow.
-
-        Args:
-            workflow_id: Workflow UUID
-            limit: Maximum number of executions to return
-
-        Returns:
-            List of execution records
-        """
-        with self.session_factory() as session:
+    async def get_executions(self, workflow_id: str, limit: int = 10) -> list[dict[str, Any]]:
+        """Get execution history for a workflow."""
+        async with self.session_factory() as session:
             stmt = (
-                select(WorkflowExecutionModel)
-                .where(WorkflowExecutionModel.workflow_id == workflow_id)
-                .order_by(WorkflowExecutionModel.started_at.desc())
+                select(self._execution_model)
+                .where(self._execution_model.workflow_id == workflow_id)
+                .order_by(self._execution_model.started_at.desc())
                 .limit(limit)
             )
-            executions = session.execute(stmt).scalars().all()
+            result = await session.execute(stmt)
+            executions = result.scalars().all()
 
-            result = []
+            items = []
             for execution in executions:
-                result.append(
+                items.append(
                     {
                         "execution_id": execution.execution_id,
                         "workflow_id": execution.workflow_id,
@@ -375,27 +297,12 @@ class WorkflowStore:
                     }
                 )
 
-            return result
+            return items
 
-    def get_executions_by_name(self, name: str, limit: int = 10) -> list[dict[str, Any]]:
-        """Get execution history for a workflow by name.
-
-        Args:
-            name: Workflow name
-            limit: Maximum number of executions to return
-
-        Returns:
-            List of execution records
-        """
-        # First get workflow ID
-        with self.session_factory() as session:
-            stmt = select(WorkflowModel).where(
-                WorkflowModel.zone_id == self._get_zone_id(),
-                WorkflowModel.name == name,
-            )
-            workflow = session.execute(stmt).scalar_one_or_none()
-
+    async def get_executions_by_name(self, name: str, limit: int = 10) -> list[dict[str, Any]]:
+        """Get execution history for a workflow by name."""
+        async with self.session_factory() as session:
+            workflow = await self._get_workflow(session, name=name)
             if not workflow:
                 return []
-
-            return self.get_executions(workflow.workflow_id, limit)
+            return await self.get_executions(workflow.workflow_id, limit)

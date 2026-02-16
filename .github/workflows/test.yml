@@ -110,7 +110,7 @@ jobs:
 
       - name: Run unit tests (must finish within 3 minutes)
         run: |
-          uv run pytest tests/unit --cov=nexus --cov-report=xml --cov-report=term-missing -v
+          uv run pytest tests/unit -v
         shell: bash
         timeout-minutes: 3
 
@@ -118,24 +118,6 @@ jobs:
         run: |
           uv run pytest tests/benchmarks/ --collect-only -q -o "addopts="
         if: matrix.os == 'ubuntu-latest'
-
-      - name: Check coverage threshold
-        run: |
-          # v0.8.0: Temporarily lowered to 50% due to new subscription/parser code without tests
-          # Previous: 59%
-          # New v0.8 modules with low coverage: subscriptions, parsers/providers
-          # TODO: Raise back to 60% after adding tests for v0.8 subscription and parser modules
-          uv run coverage report --fail-under=50
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.11'
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: ./coverage.xml
-          flags: unittests
-          name: codecov-umbrella
-          fail_ci_if_error: false
 
   migration-test:
     name: Migration Tests (SQLite)

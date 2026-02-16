@@ -206,15 +206,8 @@ class EventDeliveryWorker:
         """Build FileEvent from record and dispatch to downstream systems."""
         event = self._build_file_event(record)
 
-        # 1. Publish to global EventBus (Redis Pub/Sub)
+        # 1. Publish to EventBus (Redis Pub/Sub)
         bus = self._event_bus
-        if bus is None:
-            try:
-                from nexus.core.event_bus import get_global_event_bus
-
-                bus = get_global_event_bus()
-            except ImportError:
-                pass
 
         if bus is not None:
             import asyncio

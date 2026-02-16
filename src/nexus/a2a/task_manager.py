@@ -71,7 +71,7 @@ class TaskManager:
         self,
         message: Message,
         *,
-        zone_id: str = "default",
+        zone_id: str = "root",
         agent_id: str | None = None,
         context_id: str | None = None,
         metadata: dict[str, Any] | None = None,
@@ -98,7 +98,7 @@ class TaskManager:
         self,
         task_id: str,
         *,
-        zone_id: str = "default",
+        zone_id: str = "root",
         history_length: int | None = None,
     ) -> Task:
         """Retrieve a task by ID.
@@ -120,7 +120,7 @@ class TaskManager:
     async def list_tasks(
         self,
         *,
-        zone_id: str = "default",
+        zone_id: str = "root",
         agent_id: str | None = None,
         state: TaskState | None = None,
         limit: int = 50,
@@ -139,7 +139,7 @@ class TaskManager:
         self,
         task_id: str,
         *,
-        zone_id: str = "default",
+        zone_id: str = "root",
     ) -> Task:
         """Cancel a task.
 
@@ -165,7 +165,7 @@ class TaskManager:
         task_id: str,
         new_state: TaskState,
         *,
-        zone_id: str = "default",
+        zone_id: str = "root",
         message: Message | None = None,
     ) -> Task:
         """Transition a task to a new state.
@@ -215,7 +215,7 @@ class TaskManager:
         task_id: str,
         artifact: Artifact,
         *,
-        zone_id: str = "default",
+        zone_id: str = "root",
         append: bool = True,
     ) -> Task:
         """Add an artifact to a task.

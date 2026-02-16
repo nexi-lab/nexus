@@ -173,12 +173,15 @@ Driver selection is config-time: same binary, different `NEXUS_METASTORE`, `NEXU
 
 ## 6. gRPC Services
 
-| Proto Service | Scope | Purpose |
-|---------------|-------|---------|
-| `ZoneTransportService` | Internal | Node-to-node Raft messages (StepMessage, ReplicateEntries) |
-| `ZoneApiService` | Internal | Client-facing zone ops (Propose, Query, JoinZone, InviteZone) |
+> **SSOT:** Proto files in `proto/` are the source of truth for RPC definitions. This table is a summary for architectural orientation — see the proto files for exact request/response types and detailed comments.
 
-Named `Zone*` to match `ZoneConsensus` (Rust). Neither is an external API.
+| Proto Service | Proto File | Scope | Purpose |
+|---------------|-----------|-------|---------|
+| `ZoneTransportService` | `proto/nexus/raft/transport.proto` | Internal | Node-to-node Raft messages (StepMessage, ReplicateEntries) |
+| `ZoneApiService` | `proto/nexus/raft/transport.proto` | Internal | Client-facing zone ops (Propose, Query, GetClusterInfo, JoinZone, InviteZone) |
+| `ExchangeService` | `proto/nexus/exchange/v1/exchange.proto` | External | Agent Exchange API — identity (4 RPCs), payment (8 RPCs), audit (5 RPCs). REST-only Phase 1; Connect-RPC planned Phase 2/3. |
+
+Named `Zone*` to match `ZoneConsensus` (Rust). Zone services are internal — not exposed as external APIs. `ExchangeService` is the external-facing API for agent-to-agent value exchange.
 
 ---
 

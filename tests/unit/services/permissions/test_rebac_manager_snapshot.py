@@ -604,7 +604,8 @@ class TestBulkCheck:
 
     @pytest.mark.xfail(
         sys.platform == "linux",
-        reason="Flaky on Ubuntu CI — Rust bulk checker race condition with in-memory SQLite.",
+        reason="Rust bulk checker race condition with in-memory SQLite on Linux CI. "
+        "Passes reliably on macOS. Tracked upstream.",
         strict=False,
     )
     def test_bulk_check_returns_dict_of_results(self, manager):

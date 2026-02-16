@@ -33,7 +33,6 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
-from nexus.core.nexus_fs import NexusFS
 
 
 @click.group()
@@ -460,6 +459,7 @@ def export_zone(
         nexus zone export acme-corp -o /backup/acme.nexus --after 2025-01-01T00:00:00
     """
     try:
+        from nexus.core.nexus_fs import NexusFS
         from nexus.portability import ZoneExportOptions, ZoneExportService
 
         # Parse after time if provided
@@ -603,6 +603,7 @@ def import_zone(
         nexus zone import /backup/acme.nexus --dry-run
     """
     try:
+        from nexus.core.nexus_fs import NexusFS
         from nexus.portability import ConflictMode, ZoneImportOptions, ZoneImportService
 
         # Parse path remappings

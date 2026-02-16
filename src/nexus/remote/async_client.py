@@ -57,14 +57,10 @@ from nexus.core.exceptions import (
     NexusFileNotFoundError,
 )
 from nexus.core.filesystem import NexusFilesystem
+from nexus.core.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.remote.base_client import BaseRemoteNexusFS
 from nexus.remote.rpc_proxy import RPCProxyBase
-from nexus.server.protocol import (
-    RPCRequest,
-    RPCResponse,
-    decode_rpc_message,
-    encode_rpc_message,
-)
+from nexus.server.protocol import RPCRequest, RPCResponse
 
 from .client import (
     _DOMAIN_METHOD_MAP,
@@ -862,66 +858,3 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
 # Register as virtual subclass of NexusFilesystem so isinstance() works at runtime
 # without putting abstract methods in MRO (which would shadow __getattr__ dispatch).
 NexusFilesystem.register(AsyncRemoteNexusFS)
-
-
-# ============================================================
-# Backwards-compat wrappers (delegate to domain clients)
-# ============================================================
-
-
-class AsyncRemoteMemory:
-    """Async Remote Memory API client (backwards-compatible wrapper).
-
-    Delegates to AsyncMemoryClient domain client.
-    """
-
-    def __init__(self, remote_fs: AsyncRemoteNexusFS):
-        from nexus.remote.domain.memory import AsyncMemoryClient as _AsyncMemoryClient
-
-        self.remote_fs = remote_fs
-        # Use lambda to ensure dynamic resolution of _call_rpc (supports test mocking)
-        self._client = _AsyncMemoryClient(lambda *a, **kw: remote_fs._call_rpc(*a, **kw))
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._client, name)
-
-    def __dir__(self) -> list[str]:
-        return list(set(super().__dir__()) | set(dir(self._client)))
-
-
-class AsyncAdminAPI:
-    """Async Admin API client (backwards-compatible wrapper).
-
-    Delegates to AsyncAdminClient domain client.
-    """
-
-    def __init__(self, remote_fs: AsyncRemoteNexusFS):
-        from nexus.remote.domain.admin import AsyncAdminClient as _AsyncAdminClient
-
-        self.remote_fs = remote_fs
-        self._client = _AsyncAdminClient(lambda *a, **kw: remote_fs._call_rpc(*a, **kw))
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._client, name)
-
-    def __dir__(self) -> list[str]:
-        return list(set(super().__dir__()) | set(dir(self._client)))
-
-
-class AsyncACE:
-    """Async ACE client (backwards-compatible wrapper).
-
-    Delegates to AsyncACEClient domain client.
-    """
-
-    def __init__(self, remote_fs: AsyncRemoteNexusFS):
-        from nexus.remote.domain.ace import AsyncACEClient as _AsyncACEClient
-
-        self.remote_fs = remote_fs
-        self._client = _AsyncACEClient(lambda *a, **kw: remote_fs._call_rpc(*a, **kw))
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._client, name)
-
-    def __dir__(self) -> list[str]:
-        return list(set(super().__dir__()) | set(dir(self._client)))

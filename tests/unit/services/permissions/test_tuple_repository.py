@@ -272,7 +272,7 @@ class TestZoneRevision:
         assert repo.get_zone_revision("z2") == 1
 
     def test_default_zone_id(self, repo: TupleRepository):
-        """None zone_id maps to 'default'."""
+        """None zone_id maps to 'root'."""
         conn = repo.get_connection()
         try:
             repo.increment_zone_revision(None, conn)
@@ -280,7 +280,7 @@ class TestZoneRevision:
         finally:
             repo.close_connection(conn)
         assert repo.get_zone_revision(None) == 1
-        assert repo.get_zone_revision("default") == 1
+        assert repo.get_zone_revision("root") == 1
 
     def test_get_revision_with_provided_connection(self, repo: TupleRepository):
         """get_zone_revision reuses a provided connection."""

@@ -10,8 +10,6 @@ Covers:
 
 from __future__ import annotations
 
-import types
-from datetime import datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -19,7 +17,6 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from nexus.core.agent_record import AgentRecord, AgentState
 from nexus.server.api.v2.routers.manifest import (
     _get_require_auth,
     get_nexus_fs,
@@ -45,20 +42,15 @@ def _make_agent_record(
     owner_id: str = "user-001",
     zone_id: str = "zone-001",
     manifest: tuple[dict[str, Any], ...] = (),
-) -> AgentRecord:
-    return AgentRecord(
-        agent_id=agent_id,
-        owner_id=owner_id,
-        zone_id=zone_id,
-        name="test-agent",
-        state=AgentState.UNKNOWN,
-        generation=0,
-        last_heartbeat=None,
-        metadata=types.MappingProxyType({}),
-        created_at=datetime.now(),
-        updated_at=datetime.now(),
-        context_manifest=manifest,
-    )
+) -> MagicMock:
+    """Create a mock agent record with the attributes the router accesses."""
+    record = MagicMock()
+    record.agent_id = agent_id
+    record.owner_id = owner_id
+    record.zone_id = zone_id
+    record.context_manifest = manifest
+    record.metadata = {}
+    return record
 
 
 @pytest.fixture

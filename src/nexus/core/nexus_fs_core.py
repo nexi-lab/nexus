@@ -245,24 +245,13 @@ class NexusFSCoreMixin:
         if not (self.enable_workflows and self.workflow_engine):  # type: ignore[attr-defined]
             return
 
-        # Bounded queue: try to enqueue, drop on overflow
-        queue = getattr(self, "_workflow_queue", None)
-        if queue is not None:
-            try:
-                queue.put_nowait((trigger_type, event_context))
-            except Exception:
-                logger.warning("Workflow event queue full, dropping event: %s", label)
-        else:
-            # Fallback: fire-and-forget (no queue — CLI or pre-startup)
-            from nexus.core.sync_bridge import fire_and_forget
+        from nexus.core.sync_bridge import fire_and_forget
 
-            fire_and_forget(
-                self.workflow_engine.fire_event(trigger_type, event_context)  # type: ignore[attr-defined]
-            )
+        fire_and_forget(
+            self.workflow_engine.fire_event(trigger_type, event_context)  # type: ignore[attr-defined]
+        )
 
         if self.subscription_manager:  # type: ignore[attr-defined]
-            from nexus.core.sync_bridge import fire_and_forget
-
             event_type = label.split(":")[0] if ":" in label else label
             fire_and_forget(
                 self.subscription_manager.broadcast(  # type: ignore[attr-defined]
@@ -271,34 +260,6 @@ class NexusFSCoreMixin:
                     event_context.get("zone_id", "default"),
                 )
             )
-
-    async def _start_workflow_consumer(self) -> None:
-        """Background consumer for bounded workflow event queue (#1522)."""
-        queue = self._workflow_queue  # type: ignore[attr-defined]
-        engine = self.workflow_engine  # type: ignore[attr-defined]
-        while True:
-            trigger_type, event_context = await queue.get()
-            try:
-                await engine.fire_event(trigger_type, event_context)
-            except Exception as e:
-                logger.error("Workflow event processing failed: %s", e)
-            finally:
-                queue.task_done()
-
-    def ensure_workflow_consumer(self) -> None:
-        """Start the workflow consumer task if not already running."""
-        if (
-            getattr(self, "_workflow_queue", None) is None
-            or getattr(self, "_workflow_consumer_task", None) is not None
-        ):
-            return
-        try:
-            loop = asyncio.get_running_loop()
-            self._workflow_consumer_task = loop.create_task(  # type: ignore[attr-defined]
-                self._start_workflow_consumer()
-            )
-        except RuntimeError:
-            pass  # No event loop — consumer starts when server starts
 
     # =========================================================================
     # Zookie Consistency Token Support - Issue #1187

@@ -483,6 +483,16 @@ disable_error_code = ["no-any-return"]
 
 [[tool.mypy.overrides]]
 module = [
+    "nexus.services.search_listing_mixin",
+    "nexus.services.search_grep_mixin",
+    "nexus.services.rebac_share_mixin",
+]
+# Mixin classes access `self.*` attributes defined on the concrete class
+# (SearchService / ReBACService). Mypy cannot see across mixin boundaries.
+disable_error_code = ["attr-defined", "no-any-return"]
+
+[[tool.mypy.overrides]]
+module = [
     "test_slack_connector",
     "load_secrets_from_gcp",
 ]

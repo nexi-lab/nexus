@@ -27,6 +27,7 @@ References:
 
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from nexus.services.protocols.context_manifest import ContextManifestProtocol
+from nexus.services.protocols.events import EventsProtocol
 from nexus.services.protocols.hook_engine import (
     POST_COPY,
     POST_DELETE,
@@ -44,23 +45,33 @@ from nexus.services.protocols.hook_engine import (
     HookResult,
     HookSpec,
 )
+from nexus.services.protocols.llm import LLMProtocol
+from nexus.services.protocols.mount import MountProtocol, ProgressCallback
 from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol, NamespaceMount
+from nexus.services.protocols.oauth import OAuthProtocol
+from nexus.services.protocols.permission import PermissionProtocol
 from nexus.services.protocols.rebac import ReBACBrickProtocol
 from nexus.services.protocols.scheduler import AgentRequest, SchedulerProtocol
 from nexus.services.protocols.search import SearchBrickProtocol
+from nexus.services.protocols.share_link import ShareLinkProtocol
+from nexus.services.protocols.skills import SkillsProtocol
 
 __all__ = [
     "AgentInfo",
     "AgentRegistryProtocol",
     "AgentRequest",
     "ContextManifestProtocol",
+    "EventsProtocol",
     "HookContext",
     "HookEngineProtocol",
     "HookId",
     "HookResult",
     "HookSpec",
+    "LLMProtocol",
+    "MountProtocol",
     "NamespaceManagerProtocol",
     "NamespaceMount",
+    "OAuthProtocol",
     "POST_COPY",
     "POST_DELETE",
     "POST_MKDIR",
@@ -71,7 +82,11 @@ __all__ = [
     "PRE_MKDIR",
     "PRE_READ",
     "PRE_WRITE",
+    "PermissionProtocol",
+    "ProgressCallback",
     "ReBACBrickProtocol",
     "SchedulerProtocol",
     "SearchBrickProtocol",
+    "ShareLinkProtocol",
+    "SkillsProtocol",
 ]

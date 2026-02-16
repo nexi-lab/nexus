@@ -123,6 +123,8 @@ class AsyncSemanticSearch:
         contextual_chunking: bool = False,
         contextual_config: ContextualChunkingConfig | None = None,
         context_generator: ContextGenerator | None = None,
+        *,
+        async_session_factory: Any | None = None,
     ):
         """Initialize async semantic search.
 
@@ -138,6 +140,8 @@ class AsyncSemanticSearch:
             contextual_chunking: Enable contextual chunking (Issue #1192)
             contextual_config: Configuration for contextual chunking
             context_generator: Callable that generates context for each chunk
+            async_session_factory: Injected async_sessionmaker from RecordStoreABC.
+                When provided, skips creating a private engine (Issue #1597).
         """
         self.database_url = database_url
         self.embedding_provider = embedding_provider
@@ -147,13 +151,17 @@ class AsyncSemanticSearch:
         self.entropy_threshold = entropy_threshold
         self.entropy_alpha = entropy_alpha
 
-        # Create async engine and session factory
-        self.engine = create_async_engine_from_url(database_url)
-        self.async_session = async_sessionmaker(
-            self.engine,
-            class_=AsyncSession,
-            expire_on_commit=False,
-        )
+        # Use injected session factory or create a private engine (Issue #1597)
+        if async_session_factory is not None:
+            self.engine = None  # Owned externally
+            self.async_session = async_session_factory
+        else:
+            self.engine = create_async_engine_from_url(database_url)
+            self.async_session = async_sessionmaker(
+                self.engine,
+                class_=AsyncSession,
+                expire_on_commit=False,
+            )
 
         # Chunker
         self.chunker = DocumentChunker(
@@ -1011,5 +1019,9 @@ class AsyncSemanticSearch:
         return stats
 
     async def close(self) -> None:
-        """Close database connections."""
-        await self.engine.dispose()
+        """Close database connections.
+
+        No-op when engine is externally owned (async_session_factory path).
+        """
+        if self.engine is not None:
+            await self.engine.dispose()

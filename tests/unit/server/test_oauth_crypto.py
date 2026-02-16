@@ -483,6 +483,49 @@ class TestOAuthCryptoDbKeyLoading:
         assert crypto.encrypt_token("thread_safe_test") is not None
 
 
+class TestOAuthCryptoSessionFactory:
+    """Tests for session_factory dependency injection (Issue #1597)."""
+
+    def test_session_factory_used_for_key_loading(self):
+        """Test that injected session_factory loads key without creating own engine."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+
+        from nexus.storage.models import Base
+
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        sf = sessionmaker(bind=engine)
+
+        # First call: generates and stores key via injected session_factory
+        crypto1 = OAuthCrypto(session_factory=sf)
+        encrypted = crypto1.encrypt_token("test-token")
+
+        # Second call: should load the same key from DB via session_factory
+        crypto2 = OAuthCrypto(session_factory=sf)
+        decrypted = crypto2.decrypt_token(encrypted)
+
+        assert decrypted == "test-token"
+
+    def test_session_factory_takes_precedence_over_db_url(self):
+        """Test that session_factory is preferred when both are provided."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+
+        from nexus.storage.models import Base
+
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        sf = sessionmaker(bind=engine)
+
+        # Provide both — session_factory should win (no engine created from db_url)
+        crypto = OAuthCrypto(session_factory=sf, db_url="sqlite:///nonexistent.db")
+        assert crypto._session_factory is sf
+        # Should still work (key loaded from sf, not from nonexistent.db)
+        encrypted = crypto.encrypt_token("test")
+        assert crypto.decrypt_token(encrypted) == "test"
+
+
 class TestOAuthCryptoMiscCoverage:
     """Additional tests to cover remaining edge-case branches."""
 

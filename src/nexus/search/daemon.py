@@ -140,6 +140,7 @@ class SearchDaemon:
         # Search components (initialized on startup)
         self._bm25s_index: BM25SIndex | None = None
         self._async_engine: AsyncEngine | None = None
+        self._async_session: Any | None = None  # async_sessionmaker (Issue #1597)
         self._async_search: AsyncSemanticSearch | None = None
         self._embedding_provider: Any = None
 
@@ -242,6 +243,8 @@ class SearchDaemon:
         # Close database connections
         if self._async_engine:
             await self._async_engine.dispose()
+            self._async_engine = None
+            self._async_session = None
 
         self._initialized = False
         logger.info("SearchDaemon shutdown complete")
@@ -294,7 +297,7 @@ class SearchDaemon:
         start = time.perf_counter()
 
         try:
-            from sqlalchemy.ext.asyncio import create_async_engine
+            from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
             # Convert sync URL to async
             db_url = self.config.database_url
@@ -309,6 +312,13 @@ class SearchDaemon:
                 pool_size=self.config.db_pool_min_size,
                 max_overflow=self.config.db_pool_max_size - self.config.db_pool_min_size,
                 pool_recycle=self.config.db_pool_recycle,
+            )
+
+            # Create session factory once (Issue #1597: avoid per-method creation).
+            # expire_on_commit=False matches RecordStoreABC convention and avoids
+            # lazy-load exceptions after commit in async context (SA2 best practice).
+            self._async_session = async_sessionmaker(
+                self._async_engine, class_=AsyncSession, expire_on_commit=False
             )
 
             # Warm the pool by executing a simple query
@@ -492,7 +502,7 @@ class SearchDaemon:
         path_filter: str | None,
     ) -> list[SearchResult]:
         """Vector similarity search using pgvector."""
-        if not self._async_engine:
+        if not self._async_engine or not self._async_session:
             logger.warning("Semantic search requires database connection")
             return []
 
@@ -504,11 +514,8 @@ class SearchDaemon:
                 return []
 
             from sqlalchemy import text
-            from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-            async_session = async_sessionmaker(self._async_engine, class_=AsyncSession)
-
-            async with async_session() as session:
+            async with self._async_session() as session:
                 sql = text("""
                     SELECT
                         c.chunk_index, c.chunk_text,
@@ -725,16 +732,13 @@ class SearchDaemon:
         path_filter: str | None,
     ) -> list[SearchResult]:
         """Search using database FTS (fallback)."""
-        if not self._async_engine:
+        if not self._async_engine or not self._async_session:
             return []
 
         try:
             from sqlalchemy import text
-            from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-            async_session = async_sessionmaker(self._async_engine, class_=AsyncSession)
-
-            async with async_session() as session:
+            async with self._async_session() as session:
                 # PostgreSQL FTS query - use explicit boolean for path filtering
                 if path_filter:
                     sql = text("""

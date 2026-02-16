@@ -53,6 +53,7 @@ class OAuthCrypto:
         self,
         encryption_key: str | None = None,
         db_url: str | None = None,
+        session_factory: Any = None,
     ):
         """Initialize the crypto service.
 
@@ -61,6 +62,9 @@ class OAuthCrypto:
                            environment or database.
             db_url: Database URL for storing/retrieving encryption key.
                    If provided and key not found, generates and stores a new key.
+            session_factory: Optional pre-built SQLAlchemy sessionmaker. When
+                provided, reuses the application's connection pool instead of
+                creating a redundant engine from *db_url*. (Issue #1597)
 
         Raises:
             ValueError: If the provided key is invalid
@@ -69,6 +73,8 @@ class OAuthCrypto:
             For production deployments, provide db_url to ensure the encryption
             key is persisted and consistent across all processes/restarts.
         """
+        self._session_factory = session_factory
+
         # Priority 1: Explicit encryption key
         if encryption_key is not None:
             logger.debug("OAuthCrypto: Using explicit encryption key")
@@ -83,12 +89,13 @@ class OAuthCrypto:
             return
 
         # Priority 3 & 4: Load from database or generate and store
-        if db_url:
-            logger.debug(f"OAuthCrypto: Trying to load key from db_url={db_url}")
+        if db_url or session_factory:
+            logger.debug("OAuthCrypto: Trying to load key from database")
             db_key = self._load_or_create_key_from_db(db_url)
             if db_key:
                 logger.debug(
-                    f"OAuthCrypto: Loaded key from database (starts with: {db_key[:10]}...)"
+                    "OAuthCrypto: Loaded key from database (starts with: %s...)",
+                    db_key[:10],
                 )
                 self._init_fernet(db_key)
                 return
@@ -114,34 +121,43 @@ class OAuthCrypto:
         except Exception as e:
             raise ValueError(f"Invalid encryption key: {e}") from e
 
-    def _load_or_create_key_from_db(self, db_url: str) -> str | None:
+    def _load_or_create_key_from_db(self, db_url: str | None) -> str | None:
         """Load encryption key from database, or create and store a new one.
 
+        Uses ``self._session_factory`` when available (injected via DI) to
+        reuse the application's connection pool. Falls back to creating an
+        ad-hoc engine from *db_url* for standalone / CLI usage.
+
         Args:
-            db_url: Database URL
+            db_url: Database URL (used only when session_factory is not available)
 
         Returns:
             Encryption key string, or None if database access fails
         """
         try:
-            from sqlalchemy import create_engine, select
-            from sqlalchemy.orm import sessionmaker
+            from sqlalchemy import select
 
-            from nexus.storage.models import Base, SystemSettingsModel
+            from nexus.storage.models import SystemSettingsModel
 
-            logger.debug(f"OAuthCrypto._load_or_create_key_from_db: Connecting to {db_url}")
+            if self._session_factory is not None:
+                logger.debug("OAuthCrypto: Using injected session_factory")
+                Session = self._session_factory
+            elif db_url:
+                from sqlalchemy import create_engine
+                from sqlalchemy.orm import sessionmaker
 
-            # Create engine
-            connect_args = {}
-            if "sqlite" in db_url:
-                connect_args["check_same_thread"] = False
+                from nexus.storage.models import Base
 
-            engine = create_engine(db_url, connect_args=connect_args)
-
-            # Ensure table exists
-            Base.metadata.create_all(engine)
-
-            Session = sessionmaker(bind=engine)
+                logger.debug("OAuthCrypto._load_or_create_key_from_db: Connecting to %s", db_url)
+                connect_args = {}
+                if "sqlite" in db_url:
+                    connect_args["check_same_thread"] = False
+                engine = create_engine(db_url, connect_args=connect_args)
+                Base.metadata.create_all(engine)
+                Session = sessionmaker(bind=engine)
+            else:
+                logger.debug("OAuthCrypto: No db_url or session_factory — cannot load key")
+                return None
 
             with Session() as session:
                 # Try to load existing key
@@ -154,7 +170,7 @@ class OAuthCrypto:
                     logger.debug(
                         f"OAuthCrypto: Loaded key from database (key={OAUTH_ENCRYPTION_KEY_NAME}, value starts with: {setting.value[:10]}...)"
                     )
-                    return setting.value
+                    return str(setting.value)
 
                 # Generate new key and store it
                 logger.debug("OAuthCrypto: No key found in database, generating new one")

@@ -162,11 +162,6 @@ class ReBACManager:
                 f"revision_window={l1_cache_revision_window}"
             )
 
-        # Use SQLAlchemy sessionmaker for proper connection management
-        from sqlalchemy.orm import sessionmaker
-
-        self.SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
-
         # Backward-compat aliases for code accessing _conn_map / _pg_version directly
         self._conn_map = self._repo._conn_map
         self._pg_version = self._repo._pg_version

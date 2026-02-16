@@ -145,6 +145,15 @@ class KernelServices:
     # code via NexusFS._service_extras. The kernel never inspects these.
     server_extras: dict[str, Any] = field(default_factory=dict)
 
+    # Kernel protocol services (Issue #1502)
+    agent_registry: Any = None
+    namespace_manager: Any = None
+
+    # Async protocol wrappers (Issue #1502)
+    async_agent_registry: Any = None
+    async_namespace_manager: Any = None
+    async_vfs_router: Any = None
+
 
 # ---------------------------------------------------------------------------
 # Observability (unchanged from before)

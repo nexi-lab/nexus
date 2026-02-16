@@ -108,6 +108,11 @@ class TestCreateNexusServices:
             "write_observer",
             "version_service",
             "wallet_provisioner",
+            "agent_registry",
+            "namespace_manager",
+            "async_agent_registry",
+            "async_namespace_manager",
+            "async_vfs_router",
         ]
         for attr in expected_attrs:
             assert hasattr(result, attr), f"Missing attribute: {attr}"
@@ -247,6 +252,96 @@ class TestCreateNexusServices:
 
         observer = result.write_observer
         assert type(observer).__name__ == "BufferedRecordStoreSyncer"
+
+    def test_agent_registry_created(self, deps: dict, tmp_path: Path) -> None:
+        """AgentRegistry is created when session_factory exists."""
+        from nexus.core.router import PathRouter
+        from nexus.factory import create_nexus_services
+
+        router = PathRouter()
+        router.add_mount("/", deps["backend"], priority=0)
+        record_store = self._make_record_store(tmp_path)
+
+        result = create_nexus_services(
+            record_store=record_store,
+            metadata_store=deps["metadata_store"],
+            backend=deps["backend"],
+            router=router,
+        )
+        assert result.agent_registry is not None
+        assert type(result.agent_registry).__name__ == "AgentRegistry"
+
+    def test_async_agent_registry_wraps_sync(self, deps: dict, tmp_path: Path) -> None:
+        """AsyncAgentRegistry._inner is the sync AgentRegistry."""
+        from nexus.core.router import PathRouter
+        from nexus.factory import create_nexus_services
+
+        router = PathRouter()
+        router.add_mount("/", deps["backend"], priority=0)
+        record_store = self._make_record_store(tmp_path)
+
+        result = create_nexus_services(
+            record_store=record_store,
+            metadata_store=deps["metadata_store"],
+            backend=deps["backend"],
+            router=router,
+        )
+        assert result.async_agent_registry is not None
+        assert result.async_agent_registry._inner is result.agent_registry
+
+    def test_namespace_manager_created(self, deps: dict, tmp_path: Path) -> None:
+        """NamespaceManager is created by factory."""
+        from nexus.core.router import PathRouter
+        from nexus.factory import create_nexus_services
+
+        router = PathRouter()
+        router.add_mount("/", deps["backend"], priority=0)
+        record_store = self._make_record_store(tmp_path)
+
+        result = create_nexus_services(
+            record_store=record_store,
+            metadata_store=deps["metadata_store"],
+            backend=deps["backend"],
+            router=router,
+        )
+        assert result.namespace_manager is not None
+        assert type(result.namespace_manager).__name__ == "NamespaceManager"
+
+    def test_async_namespace_manager_wraps_sync(self, deps: dict, tmp_path: Path) -> None:
+        """AsyncNamespaceManager._inner is the sync NamespaceManager."""
+        from nexus.core.router import PathRouter
+        from nexus.factory import create_nexus_services
+
+        router = PathRouter()
+        router.add_mount("/", deps["backend"], priority=0)
+        record_store = self._make_record_store(tmp_path)
+
+        result = create_nexus_services(
+            record_store=record_store,
+            metadata_store=deps["metadata_store"],
+            backend=deps["backend"],
+            router=router,
+        )
+        assert result.async_namespace_manager is not None
+        assert result.async_namespace_manager._inner is result.namespace_manager
+
+    def test_async_vfs_router_wraps_router(self, deps: dict, tmp_path: Path) -> None:
+        """AsyncVFSRouter._inner is the PathRouter passed to the factory."""
+        from nexus.core.router import PathRouter
+        from nexus.factory import create_nexus_services
+
+        router = PathRouter()
+        router.add_mount("/", deps["backend"], priority=0)
+        record_store = self._make_record_store(tmp_path)
+
+        result = create_nexus_services(
+            record_store=record_store,
+            metadata_store=deps["metadata_store"],
+            backend=deps["backend"],
+            router=router,
+        )
+        assert result.async_vfs_router is not None
+        assert result.async_vfs_router._inner is router
 
 
 # ---------------------------------------------------------------------------

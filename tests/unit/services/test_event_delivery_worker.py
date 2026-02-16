@@ -17,7 +17,7 @@ import time
 from collections.abc import Generator
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -454,13 +454,9 @@ class TestNoBus:
 
         op_id = _insert_undelivered(record_store.session_factory)
 
-        # No event_bus provided, and mock the global event bus at the import source
-        with patch(
-            "nexus.core.event_bus.get_global_event_bus",
-            return_value=None,
-        ):
-            worker = EventDeliveryWorker(record_store.session_factory)
-            count = worker._poll_and_dispatch()
+        # No event_bus provided — worker should still mark delivered
+        worker = EventDeliveryWorker(record_store.session_factory)
+        count = worker._poll_and_dispatch()
 
         assert count == 1
 

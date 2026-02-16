@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from nexus.backends.backend import Backend
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
+from nexus.raft.zone_manager import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from nexus.services.memory.memory_api import Memory
@@ -230,11 +231,11 @@ class NexusFS(  # type: ignore[misc]
         self._parser_threads: list[threading.Thread] = []
         self._parser_threads_lock = threading.Lock()
 
-        # Create default context (zone_id defaults to "default")
+        # Create default context
         self._default_context = OperationContext(
             user="anonymous",
             groups=[],
-            zone_id="default",
+            zone_id=ROOT_ZONE_ID,
             agent_id=None,
             is_admin=is_admin,
             is_system=False,

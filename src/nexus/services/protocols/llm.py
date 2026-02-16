@@ -3,9 +3,13 @@
 Defines the contract for LLM-powered document reading operations.
 Existing implementation: ``nexus.services.llm_service.LLMService``.
 
+Renamed from LLMProtocol → LLMServiceProtocol in Issue #1521 to
+distinguish from the brick-level LLMProviderProtocol.
+
 References:
     - docs/design/NEXUS-LEGO-ARCHITECTURE.md
     - Issue #1287: Extract NexusFS domain services from god object
+    - Issue #1521: Extract LLM module into LLM brick
 """
 
 from __future__ import annotations
@@ -15,7 +19,7 @@ from typing import Any, Protocol, runtime_checkable
 
 
 @runtime_checkable
-class LLMProtocol(Protocol):
+class LLMServiceProtocol(Protocol):
     """Service contract for LLM-powered document reading.
 
     Provides three interaction modes:
@@ -72,3 +76,7 @@ class LLMProtocol(Protocol):
         system_prompt: str | None = None,
         max_context_tokens: int = 3000,
     ) -> Any: ...
+
+
+# Backward compatibility alias (Issue #1521)
+LLMProtocol = LLMServiceProtocol

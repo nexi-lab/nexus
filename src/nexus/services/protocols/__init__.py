@@ -45,6 +45,8 @@ from nexus.services.protocols.hook_engine import (
     HookSpec,
 )
 from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol, NamespaceMount
+from nexus.services.protocols.llm import LLMProtocol, LLMServiceProtocol
+from nexus.services.protocols.llm_provider import LLMProviderProtocol
 from nexus.services.protocols.rebac import ReBACBrickProtocol
 from nexus.services.protocols.scheduler import AgentRequest, SchedulerProtocol
 from nexus.services.protocols.search import SearchBrickProtocol
@@ -59,6 +61,9 @@ __all__ = [
     "HookId",
     "HookResult",
     "HookSpec",
+    "LLMProtocol",
+    "LLMProviderProtocol",
+    "LLMServiceProtocol",
     "NamespaceManagerProtocol",
     "NamespaceMount",
     "POST_COPY",

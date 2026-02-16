@@ -10,6 +10,19 @@ import pytest
 from nexus.core.exceptions import ConflictError
 from nexus.core.permissions import OperationContext
 from nexus.server import fastapi_server as fas
+from nexus.server.rpc.dispatch import _auto_dispatch
+from nexus.server.rpc.handlers.filesystem import (
+    handle_delete,
+    handle_exists,
+    handle_glob,
+    handle_grep,
+    handle_list,
+    handle_mkdir,
+    handle_read,
+    handle_rename,
+    handle_rmdir,
+    handle_write,
+)
 
 
 def _make_mock_request():
@@ -108,7 +121,7 @@ def test_handle_delete_passes_context_to_filesystem():
     )
     params = SimpleNamespace(path="/nexus_file_structure.pdf")
 
-    result = fas._handle_delete(params, ctx)
+    result = handle_delete(fs, params, ctx)
 
     assert result == {"deleted": True}
     assert fs.calls == [("/nexus_file_structure.pdf", ctx)]
@@ -135,7 +148,7 @@ def test_handle_delete_falls_back_if_filesystem_delete_has_no_context_param():
     )
     params = SimpleNamespace(path="/file.txt")
 
-    result = fas._handle_delete(params, ctx)
+    result = handle_delete(fs, params, ctx)
 
     assert result == {"deleted": True}
     assert fs.calls == ["/file.txt"]
@@ -167,7 +180,7 @@ def test_handle_rename_passes_context_to_filesystem():
     )
     params = SimpleNamespace(old_path="/a.txt", new_path="/b.txt")
 
-    result = fas._handle_rename(params, ctx)
+    result = handle_rename(fs, params, ctx)
 
     assert result == {"renamed": True}
     assert fs.calls == [("/a.txt", "/b.txt", ctx)]
@@ -184,7 +197,7 @@ async def test_auto_dispatch_injects__context_param():
         assert _context is not None
         return {"subject_id": _context.subject_id, "zone_id": _context.zone_id}
 
-    fas._fastapi_app.state.exposed_methods = {"dummy": fn}
+    exposed_methods = {"dummy": fn}
 
     ctx = OperationContext(
         user="admin",
@@ -196,7 +209,7 @@ async def test_auto_dispatch_injects__context_param():
     )
     params = SimpleNamespace()
 
-    result = await fas._auto_dispatch("dummy", params, ctx)
+    result = await _auto_dispatch("dummy", params, ctx, exposed_methods=exposed_methods)
     assert result == {"subject_id": "admin", "zone_id": "default"}
 
 
@@ -316,7 +329,7 @@ class TestFastAPIServerHandlers:
         )
         params = SimpleNamespace(path="/test.txt", return_metadata=False)
 
-        result = fas._handle_read(params, ctx)
+        result = handle_read(fs, params, ctx)
 
         # Read handler returns raw bytes
         assert result == b"data"
@@ -341,7 +354,7 @@ class TestFastAPIServerHandlers:
         )
         params = SimpleNamespace(path="/test.txt", return_metadata=True)
 
-        result = fas._handle_read(params, ctx)
+        result = handle_read(fs, params, ctx)
 
         assert result["content"] == b"data"
         assert result["size"] == 4
@@ -377,7 +390,7 @@ class TestFastAPIServerHandlers:
             path="/test.txt", content=b"hello", if_match=None, if_none_match=False, force=False
         )
 
-        result = fas._handle_write(params, ctx)
+        result = handle_write(fs, params, ctx)
 
         # Handler wraps the dict return value in {"bytes_written": <dict>}
         # The write() method returns a dict, and handler assigns it to bytes_written
@@ -425,7 +438,7 @@ class TestFastAPIServerHandlers:
         )
 
         with pytest.raises(ConflictError):
-            fas._handle_write(params, ctx)
+            handle_write(fs, params, ctx)
 
     def test_handle_write_with_lock(self):
         """Test write handler forwards lock=True to nexus_fs.write()."""
@@ -436,7 +449,8 @@ class TestFastAPIServerHandlers:
                 calls.append(kwargs)
                 return {"etag": "etag123", "size": len(content)}
 
-        fas._fastapi_app.state.nexus_fs = FS()
+        fs = FS()
+        fas._fastapi_app.state.nexus_fs = fs
 
         ctx = OperationContext(
             user="admin",
@@ -456,7 +470,7 @@ class TestFastAPIServerHandlers:
             lock_timeout=5.0,
         )
 
-        result = fas._handle_write(params, ctx)
+        result = handle_write(fs, params, ctx)
 
         assert "bytes_written" in result
         assert calls[0]["lock"] is True
@@ -471,7 +485,8 @@ class TestFastAPIServerHandlers:
                 calls.append(kwargs)
                 return {"etag": "etag123", "size": len(content)}
 
-        fas._fastapi_app.state.nexus_fs = FS()
+        fs = FS()
+        fas._fastapi_app.state.nexus_fs = fs
 
         ctx = OperationContext(
             user="admin",
@@ -490,7 +505,7 @@ class TestFastAPIServerHandlers:
             force=False,
         )
 
-        result = fas._handle_write(params, ctx)
+        result = handle_write(fs, params, ctx)
 
         assert "bytes_written" in result
         # lock and lock_timeout should NOT be in kwargs when absent from params
@@ -527,7 +542,7 @@ class TestFastAPIServerHandlers:
             path="/workspace", recursive=True, details=False, prefix=None, show_parsed=True
         )
 
-        result = fas._handle_list(params, ctx)
+        result = handle_list(fs, params, ctx)
 
         assert result == {
             "files": ["/file1.txt", "/file2.txt"],
@@ -547,7 +562,7 @@ class TestFastAPIServerHandlers:
 
         fs = FS()
         fas._fastapi_app.state.nexus_fs = fs
-        fas._fastapi_app.state.exposed_methods = {"stat": fs.stat}
+        exposed_methods = {"stat": fs.stat}
 
         ctx = OperationContext(
             user="admin",
@@ -559,7 +574,7 @@ class TestFastAPIServerHandlers:
         )
         params = SimpleNamespace(path="/test.txt")
 
-        result = await fas._auto_dispatch("stat", params, ctx)
+        result = await _auto_dispatch("stat", params, ctx, exposed_methods=exposed_methods)
 
         assert result["size"] == 1024
         assert result["is_directory"] is False
@@ -584,7 +599,7 @@ class TestFastAPIServerHandlers:
         )
         params = SimpleNamespace(path="/test.txt")
 
-        result = fas._handle_exists(params, ctx)
+        result = handle_exists(fs, params, ctx)
 
         assert result == {"exists": True}
 
@@ -608,7 +623,7 @@ class TestFastAPIServerHandlers:
         )
         params = SimpleNamespace(path="/newdir")
 
-        result = fas._handle_mkdir(params, ctx)
+        result = handle_mkdir(fs, params, ctx)
 
         assert result == {"created": True}
 
@@ -632,7 +647,7 @@ class TestFastAPIServerHandlers:
         )
         params = SimpleNamespace(path="/olddir")
 
-        result = fas._handle_rmdir(params, ctx)
+        result = handle_rmdir(fs, params, ctx)
 
         assert result == {"removed": True}
 
@@ -656,7 +671,7 @@ class TestFastAPIServerHandlers:
         )
         params = SimpleNamespace(pattern="*.py", path="/workspace")
 
-        result = fas._handle_glob(params, ctx)
+        result = handle_glob(fs, params, ctx)
 
         assert "matches" in result
         assert result["matches"] == ["/file1.py", "/file2.py"]
@@ -695,7 +710,7 @@ class TestFastAPIServerHandlers:
             max_results=100,
         )
 
-        result = fas._handle_grep(params, ctx)
+        result = handle_grep(fs, params, ctx)
 
         assert "results" in result
         assert len(result["results"]) == 1

@@ -4203,7 +4203,6 @@ class NexusFSCoreMixin:
             is_implicit: If True, directory is implicit (no metadata, exists due to child files).
                         If None, will be auto-detected.
         """
-        import contextlib
         import errno
 
         path = self._validate_path(path)

@@ -17,7 +17,6 @@ Usage:
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 from dataclasses import dataclass

@@ -15,8 +15,6 @@ from pathlib import Path
 
 import click
 
-logger = logging.getLogger(__name__)
-
 from nexus import NexusFilesystem
 from nexus.cli.utils import (
     BackendConfig,
@@ -25,6 +23,8 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def start_background_mount_sync(nx: NexusFilesystem) -> None:

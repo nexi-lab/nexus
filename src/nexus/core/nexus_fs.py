@@ -272,12 +272,6 @@ class NexusFS(  # type: ignore[misc]
         self.enable_workflows = distributed.enable_workflows
         self.workflow_engine = svc.workflow_engine
 
-        # Bounded workflow event queue (#1522)
-        self._workflow_queue: asyncio.Queue[tuple[str, dict]] | None = None
-        self._workflow_consumer_task: asyncio.Task[None] | None = None  # type: ignore[assignment]  # allowed
-        if self.enable_workflows and self.workflow_engine:
-            self._workflow_queue = asyncio.Queue(maxsize=1000)
-
         # Auth services — injected from server layer (Issue #1519, 3A)
         self._api_key_creator = svc.api_key_creator
 
@@ -5923,6 +5917,15 @@ class NexusFS(  # type: ignore[misc]
     # ========================================================================
     # Sandbox Management (Issue #372)
     # ========================================================================
+
+    @property
+    def sandbox_available(self) -> bool:
+        """Whether sandbox execution is available."""
+        try:
+            self._ensure_sandbox_manager()
+        except Exception:
+            return False
+        return bool(self._sandbox_manager and self._sandbox_manager.providers)
 
     def _ensure_sandbox_manager(self) -> None:
         """Ensure sandbox manager is initialized (lazy initialization)."""

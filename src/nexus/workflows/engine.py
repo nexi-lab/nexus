@@ -10,9 +10,11 @@ from datetime import UTC, datetime
 from typing import Any
 
 from nexus.raft.zone_manager import ROOT_ZONE_ID
+from cachetools import LRUCache
+
 from nexus.workflows.actions import BUILTIN_ACTIONS
 from nexus.workflows.protocol import WorkflowServices
-from nexus.workflows.triggers import BUILTIN_TRIGGERS, TriggerManager
+from nexus.workflows.triggers import BUILTIN_TRIGGERS, TriggerFactory, TriggerManager
 from nexus.workflows.types import (
     TriggerType,
     WorkflowContext,
@@ -33,17 +35,18 @@ class WorkflowEngine:
         workflow_store: Any | None = None,
         services: WorkflowServices | None = None,
         plugin_registry: Any | None = None,
+        max_workflows: int = 1024,
     ) -> None:
         self.workflow_store = workflow_store
         self._services = services
         self.plugin_registry = plugin_registry
         glob_match = services.glob_match if services else None
         self.trigger_manager = TriggerManager(glob_match=glob_match)
-        self.workflows: dict[str, WorkflowDefinition] = {}
-        self.enabled_workflows: dict[str, bool] = {}
-        self.workflow_ids: dict[str, str] = {}
+        self.workflows: LRUCache[str, WorkflowDefinition] = LRUCache(maxsize=max_workflows)
+        self.enabled_workflows: LRUCache[str, bool] = LRUCache(maxsize=max_workflows)
+        self.workflow_ids: LRUCache[str, str] = LRUCache(maxsize=max_workflows)
         self.action_registry = BUILTIN_ACTIONS.copy()
-        self.trigger_registry = BUILTIN_TRIGGERS.copy()
+        self.trigger_registry: dict[TriggerType, TriggerFactory] = BUILTIN_TRIGGERS.copy()
 
         if plugin_registry:
             self._discover_plugin_extensions()
@@ -93,7 +96,7 @@ class WorkflowEngine:
                 logger.warning(f"Unknown trigger type: {trigger_def.type}, skipping")
                 continue
 
-            trigger = trigger_class(trigger_def.config, glob_match=glob_match)  # type: ignore[abstract]
+            trigger = trigger_class(trigger_def.config, glob_match=glob_match)
 
             async def trigger_callback(
                 event_context: dict[str, Any], wf_name: str = definition.name

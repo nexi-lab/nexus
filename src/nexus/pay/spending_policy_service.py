@@ -27,6 +27,8 @@ from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from cachetools import LRUCache, TTLCache
+
 from nexus.pay.constants import credits_to_micro, micro_to_credits
 from nexus.pay.policy_rules import RuleContext, evaluate_rules
 from nexus.pay.spending_policy import (
@@ -79,15 +81,24 @@ class SpendingPolicyService:
 
     _CACHE_TTL: float = 60.0  # seconds
 
-    def __init__(self, session_factory: Callable[[], AsyncSession]) -> None:
+    def __init__(
+        self,
+        session_factory: Callable[[], AsyncSession],
+        *,
+        cache_ttl: float = _CACHE_TTL,
+        max_cache_entries: int = 4096,
+    ) -> None:
         self._session_factory = session_factory
-        # Cache: (agent_id, zone_id) → (policy | None, expires_at)
-        self._cache: dict[tuple[str, str], tuple[SpendingPolicy | None, float]] = {}
-        # Phase 3: in-memory sliding window for hourly rate limits
-        # Key: (agent_id, zone_id) → deque of monotonic timestamps
-        self._hourly_counters: dict[tuple[str, str], deque[float]] = {}
-        # Phase 3: daily tx counts (in-memory, auto-resets on day change)
-        self._daily_tx_counts: dict[tuple[str, str], int] = {}
+        # Policy cache with automatic TTL expiration
+        self._cache: TTLCache[tuple[str, str], SpendingPolicy | None] = TTLCache(
+            maxsize=max_cache_entries, ttl=cache_ttl
+        )
+        # Phase 3: in-memory sliding window for hourly rate limits (bounded)
+        self._hourly_counters: LRUCache[tuple[str, str], deque[float]] = LRUCache(
+            maxsize=max_cache_entries
+        )
+        # Phase 3: daily tx counts (bounded, auto-resets on day change)
+        self._daily_tx_counts: LRUCache[tuple[str, str], int] = LRUCache(maxsize=max_cache_entries)
         self._daily_tx_date: date | None = None
 
     # =========================================================================
@@ -725,12 +736,10 @@ class SpendingPolicyService:
 
         Resolution: agent-specific → zone default. Highest priority wins.
         """
-        # Check cache for agent-specific
+        # Check cache for agent-specific (TTLCache handles expiration)
         cache_key = (agent_id, zone_id)
-        now = time.monotonic()
-        cached = self._cache.get(cache_key)
-        if cached is not None and cached[1] > now:
-            return cached[0]
+        if cache_key in self._cache:
+            return self._cache[cache_key]
 
         # DB lookup: agent-specific policies
         from sqlalchemy import select
@@ -754,7 +763,7 @@ class SpendingPolicyService:
 
             if model is not None:
                 policy = _model_to_policy(model)
-                self._cache[cache_key] = (policy, now + self._CACHE_TTL)
+                self._cache[cache_key] = policy
                 return policy
 
             # Zone-level default (agent_id IS NULL)
@@ -773,7 +782,7 @@ class SpendingPolicyService:
 
             resolved: SpendingPolicy | None = _model_to_policy(model) if model is not None else None
 
-        self._cache[cache_key] = (resolved, now + self._CACHE_TTL)
+        self._cache[cache_key] = resolved
         return resolved
 
     async def _get_spending(self, agent_id: str, zone_id: str) -> dict[str, Decimal]:

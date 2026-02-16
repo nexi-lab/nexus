@@ -18,19 +18,20 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from nexus.pay.audit_types import TransactionProtocol
-from nexus.pay.protocol import PaymentProtocol, ProtocolTransferRequest, ProtocolTransferResult
+from nexus.pay.protocol import ProtocolTransferRequest, ProtocolTransferResult
 from nexus.pay.spending_policy import ApprovalRequiredError, PolicyDeniedError
 
 if TYPE_CHECKING:
     from nexus.pay.spending_policy_service import SpendingPolicyService
+    from nexus.services.protocols.payment import PaymentProtocol
 
 logger = logging.getLogger(__name__)
 
 
-class PolicyEnforcedPayment(PaymentProtocol):
+class PolicyEnforcedPayment:
     """Wraps a PaymentProtocol with spending policy enforcement.
 
-    Implements the full PaymentProtocol interface (same-Protocol wrapper).
+    Structurally satisfies ``PaymentProtocol``.
     Evaluates spending policies before delegating to the inner protocol.
     On success, asynchronously records spending in the ledger.
 

@@ -5,8 +5,7 @@ This module defines the kernel-level types for ReBAC permission enforcement:
 - OperationContext: operation context with subject identity
 - check_stale_session(): stale session detection helper
 
-The PermissionEnforcer class has been moved to services/permissions/enforcer.py
-(it depends on services/ at runtime).
+PermissionEnforcer lives in services/permissions/enforcer.py — import it from there.
 """
 
 from __future__ import annotations
@@ -15,19 +14,6 @@ import logging
 from typing import Any
 
 from nexus.core.types import OperationContext, Permission  # noqa: F401
-
-
-def __getattr__(name: str) -> Any:
-    """Lazy re-export for PermissionEnforcer (moved to services/permissions/enforcer.py).
-
-    Avoids circular import: enforcer.py imports from this module at load time.
-    """
-    if name == "PermissionEnforcer":
-        from nexus.services.permissions.enforcer import PermissionEnforcer
-
-        return PermissionEnforcer
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
 
 logger = logging.getLogger(__name__)
 

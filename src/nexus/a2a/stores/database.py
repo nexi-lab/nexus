@@ -24,9 +24,6 @@ logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
 
-# Dedicated thread pool for DB operations (Decision 14)
-_DB_EXECUTOR = ThreadPoolExecutor(max_workers=20, thread_name_prefix="a2a-db")
-
 
 class DatabaseTaskStore:
     """SQLAlchemy-backed task store.
@@ -63,7 +60,7 @@ class DatabaseTaskStore:
             finally:
                 session.close()
 
-        return await loop.run_in_executor(_DB_EXECUTOR, _wrapper)
+        return await loop.run_in_executor(self._executor, _wrapper)
 
     async def save(
         self,

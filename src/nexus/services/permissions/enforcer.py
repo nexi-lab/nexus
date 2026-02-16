@@ -126,9 +126,7 @@ class PermissionEnforcer:
         self._boundary_cache = self._cache.boundary_cache
         self._hotspot_detector = self._cache.hotspot_detector
         self._bitmap_completeness_cache = self._cache._bitmap_completeness_cache
-        self._bitmap_completeness_ttl = self._cache._bitmap_completeness_ttl
         self._leopard_dir_index = self._cache._leopard_dir_index
-        self._leopard_dir_ttl = self._cache._leopard_dir_ttl
 
         # Register boundary cache invalidation callback with rebac_manager
         if (

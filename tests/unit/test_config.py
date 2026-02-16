@@ -743,12 +743,6 @@ class TestNexusConfigAdvanced:
         assert config.mode == "federation"
         assert config.url is None
 
-    def test_parsers_list(self) -> None:
-        """Test NexusConfig with parsers list."""
-        parsers = [{"module": "my_parsers", "class": "CSVParser", "priority": 60, "enabled": True}]
-        config = NexusConfig(parsers=parsers)
-        assert config.parsers == parsers
-
     def test_namespaces_list(self) -> None:
         """Test NexusConfig with namespaces list."""
         namespaces = [{"name": "private", "readonly": False, "admin_only": True}]

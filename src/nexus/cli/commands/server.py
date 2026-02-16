@@ -24,6 +24,7 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
+from nexus.constants import DEFAULT_GRPC_BIND_ADDR
 
 
 def start_background_mount_sync(nx: NexusFilesystem) -> None:
@@ -149,7 +150,7 @@ def _is_federation_syntax(source: str, target: str | None) -> bool:
     "--bind",
     type=str,
     envvar="NEXUS_BIND_ADDR",
-    default="0.0.0.0:2126",
+    default=DEFAULT_GRPC_BIND_ADDR,
     show_default=True,
     help="[Federation] gRPC bind address",
 )

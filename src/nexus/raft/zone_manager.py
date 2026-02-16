@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from nexus.constants import DEFAULT_GRPC_BIND_ADDR
 from nexus.core._metadata_generated import DT_DIR, DT_MOUNT, FileMetadata
 
 if TYPE_CHECKING:
@@ -64,7 +65,7 @@ class ZoneManager:
         self,
         node_id: int,
         base_path: str,
-        bind_addr: str = "0.0.0.0:2126",
+        bind_addr: str = DEFAULT_GRPC_BIND_ADDR,
         *,
         tls_cert_path: str | None = None,
         tls_key_path: str | None = None,

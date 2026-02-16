@@ -177,12 +177,14 @@ class NexusFUSE:
                 pass  # Not available — fallback to is_directory() proxy
 
         # Create FUSE operations
+        event_bus = getattr(self.nexus_fs, "_event_bus", None)
         operations = NexusFUSEOperations(
             self.nexus_fs,
             self.mode,
             self.cache_config,
             context=context,
             namespace_manager=namespace_manager,
+            event_bus=event_bus,
         )
 
         # Issue #1115: Set up event loop for async event dispatch

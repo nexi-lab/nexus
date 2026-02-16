@@ -74,14 +74,13 @@ except ImportError:
 
 # Import event system for firing events from FUSE operations (Issue #1115)
 try:
-    from nexus.core.event_bus import FileEvent, FileEventType, get_global_event_bus
+    from nexus.core.event_bus import FileEvent, FileEventType
 
     HAS_EVENT_BUS = True
 except ImportError:
     HAS_EVENT_BUS = False
     FileEvent = None  # type: ignore[misc,assignment]
     FileEventType = None  # type: ignore[misc,assignment]
-    get_global_event_bus = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +189,7 @@ class NexusFUSEOperations(Operations):
         cache_config: dict[str, Any] | None = None,
         context: OperationContext | None = None,
         namespace_manager: NamespaceManager | None = None,
+        event_bus: Any | None = None,
     ) -> None:
         """Initialize FUSE operations.
 
@@ -208,11 +208,13 @@ class NexusFUSEOperations(Operations):
             namespace_manager: Optional NamespaceManager for direct O(log m) visibility
                     checks (A2-B). When provided, _check_namespace_visible() bypasses the
                     full RPC/PermissionEnforcer pipeline and calls is_visible() directly.
+            event_bus: Optional EventBusBase instance for distributing file events.
         """
         self.nexus_fs = nexus_fs
         self.mode = mode
         self._context = context
         self._namespace_manager = namespace_manager
+        self._event_bus = event_bus
         self.fd_counter = 0
         self.open_files: dict[int, dict[str, Any]] = {}
         self._files_lock = threading.RLock()
@@ -367,7 +369,7 @@ class NexusFUSEOperations(Operations):
         if not self._enable_events or not HAS_EVENT_BUS:
             return
 
-        if FileEvent is None or get_global_event_bus is None:
+        if FileEvent is None:
             return
 
         try:
@@ -401,11 +403,10 @@ class NexusFUSEOperations(Operations):
             event: FileEvent to dispatch
         """
         try:
-            # 1. Publish to global event bus (distributed cache invalidation)
-            event_bus = get_global_event_bus()
-            if event_bus is not None:
+            # 1. Publish to event bus (distributed cache invalidation)
+            if self._event_bus is not None:
                 try:
-                    await event_bus.publish(event)
+                    await self._event_bus.publish(event)
                 except Exception as e:
                     logger.debug(f"[FUSE-EVENT] Event bus publish failed: {e}")
 

@@ -691,14 +691,13 @@ def _create_distributed_infra(
 
         # Initialize event bus
         if dist.event_bus_backend == "nats":
-            from nexus.core.event_bus import create_event_bus, set_global_event_bus
+            from nexus.core.event_bus import create_event_bus
 
             event_bus = create_event_bus(
                 backend="nats",
                 nats_url=dist.nats_url,
                 session_factory=session_factory,
             )
-            set_global_event_bus(event_bus)
             logger.info(
                 "Distributed event bus initialized (NATS JetStream: %s, SSOT: PostgreSQL)",
                 dist.nats_url,
@@ -710,14 +709,13 @@ def _create_distributed_infra(
             event_url_resolved = coordination_url_resolved or os.getenv("NEXUS_DRAGONFLY_URL")
             if event_url_resolved:
                 from nexus.cache.dragonfly import DragonflyClient
-                from nexus.core.event_bus import RedisEventBus, set_global_event_bus
+                from nexus.core.event_bus import RedisEventBus
 
                 event_client = DragonflyClient(url=event_url_resolved)
                 event_bus = RedisEventBus(
                     event_client,
                     session_factory=session_factory,
                 )
-                set_global_event_bus(event_bus)
                 logger.info(
                     "Distributed event bus initialized (dragonfly: %s, SSOT: PostgreSQL)",
                     event_url_resolved,

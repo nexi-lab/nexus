@@ -158,24 +158,27 @@ from nexus.search.query_router import (
     QueryRouter,
     RoutedQuery,
     RoutingConfig,
-    create_query_router,
 )
 from nexus.search.ranking import (
     AttributeWeights,
     RankingConfig,
     apply_attribute_boosting,
-    detect_matched_field,
     get_ranking_config_from_env,
 )
-from nexus.search.results import BaseSearchResult
+from nexus.search.results import BaseSearchResult, detect_matched_field
 from nexus.search.semantic import SemanticSearch, SemanticSearchResult
 from nexus.search.strategies import (
+    AGGREGATION_WORDS,
+    COMPARISON_WORDS,
+    COMPLEX_PATTERNS,
     GLOB_RUST_THRESHOLD,
     GREP_CACHED_TEXT_RATIO,
     GREP_PARALLEL_THRESHOLD,
     GREP_PARALLEL_WORKERS,
     GREP_SEQUENTIAL_THRESHOLD,
     GREP_ZOEKT_THRESHOLD,
+    MULTIHOP_PATTERNS,
+    TEMPORAL_WORDS,
     GlobStrategy,
     SearchStrategy,
 )
@@ -202,6 +205,12 @@ __all__ = [
     "GREP_PARALLEL_WORKERS",
     "GREP_CACHED_TEXT_RATIO",
     "GLOB_RUST_THRESHOLD",
+    # Query Analysis Patterns (Issue #1499)
+    "COMPARISON_WORDS",
+    "TEMPORAL_WORDS",
+    "AGGREGATION_WORDS",
+    "MULTIHOP_PATTERNS",
+    "COMPLEX_PATTERNS",
     # Chunking
     "ChunkStrategy",
     "DocumentChunk",
@@ -270,7 +279,6 @@ __all__ = [
     "QueryRouter",
     "RoutedQuery",
     "RoutingConfig",
-    "create_query_router",
     # Attribute Ranking (Issue #1092)
     "AttributeWeights",
     "RankingConfig",

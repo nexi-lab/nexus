@@ -319,35 +319,32 @@ class ScopedFilesystem:
     def workspace_snapshot(
         self,
         workspace_path: str | None = None,
-        agent_id: str | None = None,
         description: str | None = None,
         tags: builtins.list[str] | None = None,
     ) -> dict[str, Any]:
         """Create a snapshot of a registered workspace."""
         scoped_path = self._scope_path(workspace_path) if workspace_path else None
-        result = self._fs.workspace_snapshot(scoped_path, agent_id, description, tags)
+        result = self._fs.workspace_snapshot(scoped_path, description, tags)
         return self._unscope_dict(result, ["workspace_path", "path"])
 
     def workspace_restore(
         self,
         snapshot_number: int,
         workspace_path: str | None = None,
-        agent_id: str | None = None,
     ) -> dict[str, Any]:
         """Restore workspace to a previous snapshot."""
         scoped_path = self._scope_path(workspace_path) if workspace_path else None
-        result = self._fs.workspace_restore(snapshot_number, scoped_path, agent_id)
+        result = self._fs.workspace_restore(snapshot_number, scoped_path)
         return self._unscope_dict(result, ["workspace_path", "path"])
 
     def workspace_log(
         self,
         workspace_path: str | None = None,
-        agent_id: str | None = None,
         limit: int = 100,
     ) -> builtins.list[dict[str, Any]]:
         """List snapshot history for workspace."""
         scoped_path = self._scope_path(workspace_path) if workspace_path else None
-        result = self._fs.workspace_log(scoped_path, agent_id, limit)
+        result = self._fs.workspace_log(scoped_path, limit)
         return [self._unscope_dict(r, ["workspace_path", "path"]) for r in result]
 
     def workspace_diff(
@@ -355,11 +352,10 @@ class ScopedFilesystem:
         snapshot_1: int,
         snapshot_2: int,
         workspace_path: str | None = None,
-        agent_id: str | None = None,
     ) -> dict[str, Any]:
         """Compare two workspace snapshots."""
         scoped_path = self._scope_path(workspace_path) if workspace_path else None
-        return self._fs.workspace_diff(snapshot_1, snapshot_2, scoped_path, agent_id)
+        return self._fs.workspace_diff(snapshot_1, snapshot_2, scoped_path)
 
     # ============================================================
     # Workspace & Memory Registry

@@ -65,43 +65,61 @@ Example:
     >>> await mcp_manager.sync_tools("github")
 """
 
-from nexus.mcp.exporter import MCPToolExporter
-from nexus.mcp.models import (
-    MCPMount,
-    MCPToolConfig,
-    MCPToolDefinition,
-    MCPToolExample,
-)
-from nexus.mcp.mount import MCPMountError, MCPMountManager
-from nexus.skills.analytics import (
-    DashboardMetrics,
-    SkillAnalytics,
-    SkillAnalyticsTracker,
-    SkillUsageRecord,
-)
-from nexus.skills.audit import AuditAction, AuditLogEntry, SkillAuditLogger
-from nexus.skills.exporter import SkillExporter, SkillExportError
-from nexus.skills.governance import (
-    ApprovalStatus,
-    GovernanceError,
-    SkillApproval,
-    SkillGovernance,
-)
+import importlib
+
+# Eager imports — commonly used classes that should load immediately
 from nexus.skills.manager import SkillManager, SkillManagerError
 from nexus.skills.models import Skill, SkillMetadata
 from nexus.skills.parser import SkillParseError, SkillParser
-from nexus.skills.protocols import NexusFilesystem
 from nexus.skills.registry import (
     SkillDependencyError,
     SkillNotFoundError,
     SkillRegistry,
 )
-from nexus.skills.templates import (
-    TemplateError,
-    get_template,
-    get_template_description,
-    list_templates,
-)
+
+# Lazy imports — loaded on first access via __getattr__
+_LAZY_IMPORTS: dict[str, str] = {
+    # Analytics
+    "SkillAnalyticsTracker": "nexus.skills.analytics",
+    "SkillAnalytics": "nexus.skills.analytics",
+    "SkillUsageRecord": "nexus.skills.analytics",
+    "DashboardMetrics": "nexus.skills.analytics",
+    # Governance
+    "SkillGovernance": "nexus.skills.governance",
+    "SkillApproval": "nexus.skills.governance",
+    "ApprovalStatus": "nexus.skills.governance",
+    "GovernanceError": "nexus.skills.governance",
+    # Audit
+    "SkillAuditLogger": "nexus.skills.audit",
+    "AuditLogEntry": "nexus.skills.audit",
+    "AuditAction": "nexus.skills.audit",
+    # Exporter
+    "SkillExporter": "nexus.skills.exporter",
+    "SkillExportError": "nexus.skills.exporter",
+    # Protocols
+    "NexusFilesystem": "nexus.skills.protocols",
+    # Templates
+    "get_template": "nexus.skills.templates",
+    "list_templates": "nexus.skills.templates",
+    "get_template_description": "nexus.skills.templates",
+    "TemplateError": "nexus.skills.templates",
+    # MCP Integration (backward-compat re-exports, moved to nexus.mcp)
+    "MCPToolConfig": "nexus.mcp.models",
+    "MCPToolDefinition": "nexus.mcp.models",
+    "MCPToolExample": "nexus.mcp.models",
+    "MCPMount": "nexus.mcp.models",
+    "MCPMountManager": "nexus.mcp.mount",
+    "MCPMountError": "nexus.mcp.mount",
+    "MCPToolExporter": "nexus.mcp.exporter",
+}
+
+
+def __getattr__(name: str) -> object:
+    if name in _LAZY_IMPORTS:
+        module = importlib.import_module(_LAZY_IMPORTS[name])
+        return getattr(module, name)
+    raise AttributeError(f"module 'nexus.skills' has no attribute {name}")
+
 
 __all__ = [
     # Models

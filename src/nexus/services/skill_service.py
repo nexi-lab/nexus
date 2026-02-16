@@ -93,6 +93,9 @@ class SkillService:
         """
         self._gw = gateway
 
+        # Request-scoped cache for subscriptions keyed by (user_id, zone_id)
+        self._subscriptions_cache: dict[tuple[str, str], list[str]] = {}
+
         logger.info("[SkillService] Initialized")
 
     # =========================================================================
@@ -708,8 +711,16 @@ class SkillService:
         return f"/zone/{context.zone_id}/user/{context.user_id}/skill/.subscribed.yaml"
 
     def _load_subscriptions(self, context: OperationContext) -> list[str]:
-        """Load user's subscribed skills from config file."""
+        """Load user's subscribed skills from config file.
+
+        Uses a request-scoped cache keyed by (user_id, zone_id) to avoid
+        repeated YAML parsing within the same request.
+        """
         import yaml
+
+        cache_key = (context.user_id or "", context.zone_id or "")
+        if cache_key in self._subscriptions_cache:
+            return self._subscriptions_cache[cache_key]
 
         path = self._get_subscriptions_path(context)
 
@@ -721,12 +732,14 @@ class SkillService:
                 data = yaml.safe_load(content)
                 if data:
                     result: list[str] = data.get("subscribed_skills", [])
+                    self._subscriptions_cache[cache_key] = result
                     return result
         except FileNotFoundError:
             pass  # Expected: subscriptions file doesn't exist yet
         except (OSError, ValueError, yaml.YAMLError) as e:
             logger.debug(f"Could not load subscribed skills from {path}: {e}")
 
+        self._subscriptions_cache[cache_key] = []
         return []
 
     def _load_assigned_skills(self, context: OperationContext) -> list[str]:
@@ -792,6 +805,10 @@ class SkillService:
             self._gw.mkdir(parent_dir, context=context)
 
         self._gw.write(path, content, context=context)
+
+        # Invalidate cache for this user/zone
+        cache_key = (context.user_id or "", context.zone_id or "")
+        self._subscriptions_cache.pop(cache_key, None)
 
     # =========================================================================
     # Helper Methods: Skill Discovery & Metadata

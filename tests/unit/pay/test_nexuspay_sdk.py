@@ -791,12 +791,11 @@ class TestEdgeCases:
 
     @pytest.mark.asyncio
     async def test_credits_service_error_propagates(self, nexuspay, mock_credits_service):
-        """Errors from CreditsService are wrapped in ProtocolError."""
+        """CreditsError subclasses propagate directly (no wrapping)."""
         from nexus.pay.credits import InsufficientCreditsError
-        from nexus.pay.protocol import ProtocolError
 
         mock_credits_service.transfer.side_effect = InsufficientCreditsError("Not enough")
-        with pytest.raises(ProtocolError, match="Not enough"):
+        with pytest.raises(InsufficientCreditsError, match="Not enough"):
             await nexuspay.transfer(to="bob", amount=100.0)
 
     @pytest.mark.asyncio

@@ -48,7 +48,7 @@ class TestAuthHelperLogging:
         mock_rebac = MagicMock()
         mock_rebac._connection = failing_connection
 
-        with caplog.at_level(logging.WARNING, logger="nexus.server.auth.user_helpers"):
+        with caplog.at_level(logging.WARNING, logger="nexus.core.zone_helpers"):
             result = get_user_zones(mock_rebac, "user-123")
 
         assert result == []

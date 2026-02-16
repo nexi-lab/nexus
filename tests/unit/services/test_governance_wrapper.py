@@ -223,4 +223,4 @@ class TestPostAnalysis:
         with pytest.raises(GovernanceBlockedError):
             import asyncio
 
-            asyncio.get_event_loop().run_until_complete(wrapper.transfer(request))
+            asyncio.run(wrapper.transfer(request))

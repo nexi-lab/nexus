@@ -11,7 +11,10 @@ these for backward compatibility.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # ==============================================================================
 # ReBAC Group Naming Helpers
@@ -283,8 +286,8 @@ def get_user_zones(rebac_manager: Any, user_id: str) -> list[str]:
                 zid = row[0] if isinstance(row, (tuple, list)) else row["zone_id"]
                 if zid and zid not in zone_ids:
                     zone_ids.append(zid)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Failed to fetch zone IDs for user %s: %s", user_id, e)
     return zone_ids
 
 

@@ -196,6 +196,8 @@ class ConnectorAuthError(ConnectorError):
     This is an expected error — user needs to re-authenticate.
     """
 
+    status_code = 401
+    error_type = "Unauthorized"
     is_expected = True
 
 
@@ -205,6 +207,8 @@ class ConnectorRateLimitError(ConnectorError):
     This is an expected error — external API rate limiting.
     """
 
+    status_code = 429
+    error_type = "Too Many Requests"
     is_expected = True
 
 

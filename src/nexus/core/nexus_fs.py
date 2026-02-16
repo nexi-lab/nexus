@@ -454,6 +454,14 @@ class NexusFS(  # type: ignore[misc]
         """Public accessor for the underlying MetadataCache on the metadata store."""
         return getattr(self.metadata, "_cache", None)
 
+    @property
+    def namespace_manager(self) -> Any | None:
+        """Public accessor for the NamespaceManager (via PermissionEnforcer)."""
+        enforcer = self._permission_enforcer
+        if enforcer is not None:
+            return getattr(enforcer, "namespace_manager", None)
+        return None
+
     def _init_performance_optimizations(self) -> None:
         """Initialize performance optimizations for permission checks.
 

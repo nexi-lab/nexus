@@ -297,19 +297,36 @@ class ProxyEventLogBrick(ProxyBrick):
 
 
 class ProxySchedulerBrick(ProxyBrick):
-    """Proxy for ``SchedulerProtocol`` — forwards scheduling to cloud."""
+    """Proxy for ``SchedulerProtocol`` — forwards scheduling to cloud.
 
-    async def submit(self, request: Any) -> None:
-        await self._forward("scheduler.submit", request=asdict(request))
+    Implements the full 8-method protocol (Issue #1274).
+    """
 
-    async def next(self) -> Any | None:
-        return await self._forward("scheduler.next")
+    async def submit(self, request: Any) -> str:
+        result = await self._forward("scheduler.submit", request=asdict(request))
+        return str(result) if result is not None else ""
+
+    async def next(self, *, executor_id: str | None = None) -> Any | None:
+        return await self._forward("scheduler.next", executor_id=executor_id)
 
     async def pending_count(self, *, zone_id: str | None = None) -> int:
         return await self._forward("scheduler.pending_count", zone_id=zone_id)  # type: ignore[no-any-return]
 
     async def cancel(self, agent_id: str) -> int:
         return await self._forward("scheduler.cancel", agent_id=agent_id)  # type: ignore[no-any-return]
+
+    async def get_status(self, task_id: str) -> dict[str, Any] | None:
+        return await self._forward("scheduler.get_status", task_id=task_id)  # type: ignore[no-any-return]
+
+    async def complete(self, task_id: str, *, error: str | None = None) -> None:
+        await self._forward("scheduler.complete", task_id=task_id, error=error)
+
+    async def classify(self, request: Any) -> str:
+        result = await self._forward("scheduler.classify", request=asdict(request))
+        return str(result) if result is not None else "batch"
+
+    async def metrics(self, *, zone_id: str | None = None) -> dict[str, Any]:
+        return await self._forward("scheduler.metrics", zone_id=zone_id)  # type: ignore[no-any-return]
 
 
 class ProxyAgentRegistryBrick(ProxyBrick):

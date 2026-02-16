@@ -4,7 +4,9 @@ Runs as a background task in the FastAPI lifespan, dispatching
 queued tasks to executors. Uses PostgreSQL LISTEN/NOTIFY for
 low-latency notification with a fallback poll.
 
-Related: Issue #1212
+Uses asyncio.TaskGroup for structured concurrency (Issue #1274).
+
+Related: Issue #1212, #1274
 """
 
 from __future__ import annotations
@@ -14,19 +16,26 @@ import contextlib
 import logging
 from typing import TYPE_CHECKING, Any
 
-from nexus.scheduler.constants import AGING_INTERVAL_SECONDS
+from nexus.scheduler.constants import (
+    AGING_INTERVAL_SECONDS,
+    STARVATION_PROMOTION_THRESHOLD_SECS,
+)
 
 if TYPE_CHECKING:
     from nexus.scheduler.service import SchedulerService
 
 logger = logging.getLogger(__name__)
 
+# Starvation promotion runs every 5 minutes
+_STARVATION_CHECK_INTERVAL = 300
+
 
 class TaskDispatcher:
     """Background task dispatcher.
 
     Listens for new task notifications and dispatches them.
-    Also runs periodic aging sweeps.
+    Also runs periodic aging sweeps and starvation promotion.
+    Uses asyncio.TaskGroup for structured lifecycle management.
     """
 
     def __init__(
@@ -39,8 +48,7 @@ class TaskDispatcher:
         self._dsn = db_dsn
         self._poll_interval = poll_interval
         self._running = False
-        self._dispatch_task: asyncio.Task[None] | None = None
-        self._aging_task: asyncio.Task[None] | None = None
+        self._task_group_task: asyncio.Task[None] | None = None
         self._notification_event = asyncio.Event()
 
     async def start(self) -> None:
@@ -51,12 +59,7 @@ class TaskDispatcher:
         self._running = True
         logger.info("Starting task dispatcher")
 
-        self._dispatch_task = asyncio.create_task(self._dispatch_loop())
-        self._aging_task = asyncio.create_task(self._aging_loop())
-
-        # Try to set up LISTEN/NOTIFY if DSN is available
-        if self._dsn:
-            asyncio.create_task(self._listen_loop())
+        self._task_group_task = asyncio.create_task(self._run_all())
 
     async def stop(self) -> None:
         """Gracefully stop the dispatcher."""
@@ -65,19 +68,29 @@ class TaskDispatcher:
 
         logger.info("Stopping task dispatcher")
         self._running = False
-        self._notification_event.set()  # Wake up any waiting
+        self._notification_event.set()
 
-        if self._dispatch_task:
-            self._dispatch_task.cancel()
+        if self._task_group_task:
+            self._task_group_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await self._dispatch_task
-
-        if self._aging_task:
-            self._aging_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._aging_task
+                await self._task_group_task
 
         logger.info("Task dispatcher stopped")
+
+    async def _run_all(self) -> None:
+        """Run all background loops in a TaskGroup."""
+        try:
+            async with asyncio.TaskGroup() as tg:
+                tg.create_task(self._dispatch_loop())
+                tg.create_task(self._aging_loop())
+                tg.create_task(self._starvation_loop())
+                if self._dsn:
+                    tg.create_task(self._listen_loop())
+        except* asyncio.CancelledError:
+            logger.info("Dispatcher TaskGroup cancelled")
+        except* Exception as eg:
+            for exc in eg.exceptions:
+                logger.exception("Dispatcher loop failed: %s", exc)
 
     async def _dispatch_loop(self) -> None:
         """Main dispatch loop: dequeue and process tasks."""
@@ -92,11 +105,9 @@ class TaskDispatcher:
                             "task_type": task.task_type,
                             "executor": task.executor_id,
                             "effective_tier": task.effective_tier,
+                            "priority_class": task.priority_class,
                         },
                     )
-                    # Task execution is handled by the executor
-                    # For now, just log. Actual execution integration
-                    # depends on the executor framework.
                     continue  # Try to dequeue another immediately
 
                 # No tasks available, wait for notification or timeout
@@ -111,7 +122,7 @@ class TaskDispatcher:
                 break
             except Exception:
                 logger.exception("Error in dispatch loop")
-                await asyncio.sleep(1)  # Brief pause before retry
+                await asyncio.sleep(1)
 
     async def _aging_loop(self) -> None:
         """Periodic aging sweep loop."""
@@ -127,10 +138,26 @@ class TaskDispatcher:
 
             await asyncio.sleep(AGING_INTERVAL_SECONDS)
 
+    async def _starvation_loop(self) -> None:
+        """Periodic starvation promotion loop (Issue #1274)."""
+        while self._running:
+            try:
+                count = await self._scheduler.run_starvation_promotion(
+                    STARVATION_PROMOTION_THRESHOLD_SECS,
+                )
+                if count > 0:
+                    logger.info("Starvation promotion: %d tasks promoted", count)
+            except asyncio.CancelledError:
+                break
+            except Exception:
+                logger.exception("Error in starvation promotion")
+
+            await asyncio.sleep(_STARVATION_CHECK_INTERVAL)
+
     async def _listen_loop(self) -> None:
         """LISTEN for task_enqueued notifications."""
         try:
-            import asyncpg  # noqa: F811
+            import asyncpg
 
             conn = await asyncpg.connect(self._dsn)
             try:

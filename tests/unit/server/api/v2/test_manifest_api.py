@@ -72,6 +72,8 @@ def app(agent_registry):
     # Mock NexusFS with agent registry attached
     mock_nexus_fs = MagicMock()
     mock_nexus_fs._agent_registry = agent_registry
+    mock_nexus_fs._services = MagicMock()
+    # manifest_resolver accessed via _service_extras dict
     mock_nexus_fs._service_extras = {"manifest_resolver": MagicMock()}
 
     # Override dependencies

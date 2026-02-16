@@ -93,6 +93,11 @@ class AsyncLocalBackend:
         """Backend name identifier."""
         return "local"
 
+    @property
+    def has_root_path(self) -> bool:
+        """This backend has a local root_path for physical storage."""
+        return True
+
     async def initialize(self) -> None:
         """Initialize backend and create required directories."""
         if self._initialized:
@@ -787,6 +792,68 @@ class AsyncLocalBackend:
             backend_name=self.name,
             path=path,
         )
+
+    async def rmdir(
+        self,
+        path: str,
+        recursive: bool = False,
+        context: "OperationContext | None" = None,
+    ) -> HandlerResponse[None]:
+        """
+        Remove directory from virtual directory structure asynchronously.
+
+        Args:
+            path: Directory path (relative to backend root)
+            recursive: Remove non-empty directory (like rm -rf)
+            context: Operation context (ignored for local backend)
+
+        Returns:
+            HandlerResponse indicating success or failure
+        """
+        import shutil
+
+        start_time = time.perf_counter()
+        full_path = self.dir_root / path.lstrip("/")
+
+        def _rmdir() -> HandlerResponse[None]:
+            if not full_path.exists():
+                return HandlerResponse.not_found(
+                    path=path,
+                    message=f"Directory not found: {path}",
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name=self.name,
+                )
+
+            if not full_path.is_dir():
+                return HandlerResponse.error(
+                    message=f"Not a directory: {path}",
+                    code=400,
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name=self.name,
+                    path=path,
+                )
+
+            try:
+                if recursive:
+                    shutil.rmtree(full_path)
+                else:
+                    full_path.rmdir()
+                return HandlerResponse.ok(
+                    data=None,
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name=self.name,
+                    path=path,
+                )
+            except OSError as e:
+                return HandlerResponse.error(
+                    message=f"Failed to remove directory: {e}",
+                    code=400,
+                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+                    backend_name=self.name,
+                    path=path,
+                )
+
+        return await asyncio.to_thread(_rmdir)
 
     async def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
         """

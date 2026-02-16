@@ -28,12 +28,12 @@ from pathlib import Path
 from typing import Any
 
 from cachetools import TTLCache
-from sqlalchemy import create_engine, delete, select, update
+from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
 from nexus.core.exceptions import AuthenticationError
 from nexus.storage.models import Base, OAuthCredentialModel
-from nexus.storage.models.refresh_token_history import RefreshTokenHistoryModel
+from nexus.storage.token_rotation_store import TokenRotationStore
 
 from .oauth_crypto import OAuthCrypto
 from .oauth_provider import OAuthCredential, OAuthError, OAuthProvider
@@ -103,6 +103,14 @@ class TokenManager:
             self.database_url = db_url or (str(self.engine.url) if self.engine else "")
             self._owns_engine = False
         elif db_url:
+            import warnings
+
+            warnings.warn(
+                "TokenManager(db_url=...) creates a standalone engine outside "
+                "RecordStoreABC. Use session_factory= for proper pillar compliance.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             self.database_url = db_url
             self.engine = create_engine(
                 self.database_url,
@@ -112,6 +120,14 @@ class TokenManager:
             Base.metadata.create_all(self.engine)
             self._owns_engine = True
         elif db_path:
+            import warnings
+
+            warnings.warn(
+                "TokenManager(db_path=...) creates a standalone engine outside "
+                "RecordStoreABC. Use session_factory= for proper pillar compliance.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
             self.database_url = f"sqlite:///{db_path}"
             self.engine = create_engine(
                 self.database_url,
@@ -126,6 +142,7 @@ class TokenManager:
         self.crypto = OAuthCrypto(encryption_key=encryption_key, db_url=self.database_url)
         self.providers: dict[str, OAuthProvider] = {}
         self._audit_logger = audit_logger
+        self._rotation_store = TokenRotationStore()
 
         # In-memory cache: (provider, user_email, zone_id) -> access_token
         self._token_cache: TTLCache[tuple[str, str, str], str] = TTLCache(
@@ -354,10 +371,10 @@ class TokenManager:
                         ):
                             # Reuse detection: if the old hash is already in history,
                             # another caller already rotated it — our copy is stale
-                            if old_refresh_hash and self._detect_reuse_in_session(
+                            if old_refresh_hash and self._rotation_store.detect_reuse(
                                 session, model.token_family_id, old_refresh_hash
                             ):
-                                count = self._invalidate_family_in_session(
+                                count = self._rotation_store.invalidate_family(
                                     session, model.token_family_id
                                 )
                                 session.commit()
@@ -381,7 +398,14 @@ class TokenManager:
                                 )
 
                             # Provider rotated the refresh token — record the old one
-                            self._record_rotation(session, model, old_refresh_hash)
+                            self._rotation_store.record_rotation(
+                                session,
+                                credential_id=model.credential_id,
+                                token_family_id=model.token_family_id or "",
+                                refresh_token_hash=old_refresh_hash,
+                                rotation_counter=model.rotation_counter or 0,
+                                zone_id=model.zone_id,
+                            )
 
                             encrypted_refresh_token = self.crypto.encrypt_token(
                                 new_credential.refresh_token
@@ -406,7 +430,11 @@ class TokenManager:
                         if (model.rotation_counter or 0) > 0 and (
                             model.rotation_counter or 0
                         ) % 10 == 0:
-                            self._prune_history(session, model.token_family_id)
+                            self._rotation_store.prune_history(
+                                session,
+                                model.token_family_id,
+                                retention_days=_HISTORY_RETENTION_DAYS,
+                            )
 
                         credential = new_credential
                         refreshed = True
@@ -460,12 +488,7 @@ class TokenManager:
         replay attack.  Returns True if reuse is detected.
         """
         with self.SessionLocal() as session:
-            stmt = select(RefreshTokenHistoryModel).where(
-                RefreshTokenHistoryModel.token_family_id == token_family_id,
-                RefreshTokenHistoryModel.refresh_token_hash == refresh_token_hash,
-            )
-            result = session.execute(stmt).scalar_one_or_none()
-            return result is not None
+            return self._rotation_store.detect_reuse(session, token_family_id, refresh_token_hash)
 
     def invalidate_family(self, token_family_id: str) -> int:
         """Invalidate all credentials in a token family.
@@ -477,21 +500,10 @@ class TokenManager:
             Number of credentials revoked.
         """
         with self.SessionLocal() as session:
-            now = datetime.now(UTC)
-            result = session.execute(
-                update(OAuthCredentialModel)
-                .where(OAuthCredentialModel.token_family_id == token_family_id)
-                .where(OAuthCredentialModel.revoked == 0)
-                .values(revoked=1, revoked_at=now)
-            )
+            count = self._rotation_store.invalidate_family(session, token_family_id)
             session.commit()
-            count = result.rowcount or 0
 
             if count > 0:
-                logger.warning(
-                    f"SECURITY: Invalidated {count} credential(s) in family "
-                    f"{token_family_id} due to refresh token reuse"
-                )
                 self._log_audit(
                     "family_invalidated",
                     "",
@@ -654,90 +666,6 @@ class TokenManager:
         if last.tzinfo is None:
             last = last.replace(tzinfo=UTC)
         return datetime.now(UTC) - last < timedelta(seconds=_REFRESH_COOLDOWN_SECONDS)
-
-    def _record_rotation(
-        self,
-        session: Any,
-        model: OAuthCredentialModel,
-        old_refresh_hash: str | None,
-    ) -> None:
-        """Record a retired refresh token in the history table."""
-        if not old_refresh_hash:
-            return
-
-        history_entry = RefreshTokenHistoryModel(
-            token_family_id=model.token_family_id or "",
-            credential_id=model.credential_id,
-            refresh_token_hash=old_refresh_hash,
-            rotation_counter=model.rotation_counter or 0,
-            zone_id=model.zone_id,
-            rotated_at=datetime.now(UTC),
-        )
-        session.add(history_entry)
-
-    def _detect_reuse_in_session(
-        self,
-        session: Any,
-        token_family_id: str | None,
-        refresh_token_hash: str,
-    ) -> bool:
-        """Check if a refresh token hash exists in rotation history (in-session).
-
-        Same logic as ``detect_reuse()`` but uses the caller's open session
-        instead of creating a new one — avoids nested transactions.
-        """
-        if not token_family_id:
-            return False
-        stmt = select(RefreshTokenHistoryModel).where(
-            RefreshTokenHistoryModel.token_family_id == token_family_id,
-            RefreshTokenHistoryModel.refresh_token_hash == refresh_token_hash,
-        )
-        return session.execute(stmt).scalar_one_or_none() is not None
-
-    def _invalidate_family_in_session(
-        self,
-        session: Any,
-        token_family_id: str | None,
-    ) -> int:
-        """Revoke all credentials in a token family (in-session).
-
-        Same logic as ``invalidate_family()`` but uses the caller's open
-        session — the caller is responsible for commit.
-        """
-        if not token_family_id:
-            return 0
-        now = datetime.now(UTC)
-        result = session.execute(
-            update(OAuthCredentialModel)
-            .where(OAuthCredentialModel.token_family_id == token_family_id)
-            .where(OAuthCredentialModel.revoked == 0)
-            .values(revoked=1, revoked_at=now)
-        )
-        count = result.rowcount or 0
-        if count > 0:
-            logger.warning(
-                f"SECURITY: Invalidated {count} credential(s) in family "
-                f"{token_family_id} due to refresh token reuse (in-session)"
-            )
-        return count
-
-    def _prune_history(self, session: Any, token_family_id: str | None) -> None:
-        """Delete history entries older than _HISTORY_RETENTION_DAYS.
-
-        Called within an open session — does NOT commit (caller handles that).
-        """
-        if not token_family_id:
-            return
-        cutoff = datetime.now(UTC) - timedelta(days=_HISTORY_RETENTION_DAYS)
-        try:
-            session.execute(
-                delete(RefreshTokenHistoryModel).where(
-                    RefreshTokenHistoryModel.token_family_id == token_family_id,
-                    RefreshTokenHistoryModel.rotated_at < cutoff,
-                )
-            )
-        except Exception:
-            logger.warning("Failed to prune token history", exc_info=True)
 
     def _invalidate_cache(self, provider: str, user_email: str, zone_id: str) -> None:
         """Remove a token from the in-memory cache."""

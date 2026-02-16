@@ -780,7 +780,7 @@ async def lifespan(_app: FastAPI) -> Any:
     # Fall back to creating one here if the factory didn't provide it.
     _upload_cleanup_task = None
     _factory_upload_svc = (
-        _app.state.nexus_fs._service_extras.get("chunked_upload_service")
+        getattr(_app.state.nexus_fs, "_service_extras", {}).get("chunked_upload_service")
         if _app.state.nexus_fs
         else None
     )
@@ -834,7 +834,7 @@ async def lifespan(_app: FastAPI) -> Any:
 
     # Issue #726: Wire circuit breaker from factory for health endpoint access
     if _app.state.nexus_fs:
-        _app.state.rebac_circuit_breaker = _app.state.nexus_fs._service_extras.get(
+        _app.state.rebac_circuit_breaker = getattr(_app.state.nexus_fs, "_service_extras", {}).get(
             "rebac_circuit_breaker"
         )
 
@@ -1255,6 +1255,16 @@ def create_app(
     else:
         app.state.async_session_factory = None
 
+    # Expose sync session_factory from RecordStoreABC (Issue #1519).
+    # This is the canonical way for sync endpoints to get database sessions
+    # without reaching into NexusFS.SessionLocal internals.
+    if _record_store is not None:
+        app.state.session_factory = _record_store.session_factory
+    elif hasattr(nexus_fs, "SessionLocal") and nexus_fs.SessionLocal is not None:
+        app.state.session_factory = nexus_fs.SessionLocal
+    else:
+        app.state.session_factory = None
+
     # Thread pool and timeout settings (Issue #932)
     app.state.thread_pool_size = thread_pool_size or int(
         os.environ.get("NEXUS_THREAD_POOL_SIZE", "200")
@@ -1429,7 +1439,7 @@ def create_app(
 
         from nexus.server.pg_metrics_collector import QueryObserverCollector
 
-        obs_sub = nexus_fs._service_extras.get("observability_subsystem")
+        obs_sub = getattr(nexus_fs, "_service_extras", {}).get("observability_subsystem")
         if obs_sub is not None:
             REGISTRY.register(QueryObserverCollector(obs_sub.observer))
     except Exception:
@@ -1726,9 +1736,8 @@ def _register_routes(app: FastAPI) -> None:
 
         # Circuit breaker health (Issue #1366)
         _resiliency_mgr = (
-            _fastapi_app.state.nexus_fs._service_extras.get("resiliency_manager")
+            getattr(_fastapi_app.state.nexus_fs, "_service_extras", {}).get("resiliency_manager")
             if _fastapi_app.state.nexus_fs
-            and hasattr(_fastapi_app.state.nexus_fs, "_service_extras")
             else None
         )
         if _resiliency_mgr is not None:

@@ -19,6 +19,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from nexus.core.agent_registry import AgentRegistry
 from nexus.services.delegation.errors import DelegationChainError, EscalationError
 from nexus.services.delegation.models import DelegationMode
 from nexus.services.delegation.service import DelegationService
@@ -65,11 +66,20 @@ def entity_registry(engine):
 
 
 @pytest.fixture()
-def delegation_service(session_factory, rebac_manager, entity_registry):
+def agent_registry(session_factory, entity_registry):
+    return AgentRegistry(
+        session_factory=session_factory,
+        entity_registry=entity_registry,
+    )
+
+
+@pytest.fixture()
+def delegation_service(session_factory, rebac_manager, entity_registry, agent_registry):
     return DelegationService(
         session_factory=session_factory,
         rebac_manager=rebac_manager,
         entity_registry=entity_registry,
+        agent_registry=agent_registry,
     )
 
 

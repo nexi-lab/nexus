@@ -10707,7 +10707,9 @@ class NexusFS(  # type: ignore[misc]
         if hasattr(self, "router"):
             import contextlib
 
+            from nexus.core.protocols.connector import OAuthCapableProtocol
+
             for mount in self.router.list_mounts():
                 with contextlib.suppress(Exception):
-                    if hasattr(mount.backend, "token_manager"):
+                    if isinstance(mount.backend, OAuthCapableProtocol):
                         mount.backend.token_manager.close()

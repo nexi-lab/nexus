@@ -1,4 +1,4 @@
-"""Storage connector protocol interfaces (Issue #1601).
+"""Storage connector protocol interfaces (Issue #1601, #1703).
 
 Defines the Storage Brick boundary as composable protocols:
 
@@ -7,15 +7,20 @@ Defines the Storage Brick boundary as composable protocols:
 - ``ConnectorProtocol`` — Full connector interface (Storage Brick boundary)
 - ``PassthroughProtocol`` — Same-box operations (locking, physical paths)
 - ``OAuthCapableProtocol`` — OAuth token management capability
+- ``StreamingProtocol`` — Memory-efficient large file I/O (stream/range)
+- ``BatchContentProtocol`` — Bulk content read optimization
+- ``DirectoryListingProtocol`` — Extended directory listing + file metadata
 
 Design decisions:
     - Protocol for brick interfaces, ABC for internal implementations (§11.3)
     - Protocols in ``core/protocols/``, implementations stay in ``backends/`` (§11.4)
     - Modeled after ``VFSRouterProtocol`` pattern (§5.1)
+    - Layered protocols: consumers import only the capability they need (§5.6)
 
 References:
-    - docs/design/NEXUS-LEGO-ARCHITECTURE.md §11.3, §11.4
+    - docs/design/NEXUS-LEGO-ARCHITECTURE.md §5.1, §5.6, §11.3, §11.4
     - Issue #1601: ConnectorProtocol + Storage Brick Extraction
+    - Issue #1703: Make backends implement ConnectorProtocol
 """
 
 from __future__ import annotations
@@ -24,7 +29,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from nexus.backends.backend import HandlerStatusResponse
+    from collections.abc import Iterator
+
+    from nexus.backends.backend import FileInfo, HandlerStatusResponse
     from nexus.core.permissions import OperationContext
     from nexus.core.response import HandlerResponse
 
@@ -159,3 +166,67 @@ class OAuthCapableProtocol(Protocol):
     token_manager_db: str
     user_email: str | None
     provider: str
+
+
+@runtime_checkable
+class StreamingProtocol(Protocol):
+    """Memory-efficient large file I/O — streaming reads and writes.
+
+    Used by nexus_fs_core for HTTP range requests and large file operations.
+    All Backend subclasses provide default implementations; backends with
+    native streaming (e.g., GCS, S3) can override for true streaming.
+    """
+
+    def stream_content(
+        self,
+        content_hash: str,
+        chunk_size: int = 8192,
+        context: OperationContext | None = None,
+    ) -> Any: ...
+
+    def stream_range(
+        self,
+        content_hash: str,
+        start: int,
+        end: int,
+        chunk_size: int = 8192,
+        context: OperationContext | None = None,
+    ) -> Iterator[bytes]: ...
+
+    def write_stream(
+        self,
+        chunks: Iterator[bytes],
+        context: OperationContext | None = None,
+    ) -> HandlerResponse[str]: ...
+
+
+@runtime_checkable
+class BatchContentProtocol(Protocol):
+    """Bulk content read optimization.
+
+    Used by object_store, async_nexus_fs, and memory services to reduce
+    round-trips when reading multiple content items.
+    """
+
+    def batch_read_content(
+        self,
+        content_hashes: list[str],
+        context: OperationContext | None = None,
+    ) -> dict[str, bytes | None]: ...
+
+
+@runtime_checkable
+class DirectoryListingProtocol(Protocol):
+    """Extended directory operations — listing and file metadata.
+
+    Used by search_service, sync_service, and write_back_service for
+    directory enumeration and delta sync change detection.
+    """
+
+    def list_dir(
+        self, path: str, context: OperationContext | None = None
+    ) -> list[str]: ...
+
+    def get_file_info(
+        self, path: str, context: OperationContext | None = None
+    ) -> HandlerResponse[FileInfo]: ...

@@ -39,6 +39,7 @@ from nats.js.api import (
 )
 from nats.js.errors import NotFoundError
 
+from nexus.constants import DEFAULT_NATS_URL
 from nexus.core.event_bus import (
     AckableEvent,
     EventBusBase,
@@ -82,7 +83,7 @@ class NatsEventBus(EventBusBase):
 
     def __init__(
         self,
-        nats_url: str = "nats://localhost:4222",
+        nats_url: str = DEFAULT_NATS_URL,
         session_factory: Any | None = None,
         node_id: str | None = None,
         max_reconnect_attempts: int = -1,

@@ -47,3 +47,10 @@ DEFAULT_OTEL_ENDPOINT = "http://localhost:4317"
 
 DEFAULT_ZOEKT_URL = "http://localhost:6070"
 """Default Zoekt code search server URL. Override via ZOEKT_URL env var."""
+
+# =============================================================================
+# Event Bus Defaults
+# =============================================================================
+
+DEFAULT_NATS_URL = "nats://localhost:4222"
+"""Default NATS JetStream server URL. Override via NEXUS_NATS_URL env var."""

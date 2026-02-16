@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771214228818,
+  "lastUpdate": 1771216681459,
   "repoUrl": "https://github.com/nexi-lab/nexus",
   "entries": {
     "Benchmark": [
@@ -1500,6 +1500,156 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000023429199499528045",
             "extra": "mean: 1.5094706358207215 msec\nrounds: 670"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "taofeng.nju@gmail.com",
+            "name": "oliverfeng",
+            "username": "windoliver"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": false,
+          "id": "1cb4f5b122518fda029b650e1d5a575ba778f035",
+          "message": "fix(#1291): Fix circular imports via Protocol — extract zero-dep leaf module (#1614)\n\n* fix(#1291): extract zero-dependency leaf module to break circular import hub\n\n- Create `core/types.py` with Permission, OperationContext, ContextIdentity,\n  and extract_context_identity() — zero runtime nexus.* imports\n- Re-export from permissions.py and subsystem.py for backward compatibility\n  (72+ downstream files unchanged)\n- Move protocol file imports (search.py, context_manifest.py) to TYPE_CHECKING\n- Remove 6 redundant deferred OperationContext imports in nexus_fs.py\n- Consolidate 7 EntityRegistry deferred imports into _ensure_entity_registry()\n- Add AST-based import cycle detection test (CI guardrail)\n- Add re-export identity tests, protocol import cleanliness tests,\n  startup-time benchmarks, and factory smoke tests (46 new tests)\n\n* style(#1291): apply ruff format to test files\n\n* merge: resolve conflicts with origin/main, add PermissionEnforcer re-export\n\nConflicts resolved:\n- nexus_fs.py: use services.memory.memory_api path, keep EntityRegistry TYPE_CHECKING\n- permissions.py: drop stale TYPE_CHECKING imports, remove unused uuid\n\nFix: add lazy __getattr__ re-export for PermissionEnforcer (moved to\nservices/permissions/enforcer.py) to maintain backward compatibility.\nUses __getattr__ to avoid circular import since enforcer.py imports\nfrom this module.",
+          "timestamp": "2026-02-15T20:25:16-08:00",
+          "tree_id": "a045fea8945f1e80696382fa4751223ca5e30a6a",
+          "url": "https://github.com/nexi-lab/nexus/commit/1cb4f5b122518fda029b650e1d5a575ba778f035"
+        },
+        "date": 1771216680324,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/benchmarks/test_async_permission_performance.py::test_permission_overhead_acceptable",
+            "value": 309.77542738289793,
+            "unit": "iter/sec",
+            "range": "stddev: 0.008854167132473556",
+            "extra": "mean: 3.228145009590931 msec\nrounds: 417"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_write_small_file",
+            "value": 316.4906355820111,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0010326029850446393",
+            "extra": "mean: 3.1596511478484914 msec\nrounds: 372"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_read_small_file",
+            "value": 13393.883047512549,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001651721803267741",
+            "extra": "mean: 74.66094757231103 usec\nrounds: 16518"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_read_cached_file",
+            "value": 17101.836407720533,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000009431262621856472",
+            "extra": "mean: 58.47325258874276 usec\nrounds: 15163"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_exists_check",
+            "value": 53045.79689699658,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000014154613291585645",
+            "extra": "mean: 18.85163497386575 usec\nrounds: 45268"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestGlobBenchmarks::test_list_large_directory",
+            "value": 230.2783336661459,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0007769983877190351",
+            "extra": "mean: 4.342570940476689 msec\nrounds: 252"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestGlobBenchmarks::test_glob_simple_pattern",
+            "value": 185.5979798815373,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00033974354454854687",
+            "extra": "mean: 5.387989678757688 msec\nrounds: 193"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestGlobBenchmarks::test_list_1k_files",
+            "value": 61.441498048754006,
+            "unit": "iter/sec",
+            "range": "stddev: 0.01988314916409248",
+            "extra": "mean: 16.275644828947645 msec\nrounds: 76"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestHashingBenchmarks::test_sha256_medium",
+            "value": 23754.664929477964,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000004168931009597231",
+            "extra": "mean: 42.09699454691387 usec\nrounds: 23839"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestPermissionBenchmarks::test_permission_check_bulk_python",
+            "value": 2653.9149925876213,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000029375139086476385",
+            "extra": "mean: 376.80182025158973 usec\nrounds: 1669"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestPermissionBenchmarks::test_permission_check_bulk_rust",
+            "value": 4998.903109987136,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00005793160613459497",
+            "extra": "mean: 200.04388522796822 usec\nrounds: 3581"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBulkOperationBenchmarks::test_write_batch_10",
+            "value": 41.10990559946031,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0009749148226896443",
+            "extra": "mean: 24.3250376136385 msec\nrounds: 44"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBulkOperationBenchmarks::test_read_bulk_10",
+            "value": 1477.939656382007,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00016831903522977624",
+            "extra": "mean: 676.6176113360391 usec\nrounds: 1482"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBlake3HashingBenchmarks::test_hash_1mb_content",
+            "value": 3957.9597657089753,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000005749024531207383",
+            "extra": "mean: 252.6554232975821 usec\nrounds: 4009"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBlake3HashingBenchmarks::test_hash_smart_1mb_content",
+            "value": 18271.315747927358,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000003820378560196829",
+            "extra": "mean: 54.730595967804724 usec\nrounds: 17360"
+          },
+          {
+            "name": "tests/benchmarks/test_search_benchmarks.py::TestPythonRegexBenchmarks::test_python_regex_simple_10k_lines",
+            "value": 3927.4231210872917,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000009030897736959002",
+            "extra": "mean: 254.61987903232435 usec\nrounds: 3968"
+          },
+          {
+            "name": "tests/benchmarks/test_search_benchmarks.py::TestRustGrepBenchmarks::test_rust_grep_10k_lines",
+            "value": 1032.058862481676,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000011979046727781178",
+            "extra": "mean: 968.9369825238576 usec\nrounds: 1030"
+          },
+          {
+            "name": "tests/benchmarks/test_search_benchmarks.py::TestHybridSearchFusionBenchmarks::test_rrf_fusion_1k_results",
+            "value": 651.9425737289235,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000045593933219432946",
+            "extra": "mean: 1.5338774307686156 msec\nrounds: 650"
           }
         ]
       }

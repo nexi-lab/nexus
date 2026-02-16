@@ -1,11 +1,11 @@
-"""Agent registry with lifecycle state machine (Agent OS Phase 1, Issues #1240, #1588).
+"""Agent registry with lifecycle state machine (Agent OS Phase 1, Issues #1240, #1588, #1589).
 
 Consolidates all agent identity and lifecycle logic into a single class:
 - Registration and unregistration
 - State transitions with strict allowlist validation
 - Session generation counter (increments on new session only)
 - Optimistic locking via generation counter (cross-DB compatible)
-- In-memory heartbeat buffer with batch flush
+- Heartbeat buffering via composed HeartbeatBuffer (Issue #1589)
 - Queries: list by zone, owner, stale detection
 
 Replaces scattered agent logic from agents.py and entity_registry.py
@@ -16,12 +16,13 @@ Design decisions:
     - #2A: Generation increments on new session only (→ CONNECTED)
     - #5A: AgentRegistry consolidates all agent logic
     - #8A: Strict allowlist table for valid transitions
-    - #13A: In-memory heartbeat with batch flush
+    - #13A: In-memory heartbeat with batch flush (via HeartbeatBuffer)
     - #16B: Optimistic locking via generation counter
 
 References:
     - AGENT-OS-DEEP-RESEARCH.md Part 11 (Final Architecture)
     - Issue #1240: AgentRecord with session generation counter and state machine
+    - Issue #1589: Extract HeartbeatBuffer from AgentRegistry (SRP)
 """
 
 from __future__ import annotations
@@ -29,7 +30,6 @@ from __future__ import annotations
 import json
 import logging
 import threading
-import time
 import types
 from collections.abc import Generator
 from contextlib import contextmanager
@@ -47,6 +47,7 @@ from nexus.services.agents.agent_record import (
     is_new_session,
     validate_transition,
 )
+from nexus.core.heartbeat_buffer import HeartbeatBuffer
 from nexus.storage.models import AgentRecordModel
 
 if TYPE_CHECKING:
@@ -101,8 +102,8 @@ _CACHE_MISS = object()
 class AgentRegistry:
     """Agent registry with lifecycle state machine and session generation counters.
 
-    Thread-safe via threading.Lock for the heartbeat buffer. Database operations
-    use session-per-operation pattern (no held sessions).
+    Heartbeat buffering is delegated to :class:`HeartbeatBuffer` (Issue #1589).
+    Database operations use session-per-operation pattern (no held sessions).
 
     Args:
         session_factory: SQLAlchemy sessionmaker for database access.
@@ -110,6 +111,7 @@ class AgentRegistry:
         flush_interval: Seconds between heartbeat buffer flushes (default: 60).
         cache_maxsize: Max entries in the get() TTLCache (default: 5000).
         cache_ttl: TTL in seconds for cached records (default: 10).
+        max_buffer_size: Hard cap on heartbeat buffer entries (default: 50_000).
     """
 
     def __init__(
@@ -123,12 +125,8 @@ class AgentRegistry:
     ) -> None:
         self._session_factory = session_factory
         self._entity_registry = entity_registry
-        self._heartbeat_buffer: dict[str, datetime] = {}
         self._known_agents: TTLCache[str, bool] = TTLCache(maxsize=10_000, ttl=3600)
-        self._flush_interval = flush_interval
-        self._max_buffer_size = max_buffer_size
-        self._last_flush = time.monotonic()
-        self._lock = threading.Lock()
+        self._lock = threading.Lock()  # protects _known_agents only
         # TTLCache for get() lookups to avoid per-request DB hits.
         # cachetools.TTLCache is NOT thread-safe — all access must be
         # synchronized via _cache_lock (see cachetools docs & issue #294).
@@ -136,6 +134,12 @@ class AgentRegistry:
         self._record_cache: TTLCache[str, AgentRecord | None] = TTLCache(
             maxsize=cache_maxsize,
             ttl=cache_ttl,
+        )
+        # Heartbeat buffer composed via DI (Issue #1589)
+        self._heartbeat_buffer = HeartbeatBuffer(
+            flush_callback=self._flush_to_db,
+            flush_interval=flush_interval,
+            max_buffer_size=max_buffer_size,
         )
 
     @contextmanager
@@ -256,7 +260,7 @@ class AgentRegistry:
                 )
                 raise
 
-        logger.debug(f"[AGENT-REG] Registered agent {agent_id} (owner={owner_id})")
+        logger.debug("[AGENT-REG] Registered agent %s (owner=%s)", agent_id, owner_id)
         return record
 
     def get(self, agent_id: str) -> AgentRecord | None:
@@ -395,8 +399,12 @@ class AgentRegistry:
             self._record_cache.pop(agent_id, None)
 
         logger.debug(
-            f"[AGENT-REG] Transition {agent_id}: {current_state.value} -> {target_state.value} "
-            f"(gen {model.generation} -> {new_generation})"
+            "[AGENT-REG] Transition %s: %s -> %s (gen %d -> %d)",
+            agent_id,
+            current_state.value,
+            target_state.value,
+            model.generation,
+            new_generation,
         )
 
         # Structured log for observability when agent connects with manifest
@@ -412,12 +420,13 @@ class AgentRegistry:
     def heartbeat(self, agent_id: str) -> None:
         """Record a heartbeat for an agent.
 
-        Writes to in-memory buffer first (Decision #13A). The buffer is
-        flushed to DB when the flush_interval elapses. This reduces write
+        Writes to the composed HeartbeatBuffer (Decision #13A). The buffer
+        is flushed to DB when the flush_interval elapses. This reduces write
         amplification from frequent heartbeats.
 
         On the first call for a given agent_id, verifies existence via DB.
-        Subsequent calls use a TTLCache of known agent IDs for fast-path.
+        Subsequent calls use a TTLCache of known agent IDs for fast-path
+        (single-acquisition, Decision #2B).
 
         Args:
             agent_id: Agent identifier.
@@ -425,7 +434,7 @@ class AgentRegistry:
         Raises:
             ValueError: If agent not found.
         """
-        # Fast-path: skip DB check if agent is already known
+        # Single-acquisition fast path for known agents
         with self._lock:
             known = agent_id in self._known_agents
 
@@ -436,36 +445,7 @@ class AgentRegistry:
             with self._lock:
                 self._known_agents[agent_id] = True
 
-        now = datetime.now(UTC)
-        should_flush = False
-        buffer_snapshot: dict[str, datetime] | None = None
-
-        with self._lock:
-            self._heartbeat_buffer[agent_id] = now
-
-            # Warn at 80% buffer capacity (Decision #15A)
-            buffer_len = len(self._heartbeat_buffer)
-            threshold = int(0.8 * self._max_buffer_size)
-            if buffer_len >= threshold:
-                pct = buffer_len / self._max_buffer_size * 100
-                logger.warning(
-                    "[AGENT-REG] Heartbeat buffer at %.0f%% capacity (%d/%d)",
-                    pct,
-                    buffer_len,
-                    self._max_buffer_size,
-                )
-
-            # Check if auto-flush is needed
-            elapsed = time.monotonic() - self._last_flush
-            if elapsed >= self._flush_interval:
-                # Copy buffer and clear under lock, flush outside lock
-                buffer_snapshot = dict(self._heartbeat_buffer)
-                self._heartbeat_buffer.clear()
-                self._last_flush = time.monotonic()
-                should_flush = True
-
-        if should_flush and buffer_snapshot:
-            self._flush_to_db(buffer_snapshot)
+        self._heartbeat_buffer.record(agent_id)
 
     def flush_heartbeats(self) -> int:
         """Flush the heartbeat buffer to the database.
@@ -473,21 +453,13 @@ class AgentRegistry:
         Returns:
             Number of heartbeats flushed.
         """
-        with self._lock:
-            if not self._heartbeat_buffer:
-                return 0
-            buffer_snapshot = dict(self._heartbeat_buffer)
-            self._heartbeat_buffer.clear()
-            self._last_flush = time.monotonic()
-
-        # DB I/O happens outside the lock
-        return self._flush_to_db(buffer_snapshot)
+        return self._heartbeat_buffer.flush()
 
     def _flush_to_db(self, buffer: dict[str, datetime]) -> int:
         """Flush a buffer snapshot to the database.
 
-        Uses batch execution to minimize DB round-trips. If the DB write
-        fails, restores entries to the in-memory buffer to prevent data loss.
+        Used as the flush_callback for HeartbeatBuffer. The buffer handles
+        restore-on-failure; this method only does the DB write.
 
         Args:
             buffer: Mapping of agent_id -> heartbeat timestamp to flush.
@@ -498,50 +470,26 @@ class AgentRegistry:
         if not buffer:
             return 0
 
-        try:
-            # Batch all UPDATEs in a single executemany call
-            params = [
-                {"aid": agent_id, "ts": heartbeat_time}
-                for agent_id, heartbeat_time in buffer.items()
-            ]
+        params = [
+            {"aid": agent_id, "ts": heartbeat_time} for agent_id, heartbeat_time in buffer.items()
+        ]
 
-            with self._get_session() as session:
-                conn = session.connection()
-                table = cast("sa.Table", AgentRecordModel.__table__)
-                stmt = (
-                    update(table)
-                    .where(table.c.agent_id == sa.bindparam("aid"))
-                    .values(
-                        last_heartbeat=sa.bindparam("ts"),
-                        updated_at=sa.bindparam("ts"),
-                    )
+        with self._get_session() as session:
+            conn = session.connection()
+            table = cast("sa.Table", AgentRecordModel.__table__)
+            stmt = (
+                update(table)
+                .where(table.c.agent_id == sa.bindparam("aid"))
+                .values(
+                    last_heartbeat=sa.bindparam("ts"),
+                    updated_at=sa.bindparam("ts"),
                 )
-                conn.execute(stmt, params)
-
-            flushed = len(params)
-            logger.debug(f"[AGENT-REG] Flushed {flushed} heartbeats to DB (batch)")
-            return flushed
-
-        except Exception:
-            # Restore buffer entries to prevent data loss (bounded)
-            with self._lock:
-                for aid, ts in buffer.items():
-                    if len(self._heartbeat_buffer) >= self._max_buffer_size:
-                        logger.warning(
-                            "[AGENT-REG] Heartbeat buffer at max capacity (%d), "
-                            "dropping %d entries to prevent OOM",
-                            self._max_buffer_size,
-                            len(buffer) - len(self._heartbeat_buffer),
-                        )
-                        break
-                    existing = self._heartbeat_buffer.get(aid)
-                    if existing is None or ts > existing:
-                        self._heartbeat_buffer[aid] = ts
-            logger.warning(
-                "[AGENT-REG] Heartbeat flush failed, entries restored to buffer",
-                exc_info=True,
             )
-            raise
+            conn.execute(stmt, params)
+
+        flushed = len(params)
+        logger.debug("[AGENT-REG] Flushed %d heartbeats to DB (batch)", flushed)
+        return flushed
 
     def list_by_zone(
         self,
@@ -633,13 +581,13 @@ class AgentRegistry:
                 raise
 
         # Remove from heartbeat buffer, known agents, and record cache
+        self._heartbeat_buffer.remove(agent_id)
         with self._lock:
-            self._heartbeat_buffer.pop(agent_id, None)
             self._known_agents.pop(agent_id, None)
         with self._cache_lock:
             self._record_cache.pop(agent_id, None)
 
-        logger.debug(f"[AGENT-REG] Unregistered agent {agent_id}")
+        logger.debug("[AGENT-REG] Unregistered agent %s", agent_id)
         return True
 
     def update_manifest(
@@ -717,10 +665,7 @@ class AgentRegistry:
         cutoff = datetime.now(UTC) - timedelta(seconds=threshold_seconds)
 
         # Check in-memory buffer for recent heartbeats not yet flushed
-        with self._lock:
-            recently_heartbeated = {
-                aid for aid, ts in self._heartbeat_buffer.items() if ts >= cutoff
-            }
+        recently_heartbeated = self._heartbeat_buffer.recently_heartbeated(cutoff)
 
         with self._get_session() as session:
             stmt = (

@@ -271,7 +271,7 @@ class TestHeartbeat:
         registry.transition("agent-1", AgentState.CONNECTED, expected_generation=0)
         registry.heartbeat("agent-1")
         # Buffer should contain the agent
-        assert "agent-1" in registry._heartbeat_buffer
+        assert "agent-1" in registry._heartbeat_buffer._buffer
 
     def test_flush_heartbeats(self, registry):
         """flush_heartbeats writes buffer to DB and clears it."""
@@ -280,7 +280,7 @@ class TestHeartbeat:
         registry.heartbeat("agent-1")
         flushed = registry.flush_heartbeats()
         assert flushed >= 1
-        assert len(registry._heartbeat_buffer) == 0
+        assert registry._heartbeat_buffer.stats()["buffer_size"] == 0
 
     def test_heartbeat_persists_after_flush(self, registry):
         """After flush, get() returns agent with updated last_heartbeat."""
@@ -299,7 +299,7 @@ class TestHeartbeat:
         reg.transition("agent-1", AgentState.CONNECTED, expected_generation=0)
         reg.heartbeat("agent-1")
         # Buffer should NOT have been auto-flushed
-        assert "agent-1" in reg._heartbeat_buffer
+        assert "agent-1" in reg._heartbeat_buffer._buffer
 
     def test_auto_flush_on_interval(self, session_factory):
         """Heartbeats auto-flush when flush_interval elapses."""
@@ -308,7 +308,7 @@ class TestHeartbeat:
         reg.transition("agent-1", AgentState.CONNECTED, expected_generation=0)
         reg.heartbeat("agent-1")
         # With flush_interval=0, should auto-flush immediately
-        assert len(reg._heartbeat_buffer) == 0
+        assert reg._heartbeat_buffer.stats()["buffer_size"] == 0
 
     def test_heartbeat_nonexistent_agent(self, registry):
         """Heartbeat for nonexistent agent raises ValueError."""
@@ -606,14 +606,14 @@ class TestHeartbeatCapacityWarning:
             reg.transition(f"agent-{i}", AgentState.CONNECTED, expected_generation=0)
 
         # Heartbeat 7 agents (below threshold)
-        with caplog.at_level(logging.WARNING, logger="nexus.core.agent_registry"):
+        with caplog.at_level(logging.WARNING, logger="nexus.core.heartbeat_buffer"):
             caplog.clear()
             for i in range(7):
                 reg.heartbeat(f"agent-{i}")
             assert "capacity" not in caplog.text
 
         # Heartbeat the 8th agent (hits 80%)
-        with caplog.at_level(logging.WARNING, logger="nexus.core.agent_registry"):
+        with caplog.at_level(logging.WARNING, logger="nexus.core.heartbeat_buffer"):
             caplog.clear()
             reg.heartbeat("agent-7")
             assert "capacity" in caplog.text

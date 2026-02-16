@@ -310,6 +310,8 @@ async def _startup_scheduler(app: FastAPI) -> None:
         import asyncpg
 
         from nexus.pay.credits import CreditsService
+        from nexus.scheduler.events import AgentStateEmitter
+        from nexus.scheduler.policies.fair_share import FairShareCounter
         from nexus.scheduler.queue import TaskQueue
         from nexus.scheduler.service import SchedulerService
 
@@ -347,13 +349,44 @@ async def _startup_scheduler(app: FastAPI) -> None:
                 WHERE status = 'queued'
             """)
 
+            # Astraea columns (Issue #1274) — idempotent ALTER TABLE
+            for col_sql in (
+                "ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS request_state TEXT NOT NULL DEFAULT 'pending'",
+                "ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS priority_class TEXT NOT NULL DEFAULT 'batch'",
+                "ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS executor_state TEXT NOT NULL DEFAULT 'UNKNOWN'",
+                "ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS estimated_service_time REAL NOT NULL DEFAULT 30.0",
+            ):
+                await conn.execute(col_sql)
+
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_sched_astraea_dequeue
+                ON scheduled_tasks (priority_class, enqueued_at)
+                WHERE status = 'queued'
+            """)
+
+        # Astraea: state emitter + fair-share (Issue #1274)
+        state_emitter = AgentStateEmitter()
+        fair_share = FairShareCounter()
+
         scheduler_service = SchedulerService(
             queue=TaskQueue(),
             db_pool=_scheduler_pool,
             credits_service=CreditsService(enabled=False),
+            state_emitter=state_emitter,
+            fair_share=fair_share,
+            use_hrrn=True,
         )
         app.state.scheduler_service = scheduler_service
-        logger.info("Scheduler service initialized (PostgreSQL)")
+
+        # Wire emitter into AsyncAgentRegistry if available
+        async_reg = getattr(app.state, "async_agent_registry", None)
+        if async_reg is not None:
+            async_reg._state_emitter = state_emitter
+
+        # Initialize fair-share counters from DB
+        await scheduler_service.sync_fair_share()
+
+        logger.info("Scheduler service initialized with Astraea (PostgreSQL)")
     except ImportError as e:
         logger.debug(f"Scheduler service not available: {e}")
     except Exception as e:

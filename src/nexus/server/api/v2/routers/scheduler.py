@@ -4,8 +4,10 @@ Provides endpoints for task scheduling with hybrid priority:
 - POST   /api/v2/scheduler/submit              - Submit a task
 - GET    /api/v2/scheduler/task/{id}            - Get task status
 - POST   /api/v2/scheduler/task/{id}/cancel     - Cancel a task
+- GET    /api/v2/scheduler/metrics              - Queue metrics (Issue #1274)
+- POST   /api/v2/scheduler/classify             - Classify request (Issue #1274)
 
-Related: Issue #1212
+Related: Issue #1212, #1274
 """
 
 from __future__ import annotations
@@ -18,13 +20,14 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
-from nexus.scheduler.constants import TIER_ALIASES, PriorityTier
+from nexus.scheduler.constants import TIER_ALIASES, PriorityTier, RequestState
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/scheduler", tags=["scheduler"])
 
 VALID_PRIORITIES = frozenset(TIER_ALIASES.keys())
+VALID_REQUEST_STATES = frozenset(s.value for s in RequestState)
 
 
 # =============================================================================
@@ -44,6 +47,14 @@ class SubmitTaskRequest(BaseModel):
     deadline: datetime | None = Field(default=None, description="Optional deadline (ISO 8601)")
     boost: str = Field(default="0", description="Credits for priority boost (decimal string)")
     idempotency_key: str | None = Field(default=None, description="Deduplication key")
+    # Astraea extensions (Issue #1274)
+    request_state: str = Field(
+        default="pending",
+        description="Request state: io_wait, compute, tool_call, idle, pending",
+    )
+    estimated_service_time: float = Field(
+        default=30.0, gt=0, description="Estimated execution time in seconds"
+    )
 
     @field_validator("priority")
     @classmethod
@@ -51,6 +62,14 @@ class SubmitTaskRequest(BaseModel):
         if v not in VALID_PRIORITIES:
             valid = ", ".join(sorted(VALID_PRIORITIES))
             raise ValueError(f"Invalid priority '{v}'. Must be one of: {valid}")
+        return v
+
+    @field_validator("request_state")
+    @classmethod
+    def validate_request_state(cls, v: str) -> str:
+        if v not in VALID_REQUEST_STATES:
+            valid = ", ".join(sorted(VALID_REQUEST_STATES))
+            raise ValueError(f"Invalid request_state '{v}'. Must be one of: {valid}")
         return v
 
 
@@ -70,6 +89,9 @@ class TaskStatusResponse(BaseModel):
     deadline: str | None = None
     boost_amount: str = "0"
     error_message: str | None = None
+    # Astraea extensions (Issue #1274)
+    priority_class: str = "batch"
+    request_state: str = "pending"
 
 
 class CancelResponse(BaseModel):
@@ -77,6 +99,35 @@ class CancelResponse(BaseModel):
 
     cancelled: bool
     task_id: str
+
+
+class ClassifyRequest(BaseModel):
+    """Request to classify a task into a priority class."""
+
+    priority: str = Field(default="normal", description="Priority tier")
+    request_state: str = Field(default="pending", description="Request state")
+
+    @field_validator("priority")
+    @classmethod
+    def validate_priority(cls, v: str) -> str:
+        if v not in VALID_PRIORITIES:
+            valid = ", ".join(sorted(VALID_PRIORITIES))
+            raise ValueError(f"Invalid priority '{v}'. Must be one of: {valid}")
+        return v
+
+
+class ClassifyResponse(BaseModel):
+    """Classification result."""
+
+    priority_class: str
+
+
+class MetricsResponse(BaseModel):
+    """Scheduler metrics."""
+
+    queue_by_class: list[dict[str, Any]]
+    fair_share: dict[str, Any]
+    use_hrrn: bool
 
 
 # =============================================================================
@@ -128,6 +179,8 @@ def _task_to_response(task: Any) -> TaskStatusResponse:
         deadline=task.deadline.isoformat() if task.deadline else None,
         boost_amount=str(task.boost_amount),
         error_message=task.error_message,
+        priority_class=getattr(task, "priority_class", "batch"),
+        request_state=getattr(task, "request_state", "pending"),
     )
 
 
@@ -147,6 +200,7 @@ async def submit_task(
     The task is enqueued with the specified priority and boost.
     Returns the task details with computed effective priority.
     """
+    from nexus.scheduler.constants import RequestState as RS
     from nexus.scheduler.models import TaskSubmission
 
     agent_id = _extract_agent_id(auth_result)
@@ -160,6 +214,8 @@ async def submit_task(
         deadline=request.deadline,
         boost_amount=Decimal(request.boost),
         idempotency_key=request.idempotency_key,
+        request_state=RS(request.request_state),
+        estimated_service_time=request.estimated_service_time,
     )
 
     task = await scheduler.submit_task(submission)
@@ -173,7 +229,7 @@ async def get_task_status(
     scheduler: Any = Depends(get_scheduler_service),
 ) -> TaskStatusResponse:
     """Get task status by ID."""
-    task = await scheduler.get_status(task_id)
+    task = await scheduler.get_task_status(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
     return _task_to_response(task)
@@ -193,3 +249,32 @@ async def cancel_task(
     agent_id = _extract_agent_id(auth_result)
     cancelled = await scheduler.cancel_task(task_id, agent_id=agent_id)
     return CancelResponse(cancelled=cancelled, task_id=task_id)
+
+
+@router.get("/metrics", response_model=MetricsResponse)
+async def get_metrics(
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),  # noqa: ARG001
+    scheduler: Any = Depends(get_scheduler_service),
+) -> MetricsResponse:
+    """Get scheduler queue metrics and fair-share snapshots."""
+    data = await scheduler.metrics()
+    return MetricsResponse(**data)
+
+
+@router.post("/classify", response_model=ClassifyResponse)
+async def classify_request_endpoint(
+    request: ClassifyRequest,
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),  # noqa: ARG001
+    scheduler: Any = Depends(get_scheduler_service),
+) -> ClassifyResponse:
+    """Classify a request into a priority class."""
+    from nexus.services.protocols.scheduler import AgentRequest
+
+    agent_request = AgentRequest(
+        agent_id="",
+        zone_id=None,
+        priority=TIER_ALIASES[request.priority].value,
+        request_state=request.request_state,
+    )
+    priority_class = await scheduler.classify(agent_request)
+    return ClassifyResponse(priority_class=priority_class)

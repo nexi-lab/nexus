@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING, Any
 from nexus.scheduler.constants import AGING_INTERVAL_SECONDS
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncEngine
+
     from nexus.scheduler.service import SchedulerService
 
 logger = logging.getLogger(__name__)
@@ -32,11 +34,11 @@ class TaskDispatcher:
     def __init__(
         self,
         scheduler_service: SchedulerService,
-        db_dsn: str = "",
+        async_engine: AsyncEngine | None = None,
         poll_interval: int = 30,
     ) -> None:
         self._scheduler = scheduler_service
-        self._dsn = db_dsn
+        self._async_engine = async_engine
         self._poll_interval = poll_interval
         self._running = False
         self._dispatch_task: asyncio.Task[None] | None = None
@@ -54,8 +56,8 @@ class TaskDispatcher:
         self._dispatch_task = asyncio.create_task(self._dispatch_loop())
         self._aging_task = asyncio.create_task(self._aging_loop())
 
-        # Try to set up LISTEN/NOTIFY if DSN is available
-        if self._dsn:
+        # Try to set up LISTEN/NOTIFY if async engine is available
+        if self._async_engine is not None:
             asyncio.create_task(self._listen_loop())
 
     async def stop(self) -> None:
@@ -128,21 +130,25 @@ class TaskDispatcher:
             await asyncio.sleep(AGING_INTERVAL_SECONDS)
 
     async def _listen_loop(self) -> None:
-        """LISTEN for task_enqueued notifications."""
-        try:
-            import asyncpg  # noqa: F811
+        """LISTEN for task_enqueued notifications via SQLAlchemy async engine."""
+        if self._async_engine is None:
+            return
 
-            conn = await asyncpg.connect(self._dsn)
+        try:
+            conn = await self._async_engine.connect()
             try:
-                await conn.add_listener("task_enqueued", self._on_notification)
+                raw_conn = await conn.get_raw_connection()
+                dbapi_conn = raw_conn.dbapi_connection
+                if dbapi_conn is None:
+                    logger.warning("LISTEN: no DBAPI connection available")
+                    return
+                await dbapi_conn.add_listener("task_enqueued", self._on_notification)
                 logger.info("Listening for task_enqueued notifications")
 
                 while self._running:
                     await asyncio.sleep(1)
             finally:
                 await conn.close()
-        except ImportError:
-            logger.warning("asyncpg not available, using poll-only mode")
         except Exception:
             logger.exception("LISTEN connection failed, falling back to polling")
 

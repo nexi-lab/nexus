@@ -22,7 +22,8 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.exc import OperationalError
 
-from nexus.core.rebac import CROSS_ZONE_ALLOWED_RELATIONS, Entity
+from nexus.core.rebac import Entity
+from nexus.services.permissions.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 from nexus.services.permissions.types import ConsistencyLevel
 
 if TYPE_CHECKING:

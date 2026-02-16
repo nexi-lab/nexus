@@ -1208,35 +1208,64 @@ class TestSandboxTools:
 class TestResources:
     """Test suite for MCP resource endpoints."""
 
-    def test_file_resource_success(self, mock_nx_basic):
+    async def test_file_resource_success(self, mock_nx_basic):
         """Test accessing file resource successfully."""
+        import inspect
+
+        from fastmcp.server.context import Context, _current_context
+
         mock_nx_basic.read.return_value = b"resource content"
         server = create_mcp_server(nx=mock_nx_basic)
 
-        # Find the resource
         resource = get_resource_template(server, "nexus://files/")
-        result = resource.fn(path="/data/file.txt")
+        token = _current_context.set(Context(fastmcp=server))
+        try:
+            result = resource.fn(path="/data/file.txt")
+            if inspect.iscoroutine(result):
+                result = await result
+        finally:
+            _current_context.reset(token)
 
         assert result == "resource content"
         mock_nx_basic.read.assert_called_once_with("/data/file.txt")
 
-    def test_file_resource_bytes(self, mock_nx_basic):
+    async def test_file_resource_bytes(self, mock_nx_basic):
         """Test file resource with bytes content."""
+        import inspect
+
+        from fastmcp.server.context import Context, _current_context
+
         mock_nx_basic.read.return_value = b"binary data"
         server = create_mcp_server(nx=mock_nx_basic)
 
         resource = get_resource_template(server, "nexus://files/")
-        result = resource.fn(path="/data/binary.dat")
+        token = _current_context.set(Context(fastmcp=server))
+        try:
+            result = resource.fn(path="/data/binary.dat")
+            if inspect.iscoroutine(result):
+                result = await result
+        finally:
+            _current_context.reset(token)
 
         assert result == "binary data"
 
-    def test_file_resource_error(self, mock_nx_basic):
+    async def test_file_resource_error(self, mock_nx_basic):
         """Test file resource error handling."""
+        import inspect
+
+        from fastmcp.server.context import Context, _current_context
+
         mock_nx_basic.read.side_effect = FileNotFoundError("File not found")
         server = create_mcp_server(nx=mock_nx_basic)
 
         resource = get_resource_template(server, "nexus://files/")
-        result = resource.fn(path="/missing.txt")
+        token = _current_context.set(Context(fastmcp=server))
+        try:
+            result = resource.fn(path="/missing.txt")
+            if inspect.iscoroutine(result):
+                result = await result
+        finally:
+            _current_context.reset(token)
 
         assert "Error reading resource" in result
         assert "File not found" in result

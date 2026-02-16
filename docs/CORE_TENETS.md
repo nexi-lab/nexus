@@ -558,7 +558,7 @@ These tenets are **stable but not immutable**. They evolve based on:
 ## Related Documents
 
 - [README.md](../README.md) - High-level overview and features
-- [Architecture](architecture/ARCHITECTURE.md) - System architecture
+- [Kernel Architecture](architecture/KERNEL-ARCHITECTURE.md) - System architecture
 - [Plugin Development](development/PLUGIN_DEVELOPMENT.md) - Plugin development guide
 - [Contributing](../CONTRIBUTING.md) - Contribution guidelines
 

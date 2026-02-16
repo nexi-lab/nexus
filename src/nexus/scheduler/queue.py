@@ -14,6 +14,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Any
 
+from nexus.raft.zone_manager import ROOT_ZONE_ID
 from nexus.scheduler.constants import (
     AGING_THRESHOLD_SECONDS,
     MAX_WAIT_SECONDS,
@@ -143,7 +144,7 @@ def _row_to_task(row: dict[str, Any]) -> ScheduledTask:
         started_at=row.get("started_at"),
         completed_at=row.get("completed_at"),
         error_message=row.get("error_message"),
-        zone_id=row.get("zone_id", "default"),
+        zone_id=row.get("zone_id", ROOT_ZONE_ID),
         idempotency_key=row.get("idempotency_key"),
     )
 
@@ -170,7 +171,7 @@ class TaskQueue:
         payload: dict[str, Any],
         priority_tier: int,
         effective_tier: int,
-        zone_id: str = "default",
+        zone_id: str = ROOT_ZONE_ID,
         deadline: datetime | None = None,
         boost_amount: Decimal = Decimal("0"),
         boost_tiers: int = 0,

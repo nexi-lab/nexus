@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.raft.zone_manager import ROOT_ZONE_ID
 from nexus.server.path_utils import (
     unscope_internal_dict,
     unscope_internal_path,
@@ -90,9 +91,9 @@ def generate_download_url(
 
             from nexus.server.streaming import _sign_stream_token
 
-            zone_id = "default"
+            zone_id = ROOT_ZONE_ID
             if context and hasattr(context, "zone_id"):
-                zone_id = context.zone_id or "default"
+                zone_id = context.zone_id or ROOT_ZONE_ID
 
             token = _sign_stream_token(path, expires_in, zone_id)
             encoded_path = quote(path.lstrip("/"), safe="")

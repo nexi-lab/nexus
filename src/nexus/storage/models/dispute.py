@@ -40,7 +40,7 @@ class DisputeModel(Base):
 
     # Exchange + zone
     exchange_id: Mapped[str] = mapped_column(String(36), nullable=False)
-    zone_id: Mapped[str] = mapped_column(String(36), nullable=False, default="default")
+    zone_id: Mapped[str] = mapped_column(String(36), nullable=False, default="root")
 
     # Parties
     complainant_agent_id: Mapped[str] = mapped_column(String(255), nullable=False)

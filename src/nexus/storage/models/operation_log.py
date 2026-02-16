@@ -34,7 +34,7 @@ class OperationLogModel(Base):
     operation_type: Mapped[str] = mapped_column(String(50), nullable=False)
 
     # Context
-    zone_id: Mapped[str] = mapped_column(String(36), nullable=False, default="default")
+    zone_id: Mapped[str] = mapped_column(String(36), nullable=False, default="root")
     agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Affected paths

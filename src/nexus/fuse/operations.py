@@ -30,6 +30,7 @@ from nexus.core.virtual_views import (
     should_add_virtual_views,
 )
 from nexus.fuse.cache import FUSECacheManager
+from nexus.raft.zone_manager import ROOT_ZONE_ID
 
 # Import readahead for sequential read optimization (Issue #1073)
 try:
@@ -190,6 +191,7 @@ class NexusFUSEOperations(Operations):
         context: OperationContext | None = None,
         namespace_manager: NamespaceManager | None = None,
         event_bus: Any | None = None,
+        subscription_manager: Any | None = None,
     ) -> None:
         """Initialize FUSE operations.
 
@@ -209,12 +211,15 @@ class NexusFUSEOperations(Operations):
                     checks (A2-B). When provided, _check_namespace_visible() bypasses the
                     full RPC/PermissionEnforcer pipeline and calls is_visible() directly.
             event_bus: Optional EventBusBase instance for distributing file events.
+            subscription_manager: Optional subscription manager for webhook broadcasts.
+                    Injected from server layer to avoid FUSE→server layer inversion.
         """
         self.nexus_fs = nexus_fs
         self.mode = mode
         self._context = context
         self._namespace_manager = namespace_manager
         self._event_bus = event_bus
+        self._subscription_manager = subscription_manager
         self.fd_counter = 0
         self.open_files: dict[int, dict[str, Any]] = {}
         self._files_lock = threading.RLock()
@@ -410,12 +415,9 @@ class NexusFUSEOperations(Operations):
                 except Exception as e:
                     logger.debug(f"[FUSE-EVENT] Event bus publish failed: {e}")
 
-            # 2. Broadcast to webhook subscriptions
-            # Import here to avoid circular imports
+            # 2. Broadcast to webhook subscriptions via injected manager
             try:
-                from nexus.server.subscriptions import get_subscription_manager
-
-                sub_manager = get_subscription_manager()
+                sub_manager = self._subscription_manager
                 if sub_manager is not None:
                     event_type_str = (
                         event.type.value if hasattr(event.type, "value") else str(event.type)
@@ -428,10 +430,8 @@ class NexusFUSEOperations(Operations):
                             "size": event.size,
                             "timestamp": event.timestamp,
                         },
-                        zone_id=event.zone_id or "default",
+                        zone_id=event.zone_id or ROOT_ZONE_ID,
                     )
-            except ImportError:
-                pass  # Subscription manager not available
             except Exception as e:
                 logger.debug(f"[FUSE-EVENT] Webhook broadcast failed: {e}")
 
@@ -1562,11 +1562,6 @@ class NexusFUSEOperations(Operations):
             if metadata_dict:
                 # C2-B: Use module-level frozen dataclass instead of inner class
                 return MetadataObj.from_dict(metadata_dict)
-            return None
-
-        # Fall back to direct metadata access (for local NexusFS)
-        if hasattr(self.nexus_fs, "metadata"):
-            return self.nexus_fs.metadata.get(path)
 
         return None
 

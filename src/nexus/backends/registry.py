@@ -47,6 +47,38 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Members required by ConnectorProtocol (Issue #1703).
+# Used for registration-time conformance validation.  Cannot use
+# issubclass(cls, ConnectorProtocol) because Python's runtime_checkable
+# doesn't support issubclass() on Protocols with @property members.
+_CONNECTOR_PROTOCOL_MEMBERS: frozenset[str] = frozenset(
+    {
+        # ContentStoreProtocol
+        "name",
+        "write_content",
+        "read_content",
+        "delete_content",
+        "content_exists",
+        "get_content_size",
+        "get_ref_count",
+        # DirectoryOpsProtocol
+        "mkdir",
+        "rmdir",
+        "is_directory",
+        # ConnectorProtocol (connection lifecycle)
+        "connect",
+        "disconnect",
+        "check_connection",
+        # ConnectorProtocol (capability flags)
+        "user_scoped",
+        "is_connected",
+        "is_passthrough",
+        "has_root_path",
+        "has_virtual_filesystem",
+        "has_token_manager",
+    }
+)
+
 
 class ArgType(Enum):
     """Types for connection arguments.
@@ -279,8 +311,20 @@ class ConnectorRegistry:
             service_name: Unified service name for service_map integration
 
         Raises:
-            ValueError: If a connector with the same name is already registered
+            ValueError: If a connector with the same name is already registered,
+                or if the connector class does not satisfy ConnectorProtocol.
         """
+        # Validate ConnectorProtocol conformance (Issue #1703).
+        # Cannot use issubclass() because ConnectorProtocol has @property
+        # members which Python's runtime_checkable doesn't support for
+        # issubclass(). Instead, check for required method/property presence.
+        missing = [m for m in _CONNECTOR_PROTOCOL_MEMBERS if not hasattr(connector_class, m)]
+        if missing:
+            raise ValueError(
+                f"Connector '{name}' ({connector_class.__name__}) does not satisfy "
+                f"ConnectorProtocol. Missing members: {', '.join(sorted(missing))}"
+            )
+
         existing = cls._base.get(name)
         if existing is not None:
             if existing.connector_class is not connector_class:

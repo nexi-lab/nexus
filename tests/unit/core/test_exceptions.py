@@ -8,6 +8,14 @@ from nexus.core.exceptions import (
     AuthenticationError,
     BackendError,
     ConflictError,
+    ConnectorAuthError,
+    ConnectorError,
+    ConnectorQuotaError,
+    ConnectorRateLimitError,
+    DatabaseConnectionError,
+    DatabaseError,
+    DatabaseIntegrityError,
+    DatabaseTimeoutError,
     InvalidPathError,
     MetadataError,
     NexusError,
@@ -404,3 +412,129 @@ def test_router_uses_canonical_exceptions() -> None:
             assert issubclass(cls, NexusError), (
                 f"router.{name} must be a NexusError subclass, got bases: {cls.__bases__}"
             )
+
+
+# ============================================================================
+# Database & Connector Exception Hierarchy Tests (Issue #1254)
+# ============================================================================
+
+
+def test_database_error_hierarchy() -> None:
+    """Test DatabaseError inherits BackendError → NexusError."""
+    assert issubclass(DatabaseError, BackendError)
+    assert issubclass(DatabaseError, NexusError)
+    assert issubclass(DatabaseConnectionError, DatabaseError)
+    assert issubclass(DatabaseTimeoutError, DatabaseError)
+    assert issubclass(DatabaseIntegrityError, DatabaseError)
+
+
+def test_database_error_creation() -> None:
+    """Test DatabaseError can be created with message and optional path."""
+    error = DatabaseError("Connection lost")
+    assert "Connection lost" in str(error)
+    assert error.is_expected is False
+
+    error = DatabaseError("Query failed", path="/data/table")
+    assert "Query failed" in str(error)
+    assert error.path == "/data/table"
+
+
+def test_database_children_is_expected() -> None:
+    """Test is_expected classification for DatabaseError subtypes."""
+    # Connection errors are unexpected (infrastructure failure)
+    assert DatabaseConnectionError("Connection refused").is_expected is False
+    # Timeout errors are unexpected (infrastructure failure)
+    assert DatabaseTimeoutError("Query timed out").is_expected is False
+    # Integrity errors are expected (user-caused, e.g., duplicate key)
+    assert DatabaseIntegrityError("Duplicate key").is_expected is True
+
+
+def test_database_error_caught_by_backend_error() -> None:
+    """Test that except BackendError catches DatabaseError and children."""
+    with_caught = []
+    for exc_class in (
+        DatabaseError,
+        DatabaseConnectionError,
+        DatabaseTimeoutError,
+        DatabaseIntegrityError,
+    ):
+        try:
+            raise exc_class("test")
+        except BackendError:
+            with_caught.append(exc_class.__name__)
+    assert len(with_caught) == 4
+
+
+def test_connector_error_hierarchy() -> None:
+    """Test ConnectorError inherits BackendError → NexusError."""
+    assert issubclass(ConnectorError, BackendError)
+    assert issubclass(ConnectorError, NexusError)
+    assert issubclass(ConnectorAuthError, ConnectorError)
+    assert issubclass(ConnectorRateLimitError, ConnectorError)
+    assert issubclass(ConnectorQuotaError, ConnectorError)
+
+
+def test_connector_error_creation() -> None:
+    """Test ConnectorError can be created with message and optional path."""
+    error = ConnectorError("API call failed")
+    assert "API call failed" in str(error)
+    assert error.is_expected is False
+
+    error = ConnectorError("Timeout", path="/mnt/gmail")
+    assert error.path == "/mnt/gmail"
+
+
+def test_connector_children_is_expected() -> None:
+    """Test is_expected classification for ConnectorError subtypes."""
+    # Auth errors are expected (user needs to re-authenticate)
+    assert ConnectorAuthError("Token expired").is_expected is True
+    # Rate limit errors are expected (transient)
+    assert ConnectorRateLimitError("Rate limited").is_expected is True
+    # Quota errors are expected (user-caused)
+    assert ConnectorQuotaError("Quota exceeded").is_expected is True
+    # Base connector error is unexpected (generic failure)
+    assert ConnectorError("Unknown failure").is_expected is False
+
+
+def test_connector_error_caught_by_backend_error() -> None:
+    """Test that except BackendError catches ConnectorError and children."""
+    with_caught = []
+    for exc_class in (
+        ConnectorError,
+        ConnectorAuthError,
+        ConnectorRateLimitError,
+        ConnectorQuotaError,
+    ):
+        try:
+            raise exc_class("test")
+        except BackendError:
+            with_caught.append(exc_class.__name__)
+    assert len(with_caught) == 4
+
+
+def test_connector_validation_error_caught_by_core() -> None:
+    """Test that connectors.base.ValidationError is caught by core ValidationError."""
+    from nexus.connectors.base import ValidationError as ConnectorValidationError
+
+    assert issubclass(ConnectorValidationError, ValidationError)
+
+    # Verify catch works
+    try:
+        raise ConnectorValidationError(
+            code="TEST",
+            message="test error",
+        )
+    except ValidationError:
+        pass  # Should be caught
+
+
+def test_is_expected_defaults_new_types() -> None:
+    """Test is_expected class attributes for new exception types."""
+    assert DatabaseError.is_expected is False
+    assert DatabaseConnectionError.is_expected is False
+    assert DatabaseTimeoutError.is_expected is False
+    assert DatabaseIntegrityError.is_expected is True
+    assert ConnectorError.is_expected is False
+    assert ConnectorAuthError.is_expected is True
+    assert ConnectorRateLimitError.is_expected is True
+    assert ConnectorQuotaError.is_expected is True

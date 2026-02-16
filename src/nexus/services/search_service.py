@@ -723,7 +723,8 @@ class SearchService(SemanticSearchMixin):
                 try:
                     backend_relative = entry_path[len(path) :].lstrip("/")
                     is_dir = route.backend.is_directory(backend_relative, context=list_context)
-                except Exception:
+                except Exception as e:
+                    logger.debug("Failed to check if %s is a directory: %s", entry_path, e)
                     is_dir = False
             name = entry_path.rstrip("/").split("/")[-1]
             results_with_details.append(
@@ -1556,7 +1557,8 @@ class SearchService(SemanticSearchMixin):
             accessible_files: builtins.list[str] = cast(
                 builtins.list[str], self.list(path, recursive=True, context=context)
             )
-        except Exception:
+        except Exception as e:
+            logger.debug("Failed to list accessible files for glob at %s: %s", path, e)
             for pattern in patterns:
                 results[pattern] = []
             return results
@@ -1844,7 +1846,8 @@ class SearchService(SemanticSearchMixin):
                                     "match": match_obj.group(0),
                                 }
                             )
-                except Exception:
+                except Exception as e:
+                    logger.debug("Failed to grep file %s: %s", file_path, e)
                     continue
 
         return results
@@ -1997,7 +2000,8 @@ class SearchService(SemanticSearchMixin):
                                 "match": match_obj.group(0),
                             }
                         )
-            except Exception:
+            except Exception as e:
+                logger.debug("Failed to read/search trigram candidate %s: %s", file_path, e)
                 continue
 
         return results
@@ -2037,8 +2041,11 @@ class SearchService(SemanticSearchMixin):
                 content = self._read(file_path, context=context)
                 if isinstance(content, bytes):
                     entries.append((file_path, content))
-            except Exception:
-                continue  # Skip unreadable files.
+            except Exception as e:
+                logger.debug(
+                    "Skipping unreadable file during trigram indexing %s: %s", file_path, e
+                )
+                continue
 
         success = trigram_fast.build_index_from_entries(entries, index_path)
         if not success:
@@ -2117,7 +2124,8 @@ class SearchService(SemanticSearchMixin):
                             )
                             if len(chunk_results) >= max_results:
                                 break
-                except Exception:
+                except Exception as e:
+                    logger.debug("Failed to grep file in parallel chunk %s: %s", file_path, e)
                     continue
             return chunk_results
 

@@ -255,7 +255,9 @@ class PermissionEnforcer:
             return False
 
         except Exception as e:
-            logger.warning(f"[HAS-DESCENDANTS] Error: {e}, returning True (fallback)")
+            logger.warning(
+                "[HAS-DESCENDANTS] Error: %s, returning True (fallback)", e, exc_info=True
+            )
             return True  # Fallback: assume accessible
 
     def has_accessible_descendants_batch(
@@ -353,8 +355,11 @@ class PermissionEnforcer:
 
         except Exception as e:
             logger.warning(
-                f"[BATCH-OPT] has_accessible_descendants_batch error: {e}, "
-                f"returning all True for {len(prefixes)} prefixes (fallback)"
+                "[BATCH-OPT] has_accessible_descendants_batch error: %s, "
+                "returning all True for %d prefixes (fallback)",
+                e,
+                len(prefixes),
+                exc_info=True,
             )
             return dict.fromkeys(prefixes, True)
 
@@ -560,7 +565,9 @@ class PermissionEnforcer:
             except Exception as e:
                 # If routing fails, fall back to default "file" type with virtual path
                 logger.warning(
-                    f"[_check_rebac] Failed to route path for object type: {e}, using default 'file'"
+                    "[_check_rebac] Failed to route path for object type: %s, using default 'file'",
+                    e,
+                    exc_info=True,
                 )
 
         # Check ReBAC permission using backend-provided object type

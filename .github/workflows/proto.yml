@@ -15,6 +15,10 @@ on:
       - "buf.gen.yaml"
       - "docs/protocol/nexus-exchange-v1.openapi.yaml"
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   proto-check:
     name: Proto Lint & Breaking Change Detection

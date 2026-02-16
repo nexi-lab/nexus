@@ -165,4 +165,5 @@ def configure_logging(
     # duration_ms as separate queryable fields.
     uvicorn_access = logging.getLogger("uvicorn.access")
     uvicorn_access.handlers.clear()
+    uvicorn_access.propagate = True
     uvicorn_access.setLevel(logging.WARNING)

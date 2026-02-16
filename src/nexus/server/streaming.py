@@ -25,7 +25,7 @@ def _get_stream_secret() -> bytes:
     return _STREAM_SECRET
 
 
-def _sign_stream_token(path: str, expires_in: int, zone_id: str = "default") -> str:
+def _sign_stream_token(path: str, expires_in: int, zone_id: str = "root") -> str:
     """Generate a signed token for streaming access to a file.
 
     Token format: {expires_at}.{signature}
@@ -45,7 +45,7 @@ def _sign_stream_token(path: str, expires_in: int, zone_id: str = "default") -> 
     return f"{expires_at}.{signature}"
 
 
-def _verify_stream_token(token: str, path: str, zone_id: str = "default") -> bool:
+def _verify_stream_token(token: str, path: str, zone_id: str = "root") -> bool:
     """Verify a stream token is valid and not expired.
 
     Args:

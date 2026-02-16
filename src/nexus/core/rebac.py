@@ -15,9 +15,6 @@ Relationship Types:
     - viewer-of: Subject can view object (read-only)
     - editor-of: Subject can edit object (read/write)
     - parent-of: Hierarchical relationship (e.g., folder → file)
-    - shared-viewer: Cross-zone read access
-    - shared-editor: Cross-zone read/write access
-    - shared-owner: Cross-zone full access
 
 Example:
     # Direct relationship
@@ -44,16 +41,6 @@ from typing import Any
 # Wildcard subject for public access
 WILDCARD_SUBJECT = ("*", "*")
 
-# Relations that are allowed to cross zone boundaries
-# These relations can link subjects and objects from different zones
-CROSS_ZONE_ALLOWED_RELATIONS = frozenset(
-    {
-        "shared-viewer",  # Read access via cross-zone share
-        "shared-editor",  # Read + Write access via cross-zone share
-        "shared-owner",  # Full access via cross-zone share
-    }
-)
-
 
 class RelationType(StrEnum):
     """Standard relationship types in ReBAC."""
@@ -63,10 +50,6 @@ class RelationType(StrEnum):
     VIEWER_OF = "viewer-of"
     EDITOR_OF = "editor-of"
     PARENT_OF = "parent-of"
-    # Cross-zone sharing relations
-    SHARED_VIEWER = "shared-viewer"
-    SHARED_EDITOR = "shared-editor"
-    SHARED_OWNER = "shared-owner"
 
 
 class EntityType(StrEnum):

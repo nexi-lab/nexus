@@ -80,8 +80,11 @@ jobs:
             git reset --hard
             git commit --allow-empty -m "Initialize gh-pages for benchmark data"
             git push origin gh-pages
-            git checkout -
+            git checkout "${{ github.sha }}"
           fi
+
+      - name: Clean working tree for branch switch
+        run: git checkout -- .
 
       - name: Store benchmark results
         uses: benchmark-action/github-action-benchmark@v1
@@ -160,8 +163,11 @@ jobs:
             git reset --hard
             git commit --allow-empty -m "Initialize gh-pages for benchmark data"
             git push origin gh-pages
-            git checkout -
+            git checkout "${{ github.sha }}"
           fi
+
+      - name: Clean working tree for branch switch
+        run: git checkout -- .
 
       - name: Store full benchmark results
         uses: benchmark-action/github-action-benchmark@v1

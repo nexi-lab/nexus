@@ -20,7 +20,6 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 from nexus.core.rebac import (
-    CROSS_ZONE_ALLOWED_RELATIONS,
     DEFAULT_FILE_NAMESPACE,
     DEFAULT_GROUP_NAMESPACE,
     DEFAULT_MEMORY_NAMESPACE,
@@ -30,6 +29,7 @@ from nexus.core.rebac import (
     Entity,
     NamespaceConfig,
 )
+from nexus.services.permissions.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 from nexus.services.permissions.graph.expand import ExpandEngine
 from nexus.services.permissions.graph.traversal import PermissionComputer
 from nexus.services.permissions.rebac_cache import ReBACPermissionCache

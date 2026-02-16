@@ -90,14 +90,14 @@ nexus agent list
 **Python API:**
 
 ```python
-from nexus.core.agents import register_agent
+from nexus.core.agent_registry import AgentRegistry
 
-register_agent(
-    user_id="alice",
+agent_registry = AgentRegistry(session_factory=session_factory)
+agent_registry.register(
     agent_id="alice_research",
+    owner_id="alice",
     name="Research Agent",
     zone_id="default",
-    entity_registry=registry
 )
 ```
 
@@ -120,16 +120,26 @@ nexus admin create-agent-key alice alice_research --expires-days 90
 **Python API:**
 
 ```python
-from nexus.core.agents import create_agent_with_api_key
+from nexus.core.agent_registry import AgentRegistry
+from nexus.server.auth.database_key import DatabaseAPIKeyAuth
 from datetime import timedelta, datetime, UTC
 
-agent, raw_key = create_agent_with_api_key(
+# Register agent via AgentRegistry
+agent_registry = AgentRegistry(session_factory=session_factory)
+agent_registry.register(
+    agent_id="alice_research",
+    owner_id="alice",
+    name="Research Agent",
+)
+
+# Create API key separately
+key_id, raw_key = DatabaseAPIKeyAuth.create_key(
     session,
     user_id="alice",
-    agent_id="alice_research",
     name="Research Agent",
+    subject_type="agent",
+    subject_id="alice_research",
     expires_at=datetime.now(UTC) + timedelta(days=90),
-    entity_registry=registry
 )
 
 print(f"API Key: {raw_key}")  # Save this - only shown once!
@@ -167,7 +177,7 @@ graph LR
 nx.rebac.create("user", "alice", "direct_owner", "file", "/workspace/alice/")
 
 # Register agent owned by alice
-register_agent(user_id="alice", agent_id="alice_research", ...)
+agent_registry.register(agent_id="alice_research", owner_id="alice", ...)
 
 # Agent inherits alice's permissions
 ctx = OperationContext(
@@ -548,18 +558,18 @@ nexus rebac delete <tuple_id>
 ```python
 from crewai import Agent, Task, Crew
 from nexus import connect
-from nexus.core.agents import register_agent
+from nexus.core.agent_registry import AgentRegistry
 
 # Setup Nexus
 nx = connect()
 
 # Register agent
-register_agent(
-    user_id="alice",
+# Use the AgentRegistry for registration
+nx.agent_registry.register(
     agent_id="crewai_researcher",
+    owner_id="alice",
     name="CrewAI Research Agent",
     zone_id="default",
-    entity_registry=nx.entity_registry
 )
 
 # Grant agent permissions
@@ -695,7 +705,7 @@ nexus admin create-agent-key alice alice_research  # No expiration
 
 ```python
 # ✅ Good: Register agent with owner
-register_agent(user_id="alice", agent_id="alice_research", ...)
+agent_registry.register(agent_id="alice_research", owner_id="alice", ...)
 
 # ❌ Bad: Skip registration (no inheritance)
 # Agent won't inherit user permissions!
@@ -865,7 +875,7 @@ nexus admin delete-user alice
 
 ## Related Files
 
-- Core: `src/nexus/core/agents.py:1`
+- Core: `src/nexus/core/agent_registry.py:1`
 - Permissions: `src/nexus/core/permissions_enhanced.py:737`
 - Entity Registry: `src/nexus/core/entity_registry.py:1`
 - CLI Agent: `src/nexus/cli/commands/agent.py:1`
@@ -873,4 +883,4 @@ nexus admin delete-user alice
 - CLI ReBAC: `src/nexus/cli/commands/rebac.py:1`
 - Demo 1: `examples/cli/agent_permissions_demo.sh:1`
 - Demo 2: `examples/cli/agent_permissions_inheritance_demo.sh:1`
-- Tests: `tests/unit/core/test_agents.py:1`
+- Tests: `tests/unit/core/test_agent_registry.py:1`

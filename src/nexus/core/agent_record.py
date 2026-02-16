@@ -143,6 +143,26 @@ class AgentRecord:
     updated_at: datetime
     context_manifest: tuple[dict[str, Any], ...] = ()
 
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to a plain dict matching the legacy agents.register_agent() return format.
+
+        Returns a mutable dict with keys: agent_id, user_id (alias for owner_id),
+        name, zone_id, metadata (mutable copy), created_at (ISO string), state, generation.
+
+        Returns:
+            Dict with backward-compatible keys.
+        """
+        return {
+            "agent_id": self.agent_id,
+            "user_id": self.owner_id,
+            "name": self.name,
+            "zone_id": self.zone_id,
+            "metadata": dict(self.metadata),
+            "created_at": self.created_at.isoformat(),
+            "state": self.state.value,
+            "generation": self.generation,
+        }
+
     @property
     def capabilities(self) -> list[str]:
         """Agent capabilities for discovery (stored in metadata).

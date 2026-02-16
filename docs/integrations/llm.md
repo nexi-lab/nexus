@@ -321,22 +321,6 @@ print(f"Cache write tokens: {usage.cache_write_tokens}")
 provider.reset_metrics()
 ```
 
-### Persistent Metrics
-
-Metrics can be saved to Nexus metadata database:
-
-```python
-from nexus.llm import MetricsStore
-
-store = MetricsStore(metadata_path="/path/to/nexus/metadata.db")
-
-# Save metrics
-store.save_metrics(provider.metrics, session_id="session-123")
-
-# Load metrics
-metrics = store.load_metrics(session_id="session-123")
-```
-
 ## Response Caching
 
 Response caching using Nexus CAS (planned for future release):

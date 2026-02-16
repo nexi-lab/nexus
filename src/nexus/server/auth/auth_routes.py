@@ -226,16 +226,6 @@ class OAuthCallbackResponse(BaseModel):
     message: str = "OAuth authentication successful"
 
 
-class OAuthAccountResponse(BaseModel):
-    """OAuth account information."""
-
-    oauth_account_id: str
-    provider: str
-    provider_email: str
-    created_at: str
-    last_used_at: str | None = None
-
-
 class OAuthCheckResponseExisting(BaseModel):
     """OAuth check response for existing users."""
 
@@ -1538,43 +1528,3 @@ async def oauth_callback(request: OAuthCallbackRequest) -> OAuthCallbackResponse
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"OAuth callback failed: {e}",
         ) from e
-
-
-@router.get("/oauth/accounts", response_model=list[OAuthAccountResponse])
-async def list_oauth_accounts() -> list[OAuthAccountResponse]:
-    """List linked OAuth accounts for current user.
-
-    Returns:
-        List of linked OAuth accounts
-
-    Raises:
-        401: Not authenticated
-        501: Not implemented
-    """
-    # Stub: requires JWT token authentication middleware
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="OAuth account listing requires JWT token authentication middleware",
-    )
-
-
-@router.delete("/oauth/accounts/{oauth_account_id}")
-async def unlink_oauth_account(_oauth_account_id: str) -> dict[str, Any]:
-    """Unlink an OAuth account.
-
-    Args:
-        oauth_account_id: OAuth account ID to unlink
-
-    Returns:
-        Success message
-
-    Raises:
-        401: Not authenticated
-        404: OAuth account not found
-        501: Not implemented
-    """
-    # Stub: requires JWT token authentication middleware
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="OAuth account unlinking requires JWT token authentication middleware",
-    )

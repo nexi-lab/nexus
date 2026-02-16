@@ -320,7 +320,7 @@ class TestSkillDocGeneration:
         assert "/mnt/gmail/" not in doc
         assert "/custom/mount/path/" in doc
 
-    def test_write_skill_doc(self, gmail_backend, isolated_db, tmp_path):
+    def test_write_skill_docs(self, gmail_backend, isolated_db, tmp_path):
         """Test writing SKILL.md to filesystem."""
         # Create a real NexusFS for writing
         backend = LocalBackend(root_path=str(tmp_path / "storage"))
@@ -333,7 +333,9 @@ class TestSkillDocGeneration:
 
         try:
             # Write SKILL.md
-            skill_path = gmail_backend.write_skill_doc("/mnt/gmail/", filesystem=nx)
+            result = gmail_backend.write_skill_docs("/mnt/gmail/", filesystem=nx)
+            assert isinstance(result, dict)
+            skill_path = result.get("skill_md")
 
             if skill_path:
                 # Read back and verify

@@ -70,7 +70,6 @@ from nexus.services.permissions.rebac_tracing import (
 from nexus.services.permissions.types import (
     CheckResult,
     ConsistencyLevel,
-    ConsistencyMode,  # noqa: F401 — re-exported for backward compatibility
     ConsistencyRequirement,
     GraphLimitExceeded,
     GraphLimits,

@@ -294,7 +294,7 @@ class TestSkillDocGeneration:
         assert "```yaml" in doc
         assert "# agent_intent:" in doc
 
-    def test_write_skill_doc(self, calendar_backend, isolated_db, tmp_path):
+    def test_write_skill_docs(self, calendar_backend, isolated_db, tmp_path):
         """Test writing SKILL.md to filesystem."""
         # Create a real NexusFS for writing
         backend = LocalBackend(root_path=str(tmp_path / "storage"))
@@ -307,7 +307,9 @@ class TestSkillDocGeneration:
 
         try:
             # Write SKILL.md
-            skill_path = calendar_backend.write_skill_doc("/mnt/calendar/", filesystem=nx)
+            result = calendar_backend.write_skill_docs("/mnt/calendar/", filesystem=nx)
+            assert isinstance(result, dict)
+            skill_path = result.get("skill_md")
 
             if skill_path:
                 # Read back and verify

@@ -922,7 +922,6 @@ class NexusFSCoreMixin:
             route = self.router.route(
                 original_path,
                 zone_id=zone_id,
-                agent_id=agent_id,
                 is_admin=is_admin,
                 check_write=False,
             )
@@ -965,7 +964,6 @@ class NexusFSCoreMixin:
         route = self.router.route(
             path,
             zone_id=zone_id,
-            agent_id=agent_id,
             is_admin=is_admin,
             check_write=False,
         )
@@ -1186,7 +1184,6 @@ class NexusFSCoreMixin:
                 route = self.router.route(
                     path,
                     zone_id=zone_id,
-                    agent_id=agent_id,
                     is_admin=is_admin,
                     check_write=False,
                 )
@@ -1501,7 +1498,6 @@ class NexusFSCoreMixin:
         route = self.router.route(
             path,
             zone_id=zone_id,
-            agent_id=agent_id,
             is_admin=is_admin,
             check_write=False,
         )
@@ -1570,7 +1566,6 @@ class NexusFSCoreMixin:
         route = self.router.route(
             path,
             zone_id=zone_id,
-            agent_id=agent_id,
             is_admin=is_admin,
             check_write=False,
         )
@@ -1615,7 +1610,6 @@ class NexusFSCoreMixin:
         route = self.router.route(
             path,
             zone_id=zone_id,
-            agent_id=agent_id,
             is_admin=is_admin,
             check_write=False,
         )
@@ -1674,7 +1668,6 @@ class NexusFSCoreMixin:
         route = self.router.route(
             path,
             zone_id=zone_id,
-            agent_id=agent_id,
             is_admin=is_admin,
             check_write=True,
         )
@@ -1860,7 +1853,6 @@ class NexusFSCoreMixin:
         route = self.router.route(
             path,
             zone_id=zone_id,
-            agent_id=agent_id,
             is_admin=is_admin,
             check_write=True,
         )
@@ -2592,7 +2584,6 @@ class NexusFSCoreMixin:
             route = self.router.route(
                 path,
                 zone_id=zone_id,
-                agent_id=agent_id,
                 is_admin=is_admin,
                 check_write=True,
             )
@@ -2947,7 +2938,6 @@ class NexusFSCoreMixin:
         route = self.router.route(
             path,
             zone_id=zone_id,
-            agent_id=agent_id,
             is_admin=is_admin,
             check_write=True,
         )
@@ -3084,14 +3074,12 @@ class NexusFSCoreMixin:
         old_route = self.router.route(
             old_path,
             zone_id=zone_id,
-            agent_id=agent_id,
             is_admin=is_admin,
             check_write=True,  # Need write access to source
         )
         new_route = self.router.route(
             new_path,
             zone_id=zone_id,
-            agent_id=agent_id,
             is_admin=is_admin,
             check_write=True,  # Need write access to destination
         )
@@ -3539,7 +3527,6 @@ class NexusFSCoreMixin:
             route = self.router.route(
                 path,
                 zone_id=zone_id,
-                agent_id=agent_id,
                 is_admin=is_admin,
                 check_write=False,
             )
@@ -4175,7 +4162,6 @@ class NexusFSCoreMixin:
         route = self.router.route(
             path,
             zone_id=zone_id,
-            agent_id=agent_id,
             is_admin=is_admin,
             check_write=True,
         )

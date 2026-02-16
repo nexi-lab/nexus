@@ -15,10 +15,10 @@ import pytest
 from nexus.services.permissions.rebac_cache import ReBACPermissionCache
 from nexus.services.permissions.rebac_manager_enhanced import (
     ConsistencyLevel,
-    ConsistencyMode,
     ConsistencyRequirement,
     WriteResult,
 )
+from nexus.services.permissions.types import ConsistencyMode
 
 
 class TestConsistencyModeEnum:

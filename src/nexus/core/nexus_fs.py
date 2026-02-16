@@ -325,6 +325,13 @@ class NexusFS(  # type: ignore[misc]
             )
             self._read_tracking_enabled = True
 
+        # Issue #1519: Cache observer — decouples kernel from ReadSetAwareCache
+        self._cache_observer = svc.cache_observer
+        if self._cache_observer is None and self._read_set_cache is not None:
+            from nexus.core.cache_invalidation import ReadSetCacheObserver
+
+            self._cache_observer = ReadSetCacheObserver(self._read_set_cache)
+
         # OPTIMIZATION: Initialize TRAVERSE permissions and Tiger Cache
         self._init_performance_optimizations()
 

@@ -139,9 +139,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         prefix: str = "",
         # OAuth access token (alternative to credentials_path)
         access_token: str | None = None,
-        # Database session for caching support (deprecated, use session_factory)
-        db_session: "Session | None" = None,
-        # Session factory for caching support (preferred)
+        # Session factory for caching support
         session_factory: "type[Session] | None" = None,
     ):
         """
@@ -153,9 +151,8 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
             credentials_path: Optional path to service account credentials JSON file
             prefix: Optional prefix for all paths in bucket (e.g., "data/")
             access_token: OAuth access token (alternative to credentials_path)
-            db_session: Optional SQLAlchemy session for caching (deprecated)
             session_factory: Optional session factory (e.g., metadata_store.SessionLocal)
-                           for caching support. Preferred over db_session.
+                           for caching support.
         """
         try:
             # Priority: access_token > credentials_path > ADC
@@ -195,9 +192,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
             )
 
             # Store session info for caching support (CacheConnectorMixin)
-            # Prefer session_factory (creates fresh sessions) over db_session
             self.session_factory = session_factory
-            self.db_session = db_session  # Legacy support
 
         except Exception as e:
             if isinstance(e, BackendError):

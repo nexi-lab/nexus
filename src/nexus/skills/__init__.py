@@ -66,6 +66,7 @@ Example:
 """
 
 import importlib
+from typing import TYPE_CHECKING
 
 # Eager imports — commonly used classes that should load immediately
 from nexus.skills.manager import SkillManager, SkillManagerError
@@ -112,6 +113,34 @@ _LAZY_IMPORTS: dict[str, str] = {
     "MCPMountError": "nexus.mcp.mount",
     "MCPToolExporter": "nexus.mcp.exporter",
 }
+
+
+# TYPE_CHECKING imports — lets mypy resolve lazy types without runtime cost
+if TYPE_CHECKING:
+    from nexus.mcp.exporter import MCPToolExporter
+    from nexus.mcp.models import MCPMount, MCPToolConfig, MCPToolDefinition, MCPToolExample
+    from nexus.mcp.mount import MCPMountError, MCPMountManager
+    from nexus.skills.analytics import (
+        DashboardMetrics,
+        SkillAnalytics,
+        SkillAnalyticsTracker,
+        SkillUsageRecord,
+    )
+    from nexus.skills.audit import AuditAction, AuditLogEntry, SkillAuditLogger
+    from nexus.skills.exporter import SkillExporter, SkillExportError
+    from nexus.skills.governance import (
+        ApprovalStatus,
+        GovernanceError,
+        SkillApproval,
+        SkillGovernance,
+    )
+    from nexus.skills.protocols import NexusFilesystem
+    from nexus.skills.templates import (
+        TemplateError,
+        get_template,
+        get_template_description,
+        list_templates,
+    )
 
 
 def __getattr__(name: str) -> object:

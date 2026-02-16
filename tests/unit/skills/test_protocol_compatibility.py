@@ -101,7 +101,9 @@ def test_minimal_mock_satisfies_protocol() -> None:
         def read(self, path, context=None, return_metadata=False):
             return b""
 
-        def write(self, path, content, context=None, **kwargs):
+        def write(
+            self, path, content, context=None, if_match=None, if_none_match=False, force=False
+        ):
             return {}
 
         def list(

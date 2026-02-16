@@ -49,7 +49,9 @@ class NexusFilesystem(Protocol):
         path: str,
         content: bytes,
         context: Any = None,
-        **kwargs: Any,
+        if_match: str | None = None,
+        if_none_match: bool = False,
+        force: bool = False,
     ) -> dict[str, Any]:
         """Write content to a file.
 
@@ -57,7 +59,9 @@ class NexusFilesystem(Protocol):
             path: Virtual path to write
             content: File content as bytes
             context: Optional operation context for permission checks
-            **kwargs: Additional arguments (if_match, if_none_match, force)
+            if_match: Etag for optimistic concurrency
+            if_none_match: Fail if file already exists
+            force: Skip version check
 
         Returns:
             Dict with metadata (etag, version, modified_at, size)

@@ -13,9 +13,9 @@ name: Docker Integration Test
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
     paths:
       # Docker-related files
       - 'Dockerfile'

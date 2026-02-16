@@ -1528,7 +1528,7 @@ class NexusFSCoreMixin:
 
     @rpc_expose(description="Stream file content in chunks")
     def stream(
-        self, path: str, chunk_size: int = 8192, context: OperationContext | None = None
+        self, path: str, chunk_size: int = 65536, context: OperationContext | None = None
     ) -> Any:
         """
         Stream file content in chunks without loading entire file into memory.
@@ -1589,7 +1589,7 @@ class NexusFSCoreMixin:
         path: str,
         start: int,
         end: int,
-        chunk_size: int = 8192,
+        chunk_size: int = 65536,
         context: OperationContext | None = None,
     ) -> Any:
         """Stream a byte range [start, end] of file content.
@@ -1689,15 +1689,15 @@ class NexusFSCoreMixin:
         meta = self.metadata.get(path)
 
         # Write content via streaming
-        content_hash = route.backend.write_stream(chunks, context=context).unwrap()
+        write_response = route.backend.write_stream(chunks, context=context)
+        content_hash = write_response.unwrap()
 
-        # Get size from backend metadata (written during streaming)
-        # For now, we can't easily get size without reading - set to 0 and update on next read
-        # A better approach would be for write_stream to return (hash, size) tuple
-        size = 0
-        # get_content_size is an abstract method on Backend, always available
-        with contextlib.suppress(Exception):
-            size = route.backend.get_content_size(content_hash, context=context).unwrap()
+        # WriteResult-aware backends (LocalBackend, GCS) store the byte count
+        # in affected_rows to avoid a redundant get_content_size() round-trip.
+        size = write_response.affected_rows
+        if size <= 0:
+            with contextlib.suppress(Exception):
+                size = route.backend.get_content_size(content_hash, context=context).unwrap()
 
         # Update metadata
         new_version = (meta.version + 1) if meta else 1

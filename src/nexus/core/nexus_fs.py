@@ -470,6 +470,11 @@ class NexusFS(  # type: ignore[misc]
             return getattr(enforcer, "namespace_manager", None)
         return None
 
+    @property
+    def config(self) -> Any | None:
+        """Public accessor for the runtime configuration object."""
+        return self._config
+
     def _init_performance_optimizations(self) -> None:
         """Initialize performance optimizations for permission checks.
 

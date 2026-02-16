@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771237391280,
+  "lastUpdate": 1771237928322,
   "repoUrl": "https://github.com/nexi-lab/nexus",
   "entries": {
     "Benchmark": [
@@ -9300,6 +9300,156 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.0001789095594515396",
             "extra": "mean: 1.535811920973456 msec\nrounds: 658"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joezhoujinjing@gmail.com",
+            "name": "joezhoujinjing",
+            "username": "joezhoujinjing"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "430c7c1132d07d4d0ace39e2fd2cb23a64d7d08a",
+          "message": "chore: prune non-protocol unit tests, keep only RPC/MCP/IPC (#1699)\n\n* chore: prune non-protocol unit tests, keep only RPC/MCP/IPC\n\nAggressive cleanup of the unit test suite to focus exclusively on\ncore protocol tests. Removed ~537 files (~180k lines) covering\nbackends, connectors, storage, permissions, workflows, skills,\nsearch, payments, and all other non-protocol subsystems.\n\nRemaining unit tests (33 files):\n- tests/unit/ipc/ — IPC envelope, delivery, driver, discovery, storage\n- tests/unit/mcp/ — MCP server, tools, formatters, provider registry\n- tests/unit/server/test_rpc_* + test_protocol — RPC protocol tests\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* chore: restore trusted computing base tests, add time budget and README\n\nRestore kernel, system service, and storage pillar unit tests that\nform the trusted computing base. Feature module tests (search, skills,\npay, connectors, LLM, workflows, etc.) remain pruned — they are\nself-contained and covered by integration/e2e tests.\n\nTiers restored:\n- Kernel (core/): NexusFS, VFS, mounts, namespaces, permissions, ReBaC\n- System services (services/): event bus, agent registry, protocol contracts\n- Storage (backends/, storage/): backend contracts, CAS, record store\n\nAlso adds:\n- Per-test timeout: 60s (pytest-timeout in pyproject.toml)\n- Suite budget: 180s (conftest.py hook)\n- CI job timeout: 3 min (test.yml timeout-minutes)\n- tests/unit/README.md documenting test philosophy and rules\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix: update MCP resource tests for fastmcp 2.x compatibility\n\nfastmcp 2.x requires an active Context when calling resource\nfunctions. Updated tests to set up Context via _current_context\ncontextvar before invoking resource.fn(). Bumped fastmcp pin\nfrom >=0.2.0 to >=2.0.0.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* chore: move misplaced root-level tests to integration/, delete dead files\n\n- Moved 4 test files from tests/ root to tests/integration/:\n  test_auth_integration.py, test_oauth_api_key_simple.py,\n  test_oauth_provision_integration.py, test_user_auth.py\n- Deleted test_share_link_e2e.py (0 tests collected, empty)\n- Deleted test_skills_segfault.sh (one-off debug script)\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* ci: add concurrency groups to cancel stale workflow runs\n\nNew pushes to the same branch now auto-cancel in-progress runs,\nreducing CI queue saturation on the free-tier 20-job limit.\n\nSkipped: docs.yml (already has pages group), release.yml (tag-only),\nlabel-sync.yml (main-only, rare).\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* ci: re-trigger workflows after clearing queue\n\n* fix: handle fastmcp version differences in resource tests\n\nresource.fn() returns a coroutine in some fastmcp versions but a\nstring in others. Use inspect.iscoroutine() to handle both cases.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* ci: drop coverage from unit test step to stay within 3-min budget\n\n--cov roughly doubles pytest runtime on CI. Unit tests finish in\n~1m36s without coverage but were timing out at 3 min with it.\nCoverage can be measured in a separate job if needed.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Opus 4.6 <noreply@anthropic.com>",
+          "timestamp": "2026-02-16T02:29:00-08:00",
+          "tree_id": "c2cf033d3d07d939c41d188acb504c2973c8bf8b",
+          "url": "https://github.com/nexi-lab/nexus/commit/430c7c1132d07d4d0ace39e2fd2cb23a64d7d08a"
+        },
+        "date": 1771237927619,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/benchmarks/test_async_permission_performance.py::test_permission_overhead_acceptable",
+            "value": 349.28593941525895,
+            "unit": "iter/sec",
+            "range": "stddev: 0.008049218558345603",
+            "extra": "mean: 2.8629838397563447 msec\nrounds: 493"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_write_small_file",
+            "value": 327.59776170197176,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0011413164004330024",
+            "extra": "mean: 3.0525239086027036 msec\nrounds: 372"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_read_small_file",
+            "value": 16124.1462414071,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000018509878758939996",
+            "extra": "mean: 62.0187875393974 usec\nrounds: 16436"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_read_cached_file",
+            "value": 16214.39333353139,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000016132240966070723",
+            "extra": "mean: 61.67359946375536 usec\nrounds: 17901"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_exists_check",
+            "value": 54466.208920529556,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001599516331983099",
+            "extra": "mean: 18.360007421465262 usec\nrounds: 41366"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestGlobBenchmarks::test_list_large_directory",
+            "value": 248.6227064211869,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0002695323413437333",
+            "extra": "mean: 4.022158773808533 msec\nrounds: 252"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestGlobBenchmarks::test_glob_simple_pattern",
+            "value": 168.85683460011563,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0009539183168770589",
+            "extra": "mean: 5.922176631867972 msec\nrounds: 182"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestGlobBenchmarks::test_list_1k_files",
+            "value": 57.37414666107512,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0214855177107051",
+            "extra": "mean: 17.42945312820555 msec\nrounds: 78"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestHashingBenchmarks::test_sha256_medium",
+            "value": 23636.472482574787,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000023368979455096755",
+            "extra": "mean: 42.307497480312136 usec\nrounds: 23812"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestPermissionBenchmarks::test_permission_check_bulk_python",
+            "value": 2530.8038000644788,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004576903310849948",
+            "extra": "mean: 395.131380778914 usec\nrounds: 1644"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestPermissionBenchmarks::test_permission_check_bulk_rust",
+            "value": 4853.730404543929,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000047916268126369834",
+            "extra": "mean: 206.0271001174329 usec\nrounds: 2547"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBulkOperationBenchmarks::test_write_batch_10",
+            "value": 41.71265743904458,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0010184207527640732",
+            "extra": "mean: 23.973538522721004 msec\nrounds: 44"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBulkOperationBenchmarks::test_read_bulk_10",
+            "value": 1328.901185017479,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0005517997896220321",
+            "extra": "mean: 752.5013983540447 usec\nrounds: 1579"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBlake3HashingBenchmarks::test_hash_1mb_content",
+            "value": 3911.8400453970107,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000073904971079423805",
+            "extra": "mean: 255.63417430032226 usec\nrounds: 3821"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBlake3HashingBenchmarks::test_hash_smart_1mb_content",
+            "value": 18548.660560912824,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000026487348926169937",
+            "extra": "mean: 53.9122486346684 usec\nrounds: 18312"
+          },
+          {
+            "name": "tests/benchmarks/test_search_benchmarks.py::TestPythonRegexBenchmarks::test_python_regex_simple_10k_lines",
+            "value": 3936.2911144663562,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000007011797422645522",
+            "extra": "mean: 254.04625087938146 usec\nrounds: 3978"
+          },
+          {
+            "name": "tests/benchmarks/test_search_benchmarks.py::TestRustGrepBenchmarks::test_rust_grep_10k_lines",
+            "value": 1018.3528375805317,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00009227901672987351",
+            "extra": "mean: 981.9779187495216 usec\nrounds: 960"
+          },
+          {
+            "name": "tests/benchmarks/test_search_benchmarks.py::TestHybridSearchFusionBenchmarks::test_rrf_fusion_1k_results",
+            "value": 524.2577298370328,
+            "unit": "iter/sec",
+            "range": "stddev: 0.008068468959585778",
+            "extra": "mean: 1.907458761382218 msec\nrounds: 637"
           }
         ]
       }

@@ -234,7 +234,9 @@ class TestTransferOperations:
 
     @pytest.mark.asyncio
     async def test_transfer_x402_disabled_raises_for_external(self, nexuspay_no_x402):
-        with pytest.raises(NexusPayError, match="x402 not enabled"):
+        from nexus.pay.protocol import ProtocolDetectionError
+
+        with pytest.raises(ProtocolDetectionError):
             await nexuspay_no_x402.transfer(
                 to="0x1234567890abcdef1234567890abcdef12345678",
                 amount=1.0,
@@ -789,20 +791,22 @@ class TestEdgeCases:
 
     @pytest.mark.asyncio
     async def test_credits_service_error_propagates(self, nexuspay, mock_credits_service):
-        """Errors from CreditsService should propagate through NexusPay."""
+        """Errors from CreditsService are wrapped in ProtocolError."""
         from nexus.pay.credits import InsufficientCreditsError
+        from nexus.pay.protocol import ProtocolError
 
         mock_credits_service.transfer.side_effect = InsufficientCreditsError("Not enough")
-        with pytest.raises(InsufficientCreditsError):
+        with pytest.raises(ProtocolError, match="Not enough"):
             await nexuspay.transfer(to="bob", amount=100.0)
 
     @pytest.mark.asyncio
     async def test_x402_error_propagates(self, nexuspay, mock_x402_client):
-        """Errors from X402Client should propagate through NexusPay."""
+        """Errors from X402Client are wrapped in ProtocolError."""
+        from nexus.pay.protocol import ProtocolError
         from nexus.pay.x402 import X402Error
 
         mock_x402_client.pay.side_effect = X402Error("Payment failed")
-        with pytest.raises(X402Error):
+        with pytest.raises(ProtocolError, match="Payment failed"):
             await nexuspay.transfer(
                 to="0x1234567890abcdef1234567890abcdef12345678",
                 amount=1.0,

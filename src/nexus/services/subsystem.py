@@ -11,51 +11,14 @@ This module provides:
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
+    from nexus.core.types import OperationContext as OperationContext  # noqa: F401
 
-
-@dataclass(frozen=True)
-class ContextIdentity:
-    """Extracted identity from OperationContext (DRY helper).
-
-    Replaces the pattern::
-
-        zone_id = getattr(context, "zone_id", None) or "default"
-        user_id = getattr(context, "user", None) or "anonymous"
-        is_admin = getattr(context, "is_admin", False)
-
-    which appears 10+ times across mixins.
-    """
-
-    zone_id: str
-    user_id: str
-    is_admin: bool
-
-
-def extract_context_identity(context: OperationContext | None) -> ContextIdentity:
-    """Extract zone/user/admin from an OperationContext.
-
-    Safe to call with ``None`` — returns sensible defaults.
-
-    Args:
-        context: Optional OperationContext from a request.
-
-    Returns:
-        Frozen ContextIdentity with zone_id, user_id, is_admin.
-    """
-    if context is None:
-        return ContextIdentity(zone_id="default", user_id="anonymous", is_admin=False)
-    return ContextIdentity(
-        zone_id=getattr(context, "zone_id", None) or "default",
-        user_id=(
-            getattr(context, "user", None) or getattr(context, "subject_id", None) or "anonymous"
-        ),
-        is_admin=getattr(context, "is_admin", False),
-    )
+# Issue #1291: ContextIdentity and extract_context_identity moved to nexus.core.types.
+# Re-exported here for backward compatibility.
+from nexus.core.types import ContextIdentity, extract_context_identity  # noqa: F401
 
 
 class Subsystem(ABC):

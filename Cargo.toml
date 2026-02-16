@@ -21,6 +21,8 @@ roaring = "0.10"
 globset = "0.4"
 blake3 = "1.5"
 string-interner = "0.17"
+regex-syntax = "0.8"
+crc32fast = "1.4"
 
 [profile.release]
 lto = true

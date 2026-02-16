@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-from nexus.core.permissions import OperationContext, Permission, PermissionEnforcer
+from nexus.core.permissions import OperationContext, Permission
+from nexus.services.permissions.enforcer import PermissionEnforcer
 
 # ---------------------------------------------------------------------------
 # Fixtures

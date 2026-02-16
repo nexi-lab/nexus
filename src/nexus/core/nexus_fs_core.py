@@ -53,7 +53,7 @@ class NexusFSCoreMixin:
     # Type hints for attributes/methods that will be provided by NexusFS parent class
     if TYPE_CHECKING:
         from nexus.core._metadata_generated import FileMetadataProtocol
-        from nexus.core.permissions import PermissionEnforcer
+        from nexus.services.permissions.enforcer import PermissionEnforcer
 
         metadata: FileMetadataProtocol
         backend: Backend
@@ -524,25 +524,20 @@ class NexusFSCoreMixin:
         the given path, enabling precise invalidation when the path is written.
 
         Called after metadata reads (get/stat) to associate read sets with
-        cache entries. This is a no-op when ReadSetAwareCache is not configured.
+        cache entries. This is a no-op when cache observer is not configured.
 
         Args:
             path: Virtual path of the cached entry
             metadata: File metadata (None means not found — skip)
             resource_type: Type of resource (file, directory)
         """
-        read_set_cache = getattr(self, "_read_set_cache", None)
-        if read_set_cache is None or metadata is None:
+        cache_observer = getattr(self, "_cache_observer", None)
+        if cache_observer is None or metadata is None:
             return
-
-        from nexus.core.read_set import ReadSet
 
         zone_id = getattr(self, "zone_id", None) or "default"
         revision = self._get_zone_revision()
-
-        rs = ReadSet(query_id=f"cache:{path}", zone_id=zone_id)
-        rs.record_read(resource_type, path, revision=revision)
-        read_set_cache.put_path(path, metadata, read_set=rs, zone_revision=revision)
+        cache_observer.on_read(path, metadata, revision, zone_id, resource_type)
 
     # =========================================================================
     # Sync Lock Helpers for write(lock=True) - Issue #1106 Block 3
@@ -895,7 +890,7 @@ class NexusFSCoreMixin:
         path = self._validate_path(path)
 
         # Phase 2 Integration: Intercept memory paths
-        from nexus.core.memory_router import MemoryViewRouter
+        from nexus.services.memory.memory_router import MemoryViewRouter
 
         if MemoryViewRouter.is_memory_path(path):
             return self._read_memory_path(path, return_metadata, context=context)
@@ -1821,7 +1816,7 @@ class NexusFSCoreMixin:
         path = self._validate_path(path)
 
         # Phase 2 Integration: Intercept memory paths
-        from nexus.core.memory_router import MemoryViewRouter
+        from nexus.services.memory.memory_router import MemoryViewRouter
 
         if MemoryViewRouter.is_memory_path(path):
             return self._write_memory_path(path, content)
@@ -1975,12 +1970,10 @@ class NexusFSCoreMixin:
         # Issue #1169: Advance zone revision counter after mutation
         new_revision = self._increment_zone_revision()
 
-        # Issue #1169: Precise cache invalidation via read sets
-        # Invalidates other cache entries whose read sets depend on this path
-        # (e.g., directory listings that included this file)
-        read_set_cache = getattr(self, "_read_set_cache", None)
-        if read_set_cache is not None:
-            read_set_cache.invalidate_for_write(path, new_revision, zone_id=zone_id or "default")
+        # Issue #1169: Precise cache invalidation via cache observer
+        cache_observer = getattr(self, "_cache_observer", None)
+        if cache_observer is not None:
+            cache_observer.on_write(path, new_revision, zone_id or "default")
 
         # Leopard-style: Add new file to ancestor directory grants
         # When a file is created in a directory that has been granted to users,
@@ -2942,7 +2935,7 @@ class NexusFSCoreMixin:
         path = self._validate_path(path)
 
         # Phase 2 Integration: Intercept memory paths
-        from nexus.core.memory_router import MemoryViewRouter
+        from nexus.services.memory.memory_router import MemoryViewRouter
 
         if MemoryViewRouter.is_memory_path(path):
             self._delete_memory_path(path, context=context)
@@ -3017,10 +3010,10 @@ class NexusFSCoreMixin:
         # Issue #1169: Advance zone revision counter after delete
         new_revision = self._increment_zone_revision()
 
-        # Issue #1169: Precise cache invalidation via read sets
-        read_set_cache = getattr(self, "_read_set_cache", None)
-        if read_set_cache is not None:
-            read_set_cache.invalidate_for_write(path, new_revision, zone_id=zone_id or "default")
+        # Issue #1169: Precise cache invalidation via cache observer
+        cache_observer = getattr(self, "_cache_observer", None)
+        if cache_observer is not None:
+            cache_observer.on_delete(path, new_revision, zone_id or "default")
 
         # v0.7.0: Fire workflow event for automatic trigger execution
         from nexus.workflows.types import TriggerType
@@ -3197,14 +3190,9 @@ class NexusFSCoreMixin:
 
         # Issue #1169: Advance zone revision + invalidate both old and new paths
         new_revision = self._increment_zone_revision()
-        read_set_cache = getattr(self, "_read_set_cache", None)
-        if read_set_cache is not None:
-            read_set_cache.invalidate_for_write(
-                old_path, new_revision, zone_id=zone_id or "default"
-            )
-            read_set_cache.invalidate_for_write(
-                new_path, new_revision, zone_id=zone_id or "default"
-            )
+        cache_observer = getattr(self, "_cache_observer", None)
+        if cache_observer is not None:
+            cache_observer.on_rename(old_path, new_path, new_revision, zone_id or "default")
 
         # Update ReBAC permissions to follow the renamed file/directory
         # This ensures permissions are preserved when files are moved
@@ -3923,7 +3911,7 @@ class NexusFSCoreMixin:
         Raises:
             NexusFileNotFoundError: If memory doesn't exist.
         """
-        from nexus.core.memory_router import MemoryViewRouter
+        from nexus.services.memory.memory_router import MemoryViewRouter
         from nexus.services.permissions.entity_registry import EntityRegistry
 
         # Get memory via router
@@ -4008,7 +3996,7 @@ class NexusFSCoreMixin:
         Raises:
             NexusFileNotFoundError: If memory doesn't exist.
         """
-        from nexus.core.memory_router import MemoryViewRouter
+        from nexus.services.memory.memory_router import MemoryViewRouter
         from nexus.services.permissions.entity_registry import EntityRegistry
 
         # Get memory via router

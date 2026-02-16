@@ -90,7 +90,7 @@ nexus agent list
 **Python API:**
 
 ```python
-from nexus.core.agent_registry import AgentRegistry
+from nexus.services.agents.agent_registry import AgentRegistry
 
 agent_registry = AgentRegistry(session_factory=session_factory)
 agent_registry.register(
@@ -120,7 +120,7 @@ nexus admin create-agent-key alice alice_research --expires-days 90
 **Python API:**
 
 ```python
-from nexus.core.agent_registry import AgentRegistry
+from nexus.services.agents.agent_registry import AgentRegistry
 from nexus.server.auth.database_key import DatabaseAPIKeyAuth
 from datetime import timedelta, datetime, UTC
 
@@ -558,7 +558,7 @@ nexus rebac delete <tuple_id>
 ```python
 from crewai import Agent, Task, Crew
 from nexus import connect
-from nexus.core.agent_registry import AgentRegistry
+from nexus.services.agents.agent_registry import AgentRegistry
 
 # Setup Nexus
 nx = connect()

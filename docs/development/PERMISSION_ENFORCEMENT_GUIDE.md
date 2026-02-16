@@ -110,7 +110,8 @@ system_ctx = OperationContext(
 Multi-layer permission enforcement engine:
 
 ```python
-from nexus.core.permissions import PermissionEnforcer, Permission
+from nexus.core.permissions import Permission
+from nexus.services.permissions.enforcer import PermissionEnforcer
 
 enforcer = PermissionEnforcer(
     metadata_store=metadata,

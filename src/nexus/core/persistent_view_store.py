@@ -118,3 +118,13 @@ class PersistentViewStore(Protocol):
             Number of views deleted.
         """
         ...
+
+    def delete_all_views(self) -> int:
+        """Delete all persisted views across all subjects and zones.
+
+        Used by invalidate_all() for full cache reset.
+
+        Returns:
+            Number of views deleted.
+        """
+        ...

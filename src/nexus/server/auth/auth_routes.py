@@ -15,25 +15,25 @@ from nexus.server.auth.oauth_user_auth import OAuthUserAuth
 logger = logging.getLogger(__name__)
 
 # ==============================================================================
-# Dependency Injection
+# Injectable DI — set at server startup, accessed via Depends() or direct call
 # ==============================================================================
 
 _auth_provider: DatabaseLocalAuth | None = None
 _oauth_provider: OAuthUserAuth | None = None
-_nexus_fs_instance: Any | None = None  # NexusFS instance for provisioning
+_nexus_fs_instance: Any | None = None
 
 
 def set_auth_provider(provider: DatabaseLocalAuth) -> None:
-    """Set the authentication provider for dependency injection."""
+    """Inject the authentication provider. Called by server layer at startup."""
     global _auth_provider
     _auth_provider = provider
 
 
 def get_auth_provider() -> DatabaseLocalAuth:
-    """Get the authentication provider.
+    """Return the injected auth provider (used as ``Depends(get_auth_provider)``).
 
     Raises:
-        HTTPException: If auth provider is not configured
+        HTTPException: If auth provider has not been injected.
     """
     if _auth_provider is None:
         raise HTTPException(
@@ -43,26 +43,44 @@ def get_auth_provider() -> DatabaseLocalAuth:
     return _auth_provider
 
 
+def reset_auth_provider() -> None:
+    """Reset auth provider to None — only for tests."""
+    global _auth_provider
+    _auth_provider = None
+
+
 def set_oauth_provider(provider: OAuthUserAuth) -> None:
-    """Set the OAuth authentication provider for dependency injection."""
+    """Inject the OAuth authentication provider. Called by server layer at startup."""
     global _oauth_provider
     _oauth_provider = provider
 
 
 def get_oauth_provider() -> OAuthUserAuth | None:
-    """Get the OAuth authentication provider (optional)."""
+    """Return the injected OAuth provider, or None if not configured."""
     return _oauth_provider
 
 
+def reset_oauth_provider() -> None:
+    """Reset OAuth provider to None — only for tests."""
+    global _oauth_provider
+    _oauth_provider = None
+
+
 def set_nexus_instance(nexus_fs: Any) -> None:
-    """Set the global NexusFS instance for user provisioning."""
+    """Inject the NexusFS instance for user provisioning. Called by server layer at startup."""
     global _nexus_fs_instance
     _nexus_fs_instance = nexus_fs
 
 
 def get_nexus_instance() -> Any | None:
-    """Get the global NexusFS instance."""
+    """Return the injected NexusFS instance, or None if not configured."""
     return _nexus_fs_instance
+
+
+def reset_nexus_instance() -> None:
+    """Reset NexusFS instance to None — only for tests."""
+    global _nexus_fs_instance
+    _nexus_fs_instance = None
 
 
 async def get_authenticated_user(

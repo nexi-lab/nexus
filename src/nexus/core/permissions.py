@@ -16,6 +16,19 @@ from typing import Any
 
 from nexus.core.types import OperationContext, Permission  # noqa: F401
 
+
+def __getattr__(name: str) -> Any:
+    """Lazy re-export for PermissionEnforcer (moved to services/permissions/enforcer.py).
+
+    Avoids circular import: enforcer.py imports from this module at load time.
+    """
+    if name == "PermissionEnforcer":
+        from nexus.services.permissions.enforcer import PermissionEnforcer
+
+        return PermissionEnforcer
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 logger = logging.getLogger(__name__)
 
 

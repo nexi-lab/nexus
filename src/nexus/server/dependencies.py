@@ -240,7 +240,7 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
     if subject_type == "agent":
         agent_id = subject_id
         metadata = auth_result.get("metadata", {})
-        user_id = metadata.get("legacy_user_id", subject_id)
+        user_id = metadata.get("owner_user_id", subject_id)
 
     # Handle X-Agent-ID header
     if agent_id and subject_type == "user":

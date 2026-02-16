@@ -570,4 +570,5 @@ class TestDatabaseTaskStoreDeprecation:
 
         with pytest.warns(DeprecationWarning):
             store = DatabaseTaskStore(fake_record_store)
+
         assert store._session_factory is fake_record_store.session_factory

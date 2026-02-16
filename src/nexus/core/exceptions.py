@@ -83,8 +83,11 @@ class NexusPermissionError(NexusError):
         super().__init__(msg, path)
 
 
-class PermissionDeniedError(NexusError):
+class PermissionDeniedError(NexusPermissionError):
     """Raised when ReBAC permission check fails.
+
+    Subclass of NexusPermissionError — can be caught by
+    ``except NexusPermissionError`` for unified permission handling.
 
     This is an expected error - the user attempted an operation they lack
     ReBAC permissions for.
@@ -97,7 +100,7 @@ class PermissionDeniedError(NexusError):
     is_expected = True  # User lacks ReBAC permissions
 
     def __init__(self, message: str, path: str | None = None):
-        super().__init__(message, path)
+        super().__init__(path=path or "", message=message)
 
 
 class StaleSessionError(NexusError):
@@ -338,6 +341,39 @@ class AuthenticationError(NexusError):
         super().__init__(message, path)
 
 
+# --- Router / Path Exceptions ---
+
+
+class PathNotMountedError(NexusError):
+    """Raised when no mount exists for a given path.
+
+    This is an expected error — the user referenced a path that has no
+    backend mount configured. Maps to HTTP 404 Not Found.
+    """
+
+    is_expected = True  # User referenced unmounted path
+
+    def __init__(self, path: str, message: str | None = None):
+        msg = message or "No mount found for path"
+        super().__init__(msg, path)
+
+
+class AccessDeniedError(NexusError):
+    """Raised when access to a path is denied by namespace or zone rules.
+
+    Distinct from NexusPermissionError (ReBAC / file-level permissions):
+    AccessDeniedError covers zone isolation, read-only namespaces, and
+    admin-only namespace enforcement in the VFS router layer.
+
+    This is an expected error — maps to HTTP 403 Forbidden.
+    """
+
+    is_expected = True  # User lacks zone/namespace-level access
+
+    def __init__(self, message: str, path: str | None = None):
+        super().__init__(message, path)
+
+
 # --- Chunked Upload Exceptions (Issue #788) ---
 
 
@@ -402,7 +438,3 @@ class UploadChecksumMismatchError(NexusError):
         self.algorithm = algorithm
         msg = message or f"Checksum mismatch ({algorithm}) for upload {upload_id}"
         super().__init__(msg)
-
-
-# Alias for convenience (used in time-travel debugging)
-NotFoundError = NexusFileNotFoundError

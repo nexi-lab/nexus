@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import and_, or_, select
 
-from nexus.core.exceptions import NotFoundError
+from nexus.core.exceptions import NexusFileNotFoundError
 from nexus.storage.models import FilePathModel, OperationLogModel
 
 if TYPE_CHECKING:
@@ -43,13 +43,13 @@ class TimeTravelReader:
             Operation log entry
 
         Raises:
-            NotFoundError: If operation not found
+            NexusFileNotFoundError: If operation not found
         """
         stmt = select(OperationLogModel).where(OperationLogModel.operation_id == operation_id)
         operation = self.session.execute(stmt).scalar_one_or_none()
 
         if not operation:
-            raise NotFoundError(f"Operation {operation_id} not found")
+            raise NexusFileNotFoundError(f"Operation {operation_id} not found")
 
         return operation
 
@@ -79,7 +79,7 @@ class TimeTravelReader:
             Dict with keys: content (bytes), metadata (dict), operation_id (str)
 
         Raises:
-            NotFoundError: If file doesn't exist at that operation point
+            NexusFileNotFoundError: If file doesn't exist at that operation point
             ValidationError: If operation ID is invalid
         """
         # Get the target operation
@@ -106,14 +106,16 @@ class TimeTravelReader:
         ops_up_to_target = [op for op in all_operations if op.created_at <= target_op.created_at]
 
         if not ops_up_to_target:
-            raise NotFoundError(f"File {path} did not exist at operation {operation_id}")
+            raise NexusFileNotFoundError(f"File {path} did not exist at operation {operation_id}")
 
         # Find most recent operation at or before target
         most_recent = ops_up_to_target[-1]
 
         # If most recent operation is delete, file doesn't exist
         if most_recent.operation_type == "delete":
-            raise NotFoundError(f"File {path} was deleted at or before operation {operation_id}")
+            raise NexusFileNotFoundError(
+                f"File {path} was deleted at or before operation {operation_id}"
+            )
 
         # Find last write operation
         last_write = None
@@ -123,7 +125,9 @@ class TimeTravelReader:
                 break
 
         if not last_write:
-            raise NotFoundError(f"File {path} had no write operations before {operation_id}")
+            raise NexusFileNotFoundError(
+                f"File {path} had no write operations before {operation_id}"
+            )
 
         # Now reconstruct the content written by last_write
         # Strategy: The next write operation's snapshot_hash contains our content
@@ -178,12 +182,12 @@ class TimeTravelReader:
                     if next_delete.metadata_snapshot:
                         metadata_dict = json.loads(next_delete.metadata_snapshot)
                 else:
-                    raise NotFoundError(
+                    raise NexusFileNotFoundError(
                         f"Cannot reconstruct content for {path} at operation {operation_id}"
                     )
 
         if content is None:
-            raise NotFoundError(
+            raise NexusFileNotFoundError(
                 f"Cannot reconstruct content for {path} at operation {operation_id}"
             )
 
@@ -214,7 +218,7 @@ class TimeTravelReader:
             List of dicts with keys: path, size, modified_at
 
         Raises:
-            NotFoundError: If directory doesn't exist at that operation point
+            NexusFileNotFoundError: If directory doesn't exist at that operation point
             ValidationError: If operation ID is invalid
         """
         # Get the target operation
@@ -325,10 +329,10 @@ class TimeTravelReader:
         state_1 = None
         state_2 = None
 
-        with suppress(NotFoundError):
+        with suppress(NexusFileNotFoundError):
             state_1 = self.get_file_at_operation(path, operation_id_1, zone_id=zone_id)
 
-        with suppress(NotFoundError):
+        with suppress(NexusFileNotFoundError):
             state_2 = self.get_file_at_operation(path, operation_id_2, zone_id=zone_id)
 
         # Compare states

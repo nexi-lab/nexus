@@ -15,6 +15,7 @@ Usage:
 
 from __future__ import annotations
 
+import functools
 import inspect
 import logging
 from typing import TYPE_CHECKING, Any
@@ -50,7 +51,7 @@ class BackendFactory:
             Instantiated Backend
 
         Raises:
-            KeyError: If backend_type is not registered
+            RuntimeError: If backend_type is not registered
             TypeError: If required constructor args are missing
         """
         from nexus.backends.registry import ConnectorRegistry, _ensure_optional_backends_registered
@@ -77,16 +78,22 @@ class BackendFactory:
 
         # Only pass extra kwargs the constructor actually accepts
         if extra_kwargs:
-            sig = inspect.signature(connector_cls.__init__)
-            accepts_var_keyword = any(
-                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
-            )
-            if accepts_var_keyword:
+            accepted, accepts_var_kw = BackendFactory._accepted_params(connector_cls)
+            if accepts_var_kw:
                 kwargs.update(extra_kwargs)
             else:
-                accepted_params = set(sig.parameters.keys()) - {"self"}
                 for key, value in extra_kwargs.items():
-                    if key in accepted_params:
+                    if key in accepted:
                         kwargs[key] = value
 
         return connector_cls(**kwargs)
+
+    @staticmethod
+    @functools.lru_cache(maxsize=64)
+    def _accepted_params(cls: type) -> tuple[frozenset[str], bool]:
+        """Return (accepted_param_names, accepts_var_keyword) for a class."""
+        sig = inspect.signature(cls.__init__)  # type: ignore[misc]
+        accepts_var_kw = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+        )
+        return frozenset(sig.parameters.keys()) - frozenset({"self"}), accepts_var_kw

@@ -13,6 +13,8 @@ from nexus.core.protocols.connector import (
     ConnectorProtocol,
     ContentStoreProtocol,
     DirectoryOpsProtocol,
+    OAuthCapableProtocol,
+    PassthroughProtocol,
 )
 from nexus.core.protocols.vfs_router import MountInfo, ResolvedPath, VFSRouterProtocol
 
@@ -21,6 +23,8 @@ __all__ = [
     "ContentStoreProtocol",
     "DirectoryOpsProtocol",
     "MountInfo",
+    "OAuthCapableProtocol",
+    "PassthroughProtocol",
     "ResolvedPath",
     "VFSRouterProtocol",
 ]

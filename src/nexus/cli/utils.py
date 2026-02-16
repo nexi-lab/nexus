@@ -549,8 +549,7 @@ def handle_error(e: Exception) -> None:
     - 3: Permission denied
     """
     # Import exception types here to avoid circular imports
-    from nexus.core.exceptions import NexusPermissionError
-    from nexus.core.router import AccessDeniedError
+    from nexus.core.exceptions import AccessDeniedError, NexusPermissionError
 
     if isinstance(e, (PermissionError, AccessDeniedError, NexusPermissionError)):
         console.print(f"[red]Permission Denied:[/red] {e}")

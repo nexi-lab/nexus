@@ -26,7 +26,7 @@ import threading
 from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend, HandlerStatusResponse
-from nexus.core.response import HandlerResponse
+from nexus.core.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
@@ -88,6 +88,7 @@ class IPCVFSDriver(Backend):
 
     # === Content Operations (path-oriented virtual FS) ===
 
+    @timed_response
     def write_content(
         self,
         content: bytes,
@@ -100,12 +101,10 @@ class IPCVFSDriver(Backend):
         use ``write_path()`` instead.
         """
         content_hash = hashlib.sha256(content).hexdigest()
-        try:
-            self._run_async(self._storage.write(f"/_cas/{content_hash}", content, self._zone_id))
-            return HandlerResponse.ok(data=content_hash, backend_name="ipc")
-        except Exception as exc:
-            return HandlerResponse.error(message=str(exc), code=500, backend_name="ipc")
+        self._run_async(self._storage.write(f"/_cas/{content_hash}", content, self._zone_id))
+        return HandlerResponse.ok(data=content_hash, backend_name="ipc")
 
+    @timed_response
     def write_path(
         self,
         path: str,
@@ -123,8 +122,9 @@ class IPCVFSDriver(Backend):
             return HandlerResponse.ok(data=content_hash, backend_name="ipc", path=path)
         except Exception as exc:
             logger.error("IPC write failed at %s: %s", path, exc)
-            return HandlerResponse.error(message=str(exc), code=500, backend_name="ipc", path=path)
+            raise
 
+    @timed_response
     def read_content(
         self,
         content_hash: str,
@@ -146,9 +146,8 @@ class IPCVFSDriver(Backend):
                 backend_name="ipc",
                 path=path,
             )
-        except Exception as exc:
-            return HandlerResponse.error(message=str(exc), code=500, backend_name="ipc", path=path)
 
+    @timed_response
     def delete_content(
         self,
         content_hash: str,
@@ -157,6 +156,7 @@ class IPCVFSDriver(Backend):
         """Delete content — IPC never hard-deletes (moves to dead_letter)."""
         return HandlerResponse.ok(data=None, backend_name="ipc")
 
+    @timed_response
     def content_exists(
         self,
         content_hash: str,
@@ -164,12 +164,10 @@ class IPCVFSDriver(Backend):
     ) -> HandlerResponse[bool]:
         """Check if a path exists (virtual FS mode)."""
         path = content_hash
-        try:
-            exists = self._run_async(self._storage.exists(path, self._zone_id))
-            return HandlerResponse.ok(data=exists, backend_name="ipc", path=path)
-        except Exception as exc:
-            return HandlerResponse.error(message=str(exc), code=500, backend_name="ipc", path=path)
+        exists = self._run_async(self._storage.exists(path, self._zone_id))
+        return HandlerResponse.ok(data=exists, backend_name="ipc", path=path)
 
+    @timed_response
     def get_content_size(
         self,
         content_hash: str,
@@ -188,9 +186,8 @@ class IPCVFSDriver(Backend):
                 backend_name="ipc",
                 path=path,
             )
-        except Exception as exc:
-            return HandlerResponse.error(message=str(exc), code=500, backend_name="ipc", path=path)
 
+    @timed_response
     def get_ref_count(
         self,
         content_hash: str,
@@ -201,6 +198,7 @@ class IPCVFSDriver(Backend):
 
     # === Directory Operations ===
 
+    @timed_response
     def mkdir(
         self,
         path: str,
@@ -209,12 +207,10 @@ class IPCVFSDriver(Backend):
         context: OperationContext | None = None,
     ) -> HandlerResponse[None]:
         """Create a directory in IPC storage."""
-        try:
-            self._run_async(self._storage.mkdir(path, self._zone_id))
-            return HandlerResponse.ok(data=None, backend_name="ipc", path=path)
-        except Exception as exc:
-            return HandlerResponse.error(message=str(exc), code=500, backend_name="ipc", path=path)
+        self._run_async(self._storage.mkdir(path, self._zone_id))
+        return HandlerResponse.ok(data=None, backend_name="ipc", path=path)
 
+    @timed_response
     def rmdir(
         self,
         path: str,
@@ -230,6 +226,7 @@ class IPCVFSDriver(Backend):
             path=path,
         )
 
+    @timed_response
     def is_directory(
         self,
         path: str,

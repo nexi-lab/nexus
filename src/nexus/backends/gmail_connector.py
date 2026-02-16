@@ -56,7 +56,7 @@ from nexus.connectors.base import (
 )
 from nexus.connectors.gmail.errors import ERROR_REGISTRY
 from nexus.core.exceptions import BackendError
-from nexus.core.response import HandlerResponse
+from nexus.core.response import HandlerResponse, timed_response
 
 try:
     import yaml
@@ -605,6 +605,7 @@ class GmailConnectorBackend(
             backend="gmail",
         )
 
+    @timed_response
     def read_content(
         self, content_hash: str, context: "OperationContext | None" = None
     ) -> "HandlerResponse[bytes]":
@@ -624,15 +625,11 @@ class GmailConnectorBackend(
             NexusFileNotFoundError: If email doesn't exist
             BackendError: If read operation fails or PyYAML not installed
         """
-        import time
-
-        start_time = time.perf_counter()
 
         if yaml is None:
             return HandlerResponse.error(
                 message="PyYAML not installed. Install with: pip install pyyaml",
                 code=500,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name="gmail",
                 path=content_hash,
             )
@@ -642,7 +639,6 @@ class GmailConnectorBackend(
                 message="Gmail connector requires backend_path in OperationContext. "
                 "This backend reads files from actual paths, not CAS hashes.",
                 code=400,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name="gmail",
                 path=content_hash,
             )
@@ -661,7 +657,6 @@ class GmailConnectorBackend(
             return HandlerResponse.not_found(
                 path=backend_path,
                 message=f"Invalid Gmail path: {backend_path}",
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name="gmail",
             )
 
@@ -670,7 +665,6 @@ class GmailConnectorBackend(
             return HandlerResponse.not_found(
                 path=backend_path,
                 message=f"Not a valid Gmail email file: {filename}",
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name="gmail",
             )
 
@@ -680,7 +674,6 @@ class GmailConnectorBackend(
             return HandlerResponse.not_found(
                 path=backend_path,
                 message=f"Invalid Gmail email filename format: {filename}",
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name="gmail",
             )
 
@@ -695,7 +688,6 @@ class GmailConnectorBackend(
             if cached and not cached.stale and cached.content_binary:
                 return HandlerResponse.ok(
                     data=cached.content_binary,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
                     backend_name="gmail",
                     path=backend_path,
                 )
@@ -708,7 +700,6 @@ class GmailConnectorBackend(
             return HandlerResponse.not_found(
                 path=backend_path,
                 message=f"Failed to fetch email: {e}",
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name="gmail",
             )
 
@@ -730,7 +721,6 @@ class GmailConnectorBackend(
 
         return HandlerResponse.ok(
             data=content,
-            execution_time_ms=(time.perf_counter() - start_time) * 1000,
             backend_name="gmail",
             path=backend_path,
         )

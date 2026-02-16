@@ -247,36 +247,28 @@ class CacheConnectorMixin:
 
         Returns True if:
         - l1_only mode is enabled (L1 cache only), OR
-        - session_factory/db_session is available (L1+L2 cache)
+        - session_factory is available (L1+L2 cache)
 
         This is the standard implementation. Connectors can override if needed.
         """
         # L1-only mode: caching enabled without database
         if getattr(self, "l1_only", False):
             return True
-        # L1+L2 mode: requires database session
-        return (
-            getattr(self, "session_factory", None) is not None
-            or getattr(self, "db_session", None) is not None
-            or getattr(self, "_db_session", None) is not None
-        )
+        # L1+L2 mode: requires database session factory
+        return getattr(self, "session_factory", None) is not None
 
     def _has_l2_caching(self) -> bool:
         """Check if L2 (PostgreSQL) caching is enabled.
 
         Returns True only if:
         - l1_only mode is NOT enabled, AND
-        - session_factory/db_session is available
+        - session_factory is available
 
         Used to skip L2 operations in L1-only mode.
         """
         if getattr(self, "l1_only", False):
             return False
-        return (
-            getattr(self, "session_factory", None) is not None
-            or getattr(self, "db_session", None) is not None
-            or getattr(self, "_db_session", None) is not None
-        )
+        return getattr(self, "session_factory", None) is not None
 
     def _get_cache_path(self, context: OperationContext | None) -> str | None:
         """Get the cache key path from context.
@@ -301,21 +293,12 @@ class CacheConnectorMixin:
         return None
 
     def _get_db_session(self) -> Session:
-        """Get database session. Override if session is stored differently.
+        """Get database session from session_factory.
 
-        Supports multiple patterns:
-        1. session_factory (SessionLocal) - creates new session each call
-        2. db_session - existing session instance
-        3. _db_session - existing session instance (alternate attribute)
+        Requires session_factory (SessionLocal) to be set on the connector.
         """
-        # Prefer session factory pattern (creates session per operation)
         if hasattr(self, "session_factory") and self.session_factory is not None:
             return self.session_factory()  # type: ignore[no-any-return]
-        # Fall back to existing session
-        if hasattr(self, "db_session") and self.db_session is not None:
-            return self.db_session  # type: ignore[no-any-return]
-        if hasattr(self, "_db_session") and self._db_session is not None:
-            return self._db_session  # type: ignore[no-any-return]
         raise RuntimeError("No database session available for caching")
 
     def _get_path_id(self, path: str, session: Session) -> str | None:

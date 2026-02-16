@@ -741,7 +741,7 @@ async def lifespan(_app: FastAPI) -> Any:
             # Reuse OAuthCrypto for Fernet encryption of private keys
             _db_url = _app.state.database_url or "sqlite:///nexus.db"
             _identity_oauth_crypto = OAuthCrypto(db_url=_db_url)
-            _identity_crypto = IdentityCrypto(oauth_crypto=_identity_oauth_crypto)
+            _identity_crypto = IdentityCrypto(token_encryptor=_identity_oauth_crypto)
 
             _app.state.key_service = KeyService(
                 session_factory=_app.state.nexus_fs.SessionLocal,

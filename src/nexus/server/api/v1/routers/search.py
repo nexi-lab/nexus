@@ -73,7 +73,7 @@ async def _graph_enhanced_search(
 
     async with async_session_factory() as session:
         # Initialize components
-        graph_store = GraphStore(session, zone_id="default")
+        graph_store = GraphStore(session, zone_id="root")
 
         # Create a wrapper for SemanticSearch that uses the search daemon
         class DaemonSemanticSearchWrapper:

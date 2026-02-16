@@ -134,7 +134,9 @@ def cat(
                 time_travel = TimeTravelReader(session, nx.backend)
 
                 # Get file state at operation
-                state = time_travel.get_file_at_operation(path, at_operation, zone_id=nx.zone_id)
+                state = time_travel.get_file_at_operation(
+                    path, at_operation, zone_id=nx._default_context.zone_id
+                )
 
             nx.close()
 

@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.skills.mcp_models import MCPToolConfig
+    from nexus.mcp.models import MCPToolConfig
 
 
 @dataclass
@@ -56,18 +56,18 @@ class SkillMetadata:
         Raises:
             ValidationError: If validation fails with clear message.
         """
-        from nexus.core.exceptions import ValidationError
+        from nexus.skills.exceptions import SkillValidationError
 
         # Validate required fields
         if not self.name:
-            raise ValidationError("skill name is required")
+            raise SkillValidationError("skill name is required")
 
         if not self.description:
-            raise ValidationError(f"skill description is required for '{self.name}'")
+            raise SkillValidationError(f"skill description is required for '{self.name}'")
 
         # Validate name format (alphanumeric, dash, underscore only)
         if not self.name.replace("-", "").replace("_", "").isalnum():
-            raise ValidationError(
+            raise SkillValidationError(
                 f"skill name must be alphanumeric (with - or _), got '{self.name}'"
             )
 
@@ -75,18 +75,20 @@ class SkillMetadata:
         # Accept personal/user as valid tiers (personal is alias for user)
         valid_tiers = ("agent", "zone", "system", "personal", "user")
         if self.tier and self.tier not in valid_tiers:
-            raise ValidationError(f"skill tier must be one of {valid_tiers}, got '{self.tier}'")
+            raise SkillValidationError(
+                f"skill tier must be one of {valid_tiers}, got '{self.tier}'"
+            )
 
         # Validate skill_type
         valid_skill_types = ("documentation", "mcp_tool", "hybrid")
         if self.skill_type not in valid_skill_types:
-            raise ValidationError(
+            raise SkillValidationError(
                 f"skill_type must be one of {valid_skill_types}, got '{self.skill_type}'"
             )
 
         # Validate mcp_config is provided for mcp_tool or hybrid types
         if self.skill_type in ("mcp_tool", "hybrid") and self.mcp_config is None:
-            raise ValidationError(f"mcp_config is required for skill_type '{self.skill_type}'")
+            raise SkillValidationError(f"mcp_config is required for skill_type '{self.skill_type}'")
 
 
 @dataclass
@@ -108,11 +110,11 @@ class Skill:
         Raises:
             ValidationError: If validation fails with clear message.
         """
-        from nexus.core.exceptions import ValidationError
+        from nexus.skills.exceptions import SkillValidationError
 
         # Validate metadata
         self.metadata.validate()
 
         # Validate content
         if not self.content:
-            raise ValidationError(f"skill content is required for '{self.metadata.name}'")
+            raise SkillValidationError(f"skill content is required for '{self.metadata.name}'")

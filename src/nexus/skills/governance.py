@@ -8,34 +8,15 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any
 
-from nexus.core.exceptions import PermissionDeniedError, ValidationError
+from nexus.skills.exceptions import SkillPermissionDeniedError, SkillValidationError
+from nexus.skills.types import DatabaseConnection
 
 if TYPE_CHECKING:
     from nexus.services.permissions.rebac_manager import ReBACManager
 
 logger = logging.getLogger(__name__)
-
-
-class DatabaseConnection(Protocol):
-    """Protocol for database connections."""
-
-    def execute(self, query: str, params: dict[str, Any] | None = None) -> Any:
-        """Execute a query."""
-        ...
-
-    def fetchall(self, query: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-        """Fetch all results from a query."""
-        ...
-
-    def fetchone(self, query: str, params: dict[str, Any] | None = None) -> dict[str, Any] | None:
-        """Fetch one result from a query."""
-        ...
-
-    def commit(self) -> None:
-        """Commit the transaction."""
-        ...
 
 
 class ApprovalStatus(StrEnum):
@@ -64,22 +45,22 @@ class SkillApproval:
         """Validate approval record.
 
         Raises:
-            ValidationError: If validation fails.
+            SkillValidationError: If validation fails.
         """
         if not self.approval_id:
-            raise ValidationError("approval_id is required")
+            raise SkillValidationError("approval_id is required")
 
         if not self.skill_name:
-            raise ValidationError("skill_name is required")
+            raise SkillValidationError("skill_name is required")
 
         if not self.submitted_by:
-            raise ValidationError("submitted_by is required")
+            raise SkillValidationError("submitted_by is required")
 
         if not isinstance(self.status, ApprovalStatus):
-            raise ValidationError(f"status must be ApprovalStatus, got {type(self.status)}")
+            raise SkillValidationError(f"status must be ApprovalStatus, got {type(self.status)}")
 
 
-class GovernanceError(ValidationError):
+class GovernanceError(SkillValidationError):
     """Raised when governance operations fail."""
 
     pass
@@ -237,7 +218,7 @@ class SkillGovernance:
 
         Raises:
             GovernanceError: If approval fails
-            PermissionDeniedError: If reviewer lacks approve permission
+            SkillPermissionDeniedError: If reviewer lacks approve permission
 
         Example:
             >>> await gov.approve_skill(
@@ -265,11 +246,11 @@ class SkillGovernance:
                     zone_id=zone_id,
                 )
                 if not has_permission:
-                    raise PermissionDeniedError(
+                    raise SkillPermissionDeniedError(
                         f"No permission to approve skill '{approval.skill_name}'. "
                         f"Reviewer ({reviewer_type}:{reviewed_by}) lacks 'approve' permission."
                     )
-            except PermissionDeniedError:
+            except SkillPermissionDeniedError:
                 # Re-raise permission errors
                 raise
             except Exception as e:
@@ -331,7 +312,7 @@ class SkillGovernance:
 
         Raises:
             GovernanceError: If rejection fails
-            PermissionDeniedError: If reviewer lacks approve permission
+            SkillPermissionDeniedError: If reviewer lacks approve permission
 
         Example:
             >>> await gov.reject_skill(
@@ -359,11 +340,11 @@ class SkillGovernance:
                     zone_id=zone_id,
                 )
                 if not has_permission:
-                    raise PermissionDeniedError(
+                    raise SkillPermissionDeniedError(
                         f"No permission to reject skill '{approval.skill_name}'. "
                         f"Reviewer ({reviewer_type}:{reviewed_by}) lacks 'approve' permission."
                     )
-            except PermissionDeniedError:
+            except SkillPermissionDeniedError:
                 # Re-raise permission errors
                 raise
             except Exception as e:

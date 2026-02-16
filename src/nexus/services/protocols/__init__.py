@@ -45,6 +45,7 @@ from nexus.services.protocols.hook_engine import (
     HookSpec,
 )
 from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol, NamespaceMount
+from nexus.services.protocols.payment import PaymentProtocol
 from nexus.services.protocols.rebac import ReBACBrickProtocol
 from nexus.services.protocols.scheduler import AgentRequest, SchedulerProtocol
 from nexus.services.protocols.search import SearchBrickProtocol
@@ -53,6 +54,7 @@ __all__ = [
     "AgentInfo",
     "AgentRegistryProtocol",
     "AgentRequest",
+    "PaymentProtocol",
     "ContextManifestProtocol",
     "HookContext",
     "HookEngineProtocol",

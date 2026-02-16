@@ -171,7 +171,7 @@ class TestHashComputation:
         )
         # Amount is normalized to 6dp: "10.500000"
         canonical = (
-            "internal|buyer-1|seller-1|10.500000|credits|settled|gateway|default||tx-001|"
+            "internal|buyer-1|seller-1|10.500000|credits|settled|gateway|root||tx-001|"
             + ts.isoformat()
         )
         expected = hashlib.sha256(canonical.encode("utf-8")).hexdigest()

@@ -23,7 +23,6 @@ from nexus.core.event_bus import (
     EventBusProtocol,
     FileEvent,
     FileEventType,
-    GlobalEventBus,
     RedisEventBus,
     create_event_bus,
 )
@@ -748,17 +747,6 @@ class TestEventBusFactory:
         """Test error for unsupported backend."""
         with pytest.raises(ValueError, match="Unsupported event bus backend"):
             create_event_bus(backend="unknown", redis_client=mock_redis_client)
-
-
-class TestGlobalEventBusAlias:
-    """Tests for GlobalEventBus alias."""
-
-    def test_global_event_bus_alias(self, mock_redis_client):
-        """Test that GlobalEventBus is an alias for RedisEventBus."""
-        assert GlobalEventBus is RedisEventBus
-
-        bus = GlobalEventBus(mock_redis_client)
-        assert isinstance(bus, RedisEventBus)
 
 
 # =============================================================================

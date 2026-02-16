@@ -234,7 +234,7 @@ class OperationContext:
         from nexus.core.read_set import ReadSet
 
         self.track_reads = True
-        self.read_set = ReadSet.create(zone_id=zone_id or self.zone_id or "default")
+        self.read_set = ReadSet.create(zone_id=zone_id or self.zone_id or "root")
 
     def disable_read_tracking(self) -> None:
         """Disable read tracking.
@@ -250,7 +250,7 @@ class ContextIdentity:
 
     Replaces the pattern::
 
-        zone_id = getattr(context, "zone_id", None) or "default"
+        zone_id = getattr(context, "zone_id", None) or "root"
         user_id = getattr(context, "user", None) or "anonymous"
         is_admin = getattr(context, "is_admin", False)
 
@@ -274,9 +274,9 @@ def extract_context_identity(context: OperationContext | None) -> ContextIdentit
         Frozen ContextIdentity with zone_id, user_id, is_admin.
     """
     if context is None:
-        return ContextIdentity(zone_id="default", user_id="anonymous", is_admin=False)
+        return ContextIdentity(zone_id="root", user_id="anonymous", is_admin=False)
     return ContextIdentity(
-        zone_id=getattr(context, "zone_id", None) or "default",
+        zone_id=getattr(context, "zone_id", None) or "root",
         user_id=(
             getattr(context, "user", None) or getattr(context, "subject_id", None) or "anonymous"
         ),

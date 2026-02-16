@@ -756,17 +756,17 @@ class TestIssue1077TargetedInvalidation:
         cache.set("agent", "alice", "read", "file", "/workspace/doc.txt", True)
 
         # Subject index should be populated
-        subject_key = ("default", "agent", "alice")
+        subject_key = ("root", "agent", "alice")
         assert subject_key in cache._subject_index
         assert len(cache._subject_index[subject_key]) == 1
 
         # Object index should be populated
-        object_key = ("default", "file", "/workspace/doc.txt")
+        object_key = ("root", "file", "/workspace/doc.txt")
         assert object_key in cache._object_index
         assert len(cache._object_index[object_key]) == 1
 
         # Path prefix index should include ancestor paths
-        prefix_key = ("default", "file", "/workspace")
+        prefix_key = ("root", "file", "/workspace")
         assert prefix_key in cache._path_prefix_index
         assert len(cache._path_prefix_index[prefix_key]) >= 1
 
@@ -791,8 +791,8 @@ class TestIssue1077TargetedInvalidation:
         cache.set("agent", "bob", "read", "file", "/doc3.txt", True)
 
         # Verify indexes
-        assert len(cache._subject_index[("default", "agent", "alice")]) == 2
-        assert len(cache._subject_index[("default", "agent", "bob")]) == 1
+        assert len(cache._subject_index[("root", "agent", "alice")]) == 2
+        assert len(cache._subject_index[("root", "agent", "bob")]) == 1
 
         # Invalidate alice
         count = cache.invalidate_subject("agent", "alice")
@@ -806,7 +806,7 @@ class TestIssue1077TargetedInvalidation:
         assert cache.get("agent", "bob", "read", "file", "/doc3.txt") is True
 
         # Verify indexes are cleaned up
-        assert ("default", "agent", "alice") not in cache._subject_index
+        assert ("root", "agent", "alice") not in cache._subject_index
 
     def test_targeted_invalidate_object_prefix(self):
         """Test targeted invalidation by path prefix."""
@@ -892,12 +892,12 @@ class TestIssue1077TargetedInvalidation:
         cache.set("agent", "alice", "read", "file", deep_path, True)
 
         # All ancestor prefixes should be indexed
-        assert ("default", "file", "/workspace") in cache._path_prefix_index
-        assert ("default", "file", "/workspace/project") in cache._path_prefix_index
-        assert ("default", "file", "/workspace/project/src") in cache._path_prefix_index
-        assert ("default", "file", "/workspace/project/src/utils") in cache._path_prefix_index
+        assert ("root", "file", "/workspace") in cache._path_prefix_index
+        assert ("root", "file", "/workspace/project") in cache._path_prefix_index
+        assert ("root", "file", "/workspace/project/src") in cache._path_prefix_index
+        assert ("root", "file", "/workspace/project/src/utils") in cache._path_prefix_index
         assert (
-            "default",
+            "root",
             "file",
             "/workspace/project/src/utils/helpers",
         ) in cache._path_prefix_index

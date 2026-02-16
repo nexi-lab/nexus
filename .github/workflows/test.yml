@@ -135,6 +135,35 @@ jobs:
           uv run pytest tests/benchmarks/ --collect-only -q -o "addopts="
         if: matrix.os == 'ubuntu-latest'
 
+  e2e-self-contained:
+    name: E2E Tests (Self-Contained)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+          cache-dependency-glob: "pyproject.toml"
+
+      - name: Create virtual environment
+        run: uv venv --python 3.13
+
+      - name: Install dependencies
+        run: uv pip install -e ".[dev,test]"
+
+      - name: Run self-contained e2e tests
+        run: |
+          uv run pytest tests/e2e/self_contained/ -v --timeout=120 -o "addopts="
+        timeout-minutes: 10
+
   migration-test:
     name: Migration Tests (SQLite)
     runs-on: ubuntu-latest

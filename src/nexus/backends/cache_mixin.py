@@ -120,7 +120,6 @@ class CacheConnectorMixin:
 
     The connector must have:
         - self.session_factory: SQLAlchemy session factory (for FilePathModel lookups)
-        - OR self.db_session: SQLAlchemy session (legacy)
         - self._read_from_backend(): Read content from actual backend
         - self._list_files(): List files from backend
 
@@ -133,7 +132,7 @@ class CacheConnectorMixin:
         (e.g., LocalConnector), so L2 persistence provides no benefit.
 
         When l1_only=True:
-        - No session_factory/db_session required
+        - No session_factory required
         - L1 cache uses disk_path pointing to original files
         - Connector must implement get_physical_path() for disk_path
     """
@@ -286,11 +285,6 @@ class CacheConnectorMixin:
         """
         if hasattr(self, "session_factory") and self.session_factory is not None:
             return cast("Session", self.session_factory())
-        # Fall back to existing session
-        if hasattr(self, "db_session") and self.db_session is not None:
-            return cast("Session", self.db_session)
-        if hasattr(self, "_db_session") and self._db_session is not None:
-            return cast("Session", self._db_session)
         raise RuntimeError("No database session available for caching")
 
     def _get_path_id(self, path: str, session: Session) -> str | None:

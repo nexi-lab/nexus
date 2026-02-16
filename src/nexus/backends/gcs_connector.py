@@ -21,9 +21,8 @@ Key differences from GCSBackend:
 - Requires backend_path in OperationContext
 
 Caching:
-    This connector supports the CacheConnectorMixin for caching content
-    in the local database. Enable caching by passing a db_session when
-    creating the connector.
+    This connector supports the CacheConnectorMixin for caching content.
+    Enable caching by passing a session_factory when creating the connector.
 
 Authentication (Recommended):
     Use service account credentials for production (no daily re-auth):
@@ -88,7 +87,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
     - If bucket has no versioning: Only current version retained (overwrites on update)
 
     Caching:
-    - Pass db_session to enable local caching
+    - Pass session_factory to enable local caching
     - Use read_content() with use_cache=True to read from cache first
     - Use sync() to bulk-sync files to cache
 
@@ -938,7 +937,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         """
         Read content from GCS with caching support.
 
-        When caching is enabled (db_session provided):
+        When caching is enabled (session_factory provided):
         1. Check cache for non-stale entry with matching version
         2. If cache hit, return cached content
         3. If cache miss, read from GCS and cache result

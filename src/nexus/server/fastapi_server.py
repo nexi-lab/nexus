@@ -718,7 +718,7 @@ async def lifespan(_app: FastAPI) -> Any:
     # Issue #1240: Initialize AgentRegistry for agent lifecycle tracking
     if _app.state.nexus_fs and getattr(_app.state.nexus_fs, "SessionLocal", None):
         try:
-            from nexus.core.agent_registry import AgentRegistry
+            from nexus.services.agents.agent_registry import AgentRegistry
 
             _app.state.agent_registry = AgentRegistry(
                 session_factory=_app.state.nexus_fs.SessionLocal,

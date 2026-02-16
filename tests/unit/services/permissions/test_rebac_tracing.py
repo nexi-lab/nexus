@@ -22,8 +22,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nexus.services.permissions import rebac_tracing
-from nexus.services.permissions.rebac_tracing import (
+from nexus.rebac import rebac_tracing
+from nexus.rebac.rebac_tracing import (
     ATTR_BATCH_ALLOWED,
     ATTR_BATCH_DENIED,
     ATTR_BATCH_DURATION_MS,

@@ -17,7 +17,8 @@ Admin bypass flow:
 5. Grant or deny based on above checks
 """
 
-from nexus.core.permissions import OperationContext, Permission, PermissionEnforcer
+from nexus.core.permissions import OperationContext, Permission
+from nexus.services.permissions.enforcer import PermissionEnforcer
 
 
 class MockReBACManager:

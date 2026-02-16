@@ -18,7 +18,7 @@ from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 
 if TYPE_CHECKING:
-    from nexus.core.memory_api import Memory
+    from nexus.services.memory.memory_api import Memory
 from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol
 from nexus.core.cache_store import CacheStoreABC, NullCacheStore
 from nexus.core.config import (
@@ -316,7 +316,7 @@ class NexusFS(  # type: ignore[misc]
 
         if metadata_cache is not None and self._cache_config.enable_metadata_cache:
             from nexus.core.read_set import ReadSetRegistry
-            from nexus.core.read_set_cache import ReadSetAwareCache
+            from nexus.storage.read_set_cache import ReadSetAwareCache
 
             self._read_set_registry = ReadSetRegistry()
             self._read_set_cache = ReadSetAwareCache(
@@ -324,6 +324,13 @@ class NexusFS(  # type: ignore[misc]
                 registry=self._read_set_registry,
             )
             self._read_tracking_enabled = True
+
+        # Issue #1519: Cache observer — decouples kernel from ReadSetAwareCache
+        self._cache_observer = svc.cache_observer
+        if self._cache_observer is None and self._read_set_cache is not None:
+            from nexus.core.cache_invalidation import ReadSetCacheObserver
+
+            self._cache_observer = ReadSetCacheObserver(self._read_set_cache)
 
         # OPTIMIZATION: Initialize TRAVERSE permissions and Tiger Cache
         self._init_performance_optimizations()
@@ -731,7 +738,7 @@ class NexusFS(  # type: ignore[misc]
 
             # Issue #1258: Create MemoryWithPaging if enabled, else standard Memory
             if self._enable_memory_paging:
-                from nexus.core.memory_with_paging import MemoryWithPaging
+                from nexus.services.memory.memory_with_paging import MemoryWithPaging
 
                 # Try to get engine for VectorDatabase integration
                 engine = None
@@ -752,7 +759,7 @@ class NexusFS(  # type: ignore[misc]
                     session_factory=self.SessionLocal,
                 )
             else:
-                from nexus.core.memory_api import Memory
+                from nexus.services.memory.memory_api import Memory
 
                 self._memory_api = Memory(
                     session=session,
@@ -867,7 +874,7 @@ class NexusFS(  # type: ignore[misc]
         Returns:
             Memory API instance
         """
-        from nexus.core.memory_api import Memory
+        from nexus.services.memory.memory_api import Memory
         from nexus.services.permissions.entity_registry import EntityRegistry
 
         # Get or create entity registry
@@ -3714,7 +3721,7 @@ class NexusFS(  # type: ignore[misc]
                 "to create one. Provide a record_store when constructing NexusFS."
             )
 
-        from nexus.core.agent_registry import AgentRegistry
+        from nexus.services.agents.agent_registry import AgentRegistry
 
         self._agent_registry = AgentRegistry(
             session_factory=self.SessionLocal,
@@ -4595,7 +4602,7 @@ class NexusFS(  # type: ignore[misc]
         if not hasattr(self, "_agent_registry") or not self._agent_registry:
             raise ValueError("AgentRegistry not available")
 
-        from nexus.core.agent_record import AgentState
+        from nexus.services.agents.agent_record import AgentState
 
         try:
             target = AgentState(target_state)
@@ -4658,7 +4665,7 @@ class NexusFS(  # type: ignore[misc]
 
         state_enum = None
         if state:
-            from nexus.core.agent_record import AgentState
+            from nexus.services.agents.agent_record import AgentState
 
             try:
                 state_enum = AgentState(state)

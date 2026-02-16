@@ -14,7 +14,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from nexus.core.agent_registry import AgentRegistry, _safe_json_loads
+from nexus.services.agents.agent_registry import AgentRegistry, _safe_json_loads
 from nexus.storage.models import Base
 from nexus.storage.models.agents import AgentRecordModel
 

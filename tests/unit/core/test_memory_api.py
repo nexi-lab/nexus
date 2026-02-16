@@ -230,7 +230,7 @@ class TestPhase5BackwardCompatibility:
 
     def test_agent_scoped_memory_isolation(self, session, backend, entity_registry):
         """Test that agent-scoped memories with restrictive permissions are isolated."""
-        from nexus.core.memory_router import MemoryViewRouter
+        from nexus.services.memory.memory_router import MemoryViewRouter
 
         _memory_api1 = Memory(
             session=session,

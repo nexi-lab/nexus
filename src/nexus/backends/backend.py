@@ -5,10 +5,10 @@ combining content-addressable storage (CAS) with directory operations.
 """
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from nexus.core.response import HandlerResponse
 
@@ -795,3 +795,43 @@ class Backend(ABC):
             Backends can override to return more appropriate identifiers.
         """
         return backend_path
+
+
+@runtime_checkable
+class AsyncBackend(Protocol):
+    """Async variant of Backend — ObjectStore ABC for async drivers.
+
+    Mirrors the Backend interface with async method signatures.
+    Required by the Four Pillars architecture: all ObjectStore drivers
+    must implement the pillar ABC for interchangeability.
+    """
+
+    @property
+    def name(self) -> str: ...
+
+    async def initialize(self) -> None: ...
+
+    async def close(self) -> None: ...
+
+    async def write_content(
+        self, content: bytes, context: "OperationContext | None" = None
+    ) -> HandlerResponse[str]: ...
+
+    async def read_content(
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> HandlerResponse[bytes]: ...
+
+    async def delete_content(
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> HandlerResponse[None]: ...
+
+    async def content_exists(
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> HandlerResponse[bool]: ...
+
+    def stream_content(
+        self,
+        content_hash: str,
+        chunk_size: int = 8192,
+        context: "OperationContext | None" = None,
+    ) -> AsyncIterator[bytes]: ...

@@ -58,5 +58,5 @@ class ScheduledTask:
     started_at: datetime | None = None
     completed_at: datetime | None = None
     error_message: str | None = None
-    zone_id: str = "default"
+    zone_id: str = "root"
     idempotency_key: str | None = None

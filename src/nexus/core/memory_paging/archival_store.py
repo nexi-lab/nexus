@@ -45,7 +45,7 @@ class ArchivalStore:
     def __init__(
         self,
         session_factory: Callable[[], Session],
-        zone_id: str = "default",
+        zone_id: str = "root",
         namespace: str = "archival",
         vector_db: Any = None,
     ):

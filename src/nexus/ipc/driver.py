@@ -53,7 +53,7 @@ class IPCVFSDriver(Backend):
     def __init__(
         self,
         storage: IPCStorageDriver,
-        zone_id: str = "default",
+        zone_id: str = "root",
         event_publisher: Any | None = None,
         max_inbox_size: int = 1000,
     ) -> None:

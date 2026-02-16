@@ -594,7 +594,7 @@ class X402Client:
         metadata = webhook_payload.get("metadata", {})
         agent_id = metadata.get("agent_id")
         # Support both zone_id and tenant_id for backwards compatibility
-        zone_id = metadata.get("zone_id") or metadata.get("tenant_id", "default")
+        zone_id = metadata.get("zone_id") or metadata.get("tenant_id", "root")
 
         if not agent_id:
             raise X402Error("Missing agent_id in webhook metadata")

@@ -228,7 +228,7 @@ class OperationContext:
         from nexus.core.read_set import ReadSet
 
         self.track_reads = True
-        self.read_set = ReadSet.create(zone_id=zone_id or self.zone_id or "default")
+        self.read_set = ReadSet.create(zone_id=zone_id or self.zone_id or "root")
 
     def disable_read_tracking(self) -> None:
         """Disable read tracking.

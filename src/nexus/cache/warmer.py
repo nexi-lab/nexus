@@ -187,7 +187,7 @@ class FileAccessTracker:
     def record_access(
         self,
         path: str,
-        zone_id: str = "default",
+        zone_id: str = "root",
         user_id: str | None = None,
         size_bytes: int = 0,
     ) -> None:
@@ -302,7 +302,7 @@ class FileAccessTracker:
     def get_user_recent_files(
         self,
         user_id: str,
-        zone_id: str = "default",
+        zone_id: str = "root",
         hours: int = 24,
         limit: int = 100,
     ) -> list[FileAccessEntry]:
@@ -462,7 +462,7 @@ class CacheWarmer:
         depth: int | None = None,
         include_content: bool | None = None,
         max_files: int | None = None,
-        zone_id: str = "default",
+        zone_id: str = "root",
         context: Any | None = None,
     ) -> WarmupStats:
         """Pre-cache directory tree metadata and optionally content.
@@ -538,7 +538,7 @@ class CacheWarmer:
         user: str | None = None,
         hours: int = 24,
         max_files: int | None = None,
-        zone_id: str = "default",
+        zone_id: str = "root",
         context: Any | None = None,
     ) -> WarmupStats:
         """Pre-cache files based on user's recent access patterns.
@@ -607,7 +607,7 @@ class CacheWarmer:
     async def warmup_permissions(
         self,
         user: str,
-        zone_id: str = "default",
+        zone_id: str = "root",
         paths: list[str] | None = None,
     ) -> WarmupStats:
         """Pre-cache permission graph for user.
@@ -669,7 +669,7 @@ class CacheWarmer:
         self,
         paths: list[str],
         include_content: bool = False,
-        zone_id: str = "default",
+        zone_id: str = "root",
         context: Any | None = None,
     ) -> WarmupStats:
         """Warm specific paths.
@@ -986,7 +986,7 @@ async def warmup_on_mount(
     depth: int = 2,
     include_content: bool = False,
     max_files: int = 1000,
-    zone_id: str = "default",
+    zone_id: str = "root",
 ) -> WarmupStats:
     """Convenience function: Warm cache after FUSE mount.
 

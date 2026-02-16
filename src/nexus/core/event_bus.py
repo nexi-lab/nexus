@@ -681,7 +681,7 @@ class RedisEventBus(EventBusBase):
         >>> event = FileEvent(
         ...     type=FileEventType.FILE_WRITE,
         ...     path="/inbox/test.txt",
-        ...     zone_id="default",
+        ...     zone_id="root",
         ... )
         >>> await bus.publish(event)
     """
@@ -759,7 +759,7 @@ class RedisEventBus(EventBusBase):
             except Exception as e:
                 logger.error(f"Event log append failed (event still published): {e}")
 
-        zone_id = event.zone_id or "default"
+        zone_id = event.zone_id or "root"
         channel = self._channel_name(zone_id)
         message = event.to_json()
 

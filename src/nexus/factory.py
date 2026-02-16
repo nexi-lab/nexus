@@ -88,7 +88,7 @@ def _create_wallet_provisioner() -> Any:
     # Shared state for the closure (lazy client)
     _state: dict[str, Any] = {"client": None}
 
-    def _provision_wallet(agent_id: str, zone_id: str = "default") -> None:
+    def _provision_wallet(agent_id: str, zone_id: str = "root") -> None:
         """Create TigerBeetle account for agent. Idempotent."""
         import tigerbeetle as tb
 
@@ -146,7 +146,7 @@ def _parse_resiliency_config(raw: dict[str, Any] | None) -> Any:
     _logger = _log.getLogger(__name__)
 
     try:
-        timeouts: dict[str, TimeoutPolicy] = {"default": TimeoutPolicy()}
+        timeouts: dict[str, TimeoutPolicy] = {"root": TimeoutPolicy()}
         for name, val in raw.get("timeouts", {}).items():
             if isinstance(val, dict):
                 timeouts[name] = TimeoutPolicy(
@@ -155,7 +155,7 @@ def _parse_resiliency_config(raw: dict[str, Any] | None) -> Any:
             else:
                 timeouts[name] = TimeoutPolicy(seconds=parse_duration(val))
 
-        retries: dict[str, RetryPolicy] = {"default": RetryPolicy()}
+        retries: dict[str, RetryPolicy] = {"root": RetryPolicy()}
         for name, val in raw.get("retries", {}).items():
             if isinstance(val, dict):
                 retries[name] = RetryPolicy(
@@ -165,7 +165,7 @@ def _parse_resiliency_config(raw: dict[str, Any] | None) -> Any:
                     min_wait=float(val.get("min_wait", 1.0)),
                 )
 
-        circuit_breakers: dict[str, CircuitBreakerPolicy] = {"default": CircuitBreakerPolicy()}
+        circuit_breakers: dict[str, CircuitBreakerPolicy] = {"root": CircuitBreakerPolicy()}
         for name, val in raw.get("circuit_breakers", {}).items():
             if isinstance(val, dict):
                 circuit_breakers[name] = CircuitBreakerPolicy(
@@ -178,9 +178,9 @@ def _parse_resiliency_config(raw: dict[str, Any] | None) -> Any:
         for name, val in raw.get("targets", {}).items():
             if isinstance(val, dict):
                 targets[name] = TargetBinding(
-                    timeout=str(val.get("timeout", "default")),
-                    retry=str(val.get("retry", "default")),
-                    circuit_breaker=str(val.get("circuit_breaker", "default")),
+                    timeout=str(val.get("timeout", "root")),
+                    retry=str(val.get("retry", "root")),
+                    circuit_breaker=str(val.get("circuit_breaker", "root")),
                 )
 
         return ResiliencyConfig(

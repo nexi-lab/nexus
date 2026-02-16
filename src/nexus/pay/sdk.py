@@ -209,7 +209,7 @@ class NexusPay:
         x402_client: X402Client | None = None,
         x402_enabled: bool = True,
         scheduler_service: Any | None = None,
-        zone_id: str = "default",
+        zone_id: str = "root",
     ) -> None:
         match = _API_KEY_PATTERN.match(api_key)
         if not match:

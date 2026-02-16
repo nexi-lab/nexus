@@ -6,13 +6,13 @@ satisfy isinstance checks, and all method contracts are correct.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import Any
 
 import pytest
 
 from nexus.search.protocols import FileReaderProtocol
-
 
 # =============================================================================
 # Protocol structural checks
@@ -76,11 +76,7 @@ class MockFileReader:
         prefix = path if path.endswith("/") else path + "/"
         if path == "/":
             prefix = "/"
-        return [
-            p
-            for p in self._files
-            if p.startswith(prefix) or path == "/"
-        ]
+        return [p for p in self._files if p.startswith(prefix) or path == "/"]
 
     @contextmanager
     def get_session(self) -> Iterator[Any]:

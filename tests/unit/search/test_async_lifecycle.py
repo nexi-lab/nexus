@@ -10,7 +10,7 @@ Validates:
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -22,7 +22,6 @@ from nexus.search.daemon import (
     get_search_daemon,
     set_search_daemon,
 )
-
 
 # =============================================================================
 # SearchDaemon lifecycle
@@ -279,9 +278,7 @@ class TestSearchResult:
     def test_extends_base_search_result(self) -> None:
         from nexus.search.results import BaseSearchResult
 
-        result = SearchResult(
-            path="/test.py", chunk_text="hello", score=0.9
-        )
+        result = SearchResult(path="/test.py", chunk_text="hello", score=0.9)
         assert isinstance(result, BaseSearchResult)
 
 

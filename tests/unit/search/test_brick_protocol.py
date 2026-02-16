@@ -7,12 +7,10 @@ satisfy isinstance checks, and that all method signatures are correct.
 from __future__ import annotations
 
 from typing import Any
-from unittest.mock import AsyncMock
 
 import pytest
 
 from nexus.services.protocols.search import SearchBrickProtocol
-
 
 # =============================================================================
 # Protocol structural checks
@@ -222,7 +220,5 @@ class TestAsyncMockProtocol:
     @pytest.mark.asyncio
     async def test_index_document_with_zone(self) -> None:
         brick = self._make_mock_brick()
-        count = await brick.index_document(
-            "/test.py", "content", zone_id="zone-1"
-        )
+        count = await brick.index_document("/test.py", "content", zone_id="zone-1")
         assert isinstance(count, int)

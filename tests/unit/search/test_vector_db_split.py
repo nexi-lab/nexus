@@ -9,11 +9,9 @@ before the vector_db split refactoring.
 
 from __future__ import annotations
 
-from typing import Any
-from unittest.mock import MagicMock, PropertyMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # =============================================================================
 # VectorDatabase construction and init
@@ -74,11 +72,13 @@ class TestSQLiteInitPath:
 
         vdb = VectorDatabase(engine)
 
-        with patch.dict("sys.modules", {"sqlite_vec": None}):
-            with patch("builtins.__import__", side_effect=ImportError("no sqlite_vec")):
-                # Can't easily test _init_sqlite directly because it catches ImportError
-                # Just verify initial state
-                assert vdb.vec_available is False
+        with (
+            patch.dict("sys.modules", {"sqlite_vec": None}),
+            patch("builtins.__import__", side_effect=ImportError("no sqlite_vec")),
+        ):
+            # Can't easily test _init_sqlite directly because it catches ImportError
+            # Just verify initial state
+            assert vdb.vec_available is False
 
     def test_unsupported_dialect_raises(self) -> None:
         """Unsupported db_type should raise ValueError."""

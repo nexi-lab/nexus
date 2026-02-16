@@ -6,14 +6,12 @@ for 1000 mock calls through the protocol layer.
 
 from __future__ import annotations
 
-import asyncio
 import time
 from typing import Any
 
 import pytest
 
 from nexus.services.protocols.search import SearchBrickProtocol
-
 
 # =============================================================================
 # Mock search brick for benchmarking
@@ -23,9 +21,7 @@ from nexus.services.protocols.search import SearchBrickProtocol
 class FastMockSearchBrick:
     """Minimal mock that satisfies SearchBrickProtocol with near-zero work."""
 
-    _results: list[dict[str, Any]] = [
-        {"path": "/test.py", "chunk_text": "match", "score": 0.9}
-    ]
+    _results: list[dict[str, Any]] = [{"path": "/test.py", "chunk_text": "match", "score": 0.9}]
 
     async def search(
         self,
@@ -124,8 +120,7 @@ class TestProtocolPassthroughOverhead:
         # 1000 calls should complete well under 100ms
         # (actual overhead is ~0.01ms per call)
         assert elapsed_ms < 100, (
-            f"1000 protocol passthrough calls took {elapsed_ms:.1f}ms "
-            f"(expected <100ms)"
+            f"1000 protocol passthrough calls took {elapsed_ms:.1f}ms (expected <100ms)"
         )
 
     @pytest.mark.asyncio
@@ -142,8 +137,7 @@ class TestProtocolPassthroughOverhead:
         elapsed_ms = (time.perf_counter() - start) * 1000
 
         assert elapsed_ms < 100, (
-            f"1000 protocol passthrough calls took {elapsed_ms:.1f}ms "
-            f"(expected <100ms)"
+            f"1000 protocol passthrough calls took {elapsed_ms:.1f}ms (expected <100ms)"
         )
 
     @pytest.mark.asyncio

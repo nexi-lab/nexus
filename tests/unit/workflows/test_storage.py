@@ -1,6 +1,7 @@
 """Tests for workflow storage."""
 
 import uuid
+from types import SimpleNamespace
 
 import pytest
 from sqlalchemy import create_engine
@@ -33,9 +34,15 @@ def session_factory(engine):
 
 
 @pytest.fixture
-def workflow_store(session_factory):
+def record_store(session_factory):
+    """Create mock record store wrapping session factory."""
+    return SimpleNamespace(session_factory=session_factory)
+
+
+@pytest.fixture
+def workflow_store(record_store):
     """Create workflow store."""
-    return WorkflowStore(session_factory, zone_id="test-zone")
+    return WorkflowStore(record_store, zone_id="test-zone")
 
 
 class TestWorkflowStore:
@@ -428,7 +435,7 @@ class TestWorkflowStore:
         """Test getting zone ID."""
         assert workflow_store._get_zone_id() == "test-zone"
 
-    def test_default_zone_id(self, session_factory):
+    def test_default_zone_id(self, record_store):
         """Test default zone ID."""
-        store = WorkflowStore(session_factory)
+        store = WorkflowStore(record_store)
         assert store._get_zone_id() == "default"

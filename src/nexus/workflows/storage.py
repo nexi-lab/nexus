@@ -1,12 +1,13 @@
 """Workflow storage layer for database persistence."""
 
+from __future__ import annotations
+
 import hashlib
 import json
 import logging
 import uuid
-from collections.abc import Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 from sqlalchemy import select
@@ -15,20 +16,23 @@ from nexus.storage.models import WorkflowExecutionModel, WorkflowModel
 from nexus.workflows.loader import WorkflowLoader
 from nexus.workflows.types import WorkflowDefinition, WorkflowExecution
 
+if TYPE_CHECKING:
+    from nexus.storage.record_store import RecordStoreABC
+
 logger = logging.getLogger(__name__)
 
 
 class WorkflowStore:
     """Storage layer for workflow persistence."""
 
-    def __init__(self, session_factory: Callable[..., Any], zone_id: str | None = None) -> None:
+    def __init__(self, record_store: RecordStoreABC, zone_id: str | None = None) -> None:
         """Initialize workflow store.
 
         Args:
-            session_factory: SQLAlchemy session factory
+            record_store: A RecordStoreABC providing session_factory for database access.
             zone_id: Zone ID (optional, defaults to "default")
         """
-        self.session_factory = session_factory
+        self.session_factory = record_store.session_factory
         self.zone_id = zone_id or "default"
 
     def _get_zone_id(self) -> str:

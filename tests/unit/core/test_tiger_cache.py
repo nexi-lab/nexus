@@ -100,35 +100,35 @@ class TestTigerResourceMap:
     def test_get_or_create_int_id(self, resource_map):
         """Test creating and retrieving integer IDs."""
         # First call creates
-        id1 = resource_map.get_or_create_int_id("file", "file-uuid-1", "zone1")
+        id1 = resource_map.get_or_create_int_id("file", "file-uuid-1")
         assert id1 > 0
 
         # Second call retrieves same ID
-        id2 = resource_map.get_or_create_int_id("file", "file-uuid-1", "zone1")
+        id2 = resource_map.get_or_create_int_id("file", "file-uuid-1")
         assert id2 == id1
 
         # Different resource gets different ID
-        id3 = resource_map.get_or_create_int_id("file", "file-uuid-2", "zone1")
+        id3 = resource_map.get_or_create_int_id("file", "file-uuid-2")
         assert id3 != id1
 
     def test_zone_ignored_for_resource_mapping(self, resource_map):
         """Test that zone is ignored for resource mapping (global resource IDs)."""
-        id1 = resource_map.get_or_create_int_id("file", "file-uuid-1", "zone1")
-        id2 = resource_map.get_or_create_int_id("file", "file-uuid-1", "zone2")
+        id1 = resource_map.get_or_create_int_id("file", "file-uuid-1")
+        id2 = resource_map.get_or_create_int_id("file", "file-uuid-1")
 
         # Same resource ID gets same int ID regardless of zone
         assert id1 == id2
 
     def test_get_resource_id(self, resource_map):
         """Test reverse lookup from int ID to resource info."""
-        int_id = resource_map.get_or_create_int_id("file", "my-file", "zone1")
+        int_id = resource_map.get_or_create_int_id("file", "my-file")
 
         info = resource_map.get_resource_id(int_id)
         assert info == ("file", "my-file")  # Returns (type, id), zone is not stored
 
     def test_memory_cache(self, resource_map):
         """Test that mappings are cached in memory."""
-        int_id = resource_map.get_or_create_int_id("file", "cached-file", "zone1")
+        int_id = resource_map.get_or_create_int_id("file", "cached-file")
 
         # Check it's in memory cache - key is (type, id), zone is not part of key
         assert ("file", "cached-file") in resource_map._uuid_to_int
@@ -147,9 +147,9 @@ class TestTigerCache:
     def test_update_and_check(self, tiger_cache, resource_map):
         """Test updating cache and checking access."""
         # Create some resources
-        r1 = resource_map.get_or_create_int_id("file", "file1", "zone1")
-        r2 = resource_map.get_or_create_int_id("file", "file2", "zone1")
-        _r3 = resource_map.get_or_create_int_id("file", "file3", "zone1")  # noqa: F841
+        r1 = resource_map.get_or_create_int_id("file", "file1")
+        r2 = resource_map.get_or_create_int_id("file", "file2")
+        _r3 = resource_map.get_or_create_int_id("file", "file3")  # noqa: F841
 
         # Update cache with accessible resources
         tiger_cache.update_cache(
@@ -169,8 +169,8 @@ class TestTigerCache:
 
     def test_get_accessible_resources(self, tiger_cache, resource_map):
         """Test retrieving all accessible resources."""
-        r1 = resource_map.get_or_create_int_id("file", "file1", "zone1")
-        r2 = resource_map.get_or_create_int_id("file", "file2", "zone1")
+        r1 = resource_map.get_or_create_int_id("file", "file1")
+        r2 = resource_map.get_or_create_int_id("file", "file2")
 
         tiger_cache.update_cache(
             subject_type="user",
@@ -187,7 +187,7 @@ class TestTigerCache:
 
     def test_cache_miss_returns_none(self, tiger_cache, resource_map):
         """Test that cache miss returns None (not False)."""
-        resource_map.get_or_create_int_id("file", "uncached-file", "zone1")
+        resource_map.get_or_create_int_id("file", "uncached-file")
 
         result = tiger_cache.check_access(
             "user", "nobody", "read", "file", "uncached-file", "zone1"
@@ -196,7 +196,7 @@ class TestTigerCache:
 
     def test_invalidate(self, tiger_cache, resource_map):
         """Test cache invalidation."""
-        r1 = resource_map.get_or_create_int_id("file", "file1", "zone1")
+        r1 = resource_map.get_or_create_int_id("file", "file1")
 
         tiger_cache.update_cache(
             subject_type="user",
@@ -336,7 +336,7 @@ class TestTigerCacheIncrementalUpdates:
 
     def test_add_to_bitmap_creates_new_bitmap(self, tiger_cache, resource_map):
         """Test that add_to_bitmap creates a new bitmap if none exists."""
-        r1 = resource_map.get_or_create_int_id("file", "file1", "zone1")
+        r1 = resource_map.get_or_create_int_id("file", "file1")
 
         # Add to bitmap when none exists
         result = tiger_cache.add_to_bitmap(
@@ -354,8 +354,8 @@ class TestTigerCacheIncrementalUpdates:
 
     def test_add_to_bitmap_updates_existing_bitmap(self, tiger_cache, resource_map):
         """Test that add_to_bitmap adds to an existing bitmap."""
-        r1 = resource_map.get_or_create_int_id("file", "file1", "zone1")
-        r2 = resource_map.get_or_create_int_id("file", "file2", "zone1")
+        r1 = resource_map.get_or_create_int_id("file", "file1")
+        r2 = resource_map.get_or_create_int_id("file", "file2")
 
         # Create initial bitmap with r1
         tiger_cache.update_cache(
@@ -385,7 +385,7 @@ class TestTigerCacheIncrementalUpdates:
 
     def test_add_to_bitmap_idempotent(self, tiger_cache, resource_map):
         """Test that adding same resource twice is idempotent."""
-        r1 = resource_map.get_or_create_int_id("file", "file1", "zone1")
+        r1 = resource_map.get_or_create_int_id("file", "file1")
 
         # Add same resource twice
         tiger_cache.add_to_bitmap("user", "alice", "read", "file", "zone1", r1)
@@ -397,8 +397,8 @@ class TestTigerCacheIncrementalUpdates:
 
     def test_remove_from_bitmap(self, tiger_cache, resource_map):
         """Test removing a resource from bitmap."""
-        r1 = resource_map.get_or_create_int_id("file", "file1", "zone1")
-        r2 = resource_map.get_or_create_int_id("file", "file2", "zone1")
+        r1 = resource_map.get_or_create_int_id("file", "file1")
+        r2 = resource_map.get_or_create_int_id("file", "file2")
 
         # Create bitmap with both resources
         tiger_cache.update_cache(
@@ -428,7 +428,7 @@ class TestTigerCacheIncrementalUpdates:
 
     def test_remove_from_bitmap_not_in_cache(self, tiger_cache, resource_map):
         """Test removing from non-existent bitmap returns False."""
-        r1 = resource_map.get_or_create_int_id("file", "file1", "zone1")
+        r1 = resource_map.get_or_create_int_id("file", "file1")
 
         # Try to remove from non-existent bitmap
         result = tiger_cache.remove_from_bitmap(
@@ -443,9 +443,9 @@ class TestTigerCacheIncrementalUpdates:
 
     def test_add_to_bitmap_bulk(self, tiger_cache, resource_map):
         """Test bulk adding resources to bitmap."""
-        r1 = resource_map.get_or_create_int_id("file", "file1", "zone1")
-        r2 = resource_map.get_or_create_int_id("file", "file2", "zone1")
-        r3 = resource_map.get_or_create_int_id("file", "file3", "zone1")
+        r1 = resource_map.get_or_create_int_id("file", "file1")
+        r2 = resource_map.get_or_create_int_id("file", "file2")
+        r3 = resource_map.get_or_create_int_id("file", "file3")
 
         # Bulk add all resources
         added = tiger_cache.add_to_bitmap_bulk(
@@ -464,9 +464,9 @@ class TestTigerCacheIncrementalUpdates:
 
     def test_add_to_bitmap_bulk_partial_duplicates(self, tiger_cache, resource_map):
         """Test bulk add with some resources already in bitmap."""
-        r1 = resource_map.get_or_create_int_id("file", "file1", "zone1")
-        r2 = resource_map.get_or_create_int_id("file", "file2", "zone1")
-        r3 = resource_map.get_or_create_int_id("file", "file3", "zone1")
+        r1 = resource_map.get_or_create_int_id("file", "file1")
+        r2 = resource_map.get_or_create_int_id("file", "file2")
+        r3 = resource_map.get_or_create_int_id("file", "file3")
 
         # Create bitmap with r1
         tiger_cache.update_cache(
@@ -508,8 +508,8 @@ class TestTigerCacheIncrementalUpdates:
 
     def test_incremental_updates_different_permissions(self, tiger_cache, resource_map):
         """Test incremental updates maintain separate bitmaps per permission."""
-        r1 = resource_map.get_or_create_int_id("file", "file1", "zone1")
-        r2 = resource_map.get_or_create_int_id("file", "file2", "zone1")
+        r1 = resource_map.get_or_create_int_id("file", "file1")
+        r2 = resource_map.get_or_create_int_id("file", "file2")
 
         # Add r1 to read bitmap
         tiger_cache.add_to_bitmap("user", "alice", "read", "file", "zone1", r1)

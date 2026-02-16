@@ -21,14 +21,16 @@ from typing import TYPE_CHECKING, Any, cast
 
 from nexus.core.rebac import (
     CROSS_ZONE_ALLOWED_RELATIONS,
+    Entity,
+    NamespaceConfig,
+)
+from nexus.services.permissions.default_namespaces import (
     DEFAULT_FILE_NAMESPACE,
     DEFAULT_GROUP_NAMESPACE,
     DEFAULT_MEMORY_NAMESPACE,
     DEFAULT_PLAYBOOK_NAMESPACE,
     DEFAULT_SKILL_NAMESPACE,
     DEFAULT_TRAJECTORY_NAMESPACE,
-    Entity,
-    NamespaceConfig,
 )
 from nexus.services.permissions.graph.expand import ExpandEngine
 from nexus.services.permissions.graph.traversal import PermissionComputer
@@ -87,7 +89,6 @@ class ReBACManager:
         l1_cache_ttl: int = 300,
         enable_metrics: bool = True,
         enable_adaptive_ttl: bool = False,
-        l1_cache_quantization_interval: int = 0,  # DEPRECATED: Use l1_cache_revision_window
         l1_cache_revision_window: int = 10,
     ):
         """Initialize ReBAC manager.
@@ -101,7 +102,6 @@ class ReBACManager:
             l1_cache_ttl: L1 cache TTL in seconds (default: 300s)
             enable_metrics: Track cache metrics (default: True)
             enable_adaptive_ttl: Adjust TTL based on write frequency (default: False)
-            l1_cache_quantization_interval: DEPRECATED - was broken (Issue #909). Ignored.
             l1_cache_revision_window: Number of revisions per cache key bucket (default: 10).
                 Cache keys remain stable within a revision window. See Issue #909.
         """
@@ -133,17 +133,6 @@ class ReBACManager:
                 stacklevel=2,
             )
 
-        # Deprecation warning for old parameter (Issue #909)
-        if l1_cache_quantization_interval > 0:
-            import warnings
-
-            warnings.warn(
-                "l1_cache_quantization_interval is deprecated and was broken (Issue #909). "
-                "Use l1_cache_revision_window for revision-based quantization.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
         # Initialize L1 in-memory cache with revision-based quantization (Issue #909)
         self._l1_cache: ReBACPermissionCache | None = None
         if enable_l1_cache:
@@ -161,11 +150,6 @@ class ReBACManager:
                 f"metrics={enable_metrics}, adaptive_ttl={enable_adaptive_ttl}, "
                 f"revision_window={l1_cache_revision_window}"
             )
-
-        # Use SQLAlchemy sessionmaker for proper connection management
-        from sqlalchemy.orm import sessionmaker
-
-        self.SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
         # Backward-compat aliases for code accessing _conn_map / _pg_version directly
         self._conn_map = self._repo._conn_map

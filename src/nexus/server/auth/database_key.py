@@ -143,10 +143,7 @@ class DatabaseAPIKeyAuth(AuthProvider):
                 metadata={
                     "key_id": api_key.key_id,
                     "key_name": api_key.name,
-                    "legacy_user_id": api_key.user_id,  # For backward compatibility
-                    "expires_at": api_key.expires_at.isoformat()
-                    if api_key.expires_at
-                    else None,  # API key expiration
+                    "expires_at": api_key.expires_at.isoformat() if api_key.expires_at else None,
                 },
             )
 

@@ -66,7 +66,7 @@ class MessageSender:
         self,
         vfs: VFSOperations,
         event_publisher: EventPublisher | None = None,
-        zone_id: str = "default",
+        zone_id: str = "root",
         max_inbox_size: int = DEFAULT_MAX_INBOX_SIZE,
         max_payload_bytes: int = DEFAULT_MAX_PAYLOAD_BYTES,
     ) -> None:
@@ -222,7 +222,7 @@ class MessageProcessor:
         vfs: VFSOperations,
         agent_id: str,
         handler: MessageHandler,
-        zone_id: str = "default",
+        zone_id: str = "root",
         max_dedup_size: int = 10_000,
     ) -> None:
         self._vfs = vfs

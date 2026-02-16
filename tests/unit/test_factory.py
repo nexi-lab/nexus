@@ -108,6 +108,11 @@ class TestCreateNexusServices:
             "write_observer",
             "version_service",
             "wallet_provisioner",
+            "agent_registry",
+            "namespace_manager",
+            "async_agent_registry",
+            "async_namespace_manager",
+            "async_vfs_router",
         ]
         for attr in expected_attrs:
             assert hasattr(result, attr), f"Missing attribute: {attr}"
@@ -247,6 +252,96 @@ class TestCreateNexusServices:
 
         observer = result.write_observer
         assert type(observer).__name__ == "BufferedRecordStoreSyncer"
+
+    def test_agent_registry_created(self, deps: dict, tmp_path: Path) -> None:
+        """AgentRegistry is created when session_factory exists."""
+        from nexus.core.router import PathRouter
+        from nexus.factory import create_nexus_services
+
+        router = PathRouter()
+        router.add_mount("/", deps["backend"], priority=0)
+        record_store = self._make_record_store(tmp_path)
+
+        result = create_nexus_services(
+            record_store=record_store,
+            metadata_store=deps["metadata_store"],
+            backend=deps["backend"],
+            router=router,
+        )
+        assert result.agent_registry is not None
+        assert type(result.agent_registry).__name__ == "AgentRegistry"
+
+    def test_async_agent_registry_wraps_sync(self, deps: dict, tmp_path: Path) -> None:
+        """AsyncAgentRegistry._inner is the sync AgentRegistry."""
+        from nexus.core.router import PathRouter
+        from nexus.factory import create_nexus_services
+
+        router = PathRouter()
+        router.add_mount("/", deps["backend"], priority=0)
+        record_store = self._make_record_store(tmp_path)
+
+        result = create_nexus_services(
+            record_store=record_store,
+            metadata_store=deps["metadata_store"],
+            backend=deps["backend"],
+            router=router,
+        )
+        assert result.async_agent_registry is not None
+        assert result.async_agent_registry._inner is result.agent_registry
+
+    def test_namespace_manager_created(self, deps: dict, tmp_path: Path) -> None:
+        """NamespaceManager is created by factory."""
+        from nexus.core.router import PathRouter
+        from nexus.factory import create_nexus_services
+
+        router = PathRouter()
+        router.add_mount("/", deps["backend"], priority=0)
+        record_store = self._make_record_store(tmp_path)
+
+        result = create_nexus_services(
+            record_store=record_store,
+            metadata_store=deps["metadata_store"],
+            backend=deps["backend"],
+            router=router,
+        )
+        assert result.namespace_manager is not None
+        assert type(result.namespace_manager).__name__ == "NamespaceManager"
+
+    def test_async_namespace_manager_wraps_sync(self, deps: dict, tmp_path: Path) -> None:
+        """AsyncNamespaceManager._inner is the sync NamespaceManager."""
+        from nexus.core.router import PathRouter
+        from nexus.factory import create_nexus_services
+
+        router = PathRouter()
+        router.add_mount("/", deps["backend"], priority=0)
+        record_store = self._make_record_store(tmp_path)
+
+        result = create_nexus_services(
+            record_store=record_store,
+            metadata_store=deps["metadata_store"],
+            backend=deps["backend"],
+            router=router,
+        )
+        assert result.async_namespace_manager is not None
+        assert result.async_namespace_manager._inner is result.namespace_manager
+
+    def test_async_vfs_router_wraps_router(self, deps: dict, tmp_path: Path) -> None:
+        """AsyncVFSRouter._inner is the PathRouter passed to the factory."""
+        from nexus.core.router import PathRouter
+        from nexus.factory import create_nexus_services
+
+        router = PathRouter()
+        router.add_mount("/", deps["backend"], priority=0)
+        record_store = self._make_record_store(tmp_path)
+
+        result = create_nexus_services(
+            record_store=record_store,
+            metadata_store=deps["metadata_store"],
+            backend=deps["backend"],
+            router=router,
+        )
+        assert result.async_vfs_router is not None
+        assert result.async_vfs_router._inner is router
 
 
 # ---------------------------------------------------------------------------
@@ -530,3 +625,66 @@ class TestDefaultToolProfiles:
         assert full is not None
         # No duplicates — tools is a tuple of unique names
         assert len(full.tools) == len(set(full.tools))
+
+
+# ---------------------------------------------------------------------------
+# Import structure tests (Issue #1291)
+# ---------------------------------------------------------------------------
+
+
+class TestImportStructure:
+    """Tests for import structure integrity after circular import fix."""
+
+    def test_types_is_leaf_module(self) -> None:
+        """core/types.py has zero runtime nexus.* imports."""
+        import ast
+
+        types_path = Path("src/nexus/core/types.py")
+        source = types_path.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(types_path))
+
+        runtime_nexus_imports: list[str] = []
+        for node in ast.iter_child_nodes(tree):
+            if isinstance(node, ast.If):
+                test = node.test
+                if (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+                    isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+                ):
+                    continue
+            if isinstance(node, ast.ImportFrom):
+                if node.module and node.module.startswith("nexus"):
+                    runtime_nexus_imports.append(node.module)
+            elif isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name.startswith("nexus"):
+                        runtime_nexus_imports.append(alias.name)
+
+        assert runtime_nexus_imports == [], f"core/types.py must be leaf: {runtime_nexus_imports}"
+
+    def test_permissions_reexports_from_types(self) -> None:
+        """permissions.py re-exports from types.py (same identity)."""
+        from nexus.core.permissions import OperationContext as P_OC
+        from nexus.core.permissions import Permission as P_P
+        from nexus.core.types import OperationContext as T_OC
+        from nexus.core.types import Permission as T_P
+
+        assert P_OC is T_OC, "OperationContext must be same object"
+        assert P_P is T_P, "Permission must be same object"
+
+    def test_factory_import_chain(self) -> None:
+        """Factory module imports without circular import errors."""
+        from nexus.factory import create_nexus_fs  # noqa: F401
+
+    def test_factory_creates_instance(self, tmp_path: Path) -> None:
+        """Full DI wiring: factory creates a working NexusFS."""
+        from nexus.factory import create_nexus_fs
+
+        deps = _make_deps(tmp_path)
+        nx = create_nexus_fs(
+            backend=deps["backend"],
+            metadata_store=deps["metadata_store"],
+            enforce_permissions=False,
+        )
+        assert nx is not None
+        assert hasattr(nx, "read")
+        assert hasattr(nx, "write")

@@ -4,7 +4,7 @@ import uuid
 
 import pytest
 
-from nexus.workflows.engine import WorkflowEngine, get_engine, init_engine
+from nexus.workflows.engine import WorkflowEngine, get_engine, init_engine, reset_engine, set_engine
 from nexus.workflows.types import (
     TriggerType,
     WorkflowAction,
@@ -340,23 +340,40 @@ class TestWorkflowEngine:
         assert execution.action_results[1].output == 84
 
 
-class TestEngineGlobals:
-    """Test global engine functions."""
+class TestEngineInjection:
+    """Test injectable engine functions."""
 
-    def test_get_engine(self):
-        """Test getting global engine instance."""
-        engine1 = get_engine()
-        engine2 = get_engine()
-        assert engine1 is engine2
+    def test_get_engine_returns_none_by_default(self):
+        """Test that get_engine returns None when no engine is set."""
+        reset_engine()
+        assert get_engine() is None
+
+    def test_set_engine_makes_it_available(self):
+        """Test that set_engine makes the engine available via get_engine."""
+        engine = WorkflowEngine()
+        set_engine(engine)
+        assert get_engine() is engine
+        reset_engine()
+
+    def test_reset_clears_engine(self):
+        """Test that reset_engine clears the injected engine."""
+        engine = WorkflowEngine()
+        set_engine(engine)
+        assert get_engine() is engine
+        reset_engine()
+        assert get_engine() is None
 
     def test_init_engine(self):
-        """Test initializing global engine."""
+        """Test initializing and injecting engine."""
+        reset_engine()
         engine = init_engine()
         assert engine is not None
         assert get_engine() is engine
+        reset_engine()
 
     def test_init_engine_with_stores(self):
         """Test initializing engine with stores."""
+        reset_engine()
         mock_metadata_store = object()
         mock_workflow_store = object()
 
@@ -364,3 +381,15 @@ class TestEngineGlobals:
         assert engine.metadata_store is mock_metadata_store
         assert engine.plugin_registry is None
         assert engine.workflow_store is mock_workflow_store
+        assert get_engine() is engine
+        reset_engine()
+
+    def test_set_engine_overwrites_previous(self):
+        """Test that set_engine overwrites previous engine."""
+        engine_a = WorkflowEngine()
+        engine_b = WorkflowEngine()
+        set_engine(engine_a)
+        assert get_engine() is engine_a
+        set_engine(engine_b)
+        assert get_engine() is engine_b
+        reset_engine()

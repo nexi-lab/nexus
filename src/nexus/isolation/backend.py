@@ -26,7 +26,6 @@ from nexus.isolation.errors import (
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
-    from nexus.services.permissions.permissions_enhanced import EnhancedOperationContext
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +146,7 @@ class IsolatedBackend(Backend):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: OperationContext | EnhancedOperationContext | None = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[None]:
         return self._call("mkdir", path, parents=parents, exist_ok=exist_ok, context=context)
 
@@ -156,7 +155,7 @@ class IsolatedBackend(Backend):
         self,
         path: str,
         recursive: bool = False,
-        context: OperationContext | EnhancedOperationContext | None = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[None]:
         return self._call("rmdir", path, recursive=recursive, context=context)
 

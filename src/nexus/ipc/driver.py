@@ -30,7 +30,6 @@ from nexus.core.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
-    from nexus.core.permissions_enhanced import EnhancedOperationContext
     from nexus.ipc.storage.protocol import IPCStorageDriver
 
 logger = logging.getLogger(__name__)
@@ -53,7 +52,7 @@ class IPCVFSDriver(Backend):
     def __init__(
         self,
         storage: IPCStorageDriver,
-        zone_id: str = "default",
+        zone_id: str = "root",
         event_publisher: Any | None = None,
         max_inbox_size: int = 1000,
     ) -> None:
@@ -205,7 +204,7 @@ class IPCVFSDriver(Backend):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: OperationContext | EnhancedOperationContext | None = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[None]:
         """Create a directory in IPC storage."""
         self._run_async(self._storage.mkdir(path, self._zone_id))
@@ -216,7 +215,7 @@ class IPCVFSDriver(Backend):
         self,
         path: str,
         recursive: bool = False,
-        context: OperationContext | EnhancedOperationContext | None = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[None]:
         """Remove directory — not supported for IPC (audit preservation)."""
         return HandlerResponse.error(

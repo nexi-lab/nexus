@@ -27,7 +27,6 @@ from nexus.core.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
-    from nexus.services.permissions.permissions_enhanced import EnhancedOperationContext
 
 
 @register_connector(
@@ -571,7 +570,7 @@ class GCSBackend(Backend):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: "OperationContext | EnhancedOperationContext | None" = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[None]:
         """
         Create directory marker in GCS.
@@ -639,13 +638,9 @@ class GCSBackend(Backend):
         self,
         path: str,
         recursive: bool = False,
-        context: "OperationContext | EnhancedOperationContext | None" = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[None]:
-        """Remove directory from GCS.
-
-        Returns:
-            HandlerResponse indicating success or failure
-        """
+        """Remove directory from GCS."""
         # Normalize path
         path = path.strip("/")
         if not path:

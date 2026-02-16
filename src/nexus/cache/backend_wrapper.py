@@ -39,7 +39,6 @@ from nexus.storage.content_cache import ContentCache
 if TYPE_CHECKING:
     from nexus.core.cache_store import CacheStoreABC
     from nexus.core.permissions import OperationContext
-    from nexus.core.permissions_enhanced import EnhancedOperationContext
 
 logger = logging.getLogger(__name__)
 
@@ -343,7 +342,7 @@ class CachingBackendWrapper(Backend):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: OperationContext | EnhancedOperationContext | None = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[None]:
         return self._inner.mkdir(path, parents=parents, exist_ok=exist_ok, context=context)
 
@@ -352,7 +351,7 @@ class CachingBackendWrapper(Backend):
         self,
         path: str,
         recursive: bool = False,
-        context: OperationContext | EnhancedOperationContext | None = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[None]:
         return self._inner.rmdir(path, recursive=recursive, context=context)
 

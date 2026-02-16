@@ -14,7 +14,6 @@ from nexus.core.response import HandlerResponse
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
-    from nexus.core.permissions_enhanced import EnhancedOperationContext
 
 
 class MockBackend(Backend):
@@ -129,7 +128,7 @@ class MockBackend(Backend):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: OperationContext | EnhancedOperationContext | None = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[None]:
         self.call_counts["mkdir"] += 1
         if path in self._dirs and not exist_ok:
@@ -145,7 +144,7 @@ class MockBackend(Backend):
         self,
         path: str,
         recursive: bool = False,
-        context: OperationContext | EnhancedOperationContext | None = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[None]:
         self.call_counts["rmdir"] += 1
         if path not in self._dirs:

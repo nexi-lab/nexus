@@ -820,7 +820,7 @@ class BulkPermissionChecker:
             if result:
                 try:
                     resource_int_id = self._tiger_cache._resource_map.get_or_create_int_id(
-                        obj[0], obj[1], zone_id
+                        obj[0], obj[1]
                     )
                     if resource_int_id > 0:
                         group_key = (subject[0], subject[1], permission, obj[0], zone_id)

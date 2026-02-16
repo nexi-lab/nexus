@@ -145,6 +145,15 @@ class KernelServices:
     # code via NexusFS._service_extras. The kernel never inspects these.
     server_extras: dict[str, Any] = field(default_factory=dict)
 
+    # Kernel protocol services (Issue #1502)
+    agent_registry: Any = None
+    namespace_manager: Any = None
+
+    # Async protocol wrappers (Issue #1502)
+    async_agent_registry: Any = None
+    async_namespace_manager: Any = None
+    async_vfs_router: Any = None
+
 
 # ---------------------------------------------------------------------------
 # Observability (unchanged from before)
@@ -161,27 +170,3 @@ class ObservabilityConfig:
     log_query_parameters: bool = False  # security: off by default
     max_query_length: int = 1000  # truncate long statements
     max_listener_errors: int = 10  # auto-disable threshold
-
-
-# ---------------------------------------------------------------------------
-# Backward-compatibility aliases (Issue #1391)
-# Old names still importable; will be removed in a future release.
-# ---------------------------------------------------------------------------
-
-LRUCacheConfig = CacheConfig
-"""Deprecated: Use ``CacheConfig`` instead."""
-
-SecurityConfig = PermissionConfig
-"""Deprecated: Use ``PermissionConfig`` instead.
-
-Note: Field names changed:
-- ``enforce_permissions`` → ``enforce``
-- ``inherit_permissions`` → ``inherit``
-"""
-
-
-class FeatureFlags:
-    """Deprecated: Fields distributed into PermissionConfig, DistributedConfig, MemoryConfig."""
-
-    def __init__(self, **_kw: Any) -> None:  # noqa: ANN401
-        pass

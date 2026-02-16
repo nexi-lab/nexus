@@ -61,7 +61,6 @@ from nexus.storage.models.exchange_audit_log import ExchangeAuditLogModel as Exc
 from nexus.storage.models.file_path import FilePathModel as FilePathModel
 
 # Domain: Filesystem
-from nexus.storage.models.filesystem import ContentCacheModel as ContentCacheModel
 from nexus.storage.models.filesystem import ContentChunkModel as ContentChunkModel
 from nexus.storage.models.filesystem import DirectoryEntryModel as DirectoryEntryModel
 from nexus.storage.models.filesystem import DocumentChunkModel as DocumentChunkModel

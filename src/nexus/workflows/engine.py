@@ -425,20 +425,32 @@ class WorkflowEngine:
         return await self.trigger_manager.fire_event(trigger_type, event_context)
 
 
-# Global workflow engine instance
+# Injectable workflow engine instance (set by server/factory layer at startup)
 _engine: WorkflowEngine | None = None
 
 
-def get_engine() -> WorkflowEngine:
-    """Get the global workflow engine instance."""
+def set_engine(engine: WorkflowEngine) -> None:
+    """Inject a workflow engine instance. Called by server/factory layer at startup."""
     global _engine
-    if _engine is None:
-        _engine = WorkflowEngine()
+    _engine = engine
+
+
+def get_engine() -> WorkflowEngine | None:
+    """Return the injected workflow engine, or None if not initialized."""
     return _engine
 
 
+def reset_engine() -> None:
+    """Reset engine to None — only for tests."""
+    global _engine
+    _engine = None
+
+
 def init_engine(metadata_store=None, plugin_registry=None, workflow_store=None) -> WorkflowEngine:  # type: ignore[no-untyped-def]
-    """Initialize the workflow engine.
+    """Create and inject a workflow engine.
+
+    Convenience helper that creates a WorkflowEngine with the given
+    stores and registers it via ``set_engine()``.
 
     Args:
         metadata_store: Metadata store instance
@@ -448,6 +460,6 @@ def init_engine(metadata_store=None, plugin_registry=None, workflow_store=None) 
     Returns:
         Initialized workflow engine
     """
-    global _engine
-    _engine = WorkflowEngine(metadata_store, plugin_registry, workflow_store)
-    return _engine
+    engine = WorkflowEngine(metadata_store, plugin_registry, workflow_store)
+    set_engine(engine)
+    return engine

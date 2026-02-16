@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nexus.core.relationship_extractor import (
+from nexus.services.memory.relationship_extractor import (
     DEFAULT_RELATIONSHIP_TYPES,
     ExtractedRelationship,
     HeuristicRelationshipExtractor,

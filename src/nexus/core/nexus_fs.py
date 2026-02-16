@@ -18,7 +18,7 @@ from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 
 if TYPE_CHECKING:
-    from nexus.core.memory_api import Memory
+    from nexus.services.memory.memory_api import Memory
 from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol
 from nexus.core.cache_store import CacheStoreABC, NullCacheStore
 from nexus.core.config import (
@@ -731,7 +731,7 @@ class NexusFS(  # type: ignore[misc]
 
             # Issue #1258: Create MemoryWithPaging if enabled, else standard Memory
             if self._enable_memory_paging:
-                from nexus.core.memory_with_paging import MemoryWithPaging
+                from nexus.services.memory.memory_with_paging import MemoryWithPaging
 
                 # Try to get engine for VectorDatabase integration
                 engine = None
@@ -752,7 +752,7 @@ class NexusFS(  # type: ignore[misc]
                     session_factory=self.SessionLocal,
                 )
             else:
-                from nexus.core.memory_api import Memory
+                from nexus.services.memory.memory_api import Memory
 
                 self._memory_api = Memory(
                     session=session,
@@ -867,7 +867,7 @@ class NexusFS(  # type: ignore[misc]
         Returns:
             Memory API instance
         """
-        from nexus.core.memory_api import Memory
+        from nexus.services.memory.memory_api import Memory
         from nexus.services.permissions.entity_registry import EntityRegistry
 
         # Get or create entity registry

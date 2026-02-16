@@ -96,7 +96,7 @@ def service(
 
 
 class TestDelegateCopyMode:
-    @patch("nexus.server.auth.database_key.DatabaseAPIKeyAuth.create_key")
+    @patch("nexus.identity.api_key_ops.create_api_key")
     def test_happy_path(
         self,
         mock_create_key,
@@ -132,7 +132,7 @@ class TestDelegateCopyMode:
 
 
 class TestDelegateCleanMode:
-    @patch("nexus.server.auth.database_key.DatabaseAPIKeyAuth.create_key")
+    @patch("nexus.identity.api_key_ops.create_api_key")
     def test_happy_path(
         self,
         mock_create_key,
@@ -156,7 +156,7 @@ class TestDelegateCleanMode:
 
 
 class TestDelegateSharedMode:
-    @patch("nexus.server.auth.database_key.DatabaseAPIKeyAuth.create_key")
+    @patch("nexus.identity.api_key_ops.create_api_key")
     def test_happy_path(
         self,
         mock_create_key,

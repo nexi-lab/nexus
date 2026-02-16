@@ -1,23 +1,22 @@
 """Database-backed API key authentication provider."""
 
-import hashlib
-import hmac
 import logging
-import secrets
 from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from nexus.identity.api_key_ops import (
+    API_KEY_PREFIX,
+    create_api_key,
+    hash_api_key,
+    revoke_api_key,
+    validate_key_format,
+)
 from nexus.server.auth.base import AuthProvider, AuthResult
 
 logger = logging.getLogger(__name__)
-
-# P0-5: API key security constants
-API_KEY_PREFIX = "sk-"  # All keys must start with this
-API_KEY_MIN_LENGTH = 32  # Minimum entropy requirement
-HMAC_SALT = "nexus-api-key-v1"  # Version-tagged salt for key derivation
 
 
 class DatabaseAPIKeyAuth(AuthProvider):
@@ -73,14 +72,14 @@ class DatabaseAPIKeyAuth(AuthProvider):
             return AuthResult(authenticated=False)
 
         # P0-5: Validate key format and prefix
-        if not self._validate_key_format(token):
+        if not validate_key_format(token):
             logger.warning(
                 f"UNAUTHORIZED: Invalid API key format (must start with {API_KEY_PREFIX})"
             )
             return AuthResult(authenticated=False)
 
         # Hash the token for lookup (P0-5: HMAC-SHA256 with salt)
-        token_hash = self._hash_key(token)
+        token_hash = hash_api_key(token)
 
         with self.session_factory() as session:
             # Look up key in database
@@ -167,169 +166,36 @@ class DatabaseAPIKeyAuth(AuthProvider):
         # Session factory handles connection pooling, no explicit cleanup needed
         pass
 
-    @staticmethod
-    def _validate_key_format(key: str) -> bool:
-        """Validate API key format.
-
-        P0-5: Enforce prefix and minimum length
-
-        Args:
-            key: Raw API key
-
-        Returns:
-            True if key format is valid
-        """
-        if not key.startswith(API_KEY_PREFIX):
-            return False
-        return len(key) >= API_KEY_MIN_LENGTH
+    # Delegate static utilities to nexus.identity.api_key_ops
+    _validate_key_format = staticmethod(validate_key_format)
+    _hash_key = staticmethod(hash_api_key)
 
     @staticmethod
-    def _hash_key(key: str) -> str:
-        """Hash API key using HMAC-SHA256 with salt.
-
-        P0-5: HMAC-SHA256 instead of raw SHA-256 for rainbow table resistance
-
-        Args:
-            key: Raw API key
-
-        Returns:
-            HMAC-SHA256 hex digest
-        """
-        # Use HMAC with versioned salt for key derivation
-        return hmac.new(HMAC_SALT.encode("utf-8"), key.encode("utf-8"), hashlib.sha256).hexdigest()
-
-    @classmethod
     def create_key(
-        cls,
         session: Session,
         user_id: str,
         name: str,
-        subject_type: str = "user",  # v0.5.0 ACE: "user" or "agent"
-        subject_id: str | None = None,  # v0.5.0 ACE: Custom agent ID
+        subject_type: str = "user",
+        subject_id: str | None = None,
         zone_id: str | None = None,
         is_admin: bool = False,
         expires_at: datetime | None = None,
-        inherit_permissions: bool = False,  # v0.5.1: Default False (zero permissions)
+        inherit_permissions: bool = False,
     ) -> tuple[str, str]:
-        """Create a new API key in the database.
-
-        P0-5: Generates key with proper prefix and entropy
-        v0.5.0 ACE: Supports agent keys with custom subject IDs
-        v0.5.1: Permission inheritance control for agents
-
-        Args:
-            session: SQLAlchemy session
-            user_id: User identifier (owner of the key)
-            name: Human-readable key name (e.g., "Production Server", "agent_data_analyst")
-            subject_type: Type of subject ("user" or "agent") - v0.5.0 NEW
-            subject_id: Custom subject ID (for agents) - v0.5.0 NEW
-                       If None, defaults to user_id
-            zone_id: Optional zone identifier
-            is_admin: Whether this key has admin privileges
-            expires_at: Optional expiry datetime (UTC)
-            inherit_permissions: Whether agent inherits owner's permissions - v0.5.1 NEW
-                                Default False (zero permissions, principle of least privilege)
-
-        Returns:
-            Tuple of (key_id, raw_key)
-            IMPORTANT: Raw key is only returned once, must be saved by caller
-
-        Example (user key):
-            from datetime import timedelta
-            with session_factory() as session:
-                key_id, raw_key = DatabaseAPIKeyAuth.create_key(
-                    session,
-                    user_id="alice",
-                    name="Alice's laptop",
-                    is_admin=True,
-                    expires_at=datetime.now(UTC) + timedelta(days=90)
-                )
-                print(f"Save this key: {raw_key}")
-                session.commit()
-
-        Example (agent key - v0.5.0):
-            with session_factory() as session:
-                key_id, raw_key = DatabaseAPIKeyAuth.create_key(
-                    session,
-                    user_id="alice",  # Owner
-                    name="Data Analyst Agent",
-                    subject_type="agent",
-                    subject_id="agent_data_analyst",
-                    expires_at=datetime.now(UTC) + timedelta(days=90)
-                )
-                print(f"Agent API key: {raw_key}")
-                session.commit()
-        """
-        from nexus.storage.models import APIKeyModel
-
-        # v0.5.0: If subject_id not provided, use user_id
-        final_subject_id = subject_id or user_id
-
-        # v0.5.0: Validate subject_type
-        valid_subject_types = ["user", "agent", "service"]
-        if subject_type not in valid_subject_types:
-            raise ValueError(
-                f"subject_type must be one of {valid_subject_types}, got {subject_type}"
-            )
-
-        # P0-5: Generate key with prefix, zone, and high entropy (32+ bytes)
-        # Format: sk-<zone>_<subject>_<id>_<random-hex>
-        zone_prefix = f"{zone_id[:8]}_" if zone_id else ""
-        subject_prefix = final_subject_id[:12] if subject_type == "agent" else user_id[:8]
-        random_suffix = secrets.token_hex(16)  # 32 hex chars = 16 bytes
-        key_id_part = secrets.token_hex(4)  # 8 hex chars for uniqueness
-
-        raw_key = f"{API_KEY_PREFIX}{zone_prefix}{subject_prefix}_{key_id_part}_{random_suffix}"
-        key_hash = cls._hash_key(raw_key)
-
-        # Create database record
-        # Note: PostgreSQL has is_admin as INTEGER, so convert bool to int
-        api_key = APIKeyModel(
-            key_hash=key_hash,
-            user_id=user_id,  # Always track the owner
+        """Create a new API key. Delegates to nexus.identity.api_key_ops."""
+        return create_api_key(
+            session,
+            user_id=user_id,
             name=name,
+            subject_type=subject_type,
+            subject_id=subject_id,
             zone_id=zone_id,
-            is_admin=int(is_admin),  # Convert bool to int for PostgreSQL
+            is_admin=is_admin,
             expires_at=expires_at,
-            subject_type=subject_type,  # v0.5.0: "user" or "agent"
-            subject_id=final_subject_id,  # v0.5.0: Actual identity
-            inherit_permissions=int(inherit_permissions),  # v0.5.1: Permission inheritance control
+            inherit_permissions=inherit_permissions,
         )
 
-        session.add(api_key)
-        session.flush()  # Flush to generate key_id before returning
-        # Don't commit here - let caller handle transaction
-
-        return (api_key.key_id, raw_key)
-
-    @classmethod
-    def revoke_key(cls, session: Session, key_id: str) -> bool:
-        """Revoke an API key.
-
-        Args:
-            session: SQLAlchemy session
-            key_id: Key ID to revoke
-
-        Returns:
-            True if key was revoked, False if not found
-
-        Example:
-            with session_factory() as session:
-                if DatabaseAPIKeyAuth.revoke_key(session, key_id):
-                    session.commit()
-                    print("Key revoked")
-        """
-        from nexus.storage.models import APIKeyModel
-
-        stmt = select(APIKeyModel).where(APIKeyModel.key_id == key_id)
-        api_key = session.scalar(stmt)
-
-        if not api_key:
-            return False
-
-        api_key.revoked = 1  # Integer (0/1) for SQLite/PostgreSQL compatibility
-        api_key.revoked_at = datetime.now(UTC)
-        session.flush()  # Flush to persist changes before returning
-        # Don't commit here - let caller handle transaction
-
-        return True
+    @staticmethod
+    def revoke_key(session: Session, key_id: str) -> bool:
+        """Revoke an API key. Delegates to nexus.identity.api_key_ops."""
+        return revoke_api_key(session, key_id)

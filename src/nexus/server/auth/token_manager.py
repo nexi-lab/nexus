@@ -88,13 +88,13 @@ class TokenManager:
         """Initialize token manager.
 
         Args:
-            db_path: Path to SQLite database (deprecated, use db_url)
-            db_url: Database URL
-            encryption_key: Fernet encryption key (base64-encoded)
-            audit_logger: Optional SecretsAuditLogger instance for audit trail
+            db_path: Path to SQLite database.
+            db_url: Database URL.
+            encryption_key: Fernet encryption key (base64-encoded).
+            audit_logger: Optional SecretsAuditLogger instance for audit trail.
             session_factory: Optional SQLAlchemy sessionmaker. When provided,
                 reuses the app-level connection pool instead of creating a
-                separate engine. db_path/db_url are still needed for OAuthCrypto.
+                separate engine.
         """
         if session_factory is not None:
             self.SessionLocal = session_factory
@@ -103,14 +103,6 @@ class TokenManager:
             self.database_url = db_url or (str(self.engine.url) if self.engine else "")
             self._owns_engine = False
         elif db_url:
-            import warnings
-
-            warnings.warn(
-                "TokenManager(db_url=...) creates a standalone engine outside "
-                "RecordStoreABC. Use session_factory= for proper pillar compliance.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
             self.database_url = db_url
             self.engine = create_engine(
                 self.database_url,
@@ -120,14 +112,6 @@ class TokenManager:
             Base.metadata.create_all(self.engine)
             self._owns_engine = True
         elif db_path:
-            import warnings
-
-            warnings.warn(
-                "TokenManager(db_path=...) creates a standalone engine outside "
-                "RecordStoreABC. Use session_factory= for proper pillar compliance.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
             self.database_url = f"sqlite:///{db_path}"
             self.engine = create_engine(
                 self.database_url,

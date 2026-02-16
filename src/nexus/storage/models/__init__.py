@@ -117,7 +117,6 @@ from nexus.storage.models.permissions import TigerCacheModel as TigerCacheModel
 from nexus.storage.models.permissions import TigerCacheQueueModel as TigerCacheQueueModel
 from nexus.storage.models.permissions import TigerDirectoryGrantsModel as TigerDirectoryGrantsModel
 from nexus.storage.models.permissions import TigerResourceMapModel as TigerResourceMapModel
-from nexus.storage.models.permissions import AdminBypassAuditModel as AdminBypassAuditModel
 from nexus.storage.models.persistent_namespace_view import (
     PersistentNamespaceViewModel as PersistentNamespaceViewModel,
 )
@@ -151,7 +150,6 @@ from nexus.storage.models.sync import ConflictLogModel as ConflictLogModel
 from nexus.storage.models.sync import PendingOperationModel as PendingOperationModel
 from nexus.storage.models.sync import SyncBacklogModel as SyncBacklogModel
 from nexus.storage.models.sync import SyncJobModel as SyncJobModel
-from nexus.storage.models.sync import PendingOperationModel as PendingOperationModel
 
 # Domain: Uploads (Issue #788)
 from nexus.storage.models.upload_session import UploadSessionModel as UploadSessionModel

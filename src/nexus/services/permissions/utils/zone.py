@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any
 
-DEFAULT_ZONE: str = "default"
+DEFAULT_ZONE: str = "root"
 
 
 def normalize_zone_id(zone_id: str | None) -> str:
@@ -19,9 +19,9 @@ def normalize_zone_id(zone_id: str | None) -> str:
     >>> normalize_zone_id("tenant-1")
     'tenant-1'
     >>> normalize_zone_id(None)
-    'default'
+    'root'
     >>> normalize_zone_id("")
-    'default'
+    'root'
     """
     return zone_id or DEFAULT_ZONE
 

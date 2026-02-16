@@ -585,7 +585,7 @@ class Memory:
             async_url = sync_url
 
         # Use default zone if not provided
-        effective_zone_id = zone_id or "default"
+        effective_zone_id = zone_id or "root"
 
         async def _do_store() -> None:
             engine = create_async_engine(async_url)

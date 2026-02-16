@@ -519,9 +519,9 @@ class SearchService(SemanticSearchMixin):
     def _extract_zone_info(self, context: Any) -> tuple[str, str | None, str | None]:
         """Extract zone_id, subject_type, subject_id from context for DB filtering.
 
-        zone_id always returns a non-None value (defaults to "default").
+        zone_id always returns a non-None value (defaults to "root").
         """
-        list_zone_id: str = "default"
+        list_zone_id: str = "root"
         subject_type: str | None = None
         subject_id: str | None = None
         if self._enforce_permissions and context:
@@ -1009,7 +1009,7 @@ class SearchService(SemanticSearchMixin):
         allowed_set: set[str],
         backend_dirs: set[str],
         context: Any,
-        zone_id: str = "default",
+        zone_id: str = "root",
     ) -> set[str]:
         """Infer directory entries from file paths and backend."""
         import time as _time
@@ -1059,7 +1059,7 @@ class SearchService(SemanticSearchMixin):
         allowed_set: set[str],
         directories: set[str],
         context: Any,
-        zone_id: str = "default",
+        zone_id: str = "root",
     ) -> None:
         """Check backend directories for access using bulk TRAVERSE check."""
         import time as _time

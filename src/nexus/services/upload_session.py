@@ -49,7 +49,7 @@ class UploadSession:
     upload_length: int
     upload_offset: int = 0
     status: UploadStatus = UploadStatus.CREATED
-    zone_id: str = "default"
+    zone_id: str = "root"
     user_id: str = "anonymous"
     metadata: dict[str, str] = field(default_factory=dict)
     checksum_algorithm: str | None = None
@@ -105,7 +105,7 @@ class UploadSession:
             upload_length=data["upload_length"],
             upload_offset=data.get("upload_offset", 0),
             status=UploadStatus(data.get("status", "created")),
-            zone_id=data.get("zone_id", "default"),
+            zone_id=data.get("zone_id", "root"),
             user_id=data.get("user_id", "anonymous"),
             metadata=data.get("metadata", {}),
             checksum_algorithm=data.get("checksum_algorithm"),

@@ -249,7 +249,7 @@ class EventDeliveryWorker:
                             "size": event.size,
                             "timestamp": event.timestamp,
                         },
-                        zone_id=event.zone_id or "default",
+                        zone_id=event.zone_id or "root",
                     )
 
                 try:
@@ -278,7 +278,7 @@ class EventDeliveryWorker:
         return FileEvent(
             type=event_type,
             path=record.path,
-            zone_id=record.zone_id or "default",
+            zone_id=record.zone_id or "root",
             timestamp=record.created_at.isoformat() if record.created_at else "",
             old_path=record.new_path,  # new_path stores old_path for renames
             agent_id=record.agent_id,

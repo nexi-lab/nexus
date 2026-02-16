@@ -53,7 +53,7 @@ class ChangeLogStore(SyncStoreBase):
         super().__init__(gateway)
 
     def get_change_log(
-        self, path: str, backend_name: str, zone_id: str = "default"
+        self, path: str, backend_name: str, zone_id: str = "root"
     ) -> ChangeLogEntry | None:
         """Get change log entry for a path.
 
@@ -103,7 +103,7 @@ class ChangeLogStore(SyncStoreBase):
         self,
         path: str,
         backend_name: str,
-        zone_id: str = "default",
+        zone_id: str = "root",
         size_bytes: int | None = None,
         mtime: datetime | None = None,
         backend_version: str | None = None,
@@ -166,7 +166,7 @@ class ChangeLogStore(SyncStoreBase):
         finally:
             session.close()
 
-    def get_last_sync_time(self, backend_name: str, zone_id: str = "default") -> datetime | None:
+    def get_last_sync_time(self, backend_name: str, zone_id: str = "root") -> datetime | None:
         """Get the most recent sync time for a backend.
 
         Args:
@@ -283,7 +283,7 @@ class ChangeLogStore(SyncStoreBase):
                 {
                     "path": entry.path,
                     "backend_name": entry.backend_name,
-                    "zone_id": getattr(entry, "zone_id", "default") or "default",
+                    "zone_id": getattr(entry, "zone_id", "root") or "root",
                     "size_bytes": entry.size_bytes,
                     "mtime": entry.mtime,
                     "backend_version": entry.backend_version,
@@ -342,7 +342,7 @@ class ChangeLogStore(SyncStoreBase):
         finally:
             session.close()
 
-    def delete_change_log(self, path: str, backend_name: str, zone_id: str = "default") -> bool:
+    def delete_change_log(self, path: str, backend_name: str, zone_id: str = "root") -> bool:
         """Delete change log entry for a path.
 
         Used during file deletion to prevent stale entries that could
@@ -378,7 +378,7 @@ class ChangeLogStore(SyncStoreBase):
             session.close()
 
     def delete_change_logs_batch(
-        self, paths: list[str], backend_name: str, zone_id: str = "default"
+        self, paths: list[str], backend_name: str, zone_id: str = "root"
     ) -> bool:
         """Delete change log entries for multiple paths in a single transaction.
 

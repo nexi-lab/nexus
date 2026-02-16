@@ -112,7 +112,7 @@ class MemoryWithPaging(Memory):
         if enable_paging:
             self.pager = MemoryPager(
                 session_factory=session_factory,
-                zone_id=zone_id or "default",
+                zone_id=zone_id or "root",
                 main_capacity=main_capacity,
                 recall_max_age_hours=recall_max_age_hours,
                 warm_up=warm_up,

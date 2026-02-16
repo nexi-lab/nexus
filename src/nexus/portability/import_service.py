@@ -555,7 +555,7 @@ class ZoneImportService:
                     object_id = options.remap_path(object_id)
 
                 # Determine target zone
-                target_zone = options.target_zone_id or "default"
+                target_zone = options.target_zone_id or "root"
 
                 # Write tuple to ReBAC
                 rebac_manager.rebac_write(

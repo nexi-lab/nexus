@@ -1,6 +1,6 @@
-"""Memory backward compatibility tests.
+"""Memory client tests.
 
-Verifies that .memory property returns a usable RemoteMemory instance
+Verifies that .memory property returns a usable MemoryClient instance
 and that all expected memory methods are present.
 
 Issue #1289: Protocol + RPC Proxy pattern.
@@ -12,7 +12,8 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from nexus.remote.client import RemoteMemory, RemoteNexusFS
+from nexus.remote.client import RemoteNexusFS
+from nexus.remote.domain.memory import MemoryClient
 
 
 @pytest.fixture
@@ -29,24 +30,20 @@ def remote_client() -> RemoteNexusFS:
 
 
 class TestMemoryProperty:
-    """Test .memory property backward compatibility."""
+    """Test .memory property."""
 
-    def test_memory_returns_remote_memory(self, remote_client: RemoteNexusFS) -> None:
+    def test_memory_returns_memory_client(self, remote_client: RemoteNexusFS) -> None:
         mem = remote_client.memory
-        assert isinstance(mem, RemoteMemory)
+        assert isinstance(mem, MemoryClient)
 
     def test_memory_is_cached(self, remote_client: RemoteNexusFS) -> None:
         mem1 = remote_client.memory
         mem2 = remote_client.memory
         assert mem1 is mem2
 
-    def test_memory_has_remote_fs_reference(self, remote_client: RemoteNexusFS) -> None:
-        mem = remote_client.memory
-        assert mem.remote_fs is remote_client
 
-
-class TestRemoteMemoryMethods:
-    """Test RemoteMemory has all expected method names."""
+class TestMemoryClientMethods:
+    """Test MemoryClient has all expected method names."""
 
     EXPECTED_METHODS = [
         "start_trajectory",
@@ -73,14 +70,14 @@ class TestRemoteMemoryMethods:
     ]
 
     def test_all_methods_exist(self, remote_client: RemoteNexusFS) -> None:
-        """RemoteMemory exposes all expected methods."""
+        """MemoryClient exposes all expected methods."""
         mem = remote_client.memory
         for name in self.EXPECTED_METHODS:
             assert hasattr(mem, name), f"Missing method: {name}"
             assert callable(getattr(mem, name)), f"{name} is not callable"
 
     def test_method_count(self, remote_client: RemoteNexusFS) -> None:
-        """Verify RemoteMemory has at least 21 methods."""
+        """Verify MemoryClient has at least 21 methods."""
         mem = remote_client.memory
         methods = [
             name for name in dir(mem) if not name.startswith("_") and callable(getattr(mem, name))

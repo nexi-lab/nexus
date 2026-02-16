@@ -10,16 +10,13 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     BigInteger,
-    Boolean,
     DateTime,
     ForeignKey,
     Index,
     Integer,
-    LargeBinary,
     String,
     Text,
     UniqueConstraint,
-    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -273,69 +270,3 @@ class DocumentChunkModel(Base):
             raise ValidationError("chunk_text is required")
         if self.chunk_tokens < 0:
             raise ValidationError(f"chunk_tokens must be non-negative, got {self.chunk_tokens}")
-
-
-class ContentCacheModel(Base):
-    """Cache table for connector content metadata.
-
-    Stores metadata for cached content from connectors (GCS, X, Gmail, Google Drive, etc.)
-    to enable fast grep, glob, and semantic search without real-time connector access.
-    """
-
-    __tablename__ = "content_cache"
-
-    cache_id: Mapped[str] = uuid_pk()
-
-    path_id: Mapped[str] = mapped_column(
-        String(36),
-        ForeignKey("file_paths.path_id", ondelete="CASCADE"),
-        nullable=False,
-        unique=True,
-    )
-
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
-
-    content_text: Mapped[str | None] = mapped_column(Text, nullable=True)
-    content_binary: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
-    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
-
-    original_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
-    cached_size_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False)
-
-    content_type: Mapped[str] = mapped_column(String(50), nullable=False)
-    parsed_from: Mapped[str | None] = mapped_column(String(50), nullable=True)
-    parser_version: Mapped[str | None] = mapped_column(String(20), nullable=True)
-    parse_metadata: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    backend_version: Mapped[str | None] = mapped_column(String(255), nullable=True)
-
-    synced_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(UTC)
-    )
-    stale: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime, nullable=False, default=lambda: datetime.now(UTC)
-    )
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        nullable=False,
-        default=lambda: datetime.now(UTC),
-        onupdate=lambda: datetime.now(UTC),
-    )
-
-    file_path: Mapped[FilePathModel] = relationship("FilePathModel", foreign_keys=[path_id])
-
-    __table_args__ = (
-        Index("idx_content_cache_zone", "zone_id"),
-        Index("idx_content_cache_stale", "stale", postgresql_where=text("stale = true")),
-        Index("idx_content_cache_synced", "synced_at"),
-        Index(
-            "idx_content_cache_backend_version",
-            "backend_version",
-            postgresql_where=text("backend_version IS NOT NULL"),
-        ),
-    )
-
-    def __repr__(self) -> str:
-        return f"<ContentCacheModel(cache_id={self.cache_id}, path_id={self.path_id}, content_type={self.content_type})>"

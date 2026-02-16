@@ -5,8 +5,6 @@
 This document describes version tracking and workspace snapshot capabilities in Nexus.
 
 
-⚠️ **NOTE:** In workspace_diff(), the `agent_id` parameter is REQUIRED (not optional as currently documented)
-
 Nexus provides automatic version tracking for all file writes using content-addressable storage (CAS).
 
 ### get_version()
@@ -182,7 +180,6 @@ Create a snapshot of a registered workspace.
 ```python
 def workspace_snapshot(
     workspace_path: str | None = None,
-    agent_id: str | None = None,  # DEPRECATED: Use workspace_path instead
     description: str | None = None,
     tags: list[str] | None = None,
     created_by: str | None = None
@@ -191,7 +188,6 @@ def workspace_snapshot(
 
 **Parameters:**
 - `workspace_path` (str, optional): Path to registered workspace (e.g., "/my-workspace")
-- `agent_id` (str, optional): **DEPRECATED** - Use workspace_path instead
 - `description` (str, optional): Human-readable description of snapshot
 - `tags` (list[str], optional): List of tags for categorization
 - `created_by` (str, optional): User/agent who created the snapshot
@@ -240,14 +236,12 @@ Restore workspace to a previous snapshot.
 def workspace_restore(
     snapshot_number: int,
     workspace_path: str | None = None,
-    agent_id: str | None = None  # DEPRECATED: Use workspace_path instead
 ) -> dict[str, Any]
 ```
 
 **Parameters:**
 - `snapshot_number` (int): Snapshot version number to restore
 - `workspace_path` (str, optional): Path to registered workspace
-- `agent_id` (str, optional): **DEPRECATED** - Use workspace_path instead
 
 **Returns:**
 - `dict`: Restore operation result with keys:
@@ -276,14 +270,12 @@ List snapshot history for workspace.
 ```python
 def workspace_log(
     workspace_path: str | None = None,
-    agent_id: str | None = None,  # DEPRECATED: Use workspace_path instead
     limit: int = 100
 ) -> list[dict[str, Any]]
 ```
 
 **Parameters:**
 - `workspace_path` (str, optional): Path to registered workspace
-- `agent_id` (str, optional): **DEPRECATED** - Use workspace_path instead
 - `limit` (int): Maximum number of snapshots to return (default: 100)
 
 **Returns:**
@@ -316,14 +308,14 @@ Compare two workspace snapshots.
 def workspace_diff(
     snapshot_1: int,
     snapshot_2: int,
-    agent_id: str | None = None
+    workspace_path: str | None = None,
 ) -> dict[str, Any]
 ```
 
 **Parameters:**
 - `snapshot_1` (int): First snapshot number
 - `snapshot_2` (int): Second snapshot number
-- `agent_id` (str, optional): Agent identifier (uses default if not provided)
+- `workspace_path` (str, optional): Path to registered workspace
 
 **Returns:**
 - `dict`: Diff dict with keys:
@@ -332,14 +324,14 @@ def workspace_diff(
   - `modified`: List of files modified
 
 **Raises:**
-- `ValueError`: If agent_id not provided and no default set
+- `ValueError`: If workspace_path not provided
 - `NexusFileNotFoundError`: If either snapshot not found
 
 **Examples:**
 
 ```python
 # Compare two snapshots
-diff = nx.workspace_diff(5, 7, agent_id="agent-123")
+diff = nx.workspace_diff(5, 7, workspace_path="/my-workspace")
 print(f"Added: {len(diff['added'])} files")
 print(f"Removed: {len(diff['removed'])} files")
 print(f"Modified: {len(diff['modified'])} files")

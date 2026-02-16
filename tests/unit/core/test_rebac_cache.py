@@ -350,26 +350,6 @@ class TestRevisionQuantization:
         assert stats["revision_quantization_window"] == 15
         assert stats["enable_revision_quantization"] is True
 
-    def test_deprecation_warning_for_old_param(self):
-        """Test that using old quantization_interval triggers deprecation warning."""
-        import warnings
-
-        with warnings.catch_warnings(record=True) as w:
-            warnings.simplefilter("always")
-            ReBACPermissionCache(quantization_interval=5)
-
-            # Filter for the specific deprecation warning we're testing
-            deprecation_warnings = [
-                warning
-                for warning in w
-                if issubclass(warning.category, DeprecationWarning)
-                and "quantization_interval is deprecated" in str(warning.message)
-            ]
-            assert len(deprecation_warnings) >= 1, (
-                f"Expected at least 1 deprecation warning about quantization_interval, "
-                f"got {len(deprecation_warnings)} (total warnings: {len(w)})"
-            )
-
 
 class TestXFetchAlgorithm:
     """Test XFetch probabilistic early expiration algorithm (Issue #718).

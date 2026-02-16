@@ -14,10 +14,8 @@ import pytest
 from sqlalchemy import create_engine
 
 from nexus.core.rebac import CROSS_ZONE_ALLOWED_RELATIONS
-from nexus.rebac.manager import (
-    ZoneAwareReBACManager,
-    ZoneIsolationError,
-)
+from nexus.services.permissions.consistency.zone_manager import ZoneIsolationError
+from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 from nexus.storage.models import Base
 
 
@@ -35,7 +33,7 @@ def zone_aware_manager(engine):
 
     Uses cache_ttl_seconds=0 to disable caching for predictable test behavior.
     """
-    manager = ZoneAwareReBACManager(
+    manager = EnhancedReBACManager(
         engine=engine,
         cache_ttl_seconds=0,  # Disable cache for predictable tests
         max_depth=10,
@@ -360,7 +358,7 @@ class TestCrossZoneRustPathFix:
     @pytest.fixture
     def enhanced_manager(self, engine):
         """Create an enhanced ReBAC manager that has _fetch_tuples_for_rust."""
-        from nexus.rebac.manager import EnhancedReBACManager
+        from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
         manager = EnhancedReBACManager(
             engine=engine,
@@ -435,9 +433,9 @@ class TestCrossZonePermissionExpansion:
     @pytest.fixture
     def manager_with_namespace(self, engine):
         """Create manager with file namespace for permission expansion."""
-        from nexus.core.rebac import DEFAULT_FILE_NAMESPACE
+        from nexus.services.permissions.default_namespaces import DEFAULT_FILE_NAMESPACE
 
-        manager = ZoneAwareReBACManager(
+        manager = EnhancedReBACManager(
             engine=engine,
             cache_ttl_seconds=0,
             max_depth=10,

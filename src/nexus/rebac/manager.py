@@ -30,12 +30,6 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from nexus.core.rebac import (
     CROSS_ZONE_ALLOWED_RELATIONS,
-    DEFAULT_FILE_NAMESPACE,
-    DEFAULT_GROUP_NAMESPACE,
-    DEFAULT_MEMORY_NAMESPACE,
-    DEFAULT_PLAYBOOK_NAMESPACE,
-    DEFAULT_SKILL_NAMESPACE,
-    DEFAULT_TRAJECTORY_NAMESPACE,
     Entity,
     NamespaceConfig,
 )
@@ -3326,7 +3320,7 @@ class ReBACManager:
 
     def _initialize_default_namespaces_with_conn(self, conn: Any) -> None:
         """Initialize default namespace configurations with given connection."""
-        from nexus.core.rebac import (
+        from nexus.services.permissions.default_namespaces import (
             DEFAULT_FILE_NAMESPACE,
             DEFAULT_GROUP_NAMESPACE,
             DEFAULT_MEMORY_NAMESPACE,

@@ -59,6 +59,7 @@ from nexus.core.exceptions import (
     NexusPermissionError,
     ValidationError,
 )
+from nexus.core.rpc_codec import decode_rpc_message, encode_rpc_message
 
 # --- Extracted modules (re-exported for backward compatibility) ---
 from nexus.server.dependencies import (  # noqa: E402
@@ -77,8 +78,6 @@ from nexus.server.path_utils import (
 from nexus.server.protocol import (
     RPCErrorCode,
     RPCRequest,
-    decode_rpc_message,
-    encode_rpc_message,
     parse_method_params,
 )
 from nexus.server.rate_limiting import (  # noqa: E402

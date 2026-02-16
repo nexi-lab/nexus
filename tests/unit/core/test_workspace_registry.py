@@ -131,7 +131,7 @@ class TestWorkspaceRegistry:
         self, mock_metadata: MagicMock, mock_session_factory: MagicMock
     ) -> WorkspaceRegistry:
         """Create registry instance with mocked metadata."""
-        with patch("nexus.core.workspace_registry.WorkspaceRegistry._load_from_db"):
+        with patch("nexus.services.workspace.workspace_registry.WorkspaceRegistry._load_from_db"):
             reg = WorkspaceRegistry(mock_metadata, session_factory=mock_session_factory)
             reg._workspaces = {}
             reg._memories = {}
@@ -139,7 +139,7 @@ class TestWorkspaceRegistry:
 
     def test_init(self, mock_metadata: MagicMock, mock_session_factory: MagicMock) -> None:
         """Test registry initialization."""
-        with patch("nexus.core.workspace_registry.WorkspaceRegistry._load_from_db"):
+        with patch("nexus.services.workspace.workspace_registry.WorkspaceRegistry._load_from_db"):
             registry = WorkspaceRegistry(mock_metadata, session_factory=mock_session_factory)
             assert registry.metadata == mock_metadata
             assert registry.rebac_manager is None

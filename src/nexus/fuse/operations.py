@@ -30,6 +30,7 @@ from nexus.core.virtual_views import (
     should_add_virtual_views,
 )
 from nexus.fuse.cache import FUSECacheManager
+from nexus.raft.zone_manager import ROOT_ZONE_ID
 
 # Import readahead for sequential read optimization (Issue #1073)
 try:
@@ -429,7 +430,7 @@ class NexusFUSEOperations(Operations):
                             "size": event.size,
                             "timestamp": event.timestamp,
                         },
-                        zone_id=event.zone_id or "default",
+                        zone_id=event.zone_id or ROOT_ZONE_ID,
                     )
             except Exception as e:
                 logger.debug(f"[FUSE-EVENT] Webhook broadcast failed: {e}")

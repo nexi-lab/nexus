@@ -6,6 +6,8 @@ import threading
 from nexus.backends.backend import Backend, HandlerStatusResponse
 from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.backends.cache_mixin import CacheConnectorMixin, CacheEntry, SyncResult
+from nexus.backends.cache_models import IMMUTABLE_VERSION, CachedReadResult
+from nexus.backends.cache_service import CacheService
 from nexus.backends.factory import BackendFactory
 
 # Core backends (always available)
@@ -142,6 +144,9 @@ __all__ = [
     "BaseBlobStorageConnector",
     "CacheConnectorMixin",
     "CacheEntry",
+    "CacheService",
+    "CachedReadResult",
+    "IMMUTABLE_VERSION",
     "SyncResult",
     # Factory
     "BackendFactory",

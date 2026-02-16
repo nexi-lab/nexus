@@ -9,6 +9,7 @@ References:
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
+from nexus.core.protocols.caching import CachingConnectorContract
 from nexus.core.protocols.connector import (
     BatchContentProtocol,
     ConnectorProtocol,
@@ -23,6 +24,7 @@ from nexus.core.protocols.vfs_router import MountInfo, ResolvedPath, VFSRouterPr
 
 __all__ = [
     "BatchContentProtocol",
+    "CachingConnectorContract",
     "ConnectorProtocol",
     "ContentStoreProtocol",
     "DirectoryListingProtocol",

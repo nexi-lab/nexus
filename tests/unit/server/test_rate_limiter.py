@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 from fastapi import Request
 from slowapi.errors import RateLimitExceeded
 
-from nexus.server.fastapi_server import (
+from nexus.server.rate_limiting import (
     RATE_LIMIT_ANONYMOUS,
     RATE_LIMIT_AUTHENTICATED,
     RATE_LIMIT_PREMIUM,

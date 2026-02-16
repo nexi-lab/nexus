@@ -64,12 +64,13 @@ class WorkflowContext:
 
     workflow_id: UUID
     execution_id: UUID
-    zone_id: UUID | None  # Allow None for default/global workflows
-    trigger_type: TriggerType
+    zone_id: str = "default"
+    trigger_type: TriggerType = TriggerType.MANUAL
     trigger_context: dict[str, Any] = field(default_factory=dict)
     variables: dict[str, Any] = field(default_factory=dict)
     file_path: str | None = None
     file_metadata: dict[str, Any] | None = None
+    services: Any | None = None
 
 
 @dataclass

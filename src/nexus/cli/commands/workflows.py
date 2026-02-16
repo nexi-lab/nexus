@@ -34,8 +34,10 @@ def _get_engine_with_storage():  # type: ignore[no-untyped-def]
     if record_store is None:
         raise RuntimeError("Workflow storage requires a NexusFS instance with a record store")
 
-    # Get zone_id from Nexus filesystem (or use default)
-    zone_id = getattr(nx, "zone_id", None) or "default"
+    from nexus.raft.zone_manager import ROOT_ZONE_ID
+
+    # Get zone_id from Nexus filesystem (or use root zone)
+    zone_id = getattr(nx, "zone_id", None) or ROOT_ZONE_ID
 
     # Try to get Rust glob_match for production performance
     glob_match_fn = None

@@ -280,7 +280,7 @@ class GoogleDriveConnectorBackend(Backend):
             zone_id = (
                 context.zone_id
                 if context and hasattr(context, "zone_id") and context.zone_id
-                else "default"
+                else "root"
             )
 
             # Try to get a valid token (will refresh if needed)
@@ -399,11 +399,11 @@ class GoogleDriveConnectorBackend(Backend):
         from nexus.core.sync_bridge import run_sync
 
         try:
-            # Default to 'default' zone if not specified to match mount configurations
+            # Default to 'root' zone if not specified to match mount configurations
             zone_id = (
                 context.zone_id
                 if context and hasattr(context, "zone_id") and context.zone_id
-                else "default"
+                else "root"
             )
             access_token = run_sync(
                 self.token_manager.get_valid_token(

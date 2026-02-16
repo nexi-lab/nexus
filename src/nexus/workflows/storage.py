@@ -16,6 +16,7 @@ from typing import Any
 import yaml
 from sqlalchemy import select
 
+from nexus.raft.zone_manager import ROOT_ZONE_ID
 from nexus.workflows.loader import WorkflowLoader
 from nexus.workflows.types import WorkflowDefinition, WorkflowExecution
 
@@ -44,7 +45,7 @@ class WorkflowStore:
         self.session_factory = session_factory
         self._workflow_model = workflow_model
         self._execution_model = execution_model
-        self.zone_id = zone_id or "default"
+        self.zone_id = zone_id or ROOT_ZONE_ID
 
     def _get_zone_id(self) -> str:
         return self.zone_id

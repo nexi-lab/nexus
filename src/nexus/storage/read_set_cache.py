@@ -82,11 +82,7 @@ class ReadSetAwareCache:
 
     def _wire_eviction_callbacks(self) -> None:
         """Connect AdaptiveTTLCache eviction to read set cleanup."""
-        from nexus.storage.cache import AdaptiveTTLCache
-
-        path_cache = self._cache._path_cache
-        if isinstance(path_cache, AdaptiveTTLCache):
-            path_cache._on_evict = self._on_cache_evict
+        self._cache.register_eviction_callback(self._on_cache_evict)
 
     def _on_cache_evict(self, cache_key: str) -> None:
         """Callback when a cache entry is evicted (LRU or TTL).

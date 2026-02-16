@@ -10,21 +10,27 @@ References:
 """
 
 from nexus.core.protocols.connector import (
+    BatchContentProtocol,
     ConnectorProtocol,
     ContentStoreProtocol,
+    DirectoryListingProtocol,
     DirectoryOpsProtocol,
     OAuthCapableProtocol,
     PassthroughProtocol,
+    StreamingProtocol,
 )
 from nexus.core.protocols.vfs_router import MountInfo, ResolvedPath, VFSRouterProtocol
 
 __all__ = [
+    "BatchContentProtocol",
     "ConnectorProtocol",
     "ContentStoreProtocol",
+    "DirectoryListingProtocol",
     "DirectoryOpsProtocol",
     "MountInfo",
     "OAuthCapableProtocol",
     "PassthroughProtocol",
     "ResolvedPath",
+    "StreamingProtocol",
     "VFSRouterProtocol",
 ]

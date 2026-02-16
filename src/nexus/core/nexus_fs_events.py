@@ -9,11 +9,11 @@ Layer 1 (Same-box, Block 1):
 
 Layer 2 (Distributed, Block 2):
 - Uses Redis Pub/Sub for events via GlobalEventBus
-- Uses Redis SET NX EX for locks via DistributedLockManager
+- Uses Redis SET NX EX for locks via RaftLockManager
 - Works across multiple Nexus nodes
 
 Selection Logic:
-1. If GlobalEventBus/DistributedLockManager is available → use distributed (Layer 2)
+1. If GlobalEventBus/RaftLockManager is available → use distributed (Layer 2)
 2. Else if PassthroughBackend → use local (Layer 1)
 3. Else → raise NotImplementedError
 """
@@ -96,7 +96,7 @@ class NexusFSEventsMixin:
         """Check if distributed lock manager is available.
 
         Returns:
-            True if DistributedLockManager is initialized, False otherwise
+            True if RaftLockManager is initialized, False otherwise
         """
         return hasattr(self, "_lock_manager") and self._lock_manager is not None
 
@@ -331,7 +331,7 @@ class NexusFSEventsMixin:
         """Acquire an advisory lock on a path.
 
         Dual-track implementation:
-        - Layer 2 (preferred): Uses DistributedLockManager (Redis) for distributed locks
+        - Layer 2 (preferred): Uses RaftLockManager (Redis) for distributed locks
         - Layer 1 (fallback): Uses in-memory locks (same-box only)
 
         Supports both mutex (max_holders=1) and semaphore (max_holders>1) modes.

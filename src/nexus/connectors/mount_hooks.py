@@ -20,14 +20,14 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.backends.backend import Backend
     from nexus.connectors.base import SkillDocMixin
+    from nexus.core.protocols.connector import ConnectorProtocol
 
 logger = logging.getLogger(__name__)
 
 
 def on_mount(
-    backend: Backend,
+    backend: ConnectorProtocol,
     mount_path: str,
     filesystem: Any = None,
     skill_registry: Any = None,
@@ -121,8 +121,8 @@ def generate_all_skill_docs(
     results = []
 
     # Get all mounts from router
-    if hasattr(router, "_mounts"):
-        for mount_config in router._mounts:
+    if hasattr(router, "list_mounts"):
+        for mount_config in router.list_mounts():
             result = on_mount(
                 backend=mount_config.backend,
                 mount_path=mount_config.mount_point,

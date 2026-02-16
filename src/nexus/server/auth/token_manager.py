@@ -142,7 +142,6 @@ class TokenManager:
         # Pass session_factory to OAuthCrypto for shared pool (Issue #1597)
         self.crypto = OAuthCrypto(
             encryption_key=encryption_key,
-            db_url=self.database_url,
             session_factory=session_factory,
         )
         self.providers: dict[str, OAuthProvider] = {}

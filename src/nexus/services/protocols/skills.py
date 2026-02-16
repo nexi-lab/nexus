@@ -9,7 +9,7 @@ References:
 
 Note:
     Method names are unprefixed (e.g., ``share`` not ``skills_share``).
-    NexusFS delegation layer adds the ``skills_`` prefix for backward compat.
+    NexusFS delegation layer adds the ``skills_`` prefix.
 """
 
 from __future__ import annotations

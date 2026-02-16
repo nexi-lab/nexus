@@ -1252,13 +1252,13 @@ class NexusFSCoreMixin:
 
         # Try bulk read for backends that support it (CacheConnectorMixin)
         for backend, paths_for_backend in backend_paths.items():
-            if hasattr(backend, "_read_bulk_from_cache") and len(paths_for_backend) > 1:
+            if hasattr(backend, "read_bulk_from_cache") and len(paths_for_backend) > 1:
                 # Use bulk cache lookup
                 logger.info(
                     f"[READ-BULK] Using bulk cache for {len(paths_for_backend)} files on {type(backend).__name__}"
                 )
                 try:
-                    cache_entries = backend._read_bulk_from_cache(paths_for_backend, original=True)
+                    cache_entries = backend.read_bulk_from_cache(paths_for_backend, original=True)
 
                     # Process cache hits
                     paths_needing_backend: list[str] = []

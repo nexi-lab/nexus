@@ -16,8 +16,8 @@ from nexus.core.workspace_manifest import WorkspaceManifest
 from nexus.storage.models import WorkspaceSnapshotModel
 
 if TYPE_CHECKING:
-    from nexus.backends.backend import Backend
     from nexus.core._metadata_generated import FileMetadataProtocol
+    from nexus.core.protocols.connector import ConnectorProtocol
     from nexus.rebac.manager import ReBACManager
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ class WorkspaceManager:
     def __init__(
         self,
         metadata: FileMetadataProtocol,
-        backend: Backend,
+        backend: ConnectorProtocol,
         rebac_manager: ReBACManager | None = None,
         zone_id: str | None = None,
         agent_id: str | None = None,
@@ -97,8 +97,7 @@ class WorkspaceManager:
             - snapshot:list, snapshot:diff -> read (read-only)
         """
         if not self.rebac_manager:
-            # No ReBAC manager configured - allow operation
-            # This maintains backward compatibility for deployments without ReBAC
+            # No ReBAC manager configured — allow operation
             logger.warning(
                 f"WorkspaceManager: No ReBAC manager configured, allowing {permission} on {workspace_path}"
             )

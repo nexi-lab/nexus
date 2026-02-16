@@ -86,7 +86,7 @@ class FileWatcher:
         >>> # ... events delivered via callbacks ...
         >>> watcher.stop()
 
-    Example (one-shot mode, backward compatible):
+    Example (one-shot mode):
         >>> watcher = FileWatcher()
         >>> change = await watcher.wait_for_change("/inbox", timeout=30.0)
     """
@@ -351,7 +351,7 @@ class FileWatcher:
             watch.stop()
 
     # =========================================================================
-    # Backward Compatible One-Shot API
+    # One-Shot API
     # =========================================================================
 
     async def wait_for_change(

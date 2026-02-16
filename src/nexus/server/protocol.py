@@ -153,7 +153,6 @@ class RPCResponse:
 # ============================================================
 
 # Import decorator from core module to avoid circular imports
-# Re-export here for backward compatibility
 from nexus.core.rpc_decorator import rpc_expose  # noqa: F401, E402
 
 # ============================================================
@@ -292,13 +291,12 @@ class ListParams:
 
     Pagination Support (Issue #937):
     - When limit is provided, returns paginated response with next_cursor
-    - When limit is omitted, returns legacy list format (backward compatible)
+    - When limit is omitted, returns full list
     """
 
     path: str = "/"
     recursive: bool = True
     details: bool = False
-    prefix: str | None = None
     show_parsed: bool = True
     # Pagination parameters (Issue #937)
     limit: int | None = None  # Max items per page (1-10000). Enables pagination when set.

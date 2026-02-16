@@ -116,10 +116,9 @@ class PermissionCacheCoordinator:
                 return None
 
             # Get path int IDs from resource map
-            resource_map = tiger_cache._resource_map
+            resource_map = tiger_cache.resource_map
             resource_keys = [("file", path) for path in paths]
-            with resource_map._engine.connect() as conn:
-                int_id_map = resource_map.bulk_get_int_ids(resource_keys, conn)
+            int_id_map = resource_map.get_int_ids_batch(resource_keys)
 
             path_to_int: dict[str, int] = {}
             int_to_path: dict[int, str] = {}

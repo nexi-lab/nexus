@@ -5,14 +5,11 @@ with O(1) read-set-based overlap detection using ReadSetRegistry (#1166).
 
 Architecture:
     - Subscription: Frozen dataclass representing a single subscription
-    - ReactiveSubscriptionManager: Composes ReadSetRegistry for read-set mode,
-      falls back to pattern matching for legacy subscriptions
-    - path_matches_pattern: Shared glob/regex pattern matcher (extracted from
-      WebSocketManager for reuse)
+    - ReactiveSubscriptionManager: Composes ReadSetRegistry for read-set mode
+    - path_matches_pattern: Shared glob/regex pattern matcher (used by event_bus)
 
-Two subscription modes:
-    - read_set: O(1+d) lookup via ReadSetRegistry reverse index
-    - pattern: O(L x P) legacy glob pattern matching (backward compatible)
+All subscriptions use read-set mode with O(1+d) lookup via ReadSetRegistry
+reverse index.
 
 Example:
     >>> from nexus.core.reactive_subscriptions import (
@@ -26,7 +23,7 @@ Example:
     >>> # Register a read-set subscription
     >>> sub = Subscription(
     ...     subscription_id="sub1", connection_id="conn1",
-    ...     zone_id="zone1", mode="read_set", query_id="q1",
+    ...     zone_id="zone1", query_id="q1",
     ... )
     >>> rs = ReadSet(query_id="q1", zone_id="zone1")
     >>> rs.record_read("file", "/inbox/a.txt", revision=10)
@@ -42,7 +39,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from nexus.core.read_set import ReadSetRegistry
 
@@ -58,25 +55,20 @@ class Subscription:
     """A single reactive subscription binding a connection to event filtering.
 
     Frozen + slots for immutability and memory efficiency.
-    Tuples instead of lists for immutable collections.
 
     Attributes:
         subscription_id: Unique identifier for this subscription
         connection_id: WebSocket connection this subscription belongs to
         zone_id: Zone for event filtering
-        mode: "read_set" for O(1) lookup or "pattern" for legacy glob matching
-        query_id: Links to ReadSetRegistry (read_set mode only)
-        patterns: Glob patterns for path filtering (pattern mode only)
-        event_types: Event type filter, frozenset for O(1) lookup (shared across modes)
+        query_id: Links to ReadSetRegistry for O(1) lookup
+        event_types: Event type filter, frozenset for O(1) lookup
         created_at: When this subscription was created (epoch seconds)
     """
 
     subscription_id: str
     connection_id: str
     zone_id: str
-    mode: Literal["read_set", "pattern"]
     query_id: str | None = None
-    patterns: tuple[str, ...] = ()
     event_types: frozenset[str] = frozenset()
     created_at: float = field(default_factory=time.time)
 
@@ -151,10 +143,9 @@ def path_matches_pattern(path: str, pattern: str) -> bool:
 
 
 class ReactiveSubscriptionManager:
-    """Manages subscriptions with dual-mode event matching.
+    """Manages subscriptions with read-set-based event matching.
 
-    Composes around ReadSetRegistry for O(1) read-set lookups while
-    supporting legacy glob pattern matching for backward compatibility.
+    Composes around ReadSetRegistry for O(1) read-set lookups.
 
     Concurrency: Uses asyncio.Lock for its own data structures.
     ReadSetRegistry manages its own threading.RLock internally.
@@ -163,10 +154,11 @@ class ReactiveSubscriptionManager:
         >>> manager = ReactiveSubscriptionManager()
         >>> sub = Subscription(
         ...     subscription_id="s1", connection_id="c1",
-        ...     zone_id="z1", mode="pattern",
-        ...     patterns=("/inbox/**/*",),
+        ...     zone_id="z1", query_id="q1",
         ... )
-        >>> await manager.register(sub)
+        >>> rs = ReadSet(query_id="q1", zone_id="z1")
+        >>> rs.record_read("file", "/inbox/a.txt", revision=10)
+        >>> await manager.register(sub, read_set=rs)
         >>> affected = manager.find_affected_connections(event)
     """
 
@@ -179,7 +171,6 @@ class ReactiveSubscriptionManager:
         self._registry = registry if registry is not None else ReadSetRegistry()
         self._subscriptions: dict[str, Subscription] = {}
         self._connection_index: dict[str, set[str]] = {}
-        self._pattern_subs_by_zone: dict[str, set[str]] = {}
         self._query_to_sub_id: dict[str, str] = {}  # query_id -> subscription_id
         self._lock = asyncio.Lock()
 
@@ -194,23 +185,22 @@ class ReactiveSubscriptionManager:
     ) -> None:
         """Register a subscription.
 
-        For read_set mode, the read_set parameter is required and will be
-        registered in the ReadSetRegistry. For pattern mode, read_set is ignored.
+        The read_set parameter is required and will be registered in the
+        ReadSetRegistry.
 
         Args:
             subscription: The subscription to register
-            read_set: ReadSet for read_set mode subscriptions
+            read_set: ReadSet for the subscription
 
         Raises:
-            ValueError: If read_set mode but no read_set or query_id provided
+            ValueError: If no read_set or query_id provided
         """
-        if subscription.mode == "read_set":
-            if not subscription.query_id:
-                msg = "read_set mode requires query_id"
-                raise ValueError(msg)
-            if not read_set:
-                msg = "read_set mode requires a ReadSet"
-                raise ValueError(msg)
+        if not subscription.query_id:
+            msg = "Subscription requires query_id"
+            raise ValueError(msg)
+        if not read_set:
+            msg = "Subscription requires a ReadSet"
+            raise ValueError(msg)
 
         async with self._lock:
             sub_id = subscription.subscription_id
@@ -228,20 +218,13 @@ class ReactiveSubscriptionManager:
                 self._connection_index[conn_id] = set()
             self._connection_index[conn_id].add(sub_id)
 
-            # Mode-specific registration
-            if subscription.mode == "read_set" and read_set:
-                self._registry.register(read_set)
-                if subscription.query_id:
-                    self._query_to_sub_id[subscription.query_id] = sub_id
-            elif subscription.mode == "pattern":
-                zone_id = subscription.zone_id
-                if zone_id not in self._pattern_subs_by_zone:
-                    self._pattern_subs_by_zone[zone_id] = set()
-                self._pattern_subs_by_zone[zone_id].add(sub_id)
+            # Register read set
+            self._registry.register(read_set)
+            self._query_to_sub_id[subscription.query_id] = sub_id
 
             logger.debug(
                 f"[ReactiveSubManager] Registered {sub_id} "
-                f"(mode={subscription.mode}, conn={conn_id}, zone={subscription.zone_id})"
+                f"(conn={conn_id}, zone={subscription.zone_id})"
             )
 
     async def unregister(self, subscription_id: str) -> bool:
@@ -273,16 +256,10 @@ class ReactiveSubscriptionManager:
             if not self._connection_index[conn_id]:
                 del self._connection_index[conn_id]
 
-        # Mode-specific cleanup
-        if subscription.mode == "read_set" and subscription.query_id:
+        # Cleanup read set
+        if subscription.query_id:
             self._registry.unregister(subscription.query_id)
             self._query_to_sub_id.pop(subscription.query_id, None)
-        elif subscription.mode == "pattern":
-            zone_id = subscription.zone_id
-            if zone_id in self._pattern_subs_by_zone:
-                self._pattern_subs_by_zone[zone_id].discard(subscription_id)
-                if not self._pattern_subs_by_zone[zone_id]:
-                    del self._pattern_subs_by_zone[zone_id]
 
         logger.debug(f"[ReactiveSubManager] Unregistered {subscription_id}")
         return True
@@ -318,11 +295,8 @@ class ReactiveSubscriptionManager:
     def _iter_matching_subscriptions(self, event: FileEvent) -> list[tuple[str, Subscription]]:
         """Find all subscriptions matching an event (common core logic).
 
-        Dual-mode matching (both evaluated):
-        1. Read-set mode: O(1+d) via ReadSetRegistry reverse index
-        2. Pattern mode: O(L x P) for legacy glob pattern subscriptions
-
-        Event type filters are applied to both result sets.
+        Uses O(1+d) read-set lookup via ReadSetRegistry reverse index.
+        Event type filters are applied to results.
 
         Note: Synchronous for performance (hot path). In asyncio's
         cooperative multitasking, sync code runs to completion without
@@ -333,16 +307,14 @@ class ReactiveSubscriptionManager:
             event: The file event to match against subscriptions
 
         Returns:
-            List of (subscription_id, Subscription) pairs. May contain
-            duplicates if a subscription matches via both read-set and pattern;
-            callers deduplicate as needed.
+            List of (subscription_id, Subscription) pairs.
         """
         results: list[tuple[str, Subscription]] = []
 
         zone_id = event.zone_id
         event_type = str(event.type)
 
-        # Stage 1: Read-set lookup via registry (O(1+d))
+        # Read-set lookup via registry (O(1+d))
         if zone_id is not None:
             revision = event.revision if event.revision is not None else 0
             affected_query_ids = self._registry.get_affected_queries(
@@ -358,26 +330,6 @@ class ReactiveSubscriptionManager:
                 sub = self._subscriptions.get(sub_id)
                 if sub and self._matches_event_type(event_type, sub.event_types):
                     results.append((sub_id, sub))
-
-        # Stage 2: Pattern matching for legacy subscriptions (O(L x P))
-        for sub_id in self._pattern_subs_by_zone.get(zone_id or "", set()):
-            sub = self._subscriptions.get(sub_id)
-            if not sub:
-                continue
-
-            if not self._matches_event_type(event_type, sub.event_types):
-                continue
-
-            # Check path patterns (empty patterns = match all)
-            matched = not sub.patterns
-            if not matched:
-                for pattern in sub.patterns:
-                    if path_matches_pattern(event.path, pattern):
-                        matched = True
-                        break
-
-            if matched:
-                results.append((sub_id, sub))
 
         return results
 
@@ -460,11 +412,7 @@ class ReactiveSubscriptionManager:
             async with self._lock:
                 expired_sub_ids = []
                 for sub_id, sub in self._subscriptions.items():
-                    if (
-                        sub.mode == "read_set"
-                        and sub.query_id
-                        and self._registry.get_read_set(sub.query_id) is None
-                    ):
+                    if sub.query_id and self._registry.get_read_set(sub.query_id) is None:
                         expired_sub_ids.append(sub_id)
 
                 for sub_id in expired_sub_ids:
@@ -481,22 +429,16 @@ class ReactiveSubscriptionManager:
         """Get subscription manager statistics.
 
         Returns:
-            Dictionary with stats including counts, mode breakdown,
-            registry stats, and performance metrics
+            Dictionary with stats including counts, registry stats,
+            and performance metrics
         """
-        read_set_count = sum(1 for s in self._subscriptions.values() if s.mode == "read_set")
-        pattern_count = sum(1 for s in self._subscriptions.values() if s.mode == "pattern")
-
         avg_lookup_ms = 0.0
         if self._lookup_count > 0:
             avg_lookup_ms = (self._total_lookup_time / self._lookup_count) * 1000
 
         return {
             "total_subscriptions": len(self._subscriptions),
-            "read_set_subscriptions": read_set_count,
-            "pattern_subscriptions": pattern_count,
             "connections_tracked": len(self._connection_index),
-            "zones_with_patterns": len(self._pattern_subs_by_zone),
             "lookup_count": self._lookup_count,
             "avg_lookup_ms": round(avg_lookup_ms, 3),
             "registry": self._registry.get_stats(),

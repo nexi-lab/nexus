@@ -308,7 +308,7 @@ Compare two workspace snapshots.
 def workspace_diff(
     snapshot_1: int,
     snapshot_2: int,
-    workspace_path: str | None = None
+    workspace_path: str | None = None,
 ) -> dict[str, Any]
 ```
 
@@ -324,7 +324,7 @@ def workspace_diff(
   - `modified`: List of files modified
 
 **Raises:**
-- `ValueError`: If workspace_path not provided and no default set
+- `ValueError`: If workspace_path not provided
 - `NexusFileNotFoundError`: If either snapshot not found
 
 **Examples:**

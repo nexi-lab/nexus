@@ -92,28 +92,14 @@ class Backend(ABC):
 
     @staticmethod
     def resolve_database_url(db_param: str) -> str:
+        """Resolve database URL with TOKEN_MANAGER_DB env var priority.
+
+        .. deprecated::
+            Use ``nexus.backends.connector_utils.resolve_database_url`` instead.
         """
-        Resolve database URL with TOKEN_MANAGER_DB environment variable priority.
+        from nexus.backends.connector_utils import resolve_database_url
 
-        This utility method is used by connector backends (GDrive, Gmail, X) to
-        resolve the database URL for TokenManager, giving priority to the
-        TOKEN_MANAGER_DB environment variable over the provided parameter.
-
-        Args:
-            db_param: Database URL or path provided to the connector
-
-        Returns:
-            Resolved database URL (from env var if set, otherwise db_param)
-
-        Examples:
-            >>> import os
-            >>> os.environ['TOKEN_MANAGER_DB'] = 'postgresql://localhost/nexus'
-            >>> Backend.resolve_database_url('sqlite:///local.db')
-            'postgresql://localhost/nexus'
-        """
-        import os
-
-        return os.getenv("TOKEN_MANAGER_DB") or db_param
+        return resolve_database_url(db_param)
 
     @property
     @abstractmethod
@@ -748,51 +734,26 @@ class Backend(ABC):
     # === ReBAC Object Type Mapping ===
 
     def get_object_type(self, _backend_path: str) -> str:
-        """
-        Map backend path to ReBAC object type.
+        """Map backend path to ReBAC object type.
 
-        Used by the permission enforcer to determine what type of object
-        is being accessed for ReBAC permission checks. This allows different
-        backends to have different permission models.
-
-        Args:
-            _backend_path: Path relative to backend (no mount point prefix)
+        .. deprecated::
+            Use ``ObjectTypeMapper.get_object_type()`` instead. Kept on Backend
+            so IPCVFSDriver and other subclass overrides still work.
 
         Returns:
-            ReBAC object type string
-
-        Examples:
-            LocalBackend: "file"
-            PostgresBackend: "postgres:table" or "postgres:row"
-            RedisBackend: "redis:instance" or "redis:key"
-
-        Note:
-            Default implementation returns "file" for file storage backends.
-            Database/API backends should override to return appropriate types.
+            ReBAC object type string. Default: 'file'.
         """
         return "file"
 
     def get_object_id(self, backend_path: str) -> str:
-        """
-        Map backend path to ReBAC object identifier.
+        """Map backend path to ReBAC object identifier.
 
-        Used by the permission enforcer to identify the specific object
-        being accessed in ReBAC permission checks.
-
-        Args:
-            backend_path: Path relative to backend
+        .. deprecated::
+            Use ``ObjectTypeMapper.get_object_id()`` instead. Kept on Backend
+            so IPCVFSDriver and other subclass overrides still work.
 
         Returns:
-            Object identifier for ReBAC
-
-        Examples:
-            LocalBackend: backend_path (full relative path)
-            PostgresBackend: "public/users" (schema/table)
-            RedisBackend: "prod-cache" (instance name)
-
-        Note:
-            Default implementation returns the path as-is.
-            Backends can override to return more appropriate identifiers.
+            Object identifier for ReBAC. Default: backend_path as-is.
         """
         return backend_path
 

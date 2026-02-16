@@ -49,7 +49,7 @@ from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.backends.cache_mixin import CacheConnectorMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
-from nexus.core.response import HandlerResponse
+from nexus.core.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -228,7 +228,6 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         Returns:
             HandlerStatusResponse with health status and latency
         """
-        import time
 
         start = time.perf_counter()
 
@@ -812,6 +811,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         except Exception:
             return None
 
+    @timed_response
     def get_file_info(
         self,
         path: str,
@@ -835,40 +835,34 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         """
         from nexus.backends.backend import FileInfo
 
-        try:
-            # Get backend path
-            if context and context.backend_path:
-                backend_path = context.backend_path
-            else:
-                backend_path = path.lstrip("/")
+        # Get backend path
+        if context and context.backend_path:
+            backend_path = context.backend_path
+        else:
+            backend_path = path.lstrip("/")
 
-            blob_path = self._get_blob_path(backend_path)
-            blob = self.bucket.blob(blob_path)
+        blob_path = self._get_blob_path(backend_path)
+        blob = self.bucket.blob(blob_path)
 
-            # Fetch metadata in a single API call (reload handles NotFound)
-            blob.reload()  # Raises NotFound if blob doesn't exist
+        # Fetch metadata in a single API call (reload handles NotFound)
+        blob.reload()  # Raises NotFound if blob doesn't exist
 
-            # Extract metadata
-            size = blob.size or 0
-            mtime = blob.updated  # datetime object (GCS uses 'updated' not 'mtime')
+        # Extract metadata
+        size = blob.size or 0
+        mtime = blob.updated  # datetime object (GCS uses 'updated' not 'mtime')
 
-            # GCS generation number is the definitive version identifier
-            # It's monotonically increasing and changes on every object mutation
-            backend_version = str(blob.generation) if blob.generation else None
+        # GCS generation number is the definitive version identifier
+        # It's monotonically increasing and changes on every object mutation
+        backend_version = str(blob.generation) if blob.generation else None
 
-            file_info = FileInfo(
-                size=size,
-                mtime=mtime,
-                backend_version=backend_version,
-                content_hash=None,  # Not computed to avoid content download
-            )
+        file_info = FileInfo(
+            size=size,
+            mtime=mtime,
+            backend_version=backend_version,
+            content_hash=None,  # Not computed to avoid content download
+        )
 
-            return HandlerResponse.ok(file_info, backend_name=self.name, path=path)
-
-        except NotFound:
-            return HandlerResponse.not_found(path, backend_name=self.name)
-        except Exception as e:
-            return HandlerResponse.error(f"Failed to get file info: {e}", backend_name=self.name)
+        return HandlerResponse.ok(file_info, backend_name=self.name, path=path)
 
     def generate_signed_url(
         self,
@@ -940,6 +934,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
 
     # === Override Content Operations with Caching ===
 
+    @timed_response
     def read_content(
         self,
         content_hash: str,
@@ -960,15 +955,12 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         Returns:
             HandlerResponse with file content as bytes in data field
         """
-        start_time = time.perf_counter()
-
         if not context or not context.backend_path:
             return HandlerResponse.error(
                 message="GCS connector requires backend_path in OperationContext. "
                 "This backend reads files from actual paths, not CAS hashes.",
                 code=400,
                 is_expected=True,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name=self.name,
             )
 
@@ -976,66 +968,56 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         cache_path = self._get_cache_path(context) or context.backend_path
         blob_path = self._get_blob_path(context.backend_path)
 
-        try:
-            # Check cache first if enabled
-            # PERF FIX (Issue #847): Trust L1 cache TTL instead of making API call on every hit.
-            # Previously, get_version() was called on every cache hit (50-200ms API call),
-            # which negated the benefit of L1 caching (<1ms). Now we rely on TTL-based
-            # expiration (default 5 min) which is sufficient for most use cases.
-            # Users needing real-time consistency can use --no-cache.
-            if self._has_caching():
-                import contextlib
+        # Check cache first if enabled
+        # PERF FIX (Issue #847): Trust L1 cache TTL instead of making API call on every hit.
+        # Previously, get_version() was called on every cache hit (50-200ms API call),
+        # which negated the benefit of L1 caching (<1ms). Now we rely on TTL-based
+        # expiration (default 5 min) which is sufficient for most use cases.
+        # Users needing real-time consistency can use --no-cache.
+        if self._has_caching():
+            import contextlib
 
-                with contextlib.suppress(Exception):
-                    cached = self._read_from_cache(cache_path, original=True)
-                    if cached and not cached.stale and cached.content_binary:
-                        logger.info(f"[GCS] Cache hit (TTL-based) for {cache_path}")
-                        return HandlerResponse.ok(
-                            data=cached.content_binary,
-                            execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                            backend_name=self.name,
-                            path=blob_path,
-                        )
-
-            # Read from GCS backend
-            logger.info(f"[GCS] Cache miss, reading from backend: {cache_path}")
-
-            # Determine if we should use version ID
-            version_id = None
-            if self.versioning_enabled and content_hash and self._is_version_id(content_hash):
-                version_id = content_hash
-
-            content, generation = self._download_blob(blob_path, version_id)
-
-            # Cache the result if caching is enabled
-            if self._has_caching():
-                import contextlib
-
-                with contextlib.suppress(Exception):
-                    # Use generation from download instead of making extra API call
-                    zone_id = getattr(context, "zone_id", None)
-                    self._write_to_cache(
-                        path=cache_path,
-                        content=content,
-                        backend_version=generation,
-                        zone_id=zone_id,
+            with contextlib.suppress(Exception):
+                cached = self._read_from_cache(cache_path, original=True)
+                if cached and not cached.stale and cached.content_binary:
+                    logger.info(f"[GCS] Cache hit (TTL-based) for {cache_path}")
+                    return HandlerResponse.ok(
+                        data=cached.content_binary,
+                        backend_name=self.name,
+                        path=blob_path,
                     )
 
-            return HandlerResponse.ok(
-                data=content,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=blob_path,
-            )
+        # Read from GCS backend
+        logger.info(f"[GCS] Cache miss, reading from backend: {cache_path}")
 
-        except Exception as e:
-            return HandlerResponse.from_exception(
-                e,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=blob_path,
-            )
+        # Determine if we should use version ID
+        version_id = None
+        if self.versioning_enabled and content_hash and self._is_version_id(content_hash):
+            version_id = content_hash
 
+        content, generation = self._download_blob(blob_path, version_id)
+
+        # Cache the result if caching is enabled
+        if self._has_caching():
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                # Use generation from download instead of making extra API call
+                zone_id = getattr(context, "zone_id", None)
+                self._write_to_cache(
+                    path=cache_path,
+                    content=content,
+                    backend_version=generation,
+                    zone_id=zone_id,
+                )
+
+        return HandlerResponse.ok(
+            data=content,
+            backend_name=self.name,
+            path=blob_path,
+        )
+
+    @timed_response
     def write_content(
         self,
         content: bytes,
@@ -1055,15 +1037,12 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         Returns:
             HandlerResponse with version ID (GCS generation or content hash) in data field
         """
-        start_time = time.perf_counter()
-
         if not context or not context.backend_path:
             return HandlerResponse.error(
                 message="GCS connector requires backend_path in OperationContext. "
                 "This backend stores files at actual paths, not CAS hashes.",
                 code=400,
                 is_expected=True,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name=self.name,
             )
 
@@ -1075,42 +1054,33 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         # Get actual blob path from backend_path
         blob_path = self._get_blob_path(context.backend_path)
 
-        try:
-            # Detect appropriate Content-Type with charset for proper encoding
-            content_type = self._detect_content_type(context.backend_path, content)
+        # Detect appropriate Content-Type with charset for proper encoding
+        content_type = self._detect_content_type(context.backend_path, content)
 
-            # Upload blob
-            new_version = self._upload_blob(blob_path, content, content_type)
+        # Upload blob
+        new_version = self._upload_blob(blob_path, content, content_type)
 
-            # Update cache after write if caching is enabled
-            # Per design doc: both GCS and cache should be updated when write succeeds
-            if self._has_caching():
-                import contextlib
+        # Update cache after write if caching is enabled
+        # Per design doc: both GCS and cache should be updated when write succeeds
+        if self._has_caching():
+            import contextlib
 
-                with contextlib.suppress(Exception):
-                    zone_id = getattr(context, "zone_id", None)
-                    self._write_to_cache(
-                        path=virtual_path,
-                        content=content,
-                        backend_version=new_version,
-                        zone_id=zone_id,
-                    )
+            with contextlib.suppress(Exception):
+                zone_id = getattr(context, "zone_id", None)
+                self._write_to_cache(
+                    path=virtual_path,
+                    content=content,
+                    backend_version=new_version,
+                    zone_id=zone_id,
+                )
 
-            return HandlerResponse.ok(
-                data=new_version,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=blob_path,
-            )
+        return HandlerResponse.ok(
+            data=new_version,
+            backend_name=self.name,
+            path=blob_path,
+        )
 
-        except Exception as e:
-            return HandlerResponse.from_exception(
-                e,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=blob_path,
-            )
-
+    @timed_response
     def write_content_with_version_check(
         self,
         content: bytes,
@@ -1128,37 +1098,23 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         Returns:
             HandlerResponse with new version ID (GCS generation or content hash) in data field
         """
-        start_time = time.perf_counter()
-
         if not context or not context.backend_path:
             return HandlerResponse.error(
                 message="GCS connector requires backend_path in OperationContext. "
                 "This backend stores files at actual paths, not CAS hashes.",
                 code=400,
                 is_expected=True,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name=self.name,
             )
 
-        blob_path = self._get_blob_path(context.backend_path)
+        # Get virtual path for version check
+        virtual_path = context.backend_path
+        if hasattr(context, "virtual_path") and context.virtual_path:
+            virtual_path = context.virtual_path
 
-        try:
-            # Get virtual path for version check
-            virtual_path = context.backend_path
-            if hasattr(context, "virtual_path") and context.virtual_path:
-                virtual_path = context.virtual_path
+        # Version check if requested
+        if expected_version is not None:
+            self._check_version(virtual_path, expected_version, context)
 
-            # Version check if requested
-            if expected_version is not None:
-                self._check_version(virtual_path, expected_version, context)
-
-            # Perform the write (returns HandlerResponse)
-            return self.write_content(content, context)
-
-        except Exception as e:
-            return HandlerResponse.from_exception(
-                e,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=blob_path,
-            )
+        # Perform the write (returns HandlerResponse)
+        return self.write_content(content, context)

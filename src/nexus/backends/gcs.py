@@ -23,6 +23,7 @@ from nexus.backends.backend import Backend
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
+from nexus.core.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
@@ -205,7 +206,10 @@ class GCSBackend(Backend):
                 f"Failed to write metadata: {e}", backend="gcs", path=content_hash
             ) from e
 
-    def write_content(self, content: bytes, context: "OperationContext | None" = None) -> str:
+    @timed_response
+    def write_content(
+        self, content: bytes, context: "OperationContext | None" = None
+    ) -> HandlerResponse[str]:
         """
         Write content to CAS storage and return its hash.
 
@@ -213,41 +217,52 @@ class GCSBackend(Backend):
 
         Args:
             content: File content as bytes
-            _context: Operation context (ignored for GCS backend)
+            context: Operation context (ignored for GCS backend)
+
+        Returns:
+            HandlerResponse with content hash in data field
         """
         content_hash = self._compute_hash(content)
         content_path = self._hash_to_path(content_hash)
 
-        try:
-            blob = self.bucket.blob(content_path)
+        blob = self.bucket.blob(content_path)
 
-            # Check if content already exists
-            if blob.exists():
-                metadata = self._read_metadata(content_hash)
-                metadata["ref_count"] = metadata.get("ref_count", 0) + 1
-                self._write_metadata(content_hash, metadata)
-                return content_hash
-
-            # Content doesn't exist - write it
-            blob.upload_from_string(content, timeout=60)
-
-            # Create metadata
-            metadata = {"ref_count": 1, "size": len(content)}
+        # Check if content already exists
+        if blob.exists():
+            metadata = self._read_metadata(content_hash)
+            metadata["ref_count"] = metadata.get("ref_count", 0) + 1
             self._write_metadata(content_hash, metadata)
+            return HandlerResponse.ok(
+                data=content_hash,
+                backend_name=self.name,
+                path=content_hash,
+            )
 
-            return content_hash
+        # Content doesn't exist - write it
+        blob.upload_from_string(content, timeout=60)
 
-        except Exception as e:
-            raise BackendError(
-                f"Failed to write content: {e}", backend="gcs", path=content_hash
-            ) from e
+        # Create metadata
+        metadata = {"ref_count": 1, "size": len(content)}
+        self._write_metadata(content_hash, metadata)
 
-    def read_content(self, content_hash: str, context: "OperationContext | None" = None) -> bytes:
+        return HandlerResponse.ok(
+            data=content_hash,
+            backend_name=self.name,
+            path=content_hash,
+        )
+
+    @timed_response
+    def read_content(
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> HandlerResponse[bytes]:
         """Read content by its hash.
 
         Args:
             content_hash: SHA-256 hash as hex string
-            _context: Operation context (ignored for GCS backend)
+            context: Operation context (ignored for GCS backend)
+
+        Returns:
+            HandlerResponse with file content in data field
         """
         content_path = self._hash_to_path(content_hash)
 
@@ -255,29 +270,35 @@ class GCSBackend(Backend):
             blob = self.bucket.blob(content_path)
 
             if not blob.exists():
-                raise NexusFileNotFoundError(content_hash)
+                return HandlerResponse.not_found(
+                    path=content_hash,
+                    message=f"CAS content not found: {content_hash}",
+                    backend_name=self.name,
+                )
 
             content = blob.download_as_bytes(timeout=60)
 
             # Verify hash
             actual_hash = self._compute_hash(content)
             if actual_hash != content_hash:
-                raise BackendError(
-                    f"Content hash mismatch: expected {content_hash}, got {actual_hash}",
-                    backend="gcs",
+                return HandlerResponse.error(
+                    message=f"Content hash mismatch: expected {content_hash}, got {actual_hash}",
+                    backend_name=self.name,
                     path=content_hash,
                 )
 
-            return bytes(content)
+            return HandlerResponse.ok(
+                data=bytes(content),
+                backend_name=self.name,
+                path=content_hash,
+            )
 
-        except NotFound as e:
-            raise NexusFileNotFoundError(content_hash) from e
-        except NexusFileNotFoundError:
-            raise
-        except Exception as e:
-            raise BackendError(
-                f"Failed to read content: {e}", backend="gcs", path=content_hash
-            ) from e
+        except NotFound:
+            return HandlerResponse.not_found(
+                path=content_hash,
+                message=f"CAS content not found: {content_hash}",
+                backend_name=self.name,
+            )
 
     def stream_content(
         self,
@@ -328,11 +349,12 @@ class GCSBackend(Backend):
                 f"Failed to stream content: {e}", backend="gcs", path=content_hash
             ) from e
 
+    @timed_response
     def write_stream(
         self,
         chunks: Iterator[bytes],
         context: "OperationContext | None" = None,
-    ) -> str:
+    ) -> HandlerResponse[str]:
         """
         Write content from an iterator of chunks.
 
@@ -344,55 +366,65 @@ class GCSBackend(Backend):
             context: Operation context (ignored for GCS backend)
 
         Returns:
-            Content hash (BLAKE3 or SHA-256 as hex string)
+            HandlerResponse with content hash in data field
         """
         import tempfile
 
-        try:
-            # Write chunks to temp file while collecting for hashing
-            # Note: We collect for hashing to match hash_content() algorithm
-            collected_chunks: list[bytes] = []
+        # Write chunks to temp file while collecting for hashing
+        # Note: We collect for hashing to match hash_content() algorithm
+        collected_chunks: list[bytes] = []
 
-            with tempfile.SpooledTemporaryFile(max_size=10 * 1024 * 1024) as tmp:
-                for chunk in chunks:
-                    tmp.write(chunk)
-                    collected_chunks.append(chunk)
+        with tempfile.SpooledTemporaryFile(max_size=10 * 1024 * 1024) as tmp:
+            for chunk in chunks:
+                tmp.write(chunk)
+                collected_chunks.append(chunk)
 
-                # Compute hash using same algorithm as write_content
-                content = b"".join(collected_chunks)
-                content_hash = self._compute_hash(content)
-                total_size = len(content)
+            # Compute hash using same algorithm as write_content
+            content = b"".join(collected_chunks)
+            content_hash = self._compute_hash(content)
+            total_size = len(content)
 
-                content_path = self._hash_to_path(content_hash)
-                blob = self.bucket.blob(content_path)
+            content_path = self._hash_to_path(content_hash)
+            blob = self.bucket.blob(content_path)
 
-                # Check if content already exists
-                if blob.exists():
-                    # Increment ref_count
-                    metadata = self._read_metadata(content_hash)
-                    metadata["ref_count"] = metadata.get("ref_count", 0) + 1
-                    self._write_metadata(content_hash, metadata)
-                    return content_hash
-
-                # Upload from temp file
-                tmp.seek(0)
-                blob.upload_from_file(tmp, timeout=300)
-
-                # Create metadata
-                metadata = {"ref_count": 1, "size": total_size}
+            # Check if content already exists
+            if blob.exists():
+                # Increment ref_count
+                metadata = self._read_metadata(content_hash)
+                metadata["ref_count"] = metadata.get("ref_count", 0) + 1
                 self._write_metadata(content_hash, metadata)
+                return HandlerResponse.ok(
+                    data=content_hash,
+                    backend_name=self.name,
+                    path=content_hash,
+                )
 
-                return content_hash
+            # Upload from temp file
+            tmp.seek(0)
+            blob.upload_from_file(tmp, timeout=300)
 
-        except Exception as e:
-            raise BackendError(f"Failed to write stream: {e}", backend="gcs", path="stream") from e
+            # Create metadata
+            metadata = {"ref_count": 1, "size": total_size}
+            self._write_metadata(content_hash, metadata)
 
-    def delete_content(self, content_hash: str, context: "OperationContext | None" = None) -> None:
+            return HandlerResponse.ok(
+                data=content_hash,
+                backend_name=self.name,
+                path=content_hash,
+            )
+
+    @timed_response
+    def delete_content(
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> HandlerResponse[None]:
         """Delete content by hash with reference counting.
 
         Args:
             content_hash: SHA-256 hash as hex string
-            _context: Operation context (ignored for GCS backend)
+            context: Operation context (ignored for GCS backend)
+
+        Returns:
+            HandlerResponse indicating success or failure
         """
         content_path = self._hash_to_path(content_hash)
 
@@ -400,7 +432,11 @@ class GCSBackend(Backend):
             blob = self.bucket.blob(content_path)
 
             if not blob.exists():
-                raise NexusFileNotFoundError(content_hash)
+                return HandlerResponse.not_found(
+                    path=content_hash,
+                    message=f"CAS content not found: {content_hash}",
+                    backend_name=self.name,
+                )
 
             metadata = self._read_metadata(content_hash)
             ref_count = metadata.get("ref_count", 1)
@@ -417,35 +453,52 @@ class GCSBackend(Backend):
                 metadata["ref_count"] = ref_count - 1
                 self._write_metadata(content_hash, metadata)
 
-        except NotFound as e:
-            raise NexusFileNotFoundError(content_hash) from e
-        except NexusFileNotFoundError:
-            raise
-        except Exception as e:
-            raise BackendError(
-                f"Failed to delete content: {e}", backend="gcs", path=content_hash
-            ) from e
+            return HandlerResponse.ok(
+                data=None,
+                backend_name=self.name,
+                path=content_hash,
+            )
 
-    def content_exists(self, content_hash: str, context: "OperationContext | None" = None) -> bool:
+        except NotFound:
+            return HandlerResponse.not_found(
+                path=content_hash,
+                message=f"CAS content not found: {content_hash}",
+                backend_name=self.name,
+            )
+
+    @timed_response
+    def content_exists(
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> HandlerResponse[bool]:
         """Check if content exists.
 
         Args:
             content_hash: SHA-256 hash as hex string
-            _context: Operation context (ignored for GCS backend)
-        """
-        try:
-            content_path = self._hash_to_path(content_hash)
-            blob = self.bucket.blob(content_path)
-            return bool(blob.exists())
-        except Exception:
-            return False
+            context: Operation context (ignored for GCS backend)
 
-    def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+        Returns:
+            HandlerResponse with True if content exists, False otherwise
+        """
+        content_path = self._hash_to_path(content_hash)
+        blob = self.bucket.blob(content_path)
+        return HandlerResponse.ok(
+            data=bool(blob.exists()),
+            backend_name=self.name,
+            path=content_hash,
+        )
+
+    @timed_response
+    def get_content_size(
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> HandlerResponse[int]:
         """Get content size in bytes.
 
         Args:
             content_hash: SHA-256 hash as hex string
-            _context: Operation context (ignored for GCS backend)
+            context: Operation context (ignored for GCS backend)
+
+        Returns:
+            HandlerResponse with content size in bytes
         """
         content_path = self._hash_to_path(content_hash)
 
@@ -453,97 +506,156 @@ class GCSBackend(Backend):
             blob = self.bucket.blob(content_path)
 
             if not blob.exists():
-                raise NexusFileNotFoundError(content_hash)
+                return HandlerResponse.not_found(
+                    path=content_hash,
+                    message=f"CAS content not found: {content_hash}",
+                    backend_name=self.name,
+                )
 
             # Reload to get metadata including size
             blob.reload()
             size = blob.size
             if size is None:
-                raise BackendError(
-                    "Failed to get content size: size is None",
-                    backend="gcs",
+                return HandlerResponse.error(
+                    message="Failed to get content size: size is None",
+                    backend_name=self.name,
                     path=content_hash,
                 )
-            return int(size)
+            return HandlerResponse.ok(
+                data=int(size),
+                backend_name=self.name,
+                path=content_hash,
+            )
 
-        except NotFound as e:
-            raise NexusFileNotFoundError(content_hash) from e
-        except NexusFileNotFoundError:
-            raise
-        except Exception as e:
-            raise BackendError(
-                f"Failed to get content size: {e}", backend="gcs", path=content_hash
-            ) from e
+        except NotFound:
+            return HandlerResponse.not_found(
+                path=content_hash,
+                message=f"CAS content not found: {content_hash}",
+                backend_name=self.name,
+            )
 
-    def get_ref_count(self, content_hash: str, context: "OperationContext | None" = None) -> int:
+    @timed_response
+    def get_ref_count(
+        self, content_hash: str, context: "OperationContext | None" = None
+    ) -> HandlerResponse[int]:
         """Get reference count for content.
 
         Args:
             content_hash: SHA-256 hash as hex string
             context: Operation context (ignored for GCS backend)
+
+        Returns:
+            HandlerResponse with reference count
         """
-        if not self.content_exists(content_hash, context=context):
-            raise NexusFileNotFoundError(content_hash)
+        exists_response = self.content_exists(content_hash, context=context)
+        if not exists_response.success or not exists_response.data:
+            return HandlerResponse.not_found(
+                path=content_hash,
+                message=f"CAS content not found: {content_hash}",
+                backend_name=self.name,
+            )
 
         metadata = self._read_metadata(content_hash)
-        return int(metadata.get("ref_count", 0))
+        ref_count = int(metadata.get("ref_count", 0))
+        return HandlerResponse.ok(
+            data=ref_count,
+            backend_name=self.name,
+            path=content_hash,
+        )
 
     # === Directory Operations ===
 
+    @timed_response
     def mkdir(
         self,
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
         context: "OperationContext | EnhancedOperationContext | None" = None,
-    ) -> None:
+    ) -> HandlerResponse[None]:
         """
         Create directory marker in GCS.
 
         GCS doesn't have native directories, so we create marker objects
         with trailing slashes to represent directories.
+
+        Returns:
+            HandlerResponse indicating success or failure
         """
         # Normalize path
         path = path.strip("/")
         if not path:
-            return  # Root always exists
+            return HandlerResponse.ok(
+                data=None,
+                backend_name=self.name,
+                path=path,
+            )  # Root always exists
 
         # GCS directories are represented with trailing slash
         dir_path = f"dirs/{path}/"
 
-        try:
-            blob = self.bucket.blob(dir_path)
+        blob = self.bucket.blob(dir_path)
 
-            if blob.exists():
-                if not exist_ok:
-                    raise FileExistsError(f"Directory already exists: {path}")
-                return
+        if blob.exists():
+            if not exist_ok:
+                return HandlerResponse.error(
+                    message=f"Directory already exists: {path}",
+                    code=409,
+                    is_expected=True,
+                    backend_name=self.name,
+                    path=path,
+                )
+            return HandlerResponse.ok(
+                data=None,
+                backend_name=self.name,
+                path=path,
+            )
 
-            if not parents:
-                # Check if parent exists
-                parent = "/".join(path.split("/")[:-1])
-                if parent and not self.is_directory(parent):
-                    raise FileNotFoundError(f"Parent directory not found: {parent}")
+        if not parents:
+            # Check if parent exists
+            parent = "/".join(path.split("/")[:-1])
+            if parent:
+                parent_response = self.is_directory(parent)
+                if not parent_response.success or not parent_response.data:
+                    return HandlerResponse.error(
+                        message=f"Parent directory not found: {parent}",
+                        code=404,
+                        is_expected=True,
+                        backend_name=self.name,
+                        path=path,
+                    )
 
-            # Create directory marker
-            blob.upload_from_string("", content_type="application/x-directory", timeout=60)
+        # Create directory marker
+        blob.upload_from_string("", content_type="application/x-directory", timeout=60)
 
-        except (FileExistsError, FileNotFoundError):
-            raise
-        except Exception as e:
-            raise BackendError(f"Failed to create directory: {e}", backend="gcs", path=path) from e
+        return HandlerResponse.ok(
+            data=None,
+            backend_name=self.name,
+            path=path,
+        )
 
+    @timed_response
     def rmdir(
         self,
         path: str,
         recursive: bool = False,
         context: "OperationContext | EnhancedOperationContext | None" = None,
-    ) -> None:
-        """Remove directory from GCS."""
+    ) -> HandlerResponse[None]:
+        """Remove directory from GCS.
+
+        Returns:
+            HandlerResponse indicating success or failure
+        """
         # Normalize path
         path = path.strip("/")
         if not path:
-            raise BackendError("Cannot remove root directory", backend="gcs", path=path)
+            return HandlerResponse.error(
+                message="Cannot remove root directory",
+                code=400,
+                is_expected=True,
+                backend_name=self.name,
+                path=path,
+            )
 
         dir_path = f"dirs/{path}/"
 
@@ -551,7 +663,11 @@ class GCSBackend(Backend):
             blob = self.bucket.blob(dir_path)
 
             if not blob.exists():
-                raise NexusFileNotFoundError(path)
+                return HandlerResponse.not_found(
+                    path=path,
+                    message=f"Directory not found: {path}",
+                    backend_name=self.name,
+                )
 
             if not recursive:
                 # Check if directory is empty
@@ -563,7 +679,13 @@ class GCSBackend(Backend):
                 )
                 # If there's more than just the marker, directory is not empty
                 if len(blobs) > 1:
-                    raise OSError(f"Directory not empty: {path}")
+                    return HandlerResponse.error(
+                        message=f"Directory not empty: {path}",
+                        code=400,
+                        is_expected=True,
+                        backend_name=self.name,
+                        path=path,
+                    )
 
             # Delete directory marker
             blob.delete(timeout=60)
@@ -574,27 +696,44 @@ class GCSBackend(Backend):
                 for blob in blobs:
                     blob.delete(timeout=60)
 
-        except NotFound as e:
-            raise NexusFileNotFoundError(path) from e
-        except (NexusFileNotFoundError, OSError):
-            raise
-        except Exception as e:
-            raise BackendError(f"Failed to remove directory: {e}", backend="gcs", path=path) from e
+            return HandlerResponse.ok(
+                data=None,
+                backend_name=self.name,
+                path=path,
+            )
 
-    def is_directory(self, path: str, context: "OperationContext | None" = None) -> bool:
-        """Check if path is a directory."""
-        try:
-            # Normalize path
-            path = path.strip("/")
-            if not path:
-                return True  # Root is always a directory
+        except NotFound:
+            return HandlerResponse.not_found(
+                path=path,
+                message=f"Directory not found: {path}",
+                backend_name=self.name,
+            )
 
-            dir_path = f"dirs/{path}/"
-            blob = self.bucket.blob(dir_path)
-            return bool(blob.exists())
+    @timed_response
+    def is_directory(
+        self, path: str, context: "OperationContext | None" = None
+    ) -> HandlerResponse[bool]:
+        """Check if path is a directory.
 
-        except Exception:
-            return False
+        Returns:
+            HandlerResponse with True if path is a directory, False otherwise
+        """
+        # Normalize path
+        path = path.strip("/")
+        if not path:
+            return HandlerResponse.ok(
+                data=True,
+                backend_name=self.name,
+                path=path,
+            )  # Root is always a directory
+
+        dir_path = f"dirs/{path}/"
+        blob = self.bucket.blob(dir_path)
+        return HandlerResponse.ok(
+            data=bool(blob.exists()),
+            backend_name=self.name,
+            path=path,
+        )
 
     def list_dir(self, path: str, context: "OperationContext | None" = None) -> list[str]:
         """List directory contents using GCS list_blobs with delimiter."""
@@ -603,7 +742,8 @@ class GCSBackend(Backend):
             path = path.strip("/")
 
             # Check if directory exists (except root)
-            if path and not self.is_directory(path):
+            dir_response = self.is_directory(path) if path else None
+            if path and (not dir_response or not dir_response.success or not dir_response.data):
                 raise FileNotFoundError(f"Directory not found: {path}")
 
             # Build prefix for this directory

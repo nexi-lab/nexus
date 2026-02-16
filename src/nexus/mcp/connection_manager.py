@@ -19,7 +19,6 @@ Example:
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 import os
@@ -170,8 +169,12 @@ class MCPConnectionManager:
         try:
             if self.filesystem:
                 # Ensure directory exists
-                with contextlib.suppress(Exception):
+                try:
                     self.filesystem.mkdir(self.CONNECTIONS_PATH, parents=True)
+                except FileExistsError:
+                    pass
+                except OSError as e:
+                    logger.warning("Failed to create directory %s: %s", self.CONNECTIONS_PATH, e)
 
                 # Use provider_user as filename
                 filename = f"{conn.provider}_{conn.user_id.replace('@', '_at_')}.json"

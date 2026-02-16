@@ -220,5 +220,7 @@ class IsolatedPool:
             except Exception:
                 break
         for f in futures:
-            with contextlib.suppress(Exception):
+            try:
                 f.result(timeout=5.0)
+            except Exception as e:
+                logger.debug("Worker cleanup failed: %s", e)

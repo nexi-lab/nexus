@@ -701,10 +701,10 @@ class ChunkedUploadService:
             content_hash=session.content_hash,
         )
 
-        import contextlib
-
-        with contextlib.suppress(Exception):
+        try:
             await self._update_session(expired)
+        except Exception as e:
+            logger.debug("Failed to update expired session: %s", e)
 
         self._parts_registry.pop(session.upload_id, None)
         self._session_locks.pop(session.upload_id, None)

@@ -222,13 +222,17 @@ class FileWatcher:
 
         # Unregister from event loop
         if self._loop:
-            with contextlib.suppress(Exception):
+            try:
                 self._loop.remove_reader(self._inotify.fd)
+            except (OSError, ValueError) as e:
+                logger.debug("Failed to remove inotify reader: %s", e)
 
         # Remove all watches
         for wd in list(self._wd_to_info.keys()):
-            with contextlib.suppress(Exception):
+            try:
                 self._inotify.rm_watch(wd)
+            except (OSError, ValueError) as e:
+                logger.debug("Failed to remove inotify watch %s: %s", wd, e)
 
         self._wd_to_info.clear()
         self._inotify.close()
@@ -274,8 +278,10 @@ class FileWatcher:
         ]
 
         for wd in wds_to_remove:
-            with contextlib.suppress(Exception):
+            try:
                 self._inotify.rm_watch(wd)
+            except (OSError, ValueError) as e:
+                logger.debug("Failed to remove inotify watch %s: %s", wd, e)
             self._wd_to_info.pop(wd, None)
 
     def _on_inotify_events(self) -> None:
@@ -538,18 +544,24 @@ if sys.platform == "win32":
 
             # Cancel pending I/O
             if self._dir_handle:
-                with contextlib.suppress(Exception):
+                try:
                     win32file.CancelIo(self._dir_handle)
+                except (OSError, ValueError) as e:
+                    logger.debug("Failed to cancel pending I/O: %s", e)
 
             # Close handles
             if self._event_handle:
-                with contextlib.suppress(Exception):
+                try:
                     win32api.CloseHandle(self._event_handle)
+                except (OSError, ValueError) as e:
+                    logger.debug("Failed to close event handle: %s", e)
                 self._event_handle = None
 
             if self._dir_handle:
-                with contextlib.suppress(Exception):
+                try:
                     win32api.CloseHandle(self._dir_handle)
+                except (OSError, ValueError) as e:
+                    logger.debug("Failed to close dir handle: %s", e)
                 self._dir_handle = None
 
             logger.debug(f"Windows watch stopped: {self._path}")

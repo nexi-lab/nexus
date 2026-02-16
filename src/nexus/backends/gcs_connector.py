@@ -975,9 +975,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         # expiration (default 5 min) which is sufficient for most use cases.
         # Users needing real-time consistency can use --no-cache.
         if self._has_caching():
-            import contextlib
-
-            with contextlib.suppress(Exception):
+            try:
                 cached = self._read_from_cache(cache_path, original=True)
                 if cached and not cached.stale and cached.content_binary:
                     logger.info(f"[GCS] Cache hit (TTL-based) for {cache_path}")
@@ -986,6 +984,8 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
                         backend_name=self.name,
                         path=blob_path,
                     )
+            except Exception as e:
+                logger.debug("[CACHE] Cache read failed for %s: %s", cache_path, e)
 
         # Read from GCS backend
         logger.info(f"[GCS] Cache miss, reading from backend: {cache_path}")
@@ -999,9 +999,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
 
         # Cache the result if caching is enabled
         if self._has_caching():
-            import contextlib
-
-            with contextlib.suppress(Exception):
+            try:
                 # Use generation from download instead of making extra API call
                 zone_id = getattr(context, "zone_id", None)
                 self._write_to_cache(
@@ -1010,6 +1008,8 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
                     backend_version=generation,
                     zone_id=zone_id,
                 )
+            except Exception as e:
+                logger.debug("[CACHE] Cache write failed for %s: %s", cache_path, e)
 
         return HandlerResponse.ok(
             data=content,
@@ -1063,9 +1063,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
         # Update cache after write if caching is enabled
         # Per design doc: both GCS and cache should be updated when write succeeds
         if self._has_caching():
-            import contextlib
-
-            with contextlib.suppress(Exception):
+            try:
                 zone_id = getattr(context, "zone_id", None)
                 self._write_to_cache(
                     path=virtual_path,
@@ -1073,6 +1071,8 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
                     backend_version=new_version,
                     zone_id=zone_id,
                 )
+            except Exception as e:
+                logger.debug("[CACHE] Cache write failed for %s: %s", virtual_path, e)
 
         return HandlerResponse.ok(
             data=new_version,

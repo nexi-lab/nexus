@@ -1505,10 +1505,20 @@ class NexusFS(  # type: ignore[misc]
             file_paths = [file_meta.path for file_meta in files_in_dir]
 
             # Delete content from backend for each file
+            _errors: list[str] = []
             for file_meta in files_in_dir:
                 if file_meta.etag:
-                    with contextlib.suppress(Exception):
+                    try:
                         route.backend.delete_content(file_meta.etag).unwrap()
+                    except Exception as e:
+                        if len(_errors) < 100:
+                            _errors.append(f"{file_meta.path}: {e}")
+            if _errors:
+                logger.debug(
+                    "Bulk content delete: %d error(s) (showing up to 100): %s",
+                    len(_errors),
+                    "; ".join(_errors),
+                )
 
             # Batch delete from metadata store
             self.metadata.delete_batch(file_paths)
@@ -1520,14 +1530,18 @@ class NexusFS(  # type: ignore[misc]
 
         # Also delete the directory's own metadata entry if it exists
         # Directories can have metadata entries (created by mkdir)
-        with contextlib.suppress(Exception):
+        try:
             self.metadata.delete(path)
+        except Exception as e:
+            logger.debug("Failed to delete directory metadata for %s: %s", path, e)
 
         # Clean up sparse directory index entries (Issue: rmdir not cleaning directory index)
         # This removes entries from DirectoryEntryModel used by non-recursive list()
         if hasattr(self.metadata, "delete_directory_entries_recursive"):
-            with contextlib.suppress(Exception):
+            try:
                 self.metadata.delete_directory_entries_recursive(path)
+            except Exception as e:
+                logger.debug("Failed to clean up directory index for %s: %s", path, e)
 
     def _has_descendant_access(
         self,
@@ -2721,9 +2735,11 @@ class NexusFS(  # type: ignore[misc]
             custom_meta = metadata_dict["custom_metadata"]
             if isinstance(custom_meta, dict):
                 for key, value in custom_meta.items():
-                    with contextlib.suppress(Exception):
-                        # Ignore errors when setting custom metadata
+                    try:
                         self.metadata.set_file_metadata(path, key, value)
+                    except Exception as e:
+                        # Ignore errors when setting custom metadata
+                        logger.debug("Failed to set custom metadata %s for %s: %s", key, path, e)
 
     @rpc_expose(description="Batch get content IDs for multiple paths")
     def batch_get_content_ids(self, paths: builtins.list[str]) -> dict[str, str | None]:
@@ -10681,10 +10697,10 @@ class NexusFS(  # type: ignore[misc]
         # Close Memory API session to prevent connection leak
         # The session is created lazily in the `memory` property but never closed
         if self._memory_api is not None and hasattr(self._memory_api, "session"):
-            import contextlib
-
-            with contextlib.suppress(Exception):
+            try:
                 self._memory_api.session.close()
+            except Exception as e:
+                logger.debug("Failed to close memory API session: %s", e)
 
         # Close metadata store after all parsers have finished
         self.metadata.close()
@@ -10707,9 +10723,9 @@ class NexusFS(  # type: ignore[misc]
 
         # Close mounted backends that hold resources (e.g., OAuth connectors with SQLite)
         if hasattr(self, "router"):
-            import contextlib
-
             for mount in self.router.list_mounts():
-                with contextlib.suppress(Exception):
+                try:
                     if hasattr(mount.backend, "token_manager"):
                         mount.backend.token_manager.close()
+                except Exception as e:
+                    logger.debug("Failed to close backend token manager: %s", e)

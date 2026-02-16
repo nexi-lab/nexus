@@ -17,6 +17,7 @@ Backend-specific implementations:
 - Cloud provider-specific API calls
 """
 
+import logging
 import mimetypes
 import time
 from abc import abstractmethod
@@ -30,6 +31,8 @@ from nexus.core.response import HandlerResponse
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
+
+logger = logging.getLogger(__name__)
 
 
 class BaseBlobStorageConnector(Backend):
@@ -949,14 +952,14 @@ class BaseBlobStorageConnector(Backend):
 
             if recursive:
                 # Delete all objects with this prefix
-                import contextlib
-
                 blobs, _ = self._list_blobs(prefix=blob_path, delimiter="")
                 for blob_key in blobs:
                     if blob_key != blob_path:  # Don't delete marker twice
-                        with contextlib.suppress(Exception):
+                        try:
                             # Continue deleting other blobs even if one fails
                             self._delete_blob(blob_key)
+                        except Exception as e:
+                            logger.debug("Failed to delete blob during recursive rmdir: %s", e)
 
             return HandlerResponse.ok(
                 data=None,

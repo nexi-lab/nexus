@@ -21,7 +21,6 @@ Example:
 
 from __future__ import annotations
 
-import contextlib
 import logging
 from datetime import UTC
 from pathlib import Path
@@ -329,7 +328,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
 
         # Step 1: Check L1 cache
         if self._has_caching():
-            with contextlib.suppress(Exception):
+            try:
                 cached = self._read_from_cache(cache_path, original=True)
                 if cached and not cached.stale and cached.content_binary:
                     logger.info(f"[LocalConnectorBackend] L1 cache hit: {cache_path}")
@@ -338,6 +337,8 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
                         backend_name=self.name,
                         path=path,
                     )
+            except Exception as e:
+                logger.debug("[CACHE] Cache read failed for %s: %s", cache_path, e)
 
         # Step 2: L1 miss - read from disk
         logger.debug(f"[LocalConnectorBackend] L1 cache miss, reading from disk: {path}")
@@ -363,13 +364,15 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
 
         # Step 3: Populate L1 cache for future reads
         if self._has_caching():
-            with contextlib.suppress(Exception):
+            try:
                 zone_id = getattr(context, "zone_id", None)
                 self._write_to_cache(
                     path=cache_path,
                     content=content,
                     zone_id=zone_id,
                 )
+            except Exception as e:
+                logger.debug("[CACHE] Cache write failed for %s: %s", cache_path, e)
 
         return HandlerResponse.ok(
             data=content,
@@ -417,13 +420,15 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
             # Invalidate/update L1 cache
             cache_path = context.virtual_path if context and context.virtual_path else write_path
             if self._has_caching():
-                with contextlib.suppress(Exception):
+                try:
                     zone_id = getattr(context, "zone_id", None) if context else None
                     self._write_to_cache(
                         path=cache_path,
                         content=content,
                         zone_id=zone_id,
                     )
+                except Exception as e:
+                    logger.debug("[CACHE] Cache write failed for %s: %s", cache_path, e)
 
             # Return content hash for consistency
             content_hash = hash_content(content)

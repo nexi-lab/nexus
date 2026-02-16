@@ -42,7 +42,9 @@ if TYPE_CHECKING:
     from collections.abc import Generator
 
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-    from sqlalchemy.orm import Session, sessionmaker
+    from sqlalchemy.orm import Session
+
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -70,7 +72,7 @@ class KeyService:
     """Manages agent signing keys with idempotent provisioning.
 
     Args:
-        session_factory: SQLAlchemy sessionmaker for database access.
+        record_store: RecordStoreABC providing session_factory for database access.
         crypto: IdentityCrypto instance for key operations.
         cache_maxsize: Max entries in the public key TTL cache.
         cache_ttl: TTL in seconds for cached public keys (default: 60).
@@ -78,12 +80,12 @@ class KeyService:
 
     def __init__(
         self,
-        session_factory: sessionmaker[Session],
+        record_store: RecordStoreABC,
         crypto: IdentityCrypto,
         cache_maxsize: int = 5000,
         cache_ttl: int = 60,
     ) -> None:
-        self._session_factory = session_factory
+        self._session_factory = record_store.session_factory
         self._crypto = crypto
         self._lock = threading.Lock()
 

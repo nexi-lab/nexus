@@ -1180,12 +1180,7 @@ class ReBACService:
         subjects = await self._run_in_thread(
             self._rebac_manager.rebac_expand, "consent-to-discover", target, zone_id
         )
-        for s in subjects:
-            if s == subject:
-                # Use list_tuples-style query to find the tuple_id
-                # For now, use the expand + delete pattern
-                return True
-        return False
+        return any(s == subject for s in subjects)
 
     @rpc_expose(description="Make resource public")
     async def make_public(

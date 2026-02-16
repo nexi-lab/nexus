@@ -29,13 +29,6 @@ from typing import TYPE_CHECKING, Any, cast
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from nexus.core.rebac import (
-    CROSS_ZONE_ALLOWED_RELATIONS,
-    DEFAULT_FILE_NAMESPACE,
-    DEFAULT_GROUP_NAMESPACE,
-    DEFAULT_MEMORY_NAMESPACE,
-    DEFAULT_PLAYBOOK_NAMESPACE,
-    DEFAULT_SKILL_NAMESPACE,
-    DEFAULT_TRAJECTORY_NAMESPACE,
     Entity,
     NamespaceConfig,
 )
@@ -90,6 +83,7 @@ from nexus.rebac.types import (
 )
 from nexus.rebac.utils.changelog import insert_changelog_entry
 from nexus.rebac.utils.zone import normalize_zone_id
+from nexus.services.permissions.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -3326,7 +3320,7 @@ class ReBACManager:
 
     def _initialize_default_namespaces_with_conn(self, conn: Any) -> None:
         """Initialize default namespace configurations with given connection."""
-        from nexus.core.rebac import (
+        from nexus.services.permissions.default_namespaces import (
             DEFAULT_FILE_NAMESPACE,
             DEFAULT_GROUP_NAMESPACE,
             DEFAULT_MEMORY_NAMESPACE,
@@ -3367,8 +3361,8 @@ class ReBACManager:
                 existing = cursor.fetchone()
                 if not existing:
                     # Create namespace
-                    from datetime import UTC, datetime
                     import json
+                    from datetime import UTC, datetime
 
                     cursor.execute(
                         self._fix_sql_placeholders(
@@ -3388,8 +3382,8 @@ class ReBACManager:
                     existing_namespace_id = existing["namespace_id"]
                     if existing_namespace_id == ns_config.namespace_id:
                         # This is our default namespace, update it to pick up config changes
-                        from datetime import UTC, datetime
                         import json
+                        from datetime import UTC, datetime
 
                         cursor.execute(
                             self._fix_sql_placeholders(
@@ -3423,8 +3417,8 @@ class ReBACManager:
         Args:
             namespace: Namespace configuration to create
         """
-        from datetime import UTC, datetime
         import json
+        from datetime import UTC, datetime
 
         with self._connection() as conn:
             cursor = self._create_cursor(conn)
@@ -3487,9 +3481,10 @@ class ReBACManager:
         Returns:
             NamespaceConfig or None if not found
         """
-        from datetime import datetime
-        from nexus.core.rebac import NamespaceConfig
         import json
+        from datetime import datetime
+
+        from nexus.core.rebac import NamespaceConfig
 
         with self._connection() as conn:
             cursor = self._create_cursor(conn)
@@ -3727,11 +3722,12 @@ class ReBACManager:
             ... ])
             2
         """
-        from datetime import UTC, datetime
-        from nexus.core.rebac import Entity
         import json
         import logging
         import uuid
+        from datetime import UTC, datetime
+
+        from nexus.core.rebac import Entity
 
         logger = logging.getLogger(__name__)
 
@@ -4018,8 +4014,8 @@ class ReBACManager:
             True if tuple was deleted, False if not found
         """
         from datetime import UTC, datetime
+
         from nexus.core.rebac import Entity
-        from typing import cast
 
         with self._connection() as conn:
             cursor = self._create_cursor(conn)
@@ -4151,9 +4147,10 @@ class ReBACManager:
             >>> # Directory move (updates all children)
             >>> manager.update_object_path('/workspace/old_dir', '/workspace/new_dir', is_directory=True)
         """
-        from datetime import UTC, datetime
-        from nexus.core.rebac import Entity
         import logging
+        from datetime import UTC, datetime
+
+        from nexus.core.rebac import Entity
 
         logger = logging.getLogger(__name__)
 
@@ -4591,8 +4588,9 @@ class ReBACManager:
             ... )
             True
         """
-        from nexus.core.rebac import Entity
         import logging
+
+        from nexus.core.rebac import Entity
 
         logger = logging.getLogger(__name__)
 
@@ -4826,9 +4824,9 @@ class ReBACManager:
             ... ])
             >>> # Returns: [True, False, True]
         """
-        from nexus.core.rebac import Entity
-        from nexus.rebac.rebac_fast import is_rust_available
         import logging
+
+        from nexus.core.rebac import Entity
 
         logger = logging.getLogger(__name__)
 
@@ -4912,8 +4910,9 @@ class ReBACManager:
         results: dict[int, bool],
     ) -> None:
         """Compute uncached checks using Python (original implementation)."""
-        from nexus.core.rebac import Entity
         import time as time_module
+
+        from nexus.core.rebac import Entity
 
         for i, (subject, permission, obj) in uncached_checks:
             subject_entity = Entity(subject[0], subject[1])
@@ -4940,7 +4939,6 @@ class ReBACManager:
         Returns:
             List of boolean results in same order as input
         """
-        from nexus.rebac.rebac_fast import check_permissions_bulk_with_fallback
 
         # Fetch all relevant tuples from database
         tuples = self._fetch_all_tuples_for_batch(checks)
@@ -4977,8 +4975,8 @@ class ReBACManager:
 
         This fetches a superset of tuples to minimize database queries.
         """
-        from datetime import UTC, datetime
         import logging
+        from datetime import UTC, datetime
 
         logger = logging.getLogger(__name__)
 
@@ -5080,9 +5078,10 @@ class ReBACManager:
                 }
             }
         """
-        from datetime import UTC, datetime
-        from nexus.core.rebac import Entity
         import uuid
+        from datetime import UTC, datetime
+
+        from nexus.core.rebac import Entity
 
         # Generate request ID and timestamp
         request_id = f"req_{uuid.uuid4().hex[:12]}"
@@ -5260,8 +5259,8 @@ class ReBACManager:
         Returns:
             Cached result or None if not cached or expired
         """
-        from datetime import UTC, datetime
         import logging
+        from datetime import UTC, datetime
 
         logger = logging.getLogger(__name__)
 
@@ -5388,8 +5387,9 @@ class ReBACManager:
             obj: (object_type, object_id) tuple
             zone_id: Optional zone ID
         """
-        from nexus.core.rebac import Entity
         import logging
+
+        from nexus.core.rebac import Entity
 
         logger = logging.getLogger(__name__)
 
@@ -5456,8 +5456,8 @@ class ReBACManager:
             conn: Optional database connection
             delta: Recomputation time in seconds for XFetch (Issue #718)
         """
-        from datetime import UTC, datetime, timedelta
         import uuid
+        from datetime import UTC, datetime, timedelta
 
         # Cache in L1 first (faster)
         if self._l1_cache:
@@ -5569,7 +5569,6 @@ class ReBACManager:
             subject_relation: Optional subject relation for userset-as-subject
             expires_at: Optional expiration time (disables eager recomputation)
         """
-        from datetime import datetime
         import logging
 
         logger = logging.getLogger(__name__)
@@ -5912,6 +5911,7 @@ class ReBACManager:
             Number of tuples removed
         """
         from datetime import UTC, datetime
+
         from nexus.core.rebac import Entity
 
         with self._connection() as conn:

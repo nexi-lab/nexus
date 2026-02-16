@@ -156,6 +156,16 @@ jobs:
       - name: Create virtual environment
         run: uv venv --python 3.13
 
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Build Rust extensions
+        run: |
+          pip install maturin
+          cd rust/nexus_pyo3 && maturin develop --release && cd ../..
+          cd rust/nexus_raft && maturin develop --release --features python && cd ../..
+          cd rust/nexus_tasks && maturin develop --release && cd ../..
+
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
 
@@ -201,6 +211,16 @@ jobs:
       - name: Create virtual environment
         run: uv venv --python 3.13
 
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Build Rust extensions
+        run: |
+          pip install maturin
+          cd rust/nexus_pyo3 && maturin develop --release && cd ../..
+          cd rust/nexus_raft && maturin develop --release --features python && cd ../..
+          cd rust/nexus_tasks && maturin develop --release && cd ../..
+
       - name: Install dependencies
         run: uv pip install -e ".[dev,test,postgres]"
 
@@ -244,6 +264,16 @@ jobs:
       - name: Create virtual environment
         run: uv venv --python 3.13
 
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Build Rust extensions
+        run: |
+          pip install maturin
+          cd rust/nexus_pyo3 && maturin develop --release && cd ../..
+          cd rust/nexus_raft && maturin develop --release --features python && cd ../..
+          cd rust/nexus_tasks && maturin develop --release && cd ../..
+
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
 
@@ -272,6 +302,16 @@ jobs:
 
       - name: Create virtual environment
         run: uv venv --python 3.13
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Build Rust extensions
+        run: |
+          pip install maturin
+          cd rust/nexus_pyo3 && maturin develop --release && cd ../..
+          cd rust/nexus_raft && maturin develop --release --features python && cd ../..
+          cd rust/nexus_tasks && maturin develop --release && cd ../..
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
@@ -308,6 +348,16 @@ jobs:
 
       - name: Create virtual environment
         run: uv venv --python 3.13
+
+      - name: Install Rust toolchain
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Build Rust extensions
+        run: |
+          pip install maturin
+          cd rust/nexus_pyo3 && maturin develop --release && cd ../..
+          cd rust/nexus_raft && maturin develop --release --features python && cd ../..
+          cd rust/nexus_tasks && maturin develop --release && cd ../..
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"

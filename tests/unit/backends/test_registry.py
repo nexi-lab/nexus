@@ -287,7 +287,7 @@ class TestCreateConnectorFromConfig:
 
     def test_create_unknown_connector(self):
         """Test creating unknown connector raises."""
-        with pytest.raises(KeyError):
+        with pytest.raises(RuntimeError, match="Unsupported backend type"):
             create_connector_from_config("nonexistent", {})
 
 

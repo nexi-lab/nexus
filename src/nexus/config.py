@@ -151,11 +151,6 @@ class NexusConfig(BaseModel):
         description="Custom namespace configurations (list of dicts with name, readonly, admin_only, requires_zone)",
     )
 
-    # Parser configurations (v0.2.0)
-    parsers: list[dict[str, Any]] | None = Field(
-        default=None,
-        description="(Deprecated) Custom parser configurations. Use parse_providers instead.",
-    )
     auto_parse: bool = Field(
         default=True,
         description="Automatically parse files on upload (default: True)",
@@ -509,26 +504,6 @@ def _load_from_environment() -> NexusConfig:
             else:
                 converted_value = value
             env_config[config_key] = converted_value
-
-    # Handle NEXUS_PARSERS environment variable
-    # Format: "module:class:priority,module:class:priority,..."
-    # Example: "my_parsers.csv:CSVParser:60,my_parsers.log:LogParser:50"
-    parsers_env = os.getenv("NEXUS_PARSERS")
-    if parsers_env:
-        parsers_list = []
-        for parser_spec in parsers_env.split(","):
-            parts = parser_spec.strip().split(":")
-            if len(parts) >= 2:
-                parser_dict: dict[str, Any] = {
-                    "module": parts[0],
-                    "class": parts[1],
-                    "enabled": True,
-                }
-                if len(parts) >= 3:
-                    parser_dict["priority"] = int(parts[2])
-                parsers_list.append(parser_dict)
-        if parsers_list:
-            env_config["parsers"] = parsers_list
 
     # Auto-discover parse providers from environment variables
     # UNSTRUCTURED_API_KEY, LLAMA_CLOUD_API_KEY enable respective providers

@@ -59,6 +59,9 @@ def is_linux_container_available():
 
 
 pytestmark = [
+    pytest.mark.skip(
+        reason="TODO: https://github.com/nexi-lab/nexus/issues/1702 — RedisLockManager removed from source; tests need rewrite for RaftLockManager",
+    ),
     pytest.mark.skipif(
         not is_redis_available(),
         reason="Redis not available (set NEXUS_DRAGONFLY_COORDINATION_URL)",

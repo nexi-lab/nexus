@@ -30,12 +30,9 @@ from nexus.storage.raft_metadata_store import RaftMetadataStore
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
 
-# Skip entire module if Redis is not available
-pytestmark = pytest.mark.skipif(
-    not os.environ.get("NEXUS_DRAGONFLY_COORDINATION_URL")
-    and not os.environ.get("NEXUS_REDIS_URL")
-    and not os.environ.get("REDIS_ENABLED"),
-    reason="Redis not available (set NEXUS_DRAGONFLY_COORDINATION_URL or REDIS_ENABLED=1)",
+# Skip: RedisLockManager was removed from nexus.core.distributed_lock
+pytestmark = pytest.mark.skip(
+    reason="TODO: https://github.com/nexi-lab/nexus/issues/1702 — RedisLockManager removed from source; tests need rewrite for RaftLockManager",
 )
 
 

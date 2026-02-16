@@ -22,10 +22,9 @@ if TYPE_CHECKING:
     from nexus.core.distributed_lock import RedisLockManager
     from nexus.core.event_bus import RedisEventBus
 
-# Skip entire module if Redis is not available
-pytestmark = pytest.mark.skipif(
-    not os.environ.get("NEXUS_REDIS_URL") and not os.environ.get("REDIS_ENABLED"),
-    reason="Redis not available (set NEXUS_REDIS_URL or REDIS_ENABLED=1)",
+# Skip: RedisLockManager was removed from nexus.core.distributed_lock
+pytestmark = pytest.mark.skip(
+    reason="TODO: https://github.com/nexi-lab/nexus/issues/1702 — RedisLockManager removed from source; tests need rewrite for RaftLockManager",
 )
 
 

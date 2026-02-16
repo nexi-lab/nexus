@@ -12,13 +12,13 @@ References:
 
 import pytest
 
-from nexus.services.permissions.rebac_cache import ReBACPermissionCache
-from nexus.services.permissions.rebac_manager_enhanced import (
+from nexus.rebac.manager import (
     ConsistencyLevel,
+    ConsistencyMode,
     ConsistencyRequirement,
     WriteResult,
 )
-from nexus.services.permissions.types import ConsistencyMode
+from nexus.rebac.rebac_cache import ReBACPermissionCache
 
 
 class TestConsistencyModeEnum:

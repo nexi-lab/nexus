@@ -386,7 +386,7 @@ class TestDirectoryGrantWorker:
 
     def test_worker_processes_pending_grants(self, standalone_engine):
         """Test that the DirectoryGrantExpander processes pending grants."""
-        from nexus.services.permissions.tiger_cache import (
+        from nexus.rebac.tiger_cache import (
             DirectoryGrantExpander,
             TigerCache,
             TigerResourceMap,
@@ -423,7 +423,7 @@ class TestDirectoryGrantWorker:
 
     def test_worker_marks_completed_on_empty_directory(self, standalone_engine):
         """Test that worker marks empty directory grants as completed."""
-        from nexus.services.permissions.tiger_cache import (
+        from nexus.rebac.tiger_cache import (
             DirectoryGrantExpander,
             TigerCache,
             TigerResourceMap,

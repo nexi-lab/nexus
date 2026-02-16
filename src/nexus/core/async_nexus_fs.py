@@ -36,7 +36,7 @@ from nexus.storage.content_cache import ContentCache
 
 if TYPE_CHECKING:
     from nexus.core._metadata_generated import FileMetadataProtocol
-    from nexus.services.permissions.async_permissions import AsyncPermissionEnforcer
+    from nexus.rebac.async_permissions import AsyncPermissionEnforcer
 
 logger = logging.getLogger(__name__)
 

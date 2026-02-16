@@ -14,7 +14,7 @@ from nexus.skills.exceptions import SkillPermissionDeniedError, SkillValidationE
 from nexus.skills.types import DatabaseConnection
 
 if TYPE_CHECKING:
-    from nexus.services.permissions.rebac_manager import ReBACManager
+    from nexus.rebac.manager import ReBACManager
 
 logger = logging.getLogger(__name__)
 

@@ -143,7 +143,7 @@ class IdentityMemoryMigration:
             user_id: User ID to register.
             agent_id: Agent ID to register.
         """
-        from nexus.services.permissions.entity_registry import EntityRegistry
+        from nexus.rebac.entity_registry import EntityRegistry
 
         registry = EntityRegistry(self.session)
 
@@ -168,7 +168,7 @@ class IdentityMemoryMigration:
 
         Analyzes existing file_paths to discover entities and register them.
         """
-        from nexus.services.permissions.entity_registry import EntityRegistry
+        from nexus.rebac.entity_registry import EntityRegistry
 
         registry = EntityRegistry(self.session)
 

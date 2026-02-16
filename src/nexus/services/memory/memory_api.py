@@ -202,9 +202,7 @@ class Memory:
         import json as _json
 
         try:
-            content_bytes = self.backend.read_content(
-                content_hash, context=self.context
-            ).unwrap()
+            content_bytes = self.backend.read_content(content_hash, context=self.context).unwrap()
             if parse_json:
                 try:
                     return _json.loads(content_bytes.decode("utf-8"))
@@ -1621,7 +1619,9 @@ class Memory:
         """Flag trajectory for re-reflection. Delegates to ACE FeedbackManager."""
         self._ace.feedback.mark_for_relearning(trajectory_id, reason, priority)
 
-    def batch_add_feedback(self, feedback_items: builtins.list[dict[str, Any]]) -> builtins.list[str]:
+    def batch_add_feedback(
+        self, feedback_items: builtins.list[dict[str, Any]]
+    ) -> builtins.list[str]:
         """Add feedback to multiple trajectories. Delegates to ACE FeedbackManager."""
         return self._ace.feedback.batch_add_feedback(feedback_items)
 
@@ -1879,8 +1879,12 @@ class Memory:
 
         return run_sync(
             self.consolidate_async(
-                memory_type, scope, namespace, namespace_prefix,
-                preserve_high_importance, importance_threshold,
+                memory_type,
+                scope,
+                namespace,
+                namespace_prefix,
+                preserve_high_importance,
+                importance_threshold,
             )
         )
 
@@ -1927,8 +1931,13 @@ class Memory:
 
         return run_sync(
             self.execute_with_learning_async(
-                task_fn, task_description, task_type,
-                auto_reflect, auto_curate, playbook_name, **task_kwargs,
+                task_fn,
+                task_description,
+                task_type,
+                auto_reflect,
+                auto_curate,
+                playbook_name,
+                **task_kwargs,
             )
         )
 

@@ -62,11 +62,7 @@ class CacheSettings:
     """
 
     # Dragonfly cache connection (optional - if not set, use PostgreSQL)
-    dragonfly_url: str | None = field(
-        default_factory=lambda: (
-            os.environ.get("NEXUS_DRAGONFLY_URL") or os.environ.get("NEXUS_DRAGONFLY_CACHE_URL")
-        )  # Backward compatibility
-    )
+    dragonfly_url: str | None = field(default_factory=lambda: os.environ.get("NEXUS_DRAGONFLY_URL"))
 
     # Backend selection: auto, dragonfly, postgres
     cache_backend: Literal["auto", "dragonfly", "postgres"] = field(
@@ -150,12 +146,6 @@ class CacheSettings:
         default_factory=lambda: int(os.environ.get("NEXUS_CACHE_L1_SIZE", "50000"))
     )
 
-    # Backward compatibility aliases
-    @property
-    def dragonfly_cache_url(self) -> str | None:
-        """Backward compatibility alias."""
-        return self.dragonfly_url
-
     def should_use_dragonfly(self) -> bool:
         """Determine if Dragonfly should be used for caching."""
         if self.cache_backend == "dragonfly":
@@ -166,9 +156,6 @@ class CacheSettings:
             return False
         # "auto" mode - use Dragonfly if URL is set
         return self.dragonfly_url is not None
-
-    # Backward compatibility alias
-    should_use_dragonfly_cache = should_use_dragonfly
 
     def validate(self) -> None:
         """Validate configuration."""

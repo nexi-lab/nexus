@@ -11,7 +11,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from nexus.core.agent_registry import AgentRegistry
+from nexus.services.agents.agent_registry import AgentRegistry
 from nexus.services.delegation.derivation import derive_grants
 from nexus.services.delegation.errors import (
     DelegationChainError,

@@ -22,7 +22,8 @@ from typing import TYPE_CHECKING, Any
 # Import Permission and OperationContext from the original module (don't duplicate)
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
-from nexus.core.permissions import OperationContext, PermissionEnforcer
+from nexus.core.permissions import OperationContext
+from nexus.services.permissions.enforcer import PermissionEnforcer
 
 if TYPE_CHECKING:
     pass

@@ -30,13 +30,10 @@ class MemoryViewRouter:
 
         Args:
             session: SQLAlchemy database session.
-            entity_registry: Entity registry instance (creates new if None).
+            entity_registry: Entity registry instance. If None, path-based
+                entity extraction (e.g. workspace paths) will return empty IDs.
         """
         self.session = session
-        if entity_registry is None:
-            from nexus.services.permissions.entity_registry import EntityRegistry
-
-            entity_registry = EntityRegistry(session)
         self.entity_registry = entity_registry
 
     @staticmethod
@@ -108,7 +105,10 @@ class MemoryViewRouter:
 
         Returns:
             Dictionary mapping entity type keys to IDs.
+            Empty dict if no entity_registry is configured.
         """
+        if self.entity_registry is None:
+            return {}
         return self.entity_registry.extract_ids_from_path_parts(parts)
 
     def _query_by_relationships(self, ids: dict[str, str]) -> MemoryModel | None:

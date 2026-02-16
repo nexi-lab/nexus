@@ -41,7 +41,7 @@ from cachetools import TTLCache
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
-from nexus.core.agent_record import (
+from nexus.services.agents.agent_record import (
     AgentRecord,
     AgentState,
     is_new_session,

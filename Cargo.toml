@@ -8,7 +8,8 @@ members = [
 ]
 # nexus_raft excluded: uses pyo3 0.22 (links conflict with pyo3 0.27 in nexus_pyo3)
 # It builds independently via `cd rust/nexus_raft && cargo build`
-exclude = ["rust/nexus_raft"]
+# nexus-fuse excluded: standalone FUSE daemon with different dependency versions
+exclude = ["rust/nexus_raft", "nexus-fuse"]
 
 [workspace.dependencies]
 nexus_core = { path = "rust/nexus_core" }

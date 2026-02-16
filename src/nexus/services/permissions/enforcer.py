@@ -555,7 +555,7 @@ class PermissionEnforcer:
                 mapper = ObjectTypeMapper()
                 object_type = mapper.get_object_type(route.backend, route.backend_path)
                 object_id = mapper.get_object_id(
-                    route.backend, route.backend_path, virtual_path=path
+                    route.backend, route.backend_path, virtual_path=path, object_type=object_type
                 )
             except Exception as e:
                 # If routing fails, fall back to default "file" type with virtual path

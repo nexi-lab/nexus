@@ -28,11 +28,10 @@ from pathlib import Path
 from typing import Any
 
 from cachetools import TTLCache
-from sqlalchemy import create_engine, select
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy import select
 
 from nexus.core.exceptions import AuthenticationError
-from nexus.storage.models import Base, OAuthCredentialModel
+from nexus.storage.models import OAuthCredentialModel
 from nexus.storage.token_rotation_store import TokenRotationStore
 
 from .oauth_crypto import OAuthCrypto
@@ -102,23 +101,14 @@ class TokenManager:
             self.engine = session_factory.kw.get("bind") if hasattr(session_factory, "kw") else None
             self.database_url = db_url or (str(self.engine.url) if self.engine else "")
             self._owns_engine = False
-        elif db_url:
-            self.database_url = db_url
-            self.engine = create_engine(
-                self.database_url,
-                connect_args={"check_same_thread": False} if "sqlite" in self.database_url else {},
-            )
-            self.SessionLocal = sessionmaker(bind=self.engine)
-            Base.metadata.create_all(self.engine)
-            self._owns_engine = True
-        elif db_path:
-            self.database_url = f"sqlite:///{db_path}"
-            self.engine = create_engine(
-                self.database_url,
-                connect_args={"check_same_thread": False},
-            )
-            self.SessionLocal = sessionmaker(bind=self.engine)
-            Base.metadata.create_all(self.engine)
+        elif db_url or db_path:
+            from nexus.storage.record_store import SQLAlchemyRecordStore
+
+            url = db_url or f"sqlite:///{db_path}"
+            self._record_store = SQLAlchemyRecordStore(db_url=url)
+            self.SessionLocal = self._record_store.session_factory
+            self.engine = self._record_store.engine
+            self.database_url = url
             self._owns_engine = True
         else:
             raise ValueError("One of db_path, db_url, or session_factory must be provided")
@@ -703,10 +693,17 @@ class TokenManager:
             return
         self._closed = True
 
-        if not getattr(self, "_owns_engine", True) or self.engine is None:
+        if not getattr(self, "_owns_engine", True):
             return
 
-        try:
-            self.engine.dispose()
-        except Exception:
-            logger.debug("Engine dispose failed (non-critical)", exc_info=True)
+        record_store = getattr(self, "_record_store", None)
+        if record_store is not None:
+            try:
+                record_store.close()
+            except Exception:
+                logger.debug("RecordStore close failed (non-critical)", exc_info=True)
+        elif self.engine is not None:
+            try:
+                self.engine.dispose()
+            except Exception:
+                logger.debug("Engine dispose failed (non-critical)", exc_info=True)

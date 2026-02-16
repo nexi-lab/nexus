@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from nexus.services.permissions.namespace_manager import NamespaceManager
     from nexus.services.permissions.permission_boundary_cache import PermissionBoundaryCache
     from nexus.services.permissions.permissions_enhanced import AuditStore
-    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.manager import ReBACManager
 
 logger = logging.getLogger(__name__)
 
@@ -56,7 +56,7 @@ class PermissionEnforcer:
         self,
         metadata_store: Any = None,
         acl_store: Any | None = None,  # Deprecated, kept for backward compatibility
-        rebac_manager: EnhancedReBACManager | None = None,
+        rebac_manager: ReBACManager | None = None,
         entity_registry: Any = None,  # Entity registry (reserved for future use)
         router: Any = None,  # PathRouter for backend object type resolution
         # P0-4: Enhanced features
@@ -95,7 +95,7 @@ class PermissionEnforcer:
             agent_registry: AgentRegistry for stale-session detection (Issue #1240)
         """
         self.metadata_store = metadata_store
-        self.rebac_manager: EnhancedReBACManager | None = rebac_manager
+        self.rebac_manager: ReBACManager | None = rebac_manager
         self.entity_registry = entity_registry  # v0.5.0 ACE
         self.router = router  # For backend object type resolution
 

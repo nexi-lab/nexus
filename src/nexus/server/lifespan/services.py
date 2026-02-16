@@ -9,7 +9,7 @@ import asyncio
 import logging
 import os
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -182,7 +182,8 @@ def _startup_key_service(app: FastAPI) -> None:
             # Ensure agent_keys table exists
             _nx_engine = getattr(app.state.nexus_fs, "_sql_engine", None)
             if _nx_engine is not None:
-                AgentKeyModel.__table__.create(_nx_engine, checkfirst=True)
+                from sqlalchemy import Table
+                cast(Table, AgentKeyModel.__table__).create(_nx_engine, checkfirst=True)
 
             # Reuse OAuthCrypto for Fernet encryption of private keys
             _db_url = app.state.database_url or "sqlite:///nexus.db"

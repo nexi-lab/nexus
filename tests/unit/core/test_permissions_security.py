@@ -20,8 +20,8 @@ import pytest
 from nexus.core.permissions import (
     OperationContext,
     Permission,
-    PermissionEnforcer,
 )
+from nexus.services.permissions.enforcer import PermissionEnforcer
 
 # ---------------------------------------------------------------------------
 # OperationContext creation and validation

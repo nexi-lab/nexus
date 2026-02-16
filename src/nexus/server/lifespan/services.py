@@ -176,13 +176,7 @@ def _startup_key_service(app: FastAPI) -> None:
         try:
             from nexus.identity.crypto import IdentityCrypto
             from nexus.identity.key_service import KeyService
-            from nexus.identity.models import AgentKeyModel  # noqa: F401 — register with Base
             from nexus.server.auth.oauth_crypto import OAuthCrypto
-
-            # Ensure agent_keys table exists
-            _nx_engine = getattr(app.state.nexus_fs, "_sql_engine", None)
-            if _nx_engine is not None:
-                AgentKeyModel.__table__.create(_nx_engine, checkfirst=True)
 
             # Reuse OAuthCrypto for Fernet encryption of private keys
             _db_url = app.state.database_url or "sqlite:///nexus.db"

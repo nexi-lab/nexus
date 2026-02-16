@@ -158,9 +158,6 @@ class AsyncReBACBridge:
             engine=sync_engine,
             cache_ttl_seconds=self.cache_ttl_seconds,
             max_depth=self.max_depth,
-            enable_l1_cache=self.enable_l1_cache,
-            l1_cache_size=self.l1_cache_size,
-            l1_cache_ttl=self.l1_cache_ttl,
         )
         self._manager = AsyncReBACManager(sync_manager)
 
@@ -187,7 +184,9 @@ class AsyncReBACBridge:
         if not self._manager:
             raise RuntimeError("AsyncReBACBridge not started")
 
-        future = self._run_coro(self._manager.rebac_check(subject, permission, object, zone_id))
+        future = self._run_coro(
+            self._manager.rebac_check(subject, permission, object, zone_id=zone_id)
+        )
         result: bool = future.result(timeout=timeout)
         return result
 

@@ -25,6 +25,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
 
+import pytest
+
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -115,6 +117,15 @@ class TestResults:
 # =============================================================================
 # HTTP Client Test (against running server)
 # =============================================================================
+
+
+@pytest.fixture
+def base_url():
+    """Get base URL from NEXUS_BASE_URL env var, skip if not set."""
+    url = os.environ.get("NEXUS_BASE_URL")
+    if not url:
+        pytest.skip("NEXUS_BASE_URL not set — no running server for HTTP test")
+    return url
 
 
 def test_http_concurrent_requests(

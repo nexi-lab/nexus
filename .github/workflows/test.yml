@@ -284,14 +284,14 @@ jobs:
   e2e-nats:
     name: E2E Tests (NATS)
     runs-on: ubuntu-latest
-    services:
-      nats:
-        image: nats:latest
-        ports:
-          - 4222:4222
     env:
       NEXUS_NATS_URL: nats://localhost:4222
     steps:
+      - name: Start NATS with JetStream
+        run: |
+          docker run -d --name nats -p 4222:4222 nats:latest -js
+          sleep 2
+
       - name: Checkout code
         uses: actions/checkout@v4
 

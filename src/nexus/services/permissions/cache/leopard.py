@@ -25,6 +25,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy import delete, insert, or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+from nexus.storage.models.permissions import ReBACGroupClosureModel as GC
+from nexus.storage.models.permissions import ReBACTupleModel as RT
+
 if TYPE_CHECKING:
     from sqlalchemy.engine import Connection, Engine
 
@@ -235,11 +241,6 @@ class LeopardIndex:
         self._cache = LeopardCache(max_size=cache_max_size) if cache_enabled else None
         self._is_postgresql = "postgresql" in str(engine.url)
 
-    @property
-    def _now_sql(self) -> str:
-        """Return SQL for current timestamp based on database type."""
-        return "NOW()" if self._is_postgresql else "datetime('now')"
-
     def get_transitive_groups(
         self,
         member_type: str,
@@ -297,26 +298,16 @@ class LeopardIndex:
         Returns:
             Set of (group_type, group_id) tuples
         """
-        from sqlalchemy import text
-
-        query = text("""
-            SELECT group_type, group_id
-            FROM rebac_group_closure
-            WHERE member_type = :member_type
-              AND member_id = :member_id
-              AND zone_id = :zone_id
-        """)
-
-        params = {
-            "member_type": member_type,
-            "member_id": member_id,
-            "zone_id": zone_id,
-        }
+        stmt = select(GC.group_type, GC.group_id).where(
+            GC.member_type == member_type,
+            GC.member_id == member_id,
+            GC.zone_id == zone_id,
+        )
 
         groups: set[tuple[str, str]] = set()
 
         def execute_query(connection: Connection) -> None:
-            result = connection.execute(query, params)
+            result = connection.execute(stmt)
             for row in result:
                 groups.add((row.group_type, row.group_id))
 
@@ -355,25 +346,18 @@ class LeopardIndex:
         Returns:
             Number of closure entries created/updated
         """
-        from sqlalchemy import text
-
         entries_added = 0
 
         def do_update(connection: Connection) -> int:
             nonlocal entries_added
 
             # 1. Get all ancestors of the target group (including the group itself)
-            ancestors_query = text("""
-                SELECT group_type, group_id, depth
-                FROM rebac_group_closure
-                WHERE member_type = :group_type
-                  AND member_id = :group_id
-                  AND zone_id = :zone_id
-            """)
-            ancestors_result = connection.execute(
-                ancestors_query,
-                {"group_type": group_type, "group_id": group_id, "zone_id": zone_id},
+            ancestors_stmt = select(GC.group_type, GC.group_id, GC.depth).where(
+                GC.member_type == group_type,
+                GC.member_id == group_id,
+                GC.zone_id == zone_id,
             )
+            ancestors_result = connection.execute(ancestors_stmt)
             ancestors = [(row.group_type, row.group_id, row.depth) for row in ancestors_result]
 
             # 2. Get all descendants of the subject (if it's a group)
@@ -381,21 +365,12 @@ class LeopardIndex:
             descendants: list[tuple[str, str, int]] = [(subject_type, subject_id, 0)]
 
             if subject_type in GROUP_ENTITY_TYPES:
-                descendants_query = text("""
-                    SELECT member_type, member_id, depth
-                    FROM rebac_group_closure
-                    WHERE group_type = :subject_type
-                      AND group_id = :subject_id
-                      AND zone_id = :zone_id
-                """)
-                desc_result = connection.execute(
-                    descendants_query,
-                    {
-                        "subject_type": subject_type,
-                        "subject_id": subject_id,
-                        "zone_id": zone_id,
-                    },
+                descendants_stmt = select(GC.member_type, GC.member_id, GC.depth).where(
+                    GC.group_type == subject_type,
+                    GC.group_id == subject_id,
+                    GC.zone_id == zone_id,
                 )
+                desc_result = connection.execute(descendants_stmt)
                 descendants.extend(
                     [(row.member_type, row.member_id, row.depth) for row in desc_result]
                 )
@@ -468,8 +443,6 @@ class LeopardIndex:
         Returns:
             Number of closure entries removed
         """
-        from sqlalchemy import text
-
         entries_removed = 0
 
         def do_update(connection: Connection) -> int:
@@ -483,21 +456,12 @@ class LeopardIndex:
             descendants: list[tuple[str, str]] = [(subject_type, subject_id)]
 
             if subject_type in GROUP_ENTITY_TYPES:
-                descendants_query = text("""
-                    SELECT member_type, member_id
-                    FROM rebac_group_closure
-                    WHERE group_type = :subject_type
-                      AND group_id = :subject_id
-                      AND zone_id = :zone_id
-                """)
-                desc_result = connection.execute(
-                    descendants_query,
-                    {
-                        "subject_type": subject_type,
-                        "subject_id": subject_id,
-                        "zone_id": zone_id,
-                    },
+                descendants_stmt = select(GC.member_type, GC.member_id).where(
+                    GC.group_type == subject_type,
+                    GC.group_id == subject_id,
+                    GC.zone_id == zone_id,
                 )
+                desc_result = connection.execute(descendants_stmt)
                 descendants.extend([(row.member_type, row.member_id) for row in desc_result])
 
             # For each descendant, recompute their closure
@@ -533,35 +497,25 @@ class LeopardIndex:
         Returns:
             Number of entries that were removed (negative) or added (positive)
         """
-        from sqlalchemy import text
-
         # 1. Delete existing closure entries for this member
-        delete_query = text("""
-            DELETE FROM rebac_group_closure
-            WHERE member_type = :member_type
-              AND member_id = :member_id
-              AND zone_id = :zone_id
-        """)
-        result = conn.execute(
-            delete_query,
-            {"member_type": member_type, "member_id": member_id, "zone_id": zone_id},
+        delete_stmt = delete(GC).where(
+            GC.member_type == member_type,
+            GC.member_id == member_id,
+            GC.zone_id == zone_id,
         )
+        result = conn.execute(delete_stmt)
         old_count = result.rowcount
 
         # 2. Find direct memberships from rebac_tuples
-        direct_query = text(f"""
-            SELECT object_type, object_id
-            FROM rebac_tuples
-            WHERE subject_type = :member_type
-              AND subject_id = :member_id
-              AND relation IN ('member-of', 'member', 'belongs-to')
-              AND zone_id = :zone_id
-              AND (expires_at IS NULL OR expires_at > {self._now_sql})
-        """)
-        direct_result = conn.execute(
-            direct_query,
-            {"member_type": member_type, "member_id": member_id, "zone_id": zone_id},
+        now = datetime.now(UTC)
+        direct_stmt = select(RT.object_type, RT.object_id).where(
+            RT.subject_type == member_type,
+            RT.subject_id == member_id,
+            RT.relation.in_(MEMBERSHIP_RELATIONS),
+            RT.zone_id == zone_id,
+            or_(RT.expires_at.is_(None), RT.expires_at > now),
         )
+        direct_result = conn.execute(direct_stmt)
         direct_groups = [(row.object_type, row.object_id) for row in direct_result]
 
         # 3. For each direct group, compute transitive closure using BFS
@@ -589,20 +543,14 @@ class LeopardIndex:
                 )
 
                 # Find parent groups
-                now_sql = self._now_sql
-                parent_query = text(f"""
-                    SELECT object_type, object_id
-                    FROM rebac_tuples
-                    WHERE subject_type = :g_type
-                      AND subject_id = :g_id
-                      AND relation IN ('member-of', 'member', 'belongs-to')
-                      AND zone_id = :zone_id
-                      AND (expires_at IS NULL OR expires_at > {now_sql})
-                """)
-                parent_result = conn.execute(
-                    parent_query,
-                    {"g_type": g_type, "g_id": g_id, "zone_id": zone_id},
+                parent_stmt = select(RT.object_type, RT.object_id).where(
+                    RT.subject_type == g_type,
+                    RT.subject_id == g_id,
+                    RT.relation.in_(MEMBERSHIP_RELATIONS),
+                    RT.zone_id == zone_id,
+                    or_(RT.expires_at.is_(None), RT.expires_at > now),
                 )
+                parent_result = conn.execute(parent_stmt)
                 for row in parent_result:
                     if (row.object_type, row.object_id) not in visited:
                         queue.append((row.object_type, row.object_id, depth + 1))
@@ -633,33 +581,28 @@ class LeopardIndex:
         Returns:
             Number of entries affected
         """
-        from sqlalchemy import text
-
         if not entries:
             return 0
 
-        if self._is_postgresql:
-            # PostgreSQL: Use ON CONFLICT DO UPDATE
-            query = text("""
-                INSERT INTO rebac_group_closure
-                    (member_type, member_id, group_type, group_id, zone_id, depth, updated_at)
-                VALUES
-                    (:member_type, :member_id, :group_type, :group_id, :zone_id, :depth, NOW())
-                ON CONFLICT (member_type, member_id, group_type, group_id, zone_id)
-                DO UPDATE SET depth = EXCLUDED.depth, updated_at = NOW()
-            """)
-        else:
-            # SQLite: Use INSERT OR REPLACE
-            query = text("""
-                INSERT OR REPLACE INTO rebac_group_closure
-                    (member_type, member_id, group_type, group_id, zone_id, depth, updated_at)
-                VALUES
-                    (:member_type, :member_id, :group_type, :group_id, :zone_id, :depth, datetime('now'))
-            """)
-
+        now = datetime.now(UTC)
         count = 0
         for entry in entries:
-            conn.execute(query, entry)
+            values = {**entry, "updated_at": now}
+            if self._is_postgresql:
+                pg_stmt = pg_insert(GC).values(**values)
+                pg_stmt = pg_stmt.on_conflict_do_update(
+                    index_elements=[
+                        "member_type",
+                        "member_id",
+                        "group_type",
+                        "group_id",
+                        "zone_id",
+                    ],
+                    set_={"depth": pg_stmt.excluded.depth, "updated_at": now},
+                )
+                conn.execute(pg_stmt)
+            else:
+                conn.execute(insert(GC).prefix_with("OR REPLACE").values(**values))
             count += 1
 
         return count
@@ -679,27 +622,21 @@ class LeopardIndex:
         Returns:
             Number of closure entries created
         """
-        from sqlalchemy import text
-
-        now_sql = self._now_sql
 
         def do_rebuild(connection: Connection) -> int:
             # 1. Delete all existing closure entries for zone
-            delete_query = text("""
-                DELETE FROM rebac_group_closure
-                WHERE zone_id = :zone_id
-            """)
-            connection.execute(delete_query, {"zone_id": zone_id})
+            connection.execute(delete(GC).where(GC.zone_id == zone_id))
 
             # 2. Get all membership tuples for zone
-            tuples_query = text(f"""
-                SELECT subject_type, subject_id, object_type, object_id
-                FROM rebac_tuples
-                WHERE relation IN ('member-of', 'member', 'belongs-to')
-                  AND zone_id = :zone_id
-                  AND (expires_at IS NULL OR expires_at > {now_sql})
-            """)
-            result = connection.execute(tuples_query, {"zone_id": zone_id})
+            now = datetime.now(UTC)
+            tuples_stmt = select(
+                RT.subject_type, RT.subject_id, RT.object_type, RT.object_id
+            ).where(
+                RT.relation.in_(MEMBERSHIP_RELATIONS),
+                RT.zone_id == zone_id,
+                or_(RT.expires_at.is_(None), RT.expires_at > now),
+            )
+            result = connection.execute(tuples_stmt)
             tuples = [
                 (row.subject_type, row.subject_id, row.object_type, row.object_id) for row in result
             ]

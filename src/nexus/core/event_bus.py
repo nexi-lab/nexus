@@ -30,12 +30,31 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
-
-if TYPE_CHECKING:
-    from nexus.cache.dragonfly import DragonflyClient
+from typing import Any, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
+
+
+@runtime_checkable
+class PubSubClientProtocol(Protocol):
+    """Protocol for Redis-like pub/sub client providers (e.g., DragonflyClient).
+
+    Captures the interface that RedisEventBus needs, decoupling the kernel
+    event bus from the concrete cache driver (KERNEL-ARCHITECTURE.md §1).
+    """
+
+    @property
+    def client(self) -> Any:
+        """Underlying async client with pubsub() and publish() methods."""
+        ...
+
+    async def health_check(self) -> bool:
+        """Check if the backend is healthy."""
+        ...
+
+    async def get_info(self) -> dict[str, Any]:
+        """Get backend info/stats."""
+        ...
 
 
 def _utcnow_naive() -> datetime:
@@ -690,7 +709,7 @@ class RedisEventBus(EventBusBase):
 
     def __init__(
         self,
-        redis_client: DragonflyClient,
+        redis_client: PubSubClientProtocol,
         session_factory: Any | None = None,
         node_id: str | None = None,
         event_log: Any | None = None,
@@ -698,7 +717,7 @@ class RedisEventBus(EventBusBase):
         """Initialize RedisEventBus.
 
         Args:
-            redis_client: DragonflyClient instance for Redis connection
+            redis_client: PubSubClientProtocol provider (e.g., DragonflyClient)
             session_factory: SQLAlchemy SessionLocal for PG SSOT (optional)
             node_id: Unique node identifier for checkpoint tracking (auto-generated if None)
             event_log: Optional EventLogProtocol for durable WAL persistence (Issue #1397)
@@ -957,13 +976,13 @@ class RedisEventBus(EventBusBase):
 
 
 # =============================================================================
-# Factory and Singleton Management
+# Factory
 # =============================================================================
 
 
 def create_event_bus(
     backend: str = "redis",
-    redis_client: DragonflyClient | None = None,
+    redis_client: PubSubClientProtocol | None = None,
     nats_url: str | None = None,
     **kwargs: Any,
 ) -> EventBusBase:

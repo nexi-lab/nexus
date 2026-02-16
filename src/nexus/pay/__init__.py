@@ -55,7 +55,6 @@ from nexus.pay.policy_rules import RuleContext, RuleResult, evaluate_rules
 from nexus.pay.policy_wrapper import PolicyEnforcedPayment
 from nexus.pay.protocol import (
     CreditsPaymentProtocol,
-    PaymentProtocol,
     ProtocolDetectionError,
     ProtocolDetector,
     ProtocolError,
@@ -97,6 +96,7 @@ from nexus.pay.x402 import (
     validate_network,
     validate_wallet_address,
 )
+from nexus.services.protocols.payment import PaymentProtocol
 
 __all__ = [
     # Service

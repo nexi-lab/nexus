@@ -48,9 +48,12 @@ from nexus.services.protocols.hook_engine import (
     HookSpec,
 )
 from nexus.services.protocols.llm import LLMProtocol
+from nexus.services.protocols.mcp import MCPProtocol
 from nexus.services.protocols.mount import MountProtocol, ProgressCallback
 from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol, NamespaceMount
 from nexus.services.protocols.oauth import OAuthProtocol
+from nexus.services.protocols.parse import ParseProtocol
+from nexus.services.protocols.payment import PaymentProtocol
 from nexus.services.protocols.permission import PermissionProtocol
 from nexus.services.protocols.rebac import ReBACBrickProtocol
 from nexus.services.protocols.scheduler import AgentRequest, SchedulerProtocol
@@ -80,6 +83,7 @@ __all__ = [
     "HookSpec",
     "LLMProtocol",
     "LLMProviderProtocol",
+    "MCPProtocol",
     "MetadataStoreProtocol",
     "MountProtocol",
     "NamespaceManagerProtocol",
@@ -96,6 +100,8 @@ __all__ = [
     "PRE_MKDIR",
     "PRE_READ",
     "PRE_WRITE",
+    "ParseProtocol",
+    "PaymentProtocol",
     "PermissionProtocol",
     "ProgressCallback",
     "ReBACBrickProtocol",

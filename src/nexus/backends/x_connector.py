@@ -44,6 +44,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from cachetools import LRUCache
+
 from nexus.backends.backend import Backend
 from nexus.backends.oauth_mixin import OAuthConnectorMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
@@ -146,6 +148,9 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
         cache_ttl: dict[str, int] | None = None,
         cache_dir: str | None = None,
         provider: str = "twitter",
+        *,
+        memory_cache_maxsize: int = 1024,
+        user_id_cache_maxsize: int = 256,
     ):
         """
         Initialize X connector backend.
@@ -156,6 +161,8 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
             cache_ttl: Custom cache TTL per endpoint type
             cache_dir: Cache directory (default: /tmp/nexus-x-cache)
             provider: OAuth provider name (default: "twitter")
+            memory_cache_maxsize: Max entries in the in-memory content LRU cache
+            user_id_cache_maxsize: Max entries in the user ID LRU cache
         """
         self._init_oauth(token_manager_db, user_email=user_email, provider=provider)
         self.cache_ttl = cache_ttl or CACHE_TTL
@@ -165,10 +172,12 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
         os.makedirs(self.cache_dir, exist_ok=True)
 
         # In-memory cache: (cache_key, user_id) -> (content, timestamp)
-        self._memory_cache: dict[tuple[str, str], tuple[bytes, float]] = {}
+        self._memory_cache: LRUCache[tuple[str, str], tuple[bytes, float]] = LRUCache(
+            maxsize=memory_cache_maxsize
+        )
 
         # User ID cache: user_email -> x_user_id
-        self._user_id_cache: dict[str, str] = {}
+        self._user_id_cache: LRUCache[str, str] = LRUCache(maxsize=user_id_cache_maxsize)
 
     @property
     def name(self) -> str:

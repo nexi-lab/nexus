@@ -330,7 +330,7 @@ send_notifications: true
             zone_id = (
                 context.zone_id
                 if context and hasattr(context, "zone_id") and context.zone_id
-                else "default"
+                else "root"
             )
 
             access_token = run_sync(

@@ -1210,6 +1210,8 @@ class TestResources:
 
     async def test_file_resource_success(self, mock_nx_basic):
         """Test accessing file resource successfully."""
+        import inspect
+
         from fastmcp.server.context import Context, _current_context
 
         mock_nx_basic.read.return_value = b"resource content"
@@ -1218,7 +1220,9 @@ class TestResources:
         resource = get_resource_template(server, "nexus://files/")
         token = _current_context.set(Context(fastmcp=server))
         try:
-            result = await resource.fn(path="/data/file.txt")
+            result = resource.fn(path="/data/file.txt")
+            if inspect.iscoroutine(result):
+                result = await result
         finally:
             _current_context.reset(token)
 
@@ -1227,6 +1231,8 @@ class TestResources:
 
     async def test_file_resource_bytes(self, mock_nx_basic):
         """Test file resource with bytes content."""
+        import inspect
+
         from fastmcp.server.context import Context, _current_context
 
         mock_nx_basic.read.return_value = b"binary data"
@@ -1235,7 +1241,9 @@ class TestResources:
         resource = get_resource_template(server, "nexus://files/")
         token = _current_context.set(Context(fastmcp=server))
         try:
-            result = await resource.fn(path="/data/binary.dat")
+            result = resource.fn(path="/data/binary.dat")
+            if inspect.iscoroutine(result):
+                result = await result
         finally:
             _current_context.reset(token)
 
@@ -1243,6 +1251,8 @@ class TestResources:
 
     async def test_file_resource_error(self, mock_nx_basic):
         """Test file resource error handling."""
+        import inspect
+
         from fastmcp.server.context import Context, _current_context
 
         mock_nx_basic.read.side_effect = FileNotFoundError("File not found")
@@ -1251,7 +1261,9 @@ class TestResources:
         resource = get_resource_template(server, "nexus://files/")
         token = _current_context.set(Context(fastmcp=server))
         try:
-            result = await resource.fn(path="/missing.txt")
+            result = resource.fn(path="/missing.txt")
+            if inspect.iscoroutine(result):
+                result = await result
         finally:
             _current_context.reset(token)
 

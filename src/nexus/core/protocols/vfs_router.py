@@ -4,7 +4,7 @@ Defines the contract for virtual path routing to storage backends.
 Existing implementation: ``nexus.core.router.PathRouter`` (sync).
 
 References:
-    - docs/design/KERNEL-ARCHITECTURE.md §3
+    - docs/architecture/KERNEL-ARCHITECTURE.md §3
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 

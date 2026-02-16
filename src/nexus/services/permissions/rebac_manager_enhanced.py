@@ -85,7 +85,7 @@ from nexus.storage.models.permissions import ReBACTupleModel as RT
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
-    from nexus.services.permissions.leopard import LeopardIndex
+    from nexus.services.permissions.cache.leopard import LeopardIndex
     from nexus.services.permissions.rebac_iterator_cache import IteratorCache
     from nexus.services.permissions.tiger_cache import TigerCache, TigerCacheUpdater
 
@@ -157,7 +157,7 @@ class EnhancedReBACManager(ReBACManager):
         # Leopard index for O(1) transitive group lookups (Issue #692)
         self._leopard: LeopardIndex | None = None
         if enable_leopard:
-            from nexus.services.permissions.leopard import LeopardIndex
+            from nexus.services.permissions.cache.leopard import LeopardIndex
 
             self._leopard = LeopardIndex(
                 engine=engine,

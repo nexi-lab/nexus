@@ -299,7 +299,6 @@ class SearchService(SemanticSearchMixin):
         path: str = "/",
         recursive: bool = True,
         details: bool = False,
-        prefix: str | None = None,
         show_parsed: bool = True,  # noqa: ARG002
         context: Any = None,
         limit: int | None = None,
@@ -314,7 +313,6 @@ class SearchService(SemanticSearchMixin):
             path: Directory path to list (default: "/", supports memory paths)
             recursive: If True, list all files recursively (default: True)
             details: If True, return detailed metadata dicts (default: False)
-            prefix: (Deprecated) Path prefix filter for backward compat
             show_parsed: If True, include parsed virtual views (default: True)
             context: Operation context for permission filtering
             limit: Max items per page (enables pagination mode)
@@ -364,64 +362,53 @@ class SearchService(SemanticSearchMixin):
         # Issue #904: Extract zone_id for PREWHERE-style DB filtering
         list_zone_id, subject_type, subject_id = self._extract_zone_info(context)
 
-        # Handle backward compatibility with old 'prefix' parameter
         import time as _time
 
         _list_start = _time.time()
         _preapproved_dirs: set[str] = set()
         _accessible_int_ids: set[int] | None = None
 
-        if prefix is not None:
-            if prefix:
-                prefix = self._validate_path(prefix)
-            _meta_start = _time.time()
-            all_files = self.metadata.list(prefix, zone_id=list_zone_id)
-            logger.info(
-                f"[LIST-TIMING] metadata.list(): {(_time.time() - _meta_start) * 1000:.1f}ms, {len(all_files)} files"
-            )
-            list_prefix = prefix or ""
-        else:
-            if path and path != "/":
-                path = self._validate_path(path)
-            if path and not path.endswith("/"):
-                path = path + "/"
-            list_prefix = path if path != "/" else ""
+        if path and path != "/":
+            path = self._validate_path(path)
+        if path and not path.endswith("/"):
+            path = path + "/"
+        list_prefix = path if path != "/" else ""
 
-            # OPTIMIZATION: For non-recursive, try sparse directory index + Tiger bitmap
-            _use_fast_path = False
-            _revision_before: int | None = None
-            _rebac_manager = (
-                getattr(self._permission_enforcer, "rebac_manager", None)
-                if self._permission_enforcer
-                else None
+        # OPTIMIZATION: For non-recursive, try sparse directory index + Tiger bitmap
+        _use_fast_path = False
+        _revision_before: int | None = None
+        _rebac_manager = (
+            getattr(self._permission_enforcer, "rebac_manager", None)
+            if self._permission_enforcer
+            else None
+        )
+
+        logger.info(
+            f"[LIST-DEBUG] START path={path}, recursive={recursive}, zone={list_zone_id}, "
+            f"details={details}, has_list_dir_entries={hasattr(self.metadata, 'list_directory_entries')}, "
+            f"has_context={context is not None}"
+        )
+        if (
+            not recursive
+            and not details
+            and hasattr(self.metadata, "list_directory_entries")
+            and context
+        ):
+            all_files, _preapproved_dirs, _use_fast_path, _revision_before = self._list_fast_path(
+                path, list_zone_id, context, _rebac_manager
             )
 
-            logger.info(
-                f"[LIST-DEBUG] START path={path}, recursive={recursive}, zone={list_zone_id}, "
-                f"details={details}, has_list_dir_entries={hasattr(self.metadata, 'list_directory_entries')}, "
-                f"has_context={context is not None}"
+        if not _use_fast_path:
+            all_files, _accessible_int_ids = self._list_slow_path(
+                list_prefix,
+                list_zone_id,
+                subject_type,
+                subject_id,
+                _revision_before,
+                _rebac_manager,
             )
-            if (
-                not recursive
-                and not details
-                and hasattr(self.metadata, "list_directory_entries")
-                and context
-            ):
-                all_files, _preapproved_dirs, _use_fast_path, _revision_before = (
-                    self._list_fast_path(path, list_zone_id, context, _rebac_manager)
-                )
-
-            if not _use_fast_path:
-                all_files, _accessible_int_ids = self._list_slow_path(
-                    list_prefix,
-                    list_zone_id,
-                    subject_type,
-                    subject_id,
-                    _revision_before,
-                    _rebac_manager,
-                )
-                sample_paths = [m.path for m in all_files[:5]]
-                logger.info(f"[LIST-DEBUG] FALLBACK all_files sample: {sample_paths}")
+            sample_paths = [m.path for m in all_files[:5]]
+            logger.info(f"[LIST-DEBUG] FALLBACK all_files sample: {sample_paths}")
 
         # Issue #904: Fetch cross-zone shared files
         if list_zone_id and subject_type and subject_id:
@@ -453,7 +440,7 @@ class SearchService(SemanticSearchMixin):
         all_files = [m for m in all_files if not m.path.startswith(SYSTEM_PATH_PREFIX)]
 
         # Apply recursive filter
-        if prefix is not None or recursive:
+        if recursive:
             results = all_files
         else:
             results = []
@@ -1628,7 +1615,7 @@ class SearchService(SemanticSearchMixin):
             file_pattern: Optional glob pattern to filter files (e.g., "*.py")
             ignore_case: If True, case-insensitive search
             max_results: Maximum number of results (default: 100)
-            search_mode: Deprecated, kept for backward compat
+            search_mode: Unused (reserved for future search mode selection)
             context: Operation context for permission filtering
         """
         if path and path != "/":

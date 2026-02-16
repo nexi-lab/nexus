@@ -1,10 +1,10 @@
 """Unit tests for batch operations in connector backends.
 
 Tests cover new batch optimization methods:
-- _batch_get_versions() for GCS and S3
+- batch_get_versions() for GCS and S3
 - _bulk_download_blobs() for parallel downloads
-- _batch_write_to_cache() for bulk cache writes
-- _batch_read_from_backend() integration
+- batch_write_to_cache() for bulk cache writes
+- batch_read_from_backend() integration
 """
 
 from pathlib import Path
@@ -84,7 +84,7 @@ class MockBlobConnector(BaseBlobStorageConnector, CacheConnectorMixin):
 
 
 class TestBatchGetVersions:
-    """Test _batch_get_versions() method."""
+    """Test batch_get_versions() method."""
 
     def test_batch_get_versions_default_fallback(self, tmp_path: Path):
         """Test default fallback implementation calls get_version() sequentially."""
@@ -106,7 +106,7 @@ class TestBatchGetVersions:
         }
 
         # Call batch method
-        result = backend._batch_get_versions(["file1.txt", "file2.txt", "file3.txt"])
+        result = backend.batch_get_versions(["file1.txt", "file2.txt", "file3.txt"])
 
         # Verify all versions returned
         assert result == {"file1.txt": "v1", "file2.txt": "v2", "file3.txt": "v3"}
@@ -131,7 +131,7 @@ class TestBatchGetVersions:
         }
 
         # Call batch method
-        result = backend._batch_get_versions(["file1.txt", "file2.txt", "file3.txt"])
+        result = backend.batch_get_versions(["file1.txt", "file2.txt", "file3.txt"])
 
         # Should return None for missing files
         assert result == {"file1.txt": "v1", "file2.txt": None, "file3.txt": "v3"}
@@ -151,7 +151,7 @@ class TestBatchGetVersions:
         backend = MockBlobConnector(SessionLocal)
 
         # Call with empty list
-        result = backend._batch_get_versions([])
+        result = backend.batch_get_versions([])
 
         # Should return empty dict
         assert result == {}
@@ -250,7 +250,7 @@ class TestBulkDownloadBlobs:
 
 
 class TestBatchWriteToCache:
-    """Test _batch_write_to_cache() method."""
+    """Test batch_write_to_cache() method."""
 
     def test_batch_write_multiple_entries(self, tmp_path: Path):
         """Test batch writing multiple cache entries in single transaction."""
@@ -300,7 +300,7 @@ class TestBatchWriteToCache:
             }
 
             # Call batch write
-            result = backend._batch_write_to_cache(entries)
+            result = backend.batch_write_to_cache(entries)
 
             # Verify all entries written (cache_id is "" in disk-only mode)
             assert len(result) == 3
@@ -321,14 +321,14 @@ class TestBatchWriteToCache:
         backend = MockBlobConnector(SessionLocal)
 
         # Call with empty list
-        result = backend._batch_write_to_cache([])
+        result = backend.batch_write_to_cache([])
 
         # Should return empty list
         assert result == []
 
 
 class TestBatchReadFromBackend:
-    """Test _batch_read_from_backend() integration."""
+    """Test batch_read_from_backend() integration."""
 
     def test_batch_read_uses_bulk_download(self, tmp_path: Path):
         """Test that batch read uses _bulk_download_blobs() for blob connectors."""
@@ -354,10 +354,10 @@ class TestBatchReadFromBackend:
             backend, "_bulk_download_blobs", wraps=backend._bulk_download_blobs
         ) as mock_bulk:
             # Call batch read
-            result = backend._batch_read_from_backend(["file1.txt", "file2.txt", "file3.txt"])
+            result = backend.batch_read_from_backend(["file1.txt", "file2.txt", "file3.txt"])
 
             # Verify bulk download was called
-            assert mock_bulk.called, "_batch_read_from_backend should use _bulk_download_blobs"
+            assert mock_bulk.called, "batch_read_from_backend should use _bulk_download_blobs"
 
             # Verify all files read
             assert len(result) == 3
@@ -388,7 +388,7 @@ class TestBatchReadFromBackend:
 
         # Call batch read
         paths = [f"file{i}.txt" for i in range(50)]
-        result = backend._batch_read_from_backend(paths)
+        result = backend.batch_read_from_backend(paths)
 
         # Verify all files read
         assert len(result) == 50

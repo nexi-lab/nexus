@@ -632,7 +632,7 @@ class CacheWarmer:
             logger.info(f"[WARMUP] Starting permission warmup: user={user}")
 
             # Get rebac manager
-            rebac_manager = getattr(self._nexus, "_rebac_manager", None)
+            rebac_manager = getattr(self._nexus, "rebac_manager", None)
             if not rebac_manager:
                 logger.warning("[WARMUP] No ReBACManager, skipping permission warmup")
                 return self._current_stats

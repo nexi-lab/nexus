@@ -443,7 +443,7 @@ class MountService:
                         )
                         has_permission = False
                 else:
-                    # No context or no ReBAC - include all mounts (backward compatibility)
+                    # No context or no ReBAC configured — include all mounts
                     logger.info(
                         f"[LIST_MOUNTS] No context or no rebac_check - allowing {mount_point}"
                     )

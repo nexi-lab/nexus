@@ -67,8 +67,8 @@ class TestCacheMixinBulkOperations:
             "file3.txt": "v3",
         }
 
-        # Mock _read_bulk_from_cache to track if it was called
-        with patch.object(backend, "_read_bulk_from_cache") as mock_bulk:
+        # Mock read_bulk_from_cache to track if it was called
+        with patch.object(backend, "read_bulk_from_cache") as mock_bulk:
             mock_bulk.return_value = {}  # No cached entries
 
             # Run sync
@@ -124,7 +124,7 @@ class TestCacheMixinBulkOperations:
         }
 
         with (
-            patch.object(backend, "_read_bulk_from_cache") as mock_bulk,
+            patch.object(backend, "read_bulk_from_cache") as mock_bulk,
             patch.object(backend, "get_version") as mock_version,
         ):
             mock_bulk.return_value = fresh_cache
@@ -180,7 +180,7 @@ class TestCacheMixinBulkOperations:
         }
 
         with (
-            patch.object(backend, "_read_bulk_from_cache") as mock_bulk,
+            patch.object(backend, "read_bulk_from_cache") as mock_bulk,
             patch.object(backend, "get_version") as mock_version,
         ):
             mock_bulk.return_value = stale_cache
@@ -218,7 +218,7 @@ class TestCacheMixinBulkOperations:
             patch.object(file_cache, "read_meta_bulk", return_value={}) as mock_bulk_meta,
         ):
             paths = [f"/test/file{i}.txt" for i in range(100)]
-            backend._read_bulk_from_cache(paths)
+            backend.read_bulk_from_cache(paths)
 
             # Verify bulk disk read was called (not 100 individual calls)
             assert mock_bulk_meta.call_count == 1, (

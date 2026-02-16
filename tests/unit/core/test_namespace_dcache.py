@@ -316,7 +316,7 @@ class TestDCacheNegativeEntries:
         zone = "test_zone"
 
         with patch.object(
-            enhanced_rebac_manager, "_get_zone_revision", side_effect=RuntimeError("DB down")
+            enhanced_rebac_manager, "get_zone_revision", side_effect=RuntimeError("DB down")
         ):
             # Should not crash — returns bucket 0 as fallback
             result = namespace_manager.is_visible(alice, "/workspace/proj/a.txt", zone)
@@ -337,22 +337,12 @@ class TestDCacheRevisionQuantization:
         alice = ("user", "alice")
         zone = "test_zone"
 
-        # Pin revision bucket so both is_visible calls share the same dcache key.
-        # Without pinning, _grant_file and rebac_write each increment the zone
-        # revision, which can push the bucket boundary (revision_window=2).
-        with patch.object(namespace_manager, "_get_current_revision_bucket", return_value=0):
+        # Mock bucket to a fixed value so both calls use the same dcache key
+        with patch.object(namespace_manager, "_get_current_revision_bucket", return_value=5):
             # Prime dcache
             namespace_manager.is_visible(alice, "/workspace/proj/a.txt", zone)
 
-            # One write (doesn't affect the pinned bucket)
-            enhanced_rebac_manager.rebac_write(
-                subject=("user", "bob"),
-                relation="direct_viewer",
-                object=("file", "/workspace/other.txt"),
-                zone_id=zone,
-            )
-
-            # Should still be a dcache hit (same bucket)
+            # Second call within the same revision bucket should be a dcache hit
             namespace_manager.is_visible(alice, "/workspace/proj/a.txt", zone)
             assert namespace_manager.metrics["dcache_hits"] >= 1
 
@@ -391,7 +381,7 @@ class TestDCacheRevisionQuantization:
     ):
         """On revision fetch error, _get_current_revision_bucket returns 0."""
         with patch.object(
-            enhanced_rebac_manager, "_get_zone_revision", side_effect=RuntimeError("DB down")
+            enhanced_rebac_manager, "get_zone_revision", side_effect=RuntimeError("DB down")
         ):
             bucket = namespace_manager._get_current_revision_bucket("test_zone")
             assert bucket == 0

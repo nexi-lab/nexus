@@ -6,7 +6,6 @@ Provides bounded, reusable strategies for:
   - Agent requests (Scheduler)
   - Operation contexts (Permissions)
   - Agent info with generation counters (Agent Registry)
-  - Kernel events (EventLog)
   - Hook specs and contexts (HookEngine)
 
 All strategies are explicitly bounded to prevent pathological inputs:
@@ -22,7 +21,6 @@ from hypothesis import strategies as st
 from nexus.core.permissions import OperationContext
 from nexus.core.read_set import AccessType, ReadSetEntry, ResourceType
 from nexus.services.protocols.agent_registry import AgentInfo
-from nexus.services.protocols.event_log import KernelEvent
 from nexus.services.protocols.hook_engine import HookContext, HookSpec
 from nexus.services.protocols.scheduler import AgentRequest
 
@@ -195,26 +193,6 @@ def agent_info(
         name=draw(st.one_of(st.none(), _IDENTIFIER)),
         state=draw(st.sampled_from(["CONNECTED", "DISCONNECTED", "IDLE", "BUSY"])),
         generation=draw(st.integers(min_value=0, max_value=1_000_000)),
-    )
-
-
-# ---------------------------------------------------------------------------
-# EventLog strategies
-# ---------------------------------------------------------------------------
-
-
-@st.composite
-def kernel_event(draw: st.DrawFn) -> KernelEvent:
-    """Generate a valid KernelEvent."""
-    return KernelEvent(
-        type=draw(
-            st.sampled_from(["file_write", "file_read", "agent_connected", "agent_disconnected"])
-        ),
-        source=draw(st.sampled_from(["vfs_router", "scheduler", "hook_engine", "agent_registry"])),
-        zone_id=draw(st.one_of(st.none(), _IDENTIFIER)),
-        timestamp=draw(st.text(min_size=10, max_size=30)),
-        event_id=draw(_IDENTIFIER),
-        payload=draw(st.fixed_dictionaries({})),
     )
 
 

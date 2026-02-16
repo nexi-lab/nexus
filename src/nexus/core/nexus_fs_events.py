@@ -8,12 +8,12 @@ Layer 1 (Same-box, Block 1):
 - In-memory advisory locks
 
 Layer 2 (Distributed, Block 2):
-- Uses Redis Pub/Sub for events via RedisEventBus
+- Uses Redis Pub/Sub for events via GlobalEventBus
 - Uses Redis SET NX EX for locks via RaftLockManager
 - Works across multiple Nexus nodes
 
 Selection Logic:
-1. If RedisEventBus/RaftLockManager is available → use distributed (Layer 2)
+1. If GlobalEventBus/RaftLockManager is available → use distributed (Layer 2)
 2. Else if PassthroughBackend → use local (Layer 1)
 3. Else → raise NotImplementedError
 """

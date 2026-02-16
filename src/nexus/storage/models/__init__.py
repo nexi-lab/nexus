@@ -103,6 +103,7 @@ from nexus.storage.models.payments import PaymentTransactionMeta as PaymentTrans
 from nexus.storage.models.payments import UsageEvent as UsageEvent
 
 # Domain: Permissions (ReBAC + Tiger Cache)
+from nexus.storage.models.permissions import AdminBypassAuditModel as AdminBypassAuditModel
 from nexus.storage.models.permissions import (
     FileSystemVersionSequenceModel as FileSystemVersionSequenceModel,
 )
@@ -147,6 +148,7 @@ from nexus.storage.models.spending_policy import SpendingPolicyModel as Spending
 # Domain: Sync and Conflict Resolution
 from nexus.storage.models.sync import BackendChangeLogModel as BackendChangeLogModel
 from nexus.storage.models.sync import ConflictLogModel as ConflictLogModel
+from nexus.storage.models.sync import PendingOperationModel as PendingOperationModel
 from nexus.storage.models.sync import SyncBacklogModel as SyncBacklogModel
 from nexus.storage.models.sync import SyncJobModel as SyncJobModel
 from nexus.storage.models.sync import PendingOperationModel as PendingOperationModel

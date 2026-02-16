@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
-from nexus.core.rebac import CROSS_ZONE_ALLOWED_RELATIONS, Entity, NamespaceConfig
+from nexus.core.rebac import Entity, NamespaceConfig
 from nexus.services.permissions.batch.bulk_checker import BulkPermissionChecker
 from nexus.services.permissions.cache.tiger.facade import TigerFacade
 from nexus.services.permissions.consistency.revision import (
@@ -45,6 +45,7 @@ from nexus.services.permissions.consistency.revision import (
     increment_version_token,
 )
 from nexus.services.permissions.consistency.zone_manager import ZoneManager
+from nexus.services.permissions.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 from nexus.services.permissions.directory.expander import DirectoryExpander
 from nexus.services.permissions.graph.bulk_evaluator import (
     check_direct_relation as _check_direct_relation_in_graph,

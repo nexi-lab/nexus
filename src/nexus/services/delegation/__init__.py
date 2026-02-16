@@ -32,10 +32,10 @@ from nexus.services.delegation.errors import DelegationError as DelegationError
 from nexus.services.delegation.errors import DelegationNotFoundError as DelegationNotFoundError
 from nexus.services.delegation.errors import DepthExceededError as DepthExceededError
 from nexus.services.delegation.errors import EscalationError as EscalationError
-from nexus.services.delegation.errors import InvalidPrefixError as InvalidPrefixError
 from nexus.services.delegation.errors import (
     InvalidDelegationModeError as InvalidDelegationModeError,
 )
+from nexus.services.delegation.errors import InvalidPrefixError as InvalidPrefixError
 from nexus.services.delegation.errors import TooManyGrantsError as TooManyGrantsError
 from nexus.services.delegation.models import DelegationMode as DelegationMode
 from nexus.services.delegation.models import DelegationRecord as DelegationRecord

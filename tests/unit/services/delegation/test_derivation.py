@@ -21,7 +21,6 @@ from nexus.services.delegation.errors import (
 )
 from nexus.services.delegation.models import DelegationMode
 
-
 # ---------------------------------------------------------------------------
 # validate_scope_prefix
 # ---------------------------------------------------------------------------

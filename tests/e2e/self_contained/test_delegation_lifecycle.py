@@ -17,7 +17,6 @@ from nexus.services.delegation.errors import (
     DelegationChainError,
     DelegationError,
     DelegationNotFoundError,
-    DepthExceededError,
     EscalationError,
     TooManyGrantsError,
 )
@@ -401,7 +400,7 @@ class TestDelegationIntent:
     def test_intent_stored(self, delegation_service, entity_registry, rebac_manager):
         _register_coordinator(entity_registry, rebac_manager)
 
-        result = delegation_service.delegate(
+        delegation_service.delegate(
             coordinator_agent_id="coordinator_1",
             coordinator_owner_id="alice",
             worker_id="worker_intent",

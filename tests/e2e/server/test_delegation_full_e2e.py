@@ -368,7 +368,7 @@ class TestFullDelegationLifecycle:
         _setup_coordinator(entity_registry, rebac_manager)
 
         # A → B with can_sub_delegate=True
-        result_b = delegation_service.delegate(
+        delegation_service.delegate(
             coordinator_agent_id="coordinator_agent",
             coordinator_owner_id="alice",
             worker_id="worker_sub_b",

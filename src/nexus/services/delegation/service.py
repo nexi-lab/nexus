@@ -26,9 +26,10 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from collections.abc import Generator
 from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING, Any, Generator
+from typing import TYPE_CHECKING, Any
 
 from nexus.services.delegation.derivation import MAX_DELEGATABLE_GRANTS, GrantSpec, derive_grants
 from nexus.services.delegation.errors import (

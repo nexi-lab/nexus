@@ -19,7 +19,6 @@ from nexus.services.delegation.derivation import (
 from nexus.services.delegation.errors import (
     EscalationError,
     InvalidPrefixError,
-    TooManyGrantsError,
 )
 from nexus.services.delegation.models import DelegationMode
 

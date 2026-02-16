@@ -176,13 +176,14 @@ class VersionManager:
         return versions[-1] if versions else self.get_current_version()
 
     def _get_session(self) -> Any:
-        """Return a new session from the injected factory or legacy shim."""
+        """Return a new session from the injected factory or create one from config."""
         if self._session_factory is not None:
             return self._session_factory()
-        # Fallback: legacy module (emits deprecation warning)
-        from nexus.storage.database import get_session_factory
+        # Fallback: create a RecordStore from config
+        from nexus.storage.record_store import SQLAlchemyRecordStore
 
-        return get_session_factory(db_path=self.config.db_path)()
+        store = SQLAlchemyRecordStore(db_path=self.config.db_path)
+        return store.session_factory()
 
     def get_migration_history(self) -> list[MigrationHistoryEntry]:
         """Get migration history from database.

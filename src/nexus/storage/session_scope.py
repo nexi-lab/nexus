@@ -1,8 +1,8 @@
-"""Transactional session scope context manager (Issue #1254).
+"""Transactional session-scope context manager (Issue #1254).
 
 Replaces repeated try/commit/rollback/finally/close boilerplate with a single
-context manager that also translates SQLAlchemy errors to Nexus DatabaseError
-hierarchy at the storage boundary.
+context manager that also translates SQLAlchemy errors to the Nexus
+DatabaseError hierarchy at the storage boundary.
 """
 
 from __future__ import annotations

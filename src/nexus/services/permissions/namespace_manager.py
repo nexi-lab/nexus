@@ -215,6 +215,11 @@ class NamespaceManager:
         self._dcache_hits = 0
         self._dcache_misses = 0
         self._dcache_negative_hits = 0
+        # Latency tracking (nanoseconds) — Issue #1244
+        self._dcache_hit_total_ns = 0
+        self._dcache_miss_total_ns = 0
+        self._dcache_hit_count = 0
+        self._dcache_miss_count = 0
 
     def get_mount_table(
         self,
@@ -257,6 +262,7 @@ class NamespaceManager:
         Returns:
             True if the path is under a mounted prefix, False if invisible.
         """
+        start_ns = time.perf_counter_ns()
         dcache_key = self._dcache_key(subject, path, zone_id)
 
         # Layer 1: dcache lookup (O(1))
@@ -264,12 +270,16 @@ class NamespaceManager:
             positive = self._dcache_positive.get(dcache_key)
             if positive is not None:
                 self._dcache_hits += 1
+                self._dcache_hit_total_ns += time.perf_counter_ns() - start_ns
+                self._dcache_hit_count += 1
                 return True
 
             negative = self._dcache_negative.get(dcache_key)
             if negative is not None:
                 self._dcache_hits += 1
                 self._dcache_negative_hits += 1
+                self._dcache_hit_total_ns += time.perf_counter_ns() - start_ns
+                self._dcache_hit_count += 1
                 return False
 
         self._dcache_misses += 1
@@ -285,6 +295,10 @@ class NamespaceManager:
             else:
                 self._dcache_negative[dcache_key] = False
 
+        elapsed_ns = time.perf_counter_ns() - start_ns
+        with self._dcache_lock:
+            self._dcache_miss_total_ns += elapsed_ns
+            self._dcache_miss_count += 1
         return result
 
     def filter_visible(
@@ -396,10 +410,10 @@ class NamespaceManager:
                     self._dcache_negative.pop(k, None)
 
     def invalidate(self, subject: tuple[str, str]) -> None:
-        """Explicitly invalidate a subject's cached mount table and dcache entries.
+        """Explicitly invalidate a subject's cached mount table, dcache, and L3 entries.
 
-        Typically not needed — zone revision quantization handles invalidation
-        automatically. Use this for immediate invalidation when needed.
+        Clears all three cache layers to ensure immediate consistency after
+        grant/revoke events (Issue #1244 event-driven invalidation).
 
         Args:
             subject: (subject_type, subject_id) tuple to invalidate
@@ -407,15 +421,35 @@ class NamespaceManager:
         with self._lock:
             self._cache.pop(subject, None)
         self.invalidate_dcache(subject)
+        # L3: Clear persistent view to prevent stale L3 hit on next lookup
+        if self._persistent_store is not None:
+            try:
+                self._persistent_store.delete_views(subject[0], subject[1])
+            except Exception:
+                logger.warning(
+                    "[NAMESPACE] Failed to invalidate L3 persistent view for %s:%s",
+                    subject[0],
+                    subject[1],
+                    exc_info=True,
+                )
 
     def invalidate_all(self) -> None:
-        """Clear the entire mount table cache and dcache.
+        """Clear the entire mount table cache, dcache, and L3 entries.
 
         Use sparingly — typically zone revision quantization is sufficient.
         """
         with self._lock:
             self._cache.clear()
         self.invalidate_dcache()
+        # L3: Clear all persistent views
+        if self._persistent_store is not None:
+            try:
+                self._persistent_store.delete_all_views()
+            except Exception:
+                logger.warning(
+                    "[NAMESPACE] Failed to clear L3 persistent views",
+                    exc_info=True,
+                )
 
     def get_grants_hash(
         self,
@@ -448,6 +482,17 @@ class NamespaceManager:
     @property
     def metrics(self) -> dict[str, Any]:
         """Return cache metrics for monitoring."""
+        # Compute average latencies (nanoseconds → microseconds for readability)
+        avg_hit_us = (
+            (self._dcache_hit_total_ns / self._dcache_hit_count / 1000)
+            if self._dcache_hit_count > 0
+            else 0.0
+        )
+        avg_miss_us = (
+            (self._dcache_miss_total_ns / self._dcache_miss_count / 1000)
+            if self._dcache_miss_count > 0
+            else 0.0
+        )
         return {
             "mount_table_hits": self._hits,
             "mount_table_misses": self._misses,
@@ -462,6 +507,9 @@ class NamespaceManager:
             "dcache_negative_size": len(self._dcache_negative),
             "dcache_positive_maxsize": self._dcache_positive.maxsize,
             "dcache_negative_maxsize": self._dcache_negative.maxsize,
+            # Latency metrics (Issue #1244) — microseconds
+            "avg_dcache_hit_us": round(avg_hit_us, 2),
+            "avg_dcache_miss_us": round(avg_miss_us, 2),
             # Backward compatibility aliases
             "hits": self._hits,
             "misses": self._misses,

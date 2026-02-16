@@ -320,9 +320,14 @@ async def lifespan(_app: FastAPI) -> Any:
                             rebac_manager=sync_rebac,
                             record_store=ns_record_store,
                         )
+                        # Wire event-driven invalidation: rebac_write → namespace cache (Issue #1244)
+                        sync_rebac.register_namespace_invalidator(
+                            "namespace_dcache",
+                            lambda st, sid, _zid: namespace_manager.invalidate((st, sid)),
+                        )
                         logger.info(
                             "[NAMESPACE] NamespaceManager initialized for AsyncPermissionEnforcer "
-                            "(using sync rebac_manager, L3=%s)",
+                            "(using sync rebac_manager, L3=%s, event-driven invalidation=enabled)",
                             "enabled" if ns_record_store else "disabled",
                         )
 
@@ -899,6 +904,11 @@ async def lifespan(_app: FastAPI) -> Any:
                         namespace_manager = create_namespace_manager(
                             rebac_manager=sync_rebac,
                             record_store=ns_record_store,
+                        )
+                        # Wire event-driven invalidation for sandbox namespace (Issue #1244)
+                        sync_rebac.register_namespace_invalidator(
+                            "sandbox_namespace_dcache",
+                            lambda st, sid, _zid: namespace_manager.invalidate((st, sid)),  # type: ignore[union-attr]
                         )
                     except Exception as e:
                         logger.info(

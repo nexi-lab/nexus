@@ -772,3 +772,41 @@ class TestInvalidateDcache:
         # Mount table cache should be empty for this subject
         with namespace_manager._lock:
             assert namespace_manager._cache.get(alice) is None
+
+    def test_invalidate_clears_l3_persistent_store(self, enhanced_rebac_manager, namespace_manager):
+        """invalidate(subject) clears L3 persistent view store (Issue #1244 fix)."""
+        from unittest.mock import MagicMock
+
+        zone = "test_zone"
+        _grant_file(enhanced_rebac_manager, ("user", "alice"), "/workspace/proj/a.txt")
+        alice = ("user", "alice")
+
+        # Populate cache so L3 gets written (if present)
+        namespace_manager.is_visible(alice, "/workspace/proj/a.txt", zone)
+
+        # Attach a mock L3 store
+        mock_store = MagicMock()
+        mock_store.delete_views = MagicMock(return_value=1)
+        namespace_manager._persistent_store = mock_store
+
+        # Invalidate should call delete_views on L3
+        namespace_manager.invalidate(alice)
+
+        mock_store.delete_views.assert_called_once_with("user", "alice")
+
+    def test_invalidate_l3_exception_does_not_propagate(
+        self, enhanced_rebac_manager, namespace_manager
+    ):
+        """L3 delete_views() failure during invalidation is logged, not raised."""
+        from unittest.mock import MagicMock
+
+        alice = ("user", "alice")
+
+        mock_store = MagicMock()
+        mock_store.delete_views = MagicMock(side_effect=RuntimeError("L3 down"))
+        namespace_manager._persistent_store = mock_store
+
+        # Should not raise
+        namespace_manager.invalidate(alice)
+
+        mock_store.delete_views.assert_called_once_with("user", "alice")

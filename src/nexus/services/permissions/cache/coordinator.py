@@ -10,10 +10,11 @@ all affected caches are properly invalidated in the correct order:
 3. Boundary cache (permission inheritance boundaries)
 4. Directory visibility cache (dir listing optimization)
 5. Iterator cache (pagination cursors)
-6. Leopard cache (transitive group closure) - via callbacks
-7. Tiger cache (materialized bitmaps) - via callbacks
+6. Namespace cache — dcache + mount table (Issue #1244)
+7. Leopard cache (transitive group closure) - via callbacks
+8. Tiger cache (materialized bitmaps) - via callbacks
 
-Related: Issue #1459 (decomposition), Issue #1077, Issue #922, Issue #919
+Related: Issue #1459 (decomposition), Issue #1244, Issue #1077, Issue #922, Issue #919
 """
 
 from __future__ import annotations
@@ -93,6 +94,9 @@ class CacheCoordinator:
             tuple[str, Callable[[str, str, str, str, str], None]]
         ] = []
         self._visibility_invalidators: list[tuple[str, Callable[[str, str], None]]] = []
+        # Namespace cache invalidators: callback(subject_type, subject_id, zone_id)
+        # Used by NamespaceManager to invalidate dcache + mount table on grant/revoke (Issue #1244)
+        self._namespace_invalidators: list[tuple[str, Callable[[str, str, str], None]]] = []
 
         # Metrics
         self._invalidation_count = 0
@@ -100,6 +104,7 @@ class CacheCoordinator:
         self._l1_invalidations = 0
         self._boundary_invalidations = 0
         self._visibility_invalidations = 0
+        self._namespace_invalidations = 0
         self._iterator_invalidations = 0
 
     # ------------------------------------------------------------------
@@ -174,6 +179,33 @@ class CacheCoordinator:
                 return True
         return False
 
+    def register_namespace_invalidator(
+        self,
+        callback_id: str,
+        callback: Callable[[str, str, str], None],
+    ) -> None:
+        """Register a namespace cache invalidation callback (Issue #1244).
+
+        Called on every rebac_write/rebac_delete to immediately invalidate the
+        affected subject's dcache + mount table entries.
+
+        Args:
+            callback_id: Unique identifier for this callback
+            callback: Function(subject_type, subject_id, zone_id)
+        """
+        for cid, _ in self._namespace_invalidators:
+            if cid == callback_id:
+                return  # Already registered
+        self._namespace_invalidators.append((callback_id, callback))
+
+    def unregister_namespace_invalidator(self, callback_id: str) -> bool:
+        """Unregister a namespace cache invalidation callback."""
+        for i, (cid, _) in enumerate(self._namespace_invalidators):
+            if cid == callback_id:
+                self._namespace_invalidators.pop(i)
+                return True
+        return False
+
     # ------------------------------------------------------------------
     # Unified invalidation
     # ------------------------------------------------------------------
@@ -214,7 +246,10 @@ class CacheCoordinator:
         # 4. Directory visibility cache (external callbacks)
         self._notify_visibility_invalidators(zone_id, object_type, object_id)
 
-        # 5. Iterator cache (zone-level)
+        # 5. Namespace cache — dcache + mount table (Issue #1244)
+        self.notify_namespace_invalidators(zone_id, subject_type, subject_id)
+
+        # 6. Iterator cache (zone-level)
         self._invalidate_iterator(zone_id)
 
     def invalidate_zone_graph(self, zone_id: str | None = None) -> None:
@@ -347,6 +382,39 @@ class CacheCoordinator:
                     object_id,
                 )
 
+    def notify_namespace_invalidators(
+        self,
+        zone_id: str,
+        subject_type: str,
+        subject_id: str,
+    ) -> None:
+        """Notify namespace cache invalidators (Issue #1244).
+
+        Public entry point for namespace cache invalidation. When a permission
+        tuple changes for a subject, invalidate that subject's dcache + mount
+        table so visibility reflects the new grants immediately.
+
+        Args:
+            zone_id: Zone where the tuple was written
+            subject_type: Type of the subject whose cache should be invalidated
+            subject_id: ID of the subject whose cache should be invalidated
+        """
+        if not self._namespace_invalidators:
+            return
+
+        self._namespace_invalidations += 1
+
+        for callback_id, callback in self._namespace_invalidators:
+            try:
+                callback(subject_type, subject_id, zone_id)
+            except Exception:
+                logger.debug(
+                    "[CacheCoordinator] Namespace invalidator %s failed for %s:%s",
+                    callback_id,
+                    subject_type,
+                    subject_id,
+                )
+
     def _invalidate_iterator(self, zone_id: str) -> None:
         """Invalidate iterator cache for a zone."""
         if self._iterator_cache is None:
@@ -367,9 +435,11 @@ class CacheCoordinator:
             "l1_invalidations": self._l1_invalidations,
             "boundary_invalidations": self._boundary_invalidations,
             "visibility_invalidations": self._visibility_invalidations,
+            "namespace_invalidations": self._namespace_invalidations,
             "iterator_invalidations": self._iterator_invalidations,
             "registered_boundary_invalidators": len(self._boundary_invalidators),
             "registered_visibility_invalidators": len(self._visibility_invalidators),
+            "registered_namespace_invalidators": len(self._namespace_invalidators),
         }
 
     def reset_stats(self) -> None:
@@ -379,4 +449,5 @@ class CacheCoordinator:
         self._l1_invalidations = 0
         self._boundary_invalidations = 0
         self._visibility_invalidations = 0
+        self._namespace_invalidations = 0
         self._iterator_invalidations = 0

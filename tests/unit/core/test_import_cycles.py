@@ -175,9 +175,8 @@ class TestImportCycles:
             cycle_strs = []
             for cycle in cycles[:5]:  # Show at most 5 cycles
                 cycle_strs.append(" -> ".join(cycle))
-            msg = (
-                f"Found {len(cycles)} runtime import cycle(s):\n"
-                + "\n".join(f"  {i+1}. {c}" for i, c in enumerate(cycle_strs))
+            msg = f"Found {len(cycles)} runtime import cycle(s):\n" + "\n".join(
+                f"  {i + 1}. {c}" for i, c in enumerate(cycle_strs)
             )
             pytest.fail(msg)
 

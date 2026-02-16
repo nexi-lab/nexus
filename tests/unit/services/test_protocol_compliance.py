@@ -299,7 +299,11 @@ def test_protocol_file_no_heavy_runtime_imports(name: str, rel_path: str) -> Non
                 continue
 
         if isinstance(node, ast.ImportFrom):
-            if node.module and node.module.startswith("nexus") and node.module not in _ALLOWED_LEAF_MODULES:
+            if (
+                node.module
+                and node.module.startswith("nexus")
+                and node.module not in _ALLOWED_LEAF_MODULES
+            ):
                 names = ", ".join(a.name for a in node.names)
                 violations.append(f"from {node.module} import {names}")
         elif isinstance(node, ast.Import):

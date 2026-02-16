@@ -117,7 +117,9 @@ class TestTypesIsLeafModule:
                 for alias in node.names:
                     if alias.name.startswith("nexus"):
                         runtime_nexus_imports.append(f"import {alias.name}")
-            elif isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("nexus"):
+            elif (
+                isinstance(node, ast.ImportFrom) and node.module and node.module.startswith("nexus")
+            ):
                 names = ", ".join(a.name for a in node.names)
                 runtime_nexus_imports.append(f"from {node.module} import {names}")
 

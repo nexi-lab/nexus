@@ -564,9 +564,7 @@ class TestImportStructure:
                     if alias.name.startswith("nexus"):
                         runtime_nexus_imports.append(alias.name)
 
-        assert runtime_nexus_imports == [], (
-            f"core/types.py must be leaf: {runtime_nexus_imports}"
-        )
+        assert runtime_nexus_imports == [], f"core/types.py must be leaf: {runtime_nexus_imports}"
 
     def test_permissions_reexports_from_types(self) -> None:
         """permissions.py re-exports from types.py (same identity)."""

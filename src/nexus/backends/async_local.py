@@ -15,6 +15,7 @@ from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from nexus.backends.backend import AsyncBackend
 from nexus.backends.cas_blob_store import CASBlobStore
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
@@ -27,7 +28,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class AsyncLocalBackend:
+class AsyncLocalBackend(AsyncBackend):
     """
     Async local filesystem backend with Content-Addressable Storage (CAS).
 

@@ -316,7 +316,7 @@ class NexusFS(  # type: ignore[misc]
 
         if metadata_cache is not None and self._cache_config.enable_metadata_cache:
             from nexus.core.read_set import ReadSetRegistry
-            from nexus.core.read_set_cache import ReadSetAwareCache
+            from nexus.storage.read_set_cache import ReadSetAwareCache
 
             self._read_set_registry = ReadSetRegistry()
             self._read_set_cache = ReadSetAwareCache(
@@ -3714,7 +3714,7 @@ class NexusFS(  # type: ignore[misc]
                 "to create one. Provide a record_store when constructing NexusFS."
             )
 
-        from nexus.core.agent_registry import AgentRegistry
+        from nexus.services.agents.agent_registry import AgentRegistry
 
         self._agent_registry = AgentRegistry(
             session_factory=self.SessionLocal,
@@ -4595,7 +4595,7 @@ class NexusFS(  # type: ignore[misc]
         if not hasattr(self, "_agent_registry") or not self._agent_registry:
             raise ValueError("AgentRegistry not available")
 
-        from nexus.core.agent_record import AgentState
+        from nexus.services.agents.agent_record import AgentState
 
         try:
             target = AgentState(target_state)
@@ -4658,7 +4658,7 @@ class NexusFS(  # type: ignore[misc]
 
         state_enum = None
         if state:
-            from nexus.core.agent_record import AgentState
+            from nexus.services.agents.agent_record import AgentState
 
             try:
                 state_enum = AgentState(state)

@@ -481,7 +481,6 @@ class NexusFilesystem(Protocol):
     def workspace_snapshot(
         self,
         workspace_path: str | None = None,
-        agent_id: str | None = None,
         description: str | None = None,
         tags: builtins.list[str] | None = None,
     ) -> dict[str, Any]:
@@ -489,7 +488,6 @@ class NexusFilesystem(Protocol):
 
         Args:
             workspace_path: Path to registered workspace
-            agent_id: Agent identifier (uses default if not provided)
             description: Human-readable description of snapshot
             tags: List of tags for categorization
 
@@ -497,7 +495,7 @@ class NexusFilesystem(Protocol):
             Snapshot metadata dict
 
         Raises:
-            ValueError: If agent_id not provided and no default set
+            ValueError: If workspace_path not provided
             BackendError: If snapshot cannot be created
         """
         ...
@@ -506,20 +504,18 @@ class NexusFilesystem(Protocol):
         self,
         snapshot_number: int,
         workspace_path: str | None = None,
-        agent_id: str | None = None,
     ) -> dict[str, Any]:
         """Restore workspace to a previous snapshot.
 
         Args:
             snapshot_number: Snapshot version number to restore
             workspace_path: Path to registered workspace
-            agent_id: Agent identifier (uses default if not provided)
 
         Returns:
             Restore operation result
 
         Raises:
-            ValueError: If agent_id not provided and no default set
+            ValueError: If workspace_path not provided
             NexusFileNotFoundError: If snapshot not found
         """
         ...
@@ -527,21 +523,19 @@ class NexusFilesystem(Protocol):
     def workspace_log(
         self,
         workspace_path: str | None = None,
-        agent_id: str | None = None,
         limit: int = 100,
     ) -> builtins.list[dict[str, Any]]:
         """List snapshot history for workspace.
 
         Args:
             workspace_path: Path to registered workspace
-            agent_id: Agent identifier (uses default if not provided)
             limit: Maximum number of snapshots to return
 
         Returns:
             List of snapshot metadata dicts (most recent first)
 
         Raises:
-            ValueError: If agent_id not provided and no default set
+            ValueError: If workspace_path not provided
         """
         ...
 
@@ -550,7 +544,6 @@ class NexusFilesystem(Protocol):
         snapshot_1: int,
         snapshot_2: int,
         workspace_path: str | None = None,
-        agent_id: str | None = None,
     ) -> dict[str, Any]:
         """Compare two workspace snapshots.
 
@@ -558,13 +551,12 @@ class NexusFilesystem(Protocol):
             snapshot_1: First snapshot number
             snapshot_2: Second snapshot number
             workspace_path: Path to registered workspace
-            agent_id: Agent identifier (uses default if not provided)
 
         Returns:
             Diff dict with added, removed, modified files
 
         Raises:
-            ValueError: If agent_id not provided and no default set
+            ValueError: If workspace_path not provided
             NexusFileNotFoundError: If either snapshot not found
         """
         ...

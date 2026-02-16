@@ -94,7 +94,7 @@ class TokenManager:
             audit_logger: Optional SecretsAuditLogger instance for audit trail
             session_factory: Optional SQLAlchemy sessionmaker. When provided,
                 reuses the app-level connection pool instead of creating a
-                separate engine. db_path/db_url are still needed for OAuthCrypto.
+                separate engine (Issue #1597).
         """
         if session_factory is not None:
             self.SessionLocal = session_factory
@@ -139,7 +139,12 @@ class TokenManager:
         else:
             raise ValueError("One of db_path, db_url, or session_factory must be provided")
 
-        self.crypto = OAuthCrypto(encryption_key=encryption_key, db_url=self.database_url)
+        # Pass session_factory to OAuthCrypto for shared pool (Issue #1597)
+        self.crypto = OAuthCrypto(
+            encryption_key=encryption_key,
+            db_url=self.database_url,
+            session_factory=session_factory,
+        )
         self.providers: dict[str, OAuthProvider] = {}
         self._audit_logger = audit_logger
         self._rotation_store = TokenRotationStore()

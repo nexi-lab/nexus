@@ -619,7 +619,7 @@ def create_nexus_services(
     # --- Workflow engine (moved from NexusFS.__init__) ---
     workflow_engine: Any = None
     if dist.enable_workflows:
-        workflow_engine = _create_workflow_engine(session_factory, metadata_store)
+        workflow_engine = _create_workflow_engine(record_store, metadata_store)
 
     return _KernelServices(
         router=router,
@@ -728,7 +728,7 @@ def _create_distributed_infra(
     return event_bus, lock_manager
 
 
-def _create_workflow_engine(session_factory: Any, metadata_store: Any) -> Any:
+def _create_workflow_engine(record_store: Any, metadata_store: Any) -> Any:
     """Create workflow engine (was NexusFS.__init__ lines 529-555).
 
     Returns workflow engine or None if unavailable.
@@ -736,15 +736,15 @@ def _create_workflow_engine(session_factory: Any, metadata_store: Any) -> Any:
     import logging
 
     logger = logging.getLogger(__name__)
-    if session_factory is None:
-        logger.warning("Workflows require record_store (session_factory), skipping")
+    if record_store is None:
+        logger.warning("Workflows require record_store, skipping")
         return None
     try:
         from nexus.workflows.engine import init_engine
         from nexus.workflows.storage import WorkflowStore
 
         workflow_store = WorkflowStore(
-            session_factory=session_factory,
+            record_store=record_store,
             zone_id="default",
         )
         return init_engine(

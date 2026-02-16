@@ -87,7 +87,6 @@ class SearchProtocol(Protocol):
         path: str = "/",
         recursive: bool = True,
         details: bool = False,
-        prefix: str | None = None,
         show_parsed: bool = True,
         context: OperationContext | None = None,
         limit: int | None = None,

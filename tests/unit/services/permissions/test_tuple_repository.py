@@ -25,7 +25,6 @@ from nexus.core.rebac import Entity
 from nexus.rebac.tuples.repository import TupleRepository
 from nexus.storage.models import Base
 
-
 # ============================================================================
 # Fixtures
 # ============================================================================

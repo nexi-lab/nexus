@@ -13,7 +13,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from nexus.services.memory.memory_router import MemoryViewRouter
 from nexus.core.permissions import (
     OperationContext,
     Permission,
@@ -21,6 +20,7 @@ from nexus.core.permissions import (
 )
 from nexus.rebac.entity_registry import EntityRegistry
 from nexus.rebac.utils.zone import normalize_zone_id
+from nexus.services.memory.memory_router import MemoryViewRouter
 from nexus.storage.models import MemoryModel
 
 if TYPE_CHECKING:

@@ -3903,8 +3903,8 @@ class NexusFSCoreMixin:
         Raises:
             NexusFileNotFoundError: If memory doesn't exist.
         """
-        from nexus.services.memory.memory_router import MemoryViewRouter
         from nexus.rebac.entity_registry import EntityRegistry
+        from nexus.services.memory.memory_router import MemoryViewRouter
 
         # Get memory via router
         session = self.SessionLocal()
@@ -3988,8 +3988,8 @@ class NexusFSCoreMixin:
         Raises:
             NexusFileNotFoundError: If memory doesn't exist.
         """
-        from nexus.services.memory.memory_router import MemoryViewRouter
         from nexus.rebac.entity_registry import EntityRegistry
+        from nexus.services.memory.memory_router import MemoryViewRouter
 
         # Get memory via router
         session = self.SessionLocal()

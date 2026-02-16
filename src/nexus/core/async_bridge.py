@@ -148,10 +148,10 @@ class AsyncReBACBridge:
         Issue #1385: AsyncReBACManager is now a thin asyncio.to_thread() wrapper
         around the sync ReBACManager. We create a sync manager and wrap it.
         """
+        from sqlalchemy import create_engine
+
         from nexus.rebac.async_manager import AsyncReBACManager
         from nexus.rebac.manager import ReBACManager
-
-        from sqlalchemy import create_engine
 
         sync_engine = create_engine(self.database_url)
         sync_manager = ReBACManager(

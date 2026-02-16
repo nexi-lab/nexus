@@ -342,7 +342,7 @@ def create_nexus_services(
     entity_registry = EntityRegistry(session_factory)
 
     # --- Permission Enforcer ---
-    from nexus.core.permissions import PermissionEnforcer
+    from nexus.services.permissions.enforcer import PermissionEnforcer
 
     permission_enforcer = PermissionEnforcer(
         metadata_store=metadata_store,

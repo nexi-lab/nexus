@@ -1907,7 +1907,11 @@ class ReBACManager:
                 zone_id=zone_id,
             )
 
+            # Increment zone revision before commit for atomicity (Issue #909)
+            # Without this, namespace caches never invalidate after writes.
+            self._increment_zone_revision(zone_id, conn)
             conn.commit()
+            self._tuple_version += 1  # Invalidate Rust graph cache
 
             # Invalidate cache entries affected by this change
             self._invalidate_cache_for_tuple(

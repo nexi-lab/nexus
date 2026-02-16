@@ -221,7 +221,7 @@ class MountService:
     async def remove_mount(
         self,
         mount_point: str,
-        _context: OperationContext | None = None,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Remove a backend mount from the filesystem.
 
@@ -231,7 +231,7 @@ class MountService:
 
         Args:
             mount_point: Virtual path of mount to remove (e.g., "/personal/alice")
-            _context: Operation context (automatically provided by RPC server)
+            context: Operation context (automatically provided by RPC server)
 
         Returns:
             Dictionary with removal details:
@@ -279,7 +279,7 @@ class MountService:
             if self.nexus_fs and hasattr(self.nexus_fs, "hierarchy_manager"):
                 try:
                     if hasattr(self.nexus_fs.hierarchy_manager, "remove_parent_tuples"):
-                        zone_id = get_zone_id(_context)
+                        zone_id = get_zone_id(context)
                         tuples_removed = self.nexus_fs.hierarchy_manager.remove_parent_tuples(
                             mount_point, zone_id
                         )
@@ -293,7 +293,7 @@ class MountService:
             # Remove direct_owner permission tuple for the mount point
             if self.nexus_fs and hasattr(self.nexus_fs, "rebac_delete_object_tuples"):
                 try:
-                    zone_id = get_zone_id(_context)
+                    zone_id = get_zone_id(context)
                     deleted = self.nexus_fs.rebac_delete_object_tuples(
                         object=("file", mount_point), zone_id=zone_id
                     )
@@ -318,6 +318,49 @@ class MountService:
             return result
 
         return await asyncio.to_thread(_remove_mount_sync)
+
+    @rpc_expose(description="Delete connector with bundled cleanup")
+    async def delete_connector(
+        self,
+        mount_point: str,
+        revoke_oauth: bool = False,
+        provider: str | None = None,
+        user_email: str | None = None,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Delete a connector completely with bundled operations.
+
+        Combines: deactivate mount, delete saved config, optional OAuth
+        credential revocation, and directory cleanup.
+
+        Args:
+            mount_point: Virtual path of connector mount to delete
+            revoke_oauth: If True, also revoke associated OAuth credentials
+            provider: OAuth provider name (required if revoke_oauth=True)
+            user_email: User email for OAuth revocation (required if revoke_oauth=True)
+            context: Operation context for permission checks
+
+        Returns:
+            Dict with removal details including removed, config_deleted,
+            oauth_revoked, errors, and warnings lists.
+
+        Raises:
+            RuntimeError: If nexus_fs not configured
+        """
+        if not self.nexus_fs or not hasattr(self.nexus_fs, "delete_connector"):
+            raise RuntimeError(
+                "delete_connector requires NexusFS integration. "
+                "Set nexus_fs in MountService.__init__"
+            )
+
+        return await asyncio.to_thread(
+            self.nexus_fs.delete_connector,
+            mount_point=mount_point,
+            revoke_oauth=revoke_oauth,
+            provider=provider,
+            user_email=user_email,
+            context=context,
+        )
 
     @rpc_expose(description="List available connector types")
     async def list_connectors(self, category: str | None = None) -> list[dict[str, Any]]:
@@ -356,14 +399,14 @@ class MountService:
         return await asyncio.to_thread(_list_connectors_sync)
 
     @rpc_expose(description="List all backend mounts")
-    async def list_mounts(self, _context: OperationContext | None = None) -> list[dict[str, Any]]:
+    async def list_mounts(self, context: OperationContext | None = None) -> list[dict[str, Any]]:
         """List all active backend mounts that the user has permission to access.
 
         Automatically filters mounts based on the user's permissions. Only mounts
         where the user has read access (viewer or direct_owner) are returned.
 
         Args:
-            _context: Operation context (automatically provided by RPC server)
+            context: Operation context (automatically provided by RPC server)
 
         Returns:
             List of mount info dictionaries, each containing:
@@ -382,11 +425,11 @@ class MountService:
             mounts = []
 
             # Log context details for debugging
-            logger.info(f"[LIST_MOUNTS] Called with context: {_context}")
-            if _context:
-                logger.info(f"[LIST_MOUNTS] Context type: {type(_context)}")
-                subject_type, subject_id = get_user_identity(_context)
-                zone_id = get_zone_id(_context)
+            logger.info(f"[LIST_MOUNTS] Called with context: {context}")
+            if context:
+                logger.info(f"[LIST_MOUNTS] Context type: {type(context)}")
+                subject_type, subject_id = get_user_identity(context)
+                zone_id = get_zone_id(context)
                 logger.info(
                     f"[LIST_MOUNTS] Extracted: subject={subject_type}:{subject_id}, zone={zone_id}"
                 )
@@ -401,10 +444,10 @@ class MountService:
 
                 # Check if user has permission to access this mount
                 has_permission = False
-                if _context and self.nexus_fs and hasattr(self.nexus_fs, "rebac_check"):
+                if context and self.nexus_fs and hasattr(self.nexus_fs, "rebac_check"):
                     try:
-                        subject_type, subject_id = get_user_identity(_context)
-                        zone_id = get_zone_id(_context)
+                        subject_type, subject_id = get_user_identity(context)
+                        zone_id = get_zone_id(context)
 
                         logger.info(
                             f"[LIST_MOUNTS] Checking permission for {subject_type}:{subject_id} "
@@ -412,7 +455,7 @@ class MountService:
                         )
 
                         # Admin users can see all mounts
-                        is_admin = getattr(_context, "is_admin", False)
+                        is_admin = getattr(context, "is_admin", False)
                         if is_admin:
                             has_permission = True
                             logger.info(
@@ -465,7 +508,11 @@ class MountService:
         return await asyncio.to_thread(_list_mounts_sync)
 
     @rpc_expose(description="Get mount details")
-    async def get_mount(self, mount_point: str) -> dict[str, Any] | None:
+    async def get_mount(
+        self,
+        mount_point: str,
+        context: OperationContext | None = None,  # noqa: ARG002 - Protocol compliance
+    ) -> dict[str, Any] | None:
         """Get details about a specific mount.
 
         Args:
@@ -769,6 +816,7 @@ class MountService:
         generate_embeddings: bool = False,
         context: OperationContext | None = None,
         progress_callback: ProgressCallback | None = None,
+        full_sync: bool = False,
     ) -> dict[str, Any]:
         """Sync metadata and content from connector backend(s) to Nexus database.
 
@@ -816,6 +864,7 @@ class MountService:
                 generate_embeddings=generate_embeddings,
                 context=context,
                 progress_callback=progress_callback,
+                full_sync=full_sync,
             ),
         )
 
@@ -1010,7 +1059,7 @@ class MountService:
             )
 
     def _generate_connector_skill(
-        self, mount_point: str, backend_type: str, _context: OperationContext | None
+        self, mount_point: str, backend_type: str, context: OperationContext | None
     ) -> bool:
         """Generate SKILL.md for a connector mount.
 
@@ -1019,7 +1068,7 @@ class MountService:
         Args:
             mount_point: The virtual path of the mount
             backend_type: Backend type identifier
-            _context: Operation context
+            context: Operation context
 
         Returns:
             True if skill was generated successfully
@@ -1049,7 +1098,7 @@ Use sync_mount() to refresh metadata from the backend.
 """
 
             skill_path = f"{mount_point}/SKILL.md"
-            self.nexus_fs.write(skill_path, skill_content.encode("utf-8"), context=_context)
+            self.nexus_fs.write(skill_path, skill_content.encode("utf-8"), context=context)
             logger.info(f"✓ Generated SKILL.md for connector mount: {skill_path}")
             return True
         except Exception as e:

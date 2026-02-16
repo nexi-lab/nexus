@@ -171,7 +171,7 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "MountProtocol",
         "nexus.services.protocols.mount",
         "nexus.services.mount_service.MountService",
-        False,  # MountService is async but has pre-existing param mismatches (delete_connector, context naming)
+        True,  # Fixed: added delete_connector, context param naming, full_sync param
     ),
     (
         "OAuthProtocol",
@@ -189,7 +189,7 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
         "PermissionProtocol",
         "nexus.services.protocols.permission",
         "nexus.services.rebac_service.ReBACService",
-        False,  # Many methods are stubs
+        True,  # Fixed: protocol updated to match async ReBACService interface
     ),
     # ── ShareLinkService extracted (Issue #1387) ────────────────────────
     (

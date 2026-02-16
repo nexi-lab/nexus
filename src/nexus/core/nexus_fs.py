@@ -475,6 +475,11 @@ class NexusFS(  # type: ignore[misc]
         """Public accessor for the runtime configuration object."""
         return self._config
 
+    @property
+    def rebac_manager(self) -> Any | None:
+        """Public accessor for the ReBACManager instance."""
+        return getattr(self, "_rebac_manager", None)
+
     def _init_performance_optimizations(self) -> None:
         """Initialize performance optimizations for permission checks.
 

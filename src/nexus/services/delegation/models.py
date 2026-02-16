@@ -10,8 +10,9 @@ Follows AgentRecord pattern: frozen dataclass + SQLAlchemy model separation.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal
 from enum import Enum
 
 
@@ -28,6 +29,43 @@ class DelegationMode(Enum):
     SHARED = "shared"
 
 
+class DelegationStatus(Enum):
+    """Delegation lifecycle state.
+
+    ACTIVE: Delegation is live — worker can authenticate and operate.
+    REVOKED: Coordinator explicitly revoked the delegation.
+    EXPIRED: TTL elapsed (set by background cleanup or on-access check).
+    COMPLETED: Worker finished its task and delegation was closed.
+    """
+
+    ACTIVE = "active"
+    REVOKED = "revoked"
+    EXPIRED = "expired"
+    COMPLETED = "completed"
+
+
+@dataclass(frozen=True)
+class DelegationScope:
+    """Fine-grained scope constraints for a delegation (#1618).
+
+    Orthogonal to DelegationMode: mode determines WHICH grants are derived,
+    scope constrains WHAT the worker can do with those grants.
+
+    Attributes:
+        allowed_operations: Set of permitted operations (read, write, execute).
+            Empty means all operations allowed (backward compat).
+        resource_patterns: Glob patterns for allowed resources.
+            Empty means all resources within derived grants.
+        budget_limit: Maximum spend in NexusPay credits (None = no limit).
+        max_depth: Maximum sub-delegation depth (0 = cannot sub-delegate).
+    """
+
+    allowed_operations: frozenset[str] = field(default_factory=frozenset)
+    resource_patterns: frozenset[str] = field(default_factory=frozenset)
+    budget_limit: Decimal | None = None
+    max_depth: int = 0
+
+
 @dataclass(frozen=True)
 class DelegationRecord:
     """Immutable snapshot of a delegation relationship.
@@ -41,12 +79,18 @@ class DelegationRecord:
         agent_id: Worker agent that received delegated identity.
         parent_agent_id: Coordinator agent that created the delegation.
         delegation_mode: How grants were derived (COPY/CLEAN/SHARED).
+        status: Lifecycle state (ACTIVE/REVOKED/EXPIRED/COMPLETED).
         scope_prefix: Optional path prefix filter applied to grants.
+        scope: Fine-grained operation/resource/budget constraints.
         lease_expires_at: When the delegation expires (None = no expiry).
         removed_grants: Paths explicitly removed (COPY mode).
         added_grants: Paths explicitly added (CLEAN mode).
         readonly_paths: Paths downgraded to viewer (COPY mode).
         zone_id: Zone isolation scope.
+        intent: Immutable purpose description (audit trail).
+        parent_delegation_id: Parent delegation for chain tracking (None = root).
+        depth: Chain depth (0 = direct delegation from non-delegated agent).
+        can_sub_delegate: Whether this worker can create further delegations.
         created_at: When the delegation was created.
     """
 
@@ -54,13 +98,19 @@ class DelegationRecord:
     agent_id: str
     parent_agent_id: str
     delegation_mode: DelegationMode
-    scope_prefix: str | None
-    lease_expires_at: datetime | None
-    removed_grants: tuple[str, ...]
-    added_grants: tuple[str, ...]
-    readonly_paths: tuple[str, ...]
-    zone_id: str | None
-    created_at: datetime
+    status: DelegationStatus = DelegationStatus.ACTIVE
+    scope_prefix: str | None = None
+    scope: DelegationScope | None = None
+    lease_expires_at: datetime | None = None
+    removed_grants: tuple[str, ...] = ()
+    added_grants: tuple[str, ...] = ()
+    readonly_paths: tuple[str, ...] = ()
+    zone_id: str | None = None
+    intent: str = ""
+    parent_delegation_id: str | None = None
+    depth: int = 0
+    can_sub_delegate: bool = False
+    created_at: datetime | None = None
 
 
 @dataclass(frozen=True)

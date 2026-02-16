@@ -1,7 +1,7 @@
-"""Integration tests for delegation lifecycle (Issue #1271).
+"""Integration tests for delegation lifecycle (Issue #1271, #1618).
 
 Tests with real EnhancedReBACManager + NamespaceManager backed by
-SQLite in-memory. Covers 12 edge cases specified in the plan.
+SQLite in-memory. Covers edge cases specified in the plan.
 """
 
 from __future__ import annotations
@@ -17,10 +17,11 @@ from nexus.services.delegation.errors import (
     DelegationChainError,
     DelegationError,
     DelegationNotFoundError,
+    DepthExceededError,
     EscalationError,
     TooManyGrantsError,
 )
-from nexus.services.delegation.models import DelegationMode
+from nexus.services.delegation.models import DelegationMode, DelegationStatus
 from nexus.services.delegation.service import DelegationService
 from nexus.services.permissions.entity_registry import EntityRegistry
 from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
@@ -220,12 +221,15 @@ class TestEdge04_TTLExceedsMax:
 
 
 class TestEdge06_DelegationChain:
-    """EC6: Delegation chain: A→B, B→C → DelegationChainError."""
+    """EC6: Delegation chain tests."""
 
-    def test_chain_rejected(self, delegation_service, entity_registry, rebac_manager):
+    def test_chain_rejected_without_sub_delegate(
+        self, delegation_service, entity_registry, rebac_manager
+    ):
+        """B→C blocked when B has can_sub_delegate=False (default)."""
         _register_coordinator(entity_registry, rebac_manager)
 
-        # A delegates to B
+        # A delegates to B (can_sub_delegate=False by default)
         result = delegation_service.delegate(
             coordinator_agent_id="coordinator_1",
             coordinator_owner_id="alice",
@@ -236,7 +240,7 @@ class TestEdge06_DelegationChain:
         assert result.worker_agent_id == "worker_b"
 
         # B tries to delegate to C → should fail
-        with pytest.raises(DelegationChainError, match="cannot delegate"):
+        with pytest.raises(DelegationChainError, match="cannot sub-delegate"):
             delegation_service.delegate(
                 coordinator_agent_id="worker_b",
                 coordinator_owner_id="alice",
@@ -244,6 +248,39 @@ class TestEdge06_DelegationChain:
                 worker_name="Worker C",
                 delegation_mode=DelegationMode.COPY,
             )
+
+    def test_chain_allowed_with_sub_delegate(
+        self, delegation_service, entity_registry, rebac_manager
+    ):
+        """B→C allowed when B has can_sub_delegate=True (#1618)."""
+        _register_coordinator(entity_registry, rebac_manager)
+
+        # A delegates to B with can_sub_delegate=True
+        result_b = delegation_service.delegate(
+            coordinator_agent_id="coordinator_1",
+            coordinator_owner_id="alice",
+            worker_id="worker_chain_b",
+            worker_name="Worker Chain B",
+            delegation_mode=DelegationMode.COPY,
+            can_sub_delegate=True,
+        )
+        assert result_b.worker_agent_id == "worker_chain_b"
+
+        # B delegates to C → should succeed
+        result_c = delegation_service.delegate(
+            coordinator_agent_id="worker_chain_b",
+            coordinator_owner_id="alice",
+            worker_id="worker_chain_c",
+            worker_name="Worker Chain C",
+            delegation_mode=DelegationMode.COPY,
+        )
+        assert result_c.worker_agent_id == "worker_chain_c"
+
+        # Verify depth tracking
+        record_c = delegation_service.get_delegation("worker_chain_c")
+        assert record_c is not None
+        assert record_c.depth == 1
+        assert record_c.parent_delegation_id == result_b.delegation_id
 
 
 class TestEdge10_PathPrefixNormalization:
@@ -309,28 +346,121 @@ class TestDelegationLifecycle:
         assert result.delegation_mode == DelegationMode.COPY
         assert result.expires_at is not None
 
-        # List delegations
-        delegations = delegation_service.list_delegations("coordinator_1")
+        # List delegations (#1618: returns tuple)
+        delegations, total = delegation_service.list_delegations("coordinator_1")
+        assert total == 1
         assert len(delegations) == 1
         assert delegations[0].agent_id == "worker_lifecycle"
+        assert delegations[0].status == DelegationStatus.ACTIVE
 
         # Get delegation by worker ID
         record = delegation_service.get_delegation("worker_lifecycle")
         assert record is not None
         assert record.parent_agent_id == "coordinator_1"
 
-        # Revoke
+        # Revoke (soft-delete-first, #1618)
         revoked = delegation_service.revoke_delegation(result.delegation_id)
         assert revoked is True
 
-        # Verify delegation is gone
+        # get_delegation returns None (filters by ACTIVE only)
         record = delegation_service.get_delegation("worker_lifecycle")
         assert record is None
+
+        # But get_delegation_by_id still shows it with REVOKED status
+        record_by_id = delegation_service.get_delegation_by_id(result.delegation_id)
+        assert record_by_id is not None
+        assert record_by_id.status == DelegationStatus.REVOKED
 
     def test_revoke_nonexistent_raises(self, delegation_service):
         """Revoking a non-existent delegation raises DelegationNotFoundError."""
         with pytest.raises(DelegationNotFoundError):
             delegation_service.revoke_delegation("nonexistent_id")
+
+    def test_revoke_already_revoked_raises(self, delegation_service, entity_registry, rebac_manager):
+        """Revoking an already-revoked delegation raises DelegationError."""
+        _register_coordinator(entity_registry, rebac_manager)
+
+        result = delegation_service.delegate(
+            coordinator_agent_id="coordinator_1",
+            coordinator_owner_id="alice",
+            worker_id="worker_double_revoke",
+            worker_name="Worker Double Revoke",
+            delegation_mode=DelegationMode.COPY,
+        )
+
+        delegation_service.revoke_delegation(result.delegation_id)
+
+        # Second revoke should fail
+        with pytest.raises(DelegationError, match="not active"):
+            delegation_service.revoke_delegation(result.delegation_id)
+
+
+class TestDelegationIntent:
+    """#1618: Intent tracking on delegations."""
+
+    def test_intent_stored(self, delegation_service, entity_registry, rebac_manager):
+        _register_coordinator(entity_registry, rebac_manager)
+
+        result = delegation_service.delegate(
+            coordinator_agent_id="coordinator_1",
+            coordinator_owner_id="alice",
+            worker_id="worker_intent",
+            worker_name="Worker Intent",
+            delegation_mode=DelegationMode.COPY,
+            intent="Run unit tests on project",
+        )
+
+        record = delegation_service.get_delegation("worker_intent")
+        assert record is not None
+        assert record.intent == "Run unit tests on project"
+
+    def test_intent_defaults_empty(self, delegation_service, entity_registry, rebac_manager):
+        _register_coordinator(entity_registry, rebac_manager)
+
+        delegation_service.delegate(
+            coordinator_agent_id="coordinator_1",
+            coordinator_owner_id="alice",
+            worker_id="worker_no_intent",
+            worker_name="Worker No Intent",
+            delegation_mode=DelegationMode.COPY,
+        )
+
+        record = delegation_service.get_delegation("worker_no_intent")
+        assert record is not None
+        assert record.intent == ""
+
+
+class TestDelegationChainTrace:
+    """#1618: get_delegation_chain traces from child to root."""
+
+    def test_chain_trace(self, delegation_service, entity_registry, rebac_manager):
+        _register_coordinator(entity_registry, rebac_manager)
+
+        # A → B (can sub-delegate) → C
+        result_b = delegation_service.delegate(
+            coordinator_agent_id="coordinator_1",
+            coordinator_owner_id="alice",
+            worker_id="chain_worker_b",
+            worker_name="Chain B",
+            delegation_mode=DelegationMode.COPY,
+            can_sub_delegate=True,
+        )
+
+        result_c = delegation_service.delegate(
+            coordinator_agent_id="chain_worker_b",
+            coordinator_owner_id="alice",
+            worker_id="chain_worker_c",
+            worker_name="Chain C",
+            delegation_mode=DelegationMode.COPY,
+        )
+
+        # Trace from C to root
+        chain = delegation_service.get_delegation_chain(result_c.delegation_id)
+        assert len(chain) == 2
+        assert chain[0].delegation_id == result_c.delegation_id  # C first
+        assert chain[1].delegation_id == result_b.delegation_id  # B second
+        assert chain[0].depth == 1
+        assert chain[1].depth == 0
 
 
 class TestCopyModeWithScopeAndReadonly:

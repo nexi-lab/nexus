@@ -1,4 +1,4 @@
-"""Agent Delegation API — NS Derivation + Delegated Identity (Issue #1271).
+"""Agent Delegation API — NS Derivation + Delegated Identity (Issue #1271, #1618).
 
 Self-contained brick for coordinator agents to provision worker agent
 identities with narrower permissions. Follows the ``pay/`` exemplary
@@ -9,6 +9,8 @@ Public API:
     DelegationRecord      — Immutable snapshot of a delegation
     DelegationResult      — Return type from delegate()
     DelegationMode        — Enum: COPY, CLEAN, SHARED
+    DelegationStatus      — Enum: ACTIVE, REVOKED, EXPIRED, COMPLETED
+    DelegationScope       — Fine-grained scope constraints
     derive_grants         — Pure function: parent grants → child grants
     GrantSpec             — Single grant to materialize
 
@@ -19,6 +21,8 @@ Errors:
     InvalidDelegationModeError — Unknown mode
     DelegationNotFoundError — ID not found
     DelegationChainError  — Delegated agent tries to delegate
+    DepthExceededError    — Sub-delegation depth exceeded
+    InvalidPrefixError    — Malformed scope_prefix
 """
 
 from nexus.services.delegation.derivation import GrantSpec as GrantSpec
@@ -26,7 +30,9 @@ from nexus.services.delegation.derivation import derive_grants as derive_grants
 from nexus.services.delegation.errors import DelegationChainError as DelegationChainError
 from nexus.services.delegation.errors import DelegationError as DelegationError
 from nexus.services.delegation.errors import DelegationNotFoundError as DelegationNotFoundError
+from nexus.services.delegation.errors import DepthExceededError as DepthExceededError
 from nexus.services.delegation.errors import EscalationError as EscalationError
+from nexus.services.delegation.errors import InvalidPrefixError as InvalidPrefixError
 from nexus.services.delegation.errors import (
     InvalidDelegationModeError as InvalidDelegationModeError,
 )
@@ -34,4 +40,6 @@ from nexus.services.delegation.errors import TooManyGrantsError as TooManyGrants
 from nexus.services.delegation.models import DelegationMode as DelegationMode
 from nexus.services.delegation.models import DelegationRecord as DelegationRecord
 from nexus.services.delegation.models import DelegationResult as DelegationResult
+from nexus.services.delegation.models import DelegationScope as DelegationScope
+from nexus.services.delegation.models import DelegationStatus as DelegationStatus
 from nexus.services.delegation.service import DelegationService as DelegationService

@@ -14,7 +14,7 @@ Usage:
 
     # Consensus mode (multi-node with Raft via ZoneManager)
     from nexus.raft import ZoneManager
-    mgr = ZoneManager(1, "/var/lib/nexus/zones", "0.0.0.0:2126")
+    mgr = ZoneManager(node_id=1, base_path="/var/lib/nexus/zones")  # bind_addr from NEXUS_BIND_ADDR env
     handle = mgr.create_zone("root", ["2@peer:2126"])
     store = RaftMetadataStore(engine=handle, zone_id="root")
 
@@ -115,7 +115,7 @@ class RaftMetadataStore(FileMetadataProtocol):
 
         # Consensus mode (via ZoneManager + ZoneHandle)
         from nexus.raft import ZoneManager
-        mgr = ZoneManager(1, "/var/lib/nexus/zones", "0.0.0.0:2126")
+        mgr = ZoneManager(node_id=1, base_path="/var/lib/nexus/zones")  # bind_addr from NEXUS_BIND_ADDR env
         handle = mgr.create_zone("root", ["2@peer:2126"])
         store = RaftMetadataStore(engine=handle, zone_id="root")
         store.put(metadata)  # replicated

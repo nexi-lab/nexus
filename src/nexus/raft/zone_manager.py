@@ -43,8 +43,7 @@ class ZoneManager:
     """Manage multiple Raft zones and their metadata stores.
 
     Usage:
-        mgr = ZoneManager(node_id=1, base_path="/var/lib/nexus/zones",
-                          bind_addr="0.0.0.0:2126")
+        mgr = ZoneManager(node_id=1, base_path="/var/lib/nexus/zones")  # bind_addr defaults or NEXUS_BIND_ADDR env
         store = mgr.create_zone("alpha", peers=["2@peer:2126"])
         store.put(metadata)
 

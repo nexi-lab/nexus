@@ -22,6 +22,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any, cast
 
+from cachetools import TTLCache
+
 from nexus.core import glob_fast, grep_fast, trigram_fast
 from nexus.core.exceptions import PermissionDeniedError
 from nexus.core.permissions import Permission
@@ -178,8 +180,10 @@ class SearchService(SemanticSearchMixin):
         # Lock for lazy thread pool initialization (prevents TOCTOU race)
         self._pool_lock = threading.Lock()
 
-        # TTL cache for cross-zone sharing queries (Issue #904)
-        self._cross_zone_cache: dict[tuple[str, ...], tuple[float, builtins.list[str]]] = {}
+        # Bounded TTL cache for cross-zone sharing queries (Issue #904)
+        self._cross_zone_cache: TTLCache[tuple[str, ...], builtins.list[str]] = TTLCache(
+            maxsize=1024, ttl=5.0
+        )
 
         logger.info("[SearchService] Initialized")
 
@@ -1350,18 +1354,13 @@ class SearchService(SemanticSearchMixin):
         prefix: str = "",
     ) -> builtins.list[str]:
         """Fetch file paths shared with a user from other zones (Issue #904)."""
-        import time as _time
-
         if not self._rebac_manager:
             return []
 
-        # Check TTL cache (5-second TTL)
         cache_key = (subject_type, subject_id, zone_id, prefix)
-        now = _time.monotonic()
-        if cache_key in self._cross_zone_cache:
-            cached_time, cached_paths = self._cross_zone_cache[cache_key]
-            if now - cached_time < 5.0:
-                return cached_paths
+        cached = self._cross_zone_cache.get(cache_key)
+        if cached is not None:
+            return cached
 
         try:
             paths = self._rebac_manager.get_cross_zone_shared_paths(
@@ -1374,7 +1373,7 @@ class SearchService(SemanticSearchMixin):
                 logger.debug(
                     f"[CROSS-ZONE] Found {len(paths)} shared paths for {subject_type}:{subject_id}"
                 )
-            self._cross_zone_cache[cache_key] = (now, paths)
+            self._cross_zone_cache[cache_key] = paths
             return paths
         except Exception as e:
             logger.error(

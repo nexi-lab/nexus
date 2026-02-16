@@ -12,7 +12,6 @@ from datetime import datetime
 from typing import Any
 
 import bcrypt as bcrypt_lib
-from sqlalchemy import select
 from sqlalchemy.orm import Session, sessionmaker
 
 from nexus.auth.providers.local import LocalAuth

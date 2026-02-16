@@ -97,14 +97,16 @@ def test_create_key_with_subject(session_factory):
 
 def test_create_key_invalid_subject_type(session_factory):
     """Invalid subject_type raises ValueError."""
-    with session_factory() as session:
-        with pytest.raises(ValueError, match="subject_type must be one of"):
-            DatabaseAPIKeyAuth.create_key(
-                session,
-                user_id="alice",
-                name="Bad Key",
-                subject_type="invalid_type",
-            )
+    with (
+        session_factory() as session,
+        pytest.raises(ValueError, match="subject_type must be one of"),
+    ):
+        DatabaseAPIKeyAuth.create_key(
+            session,
+            user_id="alice",
+            name="Bad Key",
+            subject_type="invalid_type",
+        )
 
 
 @pytest.mark.asyncio
@@ -241,7 +243,10 @@ async def test_validate_token(auth_provider, session_factory):
         session.commit()
 
     assert await auth_provider.validate_token(raw_key) is True
-    assert await auth_provider.validate_token("sk-invalid-key-that-does-not-exist-in-database") is False
+    assert (
+        await auth_provider.validate_token("sk-invalid-key-that-does-not-exist-in-database")
+        is False
+    )
 
 
 def test_revoke_key(session_factory):

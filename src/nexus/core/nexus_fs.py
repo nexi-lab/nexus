@@ -195,20 +195,32 @@ class NexusFS(  # type: ignore[misc]
             enforce_permissions = getattr(permissions, "enforce", enforce_permissions)
             inherit_permissions = getattr(permissions, "inherit", inherit_permissions)
             allow_admin_bypass = getattr(permissions, "allow_admin_bypass", allow_admin_bypass)
-            enforce_zone_isolation = getattr(permissions, "enforce_zone_isolation", enforce_zone_isolation)
+            enforce_zone_isolation = getattr(
+                permissions, "enforce_zone_isolation", enforce_zone_isolation
+            )
             audit_strict_mode = getattr(permissions, "audit_strict_mode", audit_strict_mode)
             enable_tiger_cache = getattr(permissions, "enable_tiger_cache", enable_tiger_cache)
-            enable_deferred_permissions = getattr(permissions, "enable_deferred", enable_deferred_permissions)
-            deferred_flush_interval = getattr(permissions, "deferred_flush_interval", deferred_flush_interval)
+            enable_deferred_permissions = getattr(
+                permissions, "enable_deferred", enable_deferred_permissions
+            )
+            deferred_flush_interval = getattr(
+                permissions, "deferred_flush_interval", deferred_flush_interval
+            )
         if distributed is not None:
             coordination_url = getattr(distributed, "coordination_url", coordination_url)
-            enable_distributed_events = getattr(distributed, "enable_events", enable_distributed_events)
-            enable_distributed_locks = getattr(distributed, "enable_locks", enable_distributed_locks)
+            enable_distributed_events = getattr(
+                distributed, "enable_events", enable_distributed_events
+            )
+            enable_distributed_locks = getattr(
+                distributed, "enable_locks", enable_distributed_locks
+            )
             enable_workflows = getattr(distributed, "enable_workflows", enable_workflows)
         if memory is not None:
             enable_memory_paging = getattr(memory, "enable_paging", enable_memory_paging)
             memory_main_capacity = getattr(memory, "main_capacity", memory_main_capacity)
-            memory_recall_max_age_hours = getattr(memory, "recall_max_age_hours", memory_recall_max_age_hours)
+            memory_recall_max_age_hours = getattr(
+                memory, "recall_max_age_hours", memory_recall_max_age_hours
+            )
         if parsing is not None:
             auto_parse = getattr(parsing, "auto_parse", auto_parse)
             providers = getattr(parsing, "providers", None)
@@ -222,7 +234,9 @@ class NexusFS(  # type: ignore[misc]
             entity_registry = getattr(services, "entity_registry", entity_registry)
             permission_enforcer = getattr(services, "permission_enforcer", permission_enforcer)
             hierarchy_manager = getattr(services, "hierarchy_manager", hierarchy_manager)
-            deferred_permission_buffer = getattr(services, "deferred_permission_buffer", deferred_permission_buffer)
+            deferred_permission_buffer = getattr(
+                services, "deferred_permission_buffer", deferred_permission_buffer
+            )
             workspace_registry = getattr(services, "workspace_registry", workspace_registry)
             mount_manager = getattr(services, "mount_manager", mount_manager)
             workspace_manager = getattr(services, "workspace_manager", workspace_manager)
@@ -517,7 +531,11 @@ class NexusFS(  # type: ignore[misc]
         self._cache_invalidation_started: bool = False
 
         # Skip inline creation if already injected from services
-        if (enable_distributed_locks or enable_distributed_events) and self._event_bus is None and self._lock_manager is None:
+        if (
+            (enable_distributed_locks or enable_distributed_events)
+            and self._event_bus is None
+            and self._lock_manager is None
+        ):
             try:
                 import os
 

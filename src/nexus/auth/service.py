@@ -58,11 +58,9 @@ class AuthService:
         # Check cache
         cached = self._cache.get(token)
         if cached is not None:
-            return AuthResult(**{
-                k: v
-                for k, v in cached.items()
-                if k in AuthResult.__dataclass_fields__
-            })
+            return AuthResult(
+                **{k: v for k, v in cached.items() if k in AuthResult.__dataclass_fields__}
+            )
 
         # Cache miss — call provider
         result = await self._provider.authenticate(token)

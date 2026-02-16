@@ -59,9 +59,7 @@ class DiscriminatingAuthProvider(AuthProvider):
                     logger.debug("Routing to JWT/OIDC provider")
                     return await self.jwt_provider.authenticate(token)
                 else:
-                    logger.error(
-                        "UNAUTHORIZED: Token format not recognized (not API key, not JWT)"
-                    )
+                    logger.error("UNAUTHORIZED: Token format not recognized (not API key, not JWT)")
                     return AuthResult(authenticated=False)
             else:
                 logger.error("UNAUTHORIZED: JWT token provided but no JWT provider configured")

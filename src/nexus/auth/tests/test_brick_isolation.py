@@ -8,13 +8,14 @@ Verifies that the auth brick:
 
 from __future__ import annotations
 
+import contextlib
 import importlib
 import sys
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from nexus.auth.manifest import AuthBrickManifest, verify_imports
+from nexus.auth.manifest import verify_imports
 
 # Required modules that must all be importable
 _REQUIRED_MODULES = [
@@ -66,10 +67,8 @@ def test_auth_brick_imports_without_server():
         # Restore modules
         for mod in auth_modules:
             if mod not in sys.modules:
-                try:
+                with contextlib.suppress(ImportError):
                     importlib.import_module(mod)
-                except ImportError:
-                    pass
 
 
 def test_auth_brick_no_rebac_import():
@@ -91,10 +90,8 @@ def test_auth_brick_no_rebac_import():
     finally:
         for mod in auth_modules:
             if mod not in sys.modules:
-                try:
+                with contextlib.suppress(ImportError):
                     importlib.import_module(mod)
-                except ImportError:
-                    pass
 
 
 def test_auth_brick_no_pay_import():
@@ -115,10 +112,8 @@ def test_auth_brick_no_pay_import():
     finally:
         for mod in auth_modules:
             if mod not in sys.modules:
-                try:
+                with contextlib.suppress(ImportError):
                     importlib.import_module(mod)
-                except ImportError:
-                    pass
 
 
 def test_auth_result_is_frozen():

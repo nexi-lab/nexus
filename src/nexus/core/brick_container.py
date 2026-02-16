@@ -43,8 +43,7 @@ class BrickContainer:
         """
         if not isinstance(implementation, protocol_type):
             raise TypeError(
-                f"{type(implementation).__name__} does not satisfy "
-                f"{protocol_type.__name__}"
+                f"{type(implementation).__name__} does not satisfy {protocol_type.__name__}"
             )
         self._registry[protocol_type] = implementation
         logger.info(
@@ -67,9 +66,7 @@ class BrickContainer:
         """
         impl = self._registry.get(protocol_type)
         if impl is None:
-            raise LookupError(
-                f"No implementation registered for {protocol_type.__name__}"
-            )
+            raise LookupError(f"No implementation registered for {protocol_type.__name__}")
         return impl  # type: ignore[return-value]
 
     def resolve_optional(self, protocol_type: type[T]) -> T | None:

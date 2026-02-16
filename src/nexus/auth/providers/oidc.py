@@ -192,7 +192,9 @@ class OIDCAuth(AuthProvider):
 
             subject_id = claims.get(self.subject_id_claim)
             if not subject_id:
-                logger.error("UNAUTHORIZED: Token missing required claim: %s", self.subject_id_claim)
+                logger.error(
+                    "UNAUTHORIZED: Token missing required claim: %s", self.subject_id_claim
+                )
                 return AuthResult(authenticated=False)
 
             provider_prefix = self._extract_provider_prefix(claims.get("iss", ""))

@@ -91,9 +91,7 @@ class DatabaseAPIKeyAuth(AuthProvider):
             is_admin = bool(api_key.is_admin)
             key_id = api_key.key_id
             key_name = api_key.name
-            expires_at_iso = (
-                api_key.expires_at.isoformat() if api_key.expires_at else None
-            )
+            expires_at_iso = api_key.expires_at.isoformat() if api_key.expires_at else None
 
         # Decision #13: Fire-and-forget last_used_at update (outside session)
         self._update_last_used_background(token_hash)
@@ -144,9 +142,7 @@ class DatabaseAPIKeyAuth(AuthProvider):
 
     @staticmethod
     def _hash_key(key: str) -> str:
-        return hmac.new(
-            HMAC_SALT.encode("utf-8"), key.encode("utf-8"), hashlib.sha256
-        ).hexdigest()
+        return hmac.new(HMAC_SALT.encode("utf-8"), key.encode("utf-8"), hashlib.sha256).hexdigest()
 
     @classmethod
     def create_key(

@@ -10,7 +10,6 @@ import pytest
 from nexus.auth.providers.base import AuthProvider, AuthResult
 from nexus.auth.providers.discriminator import DiscriminatingAuthProvider
 
-
 # ---------------------------------------------------------------------------
 # Test helpers
 # ---------------------------------------------------------------------------
@@ -19,7 +18,7 @@ from nexus.auth.providers.discriminator import DiscriminatingAuthProvider
 class FakeAPIKeyProvider(AuthProvider):
     """Fake API key provider for tests."""
 
-    async def authenticate(self, token: str) -> AuthResult:
+    async def authenticate(self, _token: str) -> AuthResult:
         return AuthResult(
             authenticated=True,
             subject_type="user",
@@ -27,7 +26,7 @@ class FakeAPIKeyProvider(AuthProvider):
             metadata={"provider": "api_key"},
         )
 
-    async def validate_token(self, token: str) -> bool:
+    async def validate_token(self, _token: str) -> bool:
         return True
 
     def close(self) -> None:
@@ -37,7 +36,7 @@ class FakeAPIKeyProvider(AuthProvider):
 class FakeJWTProvider(AuthProvider):
     """Fake JWT provider for tests."""
 
-    async def authenticate(self, token: str) -> AuthResult:
+    async def authenticate(self, _token: str) -> AuthResult:
         return AuthResult(
             authenticated=True,
             subject_type="user",
@@ -45,7 +44,7 @@ class FakeJWTProvider(AuthProvider):
             metadata={"provider": "jwt"},
         )
 
-    async def validate_token(self, token: str) -> bool:
+    async def validate_token(self, _token: str) -> bool:
         return True
 
     def close(self) -> None:
@@ -55,10 +54,10 @@ class FakeJWTProvider(AuthProvider):
 class FailingProvider(AuthProvider):
     """Provider that always rejects."""
 
-    async def authenticate(self, token: str) -> AuthResult:
+    async def authenticate(self, _token: str) -> AuthResult:
         return AuthResult(authenticated=False)
 
-    async def validate_token(self, token: str) -> bool:
+    async def validate_token(self, _token: str) -> bool:
         return False
 
     def close(self) -> None:
@@ -87,6 +86,7 @@ async def test_sk_prefix_routes_to_api_key_provider():
     )
     result = await provider.authenticate("sk-test-key-1234567890123456")
     assert result.authenticated is True
+    assert result.metadata is not None
     assert result.metadata["provider"] == "api_key"
 
 
@@ -99,6 +99,7 @@ async def test_jwt_routes_to_jwt_provider():
     )
     result = await provider.authenticate(_make_jwt())
     assert result.authenticated is True
+    assert result.metadata is not None
     assert result.metadata["provider"] == "jwt"
 
 

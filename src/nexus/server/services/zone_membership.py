@@ -39,7 +39,7 @@ def parse_zone_from_group(group_id: str) -> str | None:
         parse_zone_from_group("engineering") -> None
     """
     if group_id.startswith("zone-"):
-        return group_id[len("zone-"):]
+        return group_id[len("zone-") :]
     return None
 
 

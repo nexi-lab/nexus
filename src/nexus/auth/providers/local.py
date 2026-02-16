@@ -42,8 +42,7 @@ class LocalAuth(AuthProvider):
 
         if not jwt_secret:
             logger.warning(
-                "No JWT secret provided - auto-generated. "
-                "Tokens will be invalidated on restart."
+                "No JWT secret provided - auto-generated. Tokens will be invalidated on restart."
             )
         logger.info("Initialized LocalAuth with %d users", len(self.users))
 

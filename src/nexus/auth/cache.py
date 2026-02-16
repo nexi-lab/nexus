@@ -31,9 +31,7 @@ class AuthCache:
         ttl: int = _DEFAULT_TTL,
         max_size: int = _DEFAULT_MAX_SIZE,
     ) -> None:
-        self._cache: TTLCache[str, dict[str, Any]] = TTLCache(
-            maxsize=max_size, ttl=ttl
-        )
+        self._cache: TTLCache[str, dict[str, Any]] = TTLCache(maxsize=max_size, ttl=ttl)
 
     @staticmethod
     def _token_hash(token: str) -> str:

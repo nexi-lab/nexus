@@ -11,7 +11,6 @@ from nexus.auth.cache import AuthCache
 from nexus.auth.providers.base import AuthProvider, AuthResult
 from nexus.auth.service import AuthService
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -29,10 +28,10 @@ class StubProvider(AuthProvider):
             is_admin=False,
         )
 
-    async def authenticate(self, token: str) -> AuthResult:
+    async def authenticate(self, _token: str) -> AuthResult:
         return self._result
 
-    async def validate_token(self, token: str) -> bool:
+    async def validate_token(self, _token: str) -> bool:
         return self._result.authenticated
 
     def close(self) -> None:
@@ -93,16 +92,19 @@ async def test_authenticate_cache_hit_skips_provider():
     mock_provider.authenticate = AsyncMock()
 
     cache = AuthCache(ttl=60, max_size=100)
-    cache.set("sk-preloaded", {
-        "authenticated": True,
-        "subject_type": "user",
-        "subject_id": "cached_user",
-        "zone_id": "org_cached",
-        "is_admin": False,
-        "metadata": None,
-        "agent_generation": None,
-        "inherit_permissions": True,
-    })
+    cache.set(
+        "sk-preloaded",
+        {
+            "authenticated": True,
+            "subject_type": "user",
+            "subject_id": "cached_user",
+            "zone_id": "org_cached",
+            "is_admin": False,
+            "metadata": None,
+            "agent_generation": None,
+            "inherit_permissions": True,
+        },
+    )
 
     svc = AuthService(provider=mock_provider, cache=cache)
     result = await svc.authenticate("sk-preloaded")
@@ -181,16 +183,14 @@ def test_setup_zone_personal_email(monkeypatch):
     monkeypatch.setattr(
         _svc_mod,
         "get_zone_strategy_from_email",
-        lambda email: ("alice", "Alice's Zone", "gmail.com", True),
+        lambda _email: ("alice", "Alice's Zone", "gmail.com", True),
     )
-    monkeypatch.setattr(
-        _svc_mod, "suggest_zone_id", lambda base_slug, session: "alice-personal"
-    )
+    monkeypatch.setattr(_svc_mod, "suggest_zone_id", lambda _base_slug, _session: "alice-personal")
     create_calls = []
     monkeypatch.setattr(
         _svc_mod,
         "create_zone",
-        lambda **kw: (create_calls.append(kw), mock_zone)[1],
+        lambda **_kw: (create_calls.append(_kw), mock_zone)[1],
     )
 
     result = svc.setup_zone(mock_session, "alice@gmail.com")
@@ -215,12 +215,10 @@ def test_setup_zone_work_email(monkeypatch):
     monkeypatch.setattr(
         _svc_mod,
         "get_zone_strategy_from_email",
-        lambda email: ("acme", "Acme Corp", "acme.com", False),
+        lambda _email: ("acme", "Acme Corp", "acme.com", False),
     )
-    monkeypatch.setattr(
-        _svc_mod, "suggest_zone_id", lambda base_slug, session: "acme"
-    )
-    monkeypatch.setattr(_svc_mod, "create_zone", lambda **kw: mock_zone)
+    monkeypatch.setattr(_svc_mod, "suggest_zone_id", lambda _base_slug, _session: "acme")
+    monkeypatch.setattr(_svc_mod, "create_zone", lambda **_kw: mock_zone)
 
     result = svc.setup_zone(mock_session, "bob@acme.com")
 
@@ -243,15 +241,15 @@ def test_setup_zone_with_overrides(monkeypatch):
     monkeypatch.setattr(
         _svc_mod,
         "get_zone_strategy_from_email",
-        lambda email: ("auto", "Auto Name", "example.com", False),
+        lambda _email: ("auto", "Auto Name", "example.com", False),
     )
     suggest_calls = []
     monkeypatch.setattr(
         _svc_mod,
         "suggest_zone_id",
-        lambda base_slug, session: suggest_calls.append(1) or "unused",
+        lambda _base_slug, _session: suggest_calls.append(1) or "unused",
     )
-    monkeypatch.setattr(_svc_mod, "create_zone", lambda **kw: mock_zone)
+    monkeypatch.setattr(_svc_mod, "create_zone", lambda **_kw: mock_zone)
 
     result = svc.setup_zone(
         mock_session,

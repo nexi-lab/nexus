@@ -15,17 +15,17 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.exceptions import ValidationError
-from nexus.core.permissions import OperationContext
+from nexus.skills.exceptions import SkillValidationError
 from nexus.skills.mcp_models import MCPMount, MCPToolConfig, MCPToolDefinition
 
 if TYPE_CHECKING:
+    from nexus.core.permissions import OperationContext
     from nexus.skills.protocols import NexusFilesystem
 
 logger = logging.getLogger(__name__)
 
 
-class MCPMountError(ValidationError):
+class MCPMountError(SkillValidationError):
     """Raised when MCP mount operations fail."""
 
     pass

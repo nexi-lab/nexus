@@ -8,14 +8,14 @@ import zipfile
 from pathlib import Path
 from typing import Any, BinaryIO
 
-from nexus.core.exceptions import ValidationError
+from nexus.skills.exceptions import SkillValidationError
 from nexus.skills.models import Skill
 from nexus.skills.registry import SkillNotFoundError, SkillRegistry
 
 logger = logging.getLogger(__name__)
 
 
-class SkillExportError(ValidationError):
+class SkillExportError(SkillValidationError):
     """Raised when skill export fails."""
 
     pass

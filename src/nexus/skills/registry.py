@@ -1,29 +1,34 @@
 """Skill registry with progressive disclosure and lazy loading."""
 
+from __future__ import annotations
+
 import logging
 from collections import defaultdict
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from nexus.core.exceptions import PermissionDeniedError, ValidationError
-from nexus.core.permissions import OperationContext
+from nexus.skills.exceptions import (
+    SkillPermissionDeniedError,
+    SkillValidationError,
+)
 from nexus.skills.models import Skill, SkillMetadata
 from nexus.skills.parser import SkillParseError, SkillParser
 from nexus.skills.protocols import NexusFilesystem
 
 if TYPE_CHECKING:
+    from nexus.core.permissions import OperationContext
     from nexus.services.permissions.rebac_manager import ReBACManager
 
 logger = logging.getLogger(__name__)
 
 
-class SkillNotFoundError(ValidationError):
+class SkillNotFoundError(SkillValidationError):
     """Raised when a skill is not found in the registry."""
 
     pass
 
 
-class SkillDependencyError(ValidationError):
+class SkillDependencyError(SkillValidationError):
     """Raised when skill dependencies cannot be resolved."""
 
     pass
@@ -107,7 +112,7 @@ class SkillRegistry:
         return paths
 
     def __init__(
-        self, filesystem: NexusFilesystem | None = None, rebac_manager: "ReBACManager | None" = None
+        self, filesystem: NexusFilesystem | None = None, rebac_manager: ReBACManager | None = None
     ):
         """Initialize skill registry.
 
@@ -346,7 +351,7 @@ class SkillRegistry:
 
         Raises:
             SkillNotFoundError: If skill not found
-            PermissionDeniedError: If subject lacks read permission
+            SkillPermissionDeniedError: If subject lacks read permission
 
         Example:
             >>> ctx = OperationContext(user_id="alice", zone_id="acme")
@@ -375,11 +380,11 @@ class SkillRegistry:
                         zone_id=context.zone_id,
                     )
                     if not has_permission:
-                        raise PermissionDeniedError(
+                        raise SkillPermissionDeniedError(
                             f"No permission to read skill '{name}'. "
                             f"Subject ({subject_type}:{subject_id}) lacks 'read' permission."
                         )
-                except PermissionDeniedError:
+                except SkillPermissionDeniedError:
                     # Re-raise permission errors
                     raise
                 except Exception as e:

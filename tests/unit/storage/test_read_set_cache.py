@@ -9,8 +9,8 @@ cache invalidation by tracking which resources each cache entry depends on.
 import threading
 
 from nexus.core.read_set import AccessType, ReadSet, ReadSetRegistry
+from nexus.core.read_set_cache import ReadSetAwareCache
 from nexus.storage.cache import _CACHE_MISS, MetadataCache
-from nexus.storage.read_set_cache import ReadSetAwareCache
 
 
 def _is_cached(cache: MetadataCache, path: str) -> bool:

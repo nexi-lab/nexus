@@ -278,12 +278,12 @@ class TestTimeTravelDebug:
 
     def test_time_travel_with_agent_id(self, nx, record_store):
         """Test time-travel with agent-specific operations using context parameter."""
-        from nexus.services.permissions.permissions_enhanced import EnhancedOperationContext
+        from nexus.core.types import OperationContext
         from nexus.storage.operation_logger import OperationLogger
         from nexus.storage.time_travel import TimeTravelReader
 
         # Use context parameter with agent ID
-        context = EnhancedOperationContext(user="test", groups=[], agent_id="agent-1")
+        context = OperationContext(user="test", groups=[], agent_id="agent-1")
 
         path = "/workspace/agent_file.txt"
         nx.write(path, b"Agent 1 content", context=context)

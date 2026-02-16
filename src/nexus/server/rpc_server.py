@@ -1068,7 +1068,13 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 raw_content = self.nexus_fs.read(original_path, context=context)
                 # Type narrowing: when return_metadata=False (default), result is bytes
                 assert isinstance(raw_content, bytes), "Expected bytes from read()"
-                return get_parsed_content(raw_content, original_path, view_type)
+                from nexus.parsers import create_default_parse_fn
+
+                if not hasattr(self, "_parse_fn"):
+                    self._parse_fn = create_default_parse_fn()
+                return get_parsed_content(
+                    raw_content, original_path, view_type, parse_fn=self._parse_fn
+                )
             else:
                 # v0.3.9: Support return_metadata parameter
                 result = self.nexus_fs.read(

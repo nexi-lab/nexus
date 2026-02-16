@@ -142,18 +142,44 @@ class ManifestResolver:
         self._max_resolve_seconds = max_resolve_seconds
         self._metrics = metrics_observer
 
+    def with_executors(self, extra: dict[str, SourceExecutor]) -> ManifestResolver:
+        """Return a new resolver with additional executors merged in.
+
+        Existing executors are preserved; *extra* executors override on conflict.
+        The new resolver shares the same config (timeout, metrics).
+
+        This enables per-request executor injection (e.g., binding a
+        MemoryQueryExecutor to the requesting agent's Memory instance)
+        without mutating the shared resolver.
+
+        Args:
+            extra: Additional executors to merge. Keys are source type names.
+
+        Returns:
+            New ManifestResolver with merged executors.
+        """
+        merged = {**self._executors, **extra}
+        return ManifestResolver(
+            executors=merged,
+            max_resolve_seconds=self._max_resolve_seconds,
+            metrics_observer=self._metrics,
+        )
+
     async def resolve(
         self,
         sources: Sequence[ContextSourceProtocol],
         variables: dict[str, str],
-        output_dir: Path,
+        output_dir: Path | None = None,
     ) -> ManifestResult:
-        """Resolve all sources and write results to *output_dir*.
+        """Resolve all sources and optionally write results to *output_dir*.
 
         Args:
             sources: Sequence of ContextSource models to resolve.
             variables: Template variable values for substitution.
-            output_dir: Directory to write result files into.
+            output_dir: Directory to write result files into. If None,
+                no files are written — results are returned in-memory only.
+                This avoids unnecessary I/O when the caller only needs
+                the ManifestResult (e.g., API resolve endpoint).
 
         Returns:
             ManifestResult with all source results.
@@ -205,9 +231,10 @@ class ManifestResolver:
                 total_ms=elapsed_ms,
             )
 
-            # Step 6-7: Write result files + _index.json (last)
-            output_dir.mkdir(parents=True, exist_ok=True)
-            await self._write_results(output_dir, sources, results, manifest_result)
+            # Step 6-7: Write result files + _index.json (last) — skip if no output_dir (15A)
+            if output_dir is not None:
+                output_dir.mkdir(parents=True, exist_ok=True)
+                await self._write_results(output_dir, sources, results, manifest_result)
 
             # Step 8: Check for required failures
             failed_required = [

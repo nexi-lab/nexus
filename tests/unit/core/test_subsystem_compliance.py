@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import pytest
 
-from nexus.raft.zone_manager import ROOT_ZONE_ID
 from nexus.services.subsystem import ContextIdentity, extract_context_identity
 
 
@@ -35,7 +34,7 @@ class TestExtractContextIdentity:
 
     def test_none_context_returns_defaults(self) -> None:
         identity = extract_context_identity(None)
-        assert identity.zone_id == ROOT_ZONE_ID
+        assert identity.zone_id == "root"
         assert identity.user_id == "anonymous"
         assert identity.is_admin is False
 
@@ -58,7 +57,7 @@ class TestExtractContextIdentity:
 
         ctx = OperationContext(user="bob", groups=[], zone_id=None)
         identity = extract_context_identity(ctx)
-        assert identity.zone_id == ROOT_ZONE_ID
+        assert identity.zone_id == "root"
 
     def test_subject_id_used_when_available(self) -> None:
         """subject_id is accessible on OperationContext."""

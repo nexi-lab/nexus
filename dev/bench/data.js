@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771256060003,
+  "lastUpdate": 1771257738185,
   "repoUrl": "https://github.com/nexi-lab/nexus",
   "entries": {
     "Benchmark": [
@@ -11550,6 +11550,156 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.006781221288990902",
             "extra": "mean: 1.8138226352577564 msec\nrounds: 658"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "songym@sudoprivacy.com",
+            "name": "elfenlieds7",
+            "username": "elfenlieds7"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "84249b797236e0834e52933163651e839b4a677f",
+          "message": "fix(#413): remove direct engine creation and env var reads from OAuthCrypto (#1734)\n\n* fix(#413): remove direct engine creation and env var reads from OAuthCrypto — DI via session_factory\n\n- Remove `db_url` parameter and `import os` from OAuthCrypto\n- Remove `create_engine`, `Base.metadata.create_all`, `sessionmaker` fallback path\n- Remove direct `os.environ.get(\"NEXUS_OAUTH_ENCRYPTION_KEY\")` read\n- Remove sqlite dialect-specific branching (`check_same_thread`)\n- Make `session_factory` keyword-only; callers pass encryption_key + session_factory\n- Update callers in fastapi_server.py, lifespan/services.py, token_manager.py\n- Remove unused `database_url` param from `_initialize_oauth_provider`\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#566): move module-level global state to app.state in lifespan/services.py\n\n- Remove module-level mutable globals: _scheduler_pool, _heartbeat_task, _stale_detection_task\n- Remove all `global` keyword usage\n- Store lifecycle state on app.state instead (federation-safe, per-app instance)\n- Remove unused `Any` import\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#474): replace private attribute access across module boundaries in oauth_service\n\n- Replace factory._oauth_config.providers with factory.list_providers() (public API)\n- Replace nexus_fs._config with nexus_fs.config (new public property)\n- Add config property to NexusFS for public access to runtime configuration\n- Also fix nexus_fs._config access in lifespan/services.py\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#357): expose public rebac_manager property on NexusFS, use in warmer.py\n\nReplace private _rebac_manager access in cache/warmer.py with the new\npublic rebac_manager property on NexusFS, eliminating cross-module\nprivate attribute access.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#358): replace private attribute access in read_set_cache with public API\n\nAdd register_eviction_callback() to MetadataCache so ReadSetAwareCache\nno longer reaches into _path_cache._on_evict across module boundaries.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#362): use public rebac_manager property in portability services\n\nReplace private _rebac_manager access via getattr in export_service.py\nand import_service.py with the public rebac_manager property on NexusFS.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#356): eliminate cross-module private attribute access in 8 service files\n\n- nexus_fs.py: add public `semantic_search_engine` property\n- llm_service.py: use `semantic_search_engine` instead of `_semantic_search`\n- rebac_manager.py: make `get_zone_revision` public, add `list_tuples` method,\n  delete backward-compat `_get_zone_revision` alias\n- namespace_manager.py: use public `get_zone_revision` (4 occurrences)\n- rebac_service.py: delegate to `rebac_manager.list_tuples()` instead of\n  accessing 4 private methods for raw SQL\n- bitmap_cache.py: add public `resource_map` property\n- permission_cache.py: use `tiger_cache.resource_map.get_int_ids_batch()`\n  instead of `_resource_map._engine.connect()`\n- mcp/middleware.py: use public `get_zone_revision` instead of private\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#380): use public list_mounts() instead of private _mounts in mount_hooks\n\nReplace `router._mounts` with `router.list_mounts()` which is the\nexisting public API on PathRouter for listing registered mounts.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#539): make 6 private connector methods public for sync_pipeline\n\nRename private methods to public API on CacheConnectorMixin and connectors:\n- _read_bulk_from_cache → read_bulk_from_cache\n- _batch_get_versions → batch_get_versions (4 connector files)\n- _batch_read_from_backend → batch_read_from_backend\n- _parse_content → parse_content\n- _batch_write_to_cache → batch_write_to_cache\n- _generate_embeddings → generate_embeddings_for_path\n\nUpdated all callers in sync_pipeline.py and nexus_fs_core.py.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#575): fix macOS test failures — remove stale xfail + fix cache zone mismatch\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#584): remove legacy pattern mode from reactive subscriptions — read-set only\n\nRemove backward-compat pattern-matching mode (O(L×P) glob scan) from\nReactiveSubscriptionManager, keeping only O(1) read-set mode via\nReadSetRegistry. Delete legacy broadcast path, _matches_filters, and\n_path_matches_pattern from WebSocketManager. Update all tests.\n\n- Subscription dataclass: remove mode/patterns fields\n- ReactiveSubscriptionManager: remove _pattern_subs_by_zone, pattern branch\n- WebSocketManager: remove _broadcast_legacy, _matches_filters, patterns param\n- events.py: remove patterns from WS connect/message\n- Tests: rewrite unit + integration tests for read-set-only mode\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#1734): update tests to use public batch method names\n\nTests referenced private methods (_batch_get_versions, _batch_write_to_cache,\n_batch_read_from_backend, _read_bulk_from_cache) that were renamed to public\nmethods (without _ prefix). Updated all test mocks, assertions, and comments.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#585): remove dead SessionLocal backward-compat alias from record_store\n\n- Delete the SessionLocal property alias from SQLAlchemyRecordStore (dead code —\n  all callers use NexusFS.SessionLocal which is a separate attribute)\n- Update docstrings in version_manager, s3_connector, gcs_connector to reference\n  session_factory instead of SessionLocal\n- Update models/__init__.py docstring: \"backward compatibility\" → \"convenient access\"\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#1734): update tests to patch public method names instead of private\n\n- _generate_embeddings → generate_embeddings_for_path (connector method)\n- _get_zone_revision → get_zone_revision (EnhancedReBACManager method)\n\nFixes 5 CI test failures on ubuntu and macos.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#586): delete backward-compat aliases, deprecated prefix param, and stale labels from core/\n\n- Remove dead DistributedLockManager = RaftLockManager alias (zero imports)\n- Delete deprecated `prefix` parameter from filesystem.list() chain\n  (filesystem ABC → scoped_filesystem → async_scoped_filesystem →\n   nexus_fs → search_service → async_client → rpc_server)\n- Clean misleading \"backward-compat\" labels from event_bus_nats subscribe,\n  file_watcher one-shot API, and workspace_manifest comments\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#1734): fix dcache revision bucket test — mock bucket for deterministic hit\n\nThe test_same_revision_bucket_returns_cached test was failing because\nthe _grant_file helper (rebac_write) increments the zone revision before\nthe first is_visible call, and the subsequent rebac_write pushes the\nrevision across a bucket boundary (revision_window=2). This means\nrevision goes 0→1 (bucket 0) then 1→2 (bucket 1), causing a dcache miss\ninstead of the expected hit.\n\nFix: mock _get_current_revision_bucket to return a fixed value (5) for\nboth is_visible calls, matching the pattern used by\ntest_different_revision_bucket_misses. This properly tests that within\nthe same revision bucket, dcache entries are hit.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#582): clean backward-compat labels, delete dead re-exports and dead code in server/\n\n- Delete dead rpc_expose re-export from protocol.py (zero imports)\n- Delete deprecated prefix field from ListParams (removed from chain in #586)\n- Delete dead duplicate api_key kwarg handling in auth/factory.py\n- Clean \"backward compatibility\" labels from rpc_server, fastapi_server,\n  path_utils, protocol, and v1/dependencies\n- Remove stale deprecation notice from get_database_url\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#1734): remove deprecated prefix param from skills NexusFilesystem protocol\n\nThe `prefix` parameter was removed from `core.filesystem.NexusFilesystem.list()`\nbut the skills protocol still had it, causing 16 mypy arg-type errors.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#559): delete 5 backward-compat shim/protocol files, clean 20+ service files\n\n- Delete permissions/leopard.py and permissions/dir_visibility_cache.py\n  shims; update callers to canonical cache.leopard / cache.visibility paths\n- Delete vestigial protocols/event_log.py (different interface from active\n  event_log/protocol.py, zero implementations) and its dedicated tests\n- Remove unused session_factory param from event_log/factory.py and caller\n- Remove subsystem.py re-exports of ContextIdentity/extract_context_identity;\n  update all callers to import from canonical nexus.core.types\n- Strip \"backward compatibility\" labels from 12+ service/memory/search files\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#1734): remove stale prefix param from test mock to match updated Protocol\n\nThe MinimalFilesystem mock in test_protocol_compatibility.py still had\n`prefix=None` in its list() signature after the Protocol was cleaned up.\nRemove it to keep the mock aligned with the narrowed Protocol.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#1734): remove deprecated prefix param from SearchProtocol and fix test\n\n- Remove prefix param from SearchProtocol.list() to match SearchService\n- Update test_list_with_prefix to use path=\"/dir\" instead of prefix=\"/dir\"\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#1734): fix 5 mypy errors — public get_zone_revision, add list_tuples, fix NamespaceManager import\n\n- Make ReBACManager._get_zone_revision public (matching services/permissions copy)\n  Fixes attr-defined error in mcp/middleware.py and no-any-return\n- Add ReBACManager.list_tuples() method (matching services/permissions copy)\n  Fixes attr-defined error in services/rebac_service.py\n- Fix SandboxAuthService NamespaceManager import to use nexus.rebac.namespace_manager\n  (matches what the factory actually returns)\n  Fixes arg-type error in server/lifespan/services.py\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#1734): replace deprecated prefix= with path= in list test\n\nSearchService.list() no longer accepts `prefix` parameter.\nUse `path=\"/a/\", recursive=True` instead to achieve the same filtering.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Opus 4.6 <noreply@anthropic.com>",
+          "timestamp": "2026-02-16T23:59:17+08:00",
+          "tree_id": "a54fdbea6cfc51509f0321155bbced51f3df6b1c",
+          "url": "https://github.com/nexi-lab/nexus/commit/84249b797236e0834e52933163651e839b4a677f"
+        },
+        "date": 1771257736841,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/benchmarks/test_async_permission_performance.py::test_permission_overhead_acceptable",
+            "value": 340.9716971571698,
+            "unit": "iter/sec",
+            "range": "stddev: 0.004932450924713714",
+            "extra": "mean: 2.932794740259786 msec\nrounds: 462"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_write_small_file",
+            "value": 326.0731737118477,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0006877543575477253",
+            "extra": "mean: 3.066796291815482 msec\nrounds: 281"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_read_small_file",
+            "value": 17181.178494644526,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000013775206882409085",
+            "extra": "mean: 58.20322513451018 usec\nrounds: 15986"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_read_cached_file",
+            "value": 16791.81612441963,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000012886734209098397",
+            "extra": "mean: 59.55281981356038 usec\nrounds: 17493"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_exists_check",
+            "value": 42775.01419310874,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000845535484478425",
+            "extra": "mean: 23.378133680692144 usec\nrounds: 46252"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestGlobBenchmarks::test_list_large_directory",
+            "value": 239.39108754410967,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0004243938419479362",
+            "extra": "mean: 4.177264952755363 msec\nrounds: 254"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestGlobBenchmarks::test_glob_simple_pattern",
+            "value": 182.86944595238114,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00043214361740379255",
+            "extra": "mean: 5.468382073298336 msec\nrounds: 191"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestGlobBenchmarks::test_list_1k_files",
+            "value": 66.92511242675859,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0014593571376861085",
+            "extra": "mean: 14.942074263892776 msec\nrounds: 72"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestHashingBenchmarks::test_sha256_medium",
+            "value": 23723.164559982975,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000001763576619146092",
+            "extra": "mean: 42.152892269981265 usec\nrounds: 24023"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestPermissionBenchmarks::test_permission_check_bulk_python",
+            "value": 2548.30423026427,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004286886247596106",
+            "extra": "mean: 392.41782363493377 usec\nrounds: 1684"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestPermissionBenchmarks::test_permission_check_bulk_rust",
+            "value": 5049.163905343707,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003951844270610583",
+            "extra": "mean: 198.05259222059814 usec\nrounds: 3188"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBulkOperationBenchmarks::test_write_batch_10",
+            "value": 34.06275536842532,
+            "unit": "iter/sec",
+            "range": "stddev: 0.007000881987726465",
+            "extra": "mean: 29.357578069769307 msec\nrounds: 43"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBulkOperationBenchmarks::test_read_bulk_10",
+            "value": 1434.2395228219912,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000341588945073585",
+            "extra": "mean: 697.2336099289838 usec\nrounds: 1551"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBlake3HashingBenchmarks::test_hash_1mb_content",
+            "value": 3974.491595958948,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000058493306605670546",
+            "extra": "mean: 251.6045073580598 usec\nrounds: 4009"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBlake3HashingBenchmarks::test_hash_smart_1mb_content",
+            "value": 18277.456218292253,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000002693416406176021",
+            "extra": "mean: 54.712208748129314 usec\nrounds: 17284"
+          },
+          {
+            "name": "tests/benchmarks/test_search_benchmarks.py::TestPythonRegexBenchmarks::test_python_regex_simple_10k_lines",
+            "value": 3931.728821065508,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000024169244635886237",
+            "extra": "mean: 254.3410406745696 usec\nrounds: 4032"
+          },
+          {
+            "name": "tests/benchmarks/test_search_benchmarks.py::TestRustGrepBenchmarks::test_rust_grep_10k_lines",
+            "value": 937.6782359763978,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000042089419790292896",
+            "extra": "mean: 1.0664639122808552 msec\nrounds: 912"
+          },
+          {
+            "name": "tests/benchmarks/test_search_benchmarks.py::TestHybridSearchFusionBenchmarks::test_rrf_fusion_1k_results",
+            "value": 534.4756932956304,
+            "unit": "iter/sec",
+            "range": "stddev: 0.008064206916844353",
+            "extra": "mean: 1.8709924745761595 msec\nrounds: 649"
           }
         ]
       }

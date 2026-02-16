@@ -12,19 +12,13 @@ from nexus.sdk import (
     Config,
     FileNotFoundError,
     Filesystem,
-    GCSBackend,
     InvalidPathError,
-    LocalBackend,
     MetadataError,
     NamespaceConfig,
     NexusError,
-    NexusFS,
     OperationContext,
-    PermissionEnforcer,
     PermissionError,
-    ReBACManager,
     ReBACTuple,
-    RemoteNexusFS,
     Skill,
     SkillDependencyError,
     SkillExporter,
@@ -55,16 +49,12 @@ class TestSDKImports:
         assert callable(load_config)
 
     def test_filesystem_imports(self):
-        """Test that filesystem classes are available."""
+        """Test that filesystem ABC is available."""
         assert Filesystem is not None
-        assert NexusFS is not None
-        assert RemoteNexusFS is not None
 
     def test_backend_imports(self):
-        """Test that backend classes are available."""
+        """Test that backend ABC is available."""
         assert Backend is not None
-        assert LocalBackend is not None
-        assert GCSBackend is not None
 
     def test_exception_imports(self):
         """Test that exception classes are available."""
@@ -79,11 +69,9 @@ class TestSDKImports:
     def test_permission_imports(self):
         """Test that permission classes are available."""
         assert OperationContext is not None
-        assert PermissionEnforcer is not None
 
     def test_rebac_imports(self):
         """Test that ReBAC classes are available."""
-        assert ReBACManager is not None
         assert ReBACTuple is not None
 
     def test_router_imports(self):
@@ -112,7 +100,6 @@ class TestSDKConnect:
         """Test that connect returns a Filesystem instance."""
         nx = connect(config={"data_dir": str(tmp_path)})
         assert isinstance(nx, Filesystem)
-        assert isinstance(nx, NexusFS)
 
     def test_connect_with_dict_config(self, tmp_path):
         """Test connect with dictionary configuration."""
@@ -122,7 +109,7 @@ class TestSDKConnect:
                 "backend": "local",
             }
         )
-        assert isinstance(nx, NexusFS)
+        assert isinstance(nx, Filesystem)
 
     def test_connect_with_path_config(self, tmp_path):
         """Test connect with path to config file."""
@@ -130,7 +117,7 @@ class TestSDKConnect:
         config_file.write_text("backend: local\n")
 
         nx = connect(config=str(config_file))
-        assert isinstance(nx, NexusFS)
+        assert isinstance(nx, Filesystem)
 
 
 class TestSDKOperations:

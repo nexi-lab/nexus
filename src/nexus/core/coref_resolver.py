@@ -179,13 +179,9 @@ Resolved text:"""
                 method="none",
             )
 
-        # Get or create LLM provider
+        # Require injected LLM provider; fall back to heuristic if absent
         provider = self.llm_provider
         if provider is None:
-            provider = self._get_default_provider()
-
-        if provider is None:
-            # Fall back to heuristic if no LLM available
             fallback = HeuristicCorefResolver()
             result = fallback.resolve(text, context, entity_hints)
             result.method = "heuristic"
@@ -352,15 +348,6 @@ Resolved text:"""
                 )
 
         return replacements
-
-    def _get_default_provider(self) -> Any:
-        """Return None — callers must inject an LLM provider via constructor.
-
-        Kernel modules must not read environment variables directly
-        (KERNEL-ARCHITECTURE §3). The service layer is responsible for
-        constructing and injecting LLM providers.
-        """
-        return None
 
 
 class HeuristicCorefResolver(CorefResolver):

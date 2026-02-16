@@ -250,12 +250,11 @@ def remove_user_from_zone(
     """
     if role is None:
         # Remove from all groups (owner, admin, member)
-        import contextlib
-
         for r in ["owner", "admin", "member"]:
-            # Ignore errors if tuple doesn't exist
-            with contextlib.suppress(Exception):
+            try:
                 remove_user_from_zone(rebac_manager, user_id, zone_id, r)
+            except Exception as e:
+                logger.warning("Failed to remove user from roles: %s", e, exc_info=True)
         return
 
     group_id = zone_group_id(zone_id)

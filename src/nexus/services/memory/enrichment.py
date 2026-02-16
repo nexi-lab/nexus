@@ -192,8 +192,10 @@ class EnrichmentPipeline:
             try:
                 from nexus.search.embeddings import create_embedding_provider
 
-                with contextlib.suppress(Exception):
+                try:
                     provider = create_embedding_provider(provider="openrouter")
+                except Exception as e:
+                    logger.debug("Failed to create embedding provider: %s", e)
             except ImportError:
                 return
 

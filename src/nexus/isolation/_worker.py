@@ -8,9 +8,11 @@ first call and reused for subsequent calls.
 
 from __future__ import annotations
 
-import contextlib
 import importlib
+import logging
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 # ── Per-worker globals (one Backend instance per interpreter / process) ──────
 _BACKEND_INSTANCE: Any = None
@@ -38,8 +40,10 @@ def _ensure_backend(
 
     # Disconnect old instance (if any) before replacing
     if _BACKEND_INSTANCE is not None:
-        with contextlib.suppress(Exception):
+        try:
             _BACKEND_INSTANCE.disconnect()
+        except Exception as e:
+            logger.debug("Worker cleanup failed: %s", e)
         _BACKEND_INSTANCE = None
         _BACKEND_SPEC = None
 
@@ -49,8 +53,10 @@ def _ensure_backend(
     try:
         instance.connect()
     except Exception:
-        with contextlib.suppress(Exception):
+        try:
             instance.disconnect()
+        except Exception as e:
+            logger.debug("Worker cleanup failed: %s", e)
         raise
     _BACKEND_INSTANCE = instance
     _BACKEND_SPEC = spec
@@ -90,7 +96,9 @@ def worker_shutdown() -> None:
     global _BACKEND_INSTANCE, _BACKEND_SPEC  # noqa: PLW0603
 
     if _BACKEND_INSTANCE is not None:
-        with contextlib.suppress(Exception):
+        try:
             _BACKEND_INSTANCE.disconnect()
+        except Exception as e:
+            logger.debug("Worker cleanup failed: %s", e)
     _BACKEND_INSTANCE = None
     _BACKEND_SPEC = None

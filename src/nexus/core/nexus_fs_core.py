@@ -1740,8 +1740,10 @@ class NexusFSCoreMixin:
         # in affected_rows to avoid a redundant get_content_size() round-trip.
         size = write_response.affected_rows
         if size <= 0:
-            with contextlib.suppress(Exception):
+            try:
                 size = route.backend.get_content_size(content_hash, context=context).unwrap()
+            except Exception as e:
+                logger.debug("Failed to get content size for %s: %s", content_hash, e)
 
         # Update metadata
         new_version = (meta.version + 1) if meta else 1
@@ -4241,10 +4243,20 @@ class NexusFSCoreMixin:
 
         if recursive and files_in_dir:
             # Delete content from backend for each file
+            _errors: list[str] = []
             for file_meta in files_in_dir:
                 if file_meta.etag and file_meta.mime_type != "inode/directory":
-                    with contextlib.suppress(Exception):
+                    try:
                         route.backend.delete_content(file_meta.etag).unwrap()
+                    except Exception as e:
+                        if len(_errors) < 100:
+                            _errors.append(f"{file_meta.path}: {e}")
+            if _errors:
+                logger.debug(
+                    "Bulk content delete: %d error(s) (showing up to 100): %s",
+                    len(_errors),
+                    "; ".join(_errors),
+                )
 
             # Batch delete from metadata store
             file_paths = [file_meta.path for file_meta in files_in_dir]

@@ -349,15 +349,15 @@ class TestFormatMessages:
         assert len(formatted) == 1
         assert formatted[0]["role"] == "user"
 
-    def test_format_messages_sets_flags(self, provider: LiteLLMProvider) -> None:
-        """Test that format_messages sets serialization flags on messages."""
+    def test_format_messages_does_not_mutate_originals(self, provider: LiteLLMProvider) -> None:
+        """Test that format_messages does not mutate the original message objects."""
         messages = _make_messages("Test")
         provider._format_messages(messages)
-        # After formatting, flags should be set on the message objects
+        # Original messages should remain unmutated (Issue #1521: fix mutation)
         for msg in messages:
-            assert msg.cache_enabled == provider.is_caching_prompt_active()
-            assert msg.vision_enabled == provider.vision_is_active()
-            assert msg.function_calling_enabled == provider.is_function_calling_active()
+            assert msg.cache_enabled is False
+            assert msg.vision_enabled is False
+            assert msg.function_calling_enabled is False
 
 
 class TestCachingPrompt:

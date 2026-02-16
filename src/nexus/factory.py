@@ -581,6 +581,15 @@ def create_nexus_services(
     except ImportError:
         _search_logger.debug("[FACTORY] Search brick manifest not available")
 
+    # --- LLM Brick Import Validation (Issue #1521) ---
+    try:
+        from nexus.llm.manifest import verify_imports as _verify_llm
+
+        _llm_status = _verify_llm()
+        _search_logger.debug("[FACTORY] LLM brick imports: %s", _llm_status)
+    except ImportError:
+        _search_logger.debug("[FACTORY] LLM brick manifest not available")
+
     # Wire zoekt callbacks into backends (Issue #1520)
     try:
         from nexus.search.zoekt_client import notify_zoekt_sync_complete, notify_zoekt_write

@@ -46,10 +46,14 @@ from nexus.llm.message import (
     ToolCall,
     ToolFunction,
 )
+from nexus.llm.manifest import LLMBrickManifest, verify_imports
 from nexus.llm.metrics import LLMMetrics, ResponseLatency, TokenUsage
 from nexus.llm.provider import LiteLLMProvider, LLMProvider, LLMResponse
 
 __all__ = [
+    # Manifest
+    "LLMBrickManifest",
+    "verify_imports",
     # Config
     "LLMConfig",
     # Providers

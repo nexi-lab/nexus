@@ -364,7 +364,7 @@ def test_namespace_cache_performance(
 ):
     """Validate namespace mount table cache hit performance.
 
-    Expected: Cache hits should be <0.1ms (pure bisect lookup, no DB).
+    Expected: Cache hits should be <0.5ms (pure bisect lookup, no DB).
     """
     # Grant alice access to 50 paths
     paths = [f"/workspace/cache-test/file-{i:02d}.txt" for i in range(50)]

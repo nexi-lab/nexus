@@ -5,15 +5,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.skills.exceptions import SkillValidationError
-from nexus.skills.mcp_exporter import NEXUS_TOOLS, MCPToolExporter
-from nexus.skills.mcp_models import (
+from nexus.mcp.exporter import NEXUS_TOOLS, MCPToolExporter
+from nexus.mcp.models import (
     MCPMount,
     MCPToolConfig,
     MCPToolDefinition,
     MCPToolExample,
 )
-from nexus.skills.mcp_mount import MCPMountError, MCPMountManager
+from nexus.mcp.mount import MCPMountError, MCPMountManager
+from nexus.skills.exceptions import SkillValidationError
 from nexus.skills.models import SkillMetadata
 
 # =============================================================================

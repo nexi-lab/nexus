@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.skills.mcp_models import MCPToolConfig
+    from nexus.mcp.models import MCPToolConfig
 
 
 @dataclass

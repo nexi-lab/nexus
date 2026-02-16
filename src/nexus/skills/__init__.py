@@ -65,6 +65,14 @@ Example:
     >>> await mcp_manager.sync_tools("github")
 """
 
+from nexus.mcp.exporter import MCPToolExporter
+from nexus.mcp.models import (
+    MCPMount,
+    MCPToolConfig,
+    MCPToolDefinition,
+    MCPToolExample,
+)
+from nexus.mcp.mount import MCPMountError, MCPMountManager
 from nexus.skills.analytics import (
     DashboardMetrics,
     SkillAnalytics,
@@ -80,14 +88,6 @@ from nexus.skills.governance import (
     SkillGovernance,
 )
 from nexus.skills.manager import SkillManager, SkillManagerError
-from nexus.skills.mcp_exporter import MCPToolExporter
-from nexus.skills.mcp_models import (
-    MCPMount,
-    MCPToolConfig,
-    MCPToolDefinition,
-    MCPToolExample,
-)
-from nexus.skills.mcp_mount import MCPMountError, MCPMountManager
 from nexus.skills.models import Skill, SkillMetadata
 from nexus.skills.parser import SkillParseError, SkillParser
 from nexus.skills.protocols import NexusFilesystem

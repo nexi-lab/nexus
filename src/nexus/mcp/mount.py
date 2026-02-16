@@ -15,8 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from nexus.skills.exceptions import SkillValidationError
-from nexus.skills.mcp_models import MCPMount, MCPToolConfig, MCPToolDefinition
+from nexus.mcp.models import MCPMount, MCPToolConfig, MCPToolDefinition
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
@@ -25,10 +24,15 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class MCPMountError(SkillValidationError):
+class MCPMountError(Exception):
     """Raised when MCP mount operations fail."""
 
-    pass
+    is_expected = True
+
+    def __init__(self, message: str, path: str | None = None):
+        self.message = message
+        self.path = path
+        super().__init__(message)
 
 
 class MCPMountManager:
@@ -55,7 +59,7 @@ class MCPMountManager:
 
     Example:
         >>> from nexus import connect
-        >>> from nexus.skills.mcp_mount import MCPMountManager
+        >>> from nexus.mcp.mount import MCPMountManager
         >>>
         >>> nx = connect()
         >>> manager = MCPMountManager(nx)

@@ -376,7 +376,7 @@ def create_nexus_services(
         deferred_permission_buffer.start()
 
     # --- Workspace Registry ---
-    from nexus.core.workspace_registry import WorkspaceRegistry
+    from nexus.services.workspace.workspace_registry import WorkspaceRegistry
 
     workspace_registry = WorkspaceRegistry(
         metadata=metadata_store,
@@ -385,12 +385,12 @@ def create_nexus_services(
     )
 
     # --- Mount Manager ---
-    from nexus.core.mount_manager import MountManager
+    from nexus.services.mount_manager import MountManager
 
     mount_manager = MountManager(session_factory)
 
     # --- Workspace Manager ---
-    from nexus.core.workspace_manager import WorkspaceManager
+    from nexus.services.workspace_manager import WorkspaceManager
 
     workspace_manager = WorkspaceManager(
         metadata=metadata_store,
@@ -691,14 +691,13 @@ def _create_distributed_infra(
 
         # Initialize event bus
         if dist.event_bus_backend == "nats":
-            from nexus.core.event_bus import create_event_bus, set_global_event_bus
+            from nexus.core.event_bus import create_event_bus
 
             event_bus = create_event_bus(
                 backend="nats",
                 nats_url=dist.nats_url,
                 session_factory=session_factory,
             )
-            set_global_event_bus(event_bus)
             logger.info(
                 "Distributed event bus initialized (NATS JetStream: %s, SSOT: PostgreSQL)",
                 dist.nats_url,
@@ -707,17 +706,16 @@ def _create_distributed_infra(
             import os
 
             coordination_url_resolved = coordination_url or os.getenv("NEXUS_REDIS_URL")
-            event_url_resolved = coordination_url_resolved or os.getenv("NEXUS_DRAGONFLY_CACHE_URL")
+            event_url_resolved = coordination_url_resolved or os.getenv("NEXUS_DRAGONFLY_URL")
             if event_url_resolved:
                 from nexus.cache.dragonfly import DragonflyClient
-                from nexus.core.event_bus import RedisEventBus, set_global_event_bus
+                from nexus.core.event_bus import RedisEventBus
 
                 event_client = DragonflyClient(url=event_url_resolved)
                 event_bus = RedisEventBus(
                     event_client,
                     session_factory=session_factory,
                 )
-                set_global_event_bus(event_bus)
                 logger.info(
                     "Distributed event bus initialized (dragonfly: %s, SSOT: PostgreSQL)",
                     event_url_resolved,

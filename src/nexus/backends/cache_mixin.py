@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import contextlib
 import logging
-import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -22,7 +21,7 @@ from nexus.core.exceptions import ConflictError
 from nexus.core.hash_fast import hash_content
 from nexus.core.permissions import OperationContext
 from nexus.storage.file_cache import get_file_cache
-from nexus.storage.models import ContentCacheModel, FilePathModel
+from nexus.storage.models import FilePathModel
 
 if TYPE_CHECKING:
     from nexus_fast import L1MetadataCache
@@ -108,15 +107,18 @@ class CacheConnectorMixin:
     """Mixin that adds cache support to connectors.
 
     Provides a two-level cache:
-    - L1: In-memory LRU cache (fast, per-instance, lost on restart)
-    - L2: PostgreSQL content_cache table (slower, shared, persistent)
+    - L1: In-memory Rust metadata cache (fast, per-instance, lost on restart)
+    - L2: Disk-based content + metadata sidecar (FileContentCache)
+
+    Per data-storage-matrix.md, ContentCacheModel (DB) has been eliminated.
+    L2 uses disk files (.bin, .txt, .meta) instead of PostgreSQL.
 
     Usage:
         class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
             pass
 
     The connector must have:
-        - self.session_factory: SQLAlchemy session factory (preferred)
+        - self.session_factory: SQLAlchemy session factory (for FilePathModel lookups)
         - OR self.db_session: SQLAlchemy session (legacy)
         - self._read_from_backend(): Read content from actual backend
         - self._list_files(): List files from backend
@@ -125,7 +127,7 @@ class CacheConnectorMixin:
         - self.get_version(): Get current backend version for a path
 
     L1-Only Mode:
-        Set l1_only=True to skip L2 (PostgreSQL) caching entirely.
+        Set l1_only=True to skip L2 (disk) caching entirely.
         This is useful for connectors where the source is already local
         (e.g., LocalConnector), so L2 persistence provides no benefit.
 
@@ -434,101 +436,64 @@ class CacheConnectorMixin:
             logger.info(f"[CACHE-BULK] All {len(paths)} paths from L1 memory")
             return results
 
-        # L2: Bulk database lookup for remaining paths
-        session = self._get_db_session()
-
-        # Get path_ids in bulk
-        path_id_map = self._get_path_ids_bulk(paths_needing_l2, session)
-        if not path_id_map:
-            logger.info(
-                f"[CACHE-BULK] {len(results)} L1 hits, {len(paths_needing_l2)} not in file_paths"
-            )
-            return results
-
-        # Query cache entries in bulk
-        path_ids = list(path_id_map.values())
-        stmt = select(ContentCacheModel).where(ContentCacheModel.path_id.in_(path_ids))
-        db_result = session.execute(stmt)
-        cache_models = {cm.path_id: cm for cm in db_result.scalars().all()}
-
-        # Build reverse map: path_id -> virtual_path
-        path_id_to_path = {v: k for k, v in path_id_map.items()}
-
-        # Process cache models
-        # Bulk read binary content from disk cache
+        # L2: Disk-based lookup for remaining paths (metadata sidecar + content files)
         file_cache = get_file_cache()
-        disk_contents: dict[str, bytes] = {}
-        if original:
-            # Group paths by zone for bulk read
-            zone_paths: dict[str, list[str]] = {}
-            for path_id, cache_model in cache_models.items():
-                vpath = path_id_to_path.get(path_id)
-                if vpath:
-                    cache_zone = cache_model.zone_id or "default"
-                    zone_paths.setdefault(cache_zone, []).append(vpath)
 
-            # Bulk read from disk for each zone
-            for zone_id, vpaths in zone_paths.items():
-                disk_contents.update(file_cache.read_bulk(zone_id, vpaths))
+        # Determine zone — use connector's zone_id or "default"
+        cache_zone = getattr(self, "zone_id", None) or "default"
+
+        # Read metadata sidecars in bulk
+        meta_entries = file_cache.read_meta_bulk(cache_zone, paths_needing_l2)
+
+        # Bulk read binary content from disk cache
+        disk_contents: dict[str, bytes] = {}
+        if original and meta_entries:
+            disk_contents = file_cache.read_bulk(cache_zone, list(meta_entries.keys()))
 
         l2_hits = 0
-        for path_id, cache_model in cache_models.items():
-            vpath = path_id_to_path.get(path_id)
-            if not vpath:
-                continue
+        for vpath, meta in meta_entries.items():
+            content_binary_raw = disk_contents.get(vpath) if original else None
 
-            # Parse metadata if stored
-            parse_metadata = None
-            if cache_model.parse_metadata:
-                with contextlib.suppress(Exception):
-                    import json
-
-                    parse_metadata = json.loads(cache_model.parse_metadata)
-
-            # Get binary content: disk (primary) or database (fallback for old data)
-            content_binary_raw = None
-            if original:
-                content_binary_raw = disk_contents.get(vpath)
-                if not content_binary_raw and cache_model.content_binary:
-                    # Fall back to database for backward compatibility
-                    content_binary_raw = cache_model.content_binary
+            # Read text content from disk
+            content_text = file_cache.read_text(meta.get("zone_id", cache_zone), vpath)
 
             entry = CacheEntry(
-                cache_id=cache_model.cache_id,
-                path_id=cache_model.path_id,
-                content_text=cache_model.content_text,
-                _content_binary=None,  # Will be lazily loaded from _content_binary_raw
-                content_hash=cache_model.content_hash,
-                content_type=cache_model.content_type,
-                original_size=cache_model.original_size_bytes,
-                cached_size=cache_model.cached_size_bytes,
-                backend_version=cache_model.backend_version,
-                synced_at=cache_model.synced_at,
-                stale=cache_model.stale,
-                parsed_from=cache_model.parsed_from,
-                parse_metadata=parse_metadata,
+                cache_id="",
+                path_id=meta.get("path_id", ""),
+                content_text=content_text,
+                _content_binary=None,
+                content_hash=meta.get("content_hash", ""),
+                content_type=meta.get("content_type", "full"),
+                original_size=meta.get("original_size", 0),
+                cached_size=meta.get("cached_size", 0),
+                backend_version=meta.get("backend_version"),
+                synced_at=datetime.fromisoformat(meta["synced_at"])
+                if meta.get("synced_at")
+                else datetime.now(UTC),
+                stale=meta.get("stale", False),
+                parsed_from=meta.get("parsed_from"),
+                parse_metadata=meta.get("parse_metadata"),
                 _content_binary_raw=content_binary_raw,
             )
             results[vpath] = entry
             l2_hits += 1
 
             # Populate L1 Rust metadata cache for future reads
-            # Stores only metadata (~100 bytes), not full content
             if l1_cache is not None:
                 with contextlib.suppress(Exception):
-                    file_cache = get_file_cache()
-                    cache_zone = cache_model.zone_id or "default"
-                    disk_path = str(file_cache._get_cache_path(cache_zone, vpath))
-                    is_text = cache_model.content_type in ("full", "parsed", "summary")
+                    disk_path = str(
+                        file_cache._get_cache_path(meta.get("zone_id", cache_zone), vpath)
+                    )
+                    is_text = meta.get("content_type", "full") in ("full", "parsed", "summary")
                     l1_cache.put(
                         key=vpath,
-                        path_id=cache_model.path_id,
-                        content_hash=cache_model.content_hash,
+                        path_id=meta.get("path_id", ""),
+                        content_hash=meta.get("content_hash", ""),
                         disk_path=disk_path,
-                        original_size=cache_model.original_size_bytes,
-                        ttl_seconds=0,  # Use default TTL
+                        original_size=meta.get("original_size", 0),
+                        ttl_seconds=0,
                         is_text=is_text,
-                        zone_id=cache_zone,
+                        zone_id=meta.get("zone_id", cache_zone),
                     )
 
         logger.info(
@@ -660,63 +625,49 @@ class CacheConnectorMixin:
                         logger.debug(f"[CACHE] L1 EXPIRED: {path}")
         logger.debug(f"[CACHE] L1 MISS: {path}")
 
-        # L2: Check database cache (skip if l1_only mode)
+        # L2: Check disk cache (skip if l1_only mode)
         if not self._has_l2_caching():
             logger.debug(f"[CACHE] L2 SKIP (l1_only mode): {path}")
             return None
 
-        session = self._get_db_session()
+        # Read metadata sidecar from disk
+        file_cache = get_file_cache()
+        cache_zone = getattr(self, "zone_id", None) or "default"
+        meta = file_cache.read_meta(cache_zone, path)
 
-        path_id = self._get_path_id(path, session)
-        if not path_id:
+        if not meta:
+            logger.debug(f"[CACHE] L2 MISS (disk): {path}")
             return None
 
-        stmt = select(ContentCacheModel).where(ContentCacheModel.path_id == path_id)
-        result = session.execute(stmt)
-        cache_model = result.scalar_one_or_none()
+        logger.info(f"[CACHE] L2 HIT (disk): {path}")
 
-        if not cache_model:
-            logger.debug(f"[CACHE] L2 MISS (database): {path}")
-            return None
-
-        logger.info(f"[CACHE] L2 HIT (database): {path}")
-
-        # Parse metadata if stored
-        parse_metadata = None
-        if cache_model.parse_metadata:
-            with contextlib.suppress(Exception):
-                import json
-
-                parse_metadata = json.loads(cache_model.parse_metadata)
-
-        # Read binary content from disk (primary) or database (fallback for old data)
+        # Read binary content from disk
         content_binary_raw = None
         if original:
-            # Try disk cache first (new storage)
-            file_cache = get_file_cache()
-            cache_zone = cache_model.zone_id or "default"
-            content_binary_raw = file_cache.read(cache_zone, path)
+            meta_zone = meta.get("zone_id", cache_zone)
+            content_binary_raw = file_cache.read(meta_zone, path)
             if content_binary_raw:
                 logger.debug(f"[CACHE] L2 content from DISK: {path}")
-            elif cache_model.content_binary:
-                # Fall back to database for backward compatibility
-                content_binary_raw = cache_model.content_binary
-                logger.debug(f"[CACHE] L2 content from DB (legacy): {path}")
+
+        # Read text content from disk
+        content_text = file_cache.read_text(meta.get("zone_id", cache_zone), path)
 
         entry = CacheEntry(
-            cache_id=cache_model.cache_id,
-            path_id=cache_model.path_id,
-            content_text=cache_model.content_text,
-            _content_binary=None,  # Will be lazily loaded from _content_binary_raw
-            content_hash=cache_model.content_hash,
-            content_type=cache_model.content_type,
-            original_size=cache_model.original_size_bytes,
-            cached_size=cache_model.cached_size_bytes,
-            backend_version=cache_model.backend_version,
-            synced_at=cache_model.synced_at,
-            stale=cache_model.stale,
-            parsed_from=cache_model.parsed_from,
-            parse_metadata=parse_metadata,
+            cache_id="",
+            path_id=meta.get("path_id", ""),
+            content_text=content_text,
+            _content_binary=None,
+            content_hash=meta.get("content_hash", ""),
+            content_type=meta.get("content_type", "full"),
+            original_size=meta.get("original_size", 0),
+            cached_size=meta.get("cached_size", 0),
+            backend_version=meta.get("backend_version"),
+            synced_at=datetime.fromisoformat(meta["synced_at"])
+            if meta.get("synced_at")
+            else datetime.now(UTC),
+            stale=meta.get("stale", False),
+            parsed_from=meta.get("parsed_from"),
+            parse_metadata=meta.get("parse_metadata"),
             _content_binary_raw=content_binary_raw,
         )
 
@@ -730,24 +681,21 @@ class CacheConnectorMixin:
                 return None
 
         # Populate L1 Rust metadata cache for future reads
-        # Stores only metadata (~100 bytes), not full content
         if l1_cache is not None:
             with contextlib.suppress(Exception):
-                file_cache = get_file_cache()
-                cache_zone = cache_model.zone_id or "default"
-                disk_path = str(file_cache._get_cache_path(cache_zone, path))
-                is_text = cache_model.content_type in ("full", "parsed", "summary")
-                # Use connector-specific TTL if defined
+                meta_zone = meta.get("zone_id", cache_zone)
+                disk_path = str(file_cache._get_cache_path(meta_zone, path))
+                is_text = meta.get("content_type", "full") in ("full", "parsed", "summary")
                 ttl = getattr(self, "cache_ttl", 0) or 0
                 l1_cache.put(
                     key=path,
-                    path_id=cache_model.path_id,
-                    content_hash=cache_model.content_hash,
+                    path_id=meta.get("path_id", ""),
+                    content_hash=meta.get("content_hash", ""),
                     disk_path=disk_path,
-                    original_size=cache_model.original_size_bytes,
+                    original_size=meta.get("original_size", 0),
                     ttl_seconds=ttl,
                     is_text=is_text,
-                    zone_id=cache_zone,
+                    zone_id=meta_zone,
                 )
                 logger.debug(f"[CACHE] L1 POPULATED from L2: {path}")
 
@@ -808,14 +756,16 @@ class CacheConnectorMixin:
         has_l2 = self._has_l2_caching()
 
         if has_l2:
-            # L1+L2 mode: write to PostgreSQL + FileContentCache
-            session = self._get_db_session()
-            path_id = self._get_path_id(path, session)
-            if not path_id:
-                raise ValueError(f"Path not found in file_paths: {path}")
-
-            # Write binary content to disk via FileContentCache
+            # L1+L2 mode: write to disk (FileContentCache) + metadata sidecar
             file_cache = get_file_cache()
+
+            # Resolve path_id from DB (needed for FilePathModel consistency updates)
+            path_id = ""
+            session = self._get_db_session()
+            if session:
+                path_id = self._get_path_id(path, session) or ""
+
+            # Write binary + text content to disk
             if original_size <= self.MAX_CACHE_FILE_SIZE:
                 try:
                     file_cache.write(cache_zone, path, content, text_content=content_text)
@@ -823,83 +773,48 @@ class CacheConnectorMixin:
                 except Exception as e:
                     logger.warning(f"[CACHE] Failed to write to disk cache: {e}")
 
-            # Serialize parse_metadata
-            parse_metadata_json = None
-            if parse_metadata:
-                import json
+            # Write metadata sidecar (replaces ContentCacheModel DB entry)
+            meta = {
+                "path_id": path_id,
+                "zone_id": cache_zone,
+                "content_hash": content_hash,
+                "content_type": content_type,
+                "original_size": original_size,
+                "cached_size": cached_size,
+                "backend_version": backend_version,
+                "parsed_from": parsed_from,
+                "parse_metadata": parse_metadata,
+                "synced_at": now.isoformat(),
+                "stale": False,
+            }
+            file_cache.write_meta(cache_zone, path, meta)
 
-                parse_metadata_json = json.dumps(parse_metadata)
+            # Update file_paths for consistency (if DB session available)
+            if session and path_id:
+                try:
+                    file_path_stmt = select(FilePathModel).where(FilePathModel.path_id == path_id)
+                    file_path_result = session.execute(file_path_stmt)
+                    file_path = file_path_result.scalar_one_or_none()
+                    if file_path:
+                        updated = False
+                        if file_path.size_bytes != original_size:
+                            file_path.size_bytes = original_size
+                            updated = True
+                        if file_path.content_hash != content_hash:
+                            file_path.content_hash = content_hash
+                            updated = True
+                        if updated:
+                            file_path.updated_at = now
+                            logger.debug(
+                                f"[CACHE] Updated file_paths: {path} (size={original_size}, hash={content_hash[:8]}...)"
+                            )
+                    session.commit()
+                except Exception as e:
+                    logger.warning(f"[CACHE] Failed to update file_paths for {path}: {e}")
 
-            # Check if entry exists in PostgreSQL
-            stmt = select(ContentCacheModel).where(ContentCacheModel.path_id == path_id)
-            result = session.execute(stmt)
-            existing = result.scalar_one_or_none()
-
-            if existing:
-                # Update existing entry
-                existing.content_text = content_text
-                existing.content_binary = None
-                existing.content_hash = content_hash
-                existing.content_type = content_type
-                existing.original_size_bytes = original_size
-                existing.cached_size_bytes = cached_size
-                existing.backend_version = backend_version
-                existing.parsed_from = parsed_from
-                existing.parser_version = None
-                existing.parse_metadata = parse_metadata_json
-                existing.synced_at = now
-                existing.stale = False
-                existing.updated_at = now
-                cache_id = existing.cache_id
-            else:
-                # Create new entry
-                cache_id = str(uuid.uuid4())
-                cache_model = ContentCacheModel(
-                    cache_id=cache_id,
-                    path_id=path_id,
-                    zone_id=zone_id,
-                    content_text=content_text,
-                    content_binary=None,
-                    content_hash=content_hash,
-                    content_type=content_type,
-                    original_size_bytes=original_size,
-                    cached_size_bytes=cached_size,
-                    backend_version=backend_version,
-                    parsed_from=parsed_from,
-                    parser_version=None,
-                    parse_metadata=parse_metadata_json,
-                    synced_at=now,
-                    stale=False,
-                    created_at=now,
-                    updated_at=now,
-                )
-                session.add(cache_model)
-
-            # Update file_paths for consistency
-            try:
-                file_path_stmt = select(FilePathModel).where(FilePathModel.path_id == path_id)
-                file_path_result = session.execute(file_path_stmt)
-                file_path = file_path_result.scalar_one_or_none()
-                if file_path:
-                    updated = False
-                    if file_path.size_bytes != original_size:
-                        file_path.size_bytes = original_size
-                        updated = True
-                    if file_path.content_hash != content_hash:
-                        file_path.content_hash = content_hash
-                        updated = True
-                    if updated:
-                        file_path.updated_at = now
-                        logger.debug(
-                            f"[CACHE] Updated file_paths: {path} (size={original_size}, hash={content_hash[:8]}...)"
-                        )
-            except Exception as e:
-                logger.warning(f"[CACHE] Failed to update file_paths for {path}: {e}")
-
-            session.commit()
-
+            cache_id = ""
             # disk_path for L1 points to FileContentCache
-            disk_path = str(get_file_cache()._get_cache_path(cache_zone, path))
+            disk_path = str(file_cache._get_cache_path(cache_zone, path))
         else:
             # L1-only mode: no PostgreSQL, disk_path points to original file
             path_id = path  # Use path as path_id in L1-only mode
@@ -1132,21 +1047,16 @@ class CacheConnectorMixin:
         if not entries:
             return []
 
-        session = self._get_db_session()
         now = datetime.now(UTC)
-        l1_cache = self._get_l1_cache()  # Rust L1 metadata cache
-        file_cache = get_file_cache()  # Disk cache for binary content
+        l1_cache = self._get_l1_cache()
+        file_cache = get_file_cache()
 
-        # Get all path_ids in bulk
-        paths = [e["path"] for e in entries]
-        path_id_map = self._get_path_ids_bulk(paths, session)
-
-        # Get existing cache entries in bulk
-        existing_stmt = select(ContentCacheModel).where(
-            ContentCacheModel.path_id.in_(list(path_id_map.values()))
-        )
-        existing_result = session.execute(existing_stmt)
-        existing_by_path_id = {ce.path_id: ce for ce in existing_result.scalars().all()}
+        # Get path_ids in bulk if DB session available (for FilePathModel updates)
+        session = self._get_db_session()
+        path_id_map: dict[str, str] = {}
+        if session:
+            paths = [e["path"] for e in entries]
+            path_id_map = self._get_path_ids_bulk(paths, session)
 
         cache_entries: list[CacheEntry] = []
 
@@ -1161,10 +1071,7 @@ class CacheConnectorMixin:
                 parse_metadata = entry_data.get("parse_metadata")
                 zone_id = entry_data.get("zone_id")
 
-                path_id = path_id_map.get(path)
-                if not path_id:
-                    logger.warning(f"[CACHE] Path not found in file_paths, skipping: {path}")
-                    continue
+                path_id = path_id_map.get(path, "")
 
                 # Compute content hash
                 content_hash = hash_content(content)
@@ -1185,7 +1092,7 @@ class CacheConnectorMixin:
 
                 cached_size = len(content_text) if content_text else 0
 
-                # Write binary content to disk via FileContentCache
+                # Write binary + text content to disk via FileContentCache
                 cache_zone = zone_id or "default"
                 if original_size <= self.MAX_CACHE_FILE_SIZE:
                     try:
@@ -1193,58 +1100,25 @@ class CacheConnectorMixin:
                     except Exception as e:
                         logger.warning(f"[CACHE] Failed to write to disk cache: {path}: {e}")
 
-                # Serialize parse_metadata
-                parse_metadata_json = None
-                if parse_metadata:
-                    import json
-
-                    parse_metadata_json = json.dumps(parse_metadata)
-
-                # Update or create entry (content_binary=None, content now on disk)
-                existing = existing_by_path_id.get(path_id)
-                if existing:
-                    # Update existing entry
-                    existing.content_text = content_text
-                    existing.content_binary = None  # Binary stored on disk via FileContentCache
-                    existing.content_hash = content_hash
-                    existing.content_type = content_type
-                    existing.original_size_bytes = original_size
-                    existing.cached_size_bytes = cached_size
-                    existing.backend_version = backend_version
-                    existing.parsed_from = parsed_from
-                    existing.parser_version = None
-                    existing.parse_metadata = parse_metadata_json
-                    existing.synced_at = now
-                    existing.stale = False
-                    existing.updated_at = now
-                    cache_id = existing.cache_id
-                else:
-                    # Create new entry
-                    cache_id = str(uuid.uuid4())
-                    cache_model = ContentCacheModel(
-                        cache_id=cache_id,
-                        path_id=path_id,
-                        zone_id=zone_id,
-                        content_text=content_text,
-                        content_binary=None,  # Binary stored on disk via FileContentCache
-                        content_hash=content_hash,
-                        content_type=content_type,
-                        original_size_bytes=original_size,
-                        cached_size_bytes=cached_size,
-                        backend_version=backend_version,
-                        parsed_from=parsed_from,
-                        parser_version=None,
-                        parse_metadata=parse_metadata_json,
-                        synced_at=now,
-                        stale=False,
-                        created_at=now,
-                        updated_at=now,
-                    )
-                    session.add(cache_model)
+                # Write metadata sidecar (replaces ContentCacheModel DB entry)
+                meta = {
+                    "path_id": path_id,
+                    "zone_id": cache_zone,
+                    "content_hash": content_hash,
+                    "content_type": content_type,
+                    "original_size": original_size,
+                    "cached_size": cached_size,
+                    "backend_version": backend_version,
+                    "parsed_from": parsed_from,
+                    "parse_metadata": parse_metadata,
+                    "synced_at": now.isoformat(),
+                    "stale": False,
+                }
+                file_cache.write_meta(cache_zone, path, meta)
 
                 # Create CacheEntry for return value
                 cache_entry = CacheEntry(
-                    cache_id=cache_id,
+                    cache_id="",
                     path_id=path_id,
                     content_text=content_text,
                     _content_binary=content if original_size <= self.MAX_CACHE_FILE_SIZE else None,
@@ -1260,12 +1134,11 @@ class CacheConnectorMixin:
                 )
                 cache_entries.append(cache_entry)
 
-                # Update L1 Rust metadata cache (stores only metadata, not content)
+                # Update L1 Rust metadata cache
                 if l1_cache is not None:
                     with contextlib.suppress(Exception):
                         disk_path = str(file_cache._get_cache_path(cache_zone, path))
                         is_text = content_type in ("full", "parsed", "summary")
-                        # Use connector-specific TTL if defined
                         ttl = getattr(self, "cache_ttl", 0) or 0
                         l1_cache.put(
                             key=path,
@@ -1281,48 +1154,43 @@ class CacheConnectorMixin:
             except Exception as e:
                 logger.error(f"[CACHE] Failed to prepare cache entry for {path}: {e}")
 
-        # Update file_paths for all cached entries (bulk update for efficiency)
-        # This keeps file_paths consistent with cache and enables get_etag() for connectors
-        try:
-            if cache_entries:
-                # Build maps for bulk update
-                size_updates = {ce.path_id: ce.original_size for ce in cache_entries}
-                hash_updates = {ce.path_id: ce.content_hash for ce in cache_entries}
+        # Update file_paths in DB for consistency (if session available)
+        if session and cache_entries:
+            try:
+                size_updates = {ce.path_id: ce.original_size for ce in cache_entries if ce.path_id}
+                hash_updates = {ce.path_id: ce.content_hash for ce in cache_entries if ce.path_id}
 
-                # Get all FilePathModel entries in bulk
-                file_path_stmt = select(FilePathModel).where(
-                    FilePathModel.path_id.in_(list(size_updates.keys()))
-                )
-                file_path_result = session.execute(file_path_stmt)
-                file_paths = file_path_result.scalars().all()
-
-                # Update size_bytes and content_hash for each
-                updated_count = 0
-                for file_path in file_paths:
-                    updated = False
-                    new_size = size_updates.get(file_path.path_id)
-                    new_hash = hash_updates.get(file_path.path_id)
-                    if new_size and file_path.size_bytes != new_size:
-                        file_path.size_bytes = new_size
-                        updated = True
-                    if new_hash and file_path.content_hash != new_hash:
-                        file_path.content_hash = new_hash
-                        updated = True
-                    if updated:
-                        file_path.updated_at = now
-                        updated_count += 1
-
-                if updated_count > 0:
-                    logger.info(
-                        f"[CACHE] Updated {updated_count} file_paths entries (size + content_hash)"
+                if size_updates:
+                    file_path_stmt = select(FilePathModel).where(
+                        FilePathModel.path_id.in_(list(size_updates.keys()))
                     )
-        except Exception as e:
-            # Don't fail batch write if file_paths update fails
-            logger.warning(f"[CACHE] Failed to update file_paths in batch: {e}")
+                    file_path_result = session.execute(file_path_stmt)
+                    file_paths = file_path_result.scalars().all()
 
-        # Commit all changes in single transaction
-        session.commit()
-        logger.info(f"[CACHE] Batch wrote {len(cache_entries)} entries to L1+L2")
+                    updated_count = 0
+                    for file_path in file_paths:
+                        updated = False
+                        new_size = size_updates.get(file_path.path_id)
+                        new_hash = hash_updates.get(file_path.path_id)
+                        if new_size and file_path.size_bytes != new_size:
+                            file_path.size_bytes = new_size
+                            updated = True
+                        if new_hash and file_path.content_hash != new_hash:
+                            file_path.content_hash = new_hash
+                            updated = True
+                        if updated:
+                            file_path.updated_at = now
+                            updated_count += 1
+
+                    if updated_count > 0:
+                        logger.info(
+                            f"[CACHE] Updated {updated_count} file_paths entries (size + content_hash)"
+                        )
+                session.commit()
+            except Exception as e:
+                logger.warning(f"[CACHE] Failed to update file_paths in batch: {e}")
+
+        logger.info(f"[CACHE] Batch wrote {len(cache_entries)} entries to L1+L2 (disk)")
 
         return cache_entries
 
@@ -1332,12 +1200,16 @@ class CacheConnectorMixin:
         mount_prefix: str | None = None,
         delete: bool = False,
     ) -> int:
-        """Invalidate cache entries (L1 memory, L2 database, and disk).
+        """Invalidate cache entries (L1 memory + L2 disk).
+
+        Per data-storage-matrix.md, ContentCacheModel (DB) has been eliminated.
+        L2 is now disk-only (FileContentCache). Invalidation always deletes
+        from disk since disk cache is ephemeral (Session durability).
 
         Args:
             path: Specific path to invalidate
             mount_prefix: Invalidate all paths under this prefix
-            delete: If True, delete entries. If False, mark as stale.
+            delete: If True, delete entries. If False, also delete (no stale concept on disk).
 
         Returns:
             Number of entries invalidated
@@ -1345,65 +1217,35 @@ class CacheConnectorMixin:
         # Invalidate L1 memory cache
         memory_cache = self._get_memory_cache()
         file_cache = get_file_cache()
+        cache_zone = getattr(self, "zone_id", None) or "default"
+
         if path:
             # Remove specific path from memory cache
             memory_key = f"cache_entry:{path}"
             memory_cache.remove(memory_key)
+
+            # Delete from disk cache (both content and metadata sidecar)
+            file_cache.delete(cache_zone, path)
+            return 1
+
         elif mount_prefix:
             # For prefix invalidation, clear entire memory cache
             # (More targeted invalidation would require iterating all keys)
             memory_cache.clear()
 
-        # Invalidate L2 database cache
-        session = self._get_db_session()
-
-        if path:
-            path_id = self._get_path_id(path, session)
-            if not path_id:
-                return 0
-
-            stmt = select(ContentCacheModel).where(ContentCacheModel.path_id == path_id)
-            result = session.execute(stmt)
-            entry = result.scalar_one_or_none()
-
-            if not entry:
-                return 0
-
-            if delete:
-                # Delete from disk cache
-                cache_zone = entry.zone_id or "default"
-                file_cache.delete(cache_zone, path)
-                session.delete(entry)
-            else:
-                entry.stale = True
-                entry.updated_at = datetime.now(UTC)
-
-            session.commit()
-            return 1
-
-        elif mount_prefix:
-            # Invalidate all entries under mount prefix
-            mount_stmt = (
-                select(ContentCacheModel, FilePathModel.virtual_path)
-                .join(FilePathModel, ContentCacheModel.path_id == FilePathModel.path_id)
-                .where(FilePathModel.virtual_path.startswith(mount_prefix))
+            # Find all paths under mount prefix via FilePathModel, then delete from disk
+            session = self._get_db_session()
+            mount_stmt = select(FilePathModel.virtual_path).where(
+                FilePathModel.virtual_path.startswith(mount_prefix)
             )
             result = session.execute(mount_stmt)
-            rows = result.all()
+            rows = result.scalars().all()
 
             count = 0
-            for cache_entry, vpath in rows:
-                if delete:
-                    # Delete from disk cache
-                    cache_zone = cache_entry.zone_id or "default"
-                    file_cache.delete(cache_zone, vpath)
-                    session.delete(cache_entry)
-                else:
-                    cache_entry.stale = True
-                    cache_entry.updated_at = datetime.now(UTC)
+            for vpath in rows:
+                file_cache.delete(cache_zone, vpath)
                 count += 1
 
-            session.commit()
             return count
 
         return 0
@@ -1457,7 +1299,7 @@ class CacheConnectorMixin:
 
         Delegates to SyncPipelineService which orchestrates a 7-step process
         to efficiently sync content from external storage backends (GCS, S3,
-        Gmail, etc.) into a two-level cache (L1 in-memory + L2 PostgreSQL).
+        Gmail, etc.) into a two-level cache (L1 in-memory + L2 disk).
 
         Args:
             path: Specific path to sync (relative to mount), or None for entire mount

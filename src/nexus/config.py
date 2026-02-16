@@ -297,6 +297,12 @@ class NexusConfig(BaseModel):
         description="Interval between expired session cleanup sweeps in seconds (default: 3600)",
     )
 
+    # Log redaction settings (Issue #86)
+    log_redaction_enabled: bool = Field(
+        default=True,
+        description="Enable secret masking in log output (default: True for security)",
+    )
+
     # Docker sandbox template configuration
     docker: DockerTemplateConfig = Field(
         default_factory=DockerTemplateConfig,
@@ -464,6 +470,8 @@ def _load_from_environment() -> NexusConfig:
         "NEXUS_UPLOAD_MAX_CONCURRENT": "upload_max_concurrent",
         "NEXUS_UPLOAD_SESSION_TTL_HOURS": "upload_session_ttl_hours",
         "NEXUS_UPLOAD_CLEANUP_INTERVAL": "upload_cleanup_interval_seconds",
+        # Log redaction settings (Issue #86)
+        "NEXUS_LOG_REDACTION_ENABLED": "log_redaction_enabled",
     }
 
     for env_var, config_key in env_mapping.items():
@@ -504,6 +512,7 @@ def _load_from_environment() -> NexusConfig:
                 "enforce_permissions",
                 "allow_admin_bypass",
                 "enforce_zone_isolation",
+                "log_redaction_enabled",
             ]:
                 converted_value = value.lower() in ["true", "1", "yes", "on"]
             else:

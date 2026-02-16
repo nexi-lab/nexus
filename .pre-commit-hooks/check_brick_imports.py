@@ -16,13 +16,8 @@ import re
 import sys
 from pathlib import Path
 
-# Paths to brick directories relative to project root.
-# Bricks can live under bricks/, rebac/, or proxy/.
-BRICK_RELATIVE_PATHS: list[Path] = [
-    Path("src") / "nexus" / "bricks",
-    Path("src") / "nexus" / "rebac",
-    Path("src") / "nexus" / "proxy",
-]
+# Path to bricks directory relative to project root
+BRICKS_RELATIVE_PATH = Path("src") / "nexus" / "bricks"
 
 # Forbidden import patterns for files under bricks/
 # Bricks may only import from:
@@ -82,13 +77,11 @@ def check_file(file_path: Path) -> list[tuple[int, str, str]]:
 
 
 def find_brick_files(root: Path) -> list[Path]:
-    """Find all Python files under brick directories."""
-    files: list[Path] = []
-    for rel_path in BRICK_RELATIVE_PATHS:
-        brick_dir = root / rel_path
-        if brick_dir.exists():
-            files.extend(brick_dir.rglob("*.py"))
-    return sorted(files)
+    """Find all Python files under the bricks/ directory."""
+    bricks_dir = root / BRICKS_RELATIVE_PATH
+    if not bricks_dir.exists():
+        return []
+    return sorted(bricks_dir.rglob("*.py"))
 
 
 def main() -> int:
@@ -102,12 +95,11 @@ def main() -> int:
         python check_brick_imports.py <file1> [file2] ...
     """
     if len(sys.argv) > 1:
-        # Pre-commit mode: check specified files, filter to brick directories only
-        brick_dirs = ("/bricks/", "/rebac/", "/proxy/")
+        # Pre-commit mode: check specified files, filter to bricks/ only
         files = [
             Path(f)
             for f in sys.argv[1:]
-            if f.endswith(".py") and any(d in f.replace("\\", "/") for d in brick_dirs)
+            if f.endswith(".py") and "/bricks/" in f.replace("\\", "/")
         ]
     else:
         # CI mode: scan entire bricks/ directory

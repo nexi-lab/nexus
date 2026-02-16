@@ -41,13 +41,13 @@ from cachetools import TTLCache
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
+from nexus.core.heartbeat_buffer import HeartbeatBuffer
 from nexus.services.agents.agent_record import (
     AgentRecord,
     AgentState,
     is_new_session,
     validate_transition,
 )
-from nexus.core.heartbeat_buffer import HeartbeatBuffer
 from nexus.storage.models import AgentRecordModel
 
 if TYPE_CHECKING:

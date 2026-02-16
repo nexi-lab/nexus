@@ -1,7 +1,7 @@
 """SQLAlchemy models for Nexus metadata store.
 
 All models are organized by domain in submodules (Issue #1286).
-This __init__.py re-exports everything for backward compatibility.
+This __init__.py re-exports all models for convenient access.
 
 Domain modules:
     models._base           -- Base, mixins, uuid_pk

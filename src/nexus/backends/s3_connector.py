@@ -155,7 +155,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
             access_key_id: AWS access key (alternative to credentials_path)
             secret_access_key: AWS secret key (alternative to credentials_path)
             session_token: AWS session token (for temporary credentials)
-            session_factory: Optional session factory (e.g., metadata_store.SessionLocal)
+            session_factory: Optional session factory (e.g., metadata_store.session_factory)
                            for caching support.
         """
         try:
@@ -670,7 +670,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
                 path=blob_path,
             ) from e
 
-    def _batch_get_versions(
+    def batch_get_versions(
         self,
         backend_paths: list[str],
         contexts: dict[str, "OperationContext"] | None = None,

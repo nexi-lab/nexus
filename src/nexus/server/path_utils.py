@@ -4,11 +4,11 @@ Strips internal zone/user prefixes from paths before returning
 them to API clients. This ensures users see clean, user-friendly paths
 instead of internal storage paths.
 
-Internal path formats:
+Internal path formats handled:
+    /tenant:{zone_id}/...                   -> /...
+    /tenant:{zone_id}/user:{user_id}/...    -> /...
     /zone/{zone_id}/...                      -> /...
     /zone/{zone_id}/user:{user_id}/...       -> /...
-    /tenant:{zone_id}/...                    -> /...
-    /tenant:{zone_id}/user:{user_id}/...     -> /...
 
 Related: Issue #1202 - list('/') returns paths with /tenant: prefix
 """
@@ -65,16 +65,17 @@ def unscope_internal_path(path: str) -> str:
     # Determine how many leading segments to skip
     skip = 0
 
-    if parts and parts[0] == "zone" and len(parts) >= 2:
+    if parts and parts[0].startswith("tenant:"):
+        # Tenant format: /tenant:{zone_id}/... or /tenant:{zone_id}/user:{user_id}/...
+        skip = 1
+        if len(parts) > 1 and parts[1].startswith("user:"):
+            skip = 2
+
+    elif parts and parts[0] == "zone" and len(parts) >= 2:
         # Current format: /zone/{zone_id}/... or /zone/{zone_id}/user:{user_id}/...
         skip = 2  # skip "zone" + zone_id
         if len(parts) > 2 and parts[2].startswith("user:"):
             skip = 3
-    elif parts and parts[0].startswith("tenant:"):
-        # Legacy format: /tenant:{zone_id}/... or /tenant:{zone_id}/user:{user_id}/...
-        skip = 1  # skip "tenant:{zone_id}"
-        if len(parts) > 1 and parts[1].startswith("user:"):
-            skip = 2
 
     if skip == 0:
         return path if path else "/"

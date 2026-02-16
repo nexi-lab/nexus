@@ -222,11 +222,11 @@ class NatsEventBus(EventBusBase):
             raise
 
     # =========================================================================
-    # Subscribe (backward-compat wrapper)
+    # Subscribe (simple auto-ack interface)
     # =========================================================================
 
     async def subscribe(self, zone_id: str) -> AsyncIterator[FileEvent]:
-        """Subscribe with auto-ack (backward compatibility wrapper).
+        """Subscribe with auto-ack.
 
         Wraps subscribe_durable() and auto-acks each message so callers
         that don't need explicit ack/nack can use the simple interface.

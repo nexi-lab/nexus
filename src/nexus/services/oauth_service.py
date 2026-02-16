@@ -208,7 +208,7 @@ class OAuthService:
         factory = self._get_oauth_factory()
         providers = []
 
-        for provider_config in factory._oauth_config.providers:
+        for provider_config in factory.list_providers():
             provider_dict = {
                 "name": provider_config.name,
                 "display_name": provider_config.display_name,
@@ -1182,8 +1182,8 @@ class OAuthService:
 
             # Get config if available
             oauth_config = None
-            if self.nexus_fs and hasattr(self.nexus_fs, "_config"):
-                config = getattr(self.nexus_fs, "_config", None)
+            if self.nexus_fs and hasattr(self.nexus_fs, "config"):
+                config = getattr(self.nexus_fs, "config", None)
                 if config and hasattr(config, "oauth") and config.oauth:
                     oauth_config = config.oauth
 

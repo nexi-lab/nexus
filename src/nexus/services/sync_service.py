@@ -677,7 +677,7 @@ class SyncService:
         """Enqueue a change log upsert for batch flush, or upsert immediately.
 
         When pending_upserts is provided, appends to the list for batch processing.
-        Otherwise falls back to immediate single upsert for backward compatibility.
+        Otherwise falls back to immediate single upsert.
 
         Args:
             pending_upserts: Batch accumulator list, or None for immediate upsert

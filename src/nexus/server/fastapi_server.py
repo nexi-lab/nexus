@@ -44,7 +44,7 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from nexus.constants import DEFAULT_GOOGLE_REDIRECT_URI, DEFAULT_NEXUS_URL
 
-# --- Extracted modules (re-exported for backward compatibility) ---
+# --- Extracted modules (re-exported for convenience) ---
 from nexus.server.dependencies import (  # noqa: F401, E402
     get_auth_result,
     get_operation_context,
@@ -166,7 +166,6 @@ _fastapi_app: FastAPI | None = None
 
 # Stream token signing/verification is now in streaming.py.
 # Auth dependencies (get_auth_result, require_auth, get_operation_context) are in dependencies.py.
-# All are imported above for backward compatibility.
 
 
 # ============================================================================
@@ -401,7 +400,7 @@ def create_app(
         logger.warning(f"Failed to register NexusFS instance: {e}")
 
     # Initialize OAuth provider if credentials are available
-    _initialize_oauth_provider(nexus_fs, auth_provider, database_url)
+    _initialize_oauth_provider(nexus_fs, auth_provider)
 
     # Prometheus metrics middleware and endpoint (Issue #761)
     try:
@@ -447,15 +446,12 @@ def create_app(
     return app
 
 
-def _initialize_oauth_provider(
-    nexus_fs: NexusFS, auth_provider: Any, database_url: str | None
-) -> None:
+def _initialize_oauth_provider(nexus_fs: NexusFS, auth_provider: Any) -> None:
     """Initialize OAuth provider if Google OAuth credentials are available.
 
     Args:
         nexus_fs: NexusFS instance
         auth_provider: Authentication provider (for session factory)
-        database_url: Database URL
     """
     try:
         google_client_id = os.getenv("GOOGLE_CLIENT_ID") or os.getenv(
@@ -492,7 +488,8 @@ def _initialize_oauth_provider(
         from nexus.server.auth.oauth_crypto import OAuthCrypto
         from nexus.server.auth.oauth_user_auth import OAuthUserAuth
 
-        oauth_crypto = OAuthCrypto(db_url=database_url)
+        _oauth_enc_key = os.environ.get("NEXUS_OAUTH_ENCRYPTION_KEY", "").strip() or None
+        oauth_crypto = OAuthCrypto(encryption_key=_oauth_enc_key, session_factory=session_factory)
         oauth_provider = OAuthUserAuth(
             session_factory=session_factory,
             google_client_id=google_client_id,

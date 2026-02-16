@@ -464,11 +464,11 @@ class DelegationService:
         expires_at: datetime | None,
     ) -> str:
         """Create API key for the worker agent."""
-        from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+        from nexus.identity.api_key_ops import create_api_key
 
         session = self._session_factory()
         try:
-            _key_id, raw_key = DatabaseAPIKeyAuth.create_key(
+            _key_id, raw_key = create_api_key(
                 session,
                 user_id=owner_id,
                 name=f"delegation:{worker_name}",
@@ -524,7 +524,7 @@ class DelegationService:
 
     def _revoke_worker_api_key(self, worker_id: str) -> None:
         """Revoke all API keys for the worker agent."""
-        from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+        from nexus.identity.api_key_ops import revoke_api_key
         from nexus.storage.models.auth import APIKeyModel
 
         session = self._session_factory()
@@ -539,7 +539,7 @@ class DelegationService:
                 .all()
             )
             for key in keys:
-                DatabaseAPIKeyAuth.revoke_key(session, key.key_id)
+                revoke_api_key(session, key.key_id)
             session.commit()
         except Exception:
             session.rollback()

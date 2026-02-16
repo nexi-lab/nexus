@@ -202,6 +202,14 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import Delegation routes: %s", e)
 
+    # ---- Workflows router (Issue #1522) ----
+    try:
+        from nexus.server.api.v2.routers.workflows import router as workflows_router
+
+        registry.add(RouterEntry(router=workflows_router, name="workflows", endpoint_count=8))
+    except ImportError as e:
+        logger.warning("Failed to import Workflows routes: %s", e)
+
     return registry
 
 

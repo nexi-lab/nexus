@@ -1,4 +1,8 @@
-"""Built-in workflow actions."""
+"""Built-in workflow actions.
+
+Zero imports from nexus.core or nexus.llm — all Nexus operations are accessed
+via ``context.services`` (a WorkflowServices dataclass injected by the engine).
+"""
 
 import json
 import logging
@@ -23,30 +27,14 @@ class BaseAction(ABC):
 
     @abstractmethod
     async def execute(self, context: WorkflowContext) -> ActionResult:
-        """Execute the action.
-
-        Args:
-            context: Workflow execution context
-
-        Returns:
-            ActionResult with execution status and output
-        """
+        """Execute the action."""
         pass
 
     def interpolate(self, value: str, context: WorkflowContext) -> str:
-        """Interpolate variables in a string value.
-
-        Args:
-            value: String with {variable} placeholders
-            context: Workflow context with variables
-
-        Returns:
-            Interpolated string
-        """
+        """Interpolate variables in a string value."""
         if not isinstance(value, str):
             return value
 
-        # Combine context variables with file metadata
         variables = {**context.variables}
         if context.file_path:
             variables["file_path"] = context.file_path
@@ -66,18 +54,20 @@ class ParseAction(BaseAction):
     """Parse a document."""
 
     async def execute(self, context: WorkflowContext) -> ActionResult:
-        """Execute parse action."""
         try:
-            from nexus import connect
+            if not context.services or not context.services.nexus_ops:
+                return ActionResult(
+                    action_name=self.name,
+                    success=False,
+                    error="nexus_ops service not injected",
+                )
 
-            nx = connect()
             file_path = self.interpolate(
                 str(self.config.get("file_path", context.file_path)), context
             )
             parser = self.config.get("parser", "auto")
 
-            # Parse the file
-            result = await nx.parse(file_path, parser=parser)  # type: ignore[attr-defined]
+            result = await context.services.nexus_ops.parse(file_path, parser=parser)
 
             return ActionResult(
                 action_name=self.name, success=True, output={"parsed_content": result}
@@ -91,28 +81,28 @@ class TagAction(BaseAction):
     """Add or remove tags."""
 
     async def execute(self, context: WorkflowContext) -> ActionResult:
-        """Execute tag action."""
         try:
-            from nexus import connect
+            if not context.services or not context.services.nexus_ops:
+                return ActionResult(
+                    action_name=self.name,
+                    success=False,
+                    error="nexus_ops service not injected",
+                )
 
-            nx = connect()
             file_path = self.interpolate(
                 str(self.config.get("file_path", context.file_path)), context
             )
             tags = self.config.get("tags", [])
             remove = self.config.get("remove", False)
 
-            # Interpolate tags
             interpolated_tags = [self.interpolate(tag, context) for tag in tags]
 
             if remove:
-                # Remove tags
                 for tag in interpolated_tags:
-                    await nx.remove_tag(file_path, tag)  # type: ignore[attr-defined]
+                    await context.services.nexus_ops.remove_tag(file_path, tag)
             else:
-                # Add tags
                 for tag in interpolated_tags:
-                    await nx.add_tag(file_path, tag)  # type: ignore[attr-defined]
+                    await context.services.nexus_ops.add_tag(file_path, tag)
 
             return ActionResult(
                 action_name=self.name,
@@ -128,23 +118,24 @@ class MoveAction(BaseAction):
     """Move or rename a file."""
 
     async def execute(self, context: WorkflowContext) -> ActionResult:
-        """Execute move action."""
         try:
-            from nexus import connect
+            if not context.services or not context.services.nexus_ops:
+                return ActionResult(
+                    action_name=self.name,
+                    success=False,
+                    error="nexus_ops service not injected",
+                )
 
-            nx = connect()
             source = self.interpolate(str(self.config.get("source", context.file_path)), context)
             destination = self.interpolate(self.config["destination"], context)
             create_parents = self.config.get("create_parents", False)
 
-            # Create parent directories if needed
             if create_parents:
                 dest_path = Path(destination)
                 if not dest_path.parent.exists():
-                    nx.mkdir(str(dest_path.parent), parents=True)
+                    context.services.nexus_ops.mkdir(str(dest_path.parent), parents=True)
 
-            # Move/rename the file
-            nx.rename(source, destination)
+            context.services.nexus_ops.rename(source, destination)
 
             return ActionResult(
                 action_name=self.name,
@@ -160,27 +151,27 @@ class MetadataAction(BaseAction):
     """Update file metadata."""
 
     async def execute(self, context: WorkflowContext) -> ActionResult:
-        """Execute metadata action."""
         try:
-            from nexus import connect
+            if not context.services or not context.services.metadata_store:
+                return ActionResult(
+                    action_name=self.name,
+                    success=False,
+                    error="metadata_store service not injected",
+                )
 
-            nx = connect()
             file_path = self.interpolate(
                 str(self.config.get("file_path", context.file_path)), context
             )
             metadata = self.config.get("metadata", {})
 
-            # Interpolate metadata values
             interpolated_metadata = {
                 key: self.interpolate(str(value), context) for key, value in metadata.items()
             }
 
-            # Update metadata
             for key, value in interpolated_metadata.items():
-                # Use metadata store directly since NexusFilesystem doesn't have set_metadata
-                path_rec = nx.metadata.get_path(file_path)  # type: ignore[attr-defined]
+                path_rec = context.services.metadata_store.get_path(file_path)
                 if path_rec:
-                    nx.metadata.set_file_metadata(path_rec.path_id, key, value)  # type: ignore[attr-defined]
+                    context.services.metadata_store.set_file_metadata(path_rec.path_id, key, value)
 
             return ActionResult(
                 action_name=self.name,
@@ -196,11 +187,14 @@ class LLMAction(BaseAction):
     """Execute LLM-powered action."""
 
     async def execute(self, context: WorkflowContext) -> ActionResult:
-        """Execute LLM action."""
         try:
-            from nexus import connect
+            if not context.services or not context.services.llm_provider:
+                return ActionResult(
+                    action_name=self.name,
+                    success=False,
+                    error="llm_provider service not injected",
+                )
 
-            nx = connect()
             file_path = self.interpolate(
                 str(self.config.get("file_path", context.file_path)), context
             )
@@ -209,8 +203,8 @@ class LLMAction(BaseAction):
             output_format = self.config.get("output_format", "text")
 
             # Read file content if specified
-            if file_path:
-                content_bytes = nx.read(file_path)
+            if file_path and context.services.nexus_ops:
+                content_bytes = context.services.nexus_ops.read(file_path)
                 content = (
                     content_bytes.decode()
                     if isinstance(content_bytes, bytes)
@@ -220,13 +214,10 @@ class LLMAction(BaseAction):
             else:
                 full_prompt = prompt
 
-            # Execute LLM query
-            from nexus.llm import get_provider  # type: ignore[attr-defined]
+            response = await context.services.llm_provider.generate(
+                model=model, prompt=full_prompt, system=""
+            )
 
-            provider = get_provider()
-            response = await provider.generate(model=model, prompt=full_prompt, system="")
-
-            # Parse output if JSON format requested
             if output_format == "json":
                 try:
                     output = json.loads(response)
@@ -235,7 +226,6 @@ class LLMAction(BaseAction):
             else:
                 output = response
 
-            # Store output in context for subsequent actions
             context.variables[f"{self.name}_output"] = output
 
             return ActionResult(action_name=self.name, success=True, output=output)
@@ -248,14 +238,12 @@ class WebhookAction(BaseAction):
     """Send HTTP webhook."""
 
     async def execute(self, context: WorkflowContext) -> ActionResult:
-        """Execute webhook action."""
         try:
             url = self.interpolate(self.config["url"], context)
             method = self.config.get("method", "POST").upper()
             headers = self.config.get("headers", {})
             body = self.config.get("body", {})
 
-            # Interpolate body values
             interpolated_body = {
                 key: self.interpolate(str(value), context) for key, value in body.items()
             }
@@ -281,7 +269,6 @@ class PythonAction(BaseAction):
     """Execute Python code."""
 
     async def execute(self, context: WorkflowContext) -> ActionResult:
-        """Execute Python action."""
         import sys
         from io import StringIO
 
@@ -289,69 +276,52 @@ class PythonAction(BaseAction):
             code = self.config.get("code", "")
             file_path = context.file_path
 
-            print(f"[PYTHON ACTION DEBUG] Code length: {len(code)} bytes", file=sys.stderr)
-            print(f"[PYTHON ACTION DEBUG] First 200 chars of code: {code[:200]}", file=sys.stderr)
-            print(f"[PYTHON ACTION DEBUG] file_path: {file_path}", file=sys.stderr)
+            logger.debug("PythonAction: code=%d bytes, file_path=%s", len(code), file_path)
 
-            # Create execution context
             exec_globals: dict[str, Any] = {
                 "context": context,
                 "file_path": file_path,
                 "variables": context.variables,
             }
 
-            # Capture stdout and stderr
             old_stdout = sys.stdout
             old_stderr = sys.stderr
             captured_stdout = StringIO()
             captured_stderr = StringIO()
 
             try:
-                # Redirect stdout/stderr
                 sys.stdout = captured_stdout
                 sys.stderr = captured_stderr
 
-                # Add print function that explicitly uses the redirected stdout
-                # This ensures print() in exec'd code uses our captured stream
                 def _print(*args: Any, **kwargs: Any) -> None:
                     import builtins
 
                     kwargs.setdefault("file", captured_stdout)
                     builtins.print(*args, **kwargs)
 
-                # Add to exec globals so print uses our captured stream
                 exec_globals["print"] = _print
 
-                # Execute code
                 try:
                     exec(code, exec_globals)
                 except Exception as exec_error:
-                    # Capture any errors during code execution
                     import traceback
 
                     error_msg = f"Error during exec: {exec_error}\n{traceback.format_exc()}"
                     captured_stderr.write(error_msg)
-                    print(f"[PYTHON ACTION ERROR] {error_msg}", file=sys.stderr)
+                    logger.debug("PythonAction exec error: %s", error_msg)
             finally:
-                # Restore stdout/stderr
                 sys.stdout = old_stdout
                 sys.stderr = old_stderr
 
-            # Get captured output
             stdout_value = captured_stdout.getvalue()
             stderr_value = captured_stderr.getvalue()
 
-            # Print captured output to stderr so it's visible
-            print(
-                f"[PYTHON ACTION] stdout length: {len(stdout_value)}, stderr length: {len(stderr_value)}",
-                file=sys.stderr,
+            logger.debug(
+                "PythonAction: stdout=%d bytes, stderr=%d bytes",
+                len(stdout_value),
+                len(stderr_value),
             )
-            if stdout_value:
-                print(f"[PYTHON ACTION STDOUT]\n{stdout_value}", file=sys.stderr, end="")
-            if stderr_value:
-                print(f"[PYTHON ACTION STDERR]\n{stderr_value}", file=sys.stderr, end="")
 
-            # Check if there was an error during execution
             if stderr_value:
                 return ActionResult(
                     action_name=self.name,
@@ -359,7 +329,6 @@ class PythonAction(BaseAction):
                     error=stderr_value,
                 )
 
-            # Get result if 'result' variable was set
             result = exec_globals.get("result")
 
             return ActionResult(
@@ -371,7 +340,6 @@ class PythonAction(BaseAction):
             import traceback
 
             full_error = f"Python action failed: {e}\n{traceback.format_exc()}"
-            print(f"[PYTHON ACTION EXCEPTION] {full_error}", file=sys.stderr)
             logger.error(full_error)
             return ActionResult(action_name=self.name, success=False, error=str(e))
 
@@ -380,11 +348,9 @@ class BashAction(BaseAction):
     """Execute shell command."""
 
     async def execute(self, context: WorkflowContext) -> ActionResult:
-        """Execute bash action."""
         try:
             command = self.interpolate(self.config.get("command", ""), context)
 
-            # Execute command
             result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=30)
 
             return ActionResult(

@@ -48,7 +48,7 @@ async def warmup_cache(
     depth = body.get("depth", 2)
     include_content = body.get("include_content", False)
     max_files = body.get("max_files", 1000)
-    zone_id = auth_result.get("zone_id", "default")
+    zone_id = auth_result.get("zone_id", "root")
 
     config = WarmupConfig(
         max_files=max_files,
@@ -164,7 +164,7 @@ async def get_hot_files(
     Args:
         limit: Maximum number of hot files to return (1-100, default: 20).
     """
-    zone_id = auth_result.get("zone_id", "default")
+    zone_id = auth_result.get("zone_id", "root")
     tracker = get_file_access_tracker()
     hot_files = tracker.get_hot_files(zone_id=zone_id, limit=limit)
 

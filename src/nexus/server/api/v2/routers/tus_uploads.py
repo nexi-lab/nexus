@@ -143,7 +143,7 @@ def create_tus_uploads_router(
         metadata = _parse_upload_metadata(metadata_raw)
 
         # Extract identity from request context if available
-        zone_id = request.headers.get("X-Zone-Id", "default")
+        zone_id = request.headers.get("X-Zone-Id", "root")
         user_id = request.headers.get("X-User-Id", "anonymous")
 
         try:

@@ -1225,7 +1225,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                     raise ValueError("Existing user email is required")
                 # User exists but not linked to OAuth - auto-link them
                 user_id = existing_user.user_id
-                zone_id = "default"  # Use their existing zone
+                zone_id = "root"  # Use their existing zone
 
                 with session.begin():
                     # Create OAuth account link

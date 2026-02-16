@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771255531803,
+  "lastUpdate": 1771256060003,
   "repoUrl": "https://github.com/nexi-lab/nexus",
   "entries": {
     "Benchmark": [
@@ -11400,6 +11400,156 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.007623551512138435",
             "extra": "mean: 1.8219074223215161 msec\nrounds: 663"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "taofeng.nju@gmail.com",
+            "name": "oliverfeng",
+            "username": "windoliver"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "f8c38e8bacabfd668c23a376bff72d08c8cdcb5e",
+          "message": "refactor(#1703): Bridge Backend ABC with ConnectorProtocol — layered protocols, validation, type migration (#1751)\n\n* refactor(#1703): bridge Backend ABC with ConnectorProtocol — layered protocols, validation, type migration\n\n- Add 3 layered protocols: StreamingProtocol, BatchContentProtocol,\n  DirectoryListingProtocol for ISP-compliant capability narrowing\n- Add registration-time ConnectorProtocol conformance validation in\n  ConnectorRegistry.register() using hasattr-based member checking\n  (issubclass() unsupported for Protocols with @property members)\n- Migrate 7 consumer type hints from Backend → ConnectorProtocol in\n  core/router, core/protocols/vfs_router, services/overlay_resolver,\n  services/workspace_manager, services/chunked_upload_service,\n  services/events_service, connectors/mount_hooks\n- Activate OAuthCapableProtocol in nexus_fs.close() replacing brittle\n  hasattr(\"token_manager\") check with isinstance()\n- Add 23 protocol conformance tests covering positive/negative cases,\n  concrete backends, OAuth detection, registry validation, and a\n  sync-check guard to prevent _CONNECTOR_PROTOCOL_MEMBERS drift\n\n* chore(#1703): fix ruff format in registry.py",
+          "timestamp": "2026-02-16T07:30:59-08:00",
+          "tree_id": "e77bb251c0e6177e6ef31e361c5ef28f5d360f4d",
+          "url": "https://github.com/nexi-lab/nexus/commit/f8c38e8bacabfd668c23a376bff72d08c8cdcb5e"
+        },
+        "date": 1771256058611,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/benchmarks/test_async_permission_performance.py::test_permission_overhead_acceptable",
+            "value": 341.0603510266274,
+            "unit": "iter/sec",
+            "range": "stddev: 0.007955279971256675",
+            "extra": "mean: 2.9320324012741295 msec\nrounds: 471"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_write_small_file",
+            "value": 327.18434245259493,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0008520548716452757",
+            "extra": "mean: 3.056380976253129 msec\nrounds: 379"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_read_small_file",
+            "value": 15306.930775186322,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001693296760091408",
+            "extra": "mean: 65.32988322002963 usec\nrounds: 15739"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_read_cached_file",
+            "value": 14679.852747519291,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000026061358735155876",
+            "extra": "mean: 68.12057431359366 usec\nrounds: 17083"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_exists_check",
+            "value": 43475.84930976017,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0008124260404341221",
+            "extra": "mean: 23.001275785899452 usec\nrounds: 43454"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestGlobBenchmarks::test_list_large_directory",
+            "value": 248.15779837680722,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00021672830048128709",
+            "extra": "mean: 4.029694035573213 msec\nrounds: 253"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestGlobBenchmarks::test_glob_simple_pattern",
+            "value": 182.34243236708937,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0003647651811928161",
+            "extra": "mean: 5.484187015706873 msec\nrounds: 191"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestGlobBenchmarks::test_list_1k_files",
+            "value": 72.4080242948614,
+            "unit": "iter/sec",
+            "range": "stddev: 0.001290080902632339",
+            "extra": "mean: 13.810624025975077 msec\nrounds: 77"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestHashingBenchmarks::test_sha256_medium",
+            "value": 23760.251184242305,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000034662641399805086",
+            "extra": "mean: 42.08709715422519 usec\nrounds: 24034"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestPermissionBenchmarks::test_permission_check_bulk_python",
+            "value": 2597.988195175641,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004486071630245407",
+            "extra": "mean: 384.9132193352378 usec\nrounds: 1655"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestPermissionBenchmarks::test_permission_check_bulk_rust",
+            "value": 4855.642106346668,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00003917792144239742",
+            "extra": "mean: 205.94598574160338 usec\nrounds: 3647"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBulkOperationBenchmarks::test_write_batch_10",
+            "value": 42.04886959430358,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0009761237793687225",
+            "extra": "mean: 23.781852155556432 msec\nrounds: 45"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBulkOperationBenchmarks::test_read_bulk_10",
+            "value": 1442.3101768391034,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00025548912964356896",
+            "extra": "mean: 693.3321389935355 usec\nrounds: 1590"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBlake3HashingBenchmarks::test_hash_1mb_content",
+            "value": 3981.2489391347135,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000005295933405954097",
+            "extra": "mean: 251.17746096463398 usec\nrounds: 4022"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBlake3HashingBenchmarks::test_hash_smart_1mb_content",
+            "value": 18509.436492484827,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000026079487298142004",
+            "extra": "mean: 54.02649618242125 usec\nrounds: 18467"
+          },
+          {
+            "name": "tests/benchmarks/test_search_benchmarks.py::TestPythonRegexBenchmarks::test_python_regex_simple_10k_lines",
+            "value": 3935.4399517494094,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000008381349396041708",
+            "extra": "mean: 254.1011963746196 usec\nrounds: 3972"
+          },
+          {
+            "name": "tests/benchmarks/test_search_benchmarks.py::TestRustGrepBenchmarks::test_rust_grep_10k_lines",
+            "value": 1028.7302834488464,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000311401735041822",
+            "extra": "mean: 972.0720932288225 usec\nrounds: 1019"
+          },
+          {
+            "name": "tests/benchmarks/test_search_benchmarks.py::TestHybridSearchFusionBenchmarks::test_rrf_fusion_1k_results",
+            "value": 551.3218219695958,
+            "unit": "iter/sec",
+            "range": "stddev: 0.006781221288990902",
+            "extra": "mean: 1.8138226352577564 msec\nrounds: 658"
           }
         ]
       }

@@ -745,9 +745,7 @@ class LiteLLMProvider(LLMProvider):
             prompt_tokens = usage.get("prompt_tokens", 0)
             completion_tokens = usage.get("completion_tokens", 0)
 
-            prompt_tokens_details: PromptTokensDetails | None = usage.get(
-                "prompt_tokens_details"
-            )
+            prompt_tokens_details: PromptTokensDetails | None = usage.get("prompt_tokens_details")
             cache_hit_tokens = (
                 prompt_tokens_details.cached_tokens
                 if prompt_tokens_details and prompt_tokens_details.cached_tokens

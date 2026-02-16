@@ -59,7 +59,13 @@ class TestDocumentReadResult:
         """Test creating result from cached response."""
         chunks = [
             {"path": "/a.txt", "chunk_index": 0, "score": 0.9, "start_offset": 0, "end_offset": 50},
-            {"path": "/b.txt", "chunk_index": 1, "score": 0.8, "start_offset": None, "end_offset": None},
+            {
+                "path": "/b.txt",
+                "chunk_index": 1,
+                "score": 0.8,
+                "start_offset": None,
+                "end_offset": None,
+            },
         ]
         result = DocumentReadResult.from_cached("Cached answer", chunks=chunks)
         assert result.answer == "Cached answer"
@@ -95,7 +101,13 @@ class TestCitationExtractor:
         """Test extracting citations that match source patterns."""
         answer = "According to [Source: /docs/readme.md], the answer is clear."
         chunks = [
-            {"path": "/docs/readme.md", "chunk_index": 0, "score": 0.9, "start_offset": 0, "end_offset": 100},
+            {
+                "path": "/docs/readme.md",
+                "chunk_index": 0,
+                "score": 0.9,
+                "start_offset": 0,
+                "end_offset": 100,
+            },
         ]
         citations = CitationExtractor.extract_citations(answer, chunks, include_all_sources=False)
         assert len(citations) == 1
@@ -112,7 +124,9 @@ class TestCitationExtractor:
 
     def test_extract_citations_no_sources(self) -> None:
         """Test extracting citations with no chunks."""
-        citations = CitationExtractor.extract_citations("Some answer text", [], include_all_sources=True)
+        citations = CitationExtractor.extract_citations(
+            "Some answer text", [], include_all_sources=True
+        )
         assert len(citations) == 0
 
     def test_extract_citations_include_all_sources(self) -> None:
@@ -120,7 +134,13 @@ class TestCitationExtractor:
         answer = "The answer is here."
         chunks = [
             {"path": "/a.txt", "chunk_index": 0, "score": 0.9, "start_offset": 0, "end_offset": 50},
-            {"path": "/b.txt", "chunk_index": 1, "score": 0.8, "start_offset": None, "end_offset": None},
+            {
+                "path": "/b.txt",
+                "chunk_index": 1,
+                "score": 0.8,
+                "start_offset": None,
+                "end_offset": None,
+            },
         ]
         citations = CitationExtractor.extract_citations(answer, chunks, include_all_sources=True)
         assert len(citations) == 2
@@ -132,7 +152,13 @@ class TestCitationExtractor:
         """Test extracting citations with unicode paths."""
         answer = "According to [Source: /docs/日本語.md], this is correct."
         chunks = [
-            {"path": "/docs/日本語.md", "chunk_index": 0, "score": 0.95, "start_offset": None, "end_offset": None},
+            {
+                "path": "/docs/日本語.md",
+                "chunk_index": 0,
+                "score": 0.95,
+                "start_offset": None,
+                "end_offset": None,
+            },
         ]
         citations = CitationExtractor.extract_citations(answer, chunks, include_all_sources=False)
         assert len(citations) == 1

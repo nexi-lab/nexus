@@ -93,15 +93,9 @@ class TestContextBuilder:
         """Test that context builder respects token limit."""
         builder = ContextBuilder(max_context_tokens=100)
         chunks = [
-            MockSearchResult(
-                path="/a.txt", chunk_index=0, chunk_text="A" * 200, score=0.9
-            ),
-            MockSearchResult(
-                path="/b.txt", chunk_index=0, chunk_text="B" * 200, score=0.8
-            ),
-            MockSearchResult(
-                path="/c.txt", chunk_index=0, chunk_text="C" * 200, score=0.7
-            ),
+            MockSearchResult(path="/a.txt", chunk_index=0, chunk_text="A" * 200, score=0.9),
+            MockSearchResult(path="/b.txt", chunk_index=0, chunk_text="B" * 200, score=0.8),
+            MockSearchResult(path="/c.txt", chunk_index=0, chunk_text="C" * 200, score=0.7),
         ]
         result = builder.build_context(chunks)
         # Should not include all three chunks due to token limit
@@ -144,9 +138,7 @@ class TestContextBuilder:
         builder = ContextBuilder(max_context_tokens=3000)
         original_max = builder.max_context_tokens
         chunks = [
-            MockSearchResult(
-                path="/test.txt", chunk_index=0, chunk_text="Content", score=0.9
-            )
+            MockSearchResult(path="/test.txt", chunk_index=0, chunk_text="Content", score=0.9)
         ]
         builder.build_context_with_budget(chunks, model_context_window=8000)
         assert builder.max_context_tokens == original_max
@@ -252,9 +244,7 @@ class TestQueryComplexityEstimation:
     def test_aggregation_keywords_increase_complexity(self, builder: ContextBuilder) -> None:
         """Test that aggregation keywords increase complexity."""
         base_score = builder.estimate_query_complexity("Python features")
-        aggregation_score = builder.estimate_query_complexity(
-            "List all Python features overview"
-        )
+        aggregation_score = builder.estimate_query_complexity("List all Python features overview")
         assert aggregation_score > base_score, "Aggregation keywords should increase complexity"
 
     def test_multihop_patterns_increase_complexity(self, builder: ContextBuilder) -> None:
@@ -286,9 +276,7 @@ class TestQueryComplexityEstimation:
         multiple_score = builder.estimate_query_complexity(
             "Compare Python Django Flask performance"
         )
-        assert (
-            multiple_score > single_score
-        ), "Multiple entities should increase complexity"
+        assert multiple_score > single_score, "Multiple entities should increase complexity"
 
 
 class TestDynamicKCalculation:
@@ -332,9 +320,7 @@ class TestDynamicKCalculation:
         """Test that disabled adaptive retrieval returns k_base."""
         config = AdaptiveRetrievalConfig(k_base=10, enabled=False)
         builder = ContextBuilder(adaptive_config=config)
-        k = builder.calculate_k_dynamic(
-            "How does authentication compare to authorization?"
-        )
+        k = builder.calculate_k_dynamic("How does authentication compare to authorization?")
         assert k == 10, f"Disabled adaptive should return k_base, got {k}"
 
     def test_delta_affects_scaling(self, builder: ContextBuilder) -> None:

@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from nexus.llm.message import Message, MessageRole, TextContent
 from nexus.services.llm_citation import Citation, CitationExtractor, DocumentReadResult
@@ -119,7 +119,7 @@ class LLMDocumentReader:
 
             if search_results:
                 # SemanticSearchResult satisfies ChunkLike via duck typing
-                chunks = list(search_results)
+                chunks = cast(list[ChunkLike], list(search_results))
                 sources = list({r.path for r in search_results})
             else:
                 # No results found, fall back to direct reading

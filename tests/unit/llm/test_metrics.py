@@ -23,8 +23,12 @@ class TestTokenUsage:
 
     def test_token_usage_addition(self) -> None:
         """Test adding two TokenUsage objects."""
-        a = TokenUsage(prompt_tokens=100, completion_tokens=50, cache_read_tokens=10, cache_write_tokens=5)
-        b = TokenUsage(prompt_tokens=200, completion_tokens=100, cache_read_tokens=20, cache_write_tokens=10)
+        a = TokenUsage(
+            prompt_tokens=100, completion_tokens=50, cache_read_tokens=10, cache_write_tokens=5
+        )
+        b = TokenUsage(
+            prompt_tokens=200, completion_tokens=100, cache_read_tokens=20, cache_write_tokens=10
+        )
         result = a + b
         assert result.prompt_tokens == 300
         assert result.completion_tokens == 150
@@ -59,7 +63,9 @@ class TestLLMMetrics:
         """Test that token usage accumulates across multiple calls."""
         metrics = LLMMetrics(model_name="test-model")
         metrics.add_token_usage(prompt_tokens=100, completion_tokens=50)
-        metrics.add_token_usage(prompt_tokens=200, completion_tokens=100, cache_read_tokens=10, cache_write_tokens=5)
+        metrics.add_token_usage(
+            prompt_tokens=200, completion_tokens=100, cache_read_tokens=10, cache_write_tokens=5
+        )
         assert metrics.accumulated_token_usage.prompt_tokens == 300
         assert metrics.accumulated_token_usage.completion_tokens == 150
         assert metrics.accumulated_token_usage.cache_read_tokens == 10

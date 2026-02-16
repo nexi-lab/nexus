@@ -20,7 +20,6 @@ from nexus.llm.exceptions import LLMCancellationError
 from nexus.llm.message import Message, MessageRole, TextContent
 from nexus.llm.provider import (
     CACHE_PROMPT_SUPPORTED_MODELS,
-    FUNCTION_CALLING_SUPPORTED_MODELS,
     LiteLLMProvider,
     LiteLLMResponse,
     LLMProvider,
@@ -203,9 +202,7 @@ class TestCompleteAsync:
         asyncio.create_task(cancel_after_delay())
 
         with pytest.raises(LLMCancellationError):
-            await provider.complete_async(
-                _make_messages(), cancellation_token=cancel_token
-            )
+            await provider.complete_async(_make_messages(), cancellation_token=cancel_token)
 
 
 class TestStream:
@@ -436,7 +433,21 @@ class TestLiteLLMResponse:
         """Test content is extracted from response."""
         mock_resp = MagicMock()
         mock_resp.get.side_effect = lambda k, d=None: {
-            "choices": [MagicMock(**{"__getitem__": lambda s, k2: {"message": MagicMock(**{"get": lambda k3, d3=None: "Test content" if k3 == "content" else d3})}[k2]})],
+            "choices": [
+                MagicMock(
+                    **{
+                        "__getitem__": lambda s, k2: {
+                            "message": MagicMock(
+                                **{
+                                    "get": lambda k3, d3=None: (
+                                        "Test content" if k3 == "content" else d3
+                                    )
+                                }
+                            )
+                        }[k2]
+                    }
+                )
+            ],
             "id": "resp_1",
         }.get(k, d)
         mock_resp.__getitem__ = lambda self, key: mock_resp.get(key)

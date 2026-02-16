@@ -36,6 +36,7 @@ from nexus.llm.exceptions import (
     LLMTimeoutError,
     LLMTokenCountError,
 )
+from nexus.llm.manifest import LLMBrickManifest, verify_imports
 from nexus.llm.message import (
     ContentType,
     ImageContent,
@@ -46,7 +47,6 @@ from nexus.llm.message import (
     ToolCall,
     ToolFunction,
 )
-from nexus.llm.manifest import LLMBrickManifest, verify_imports
 from nexus.llm.metrics import LLMMetrics, ResponseLatency, TokenUsage
 from nexus.llm.provider import LiteLLMProvider, LLMProvider, LLMResponse
 

@@ -99,8 +99,8 @@ class TestCancellationToken:
         token = CancellationToken(on_cancel_fn=toggle_cancel)
         assert token.is_cancelled() is False  # call_count=1
         assert token.is_cancelled() is False  # call_count=2
-        assert token.is_cancelled() is True   # call_count=3
-        assert token.is_cancelled() is True   # call_count=4 (still True)
+        assert token.is_cancelled() is True  # call_count=3
+        assert token.is_cancelled() is True  # call_count=4 (still True)
 
     def test_token_manual_cancel_takes_precedence(self) -> None:
         """Manual cancel returns True even if callback returns False."""

@@ -1,4 +1,4 @@
-//! Nexus Witness Node
+//! Nexus Witness Node — Multi-Zone
 //!
 //! A lightweight Raft witness that participates in leader election
 //! but doesn't apply state machine. This enables cost-effective high availability
@@ -6,29 +6,37 @@
 //!
 //! # What is a Witness?
 //!
-//! - Votes in leader elections
+//! - Votes in leader elections (standard Raft protocol)
 //! - Stores Raft log (for vote validation)
 //! - Does NOT apply state machine
 //! - Does NOT serve reads
 //! - Cannot become leader
+//!
+//! # Multi-Zone
+//!
+//! The witness creates one Raft group per zone (root + all federation zones),
+//! mirroring full nodes' static bootstrap. Each zone runs an independent
+//! `TransportLoop` with correct `zone_id` routing.
 //!
 //! # Usage
 //!
 //! ```bash
 //! NEXUS_NODE_ID=3 NEXUS_BIND_ADDR=0.0.0.0:2028 \
 //!   NEXUS_PEERS=1@http://10.0.0.1:2026,2@http://10.0.0.2:2026 \
+//!   NEXUS_FEDERATION_ZONES=corp,corp-eng,corp-sales,family \
 //!   nexus-witness
 //! ```
 //!
 //! # Resource Requirements
 //!
-//! - Memory: ~64MB (just Raft log, no data)
+//! - Memory: ~64MB per zone (just Raft log, no data)
 //! - CPU: <0.1 core (only processes votes/heartbeats)
-//! - Disk: ~1GB (Raft log only, auto-compacted)
+//! - Disk: ~1GB per zone (Raft log only, auto-compacted)
 
 use std::env;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 #[tokio::main]
 #[allow(unreachable_code)]
@@ -61,18 +69,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Ensure data directory exists
     std::fs::create_dir_all(&data_path)?;
 
+    // Parse federation zones (same env var as full nodes)
+    let federation_zones: Vec<String> = env::var("NEXUS_FEDERATION_ZONES")
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+
     tracing::info!(
-        "Starting Nexus Witness Node\n  Node ID: {}\n  Bind: {}\n  Data: {}",
+        "Starting Nexus Witness Node\n  Node ID: {}\n  Bind: {}\n  Data: {}\n  Federation zones: {:?}",
         node_id,
         bind_addr,
-        data_path.display()
+        data_path.display(),
+        federation_zones,
     );
 
     // Import and start the witness server (requires grpc feature AND proto files)
     #[cfg(all(feature = "grpc", has_protos))]
     {
         use _nexus_raft::transport::{
-            NodeAddress, RaftClientPool, RaftWitnessServer, ServerConfig, TlsConfig, TransportLoop,
+            NodeAddress, RaftWitnessServer, ServerConfig, TlsConfig, WitnessZoneRegistry,
         };
 
         // Parse TLS configuration from environment
@@ -137,40 +154,53 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
 
-        let config = ServerConfig {
+        // Create multi-zone witness registry
+        let registry = Arc::new(WitnessZoneRegistry::new(
+            data_path.clone(),
+            node_id,
+            tls_config.clone(),
+        ));
+
+        let runtime_handle = tokio::runtime::Handle::current();
+
+        // Static bootstrap: create root zone + all federation zones
+        // Same pattern as full nodes: bootstrap("root") then bootstrap_static(zones)
+        registry
+            .create_zone("root", peers.clone(), &runtime_handle)
+            .map_err(|e| format!("Failed to create root zone: {}", e))?;
+
+        for zone_id in &federation_zones {
+            registry
+                .create_zone(zone_id, peers.clone(), &runtime_handle)
+                .map_err(|e| format!("Failed to create zone '{}': {}", zone_id, e))?;
+        }
+
+        let total_zones = 1 + federation_zones.len();
+        tracing::info!(
+            "Witness bootstrap complete: {} zones (root + {} federation)",
+            total_zones,
+            federation_zones.len(),
+        );
+
+        // Create gRPC server
+        let server_config = ServerConfig {
             bind_address: bind_addr,
             tls: tls_config,
             ..Default::default()
         };
 
-        let mut server = RaftWitnessServer::with_config(
-            node_id,
-            data_path.to_str().unwrap(),
-            config,
-            peers.clone(),
-        )
-        .map_err(|e| format!("Failed to create witness server: {}", e))?;
-
-        // Set up shutdown signal
-        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
-
-        // Start transport loop in background — owns the driver exclusively
-        let driver = server.take_driver();
-        let peer_map: std::collections::HashMap<u64, NodeAddress> =
-            peers.into_iter().map(|p| (p.id, p)).collect();
-        let shared_peers = std::sync::Arc::new(std::sync::RwLock::new(peer_map));
-        let transport_loop = TransportLoop::new(driver, shared_peers, RaftClientPool::new());
-        tokio::spawn(transport_loop.run(shutdown_rx));
+        let server = RaftWitnessServer::new(registry.clone(), server_config);
 
         tracing::info!("Witness server starting on {}", bind_addr);
 
         // Handle shutdown signal
+        let shutdown_registry = registry.clone();
         let shutdown = async move {
             tokio::signal::ctrl_c()
                 .await
                 .expect("Failed to install Ctrl+C handler");
             tracing::info!("Shutdown signal received");
-            let _ = shutdown_tx.send(true);
+            shutdown_registry.shutdown_all();
         };
 
         server

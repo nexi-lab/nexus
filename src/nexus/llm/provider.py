@@ -412,7 +412,9 @@ class LiteLLMProvider(LLMProvider):
             try:
                 self.model_info = litellm.get_model_info(self.config.model.split("/")[-1])
             except Exception as e:
-                logger.debug("Failed to get model info for %s: %s", self.config.model.split("/")[-1], e)
+                logger.debug(
+                    "Failed to get model info for %s: %s", self.config.model.split("/")[-1], e
+                )
 
         # Configure max tokens
         if self.config.max_input_tokens is None:

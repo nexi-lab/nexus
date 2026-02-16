@@ -25,10 +25,12 @@ from nexus.core.exceptions import (
 
 # PostgreSQL error codes indicating query timeout / statement timeout.
 # See https://www.postgresql.org/docs/current/errcodes-appendix.html
-_PG_TIMEOUT_CODES = frozenset({
-    "57014",  # query_canceled (statement_timeout triggers this)
-    "57P01",  # admin_shutdown (can appear during long queries)
-})
+_PG_TIMEOUT_CODES = frozenset(
+    {
+        "57014",  # query_canceled (statement_timeout triggers this)
+        "57P01",  # admin_shutdown (can appear during long queries)
+    }
+)
 
 
 def _is_timeout_error(exc: SAOperationalError) -> bool:

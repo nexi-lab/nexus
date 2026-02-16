@@ -200,7 +200,9 @@ class IdentityMemoryMigration:
                         try:
                             registry.register_entity("agent", potential_agent)
                         except Exception as e:
-                            logger.warning("Failed to register agent entity %s: %s", potential_agent, e)
+                            logger.warning(
+                                "Failed to register agent entity %s: %s", potential_agent, e
+                            )
 
             logger.info("Extracted and registered entities from file paths")
 

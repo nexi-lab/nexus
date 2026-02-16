@@ -1,18 +1,21 @@
 """Unit tests for batch operations in connector backends.
 
-Tests cover new batch optimization methods:
+Tests cover batch optimization methods:
 - _batch_get_versions() for GCS and S3
 - _bulk_download_blobs() for parallel downloads
 - _batch_write_to_cache() for bulk cache writes
 - _batch_read_from_backend() integration
+- batch_read_content() native implementations for GCS and S3 (#1626)
 """
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
+from nexus.backends.backend import Backend
 from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.backends.cache_mixin import CacheConnectorMixin
 from nexus.core.permissions import OperationContext
+from nexus.core.response import HandlerResponse
 
 
 class MockBlobConnector(BaseBlobStorageConnector, CacheConnectorMixin):
@@ -396,3 +399,439 @@ class TestBatchReadFromBackend:
         # Verify _download_blob was called for each file
         # (but in parallel, not sequential)
         assert backend.download_count == 50
+
+
+# === GCS batch_read_content tests (#1626) ===
+
+
+class MockGCSBackend(Backend):
+    """Mock GCS backend for testing batch_read_content.
+
+    Simulates CAS-based hash-to-blob path mapping without real GCS dependencies.
+    """
+
+    batch_read_workers: int = 4  # Low for tests
+
+    def __init__(self) -> None:
+        self._content: dict[str, bytes] = {}  # hash -> content
+        self.read_count: int = 0
+
+    @property
+    def name(self) -> str:
+        return "gcs"
+
+    def write_content(self, content, context=None) -> HandlerResponse[str]:
+        from nexus.core.hash_fast import hash_content
+
+        h = hash_content(content)
+        self._content[h] = content
+        return HandlerResponse.ok(data=h, backend_name="gcs")
+
+    def read_content(self, content_hash, context=None) -> HandlerResponse[bytes]:
+        self.read_count += 1
+        if content_hash not in self._content:
+            return HandlerResponse.not_found(
+                path=content_hash, message="Not found", backend_name="gcs"
+            )
+        return HandlerResponse.ok(data=self._content[content_hash], backend_name="gcs")
+
+    def batch_read_content(
+        self, content_hashes, context=None, *, contexts=None
+    ) -> dict[str, bytes | None]:
+        """Use the same parallel logic as GCSBackend."""
+        if not content_hashes:
+            return {}
+
+        result: dict[str, bytes | None] = {}
+
+        if len(content_hashes) == 1:
+            response = self.read_content(content_hashes[0], context=context)
+            return {content_hashes[0]: response.data if response.success else None}
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        max_workers = min(self.batch_read_workers, len(content_hashes))
+
+        def read_one(content_hash: str) -> tuple[str, bytes | None]:
+            response = self.read_content(content_hash, context=context)
+            return (content_hash, response.data if response.success else None)
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(read_one, h): h for h in content_hashes}
+            for future in as_completed(futures):
+                hash_key, file_content = future.result()
+                result[hash_key] = file_content
+
+        return result
+
+    def delete_content(self, content_hash, context=None) -> HandlerResponse[None]:
+        self._content.pop(content_hash, None)
+        return HandlerResponse.ok(data=None, backend_name="gcs")
+
+    def content_exists(self, content_hash, context=None) -> HandlerResponse[bool]:
+        return HandlerResponse.ok(data=content_hash in self._content, backend_name="gcs")
+
+    def get_content_size(self, content_hash, context=None) -> HandlerResponse[int]:
+        if content_hash not in self._content:
+            return HandlerResponse.not_found(path=content_hash, backend_name="gcs")
+        return HandlerResponse.ok(data=len(self._content[content_hash]), backend_name="gcs")
+
+    def get_ref_count(self, content_hash, context=None) -> HandlerResponse[int]:
+        return HandlerResponse.ok(data=1, backend_name="gcs")
+
+    def mkdir(self, path, parents=False, exist_ok=False, context=None) -> HandlerResponse[None]:
+        return HandlerResponse.ok(data=None, backend_name="gcs")
+
+    def rmdir(self, path, recursive=False, context=None) -> HandlerResponse[None]:
+        return HandlerResponse.ok(data=None, backend_name="gcs")
+
+    def is_directory(self, path, context=None) -> HandlerResponse[bool]:
+        return HandlerResponse.ok(data=False, backend_name="gcs")
+
+
+class TestGCSBatchReadContent:
+    """Test GCS-style CAS batch_read_content with parallel ThreadPoolExecutor."""
+
+    def test_basic_batch_read(self):
+        """Test reading multiple CAS objects in parallel."""
+        backend = MockGCSBackend()
+        h1 = backend.write_content(b"file1").data
+        h2 = backend.write_content(b"file2").data
+        h3 = backend.write_content(b"file3").data
+
+        result = backend.batch_read_content([h1, h2, h3])
+
+        assert result[h1] == b"file1"
+        assert result[h2] == b"file2"
+        assert result[h3] == b"file3"
+
+    def test_partial_failures_return_none(self):
+        """Test missing hashes return None, not exceptions."""
+        backend = MockGCSBackend()
+        h1 = backend.write_content(b"exists").data
+        fake_hash = "a" * 64
+
+        result = backend.batch_read_content([h1, fake_hash])
+
+        assert result[h1] == b"exists"
+        assert result[fake_hash] is None
+
+    def test_empty_list_returns_empty_dict(self):
+        """Test empty input returns empty dict."""
+        backend = MockGCSBackend()
+        assert backend.batch_read_content([]) == {}
+
+    def test_single_item_skips_thread_pool(self):
+        """Test single-item optimization (no ThreadPoolExecutor overhead)."""
+        backend = MockGCSBackend()
+        h1 = backend.write_content(b"single").data
+
+        result = backend.batch_read_content([h1])
+
+        assert result[h1] == b"single"
+        assert backend.read_count == 1
+
+    def test_parallel_execution(self):
+        """Test that reads happen in parallel (all items read)."""
+        backend = MockGCSBackend()
+        hashes = []
+        for i in range(20):
+            h = backend.write_content(f"content{i}".encode()).data
+            hashes.append(h)
+
+        backend.read_count = 0
+        result = backend.batch_read_content(hashes)
+
+        assert len(result) == 20
+        assert backend.read_count == 20
+        assert all(v is not None for v in result.values())
+
+    def test_deduplication(self):
+        """Test requesting same hash multiple times."""
+        backend = MockGCSBackend()
+        h1 = backend.write_content(b"dedup").data
+
+        result = backend.batch_read_content([h1, h1, h1])
+
+        # All three entries should be the same content
+        assert len(result) == 1  # dict deduplicates keys
+        assert result[h1] == b"dedup"
+
+
+# === S3 batch_read_content tests (#1626) ===
+
+
+class MockS3ConnectorForBatch(BaseBlobStorageConnector, CacheConnectorMixin):
+    """Mock S3-like connector for testing batch_read_content with per-file contexts.
+
+    Simulates path-based access where each file needs its own OperationContext.
+    """
+
+    batch_read_workers: int = 4  # Low for tests
+
+    def __init__(self) -> None:
+        self.bucket_name = "test-bucket"
+        self.prefix = ""
+        self.versioning_enabled = False
+        self.files: dict[str, bytes] = {}  # blob_path -> content
+        self.read_count: int = 0
+        self.session_factory = None
+
+    @property
+    def name(self) -> str:
+        return "s3_connector"
+
+    def _upload_blob(self, blob_path, content, content_type="") -> str:
+        self.files[blob_path] = content
+        return "mock-version"
+
+    def _download_blob(self, blob_path, version_id=None) -> tuple[bytes, str | None]:
+        if blob_path not in self.files:
+            from nexus.core.exceptions import NexusFileNotFoundError
+
+            raise NexusFileNotFoundError(blob_path)
+        return self.files[blob_path], "v1"
+
+    def _delete_blob(self, blob_path) -> None:
+        self.files.pop(blob_path, None)
+
+    def _blob_exists(self, blob_path) -> bool:
+        return blob_path in self.files
+
+    def _get_blob_size(self, blob_path) -> int:
+        return len(self.files.get(blob_path, b""))
+
+    def _list_blobs(self, prefix="", delimiter="/") -> tuple[list[str], list[str]]:
+        keys = [k for k in self.files if k.startswith(prefix)]
+        return keys, []
+
+    def _create_directory_marker(self, blob_path) -> None:
+        pass
+
+    def _copy_blob(self, source_path, dest_path) -> None:
+        if source_path in self.files:
+            self.files[dest_path] = self.files[source_path]
+
+    def read_content(self, content_hash, context=None) -> HandlerResponse[bytes]:
+        """S3-style read that requires context.backend_path."""
+        self.read_count += 1
+        if not context or not context.backend_path:
+            return HandlerResponse.error(
+                message="S3 connector requires backend_path",
+                code=400,
+                is_expected=True,
+                backend_name=self.name,
+            )
+        blob_path = self._get_blob_path(context.backend_path)
+        if blob_path not in self.files:
+            return HandlerResponse.not_found(
+                path=blob_path, message="Not found", backend_name=self.name
+            )
+        return HandlerResponse.ok(data=self.files[blob_path], backend_name=self.name)
+
+    def batch_read_content(
+        self, content_hashes, context=None, *, contexts=None
+    ) -> dict[str, bytes | None]:
+        """S3-style batch read with per-file contexts (mirrors S3ConnectorBackend)."""
+        if not content_hashes:
+            return {}
+
+        result: dict[str, bytes | None] = {}
+
+        if len(content_hashes) == 1:
+            ctx = contexts.get(content_hashes[0], context) if contexts else context
+            response = self.read_content(content_hashes[0], context=ctx)
+            return {content_hashes[0]: response.data if response.success else None}
+
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        max_workers = min(self.batch_read_workers, len(content_hashes))
+
+        def read_one(content_hash: str) -> tuple[str, bytes | None]:
+            ctx = contexts.get(content_hash, context) if contexts else context
+            response = self.read_content(content_hash, context=ctx)
+            return (content_hash, response.data if response.success else None)
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(read_one, h): h for h in content_hashes}
+            for future in as_completed(futures):
+                hash_key, file_content = future.result()
+                result[hash_key] = file_content
+
+        return result
+
+
+class TestS3BatchReadContent:
+    """Test S3-style batch_read_content with per-file contexts."""
+
+    def _make_context(self, backend_path: str) -> OperationContext:
+        """Create a minimal OperationContext with backend_path."""
+        ctx = MagicMock(spec=OperationContext)
+        ctx.backend_path = backend_path
+        ctx.virtual_path = None
+        ctx.zone_id = None
+        return ctx
+
+    def test_basic_batch_read_with_contexts(self):
+        """Test reading multiple S3 objects with per-file contexts."""
+        backend = MockS3ConnectorForBatch()
+        backend.files = {
+            "data/file1.txt": b"content1",
+            "data/file2.txt": b"content2",
+            "data/file3.txt": b"content3",
+        }
+
+        contexts = {
+            "hash1": self._make_context("data/file1.txt"),
+            "hash2": self._make_context("data/file2.txt"),
+            "hash3": self._make_context("data/file3.txt"),
+        }
+
+        result = backend.batch_read_content(["hash1", "hash2", "hash3"], contexts=contexts)
+
+        assert result["hash1"] == b"content1"
+        assert result["hash2"] == b"content2"
+        assert result["hash3"] == b"content3"
+
+    def test_missing_context_returns_none(self):
+        """Test that hashes without contexts (and no shared context) return None."""
+        backend = MockS3ConnectorForBatch()
+        backend.files = {"data/file1.txt": b"content1"}
+
+        contexts = {
+            "hash1": self._make_context("data/file1.txt"),
+        }
+
+        # hash2 has no context and no fallback — read_content will fail
+        result = backend.batch_read_content(["hash1", "hash2"], contexts=contexts)
+
+        assert result["hash1"] == b"content1"
+        assert result["hash2"] is None  # Failed due to missing backend_path
+
+    def test_shared_context_fallback(self):
+        """Test that shared context is used when per-hash context is missing."""
+        backend = MockS3ConnectorForBatch()
+        backend.files = {"data/file1.txt": b"content1"}
+
+        shared_ctx = self._make_context("data/file1.txt")
+
+        # hash1 uses shared context (no per-hash contexts provided)
+        result = backend.batch_read_content(["hash1"], context=shared_ctx)
+
+        assert result["hash1"] == b"content1"
+
+    def test_empty_list_returns_empty_dict(self):
+        """Test empty input returns empty dict."""
+        backend = MockS3ConnectorForBatch()
+        assert backend.batch_read_content([]) == {}
+
+    def test_single_item_skips_thread_pool(self):
+        """Test single-item optimization."""
+        backend = MockS3ConnectorForBatch()
+        backend.files = {"data/single.txt": b"single"}
+
+        contexts = {"hash1": self._make_context("data/single.txt")}
+        result = backend.batch_read_content(["hash1"], contexts=contexts)
+
+        assert result["hash1"] == b"single"
+        assert backend.read_count == 1
+
+    def test_partial_failures_with_mixed_contexts(self):
+        """Test mix of successful and failed reads in parallel."""
+        backend = MockS3ConnectorForBatch()
+        backend.files = {
+            "data/file1.txt": b"content1",
+            # file2.txt doesn't exist
+            "data/file3.txt": b"content3",
+        }
+
+        contexts = {
+            "hash1": self._make_context("data/file1.txt"),
+            "hash2": self._make_context("data/file2.txt"),  # Missing file
+            "hash3": self._make_context("data/file3.txt"),
+        }
+
+        result = backend.batch_read_content(["hash1", "hash2", "hash3"], contexts=contexts)
+
+        assert result["hash1"] == b"content1"
+        assert result["hash2"] is None  # File doesn't exist
+        assert result["hash3"] == b"content3"
+
+    def test_parallel_execution_with_many_files(self):
+        """Test parallel reads with 20 files."""
+        backend = MockS3ConnectorForBatch()
+        contexts = {}
+        for i in range(20):
+            backend.files[f"data/file{i}.txt"] = f"content{i}".encode()
+            contexts[f"hash{i}"] = self._make_context(f"data/file{i}.txt")
+
+        hashes = [f"hash{i}" for i in range(20)]
+        backend.read_count = 0
+
+        result = backend.batch_read_content(hashes, contexts=contexts)
+
+        assert len(result) == 20
+        assert backend.read_count == 20
+        assert all(v is not None for v in result.values())
+
+
+# === Backend base class contexts parameter tests (#1626) ===
+
+
+class TestBatchReadContentContextsParam:
+    """Test the new contexts parameter on Backend.batch_read_content."""
+
+    def test_default_impl_uses_per_hash_context(self):
+        """Test that default batch_read_content uses per-hash contexts."""
+        backend = MockS3ConnectorForBatch()
+        backend.files = {
+            "path_a.txt": b"content_a",
+            "path_b.txt": b"content_b",
+        }
+
+        ctx_a = MagicMock(spec=OperationContext)
+        ctx_a.backend_path = "path_a.txt"
+        ctx_b = MagicMock(spec=OperationContext)
+        ctx_b.backend_path = "path_b.txt"
+
+        # Use the base class default (sequential) with per-hash contexts
+        result = Backend.batch_read_content(
+            backend,
+            ["hash_a", "hash_b"],
+            contexts={"hash_a": ctx_a, "hash_b": ctx_b},
+        )
+
+        assert result["hash_a"] == b"content_a"
+        assert result["hash_b"] == b"content_b"
+
+    def test_default_impl_falls_back_to_shared_context(self):
+        """Test that shared context is used when hash not in contexts dict."""
+        backend = MockS3ConnectorForBatch()
+        backend.files = {"shared_path.txt": b"shared_content"}
+
+        shared_ctx = MagicMock(spec=OperationContext)
+        shared_ctx.backend_path = "shared_path.txt"
+
+        # Only hash1 in contexts, hash2 should fall back to shared context
+        ctx_for_hash1 = MagicMock(spec=OperationContext)
+        ctx_for_hash1.backend_path = "shared_path.txt"
+
+        result = Backend.batch_read_content(
+            backend,
+            ["hash1", "hash2"],
+            context=shared_ctx,
+            contexts={"hash1": ctx_for_hash1},
+        )
+
+        assert result["hash1"] == b"shared_content"
+        assert result["hash2"] == b"shared_content"
+
+    def test_backward_compat_no_contexts(self):
+        """Test that batch_read_content still works without contexts param."""
+        backend = MockGCSBackend()
+        h1 = backend.write_content(b"compat").data
+
+        # Call without contexts (backward compatible)
+        result = backend.batch_read_content([h1])
+
+        assert result[h1] == b"compat"

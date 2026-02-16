@@ -1913,7 +1913,7 @@ def _register_routes(app: FastAPI) -> None:
 
                     SecretsAuditLogModel.__table__.create(engine, checkfirst=True)
                 _secrets_audit_logger_instance = SecretsAuditLogger(session_factory=session_factory)
-            zone_id = auth_result.get("zone_id", "default")
+            zone_id = auth_result.get("zone_id", "root")
             return _secrets_audit_logger_instance, zone_id
 
         app.dependency_overrides[_secrets_audit_dep] = _get_secrets_audit_logger_override
@@ -2011,7 +2011,7 @@ def _register_routes(app: FastAPI) -> None:
         request: Request,
         path: str,
         token: str = Query(..., description="Signed stream token"),
-        zone_id: str = Query("default", description="Zone ID"),
+        zone_id: str = Query("root", description="Zone ID"),
     ) -> Response | StreamingResponse:
         """Stream file content with HTTP Range support (RFC 9110).
 
@@ -2327,7 +2327,7 @@ async def _fire_rpc_event(
         return
 
     try:
-        zone_id = getattr(context, "zone_id", None) or "default"
+        zone_id = getattr(context, "zone_id", None) or "root"
         data: dict[str, Any] = {"file_path": path}
         if old_path:
             data["old_path"] = old_path
@@ -2743,9 +2743,9 @@ def _generate_download_url(
         # Local backend - use streaming endpoint with signed token
         if backend.has_root_path:
             # Get zone_id from context
-            zone_id = "default"
+            zone_id = "root"
             if context and hasattr(context, "zone_id"):
-                zone_id = context.zone_id or "default"
+                zone_id = context.zone_id or "root"
 
             # Generate signed token for streaming access
             token = _sign_stream_token(path, expires_in, zone_id)

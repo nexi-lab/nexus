@@ -55,6 +55,9 @@ from tenacity import (
 
 from nexus.core.exceptions import (
     NexusFileNotFoundError,
+    RemoteConnectionError,
+    RemoteFilesystemError,
+    RemoteTimeoutError,
 )
 from nexus.core.filesystem import NexusFilesystem
 from nexus.core.rpc_codec import decode_rpc_message, encode_rpc_message
@@ -64,9 +67,6 @@ from nexus.server.protocol import RPCRequest, RPCResponse
 
 from .client import (
     _DOMAIN_METHOD_MAP,
-    RemoteConnectionError,
-    RemoteFilesystemError,
-    RemoteTimeoutError,
 )
 
 logger = logging.getLogger(__name__)

@@ -27,6 +27,10 @@ Usage:
             logger.error(f"System error: {e}", exc_info=True)
 """
 
+from __future__ import annotations
+
+from typing import Any
+
 
 class NexusError(Exception):
     """Base exception for all Nexus errors.
@@ -219,6 +223,51 @@ class ConnectorQuotaError(ConnectorError):
     """
 
     is_expected = True
+
+
+class RemoteFilesystemError(NexusError):
+    """Enhanced remote filesystem error with detailed information.
+
+    Raised when RPC/HTTP communication with a remote Nexus server fails.
+    This is an unexpected error — indicates network or remote infrastructure failure.
+
+    Defined in core/exceptions so both nexus.remote and nexus.fuse can
+    import without cross-layer coupling.
+    """
+
+    is_expected = False  # Network / remote infrastructure failure
+
+    def __init__(
+        self,
+        message: str,
+        status_code: int | None = None,
+        details: dict[str, Any] | None = None,
+        method: str | None = None,
+    ):
+        self.message = message
+        self.status_code = status_code
+        self.details = details or {}
+        self.method = method
+
+        error_parts = [message]
+        if method:
+            error_parts.append(f"(method: {method})")
+        if status_code:
+            error_parts.append(f"[HTTP {status_code}]")
+
+        super().__init__(" ".join(error_parts))
+
+
+class RemoteConnectionError(RemoteFilesystemError):
+    """Error connecting to remote Nexus server."""
+
+    pass
+
+
+class RemoteTimeoutError(RemoteFilesystemError):
+    """Timeout while communicating with remote server."""
+
+    pass
 
 
 class ServiceUnavailableError(NexusError):

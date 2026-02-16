@@ -25,10 +25,8 @@ from pathlib import Path
 import httpx
 import pytest
 
-from nexus.remote.client import (
-    RemoteFilesystemError,
-    RemoteNexusFS,
-)
+from nexus.core.exceptions import RemoteFilesystemError
+from nexus.remote.client import RemoteNexusFS
 
 # Clear proxy env vars so localhost connections work
 for _key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):

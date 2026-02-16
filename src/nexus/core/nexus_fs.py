@@ -492,8 +492,6 @@ class NexusFS(  # type: ignore[misc]
         """Public accessor for the semantic search engine instance."""
         return self._semantic_search
 
-
-
     def _init_performance_optimizations(self) -> None:
         """Initialize performance optimizations for permission checks.
 
@@ -5890,6 +5888,15 @@ class NexusFS(  # type: ignore[misc]
     # ========================================================================
     # Sandbox Management (Issue #372)
     # ========================================================================
+
+    @property
+    def sandbox_available(self) -> bool:
+        """Whether sandbox execution is available."""
+        try:
+            self._ensure_sandbox_manager()
+        except Exception:
+            return False
+        return bool(self._sandbox_manager and self._sandbox_manager.providers)
 
     def _ensure_sandbox_manager(self) -> None:
         """Ensure sandbox manager is initialized (lazy initialization)."""

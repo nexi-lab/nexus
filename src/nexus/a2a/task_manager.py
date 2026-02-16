@@ -47,23 +47,14 @@ class TaskManager:
         A ``TaskStoreProtocol`` implementation.  When *None* an
         ``InMemoryTaskStore`` is used (useful for testing and embedded
         mode).
-    session_factory:
-        **Deprecated.**  If provided (and *store* is None), wraps the
-        session factory in a ``DatabaseTaskStore`` for backwards
-        compatibility.
     """
 
     def __init__(
         self,
         store: TaskStoreProtocol | None = None,
-        session_factory: Any = None,
     ) -> None:
         if store is not None:
             self._store: TaskStoreProtocol = store
-        elif session_factory is not None:
-            from nexus.a2a.stores.database import DatabaseTaskStore
-
-            self._store = DatabaseTaskStore(session_factory)
         else:
             from nexus.a2a.stores.in_memory import InMemoryTaskStore
 

@@ -22,6 +22,8 @@ FORBIDDEN_PREFIXES = ("nexus.server", "nexus.core")
 ALLOWED_EXCEPTIONS: dict[str, set[str]] = {
     # db.py may import nexus.storage.models for SQLAlchemy Base (accepted coupling)
     "db.py": {"nexus.storage"},
+    # database.py imports nexus.storage.models (A2ATaskModel) and nexus.storage.record_store (RecordStoreABC)
+    "database.py": {"nexus.storage"},
     # agent_card.py and router.py use centralized URL defaults (#1462)
     "agent_card.py": {"nexus.constants"},
     "router.py": {"nexus.constants"},

@@ -117,22 +117,19 @@ async def get_cache_stats(
             cache_stats["content_cache"] = cc.get_stats()
 
     # Permission cache stats
-    if hasattr(nexus_fs, "_rebac_manager"):
-        rm = nexus_fs._rebac_manager
-        if hasattr(rm, "_permission_cache") and rm._permission_cache:
-            pc = rm._permission_cache
-            if hasattr(pc, "get_stats"):
-                cache_stats["permission_cache"] = pc.get_stats()
-        if hasattr(rm, "_tiger_cache") and rm._tiger_cache:
-            tc = rm._tiger_cache
-            if hasattr(tc, "get_stats"):
-                cache_stats["tiger_cache"] = tc.get_stats()
+    rm = getattr(nexus_fs, "_rebac_manager", None)
+    if rm is not None:
+        pc = getattr(rm, "_permission_cache", None)
+        if pc is not None and hasattr(pc, "get_stats"):
+            cache_stats["permission_cache"] = pc.get_stats()
+        tc = getattr(rm, "_tiger_cache", None)
+        if tc is not None and hasattr(tc, "get_stats"):
+            cache_stats["tiger_cache"] = tc.get_stats()
 
     # Directory visibility cache
-    if hasattr(nexus_fs, "_dir_visibility_cache") and nexus_fs._dir_visibility_cache:
-        dvc = nexus_fs._dir_visibility_cache
-        if hasattr(dvc, "get_metrics"):
-            cache_stats["dir_visibility_cache"] = dvc.get_metrics()
+    dvc = getattr(nexus_fs, "_dir_visibility_cache", None)
+    if dvc is not None and hasattr(dvc, "get_metrics"):
+        cache_stats["dir_visibility_cache"] = dvc.get_metrics()
 
     # Issue #1169: Read-set-aware cache stats (precision metrics)
     read_set_cache = getattr(nexus_fs, "read_set_cache", None)

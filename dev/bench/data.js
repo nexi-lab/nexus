@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771255238675,
+  "lastUpdate": 1771255531803,
   "repoUrl": "https://github.com/nexi-lab/nexus",
   "entries": {
     "Benchmark": [
@@ -11250,6 +11250,156 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.000022839115534529358",
             "extra": "mean: 1.5403320235831852 msec\nrounds: 636"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "joezhoujinjing@gmail.com",
+            "name": "joezhoujinjing",
+            "username": "joezhoujinjing"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "a756897ec1f93ace8224655702c595ab964f6069",
+          "message": "refactor: merge tests/integration/ + tests/e2e/ into unified tests/e2e/ (#1713)\n\n* refactor: merge tests/integration/ + tests/e2e/ into unified tests/e2e/\n\nReorganize ~198 test files from two overlapping directories into a single\ntests/e2e/ structure organized by external dependency:\n\n  tests/e2e/\n  ├── self_contained/  — No external deps (SQLite, mocks, tmp_path)\n  │   ├── mcp/         — MCP tests (auto-skip if fastmcp missing)\n  │   └── pay/         — TigerBeetle tests (auto-skip if unavailable)\n  ├── postgres/        — Needs PostgreSQL\n  │   └── migrations/  — Alembic migration tests\n  ├── redis/           — Needs Redis/Dragonfly\n  ├── nats/            — Needs NATS\n  ├── docker/          — Needs Docker daemon\n  └── server/          — Starts nexus serve (subprocess/HTTP)\n\nChanges:\n- Merge conftest.py fixtures from both directories\n- Fix relative path depths broken by move (3 files)\n- Fix SQLite StaticPool for threaded async tests (test_tus_protocol)\n- Fix module paths for isolation test helpers\n- Fix pre-existing type: ignore comments in moved files\n- Update CI paths (test.yml, docker-integration.yml)\n- Update pyproject.toml ruff per-file-ignores\n- Skip pre-existing failures with TODO refs to #1702\n- Delete tests/integration/ entirely\n- Delete bitrotted test_scheduler_server_e2e.py\n\nResult: 827 passed, 89 skipped, 0 failures in self_contained/\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix: correct _PROJECT_ROOT depth in migration test_harness.py\n\ntest_harness.py had its own _PROJECT_ROOT with only 4 parents, but\nafter moving to tests/e2e/postgres/migrations/ it needs 5 parents\n(matching conftest.py which was already fixed).\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix: merge main and move new test files to correct directories\n\n- test_a2a_streaming.py → self_contained/ (uses ASGITransport, no server)\n- test_skills_async_e2e.py stays in server/ (uses test_app fixture)\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix: skip test_symlink_escape_blocked (backend refactor changed behavior)\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* ci: add E2E self-contained test job to CI\n\nRuns the 820+ self-contained e2e tests (no external deps) with a\n10-minute timeout. These tests use SQLite in-memory, mocks, and\nASGITransport — no server, PostgreSQL, Redis, or Docker needed.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* ci: add e2e CI jobs for postgres, redis, docker, and nats\n\n- E2E Tests (PostgreSQL): pgvector/pgvector:pg16 service, runs non-migration postgres tests\n- E2E Tests (Redis): redis:7 service, sets NEXUS_REDIS_URL + REDIS_ENABLED\n- E2E Tests (Docker): ubuntu-latest has Docker pre-installed\n- E2E Tests (NATS): nats:latest service, sets NEXUS_NATS_URL\n\nAll jobs use --timeout=120 per test with 10-15 min job timeouts.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix: enable NATS JetStream in CI (required for stream tests)\n\nGitHub Actions service containers don't support passing command args,\nso start NATS manually with `docker run -d nats:latest -js`.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix: resolve pre-existing e2e test errors in redis and nats suites\n\nRedis (3 files):\n- Skip tests referencing RedisLockManager (removed from source;\n  only RaftLockManager remains in distributed_lock.py)\n\nNATS:\n- Fix mode='embedded' → mode='standalone' (config validation changed)\n- Skip test_nats_event_bus_e2e.py (nexus.connect() doesn't wire NATS\n  event bus from env vars; needs factory-level fix)\n\nAll skipped tests tracked in https://github.com/nexi-lab/nexus/issues/1702\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix: only skip lock manager tests in redis suite, not event bus tests\n\nMove module-level skip to per-class @_skip_lock_manager on the 5 classes\nthat import RedisLockManager. The 5 event-bus-only classes now run,\nadding 32 passing tests to the redis CI job.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* ci: add Rust extension builds to all e2e CI jobs\n\nAll e2e jobs now build nexus_fast, nexus_raft, and nexus_tasks Rust\nextensions. This fixes the Metastore RuntimeError in redis\nmulti-instance workflow tests.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix: fix multi-worker isolation tests and Raft/SQLite path conflict\n\n- test_multi_instance_workflows.py: The nexus_fs fixture used obfuscated\n  chr() codes to build \".db\"→\"-raft\" replacement strings, but included\n  literal double-quote characters that don't exist in the path, making\n  the replace a no-op. Raft sled and SQLite both hit the same file →\n  \"file is not a database\". Fixed to use plain .replace(\".db\", \"-raft\").\n\n- isolation_helpers.py: MockBackend used in-memory dicts, so with\n  pool_size=2 each worker process had independent state. write_content\n  on worker 0 was invisible to read_content on worker 1. Changed to\n  filesystem-backed storage so all workers in a pool share state.\n\n- test_isolation_integration.py: Pass shared storage_dir via\n  backend_kwargs so multi-worker pools see consistent state.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix: fix redis multi-instance workflow tests for separate sled stores\n\n- test_delete/rename: Each NexusFS instance has its own sled metadata\n  store. The instance that wrote the file must be the one to delete/\n  rename it. Swapped roles so nexus_fs (owner) does the mutation and\n  second_nexus_fs (observer) waits for the event via Redis.\n\n- test_unlock_after_ttl_expired: Raft single-node embedded locks don't\n  auto-expire on TTL (no background reaper), so unlock returns True\n  even after the TTL window. Updated assertion to match Raft behavior.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* chore: merge main, move test_streaming_e2e.py to server/\n\n- Resolved rename conflict for test_astraea_e2e.py (integration/ → e2e/self_contained/)\n- Moved test_streaming_e2e.py to tests/e2e/server/ (needs nexus serve subprocess)\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix: drain dir_create event before waiting for file_write in redis test\n\nThe waiter was picking up the lingering dir_create event from mkdir()\ninstead of the expected file_write. Added sleep to drain + event type\nfilter loop, matching the pattern already used by delete/rename tests.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Opus 4.6 <noreply@anthropic.com>",
+          "timestamp": "2026-02-16T07:22:05-08:00",
+          "tree_id": "2ada089648fc76d57b39eee891eac0b121c9cb4e",
+          "url": "https://github.com/nexi-lab/nexus/commit/a756897ec1f93ace8224655702c595ab964f6069"
+        },
+        "date": 1771255530407,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/benchmarks/test_async_permission_performance.py::test_permission_overhead_acceptable",
+            "value": 331.1995641233045,
+            "unit": "iter/sec",
+            "range": "stddev: 0.008300769202382843",
+            "extra": "mean: 3.01932764509226 msec\nrounds: 479"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_write_small_file",
+            "value": 332.9641216559584,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0010101089519440585",
+            "extra": "mean: 3.0033265897437116 msec\nrounds: 390"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_read_small_file",
+            "value": 16604.021814633106,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001828838829528823",
+            "extra": "mean: 60.22637233099159 usec\nrounds: 16770"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_read_cached_file",
+            "value": 16064.75383768082,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000019895234912735608",
+            "extra": "mean: 62.24807489140864 usec\nrounds: 15449"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_exists_check",
+            "value": 53818.29384193282,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000015629351095635487",
+            "extra": "mean: 18.581042404225094 usec\nrounds: 46599"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestGlobBenchmarks::test_list_large_directory",
+            "value": 230.87073670085587,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0008464043686684314",
+            "extra": "mean: 4.331428115533418 msec\nrounds: 251"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestGlobBenchmarks::test_glob_simple_pattern",
+            "value": 175.73176480467592,
+            "unit": "iter/sec",
+            "range": "stddev: 0.001232312866218367",
+            "extra": "mean: 5.690490851847359 msec\nrounds: 189"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestGlobBenchmarks::test_list_1k_files",
+            "value": 69.33778278509764,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0014111058025408566",
+            "extra": "mean: 14.422151384611682 msec\nrounds: 78"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestHashingBenchmarks::test_sha256_medium",
+            "value": 23697.77035585424,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000019628743674011063",
+            "extra": "mean: 42.19806272841876 usec\nrounds: 24040"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestPermissionBenchmarks::test_permission_check_bulk_python",
+            "value": 2519.7673328793358,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000040070545328844365",
+            "extra": "mean: 396.86203839197367 usec\nrounds: 1719"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestPermissionBenchmarks::test_permission_check_bulk_rust",
+            "value": 4936.688333894949,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00010781268957283337",
+            "extra": "mean: 202.56494483033728 usec\nrounds: 3172"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBulkOperationBenchmarks::test_write_batch_10",
+            "value": 41.64269885605376,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0006647947144814988",
+            "extra": "mean: 24.013813404762697 msec\nrounds: 42"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBulkOperationBenchmarks::test_read_bulk_10",
+            "value": 1444.543872064262,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00027848364153274576",
+            "extra": "mean: 692.2600409297323 usec\nrounds: 1637"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBlake3HashingBenchmarks::test_hash_1mb_content",
+            "value": 3950.500839290954,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000006055084678683984",
+            "extra": "mean: 253.1324610930807 usec\nrounds: 3971"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBlake3HashingBenchmarks::test_hash_smart_1mb_content",
+            "value": 18532.037410519497,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000026903791740067675",
+            "extra": "mean: 53.96060766812188 usec\nrounds: 18543"
+          },
+          {
+            "name": "tests/benchmarks/test_search_benchmarks.py::TestPythonRegexBenchmarks::test_python_regex_simple_10k_lines",
+            "value": 3967.3721071996856,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000009417001974287322",
+            "extra": "mean: 252.0560141523594 usec\nrounds: 3957"
+          },
+          {
+            "name": "tests/benchmarks/test_search_benchmarks.py::TestRustGrepBenchmarks::test_rust_grep_10k_lines",
+            "value": 976.0048687160373,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000020857837522548642",
+            "extra": "mean: 1.0245850528548377 msec\nrounds: 946"
+          },
+          {
+            "name": "tests/benchmarks/test_search_benchmarks.py::TestHybridSearchFusionBenchmarks::test_rrf_fusion_1k_results",
+            "value": 548.8753093314572,
+            "unit": "iter/sec",
+            "range": "stddev: 0.007623551512138435",
+            "extra": "mean: 1.8219074223215161 msec\nrounds: 663"
           }
         ]
       }

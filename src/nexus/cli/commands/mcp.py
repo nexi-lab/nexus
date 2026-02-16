@@ -59,7 +59,8 @@ def _add_api_key_middleware(mcp_server: Any) -> None:
     try:
         from starlette.middleware.base import BaseHTTPMiddleware
 
-        from nexus.mcp import _request_api_key, set_request_api_key
+        from nexus.mcp import set_request_api_key
+        from nexus.mcp.server import _request_api_key
 
         class APIKeyMiddleware(BaseHTTPMiddleware):
             """Middleware to extract API key from HTTP headers."""

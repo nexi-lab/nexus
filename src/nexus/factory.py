@@ -390,7 +390,7 @@ def create_nexus_services(
     mount_manager = MountManager(session_factory)
 
     # --- Workspace Manager ---
-    from nexus.core.workspace_manager import WorkspaceManager
+    from nexus.services.workspace_manager import WorkspaceManager
 
     workspace_manager = WorkspaceManager(
         metadata=metadata_store,

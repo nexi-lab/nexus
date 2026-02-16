@@ -337,20 +337,24 @@ class TestDCacheRevisionQuantization:
         alice = ("user", "alice")
         zone = "test_zone"
 
-        # Prime dcache
-        namespace_manager.is_visible(alice, "/workspace/proj/a.txt", zone)
+        # Pin revision bucket so both is_visible calls share the same dcache key.
+        # Without pinning, _grant_file and rebac_write each increment the zone
+        # revision, which can push the bucket boundary (revision_window=2).
+        with patch.object(namespace_manager, "_get_current_revision_bucket", return_value=0):
+            # Prime dcache
+            namespace_manager.is_visible(alice, "/workspace/proj/a.txt", zone)
 
-        # One write stays within revision_window=2
-        enhanced_rebac_manager.rebac_write(
-            subject=("user", "bob"),
-            relation="direct_viewer",
-            object=("file", "/workspace/other.txt"),
-            zone_id=zone,
-        )
+            # One write (doesn't affect the pinned bucket)
+            enhanced_rebac_manager.rebac_write(
+                subject=("user", "bob"),
+                relation="direct_viewer",
+                object=("file", "/workspace/other.txt"),
+                zone_id=zone,
+            )
 
-        # Should still be a dcache hit (same bucket)
-        namespace_manager.is_visible(alice, "/workspace/proj/a.txt", zone)
-        assert namespace_manager.metrics["dcache_hits"] >= 1
+            # Should still be a dcache hit (same bucket)
+            namespace_manager.is_visible(alice, "/workspace/proj/a.txt", zone)
+            assert namespace_manager.metrics["dcache_hits"] >= 1
 
     def test_different_revision_bucket_misses(self, enhanced_rebac_manager, namespace_manager):
         """When revision crosses bucket boundary, dcache misses."""

@@ -87,7 +87,7 @@ dependencies = [
     "anthropic>=0.75", # Native Anthropic SDK for better Claude support
     "dotenv>=0.9.9",
     # MCP Server (v0.7.0)
-    "fastmcp>=0.2.0", # Model Context Protocol server
+    "fastmcp>=2.0.0", # Model Context Protocol server
     # Document parsing (Python 3.13 only - not yet compatible with 3.14)
     "markitdown[all]>=0.1.0; python_version < '3.14'",
     # Fast JSON serialization (2-3x faster than stdlib json)

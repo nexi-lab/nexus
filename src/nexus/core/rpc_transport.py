@@ -13,8 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-# Lazy imports to avoid circular dependency:
-# rpc_transport -> server.protocol -> server.__init__ -> rpc_server -> nexus_fs -> nexus_fs_federation -> rpc_transport
+# Lazy imports to avoid circular dependency.
 # Protocol types are imported inside methods that use them.
 if TYPE_CHECKING:
     pass

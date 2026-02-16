@@ -9,7 +9,6 @@ Part of: #506, #510 (cache layer epic)
 
 from __future__ import annotations
 
-import contextlib
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -464,7 +463,7 @@ class CacheConnectorMixin:
 
             # Populate L1 Rust metadata cache for future reads
             if l1_cache is not None:
-                with contextlib.suppress(Exception):
+                try:
                     disk_path = str(
                         file_cache._get_cache_path(meta.get("zone_id", cache_zone), vpath)
                     )
@@ -479,6 +478,8 @@ class CacheConnectorMixin:
                         is_text=is_text,
                         zone_id=meta.get("zone_id", cache_zone),
                     )
+                except Exception as e:
+                    logger.debug("[CACHE] L1 cache populate failed for %s: %s", vpath, e)
 
         logger.info(
             f"[CACHE-BULK] {len(results) - l2_hits} L1 hits, {l2_hits} L2 hits, "
@@ -529,10 +530,12 @@ class CacheConnectorMixin:
         # Read remaining from backend (one at a time for now)
         # TODO: Could add backend bulk read if supported
         for path in paths_needing_backend:
-            with contextlib.suppress(Exception):
+            try:
                 content = self._read_content_from_backend(path, context)
                 if content:
                     results[path] = content
+            except Exception as e:
+                logger.debug("[CACHE-BULK] Backend read failed for %s: %s", path, e)
 
         logger.info(
             f"[CACHE-BULK] {len(cache_entries)} cache hits, "
@@ -666,7 +669,7 @@ class CacheConnectorMixin:
 
         # Populate L1 Rust metadata cache for future reads
         if l1_cache is not None:
-            with contextlib.suppress(Exception):
+            try:
                 meta_zone = meta.get("zone_id", cache_zone)
                 disk_path = str(file_cache._get_cache_path(meta_zone, path))
                 is_text = meta.get("content_type", "full") in ("full", "parsed", "summary")
@@ -682,6 +685,8 @@ class CacheConnectorMixin:
                     zone_id=meta_zone,
                 )
                 logger.debug(f"[CACHE] L1 POPULATED from L2: {path}")
+            except Exception as e:
+                logger.debug("[CACHE] L1 cache populate failed for %s: %s", path, e)
 
         return entry
 
@@ -815,7 +820,7 @@ class CacheConnectorMixin:
         # === Common logic: write to L1 Rust metadata cache ===
         l1_cache = self._get_l1_cache()
         if l1_cache is not None and disk_path:
-            with contextlib.suppress(Exception):
+            try:
                 is_text = content_type in ("full", "parsed", "summary")
                 ttl = getattr(self, "cache_ttl", 0) or 0
                 l1_cache.put(
@@ -830,6 +835,8 @@ class CacheConnectorMixin:
                 )
                 mode = "L1+L2" if has_l2 else "L1 (l1_only)"
                 logger.info(f"[CACHE] WRITE to {mode}: {path} (size={original_size})")
+            except Exception as e:
+                logger.debug("[CACHE] L1 cache populate failed for %s: %s", path, e)
 
         # === Common logic: return CacheEntry ===
         return CacheEntry(
@@ -1120,7 +1127,7 @@ class CacheConnectorMixin:
 
                 # Update L1 Rust metadata cache
                 if l1_cache is not None:
-                    with contextlib.suppress(Exception):
+                    try:
                         disk_path = str(file_cache._get_cache_path(cache_zone, path))
                         is_text = content_type in ("full", "parsed", "summary")
                         ttl = getattr(self, "cache_ttl", 0) or 0
@@ -1134,6 +1141,8 @@ class CacheConnectorMixin:
                             is_text=is_text,
                             zone_id=cache_zone,
                         )
+                    except Exception as e:
+                        logger.debug("[CACHE] L1 cache populate failed for %s: %s", path, e)
 
             except Exception as e:
                 logger.error(f"[CACHE] Failed to prepare cache entry for {path}: {e}")

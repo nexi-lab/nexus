@@ -22,6 +22,10 @@ Example usage:
     >>> print(result.text)
 """
 
+from __future__ import annotations
+
+from collections.abc import Callable
+
 from nexus.parsers.base import Parser
 from nexus.parsers.detection import (
     decompress_content,
@@ -33,6 +37,37 @@ from nexus.parsers.detection import (
 from nexus.parsers.markitdown_parser import MarkItDownParser
 from nexus.parsers.registry import ParserRegistry
 from nexus.parsers.types import ImageData, ParseResult, TextChunk
+
+
+def create_default_parse_fn() -> Callable[[bytes, str], bytes | None]:
+    """Create a parse callback using MarkItDownParser.
+
+    Returns a ``(content, path) -> bytes | None`` callable suitable for
+    passing as ``parse_fn`` to :func:`nexus.core.virtual_views.get_parsed_content`.
+    This keeps the parser import out of the kernel layer.
+    """
+    import asyncio
+
+    registry = ParserRegistry()
+    registry.register(MarkItDownParser())
+
+    def _parse(content: bytes, path: str) -> bytes | None:
+        processed_content, effective_path, metadata = prepare_content_for_parsing(content, path)
+        parser = registry.get_parser(effective_path)
+        if not parser:
+            return None
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        result = loop.run_until_complete(parser.parse(processed_content, metadata))
+        if result and result.text:
+            return result.text.encode("utf-8")
+        return None
+
+    return _parse
+
 
 __all__ = [
     "Parser",
@@ -47,4 +82,6 @@ __all__ = [
     "is_compressed",
     "decompress_content",
     "prepare_content_for_parsing",
+    # Parse callback factory
+    "create_default_parse_fn",
 ]

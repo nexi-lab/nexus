@@ -278,7 +278,7 @@ async def get_operation_logger(
 
     context = _get_operation_context(auth_result)
     session = nexus_fs.SessionLocal()
-    zone_id = context.zone_id or "default"
+    zone_id = context.zone_id or "root"
 
     return OperationLogger(session=session), zone_id
 
@@ -308,7 +308,7 @@ async def get_hierarchy_manager(
     return HierarchicalMemoryManager(
         consolidation_engine=consolidation_engine,
         session=session,
-        zone_id=context.zone_id or "default",
+        zone_id=context.zone_id or "root",
     )
 
 
@@ -324,7 +324,7 @@ async def get_exchange_audit_logger(
     from nexus.storage.exchange_audit_logger import ExchangeAuditLogger
 
     context = _get_operation_context(auth_result)
-    zone_id = context.zone_id or "default"
+    zone_id = context.zone_id or "root"
 
     session_factory = nexus_fs.SessionLocal
     return ExchangeAuditLogger(session_factory=session_factory), zone_id

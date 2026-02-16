@@ -147,6 +147,11 @@ def setup_telemetry(
         # Auto-instrument libraries
         _instrument_libraries()
 
+        # Inject rebac tracer into permission tracing module
+        from nexus.services.permissions.rebac_tracing import set_tracer as _set_rebac_tracer
+
+        _set_rebac_tracer(trace.get_tracer("nexus.rebac"))
+
         _initialized = True
         logger.info(
             f"OpenTelemetry initialized: service={_service_name}, "
@@ -339,3 +344,7 @@ def shutdown_telemetry() -> None:
     finally:
         _initialized = False
         _tracer = None
+        # Reset rebac tracer
+        from nexus.services.permissions.rebac_tracing import reset_tracer as _reset_rebac_tracer
+
+        _reset_rebac_tracer()

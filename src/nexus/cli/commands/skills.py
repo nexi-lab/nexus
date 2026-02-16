@@ -66,6 +66,9 @@ def _get_database_connection() -> SQLAlchemyDatabaseConnection | None:
 
     Returns wrapped SQLAlchemy session using NEXUS_DATABASE_URL environment variable.
     Returns None if not configured (falls back to in-memory storage).
+
+    TODO(#1597): Replace ad-hoc create_engine + sessionmaker with injected
+    session_factory when CLI gains proper DI support.
     """
     import os
 

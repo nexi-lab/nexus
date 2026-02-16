@@ -14,7 +14,6 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
-from nexus.core.nexus_fs import NexusFS
 
 
 def register_commands(cli: click.Group) -> None:
@@ -253,6 +252,8 @@ def find_duplicates(path: str, json_output: bool, backend_config: BackendConfig)
         nexus find-duplicates --json
     """
     try:
+        from nexus.core.nexus_fs import NexusFS
+
         nx = get_filesystem(backend_config)
 
         # Only standalone mode supports batch_get_content_ids
@@ -416,6 +417,8 @@ def search_init(
     import asyncio
 
     try:
+        from nexus.core.nexus_fs import NexusFS
+
         nx = get_filesystem(backend_config)
 
         with console.status("[yellow]Initializing search engine...[/yellow]", spinner="dots"):
@@ -478,6 +481,8 @@ def search_index(
     import asyncio
 
     try:
+        from nexus.core.nexus_fs import NexusFS
+
         nx = get_filesystem(backend_config)
 
         with console.status(f"[yellow]Indexing {path}...[/yellow]", spinner="dots"):
@@ -567,6 +572,8 @@ def search_query(
     import asyncio
 
     try:
+        from nexus.core.nexus_fs import NexusFS
+
         nx = get_filesystem(backend_config)
 
         with console.status(f"[yellow]Searching for: {query}[/yellow]", spinner="dots"):
@@ -630,6 +637,8 @@ def search_stats(backend_config: BackendConfig) -> None:
     import asyncio
 
     try:
+        from nexus.core.nexus_fs import NexusFS
+
         nx = get_filesystem(backend_config)
 
         async def get_stats() -> dict[str, Any]:

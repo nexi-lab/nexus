@@ -156,7 +156,7 @@ class TestCreateAuthProvider:
         """Test creating static API key auth provider."""
         auth_config = {
             "api_keys": {
-                "sk-alice-xxx": {"user_id": "alice", "is_admin": True},
+                "sk-alice-xxx": {"subject_id": "alice", "is_admin": True},
             }
         }
 
@@ -253,7 +253,7 @@ class TestCreateAuthProvider:
         """Test static auth provider can actually authenticate."""
         auth_config = {
             "api_keys": {
-                "sk-alice-key": {"user_id": "alice", "is_admin": True},
+                "sk-alice-key": {"subject_id": "alice", "is_admin": True},
             }
         }
 

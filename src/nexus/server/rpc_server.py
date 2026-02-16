@@ -75,10 +75,6 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
     # that shadows this class default. Each thread has its own handler.
     _cached_auth_result: Any = None
 
-    # Legacy executor fields kept for backward compatibility (now unused — Issue #1300)
-    _async_executor: Any = None
-    _async_executor_lock: Any = None
-
     def log_message(self, format: str, *args: Any) -> None:
         """Override to use Python logging instead of stderr."""
         logger.info(f"{self.address_string()} - {format % args}")
@@ -196,7 +192,6 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                             "subject_id": context.subject_id,
                             "zone_id": context.zone_id,
                             "is_admin": context.is_admin,
-                            "user": context.user,  # For backward compatibility
                         },
                     )
                 else:
@@ -365,8 +360,6 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                     # For agent-authenticated requests (via API key), extract user and agent
                     if result.subject_type == "agent":
                         agent_id = result.subject_id
-                        # Get user from metadata (owner of the agent key)
-                        user_id = result.metadata.get("legacy_user_id", result.subject_id)
 
                     # Determine the subject for permission checking
                     # If X-Agent-ID header is provided and validated, use agent as subject
@@ -1064,7 +1057,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         # Extract authentication context for manual dispatch
         context = self._get_operation_context()
 
-        # Fall back to manual dispatch for backward compatibility
+        # Manual dispatch for methods requiring special handling (virtual views, metadata wrapping, etc.)
         # Core file operations
         if method == "read":
             # Check if this is a virtual view request (.txt or .md)
@@ -1075,7 +1068,13 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 raw_content = self.nexus_fs.read(original_path, context=context)
                 # Type narrowing: when return_metadata=False (default), result is bytes
                 assert isinstance(raw_content, bytes), "Expected bytes from read()"
-                return get_parsed_content(raw_content, original_path, view_type)
+                from nexus.parsers import create_default_parse_fn
+
+                if not hasattr(self, "_parse_fn"):
+                    self._parse_fn = create_default_parse_fn()
+                return get_parsed_content(
+                    raw_content, original_path, view_type, parse_fn=self._parse_fn
+                )
             else:
                 # v0.3.9: Support return_metadata parameter
                 result = self.nexus_fs.read(
@@ -1796,12 +1795,6 @@ class NexusRPCServer:
         logger.info("Shutting down server...")
         self.server.shutdown()
         self.server.server_close()
-
-        # Cleanup shared async executor
-        if RPCRequestHandler._async_executor is not None:
-            RPCRequestHandler._async_executor.shutdown(wait=True)
-            RPCRequestHandler._async_executor = None
-            logger.debug("Shared async executor shutdown complete")
 
         if hasattr(self.nexus_fs, "close"):
             self.nexus_fs.close()

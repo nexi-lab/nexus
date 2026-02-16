@@ -943,8 +943,13 @@ class NexusFSCoreMixin:
                 original_path, original_content, context
             )
 
-            # Parse the content
-            content = get_parsed_content(original_content, original_path, view_type)
+            # Parse the content (parse_fn injected by subclass; avoids parsers import in core/)
+            content = get_parsed_content(
+                original_content,
+                original_path,
+                view_type,
+                parse_fn=getattr(self, "_virtual_view_parse_fn", None),
+            )
 
             # Issue #1166: Record read for dependency tracking (virtual view reads original file)
             self._record_read_if_tracking(context, "file", original_path, "content")

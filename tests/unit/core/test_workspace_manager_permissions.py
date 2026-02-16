@@ -10,7 +10,7 @@ import pytest
 
 from nexus.core.exceptions import NexusPermissionError
 from nexus.core.response import HandlerResponse
-from nexus.core.workspace_manager import WorkspaceManager
+from nexus.services.workspace_manager import WorkspaceManager
 from nexus.storage.models import WorkspaceSnapshotModel
 
 

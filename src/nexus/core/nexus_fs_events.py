@@ -8,12 +8,12 @@ Layer 1 (Same-box, Block 1):
 - In-memory advisory locks
 
 Layer 2 (Distributed, Block 2):
-- Uses Redis Pub/Sub for events via GlobalEventBus
-- Uses Redis SET NX EX for locks via DistributedLockManager
+- Uses Redis Pub/Sub for events via RedisEventBus
+- Uses Redis SET NX EX for locks via RaftLockManager
 - Works across multiple Nexus nodes
 
 Selection Logic:
-1. If GlobalEventBus/DistributedLockManager is available → use distributed (Layer 2)
+1. If RedisEventBus/RaftLockManager is available → use distributed (Layer 2)
 2. Else if PassthroughBackend → use local (Layer 1)
 3. Else → raise NotImplementedError
 """
@@ -88,7 +88,7 @@ class NexusFSEventsMixin:
         """Check if distributed event bus is available.
 
         Returns:
-            True if GlobalEventBus is initialized, False otherwise
+            True if RedisEventBus is initialized, False otherwise
         """
         return hasattr(self, "_event_bus") and self._event_bus is not None
 
@@ -96,7 +96,7 @@ class NexusFSEventsMixin:
         """Check if distributed lock manager is available.
 
         Returns:
-            True if DistributedLockManager is initialized, False otherwise
+            True if RaftLockManager is initialized, False otherwise
         """
         return hasattr(self, "_lock_manager") and self._lock_manager is not None
 
@@ -112,7 +112,7 @@ class NexusFSEventsMixin:
         if not self._is_same_box():
             raise NotImplementedError(
                 "File watching is only available with PassthroughBackend (same-box mode). "
-                "For distributed scenarios, configure Redis for GlobalEventBus."
+                "For distributed scenarios, configure Redis for RedisEventBus."
             )
 
         if not hasattr(self, "_file_watcher") or self._file_watcher is None:
@@ -198,7 +198,7 @@ class NexusFSEventsMixin:
         """Wait for file system changes on a path.
 
         Dual-track implementation:
-        - Layer 2 (preferred): Uses GlobalEventBus (Redis Pub/Sub) for distributed events
+        - Layer 2 (preferred): Uses RedisEventBus (Redis Pub/Sub) for distributed events
         - Layer 1 (fallback): Uses OS-native file watching (same-box only)
 
         Semantics:
@@ -329,7 +329,7 @@ class NexusFSEventsMixin:
         """Acquire an advisory lock on a path.
 
         Dual-track implementation:
-        - Layer 2 (preferred): Uses DistributedLockManager (Redis) for distributed locks
+        - Layer 2 (preferred): Uses RaftLockManager (Redis) for distributed locks
         - Layer 1 (fallback): Uses in-memory locks (same-box only)
 
         Supports both mutex (max_holders=1) and semaphore (max_holders>1) modes.

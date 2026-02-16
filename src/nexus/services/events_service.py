@@ -96,7 +96,7 @@ class EventsService:
         if not self._is_same_box():
             raise NotImplementedError(
                 "File watching is only available with PassthroughBackend (same-box mode). "
-                "For distributed scenarios, configure Redis for GlobalEventBus."
+                "For distributed scenarios, configure Redis for RedisEventBus."
             )
 
         if self._file_watcher is None:
@@ -155,7 +155,7 @@ class EventsService:
         """Wait for file system changes on a path.
 
         Dual-track implementation:
-        - Layer 2 (preferred): Uses GlobalEventBus (Redis Pub/Sub)
+        - Layer 2 (preferred): Uses RedisEventBus (Redis Pub/Sub)
         - Layer 1 (fallback): Uses OS-native file watching (same-box only)
 
         Args:

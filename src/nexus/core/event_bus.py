@@ -6,11 +6,11 @@ Block 2 (Issue #1106) for the distributed event system.
 
 Architecture:
 - EventBusProtocol: Abstract interface for event bus implementations
-- GlobalEventBus: Redis Pub/Sub implementation (default)
+- RedisEventBus: Redis Pub/Sub implementation (default)
 - Future: etcd, ZooKeeper, P2P implementations (Issue #1141)
 
 Multi-Region Support:
-- GlobalEventBus connects to a single Redis URL (NEXUS_REDIS_URL)
+- RedisEventBus connects to a single Redis URL (NEXUS_REDIS_URL)
 - Multi-region event sync depends on Redis deployment configuration
 - See distributed_lock.py for similar patterns with locks
 
@@ -285,7 +285,7 @@ class EventBusProtocol(Protocol):
     """Protocol defining the event bus interface.
 
     This protocol allows different backend implementations:
-    - Redis Pub/Sub (default, implemented as GlobalEventBus)
+    - Redis Pub/Sub (default, implemented as RedisEventBus)
     - etcd watch (future)
     - ZooKeeper watchers (future)
     - P2P gossip protocol (future)
@@ -954,10 +954,6 @@ class RedisEventBus(EventBusBase):
             "last_checkpoint": checkpoint.isoformat() if checkpoint else None,
             "ssot_enabled": self._session_factory is not None,
         }
-
-
-# Backward compatibility alias
-GlobalEventBus = RedisEventBus
 
 
 # =============================================================================

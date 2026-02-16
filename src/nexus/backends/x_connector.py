@@ -1288,7 +1288,8 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
                         if len(results) >= max_results:
                             break
 
-            except Exception:
+            except Exception as e:
+                logger.debug("Failed to search cached tweet file %s: %s", file, e)
                 continue
 
         return results

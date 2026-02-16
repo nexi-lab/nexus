@@ -18,10 +18,13 @@ Example:
 from __future__ import annotations
 
 import json
+import logging
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Literal
+
+logger = logging.getLogger(__name__)
 
 # Relationship type definitions
 RelationshipType = Literal[
@@ -499,8 +502,8 @@ Output:"""
                     temperature=0.1,
                 )
                 return LiteLLMProvider(config)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to create LLM provider for relationship extraction: %s", e)
 
         return None
 

@@ -14,6 +14,8 @@ from fastapi.responses import JSONResponse, Response
 
 from nexus.core.exceptions import (
     ConflictError,
+    ConnectorError,
+    DatabaseError,
     InvalidPathError,
     NexusError,
     NexusFileNotFoundError,
@@ -171,8 +173,14 @@ async def rpc_endpoint(
                 "current_etag": e.current_etag,
             },
         )
+    except DatabaseError as e:
+        logger.warning("Database error in method %s: %s", method, e)
+        return _error_response(None, RPCErrorCode.INTERNAL_ERROR, f"Database error: {e}")
+    except ConnectorError as e:
+        logger.warning("Connector error in method %s: %s", method, e)
+        return _error_response(None, RPCErrorCode.INTERNAL_ERROR, f"Backend error: {e}")
     except NexusError as e:
-        logger.warning(f"NexusError in method {method}: {e}")
+        logger.warning("NexusError in method %s: %s", method, e)
         return _error_response(None, RPCErrorCode.INTERNAL_ERROR, f"Nexus error: {e}")
     except Exception as e:
         logger.exception(f"Error executing method {method}")

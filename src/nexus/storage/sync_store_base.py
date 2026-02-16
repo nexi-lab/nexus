@@ -123,21 +123,19 @@ class SyncStoreBase:
         """Context manager for database sessions.
 
         Handles commit on success, rollback on error, and close on exit.
+        Translates SQLAlchemy errors to Nexus DatabaseError hierarchy.
 
         Yields:
             SQLAlchemy session
 
         Raises:
             RuntimeError: If no session factory is available
+            DatabaseError: On SQLAlchemy failures (translated from SA errors)
         """
-        session = self._get_session()
-        if session is None:
+        if not hasattr(self._gw, "session_factory") or self._gw.session_factory is None:
             raise RuntimeError("No database session factory available")
-        try:
+
+        from nexus.storage.session_scope import session_scope
+
+        with session_scope(self._gw.session_factory) as session:
             yield session
-            session.commit()
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()

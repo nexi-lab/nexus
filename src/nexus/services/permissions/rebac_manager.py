@@ -218,10 +218,12 @@ class ReBACManager:
                     logger.info("Default namespaces initialized successfully")
                 except Exception as e:
                     sa_conn.rollback()
-                    logger.warning(f"Failed to initialize namespaces: {type(e).__name__}: {e}")
-                    import traceback
-
-                    logger.debug(traceback.format_exc())
+                    logger.warning(
+                        "Failed to initialize namespaces: %s: %s",
+                        type(e).__name__,
+                        e,
+                        exc_info=True,
+                    )
 
     def _fix_sql_placeholders(self, sql: str) -> str:
         """Convert SQLite ? placeholders to PostgreSQL %s. Delegates to TupleRepository (Issue #1459)."""
@@ -304,10 +306,9 @@ class ReBACManager:
             import logging
 
             logger = logging.getLogger(__name__)
-            logger.warning(f"Failed to register default namespaces: {type(e).__name__}: {e}")
-            import traceback
-
-            logger.debug(traceback.format_exc())
+            logger.warning(
+                "Failed to register default namespaces: %s: %s", type(e).__name__, e, exc_info=True
+            )
 
     def _initialize_default_namespaces(self) -> None:
         """Initialize default namespace configurations if not present."""

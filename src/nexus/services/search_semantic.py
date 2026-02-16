@@ -322,8 +322,10 @@ class SemanticSearchMixin:
             await asyncio.to_thread(self._read, path)
             num_chunks = await self._semantic_search.index_document(path)
             return {path: num_chunks}
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(
+                "Failed to index single document %s, falling back to directory: %s", path, e
+            )
 
         if recursive:
             return await self._semantic_search.index_directory(path)

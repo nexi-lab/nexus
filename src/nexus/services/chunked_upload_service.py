@@ -35,9 +35,9 @@ if TYPE_CHECKING:
 
     from sqlalchemy.orm import Session
 
-    from nexus.backends.backend import Backend
     from nexus.backends.multipart_upload_mixin import MultipartUploadMixin
     from nexus.core._metadata_generated import FileMetadataProtocol
+    from nexus.core.protocols.connector import ConnectorProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +95,7 @@ class ChunkedUploadService:
     def __init__(
         self,
         session_factory: Callable[[], Session],
-        backend: Backend,
+        backend: ConnectorProtocol,
         metadata_store: FileMetadataProtocol | None = None,
         config: ChunkedUploadConfig | None = None,
     ):

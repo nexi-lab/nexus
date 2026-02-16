@@ -301,8 +301,10 @@ class MessageProcessor:
                     self._agent_id, envelope.id, envelope.timestamp
                 )
                 await self._vfs.rename(msg_path, dl_path, self._zone_id)
-            except Exception:
-                pass  # best-effort cleanup of duplicate
+            except Exception as e:
+                logger.debug(
+                    "Best-effort cleanup of duplicate message %s failed: %s", envelope.id, e
+                )
             return
 
         # TTL check

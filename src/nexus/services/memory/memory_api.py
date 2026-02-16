@@ -10,6 +10,7 @@ inspired by SimpleMem (arXiv:2601.02553).
 from __future__ import annotations
 
 import builtins
+import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -21,6 +22,8 @@ from nexus.core.temporal import parse_datetime, validate_temporal_params
 from nexus.services.memory.memory_router import MemoryViewRouter
 from nexus.services.permissions.entity_registry import EntityRegistry
 from nexus.services.permissions.memory_permission_enforcer import MemoryPermissionEnforcer
+
+logger = logging.getLogger(__name__)
 
 # Importance decay configuration (Issue #1030)
 DEFAULT_DECAY_FACTOR = 0.95  # 5% decay per day
@@ -215,7 +218,8 @@ class Memory:
                 return content_bytes.decode("utf-8")
             except UnicodeDecodeError:
                 return content_bytes.hex()
-        except Exception:
+        except Exception as e:
+            logger.debug("Failed to read memory content %s: %s", content_hash, e)
             return f"<content not available: {content_hash}>"
 
     def _batch_operation(
@@ -530,7 +534,8 @@ class Memory:
                 url = getattr(bind, "url", None)
                 if url:
                     db_url = str(url)
-            except Exception:
+            except Exception as e:
+                logger.debug("Failed to extract database URL from session: %s", e)
                 return
 
         if not db_url:
@@ -929,8 +934,11 @@ class Memory:
                 # Try to create an embedding provider (checks for API keys in env)
                 try:
                     embedding_provider = create_embedding_provider(provider="openrouter")
-                except Exception:
+                except Exception as e:
                     # Fall back to keyword search if no provider available
+                    logger.debug(
+                        "Failed to create embedding provider, falling back to keyword search: %s", e
+                    )
                     return self._keyword_search(
                         query, scope, memory_type, limit, after_dt, before_dt
                     )
@@ -1001,8 +1009,8 @@ class Memory:
                         ).unwrap()
                         content = content_bytes.decode("utf-8")
                         keyword_score = self._compute_keyword_score(query, content)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug("Failed to read content for keyword scoring: %s", e)
 
                 # Combined score for hybrid mode
                 if search_mode == "hybrid":
@@ -1125,8 +1133,9 @@ class Memory:
                 memory.importance_original = memory.importance
 
             self.session.commit()
-        except Exception:
+        except Exception as e:
             # Don't fail the read operation if tracking fails
+            logger.debug("Failed to track memory access: %s", e)
             self.session.rollback()
 
     def apply_decay_batch(
@@ -1730,8 +1739,10 @@ class Memory:
                 all_helpful.extend(reflection.get("helpful_strategies", []))
                 all_harmful.extend(reflection.get("harmful_patterns", []))
                 reflection_ids.append(reflection.get("memory_id"))
-            except Exception:
-                # Skip failed reflections
+            except Exception as e:
+                logger.debug(
+                    "Skipping failed reflection for trajectory %s: %s", traj.trajectory_id, e
+                )
                 continue
 
         # Aggregate common patterns (simple frequency analysis)
@@ -2052,8 +2063,11 @@ class Memory:
                         memory.embedding_dim = len(embedding_vec)
 
                         success_count += 1
-                    except Exception:
+                    except Exception as e:
                         # Failed to generate embedding for this memory
+                        logger.debug(
+                            "Failed to generate embedding for memory %s: %s", memory.memory_id, e
+                        )
                         error_count += 1
                         continue
 

@@ -120,12 +120,12 @@ class TestSignStreamToken:
         assert sig_a != sig_b
 
     def test_default_zone_id(self):
-        """Default zone_id should be 'default'."""
-        # Two calls with explicit "default" and implicit default should match
+        """Default zone_id should be 'root'."""
+        # Two calls with explicit "root" and implicit default should match
         # (if signed at the same second with the same expires_in).
         with patch("nexus.server.streaming.time") as mock_time:
             mock_time.time.return_value = 1000000.0
-            token_explicit = _sign_stream_token("/f.txt", expires_in=60, zone_id="default")
+            token_explicit = _sign_stream_token("/f.txt", expires_in=60, zone_id="root")
             token_implicit = _sign_stream_token("/f.txt", expires_in=60)
         assert token_explicit == token_implicit
 

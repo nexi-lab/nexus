@@ -48,6 +48,7 @@ from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol,
 from nexus.services.protocols.rebac import ReBACBrickProtocol
 from nexus.services.protocols.scheduler import AgentRequest, SchedulerProtocol
 from nexus.services.protocols.search import SearchBrickProtocol
+from nexus.services.protocols.trajectory import TrajectoryProtocol
 
 __all__ = [
     "AgentInfo",
@@ -74,4 +75,5 @@ __all__ = [
     "ReBACBrickProtocol",
     "SchedulerProtocol",
     "SearchBrickProtocol",
+    "TrajectoryProtocol",
 ]

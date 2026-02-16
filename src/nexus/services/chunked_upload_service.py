@@ -118,7 +118,7 @@ class ChunkedUploadService:
         upload_length: int,
         *,
         metadata: dict[str, str] | None = None,
-        zone_id: str = "default",
+        zone_id: str = "root",
         user_id: str = "anonymous",
         checksum_algorithm: str | None = None,
     ) -> UploadSession:

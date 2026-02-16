@@ -119,19 +119,19 @@ class TestFullFlow:
 
         # Simulate dequeue returning the submitted task
         now = datetime.now(UTC)
-        mock_queue.dequeue = AsyncMock(
-            return_value=ScheduledTask(
-                id=submitted.id,
-                agent_id="agent-a",
-                executor_id="agent-b",
-                task_type="process",
-                payload={},
-                priority_tier=PriorityTier.NORMAL,
-                effective_tier=2,
-                enqueued_at=now,
-                status=TASK_STATUS_RUNNING,
-            )
+        _dequeue_result = ScheduledTask(
+            id=submitted.id,
+            agent_id="agent-a",
+            executor_id="agent-b",
+            task_type="process",
+            payload={},
+            priority_tier=PriorityTier.NORMAL,
+            effective_tier=2,
+            enqueued_at=now,
+            status=TASK_STATUS_RUNNING,
         )
+        mock_queue.dequeue = AsyncMock(return_value=_dequeue_result)
+        mock_queue.dequeue_hrrn = AsyncMock(return_value=_dequeue_result)
 
         dequeued = await scheduler.dequeue_next()
         assert dequeued is not None

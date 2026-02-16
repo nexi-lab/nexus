@@ -6,16 +6,27 @@ Provides a 4-layer priority system for agent task scheduling:
 3. Anti-starvation aging (tasks gain priority over time)
 4. Capped price boost (pay for max +2 tier boost)
 
-Related: Issue #1212
+Astraea extensions (Issue #1274):
+5. Request classification (INTERACTIVE / BATCH / BACKGROUND)
+6. HRRN scoring within priority classes
+7. Per-agent fair-share admission control
+8. Agent state event awareness
+
+Related: Issue #1212, #1274
 """
 
-from nexus.scheduler.constants import PriorityTier
+from nexus.scheduler.constants import PriorityClass, PriorityTier, RequestState
 from nexus.scheduler.dispatcher import TaskDispatcher
+from nexus.scheduler.events import AgentStateEmitter, AgentStateEvent
 from nexus.scheduler.models import ScheduledTask, TaskSubmission
 from nexus.scheduler.service import SchedulerService
 
 __all__ = [
+    "AgentStateEmitter",
+    "AgentStateEvent",
+    "PriorityClass",
     "PriorityTier",
+    "RequestState",
     "ScheduledTask",
     "SchedulerService",
     "TaskDispatcher",

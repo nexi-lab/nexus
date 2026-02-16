@@ -88,9 +88,14 @@ async def _startup_async_rebac(app: FastAPI) -> None:
                         rebac_manager=sync_rebac,
                         record_store=ns_record_store,
                     )
+                    # Wire event-driven invalidation: rebac_write → namespace cache (Issue #1244)
+                    sync_rebac.register_namespace_invalidator(
+                        "namespace_dcache",
+                        lambda st, sid, _zid: namespace_manager.invalidate((st, sid)),
+                    )
                     logger.info(
                         "[NAMESPACE] NamespaceManager initialized for AsyncPermissionEnforcer "
-                        "(using sync rebac_manager, L3=%s)",
+                        "(using sync rebac_manager, L3=%s, event-driven invalidation=enabled)",
                         "enabled" if ns_record_store else "disabled",
                     )
 

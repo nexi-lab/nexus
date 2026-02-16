@@ -50,16 +50,16 @@ class SyncPipelineService:
 
     The connector must provide:
         - list_dir(path, context) -> list[str]
-        - _read_bulk_from_cache(paths, original=False) -> dict[str, CacheEntry]
-        - _batch_read_from_backend(paths, contexts) -> dict[str, bytes]
+        - read_bulk_from_cache(paths, original=False) -> dict[str, CacheEntry]
+        - batch_read_from_backend(paths, contexts) -> dict[str, bytes]
         - _parse_content(path, content) -> tuple[str|None, str|None, dict|None]
-        - _batch_write_to_cache(entries) -> None
+        - batch_write_to_cache(entries) -> None
         - _generate_embeddings(path) -> None
         - MAX_CACHE_FILE_SIZE: int
 
     Optional (for version checking):
         - get_version(path, context) -> str | None
-        - _batch_get_versions(paths, contexts) -> dict[str, str|None]
+        - batch_get_versions(paths, contexts) -> dict[str, str|None]
     """
 
     def __init__(self, connector: Any) -> None:
@@ -232,7 +232,7 @@ class SyncPipelineService:
 
     def _step2_load_cache(self, virtual_paths: list[str]) -> dict[str, CacheEntry]:
         """Step 2: Bulk load existing cache entries (L1 + L2)."""
-        cached_entries: dict[str, CacheEntry] = self._connector._read_bulk_from_cache(
+        cached_entries: dict[str, CacheEntry] = self._connector.read_bulk_from_cache(
             virtual_paths, original=True
         )
         logger.info(
@@ -285,17 +285,17 @@ class SyncPipelineService:
                 continue
 
             # Collect paths needing version check
-            if hasattr(connector, "get_version") or hasattr(connector, "_batch_get_versions"):
+            if hasattr(connector, "get_version") or hasattr(connector, "batch_get_versions"):
                 paths_needing_version_check.append(backend_path)
 
         # Batch fetch versions if supported
-        if paths_needing_version_check and hasattr(connector, "_batch_get_versions"):
+        if paths_needing_version_check and hasattr(connector, "batch_get_versions"):
             logger.info(
                 f"[CACHE-SYNC] Batch fetching versions for "
                 f"{len(paths_needing_version_check)} files..."
             )
             try:
-                versions = connector._batch_get_versions(paths_needing_version_check, all_contexts)
+                versions = connector.batch_get_versions(paths_needing_version_check, all_contexts)
                 logger.info(f"[CACHE-SYNC] Batch version fetch complete: {len(versions)} versions")
             except Exception as e:
                 logger.warning(f"[CACHE-SYNC] Batch version fetch failed: {e}")
@@ -356,7 +356,7 @@ class SyncPipelineService:
         contexts: dict[str, OperationContext],
     ) -> dict[str, bytes]:
         """Step 4: Batch read content from backend."""
-        backend_contents: dict[str, bytes] = self._connector._batch_read_from_backend(
+        backend_contents: dict[str, bytes] = self._connector.batch_read_from_backend(
             files, contexts
         )
         logger.info(
@@ -402,7 +402,7 @@ class SyncPipelineService:
                     continue
 
                 # Parse content if supported (PDF, Excel, etc.)
-                parsed_text, parsed_from, parse_metadata = self._connector._parse_content(
+                parsed_text, parsed_from, parse_metadata = self._connector.parse_content(
                     vpath, content
                 )
 
@@ -443,7 +443,7 @@ class SyncPipelineService:
     ) -> None:
         """Step 6: Batch write to cache (single transaction)."""
         try:
-            self._connector._batch_write_to_cache(cache_entries)
+            self._connector.batch_write_to_cache(cache_entries)
             logger.info(f"[CACHE-SYNC] Step 6 complete: {len(cache_entries)} entries written")
         except Exception as e:
             result.errors.append(f"Failed to batch write cache entries: {e}")
@@ -457,7 +457,7 @@ class SyncPipelineService:
         """Step 7: Generate embeddings for semantic search (optional)."""
         for vpath in files:
             try:
-                self._connector._generate_embeddings(vpath)
+                self._connector.generate_embeddings_for_path(vpath)
                 result.embeddings_generated += 1
             except Exception as e:
                 result.errors.append(f"Failed to generate embeddings for {vpath}: {e}")

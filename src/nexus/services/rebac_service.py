@@ -830,45 +830,13 @@ class ReBACService:
 
         def _list_tuples_sync() -> list[dict[str, Any]]:
             """Synchronous implementation for thread pool execution."""
-            # Manager guaranteed by _run_in_thread
             assert self._rebac_manager is not None
-
-            from sqlalchemy import select
-
-            from nexus.storage.models.permissions import ReBACTupleModel as RT
-
-            # Build ORM query dynamically with filters
-            stmt = select(RT)
-
-            if subject:
-                stmt = stmt.where(RT.subject_type == subject[0], RT.subject_id == subject[1])
-
-            if relation:
-                stmt = stmt.where(RT.relation == relation)
-            elif relation_in:
-                stmt = stmt.where(RT.relation.in_(relation_in))
-
-            if object:
-                stmt = stmt.where(RT.object_type == object[0], RT.object_id == object[1])
-
-            with self._rebac_manager.engine.connect() as conn:
-                result = conn.execute(stmt)
-                results = []
-                for row in result:
-                    results.append(
-                        {
-                            "tuple_id": row.tuple_id,
-                            "subject_type": row.subject_type,
-                            "subject_id": row.subject_id,
-                            "relation": row.relation,
-                            "object_type": row.object_type,
-                            "object_id": row.object_id,
-                            "created_at": row.created_at,
-                            "expires_at": row.expires_at,
-                            "zone_id": row.zone_id,
-                        }
-                    )
-                return results
+            return self._rebac_manager.list_tuples(
+                subject=subject,
+                relation=relation,
+                relation_in=relation_in,
+                object=object,
+            )
 
         return await self._run_in_thread(_list_tuples_sync)
 

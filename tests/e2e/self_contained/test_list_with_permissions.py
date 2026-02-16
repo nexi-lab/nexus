@@ -98,7 +98,7 @@ class TestListWithZoneAndPermissions:
             store.put(_make_meta("/b/file3.txt"))
 
             svc = _make_search_service(store)
-            results = svc.list(prefix="/a/")
+            results = svc.list(path="/a/", recursive=True)
 
             assert "/a/file1.txt" in results
             assert "/a/file2.txt" in results

@@ -428,7 +428,7 @@ class MemoryViewRouter:
         Args:
             content_hash: SHA-256 hash of content (CAS reference).
             zone_id: Zone ID.
-            user_id: User ID (owner). If not provided, defaults to agent_id for backward compatibility.
+            user_id: User ID (owner). If not provided, defaults to agent_id.
             agent_id: Agent ID (creator).
             scope: Scope ('agent', 'user', 'zone', 'global').
             visibility: Visibility ('private', 'shared', 'public').
@@ -450,7 +450,6 @@ class MemoryViewRouter:
         Returns:
             MemoryModel: Created or updated memory.
         """
-        # v0.4.0: Fallback for backward compatibility
         # If user_id is not provided, use agent_id as user_id
         if user_id is None and agent_id is not None:
             user_id = agent_id
@@ -584,7 +583,7 @@ class MemoryViewRouter:
                 visibility=visibility,
                 memory_type=memory_type,
                 importance=importance,
-                state=state,  # #368: Use provided state (defaults to active for backward compatibility)
+                state=state,  # #368: Use provided state (defaults to active)
                 namespace=namespace,
                 path_key=path_key,
                 embedding=embedding,  # #406

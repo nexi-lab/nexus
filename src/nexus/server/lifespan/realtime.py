@@ -111,10 +111,7 @@ def _startup_event_log(app: FastAPI) -> None:
             segment_size_bytes=segment_size,
             sync_mode=sync_mode,  # type: ignore[arg-type]
         )
-        app.state.event_log = create_event_log(
-            event_log_config,
-            session_factory=getattr(app.state, "session_factory", None),
-        )
+        app.state.event_log = create_event_log(event_log_config)
         if app.state.event_log:
             logger.info(f"Event log initialized (wal_dir={wal_dir}, sync_mode={sync_mode})")
     except Exception as e:

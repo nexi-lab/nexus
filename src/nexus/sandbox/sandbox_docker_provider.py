@@ -83,6 +83,7 @@ class DockerSandboxProvider(SandboxProvider):
         network_name: str | None = None,
         docker_config: Any = None,  # DockerTemplateConfig | None
         egress_proxy_enabled: bool = False,
+        docker_host_alias: str | None = "host.docker.internal",
     ):
         """Initialize Docker sandbox provider.
 
@@ -98,6 +99,9 @@ class DockerSandboxProvider(SandboxProvider):
             egress_proxy_enabled: Enable shared egress proxy for network isolation.
                 When True, profiles with allowed_egress_domains route through a
                 Squid proxy on an internal Docker network instead of network=none.
+            docker_host_alias: Hostname alias for localhost/127.0.0.1 inside Docker
+                containers (default: "host.docker.internal"). Set to None to disable
+                URL rewriting.
         """
         if not DOCKER_AVAILABLE:
             raise RuntimeError("docker package not installed. Install with: pip install docker")
@@ -146,6 +150,9 @@ class DockerSandboxProvider(SandboxProvider):
                 f"[DEV-MODE] Enabled - will install from local source: {self._nexus_src_path}"
             )
         # Note: network_name is optional - if not set, containers will use default bridge network
+
+        # Docker host alias for localhost URL rewriting inside containers
+        self.docker_host_alias = docker_host_alias
 
         # Egress proxy manager (lazily initialized when a profile needs egress)
         self._egress_proxy_enabled = egress_proxy_enabled
@@ -523,11 +530,11 @@ class DockerSandboxProvider(SandboxProvider):
         logger.info(f"[MOUNT-STEP-1] Starting mount process for sandbox {sandbox_id}")
         logger.info(f"[MOUNT-STEP-1] Mount path: {mount_path}, Nexus URL: {nexus_url}")
 
-        # Transform localhost to host.docker.internal
-        if "localhost" in nexus_url or "127.0.0.1" in nexus_url:
+        # Transform localhost URLs so containers can reach the host
+        if self.docker_host_alias and ("localhost" in nexus_url or "127.0.0.1" in nexus_url):
             original_url = nexus_url
-            nexus_url = nexus_url.replace("localhost", "host.docker.internal")
-            nexus_url = nexus_url.replace("127.0.0.1", "host.docker.internal")
+            nexus_url = nexus_url.replace("localhost", self.docker_host_alias)
+            nexus_url = nexus_url.replace("127.0.0.1", self.docker_host_alias)
             logger.info(f"[MOUNT-STEP-1] Transformed URL: {original_url} -> {nexus_url}")
 
         # Create mount directory

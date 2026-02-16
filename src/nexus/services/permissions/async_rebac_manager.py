@@ -33,9 +33,9 @@ import logging
 import time
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import delete, func, insert, or_, select
 from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -46,144 +46,20 @@ from nexus.core.rebac import (
     NamespaceConfig,
 )
 from nexus.services.permissions.rebac_cache import ReBACPermissionCache
-
-if TYPE_CHECKING:
-    pass
+from nexus.storage.models.permissions import (
+    ReBACGroupClosureModel as GC,
+)
+from nexus.storage.models.permissions import (
+    ReBACNamespaceModel as RN,
+)
+from nexus.storage.models.permissions import (
+    ReBACTupleModel as RT,
+)
 
 logger = logging.getLogger(__name__)
 
-# =============================================================================
-# Prepared Statement Queries (Module-level for statement cache reuse)
-# =============================================================================
-# These queries are defined at module level so the same text() objects are
-# reused across all calls. This enables asyncpg's prepared statement cache
-# to efficiently cache the parsed query plans.
-#
-# Performance impact: 2-10x faster for hot path queries by avoiding:
-# - SQL parsing overhead on each call
-# - Query plan generation
-# - Parameter type inference
-# =============================================================================
-
-# Hot path: Direct tuple lookup (called 10-100x per permission check)
-_QUERY_DIRECT_TUPLE = text("""
-    SELECT tuple_id, conditions FROM rebac_tuples
-    WHERE subject_type = :subject_type AND subject_id = :subject_id
-      AND relation = :relation
-      AND object_type = :object_type AND object_id = :object_id
-      AND zone_id = :zone_id
-      AND subject_relation IS NULL
-      AND (expires_at IS NULL OR expires_at >= :now)
-""")
-
-# Hot path: Cross-zone tuple lookup for shared-* relations
-_QUERY_CROSS_ZONE_TUPLE = text("""
-    SELECT tuple_id FROM rebac_tuples
-    WHERE subject_type = :subject_type AND subject_id = :subject_id
-      AND relation = :relation
-      AND object_type = :object_type AND object_id = :object_id
-      AND subject_relation IS NULL
-      AND (expires_at IS NULL OR expires_at >= :now)
-""")
-
-# Hot path: Userset-as-subject lookup (group membership checks)
-_QUERY_USERSET_SUBJECTS = text("""
-    SELECT subject_type, subject_id, subject_relation
-    FROM rebac_tuples
-    WHERE relation = :relation
-      AND object_type = :object_type AND object_id = :object_id
-      AND subject_relation IS NOT NULL
-      AND zone_id = :zone_id
-      AND (expires_at IS NULL OR expires_at >= :now)
-""")
-
-# Related objects lookup (for tupleToUserset)
-_QUERY_RELATED_OBJECTS = text("""
-    SELECT object_type, object_id
-    FROM rebac_tuples
-    WHERE subject_type = :subject_type AND subject_id = :subject_id
-      AND relation = :relation
-      AND zone_id = :zone_id
-      AND (expires_at IS NULL OR expires_at >= :now)
-""")
-
-# Namespace configuration loading
-_QUERY_LOAD_NAMESPACES = text("SELECT namespace_id, object_type, config FROM rebac_namespaces")
-
-# Bulk fetch: All tuples for zone (used in rebac_check_bulk)
-_QUERY_BULK_TUPLES = text("""
-    SELECT subject_type, subject_id, subject_relation, relation,
-           object_type, object_id, conditions, expires_at
-    FROM rebac_tuples
-    WHERE zone_id = :zone_id
-      AND (expires_at IS NULL OR expires_at >= :now)
-""")
-
-# Bulk fetch: Cross-zone shared tuples
-_QUERY_BULK_CROSS_ZONE = text("""
-    SELECT subject_type, subject_id, subject_relation, relation,
-           object_type, object_id, conditions, expires_at
-    FROM rebac_tuples
-    WHERE relation IN ('shared-viewer', 'shared-editor', 'shared-owner')
-      AND (expires_at IS NULL OR expires_at >= :now)
-""")
-
-# Leopard closure: Fetch transitive groups for subjects (Issue #840)
-# Returns all groups a member transitively belongs to
-_QUERY_LEOPARD_CLOSURE = text("""
-    SELECT member_type, member_id, group_type, group_id
-    FROM rebac_group_closure
-    WHERE zone_id = :zone_id
-""")
-
-# Leopard closure: Insert/update closure entry for membership
-_QUERY_LEOPARD_UPSERT_SQLITE = text("""
-    INSERT OR REPLACE INTO rebac_group_closure
-        (member_type, member_id, group_type, group_id, zone_id, depth, updated_at)
-    VALUES
-        (:member_type, :member_id, :group_type, :group_id, :zone_id, :depth, datetime('now'))
-""")
-
-_QUERY_LEOPARD_UPSERT_POSTGRES = text("""
-    INSERT INTO rebac_group_closure
-        (member_type, member_id, group_type, group_id, zone_id, depth, updated_at)
-    VALUES
-        (:member_type, :member_id, :group_type, :group_id, :zone_id, :depth, NOW())
-    ON CONFLICT (member_type, member_id, group_type, group_id, zone_id)
-    DO UPDATE SET depth = EXCLUDED.depth, updated_at = NOW()
-""")
-
-# Leopard closure: Delete closure entries for a member
-_QUERY_LEOPARD_DELETE_MEMBER = text("""
-    DELETE FROM rebac_group_closure
-    WHERE member_type = :member_type
-      AND member_id = :member_id
-      AND zone_id = :zone_id
-""")
-
 # Relations that represent group membership
 MEMBERSHIP_RELATIONS = frozenset({"member-of", "member", "belongs-to"})
-
-# Write operations
-_QUERY_INSERT_TUPLE = text("""
-    INSERT INTO rebac_tuples (
-        tuple_id, subject_type, subject_id, subject_relation,
-        relation, object_type, object_id, zone_id,
-        conditions, expires_at, created_at, updated_at
-    ) VALUES (
-        :tuple_id, :subject_type, :subject_id, :subject_relation,
-        :relation, :object_type, :object_id, :zone_id,
-        :conditions, :expires_at, :created_at, :updated_at
-    )
-""")
-
-_QUERY_DELETE_TUPLE = text("""
-    DELETE FROM rebac_tuples
-    WHERE subject_type = :subject_type AND subject_id = :subject_id
-      AND relation = :relation
-      AND object_type = :object_type AND object_id = :object_id
-      AND zone_id = :zone_id
-""")
 
 
 class AsyncReBACManager:
@@ -281,7 +157,7 @@ class AsyncReBACManager:
             return
 
         async with self._session() as session:
-            result = await session.execute(_QUERY_LOAD_NAMESPACES)
+            result = await session.execute(select(RN.namespace_id, RN.object_type, RN.config))
             rows = result.fetchall()
 
             for row in rows:
@@ -468,25 +344,22 @@ class AsyncReBACManager:
         zone_id: str,
         context: dict[str, Any] | None = None,
     ) -> bool:
-        """Check for direct relation tuple in database.
-
-        Uses prepared statement constants for optimal query plan caching.
-        """
+        """Check for direct relation tuple in database."""
         async with self._session() as session:
             now_iso = self._now()
 
-            # Check direct concrete tuple (uses prepared statement)
+            # Check direct concrete tuple
             result = await session.execute(
-                _QUERY_DIRECT_TUPLE,
-                {
-                    "subject_type": subject.entity_type,
-                    "subject_id": subject.entity_id,
-                    "relation": relation,
-                    "object_type": obj.entity_type,
-                    "object_id": obj.entity_id,
-                    "zone_id": zone_id,
-                    "now": now_iso,
-                },
+                select(RT.tuple_id, RT.conditions).where(
+                    RT.subject_type == subject.entity_type,
+                    RT.subject_id == subject.entity_id,
+                    RT.relation == relation,
+                    RT.object_type == obj.entity_type,
+                    RT.object_id == obj.entity_id,
+                    RT.zone_id == zone_id,
+                    RT.subject_relation.is_(None),
+                    or_(RT.expires_at.is_(None), RT.expires_at >= now_iso),
+                )
             )
             row = result.fetchone()
 
@@ -513,15 +386,15 @@ class AsyncReBACManager:
             # but should be visible when checking from the recipient's zone.
             if relation in CROSS_ZONE_ALLOWED_RELATIONS:
                 result = await session.execute(
-                    _QUERY_CROSS_ZONE_TUPLE,
-                    {
-                        "subject_type": subject.entity_type,
-                        "subject_id": subject.entity_id,
-                        "relation": relation,
-                        "object_type": obj.entity_type,
-                        "object_id": obj.entity_id,
-                        "now": now_iso,
-                    },
+                    select(RT.tuple_id).where(
+                        RT.subject_type == subject.entity_type,
+                        RT.subject_id == subject.entity_id,
+                        RT.relation == relation,
+                        RT.object_type == obj.entity_type,
+                        RT.object_id == obj.entity_id,
+                        RT.subject_relation.is_(None),
+                        or_(RT.expires_at.is_(None), RT.expires_at >= now_iso),
+                    )
                 )
                 if result.fetchone():
                     logger.debug(f"Cross-zone share found: {subject} -> {relation} -> {obj}")
@@ -534,15 +407,15 @@ class AsyncReBACManager:
             # Industry standard: SpiceDB, OpenFGA, Ory Keto all use query-time wildcard check.
             if (subject.entity_type, subject.entity_id) != WILDCARD_SUBJECT:
                 result = await session.execute(
-                    _QUERY_CROSS_ZONE_TUPLE,  # Reuses no-zone-filter query
-                    {
-                        "subject_type": WILDCARD_SUBJECT[0],  # "*"
-                        "subject_id": WILDCARD_SUBJECT[1],  # "*"
-                        "relation": relation,
-                        "object_type": obj.entity_type,
-                        "object_id": obj.entity_id,
-                        "now": now_iso,
-                    },
+                    select(RT.tuple_id).where(
+                        RT.subject_type == WILDCARD_SUBJECT[0],  # "*"
+                        RT.subject_id == WILDCARD_SUBJECT[1],  # "*"
+                        RT.relation == relation,
+                        RT.object_type == obj.entity_type,
+                        RT.object_id == obj.entity_id,
+                        RT.subject_relation.is_(None),
+                        or_(RT.expires_at.is_(None), RT.expires_at >= now_iso),
+                    )
                 )
                 if result.fetchone():
                     logger.debug(f"Wildcard public access: *:* -> {relation} -> {obj}")
@@ -550,14 +423,14 @@ class AsyncReBACManager:
 
             # Check userset-as-subject tuples (e.g., group#member)
             result = await session.execute(
-                _QUERY_USERSET_SUBJECTS,
-                {
-                    "relation": relation,
-                    "object_type": obj.entity_type,
-                    "object_id": obj.entity_id,
-                    "zone_id": zone_id,
-                    "now": now_iso,
-                },
+                select(RT.subject_type, RT.subject_id, RT.subject_relation).where(
+                    RT.relation == relation,
+                    RT.object_type == obj.entity_type,
+                    RT.object_id == obj.entity_id,
+                    RT.subject_relation.isnot(None),
+                    RT.zone_id == zone_id,
+                    or_(RT.expires_at.is_(None), RT.expires_at >= now_iso),
+                )
             )
 
             for row in result.fetchall():
@@ -580,10 +453,7 @@ class AsyncReBACManager:
         relation: str,
         zone_id: str,
     ) -> list[Entity]:
-        """Find all objects related to obj via relation.
-
-        Uses prepared statement constants for optimal query plan caching.
-        """
+        """Find all objects related to obj via relation."""
         # For parent relation, compute from path instead of querying DB
         # This handles cross-zone scenarios where parent tuples are in different zone
         if relation == "parent" and obj.entity_type == "file":
@@ -597,14 +467,13 @@ class AsyncReBACManager:
         # For other relations, query the database
         async with self._session() as session:
             result = await session.execute(
-                _QUERY_RELATED_OBJECTS,
-                {
-                    "subject_type": obj.entity_type,
-                    "subject_id": obj.entity_id,
-                    "relation": relation,
-                    "zone_id": zone_id,
-                    "now": self._now(),
-                },
+                select(RT.object_type, RT.object_id).where(
+                    RT.subject_type == obj.entity_type,
+                    RT.subject_id == obj.entity_id,
+                    RT.relation == relation,
+                    RT.zone_id == zone_id,
+                    or_(RT.expires_at.is_(None), RT.expires_at >= self._now()),
+                )
             )
 
             return [Entity(row[0], row[1]) for row in result.fetchall()]
@@ -742,13 +611,20 @@ class AsyncReBACManager:
 
             # Use a simpler approach - fetch tuples matching subjects OR objects
             # (filtering done in Python for simplicity vs complex SQL IN clauses)
-            # Uses prepared statement constant for optimal caching
             result = await session.execute(
-                _QUERY_BULK_TUPLES,
-                {
-                    "zone_id": zone_id,
-                    "now": now_iso,
-                },
+                select(
+                    RT.subject_type,
+                    RT.subject_id,
+                    RT.subject_relation,
+                    RT.relation,
+                    RT.object_type,
+                    RT.object_id,
+                    RT.conditions,
+                    RT.expires_at,
+                ).where(
+                    RT.zone_id == zone_id,
+                    or_(RT.expires_at.is_(None), RT.expires_at >= now_iso),
+                )
             )
 
             tuples = []
@@ -772,10 +648,20 @@ class AsyncReBACManager:
 
             # Cross-zone share tuple fetch (PR #647, #648)
             # Fetch shared-* tuples for subjects without zone filter
-            # Uses prepared statement constant for optimal caching
             result = await session.execute(
-                _QUERY_BULK_CROSS_ZONE,
-                {"now": now_iso},
+                select(
+                    RT.subject_type,
+                    RT.subject_id,
+                    RT.subject_relation,
+                    RT.relation,
+                    RT.object_type,
+                    RT.object_id,
+                    RT.conditions,
+                    RT.expires_at,
+                ).where(
+                    RT.relation.in_(["shared-viewer", "shared-editor", "shared-owner"]),
+                    or_(RT.expires_at.is_(None), RT.expires_at >= now_iso),
+                )
             )
             cross_zone_count = 0
             for row in result.fetchall():
@@ -824,8 +710,9 @@ class AsyncReBACManager:
             # O(depth) recursive graph traversal during permission checks.
             try:
                 result = await session.execute(
-                    _QUERY_LEOPARD_CLOSURE,
-                    {"zone_id": zone_id},
+                    select(GC.member_type, GC.member_id, GC.group_type, GC.group_id).where(
+                        GC.zone_id == zone_id,
+                    )
                 )
                 leopard_count = 0
                 for row in result.fetchall():
@@ -1036,43 +923,63 @@ class AsyncReBACManager:
 
         async with self._session() as session:
             await session.execute(
-                _QUERY_INSERT_TUPLE,
-                {
-                    "tuple_id": tuple_id,
-                    "subject_type": subject[0],
-                    "subject_id": subject[1],
-                    "subject_relation": subject_relation,
-                    "relation": relation,
-                    "object_type": object[0],
-                    "object_id": object[1],
-                    "zone_id": zone_id,
-                    "conditions": json.dumps(conditions) if conditions else None,
-                    "expires_at": expires_at.isoformat() if expires_at else None,
-                    "created_at": now,
-                    "updated_at": now,
-                },
+                insert(RT).values(
+                    tuple_id=tuple_id,
+                    subject_type=subject[0],
+                    subject_id=subject[1],
+                    subject_relation=subject_relation,
+                    relation=relation,
+                    object_type=object[0],
+                    object_id=object[1],
+                    zone_id=zone_id,
+                    conditions=json.dumps(conditions) if conditions else None,
+                    expires_at=expires_at,
+                    created_at=now,
+                )
             )
             await session.commit()
 
             # LEOPARD (Issue #840): Update closure for membership relations
             if relation in MEMBERSHIP_RELATIONS:
                 try:
-                    upsert_query = (
-                        _QUERY_LEOPARD_UPSERT_POSTGRES
-                        if self._is_postgresql()
-                        else _QUERY_LEOPARD_UPSERT_SQLITE
-                    )
-                    await session.execute(
-                        upsert_query,
-                        {
-                            "member_type": subject[0],
-                            "member_id": subject[1],
-                            "group_type": object[0],
-                            "group_id": object[1],
-                            "zone_id": zone_id,
-                            "depth": 1,
-                        },
-                    )
+                    closure_values = {
+                        "member_type": subject[0],
+                        "member_id": subject[1],
+                        "group_type": object[0],
+                        "group_id": object[1],
+                        "zone_id": zone_id,
+                        "depth": 1,
+                        "updated_at": func.now(),
+                    }
+                    closure_index = [
+                        GC.member_type,
+                        GC.member_id,
+                        GC.group_type,
+                        GC.group_id,
+                        GC.zone_id,
+                    ]
+                    if self._is_postgresql():
+                        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+                        await session.execute(
+                            pg_insert(GC)
+                            .values(**closure_values)
+                            .on_conflict_do_update(
+                                index_elements=closure_index,
+                                set_={"depth": 1, "updated_at": func.now()},
+                            )
+                        )
+                    else:
+                        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+                        await session.execute(
+                            sqlite_insert(GC)
+                            .values(**closure_values)
+                            .on_conflict_do_update(
+                                index_elements=closure_index,
+                                set_={"depth": 1, "updated_at": func.now()},
+                            )
+                        )
                     await session.commit()
                     logger.debug(
                         f"[LEOPARD] Added closure: {subject[0]}:{subject[1]} -> "
@@ -1111,15 +1018,14 @@ class AsyncReBACManager:
 
         async with self._session() as session:
             result = await session.execute(
-                _QUERY_DELETE_TUPLE,
-                {
-                    "subject_type": subject[0],
-                    "subject_id": subject[1],
-                    "relation": relation,
-                    "object_type": object[0],
-                    "object_id": object[1],
-                    "zone_id": zone_id,
-                },
+                delete(RT).where(
+                    RT.subject_type == subject[0],
+                    RT.subject_id == subject[1],
+                    RT.relation == relation,
+                    RT.object_type == object[0],
+                    RT.object_id == object[1],
+                    RT.zone_id == zone_id,
+                )
             )
             await session.commit()
 
@@ -1131,21 +1037,13 @@ class AsyncReBACManager:
                     # Note: For simplicity, we recompute by deleting and letting
                     # subsequent writes rebuild. Full transitive recompute is complex.
                     await session.execute(
-                        text("""
-                            DELETE FROM rebac_group_closure
-                            WHERE member_type = :member_type
-                              AND member_id = :member_id
-                              AND group_type = :group_type
-                              AND group_id = :group_id
-                              AND zone_id = :zone_id
-                        """),
-                        {
-                            "member_type": subject[0],
-                            "member_id": subject[1],
-                            "group_type": object[0],
-                            "group_id": object[1],
-                            "zone_id": zone_id,
-                        },
+                        delete(GC).where(
+                            GC.member_type == subject[0],
+                            GC.member_id == subject[1],
+                            GC.group_type == object[0],
+                            GC.group_id == object[1],
+                            GC.zone_id == zone_id,
+                        )
                     )
                     await session.commit()
                     logger.debug(

@@ -694,16 +694,14 @@ def create_nexus_services(
         event_bus=event_bus,
         lock_manager=lock_manager,
         workflow_engine=workflow_engine,
-        server_extras={
-            "observability_subsystem": observability_subsystem,
-            "chunked_upload_service": chunked_upload_service,
-            "manifest_resolver": manifest_resolver,
-            "manifest_metrics": manifest_metrics,
-            "rebac_circuit_breaker": rebac_circuit_breaker,
-            "tool_namespace_middleware": tool_namespace_middleware,
-            "resiliency_manager": resiliency_manager,
-            "delivery_worker": delivery_worker,
-        },
+        observability_subsystem=observability_subsystem,
+        chunked_upload_service=chunked_upload_service,
+        manifest_resolver=manifest_resolver,
+        manifest_metrics=manifest_metrics,
+        rebac_circuit_breaker=rebac_circuit_breaker,
+        tool_namespace_middleware=tool_namespace_middleware,
+        resiliency_manager=resiliency_manager,
+        delivery_worker=delivery_worker,
         agent_registry=agent_registry,
         namespace_manager=namespace_manager,
         async_agent_registry=async_agent_registry,
@@ -1073,7 +1071,7 @@ def create_nexus_fs(
     )
 
     # Wire circuit breaker into ReBACService (Issue #726)
-    cb = services.server_extras.get("rebac_circuit_breaker")
+    cb = services.rebac_circuit_breaker
     if cb and hasattr(nx, "rebac_service"):
         nx.rebac_service._circuit_breaker = cb
 

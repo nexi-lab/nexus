@@ -14,7 +14,7 @@ Note: ``CacheConfig`` configures the kernel's **in-memory LRU caches**
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from nexus.constants import DEFAULT_NATS_URL
@@ -149,9 +149,15 @@ class KernelServices:
     lock_manager: Any = None
     workflow_engine: WorkflowProtocol | None = None
 
-    # Server-layer extras — opaque to the kernel, passed through to server
-    # code via NexusFS._service_extras. The kernel never inspects these.
-    server_extras: dict[str, Any] = field(default_factory=dict)
+    # Server-layer services — explicitly typed fields instead of opaque dict
+    observability_subsystem: Any = None
+    chunked_upload_service: Any = None
+    manifest_resolver: Any = None
+    manifest_metrics: Any = None
+    rebac_circuit_breaker: Any = None
+    tool_namespace_middleware: Any = None
+    resiliency_manager: Any = None
+    delivery_worker: Any = None
 
     # Kernel protocol services (Issue #1502)
     agent_registry: Any = None

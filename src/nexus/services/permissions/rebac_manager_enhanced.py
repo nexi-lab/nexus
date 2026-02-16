@@ -35,6 +35,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
+from sqlalchemy import and_, or_, select
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
 from nexus.core.rebac import CROSS_ZONE_ALLOWED_RELATIONS, Entity, NamespaceConfig
@@ -79,6 +80,7 @@ from nexus.services.permissions.types import (
 )
 from nexus.services.permissions.utils.changelog import insert_changelog_entry
 from nexus.services.permissions.utils.zone import normalize_zone_id
+from nexus.storage.models.permissions import ReBACTupleModel as RT
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
@@ -2352,15 +2354,9 @@ class EnhancedReBACManager(ReBACManager):
         Returns:
             Set of (group_type, group_id) tuples
         """
-        from sqlalchemy import text
-
         groups: set[tuple[str, str]] = set()
         visited: set[tuple[str, str]] = set()
         queue: list[tuple[str, str]] = [(subject_type, subject_id)]
-
-        # Determine SQL NOW function based on database type
-        is_postgresql = "postgresql" in str(self.engine.url)
-        now_sql = "NOW()" if is_postgresql else "datetime('now')"
 
         with self.engine.connect() as conn:
             while queue:
@@ -2369,20 +2365,15 @@ class EnhancedReBACManager(ReBACManager):
                     continue
                 visited.add((curr_type, curr_id))
 
-                # Find direct memberships
-                query = text(f"""
-                    SELECT object_type, object_id
-                    FROM rebac_tuples
-                    WHERE subject_type = :subj_type
-                      AND subject_id = :subj_id
-                      AND relation IN ('member-of', 'member', 'belongs-to')
-                      AND zone_id = :zone_id
-                      AND (expires_at IS NULL OR expires_at > {now_sql})
-                """)
-                result = conn.execute(
-                    query,
-                    {"subj_type": curr_type, "subj_id": curr_id, "zone_id": zone_id},
+                # Find direct memberships (ORM — no f-string SQL injection)
+                stmt = select(RT.object_type, RT.object_id).where(
+                    RT.subject_type == curr_type,
+                    RT.subject_id == curr_id,
+                    RT.relation.in_(["member-of", "member", "belongs-to"]),
+                    RT.zone_id == zone_id,
+                    or_(RT.expires_at.is_(None), RT.expires_at > datetime.now(UTC)),
                 )
+                result = conn.execute(stmt)
 
                 for row in result:
                     group = (row.object_type, row.object_id)
@@ -3109,50 +3100,39 @@ class EnhancedReBACManager(ReBACManager):
         Returns:
             List of tuple dictionaries for graph traversal
         """
-        from sqlalchemy import bindparam, text
+        _cols = (
+            RT.subject_type,
+            RT.subject_id,
+            RT.subject_relation,
+            RT.relation,
+            RT.object_type,
+            RT.object_id,
+        )
+        _not_expired = or_(RT.expires_at.is_(None), RT.expires_at > datetime.now(UTC))
 
         with self.engine.connect() as conn:
             if include_cross_zone_for_user:
                 # Include same-zone tuples AND cross-zone shares to this user
-                # Cross-zone shares have relation in CROSS_ZONE_ALLOWED_RELATIONS
                 cross_zone_relations = list(CROSS_ZONE_ALLOWED_RELATIONS)
-                # Use bindparam with expanding=True for IN clause compatibility with SQLite
-                result = conn.execute(
-                    text("""
-                        SELECT subject_type, subject_id, subject_relation,
-                               relation, object_type, object_id
-                        FROM rebac_tuples
-                        WHERE (expires_at IS NULL OR expires_at > :now)
-                          AND (
-                              -- Same zone tuples
-                              zone_id = :zone_id
-                              -- OR cross-zone shares where this user is the recipient
-                              OR (
-                                  relation IN :cross_zone_relations
-                                  AND subject_type = 'user'
-                                  AND subject_id = :user_id
-                              )
-                          )
-                    """).bindparams(bindparam("cross_zone_relations", expanding=True)),
-                    {
-                        "zone_id": zone_id,
-                        "now": datetime.now(UTC),
-                        "cross_zone_relations": cross_zone_relations,
-                        "user_id": include_cross_zone_for_user,
-                    },
+                stmt = select(*_cols).where(
+                    _not_expired,
+                    or_(
+                        RT.zone_id == zone_id,
+                        and_(
+                            RT.relation.in_(cross_zone_relations),
+                            RT.subject_type == "user",
+                            RT.subject_id == include_cross_zone_for_user,
+                        ),
+                    ),
                 )
+                result = conn.execute(stmt)
             else:
                 # Original behavior: only same-zone tuples
-                result = conn.execute(
-                    text("""
-                        SELECT subject_type, subject_id, subject_relation,
-                               relation, object_type, object_id
-                        FROM rebac_tuples
-                        WHERE zone_id = :zone_id
-                          AND (expires_at IS NULL OR expires_at > :now)
-                    """),
-                    {"zone_id": zone_id, "now": datetime.now(UTC)},
+                stmt = select(*_cols).where(
+                    RT.zone_id == zone_id,
+                    _not_expired,
                 )
+                result = conn.execute(stmt)
             return [
                 {
                     "subject_type": row.subject_type,

@@ -166,6 +166,7 @@ dev = [
     "pytest-mock>=3.12.0",
     "pytest-benchmark>=4.0.0",
     "pytest-xdist>=3.8.0",  # Parallel test execution
+    "pytest-timeout>=2.3.0",  # Per-test timeout enforcement
     "freezegun>=1.4.0",  # Time mocking for tests
     "hypothesis>=6.0.0",  # Property-based testing for crypto/identity (Issue #1355)
 
@@ -295,6 +296,7 @@ addopts = [
     "--dist", "loadgroup",        # Group tests by xdist_group marker for serial execution
     "--ignore=tests/evaluation",  # Exclude LLM evaluation tests from default runs
     "--ignore=tests/benchmarks",  # Exclude benchmarks from default runs (run via benchmark.yml)
+    "--timeout=60",               # Fail any single test that runs longer than 60 seconds
 ]
 # Coverage disabled by default for faster local runs. Enable in CI:
 #   pytest --cov=nexus --cov-report=term-missing --cov-report=html --cov-report=xml

@@ -149,7 +149,7 @@ class TokenManager:
         provider: str,
         user_email: str,
         credential: OAuthCredential,
-        zone_id: str = "default",
+        zone_id: str = "root",
         created_by: str | None = None,
         user_id: str | None = None,
         ip_address: str | None = None,
@@ -162,7 +162,7 @@ class TokenManager:
         if not provider or not provider.strip():
             raise ValueError("Provider name cannot be empty")
         if zone_id is None:
-            zone_id = "default"
+            zone_id = "root"
 
         encrypted_access_token = self.crypto.encrypt_token(credential.access_token)
         encrypted_refresh_token = None
@@ -255,7 +255,7 @@ class TokenManager:
         self,
         provider: str,
         user_email: str,
-        zone_id: str = "default",
+        zone_id: str = "root",
         ip_address: str | None = None,
     ) -> str:
         """Get a valid access token (with automatic refresh and rotation).
@@ -271,7 +271,7 @@ class TokenManager:
         8. Return valid access_token
         """
         if zone_id is None:
-            zone_id = "default"
+            zone_id = "root"
 
         # Check cache first (fast path — no lock needed)
         cache_key = (provider, user_email, zone_id)
@@ -500,7 +500,7 @@ class TokenManager:
             return count
 
     async def get_credential(
-        self, provider: str, user_email: str, zone_id: str = "default"
+        self, provider: str, user_email: str, zone_id: str = "root"
     ) -> OAuthCredential | None:
         """Get credential (decrypted) without automatic refresh."""
         with self.SessionLocal() as session:
@@ -521,12 +521,12 @@ class TokenManager:
         self,
         provider: str,
         user_email: str,
-        zone_id: str = "default",
+        zone_id: str = "root",
         ip_address: str | None = None,
     ) -> bool:
         """Revoke an OAuth credential."""
         if zone_id is None:
-            zone_id = "default"
+            zone_id = "root"
         with self.SessionLocal() as session:
             stmt = select(OAuthCredentialModel).where(
                 OAuthCredentialModel.provider == provider,
@@ -685,7 +685,7 @@ class TokenManager:
                     provider=provider or None,
                     credential_id=credential_id,
                     token_family_id=token_family_id,
-                    zone_id=zone_id or "default",
+                    zone_id=zone_id or "root",
                     ip_address=ip_address,
                     details=details,
                 )

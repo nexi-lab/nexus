@@ -17,6 +17,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from nexus.constants import DEFAULT_NATS_URL
+
 # ---------------------------------------------------------------------------
 # Config dataclasses (frozen — immutable, use dataclasses.replace() to copy)
 # ---------------------------------------------------------------------------
@@ -72,7 +74,7 @@ class DistributedConfig:
     enable_locks: bool = True
     enable_workflows: bool = True
     event_bus_backend: str = "redis"
-    nats_url: str = "nats://localhost:4222"
+    nats_url: str = DEFAULT_NATS_URL
 
 
 @dataclass(frozen=True)

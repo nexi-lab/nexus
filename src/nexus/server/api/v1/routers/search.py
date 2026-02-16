@@ -288,9 +288,9 @@ async def search_query(
     effective_limit = limit
 
     if graph_mode == "auto":
-        from nexus.search.query_router import QueryRouter, RoutingConfig
+        from nexus.search.query_router import QueryRouter
 
-        query_router = QueryRouter(config=RoutingConfig())
+        query_router = QueryRouter()
         routed = query_router.route(q, base_limit=limit)
 
         effective_graph_mode = routed.graph_mode

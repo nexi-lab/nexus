@@ -90,9 +90,9 @@ def generate_download_url(
 
             from nexus.server.streaming import _sign_stream_token
 
-            zone_id = "default"
+            zone_id = "root"
             if context and hasattr(context, "zone_id"):
-                zone_id = context.zone_id or "default"
+                zone_id = context.zone_id or "root"
 
             token = _sign_stream_token(path, expires_in, zone_id)
             encoded_path = quote(path.lstrip("/"), safe="")

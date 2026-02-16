@@ -218,7 +218,96 @@ Like Linux: processes and files are both kernel concepts. The kernel actively ma
 
 ---
 
-## 4. Open Questions We'd Like Your Input On
+## 4. IPC: The First Concrete Answer
+
+While the kernel question remains open, the IPC subsystem has been designed and implemented — and it decisively chose **Direction A** (filesystem-as-IPC, service-layer, not kernel). This is the strongest data point we have for or against the "everything is a file" thesis.
+
+### 4.1 Design: Mailbox Directories
+
+Agent communication maps onto the VFS as a directory hierarchy:
+
+```
+/agents/
+├── agent:alice/
+│   ├── AGENT.json          # Agent card (name, skills, status)
+│   ├── inbox/              # Incoming messages (write: sender, read: recipient)
+│   │   └── 20260212T100000_msg_7f3a9b2c.json
+│   ├── outbox/             # Audit trail of sent messages
+│   ├── processed/          # Successfully handled messages
+│   └── dead_letter/        # Expired / failed / malformed
+├── agent:bob/
+│   └── [same structure]
+```
+
+**Message lifecycle:** `inbox/` → parse → dedup → TTL check → handler → `processed/` (or `dead_letter/` on failure).
+
+### 4.2 Message Envelope
+
+A `MessageEnvelope` (Pydantic, JSON-serialized) with four types:
+
+| Type | Purpose |
+|------|---------|
+| `TASK` | Request from one agent to another |
+| `RESPONSE` | Reply (linked via `correlation_id`) |
+| `EVENT` | Notification broadcast |
+| `CANCEL` | Cancel an in-flight task |
+
+Fields: `id`, `from`, `to`, `type`, `correlation_id`, `ttl_seconds`, `payload`, `timestamp`, protocol version.
+
+### 4.3 Two-Layer Delivery
+
+1. **Push (low-latency):** `MessageSender.send()` writes to recipient's inbox, copies to sender's outbox, publishes EventBus notification on `ipc.inbox.{agent_id}`
+2. **Poll (guaranteed):** `MessageProcessor.process_inbox()` scans inbox files, deduplicates (bounded OrderedDict, 10k FIFO), checks TTL, invokes handler, moves to `processed/` or `dead_letter/`
+
+This gives **best-effort push with guaranteed-eventual-delivery** semantics. If push fails, polling catches it.
+
+### 4.4 Supporting Components
+
+| Component | File | Purpose |
+|-----------|------|---------|
+| **AgentProvisioner** | `ipc/provisioning.py` | Auto-creates mailbox directories on `AGENT_REGISTERED` events |
+| **AgentDiscovery** | `ipc/discovery.py` | Discovers peers by listing `/agents/` — no central registry query |
+| **TTLSweeper** | `ipc/sweep.py` | Background sweep (60s) moves expired messages to `dead_letter/` |
+| **IPCVFSDriver** | `ipc/driver.py` | Mounts IPC storage at `/agents/` in the VFS |
+
+### 4.5 Pluggable Storage
+
+Three backends behind an `IPCStorageDriver` protocol:
+
+| Driver | Use case |
+|--------|----------|
+| **VFS driver** | Delegates to kernel VFS — gets ReBAC, EventLog for free |
+| **PostgreSQL driver** | `ipc_messages` table, zone + path indexing, Alembic-managed |
+| **In-memory** | Unit tests (zero I/O) |
+
+### 4.6 Backpressure & Safety
+
+- Inbox capped at **1000 messages** (configurable)
+- Payload capped at **1 MB**
+- Bounded in-memory dedup (10k entries, FIFO eviction)
+- Zone-scoped for multi-tenant isolation
+- Exception hierarchy: `IPCError` → `EnvelopeValidationError`, `InboxFullError`, `InboxNotFoundError`, `MessageExpiredError`
+
+### 4.7 What This Proves (and Doesn't)
+
+**Validates the thesis:**
+- Agent discovery via `ls /agents/` — works, no special kernel support needed
+- Message passing via `write(inbox/msg.json)` — works, reuses VFS permissions
+- Observability for free — can inspect any agent's mailbox with standard file operations
+- Pluggable storage — same message semantics on VFS, PostgreSQL, or in-memory
+- Zero new kernel primitives were required
+
+**Leaves open:**
+- **Latency:** File-based polling has higher latency than kernel-level channels. Phase 2 plans `DT_PIPE` inodes (ring buffers) to address this — but that's a **new kernel primitive**, which contradicts "kernel = filesystem only"
+- **Ordering guarantees:** Filename-based chronological ordering is fragile at scale (clock skew, high throughput)
+- **Backpressure signaling:** Inbox-full is detected at write time, not proactively communicated to senders
+- **No kernel awareness of message flow:** The kernel doesn't know "agent A sent agent B a task." It sees file writes. This means the kernel can't enforce communication policies, rate-limit senders, or prioritize messages
+
+The IPC brick is the strongest evidence for Direction A. But Phase 2's pipe inodes hint that pure filesystem semantics hit a ceiling for real-time agent collaboration.
+
+---
+
+## 5. Open Questions
 
 1. **Is a filesystem kernel sufficient for an agent OS?** Can "agent OS" mean "a system where the whole stack (kernel + services) serves agents" — or does the kernel itself need agent awareness?
 
@@ -230,17 +319,17 @@ Like Linux: processes and files are both kernel concepts. The kernel actively ma
    - Inter-agent communication (channels/message passing)
    - Capability enforcement at syscall level
 
-   But each can arguably be implemented as a service on top of file primitives. What would you put in the kernel vs. keep as services?
+   IPC has been implemented as a service on file primitives and it works. But Phase 2 already needs `DT_PIPE` (a kernel-level inode type). Is this the thin end of the wedge — will each subsystem eventually need "just one more kernel primitive" until we have Direction B anyway?
 
 4. **Is the Linux analogy even the right one?** Maybe agent OSes are fundamentally different from process OSes and need a different architectural model entirely. What other OS or runtime models might be more appropriate?
 
-5. **The "everything is a file" tension:** Nexus's design principle is "everything is a file." Agent manifests, memories, CRM records — all exposed as files. If we fully commit to this, then agent state IS files, agent communication IS file reads/writes, and the filesystem kernel IS the agent kernel. Is this a strength or a limitation?
+5. **The "everything is a file" tension:** Nexus's design principle is "everything is a file." The IPC brick validates this — agent communication IS file reads/writes, discovery IS `ls /agents/`. But it also shows the limits: polling latency, no kernel-level message flow awareness, no proactive backpressure. Is the ceiling acceptable, or does real-time agent collaboration require fundamentally different primitives?
 
 6. **What about the 9 missing protocol gaps?** The gaps are: Version, Memory, Trajectory, Delegation, Governance, Reputation, OperationLog, Plugin, Workflow. Many are agent-centric (Trajectory, Delegation, Memory). Should any of these be kernel-level rather than service-level?
 
 ---
 
-## 5. Summary of the Design So Far
+## 6. Summary
 
 | Concept | Current state | Question |
 |---------|--------------|----------|
@@ -248,7 +337,7 @@ Like Linux: processes and files are both kernel concepts. The kernel actively ma
 | Agent | Purely service-layer (AgentRegistryProtocol, SchedulerProtocol) | Should any agent primitive be kernel? |
 | Agent definition | Not explicitly modeled | Just a file? Or a kernel entity? |
 | Agent run | Not explicitly modeled | Service on top of files? Or kernel `task_struct` equivalent? |
-| Agent communication | Not designed | File-based? Channels? Kernel or service? |
+| Agent communication | **Designed** — filesystem-as-IPC brick (`src/nexus/ipc/`) | Validates "everything is a file" — but is file-based IPC enough? |
 | Capability enforcement | Service-layer ReBAC only | Should basic caps be checked at kernel syscall level? |
 | "Agent OS" claim | Marketing, not architecture | How do we make it real? |
 

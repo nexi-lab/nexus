@@ -302,13 +302,14 @@ class GCSBackend(Backend):
     def stream_content(
         self,
         content_hash: str,
-        chunk_size: int = 8192,
+        chunk_size: int = 65536,
         context: "OperationContext | None" = None,
     ) -> Any:
         """
         Stream content from GCS in chunks without loading entire file into memory.
 
-        Uses GCS's streaming download to yield chunks progressively.
+        Uses ``blob.open("rb")`` for true streaming from GCS — data is
+        fetched on demand, not buffered in a BytesIO.
 
         Args:
             content_hash: SHA-256 hash as hex string
@@ -318,8 +319,6 @@ class GCSBackend(Backend):
         Yields:
             bytes: Chunks of file content
         """
-        import io
-
         content_path = self._hash_to_path(content_hash)
 
         try:
@@ -328,16 +327,12 @@ class GCSBackend(Backend):
             if not blob.exists():
                 raise NexusFileNotFoundError(content_hash)
 
-            # Use streaming download with BytesIO buffer
-            buffer = io.BytesIO()
-            blob.download_to_file(buffer)
-            buffer.seek(0)
-
-            while True:
-                chunk = buffer.read(chunk_size)
-                if not chunk:
-                    break
-                yield chunk
+            with blob.open("rb") as f:
+                while True:
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+                    yield chunk
 
         except NotFound as e:
             raise NexusFileNotFoundError(content_hash) from e
@@ -355,10 +350,10 @@ class GCSBackend(Backend):
         context: "OperationContext | None" = None,
     ) -> HandlerResponse[str]:
         """
-        Write content from an iterator of chunks.
+        Write content from an iterator of chunks with incremental hashing.
 
-        Streams chunks to temp file, then uploads to GCS.
-        Uses same hash algorithm as write_content() for consistency.
+        Streams chunks to a SpooledTemporaryFile while computing the hash
+        incrementally — no ``b"".join()`` buffer in memory.
 
         Args:
             chunks: Iterator yielding byte chunks
@@ -369,20 +364,18 @@ class GCSBackend(Backend):
         """
         import tempfile
 
-        # Write chunks to temp file while collecting for hashing
-        # Note: We collect for hashing to match hash_content() algorithm
-        collected_chunks: list[bytes] = []
+        from nexus.core.hash_fast import create_hasher
+
+        hasher = create_hasher()
+        total_size = 0
 
         with tempfile.SpooledTemporaryFile(max_size=10 * 1024 * 1024) as tmp:
             for chunk in chunks:
+                hasher.update(chunk)
                 tmp.write(chunk)
-                collected_chunks.append(chunk)
+                total_size += len(chunk)
 
-            # Compute hash using same algorithm as write_content
-            content = b"".join(collected_chunks)
-            content_hash = self._compute_hash(content)
-            total_size = len(content)
-
+            content_hash: str = hasher.hexdigest()
             content_path = self._hash_to_path(content_hash)
             blob = self.bucket.blob(content_path)
 
@@ -396,6 +389,7 @@ class GCSBackend(Backend):
                     data=content_hash,
                     backend_name=self.name,
                     path=content_hash,
+                    affected_rows=total_size,
                 )
 
             # Upload from temp file
@@ -410,6 +404,7 @@ class GCSBackend(Backend):
                 data=content_hash,
                 backend_name=self.name,
                 path=content_hash,
+                affected_rows=total_size,
             )
 
     @timed_response

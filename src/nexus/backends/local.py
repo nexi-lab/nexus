@@ -492,7 +492,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         return result
 
     def stream_content(
-        self, content_hash: str, chunk_size: int = 8192, context: "OperationContext | None" = None
+        self, content_hash: str, chunk_size: int = 65536, context: "OperationContext | None" = None
     ) -> Any:
         """
         Stream content from disk in chunks without loading entire file into memory.
@@ -532,7 +532,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         content_hash: str,
         start: int,
         end: int,
-        chunk_size: int = 8192,
+        chunk_size: int = 65536,
         context: "OperationContext | None" = None,
     ) -> "Iterator[bytes]":
         """Efficient seek-based range streaming for local CAS.
@@ -580,9 +580,13 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         context: "OperationContext | None" = None,
     ) -> HandlerResponse[str]:
         """
-        Write content from an iterator of chunks.
+        Write content from an iterator of chunks with true streaming.
 
-        Collects chunks, computes hash, then delegates to CASBlobStore.
+        Streams chunks directly to disk via CASBlobStore.store_streaming()
+        with incremental hashing — no full-content buffer in memory.
+
+        For files above the CDC threshold (16 MB), a two-phase approach
+        is used: store as single blob first, then re-chunk via CDC.
 
         Args:
             chunks: Iterator yielding byte chunks
@@ -591,12 +595,33 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         Returns:
             HandlerResponse with content hash in data field
         """
-        # Collect all chunks, then delegate to write_content
-        collected_chunks: list[bytes] = []
-        for chunk in chunks:
-            collected_chunks.append(chunk)
-        content = b"".join(collected_chunks)
-        return self.write_content(content, context=context)
+        result = self._cas.store_streaming(chunks)
+
+        # CDC routing: if the file is large enough, re-chunk it
+        if result.size >= self.cdc_threshold and result.is_new:
+            # Read the blob back and write through CDC chunking
+            content = self._cas.read_blob(result.content_hash)
+            cdc_hash = self._write_chunked(content, context)
+            # Release the single-blob version (CDC manifest now owns the data)
+            self._cas.release(result.content_hash)
+            content_hash = cdc_hash
+        else:
+            content_hash = result.content_hash
+
+        # Update Bloom filter
+        self._cas_bloom_add(content_hash)
+
+        # Notify search brick of write (e.g., Zoekt reindex) via callback
+        if result.is_new and self._on_write_callback is not None:
+            content_path = self._hash_to_path(content_hash)
+            self._on_write_callback(str(content_path))
+
+        return HandlerResponse.ok(
+            data=content_hash,
+            backend_name=self.name,
+            path=content_hash,
+            affected_rows=result.size,
+        )
 
     @timed_response
     def delete_content(

@@ -21,8 +21,8 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
+    from nexus.rebac.manager import ReBACManager
     from nexus.services.permissions.permission_cache import PermissionCacheCoordinator
-    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class FilterContext:
     zone_id: str
     context: OperationContext
     cache: PermissionCacheCoordinator
-    rebac_manager: EnhancedReBACManager
+    rebac_manager: ReBACManager
     router: Any = None
 
 

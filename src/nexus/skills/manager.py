@@ -249,12 +249,9 @@ class SkillManager:
 
         # Validate tier
         if tier not in tier_paths:
-            # Fall back to static paths for backward compatibility
-            if tier not in SkillRegistry.TIER_PATHS:
-                raise SkillManagerError(
-                    f"Invalid tier '{tier}'. Must be one of: {list(SkillRegistry.TIER_PATHS.keys())}"
-                )
-            tier_paths = SkillRegistry.TIER_PATHS
+            raise SkillManagerError(
+                f"Invalid tier '{tier}'. Must be one of: {list(tier_paths.keys())}"
+            )
 
         # Permission check: System tier requires admin (simplified for now)
         if tier == "system" and self._rebac and creator_id:
@@ -397,12 +394,9 @@ class SkillManager:
 
         # Validate tier
         if tier not in tier_paths:
-            # Fall back to static paths for backward compatibility
-            if tier not in SkillRegistry.TIER_PATHS:
-                raise SkillManagerError(
-                    f"Invalid tier '{tier}'. Must be one of: {list(SkillRegistry.TIER_PATHS.keys())}"
-                )
-            tier_paths = SkillRegistry.TIER_PATHS
+            raise SkillManagerError(
+                f"Invalid tier '{tier}'. Must be one of: {list(tier_paths.keys())}"
+            )
 
         # Get tier path (context-aware)
         tier_path = tier_paths[tier]

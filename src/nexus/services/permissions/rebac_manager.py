@@ -236,15 +236,10 @@ class ReBACManager:
         try:
             cursor = self._create_cursor(conn)
 
-            # Check if rebac_namespaces table exists
-            if self.engine.dialect.name == "sqlite":
-                cursor.execute(
-                    "SELECT name FROM sqlite_master WHERE type='table' AND name='rebac_namespaces'"
-                )
-            else:  # PostgreSQL
-                cursor.execute("SELECT tablename FROM pg_tables WHERE tablename='rebac_namespaces'")
+            # Check if rebac_namespaces table exists (driver-agnostic)
+            from sqlalchemy import inspect as sa_inspect
 
-            if not cursor.fetchone():
+            if not sa_inspect(self.engine).has_table("rebac_namespaces"):
                 return  # Table doesn't exist yet
 
             # Check and create/update namespaces

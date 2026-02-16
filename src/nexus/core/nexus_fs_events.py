@@ -660,13 +660,13 @@ class NexusFSEventsMixin:
                 if not virtual_path.startswith("/"):
                     virtual_path = "/" + virtual_path
 
-        # Issue #1169: Use read-set-aware invalidation when available
-        read_set_cache = getattr(self, "_read_set_cache", None)
-        if read_set_cache is not None:
+        # Issue #1169: Use cache observer for precise invalidation when available
+        cache_observer = getattr(self, "_cache_observer", None)
+        if cache_observer is not None:
             revision = self._get_zone_revision()
-            zone_id = getattr(self, "zone_id", None)
-            count = read_set_cache.invalidate_for_write(virtual_path, revision, zone_id=zone_id)
-            logger.debug(f"Cache invalidated (read-set): {virtual_path} ({count} entries)")
+            zone_id = getattr(self, "zone_id", None) or "default"
+            cache_observer.on_write(virtual_path, revision, zone_id)
+            logger.debug(f"Cache invalidated (observer): {virtual_path}")
         else:
             cache.invalidate_path(virtual_path)
             logger.debug(f"Cache invalidated: {virtual_path}")

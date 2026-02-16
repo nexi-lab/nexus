@@ -133,6 +133,9 @@ class KernelServices:
     overlay_resolver: Any = None
     wallet_provisioner: Any = None
 
+    # Cache invalidation (Issue #1169 / #1519)
+    cache_observer: Any = None  # CacheInvalidationObserver protocol
+
     # Infrastructure (moved from _service_extras dict)
     event_bus: Any = None
     lock_manager: Any = None

@@ -608,8 +608,9 @@ class E2BSandboxProvider(SandboxProvider):
                         logger.warning(f"Failed to install fusepy: {e.stderr}")
 
         # Mount the filesystem
+        # Note: api_key is logged freely here — RedactingFormatter handles redaction (Issue #86)
         logger.info(
-            f"Mounting with nexus_url={nexus_url}, api_key={'***' + api_key[-10:] if api_key else 'None'}"
+            f"Mounting with nexus_url={nexus_url}, api_key={api_key}"
             + (f", agent_id={agent_id}" if agent_id else "")
         )
 

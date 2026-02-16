@@ -231,7 +231,7 @@ def get_operation_context(auth_result: dict[str, Any]) -> Any:
 
     subject_type = auth_result.get("subject_type") or "user"
     subject_id = auth_result.get("subject_id") or "anonymous"
-    zone_id = auth_result.get("zone_id") or "default"
+    zone_id = auth_result.get("zone_id") or "root"
     is_admin = auth_result.get("is_admin", False)
     agent_id = auth_result.get("x_agent_id")
     user_id = subject_id

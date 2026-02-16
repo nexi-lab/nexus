@@ -1494,7 +1494,7 @@ class TigerCache:
         permission: str,
         resource_type: str,
         resource_int_ids: set[int],
-        zone_id: str = "default",
+        zone_id: str = "root",
     ) -> bool:
         """Persist bitmap to database after bulk read operations (Issue #979).
 

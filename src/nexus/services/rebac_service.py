@@ -2385,7 +2385,7 @@ class ReBACService:
         limit: int = 100,
         offset: int = 0,
         cursor: str | None = None,
-        current_zone: str = "default",
+        current_zone: str = "root",
     ) -> dict[str, Any]:
         """List outgoing shares with iterator caching (sync)."""
         mgr = self._require_manager()
@@ -2463,7 +2463,7 @@ class ReBACService:
         limit: int = 100,
         offset: int = 0,
         cursor: str | None = None,
-        current_zone: str = "default",
+        current_zone: str = "root",
     ) -> dict[str, Any]:
         """List incoming shares with iterator caching (sync)."""
         mgr = self._require_manager()

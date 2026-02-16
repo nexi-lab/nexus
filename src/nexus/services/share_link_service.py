@@ -118,11 +118,11 @@ class ShareLinkService:
         Returns:
             Tuple of (zone_id, user_id, is_admin)
         """
-        zone_id = "default"
+        zone_id = "root"
         user_id = "anonymous"
         is_admin = False
         if context:
-            zone_id = getattr(context, "zone_id", None) or "default"
+            zone_id = getattr(context, "zone_id", None) or "root"
             user_id = (
                 getattr(context, "user", None)
                 or getattr(context, "subject_id", None)

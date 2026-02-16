@@ -25,6 +25,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from nexus.pay.audit_types import TransactionProtocol
+from nexus.pay.credits import CreditsError
 from nexus.pay.x402 import validate_wallet_address
 
 if TYPE_CHECKING:
@@ -314,6 +315,8 @@ class CreditsPaymentProtocol(PaymentProtocol):
                 timestamp=datetime.now(UTC),
                 metadata={},
             )
+        except CreditsError:
+            raise
         except Exception as e:
             raise ProtocolError(f"Credits transfer failed: {e}") from e
 

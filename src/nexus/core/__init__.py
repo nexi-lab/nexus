@@ -120,22 +120,6 @@ def __getattr__(name: str) -> Any:
     raise AttributeError(f"module 'nexus.core' has no attribute {name!r}")
 
 
-# Async ReBAC components (v0.6.0+)
-# Import lazily to avoid circular imports and missing dependencies
-def get_async_rebac_manager() -> type:
-    """Get AsyncReBACManager class (lazy import)."""
-    from nexus.services.permissions.async_rebac_manager import AsyncReBACManager
-
-    return AsyncReBACManager
-
-
-def get_async_rebac_bridge() -> type:
-    """Get AsyncReBACBridge class (lazy import)."""
-    from nexus.core.async_bridge import AsyncReBACBridge
-
-    return AsyncReBACBridge
-
-
 __all__ = [
     # Event loop optimization
     "setup_uvloop",
@@ -163,7 +147,4 @@ __all__ = [
     "get_path_interner",
     "get_segmented_interner",
     "reset_global_interners",
-    # Async ReBAC (lazy imports via functions)
-    "get_async_rebac_manager",
-    "get_async_rebac_bridge",
 ]

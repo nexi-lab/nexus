@@ -1066,102 +1066,23 @@ class AsyncReBACManager:
         return {}
 
 
-def create_async_engine_from_url(
-    database_url: str,
-    pool_size: int | None = None,
-    max_overflow: int | None = None,
-    pool_recycle: int | None = None,
-    prepared_statement_cache_size: int = 1024,
-) -> AsyncEngine:
-    """Create async SQLAlchemy engine from database URL.
+def create_async_engine_from_url(database_url: str) -> AsyncEngine:
+    """Create async SQLAlchemy engine from database URL via RecordStoreABC.
 
-    Automatically selects the correct async driver:
-    - postgresql:// -> postgresql+asyncpg://
-    - sqlite:// -> sqlite+aiosqlite://
-
-    Performance optimizations for PostgreSQL (asyncpg):
-    - Prepared statement caching (1024 statements by default)
-    - Connection pool sizing via environment or parameters
-    - plan_cache_mode=force_custom_plan for consistent query plans
-    - TCP keepalive for cloud/NAT environments
-    - LIFO pool mode for better connection reuse
+    Delegates to SQLAlchemyRecordStore which handles URL conversion
+    (postgresql:// -> asyncpg://, sqlite:// -> aiosqlite://) internally.
 
     Args:
         database_url: Standard database URL
-        pool_size: Connection pool size (default: from env or 20)
-        max_overflow: Max overflow connections (default: from env or 30)
-        pool_recycle: Seconds before connection recycling (default: from env or 1800)
-        prepared_statement_cache_size: Asyncpg statement cache size (default: 1024)
-
-    Environment Variables:
-        NEXUS_DB_POOL_SIZE: Base pool size (default: 20)
-        NEXUS_DB_MAX_OVERFLOW: Burst capacity above pool_size (default: 30)
-        NEXUS_DB_POOL_TIMEOUT: Seconds to wait for connection (default: 30)
-        NEXUS_DB_POOL_RECYCLE: Seconds before recycling connections (default: 1800)
-        NEXUS_DB_STATEMENT_TIMEOUT: Query timeout in ms (default: 60000)
 
     Returns:
         AsyncEngine instance
     """
-    import os
+    from typing import cast
 
-    from sqlalchemy.ext.asyncio import create_async_engine
+    from nexus.storage.record_store import SQLAlchemyRecordStore
 
-    # Convert to async driver URL
-    if database_url.startswith("postgresql://"):
-        async_url = database_url.replace("postgresql://", "postgresql+asyncpg://")
-    elif database_url.startswith("sqlite://"):
-        async_url = database_url.replace("sqlite://", "sqlite+aiosqlite://")
-    else:
-        # Already has async driver specified
-        async_url = database_url
-
-    # Base engine kwargs
-    engine_kwargs: dict[str, Any] = {
-        "echo": False,
-        "pool_recycle": pool_recycle or int(os.getenv("NEXUS_DB_POOL_RECYCLE", "1800")),
-    }
-
-    # PostgreSQL-specific optimizations with asyncpg
-    if "postgresql" in async_url:
-        # Pool configuration from env or parameters
-        engine_kwargs["pool_size"] = pool_size or int(os.getenv("NEXUS_DB_POOL_SIZE", "20"))
-        engine_kwargs["max_overflow"] = max_overflow or int(
-            os.getenv("NEXUS_DB_MAX_OVERFLOW", "30")
-        )
-        engine_kwargs["pool_timeout"] = int(os.getenv("NEXUS_DB_POOL_TIMEOUT", "30"))
-
-        # Verify connections before use - prevents stale connection errors
-        engine_kwargs["pool_pre_ping"] = True
-
-        # LIFO mode: reuse most recently returned connections first
-        # This allows idle connections to be closed by server-side timeouts
-        # while keeping active connections warm
-        engine_kwargs["pool_use_lifo"] = True
-
-        # Get statement timeout from env
-        statement_timeout = os.getenv("NEXUS_DB_STATEMENT_TIMEOUT", "60000")
-
-        # Asyncpg-specific connection arguments for performance
-        # See: https://magicstack.github.io/asyncpg/current/api/index.html
-        engine_kwargs["connect_args"] = {
-            # Statement cache size - asyncpg caches prepared statements per connection
-            # Higher values reduce parse overhead for repeated queries
-            "prepared_statement_cache_size": prepared_statement_cache_size,
-            # Server settings applied on each connection
-            "server_settings": {
-                # Force custom plans to avoid plan cache invalidation issues
-                # with timestamp-based queries (see issue #683)
-                "plan_cache_mode": "force_custom_plan",
-                # Statement timeout prevents long-running queries
-                "statement_timeout": statement_timeout,
-            },
-        }
-
-        logger.info(
-            f"Async PostgreSQL engine configured: pool_size={engine_kwargs['pool_size']}, "
-            f"max_overflow={engine_kwargs['max_overflow']}, pool_pre_ping=True, "
-            f"pool_use_lifo=True, statement_timeout={statement_timeout}ms"
-        )
-
-    return create_async_engine(async_url, **engine_kwargs)
+    store = SQLAlchemyRecordStore(db_url=database_url)
+    # Trigger lazy async engine creation and return it
+    _ = store.async_session_factory
+    return cast("AsyncEngine", store._async_engine)

@@ -10,7 +10,7 @@ Provides utility functions for:
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
 # ==============================================================================
@@ -167,15 +167,16 @@ def get_user_zones(rebac_manager: Any, user_id: str) -> list[str]:
     zone_ids: list[str] = []
     try:
         with rebac_manager._connection() as conn:
-            cursor = conn.cursor() if hasattr(conn, "cursor") else conn
-            cursor.execute(
-                "SELECT DISTINCT zone_id FROM rebac_tuples "
-                "WHERE subject_type = 'user' AND subject_id = ? "
-                "AND zone_id IS NOT NULL",
-                (user_id,),
+            result = conn.execute(
+                text(
+                    "SELECT DISTINCT zone_id FROM rebac_tuples "
+                    "WHERE subject_type = 'user' AND subject_id = :user_id "
+                    "AND zone_id IS NOT NULL"
+                ),
+                {"user_id": user_id},
             )
-            for row in cursor.fetchall():
-                zid = row[0] if isinstance(row, (tuple, list)) else row["zone_id"]
+            for row in result:
+                zid = row[0] if isinstance(row, (tuple, list)) else row.zone_id
                 if zid and zid not in zone_ids:
                     zone_ids.append(zid)
     except Exception:
@@ -200,15 +201,16 @@ def user_belongs_to_zone(rebac_manager: Any, user_id: str, zone_id: str) -> bool
     """
     try:
         with rebac_manager._connection() as conn:
-            cursor = conn.cursor() if hasattr(conn, "cursor") else conn
-            cursor.execute(
-                "SELECT 1 FROM rebac_tuples "
-                "WHERE subject_type = 'user' AND subject_id = ? "
-                "AND zone_id = ? "
-                "LIMIT 1",
-                (user_id, zone_id),
+            result = conn.execute(
+                text(
+                    "SELECT 1 FROM rebac_tuples "
+                    "WHERE subject_type = 'user' AND subject_id = :user_id "
+                    "AND zone_id = :zone_id "
+                    "LIMIT 1"
+                ),
+                {"user_id": user_id, "zone_id": zone_id},
             )
-            return cursor.fetchone() is not None
+            return result.fetchone() is not None
     except Exception:
         return False
 

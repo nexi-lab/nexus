@@ -18,12 +18,10 @@ import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
-from nexus.core.exceptions import BranchConflictError, BranchStateError
 from nexus.core.response import HandlerResponse
 from nexus.core.workspace_manifest import ManifestEntry, WorkspaceManifest
-from nexus.services.context_branch import ContextBranchService, DEFAULT_BRANCH
+from nexus.services.context_branch import ContextBranchService
 from nexus.storage.models._base import Base
-from nexus.storage.models.context_branch import ContextBranchModel
 from nexus.storage.models.filesystem import WorkspaceSnapshotModel
 
 
@@ -271,11 +269,11 @@ class TestMultipleExplorations:
         service.commit(ws, message="Initial")
 
         # Start 3 explorations
-        e1 = service.explore(ws, "Approach A")
+        service.explore(ws, "Approach A")
         service.checkout(ws, "main")  # Switch back to main before next explore
-        e2 = service.explore(ws, "Approach B")
+        service.explore(ws, "Approach B")
         service.checkout(ws, "main")
-        e3 = service.explore(ws, "Approach C")
+        service.explore(ws, "Approach C")
 
         # Verify all branches exist
         branches = service.list_branches(ws)

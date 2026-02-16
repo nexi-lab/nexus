@@ -25,6 +25,7 @@ from nexus.cli.commands import (
     agent,
     cache,
     connectors,
+    context,  # Issue #1315: Context versioning — workspace branching
     directory,
     file_ops,
     llm,
@@ -45,9 +46,6 @@ from nexus.cli.commands import (
     work,
     workflows,
     workspace,
-)
-from nexus.cli.commands import (
-    context,  # Issue #1315: Context versioning — workspace branching
 )
 from nexus.cli.commands import (
     zone as zone_mod,  # zone.py (federation + portability CLI commands)

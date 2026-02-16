@@ -7,26 +7,21 @@ Tests: ensure_main_branch, create_branch, list_branches, get_branch,
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import create_engine, select
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 
 from nexus.core.exceptions import (
     BranchExistsError,
     BranchNotFoundError,
     BranchProtectedError,
     BranchStateError,
-    NexusPermissionError,
 )
-from nexus.core.response import HandlerResponse
 from nexus.services.context_branch import (
     DEFAULT_BRANCH,
-    BranchInfo,
     ContextBranchService,
-    ExploreResult,
-    MergeResult,
     _slugify,
 )
 from nexus.storage.models import WorkspaceSnapshotModel

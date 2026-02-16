@@ -14,18 +14,16 @@
 from __future__ import annotations
 
 import hashlib
-import json
-from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
 import pytest
-from sqlalchemy import create_engine, select
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from nexus.core.exceptions import BranchConflictError, BranchStateError
 from nexus.core.response import HandlerResponse
 from nexus.core.workspace_manifest import ManifestEntry, WorkspaceManifest
-from nexus.services.context_branch import ContextBranchService, MergeResult
+from nexus.services.context_branch import ContextBranchService
 from nexus.storage.models._base import Base
 from nexus.storage.models.context_branch import ContextBranchModel
 from nexus.storage.models.filesystem import WorkspaceSnapshotModel

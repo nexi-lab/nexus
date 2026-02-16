@@ -22,10 +22,8 @@ from sqlalchemy.orm import sessionmaker
 
 from nexus.core.exceptions import (
     BranchExistsError,
-    BranchNotFoundError,
     BranchProtectedError,
     BranchStateError,
-    NexusFileNotFoundError,
 )
 from nexus.services.context_branch import ContextBranchService
 from nexus.storage.models._base import Base

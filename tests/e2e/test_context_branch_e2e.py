@@ -31,7 +31,6 @@ from nexus.services.context_branch import ContextBranchService
 from nexus.storage.models._base import Base
 from nexus.storage.models.filesystem import WorkspaceSnapshotModel
 
-
 # ---------------------------------------------------------------------------
 # Fixtures — real DB + CAS
 # ---------------------------------------------------------------------------
@@ -257,11 +256,11 @@ class TestE2EExploreMergeLifecycle:
         service.commit(ws, message="Starting point")
 
         # Launch 3 explorations
-        e1 = service.explore(ws, "Approach alpha")
+        service.explore(ws, "Approach alpha")
         service.checkout(ws, "main")
-        e2 = service.explore(ws, "Approach beta")
+        service.explore(ws, "Approach beta")
         service.checkout(ws, "main")
-        e3 = service.explore(ws, "Approach gamma")
+        service.explore(ws, "Approach gamma")
 
         # Commit on the winning branch
         service.commit(ws, message="Beta wins", branch_name="approach-beta")
@@ -455,7 +454,6 @@ class TestE2EThreeWayMerge:
 
         # Manually create snapshot with this manifest
         with session_factory() as s:
-            from sqlalchemy import select
 
             snap = WorkspaceSnapshotModel(
                 snapshot_id="snap-initial",

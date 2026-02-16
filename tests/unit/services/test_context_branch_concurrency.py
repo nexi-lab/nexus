@@ -9,7 +9,6 @@ Tests:
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -18,13 +17,12 @@ from sqlalchemy.orm import sessionmaker
 
 from nexus.core.exceptions import BranchNotFoundError, StalePointerError
 from nexus.services.context_branch import (
-    ContextBranchService,
     _BASE_BACKOFF_MS,
     _MAX_RETRIES,
+    ContextBranchService,
 )
 from nexus.storage.models._base import Base
 from nexus.storage.models.context_branch import ContextBranchModel
-from nexus.storage.models.filesystem import WorkspaceSnapshotModel
 
 
 @pytest.fixture
@@ -109,10 +107,8 @@ class TestStalePointerDetection:
         _setup_branch(session_factory, pointer_version=0)
 
         # Monkey-patch: intercept the update to simulate concurrent modification
-        original_execute = None
         call_count = 0
 
-        from sqlalchemy.orm import Session
 
         original_session_factory = service._session_factory
 
@@ -185,9 +181,8 @@ class TestRetryWithBackoff:
             service,
             "_advance_head",
             side_effect=StalePointerError("main", 0, 1),
-        ):
-            with pytest.raises(StalePointerError):
-                service._advance_head_with_retry("z1", "/ws", "main", "snap-new")
+        ), pytest.raises(StalePointerError):
+            service._advance_head_with_retry("z1", "/ws", "main", "snap-new")
 
         # Should have retried MAX_RETRIES - 1 times (last attempt doesn't sleep)
         assert mock_sleep.call_count == _MAX_RETRIES - 1
@@ -200,9 +195,8 @@ class TestRetryWithBackoff:
             service,
             "_advance_head",
             side_effect=StalePointerError("main", 0, 1),
-        ):
-            with pytest.raises(StalePointerError):
-                service._advance_head_with_retry("z1", "/ws", "main", "snap-new")
+        ), pytest.raises(StalePointerError):
+            service._advance_head_with_retry("z1", "/ws", "main", "snap-new")
 
         # Verify exponential backoff: 10ms, 20ms
         calls = [c.args[0] for c in mock_sleep.call_args_list]

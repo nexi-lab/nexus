@@ -49,9 +49,6 @@ from nexus.storage.models.agents import AgentEventModel as AgentEventModel
 from nexus.storage.models.agents import AgentRecordModel as AgentRecordModel
 from nexus.storage.models.agents import DelegationRecordModel as DelegationRecordModel
 
-# Domain: Context Branching (Issue #1315)
-from nexus.storage.models.context_branch import ContextBranchModel as ContextBranchModel
-
 # Previously extracted models
 from nexus.storage.models.audit_checkpoint import AuditCheckpointModel as AuditCheckpointModel
 
@@ -64,6 +61,9 @@ from nexus.storage.models.auth import UserModel as UserModel
 from nexus.storage.models.auth import UserOAuthAccountModel as UserOAuthAccountModel
 from nexus.storage.models.auth import ZoneModel as ZoneModel
 from nexus.storage.models.dead_letter import DeadLetterModel as DeadLetterModel
+
+# Domain: Context Branching (Issue #1315)
+from nexus.storage.models.context_branch import ContextBranchModel as ContextBranchModel
 
 # Issue #1356: Reputation & Trust models
 from nexus.storage.models.dispute import DisputeModel as DisputeModel

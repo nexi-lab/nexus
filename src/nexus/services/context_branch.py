@@ -23,7 +23,6 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import select, update
-
 from sqlalchemy.exc import IntegrityError
 
 from nexus.core.exceptions import (
@@ -578,7 +577,7 @@ class ContextBranchService:
     def log(
         self,
         workspace_path: str,
-        branch_name: str | None = None,
+        branch_name: str | None = None,  # noqa: ARG002
         limit: int = 50,
         zone_id: str | None = None,
         user_id: str | None = None,
@@ -595,7 +594,7 @@ class ContextBranchService:
 
     def diff(
         self,
-        workspace_path: str,
+        workspace_path: str,  # noqa: ARG002
         from_ref: str,
         to_ref: str,
         zone_id: str | None = None,
@@ -1025,7 +1024,7 @@ class ContextBranchService:
 
     def _fast_forward_merge(
         self,
-        session: Any,
+        session: Any,  # noqa: ARG002
         source: ContextBranchModel,
         target: ContextBranchModel,
         workspace_path: str,

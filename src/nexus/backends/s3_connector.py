@@ -675,7 +675,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
                 path=blob_path,
             ) from e
 
-    def _batch_get_versions(
+    def batch_get_versions(
         self,
         backend_paths: list[str],
         contexts: dict[str, "OperationContext"] | None = None,

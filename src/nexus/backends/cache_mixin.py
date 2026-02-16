@@ -334,7 +334,7 @@ class CacheConnectorMixin:
         result = session.execute(stmt)
         return {row[0]: row[1] for row in result.fetchall()}
 
-    def _read_bulk_from_cache(
+    def read_bulk_from_cache(
         self,
         paths: list[str],
         original: bool = False,
@@ -511,7 +511,7 @@ class CacheConnectorMixin:
         results: dict[str, bytes] = {}
 
         # Bulk cache lookup (L1 + L2)
-        cache_entries = self._read_bulk_from_cache(paths, original=True)
+        cache_entries = self.read_bulk_from_cache(paths, original=True)
 
         # Extract content from cache hits
         paths_needing_backend: list[str] = []
@@ -1005,7 +1005,7 @@ class CacheConnectorMixin:
             return cached.content_hash
         return None
 
-    def _batch_write_to_cache(
+    def batch_write_to_cache(
         self,
         entries: list[dict],
     ) -> list[CacheEntry]:
@@ -1318,7 +1318,7 @@ class CacheConnectorMixin:
 
         return result
 
-    def _batch_read_from_backend(
+    def batch_read_from_backend(
         self,
         paths: list[str],
         contexts: dict[str, OperationContext] | None = None,
@@ -1431,7 +1431,7 @@ class CacheConnectorMixin:
                 return None
         return None
 
-    def _parse_content(
+    def parse_content(
         self,
         path: str,
         content: bytes,
@@ -1480,7 +1480,7 @@ class CacheConnectorMixin:
 
         return None, None, None
 
-    def _generate_embeddings(self, path: str) -> None:
+    def generate_embeddings_for_path(self, path: str) -> None:
         """Generate embeddings for a file.
 
         Override this to integrate with semantic search.

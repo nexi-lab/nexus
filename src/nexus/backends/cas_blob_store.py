@@ -50,6 +50,19 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
+class WriteResult:
+    """Result of a streaming write to CAS.
+
+    Returned by ``store_streaming()`` so callers get hash + size
+    without a redundant disk stat.
+    """
+
+    content_hash: str
+    size: int
+    is_new: bool
+
+
+@dataclass(frozen=True, slots=True)
 class CASMeta:
     """Immutable metadata for a CAS entry.
 
@@ -399,6 +412,78 @@ class CASBlobStore:
             is_new = meta.ref_count == 1
 
         return is_new
+
+    def store_streaming(
+        self,
+        chunks: Iterator[bytes],
+        *,
+        extra_meta: dict[str, Any] | None = None,
+    ) -> WriteResult:
+        """Stream chunks to disk with incremental hashing, then promote to CAS.
+
+        Uses a staging temp file so that only *one* copy of the data
+        touches disk — no ``b"".join()`` buffer in memory.
+
+        Args:
+            chunks: Iterator yielding raw byte chunks.
+            extra_meta: Additional metadata fields (e.g. ``is_chunk``).
+
+        Returns:
+            WriteResult with content_hash, total size, and whether blob was new.
+        """
+        from nexus.core.hash_fast import create_hasher
+
+        staging_dir = self.cas_root / ".staging"
+        staging_dir.mkdir(parents=True, exist_ok=True)
+
+        tmp_path: Path | None = None
+        try:
+            hasher = create_hasher()
+            total_size = 0
+
+            with tempfile.NamedTemporaryFile(mode="wb", dir=staging_dir, delete=False) as tmp:
+                tmp_path = Path(tmp.name)
+                for chunk in chunks:
+                    hasher.update(chunk)
+                    tmp.write(chunk)
+                    total_size += len(chunk)
+                tmp.flush()
+                if self._fsync_blobs:
+                    os.fsync(tmp.fileno())
+
+            content_hash: str = hasher.hexdigest()
+            blob_path = self.hash_to_path(content_hash)
+
+            if blob_path.exists():
+                # Blob already on disk — just bump ref_count
+                tmp_path.unlink()
+                tmp_path = None
+                lock = self._meta_locks.acquire_for(content_hash)
+                with lock:
+                    meta = self.read_meta(content_hash)
+                    self.write_meta(content_hash, meta.inc_ref())
+                return WriteResult(content_hash=content_hash, size=total_size, is_new=False)
+
+            # New blob — promote staging file into CAS tree
+            blob_path.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(str(tmp_path), str(blob_path))
+            tmp_path = None  # replaced successfully
+
+            # Write metadata under stripe lock
+            lock = self._meta_locks.acquire_for(content_hash)
+            with lock:
+                extra: tuple[tuple[str, Any], ...] = ()
+                if extra_meta:
+                    extra = tuple(extra_meta.items())
+                meta = CASMeta(ref_count=1, size=total_size, extra=extra)
+                self.write_meta(content_hash, meta)
+
+            return WriteResult(content_hash=content_hash, size=total_size, is_new=True)
+        finally:
+            # Clean up on any failure
+            if tmp_path is not None and tmp_path.exists():
+                with contextlib.suppress(OSError):
+                    tmp_path.unlink()
 
     def release(self, content_hash: str) -> bool:
         """Decrement ref_count; delete blob + meta when it reaches zero.

@@ -133,7 +133,9 @@ async def create_zone_endpoint(
                     )
                     logger.info(f"Added user {user_id} as owner of zone {zone_id}")
                 except Exception as e:
-                    logger.error(f"Failed to add user {user_id} as zone owner: {e}")
+                    logger.error(
+                        "Failed to add user %s as zone owner: %s", user_id, e, exc_info=True
+                    )
                     raise HTTPException(
                         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                         detail=f"Failed to assign creator as zone owner: {e}",

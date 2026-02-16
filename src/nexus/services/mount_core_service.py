@@ -178,6 +178,9 @@ class MountCoreService:
         result["removed"] = True
         logger.info(f"Removed mount from router: {mount_point}")
 
+        # Extract zone_id once for all cleanup operations
+        zone_id = get_zone_id(context)
+
         # Delete all metadata entries (mount point + children)
         try:
             dir_prefix = mount_point if mount_point.endswith("/") else mount_point + "/"
@@ -192,7 +195,6 @@ class MountCoreService:
 
         # Clean up sparse directory index entries
         try:
-            zone_id = get_zone_id(context)
             dir_entries_deleted = self._gw.delete_directory_entries_recursive(mount_point, zone_id)
             result["directory_entries_deleted"] = dir_entries_deleted
             logger.info(
@@ -203,7 +205,6 @@ class MountCoreService:
 
         # Clean up hierarchy tuples
         try:
-            zone_id = get_zone_id(context)
             removed = self._gw.remove_parent_tuples(mount_point, zone_id)
             result["permissions_cleaned"] += removed
             logger.info(f"Removed {removed} parent tuples for {mount_point}")
@@ -212,7 +213,6 @@ class MountCoreService:
 
         # Remove permission tuples
         try:
-            zone_id = get_zone_id(context)
             deleted = self._gw.rebac_delete_object_tuples(
                 object=("file", mount_point),
                 zone_id=zone_id,

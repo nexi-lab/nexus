@@ -421,8 +421,8 @@ def create_app(
         obs_sub = getattr(nexus_fs, "_service_extras", {}).get("observability_subsystem")
         if obs_sub is not None:
             REGISTRY.register(QueryObserverCollector(obs_sub.observer))
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug("QueryObserver metrics collector not registered: %s", e)
 
     # Register WriteBuffer → Prometheus collector bridge (Issue #1370)
     try:
@@ -527,7 +527,8 @@ def _discover_exposed_methods(nexus_fs: NexusFS) -> dict[str, Any]:
                 method_name = getattr(attr, "_rpc_name", name)
                 exposed[method_name] = attr
                 logger.debug(f"Discovered RPC method: {method_name}")
-        except Exception:
+        except Exception as e:
+            logger.debug("Failed to discover RPC method %s: %s", name, e)
             continue
 
     logger.info(f"Auto-discovered {len(exposed)} RPC methods")
@@ -625,7 +626,8 @@ def _register_routes(app: FastAPI) -> None:
                     x_nexus_subject=request.headers.get("X-Nexus-Subject"),
                     x_nexus_zone_id=request.headers.get("X-Nexus-Zone-ID"),
                 )
-            except Exception:
+            except Exception as e:
+                logger.debug("A2A auth extraction failed: %s", e)
                 return None
 
         a2a_router = create_a2a_router(

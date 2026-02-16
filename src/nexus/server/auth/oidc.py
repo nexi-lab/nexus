@@ -151,7 +151,7 @@ class OIDCAuth(AuthProvider):
             result: dict[str, Any] = dict(jwks)
             return result
         except Exception as e:
-            logger.error(f"Failed to fetch JWKS from {self.jwks_uri}: {e}")
+            logger.error("Failed to fetch JWKS from %s: %s", self.jwks_uri, e, exc_info=True)
             # P0-3: Fail closed on JWKS fetch error
             raise ValueError(f"INDETERMINATE: Cannot fetch JWKS - {e}") from e
 

@@ -37,6 +37,7 @@ from urllib.parse import urljoin
 
 if TYPE_CHECKING:
     from nexus.remote.domain.mcp import MCPClient
+    from nexus.remote.domain.memory import MemoryClient
     from nexus.remote.domain.oauth import OAuthClient
     from nexus.remote.domain.sandbox import SandboxClient
     from nexus.remote.domain.share_links import ShareLinksClient
@@ -174,32 +175,6 @@ _DOMAIN_METHOD_MAP: dict[str, tuple[str, str]] = {
 
 
 # ============================================================
-# RemoteMemory — backwards-compat wrapper (delegates to MemoryClient)
-# ============================================================
-
-
-class RemoteMemory:
-    """Remote Memory API client (backwards-compatible wrapper).
-
-    Provides the same interface as core.memory_api.Memory but delegates to
-    the MemoryClient domain client under the hood.
-    """
-
-    def __init__(self, remote_fs: RemoteNexusFS):
-        from nexus.remote.domain.memory import MemoryClient as _MemoryClient
-
-        self.remote_fs = remote_fs
-        # Use lambda to ensure dynamic resolution of _call_rpc (supports test mocking)
-        self._client = _MemoryClient(lambda *a, **kw: remote_fs._call_rpc(*a, **kw))
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._client, name)
-
-    def __dir__(self) -> builtins.list[str]:
-        return list(set(super().__dir__()) | set(dir(self._client)))
-
-
-# ============================================================
 # RemoteNexusFS — Sync RPC Proxy Client
 # ============================================================
 
@@ -243,7 +218,7 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         self._agent_id: str | None = None
         self._zone_id: str | None = None
         self._semantic_search = None
-        self._memory_api: RemoteMemory | None = None
+        self._memory_api: MemoryClient | None = None
 
         # Pre-build default timeout config
         self._default_timeout = httpx.Timeout(
@@ -809,9 +784,11 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
     # ============================================================
 
     @property
-    def memory(self) -> RemoteMemory:
+    def memory(self) -> MemoryClient:
         if self._memory_api is None:
-            self._memory_api = RemoteMemory(self)
+            from nexus.remote.domain.memory import MemoryClient as _MemoryClient
+
+            self._memory_api = _MemoryClient(lambda *a, **kw: self._call_rpc(*a, **kw))
         return self._memory_api
 
     def __enter__(self) -> RemoteNexusFS:

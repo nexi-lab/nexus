@@ -28,6 +28,8 @@ def nexus_error_handler(_request: Request, exc: Exception) -> JSONResponse:
         AuthenticationError,
         BackendError,
         ConflictError,
+        ConnectorAuthError,
+        ConnectorRateLimitError,
         InvalidPathError,
         NexusError,
         NexusFileNotFoundError,
@@ -38,6 +40,7 @@ def nexus_error_handler(_request: Request, exc: Exception) -> JSONResponse:
     )
 
     # Determine HTTP status code and error type based on exception.
+    # Order matters: more specific types must come before their parents.
     # NexusPermissionError check catches PermissionDeniedError (subclass).
     if isinstance(exc, (NexusFileNotFoundError, PathNotMountedError)):
         status_code = 404
@@ -45,7 +48,7 @@ def nexus_error_handler(_request: Request, exc: Exception) -> JSONResponse:
     elif isinstance(exc, (NexusPermissionError, AccessDeniedError)):
         status_code = 403
         error_type = "Forbidden"
-    elif isinstance(exc, AuthenticationError):
+    elif isinstance(exc, (ConnectorAuthError, AuthenticationError)):
         status_code = 401
         error_type = "Unauthorized"
     elif isinstance(exc, (InvalidPathError, ValidationError)):
@@ -57,7 +60,11 @@ def nexus_error_handler(_request: Request, exc: Exception) -> JSONResponse:
     elif isinstance(exc, ParserError):
         status_code = 422
         error_type = "Unprocessable Entity"
+    elif isinstance(exc, ConnectorRateLimitError):
+        status_code = 429
+        error_type = "Too Many Requests"
     elif isinstance(exc, BackendError):
+        # Catches DatabaseError, ConnectorError, and other BackendError subtypes
         status_code = 502
         error_type = "Bad Gateway"
     elif isinstance(exc, NexusError):

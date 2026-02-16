@@ -518,7 +518,8 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
                             }
                         }
                     ]
-            except Exception:
+            except Exception as e:
+                logger.debug("Failed to get channel info for %s: %s", channel_name, e)
                 # If we can't get channel info, just note that no messages were found
                 messages = [
                     {
@@ -544,8 +545,8 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
                     backend_version=IMMUTABLE_VERSION,  # Messages are immutable
                     zone_id=zone_id,
                 )
-            except Exception:
-                pass  # Don't fail on cache write errors
+            except Exception as e:
+                logger.debug("Slack cache write failed for %s: %s", cache_path, e)
 
         return HandlerResponse.ok(
             data=content,
@@ -587,7 +588,8 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
             # Try to read the message
             self.read_content(content_hash, context).unwrap()
             return True
-        except Exception:
+        except Exception as e:
+            logger.debug("Slack content existence check failed: %s", e)
             return False
 
     def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
@@ -661,7 +663,8 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
             # Return fixed version for immutable Slack messages
             return IMMUTABLE_VERSION
 
-        except Exception:
+        except Exception as e:
+            logger.debug("Slack version check failed: %s", e)
             return None
 
     def mkdir(

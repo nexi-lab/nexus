@@ -7,6 +7,7 @@ Provides utility functions for:
 - User creation with uniqueness checks
 """
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -17,6 +18,8 @@ from nexus.storage.models import (
     UserModel,
     UserOAuthAccountModel,
 )
+
+logger = logging.getLogger(__name__)
 
 # ==============================================================================
 # ReBAC Group Naming Helpers
@@ -302,8 +305,8 @@ def get_user_zones(rebac_manager: Any, user_id: str) -> list[str]:
                 zid = row[0] if isinstance(row, (tuple, list)) else row["zone_id"]
                 if zid and zid not in zone_ids:
                     zone_ids.append(zid)
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning("Failed to fetch zone IDs for user %s: %s", user_id, e)
     return zone_ids
 
 

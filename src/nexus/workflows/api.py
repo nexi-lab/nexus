@@ -4,7 +4,7 @@ import builtins
 from pathlib import Path
 from typing import Any
 
-from nexus.workflows.engine import WorkflowEngine, get_engine
+from nexus.workflows.engine import WorkflowEngine, get_engine, init_engine
 from nexus.workflows.loader import WorkflowLoader
 from nexus.workflows.types import (
     TriggerType,
@@ -46,9 +46,9 @@ class WorkflowAPI:
 
         Args:
             engine: Optional workflow engine instance. If not provided,
-                   uses the global engine.
+                   uses the injected engine or creates a default one.
         """
-        self.engine = engine or get_engine()
+        self.engine = engine or get_engine() or init_engine()
 
     def load(self, source: str | Path | dict | WorkflowDefinition, enabled: bool = True) -> bool:
         """Load a workflow from a file, dict, or definition.

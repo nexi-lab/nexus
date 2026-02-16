@@ -52,7 +52,7 @@ class ConnectionHelper(Protocol):
 def increment_version_token(
     engine: Engine,
     conn_helper: ConnectionHelper,
-    zone_id: str = "default",
+    zone_id: str = "root",
 ) -> str:
     """Atomically increment and return the version token for a zone.
 

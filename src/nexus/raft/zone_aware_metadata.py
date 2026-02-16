@@ -23,6 +23,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
 from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol, PaginatedResult
+from nexus.core.exceptions import CrossZoneOperationError
 from nexus.raft.zone_manager import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
@@ -293,10 +294,14 @@ class ZoneAwareMetadataStore(FileMetadataProtocol):
         old_resolved = self._resolve(old_path)
         new_resolved = self._resolve(new_path)
         if old_resolved.zone_id != new_resolved.zone_id:
-            raise ValueError(
+            raise CrossZoneOperationError(
                 f"Cross-zone rename not supported: "
                 f"'{old_path}' in zone '{old_resolved.zone_id}', "
-                f"'{new_path}' in zone '{new_resolved.zone_id}'"
+                f"'{new_path}' in zone '{new_resolved.zone_id}'. "
+                f"Cross-zone rename requires federation 2PC (see federation-memo.md §7e).",
+                source_zone=old_resolved.zone_id,
+                target_zone=new_resolved.zone_id,
+                path=old_path,
             )
         old_resolved.store.rename_path(old_resolved.path, new_resolved.path)
 

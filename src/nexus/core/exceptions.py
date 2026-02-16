@@ -404,5 +404,27 @@ class UploadChecksumMismatchError(NexusError):
         super().__init__(msg)
 
 
+class CrossZoneOperationError(NexusError):
+    """Raised when an operation cannot be performed across zones.
+
+    Cross-zone operations (e.g., rename across zones) require federation
+    layer support (2PC) per federation-memo.md §7e. This distinguishes
+    "not yet supported cross-zone op" from generic validation errors.
+    """
+
+    is_expected = True  # User attempted unsupported cross-zone operation
+
+    def __init__(
+        self,
+        message: str,
+        source_zone: str | None = None,
+        target_zone: str | None = None,
+        path: str | None = None,
+    ):
+        self.source_zone = source_zone
+        self.target_zone = target_zone
+        super().__init__(message, path)
+
+
 # Alias for convenience (used in time-travel debugging)
 NotFoundError = NexusFileNotFoundError

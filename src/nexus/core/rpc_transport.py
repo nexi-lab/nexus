@@ -13,9 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 
-# Lazy imports to avoid circular dependency:
-# rpc_transport -> server.protocol -> server.__init__ -> rpc_server -> nexus_fs -> nexus_fs_federation -> rpc_transport
-# Protocol types are imported inside methods that use them.
+# Lazy imports inside methods to avoid circular dependency at import time.
 if TYPE_CHECKING:
     pass
 
@@ -122,9 +120,9 @@ class NexusRPCTransport:
             TransportError: Connection or timeout error
             RPCError: Server returned an error response
         """
-        # Import codec from shared module; protocol types from server
+        # Import codec and protocol types from shared top-level modules
         from nexus.rpc_codec import decode_rpc_message, encode_rpc_message
-        from nexus.server.protocol import RPCErrorCode, RPCRequest, RPCResponse
+        from nexus.rpc_protocol import RPCErrorCode, RPCRequest, RPCResponse
 
         request = RPCRequest(
             method=method,

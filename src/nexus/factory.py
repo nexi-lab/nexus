@@ -810,18 +810,18 @@ def _create_distributed_infra(
         # Initialize lock manager (uses Raft via metadata store)
         if dist.enable_locks:
             from nexus.core.distributed_lock import (
+                LockStoreProtocol,
                 RaftLockManager,
                 set_distributed_lock_manager,
             )
-            from nexus.storage.raft_metadata_store import RaftMetadataStore
 
-            if isinstance(metadata_store, RaftMetadataStore):
+            if isinstance(metadata_store, LockStoreProtocol):
                 lock_manager = RaftLockManager(metadata_store)
                 set_distributed_lock_manager(lock_manager)
                 logger.info("Distributed lock manager initialized (Raft consensus)")
             else:
                 logger.warning(
-                    "Distributed locks require RaftMetadataStore, got %s. "
+                    "Distributed locks require LockStoreProtocol-compatible store, got %s. "
                     "Lock manager will not be initialized.",
                     type(metadata_store).__name__,
                 )

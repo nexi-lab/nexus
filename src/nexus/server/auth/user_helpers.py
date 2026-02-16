@@ -11,7 +11,7 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 # ==============================================================================
@@ -30,6 +30,7 @@ from nexus.storage.models import (
     UserModel,
     UserOAuthAccountModel,
 )
+from nexus.storage.models.permissions import ReBACTupleModel
 
 logger = logging.getLogger(__name__)
 
@@ -149,53 +150,48 @@ def remove_user_from_zone(
     )
 
 
-def get_user_zones(rebac_manager: Any, user_id: str) -> list[str]:
+def get_user_zones(session: Session, user_id: str) -> list[str]:
     """Get list of zone IDs that user belongs to.
 
-    Uses direct DB query on rebac_tuples to find all zones where the user
-    has any relation (owner, admin, member). Matches on the zone_id context
-    column, which is set by add_user_to_zone() for all roles.
+    Queries ReBACTupleModel via ORM to find all zones where the user
+    has any relation (owner, admin, member).
 
     Args:
-        rebac_manager: ReBAC manager instance (must have _connection())
+        session: SQLAlchemy ORM session
         user_id: User ID
 
     Returns:
         List of zone IDs
 
     Example:
-        zones = get_user_zones(rebac_mgr, "user-123")
+        zones = get_user_zones(session, "user-123")
         # Returns: ["acme", "techcorp"]
     """
-    zone_ids: list[str] = []
     try:
-        with rebac_manager._connection() as conn:
-            result = conn.execute(
-                text(
-                    "SELECT DISTINCT zone_id FROM rebac_tuples "
-                    "WHERE subject_type = 'user' AND subject_id = :user_id "
-                    "AND zone_id IS NOT NULL"
-                ),
-                {"user_id": user_id},
+        stmt = (
+            select(ReBACTupleModel.zone_id)
+            .where(
+                ReBACTupleModel.subject_type == "user",
+                ReBACTupleModel.subject_id == user_id,
+                ReBACTupleModel.zone_id.isnot(None),
             )
-            for row in result:
-                zid = row[0] if isinstance(row, (tuple, list)) else row.zone_id
-                if zid and zid not in zone_ids:
-                    zone_ids.append(zid)
+            .distinct()
+        )
+        return [zid for zid in session.scalars(stmt).all() if zid]
     except Exception:
         logger.warning("Failed to fetch zone IDs for user %s", user_id, exc_info=True)
-    return zone_ids
+        return []
 
 
-def user_belongs_to_zone(rebac_manager: Any, user_id: str, zone_id: str) -> bool:
+def user_belongs_to_zone(session: Session, user_id: str, zone_id: str) -> bool:
     """Check if user belongs to zone.
 
-    Checks rebac_tuples for any tuple where the user is the subject and the
-    zone_id context column matches. This covers all roles (owner, admin,
+    Queries ReBACTupleModel via ORM for any tuple where the user is the
+    subject and the zone_id matches. This covers all roles (owner, admin,
     member) since add_user_to_zone() always sets zone_id on the tuple.
 
     Args:
-        rebac_manager: ReBAC manager instance
+        session: SQLAlchemy ORM session
         user_id: User ID
         zone_id: Zone ID
 
@@ -203,17 +199,16 @@ def user_belongs_to_zone(rebac_manager: Any, user_id: str, zone_id: str) -> bool
         True if user belongs to zone
     """
     try:
-        with rebac_manager._connection() as conn:
-            result = conn.execute(
-                text(
-                    "SELECT 1 FROM rebac_tuples "
-                    "WHERE subject_type = 'user' AND subject_id = :user_id "
-                    "AND zone_id = :zone_id "
-                    "LIMIT 1"
-                ),
-                {"user_id": user_id, "zone_id": zone_id},
+        stmt = (
+            select(ReBACTupleModel.tuple_id)
+            .where(
+                ReBACTupleModel.subject_type == "user",
+                ReBACTupleModel.subject_id == user_id,
+                ReBACTupleModel.zone_id == zone_id,
             )
-            return result.fetchone() is not None
+            .limit(1)
+        )
+        return session.scalar(stmt) is not None
     except Exception:
         logger.warning(
             "Failed to check zone membership for user %s in zone %s",
@@ -422,7 +417,7 @@ def validate_user_uniqueness(
 # ==============================================================================
 
 
-def get_user_default_zone(rebac_manager: Any, user_id: str, _session: Session) -> str | None:
+def get_user_default_zone(session: Session, user_id: str) -> str | None:
     """Get user's default zone.
 
     Priority:
@@ -431,15 +426,14 @@ def get_user_default_zone(rebac_manager: Any, user_id: str, _session: Session) -
     3. None if user has no zones
 
     Args:
-        rebac_manager: ReBAC manager instance
+        session: SQLAlchemy ORM session
         user_id: User ID
-        session: Database session (for future session preference lookup)
 
     Returns:
         Zone ID or None if user has no zone memberships
     """
     # Get user's zone memberships
-    zone_ids = get_user_zones(rebac_manager, user_id)
+    zone_ids = get_user_zones(session, user_id)
 
     if not zone_ids:
         return None
@@ -450,10 +444,9 @@ def get_user_default_zone(rebac_manager: Any, user_id: str, _session: Session) -
 
 
 def require_zone_context(
-    rebac_manager: Any,
+    session: Session,
     user_id: str,
     zone_id: str | None,
-    session: Session,
     auto_create: bool = False,
 ) -> str:
     """Require zone context for operation.
@@ -462,10 +455,9 @@ def require_zone_context(
     If no default zone, raise error or create default.
 
     Args:
-        rebac_manager: ReBAC manager instance
+        session: SQLAlchemy ORM session
         user_id: User ID
         zone_id: Optional zone ID from request
-        session: Database session
         auto_create: If True, create default zone if user has none
 
     Returns:
@@ -476,12 +468,12 @@ def require_zone_context(
     """
     if zone_id:
         # Verify user belongs to this zone
-        if not user_belongs_to_zone(rebac_manager, user_id, zone_id):
+        if not user_belongs_to_zone(session, user_id, zone_id):
             raise ValueError(f"User {user_id} does not belong to zone {zone_id}")
         return zone_id
 
     # Get default zone
-    default_zone = get_user_default_zone(rebac_manager, user_id, session)
+    default_zone = get_user_default_zone(session, user_id)
     if default_zone:
         return default_zone
 

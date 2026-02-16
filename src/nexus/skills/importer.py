@@ -375,7 +375,7 @@ class SkillImporter:
         if not context:
             raise ValueError("Context required for personal/zone tier skills")
 
-        zone_id = context.zone_id or "default"
+        zone_id = context.zone_id or "root"
 
         if tier == "personal":
             # Personal: /zone/{tid}/user/{uid}/skill/{skill_name}/

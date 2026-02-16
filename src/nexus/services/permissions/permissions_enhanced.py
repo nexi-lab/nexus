@@ -22,9 +22,6 @@ from typing import TYPE_CHECKING, Any
 # Import Permission and OperationContext from the original module (don't duplicate)
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
-from nexus.core.permissions import OperationContext
-from nexus.services.permissions.enforcer import PermissionEnforcer
-
 if TYPE_CHECKING:
     pass
 
@@ -401,30 +398,3 @@ class AuditStore:
                 )
 
             return results
-
-
-# ============================================================================
-# Enhanced Operation Context with Admin Capabilities (P0-4)
-# ============================================================================
-# DEPRECATED: EnhancedOperationContext is now an alias for OperationContext.
-# OperationContext now includes all features (admin_capabilities, request_id).
-# Use OperationContext directly instead of EnhancedOperationContext.
-# ============================================================================
-
-
-# EnhancedOperationContext is now just an alias for OperationContext
-# This maintains backward compatibility while we migrate code to use OperationContext
-EnhancedOperationContext = OperationContext
-
-
-# ============================================================================
-# Enhanced Permission Enforcer with P0-4 Fix
-# ============================================================================
-# DEPRECATED: EnhancedPermissionEnforcer is now an alias for PermissionEnforcer.
-# PermissionEnforcer now includes all features (scoped bypass, audit logging, etc.).
-# Use PermissionEnforcer directly instead of EnhancedPermissionEnforcer.
-# ============================================================================
-
-# EnhancedPermissionEnforcer is now just an alias for PermissionEnforcer
-# This maintains backward compatibility while we migrate code to use PermissionEnforcer
-EnhancedPermissionEnforcer = PermissionEnforcer

@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 
-from sqlalchemy import BigInteger, DateTime, Index, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, DateTime, Float, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.core.exceptions import ValidationError
@@ -213,3 +213,27 @@ class ConflictLogModel(Base):
             f"<ConflictLogModel(path={self.path}, backend={self.backend_name}, "
             f"strategy={self.strategy}, outcome={self.outcome}, status={self.status})>"
         )
+
+
+class PendingOperationModel(Base):
+    """Offline queue pending operation for proxy replay.
+
+    Replaces raw SQLite DDL in proxy/offline_queue.py with a proper ORM model.
+    """
+
+    __tablename__ = "pending_ops"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    method: Mapped[str] = mapped_column(Text, nullable=False)
+    args_json: Mapped[str] = mapped_column(Text, nullable=False)
+    kwargs_json: Mapped[str] = mapped_column(Text, nullable=False)
+    payload_ref: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[float] = mapped_column(Float, nullable=False)
+    retry_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    max_retries: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    status: Mapped[str] = mapped_column(Text, nullable=False, default="pending")
+    idempotency_key: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    __table_args__ = (Index("idx_pending_ops_status", "status", "id"),)

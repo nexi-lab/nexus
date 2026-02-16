@@ -66,7 +66,7 @@ def _insert_record(session, **overrides: Any) -> str:
         "currency": "credits",
         "status": "settled",
         "application": "gateway",
-        "zone_id": "default",
+        "zone_id": "root",
         "trace_id": None,
         "transfer_id": None,
         "created_at": now,

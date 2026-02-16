@@ -63,7 +63,7 @@ def agent_auth() -> dict[str, Any]:
         "subject_type": "agent",
         "subject_id": "coordinator_e2e",
         "user_id": "alice",
-        "zone_id": "default",
+        "zone_id": "root",
         "is_admin": False,
         "metadata": {"user_id": "alice"},
     }
@@ -77,7 +77,7 @@ def user_auth() -> dict[str, Any]:
         "subject_type": "user",
         "subject_id": "alice",
         "user_id": "alice",
-        "zone_id": "default",
+        "zone_id": "root",
         "is_admin": False,
     }
 

@@ -20,13 +20,11 @@ class MethodSpec:
         rpc_name: Override RPC method name (default: use method name).
         response_key: Extract this key from result dict (e.g., "files", "matches").
         custom_timeout: Fixed read timeout override for this method.
-        deprecated_message: If set, method raises NotImplementedError with this message.
     """
 
     rpc_name: str | None = None
     response_key: str | None = None
     custom_timeout: float | None = None
-    deprecated_message: str | None = None
 
 
 # Registry: method_name -> MethodSpec
@@ -37,7 +35,6 @@ class MethodSpec:
 # Only methods with non-default behavior need entries here:
 #   - response_key: extract a specific key from the result dict
 #   - custom_timeout: override the default read timeout
-#   - deprecated_message: raise NotImplementedError
 #   - rpc_name: use a different RPC method name than the Python method name
 #
 # Methods with complex logic (negative cache, content encoding, streaming,
@@ -51,13 +48,4 @@ METHOD_REGISTRY: dict[str, MethodSpec] = {
     # --- Boolean result extraction ---
     "is_directory": MethodSpec(response_key="is_directory"),
     "is_file": MethodSpec(response_key="is_file"),
-    # --- Deprecated POSIX permissions ---
-    "chmod": MethodSpec(deprecated_message="Use rebac_create() for ReBAC permissions"),
-    "chown": MethodSpec(deprecated_message="Use rebac_create() for ReBAC permissions"),
-    "chgrp": MethodSpec(deprecated_message="Use rebac_create() for ReBAC permissions"),
-    "grant_user": MethodSpec(deprecated_message="Use rebac_create() or share_with_user()"),
-    "grant_group": MethodSpec(deprecated_message="Use rebac_create() or share_with_group()"),
-    "deny_user": MethodSpec(deprecated_message="Use rebac_create() for ReBAC deny tuples"),
-    "revoke_acl": MethodSpec(deprecated_message="Use rebac_delete() to remove tuples"),
-    "get_acl": MethodSpec(deprecated_message="Use rebac_list_tuples() or rebac_expand()"),
 }

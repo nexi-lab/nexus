@@ -242,7 +242,7 @@ def registered_user(db_auth_server: dict[str, Any], admin_client: httpx.Client) 
         "sub": user_id,
         "subject_id": user_id,
         "subject_type": "user",
-        "zone_id": "default",
+        "zone_id": "root",
         "email": email,
         "is_admin": False,
     }

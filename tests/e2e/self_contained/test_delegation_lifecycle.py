@@ -108,19 +108,19 @@ def _register_coordinator(
                 "subject": ("agent", agent_id),
                 "relation": "direct_editor",
                 "object": ("file", "/workspace/proj/main.py"),
-                "zone_id": zone_id or "default",
+                "zone_id": zone_id or "root",
             },
             {
                 "subject": ("agent", agent_id),
                 "relation": "direct_editor",
                 "object": ("file", "/workspace/proj/utils.py"),
-                "zone_id": zone_id or "default",
+                "zone_id": zone_id or "root",
             },
             {
                 "subject": ("agent", agent_id),
                 "relation": "direct_viewer",
                 "object": ("file", "/workspace/docs/readme.md"),
-                "zone_id": zone_id or "default",
+                "zone_id": zone_id or "root",
             },
         ]
     )

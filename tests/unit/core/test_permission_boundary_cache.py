@@ -327,8 +327,8 @@ class TestPermissionBoundaryCache:
         # Set with None zone
         cache.set_boundary(None, "user", "alice", "read", "/file.py", "/")  # type: ignore
 
-        # Should find with "default" zone
-        boundary = cache.get_boundary("default", "user", "alice", "read", "/file.py")
+        # Should find with "root" zone
+        boundary = cache.get_boundary("root", "user", "alice", "read", "/file.py")
         assert boundary == "/"
 
     def test_root_boundary(self):

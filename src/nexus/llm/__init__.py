@@ -6,7 +6,6 @@ Provides a unified interface for multiple LLM providers with:
 - Vision support
 - Token counting
 - Cost tracking
-- Metrics storage in Nexus metadata database
 - Response caching with Nexus CAS
 """
 

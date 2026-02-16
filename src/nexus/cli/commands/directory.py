@@ -74,12 +74,18 @@ def list_files(
                 return
 
             # Create time-travel reader with a session
-            with nx.SessionLocal() as session:
+            record_store = nx._record_store
+            if record_store is None:
+                console.print("[red]Error:[/red] Time-travel requires a record store")
+                nx.close()
+                return
+
+            with record_store.session_factory() as session:
                 time_travel = TimeTravelReader(session, nx.backend)
 
                 # Get directory listing at operation
                 files = time_travel.list_files_at_operation(
-                    path, at_operation, zone_id=nx.zone_id, recursive=recursive
+                    path, at_operation, zone_id=nx._default_context.zone_id, recursive=recursive
                 )
 
             nx.close()

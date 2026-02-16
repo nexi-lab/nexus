@@ -1,6 +1,6 @@
 """WAL-backed offline queue for proxy operations.
 
-Uses aiosqlite in WAL mode for crash-safe persistence.
+Uses SQLAlchemy async ORM with aiosqlite for crash-safe persistence.
 """
 
 from __future__ import annotations
@@ -9,9 +9,18 @@ import json
 import os
 import time
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, cast
 
-import aiosqlite
+from sqlalchemy import Table, delete, event, func, select, update
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+
+from nexus.storage.models._base import Base
+from nexus.storage.models.sync import PendingOperationModel as PO
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,29 +36,8 @@ class QueuedOperation:
     created_at: float
 
 
-_CREATE_TABLE = """\
-CREATE TABLE IF NOT EXISTS pending_ops (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    method TEXT NOT NULL,
-    args_json TEXT NOT NULL,
-    kwargs_json TEXT NOT NULL,
-    payload_ref TEXT,
-    created_at REAL NOT NULL,
-    retry_count INTEGER DEFAULT 0,
-    max_retries INTEGER DEFAULT 10,
-    status TEXT DEFAULT 'pending',
-    idempotency_key TEXT
-)
-"""
-
-_CREATE_INDEX = """\
-CREATE INDEX IF NOT EXISTS idx_pending_ops_status
-ON pending_ops (status, id)
-"""
-
-
 class OfflineQueue:
-    """Persistent offline operation queue backed by SQLite + WAL.
+    """Persistent offline operation queue backed by SQLAlchemy async ORM.
 
     Parameters
     ----------
@@ -62,16 +50,34 @@ class OfflineQueue:
     def __init__(self, db_path: str, max_retry_count: int = 10) -> None:
         self._db_path = os.path.expanduser(db_path)
         self._max_retry_count = max_retry_count
-        self._db: aiosqlite.Connection | None = None
+        self._engine: AsyncEngine | None = None
+        self._session_factory: async_sessionmaker[AsyncSession] | None = None
 
     async def initialize(self) -> None:
         """Open the database, enable WAL mode, and create the schema."""
         os.makedirs(os.path.dirname(self._db_path) or ".", exist_ok=True)
-        self._db = await aiosqlite.connect(self._db_path)
-        await self._db.execute("PRAGMA journal_mode=WAL")
-        await self._db.execute(_CREATE_TABLE)
-        await self._db.execute(_CREATE_INDEX)
-        await self._db.commit()
+
+        url = f"sqlite+aiosqlite:///{self._db_path}"
+        self._engine = create_async_engine(url)
+
+        # Enable WAL mode via connection event listener (driver-agnostic approach)
+        @event.listens_for(self._engine.sync_engine, "connect")
+        def _set_sqlite_wal(dbapi_conn: Any, _connection_record: Any) -> None:
+            cursor = dbapi_conn.cursor()
+            cursor.execute("PRAGMA journal_mode=WAL")
+            cursor.close()
+
+        async with self._engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all, tables=[cast(Table, PO.__table__)])
+
+        self._session_factory = async_sessionmaker(
+            self._engine, class_=AsyncSession, expire_on_commit=False
+        )
+
+    def _get_session_factory(self) -> async_sessionmaker[AsyncSession]:
+        if self._session_factory is None:
+            raise RuntimeError("Database not initialized. Call initialize() first")
+        return self._session_factory
 
     async def enqueue(
         self,
@@ -81,103 +87,97 @@ class OfflineQueue:
         payload_ref: str | None = None,
     ) -> int:
         """Add an operation to the queue.  Returns the row id."""
-        if self._db is None:
-            raise RuntimeError("Database not initialized. Call initialize() first")
-        cursor = await self._db.execute(
-            "INSERT INTO pending_ops (method, args_json, kwargs_json, payload_ref, created_at, max_retries) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
-            (
-                method,
-                json.dumps(args),
-                json.dumps(kwargs or {}),
-                payload_ref,
-                time.time(),
-                self._max_retry_count,
-            ),
-        )
-        await self._db.commit()
-        if cursor.lastrowid is None:
-            raise RuntimeError("Failed to get lastrowid after INSERT")
-        return cursor.lastrowid
+        factory = self._get_session_factory()
+        async with factory() as session:
+            op = PO(
+                method=method,
+                args_json=json.dumps(args),
+                kwargs_json=json.dumps(kwargs or {}),
+                payload_ref=payload_ref,
+                created_at=time.time(),
+                max_retries=self._max_retry_count,
+            )
+            session.add(op)
+            await session.commit()
+            return op.id
 
     async def dequeue_batch(self, limit: int = 50) -> list[QueuedOperation]:
         """Fetch up to *limit* pending operations (FIFO order)."""
-        if self._db is None:
-            raise RuntimeError("Database not initialized. Call initialize() first")
-        cursor = await self._db.execute(
-            "SELECT id, method, args_json, kwargs_json, payload_ref, retry_count, created_at "
-            "FROM pending_ops WHERE status = 'pending' ORDER BY id LIMIT ?",
-            (limit,),
-        )
-        rows = await cursor.fetchall()
-        return [
-            QueuedOperation(
-                id=r[0],
-                method=r[1],
-                args_json=r[2],
-                kwargs_json=r[3],
-                payload_ref=r[4],
-                retry_count=r[5],
-                created_at=r[6],
-            )
-            for r in rows
-        ]
+        factory = self._get_session_factory()
+        async with factory() as session:
+            stmt = select(PO).where(PO.status == "pending").order_by(PO.id).limit(limit)
+            result = await session.execute(stmt)
+            rows = result.scalars().all()
+            return [
+                QueuedOperation(
+                    id=r.id,
+                    method=r.method,
+                    args_json=r.args_json,
+                    kwargs_json=r.kwargs_json,
+                    payload_ref=r.payload_ref,
+                    retry_count=r.retry_count,
+                    created_at=r.created_at,
+                )
+                for r in rows
+            ]
 
     async def mark_done(self, op_id: int) -> None:
         """Mark an operation as successfully replayed."""
-        if self._db is None:
-            raise RuntimeError("Database not initialized. Call initialize() first")
-        await self._db.execute("UPDATE pending_ops SET status = 'done' WHERE id = ?", (op_id,))
-        await self._db.commit()
+        factory = self._get_session_factory()
+        async with factory() as session:
+            await session.execute(update(PO).where(PO.id == op_id).values(status="done"))
+            await session.commit()
 
     async def mark_failed(self, op_id: int) -> None:
         """Increment retry count; dead-letter if max retries exceeded."""
-        if self._db is None:
-            raise RuntimeError("Database not initialized. Call initialize() first")
-        await self._db.execute(
-            "UPDATE pending_ops SET retry_count = retry_count + 1 WHERE id = ?",
-            (op_id,),
-        )
-        await self._db.execute(
-            "UPDATE pending_ops SET status = 'dead_letter' "
-            "WHERE id = ? AND retry_count >= max_retries",
-            (op_id,),
-        )
-        await self._db.commit()
+        factory = self._get_session_factory()
+        async with factory() as session:
+            await session.execute(
+                update(PO).where(PO.id == op_id).values(retry_count=PO.retry_count + 1)
+            )
+            await session.execute(
+                update(PO)
+                .where(PO.id == op_id, PO.retry_count >= PO.max_retries)
+                .values(status="dead_letter")
+            )
+            await session.commit()
 
     async def mark_dead_letter(self, op_id: int) -> None:
         """Explicitly move an operation to the dead-letter status."""
-        if self._db is None:
-            raise RuntimeError("Database not initialized. Call initialize() first")
-        await self._db.execute(
-            "UPDATE pending_ops SET status = 'dead_letter' WHERE id = ?", (op_id,)
-        )
-        await self._db.commit()
+        factory = self._get_session_factory()
+        async with factory() as session:
+            await session.execute(update(PO).where(PO.id == op_id).values(status="dead_letter"))
+            await session.commit()
 
     async def pending_count(self) -> int:
         """Return the number of pending operations."""
-        if self._db is None:
-            raise RuntimeError("Database not initialized. Call initialize() first")
-        cursor = await self._db.execute("SELECT COUNT(*) FROM pending_ops WHERE status = 'pending'")
-        row = await cursor.fetchone()
-        if row is None:
-            raise RuntimeError("COUNT(*) query returned None")
-        return row[0]  # type: ignore[no-any-return]
+        factory = self._get_session_factory()
+        async with factory() as session:
+            result = await session.execute(
+                select(func.count()).select_from(PO).where(PO.status == "pending")
+            )
+            return result.scalar_one()
 
     async def cleanup_completed(self, older_than_seconds: float = 3600) -> int:
         """Delete completed operations older than *older_than_seconds*."""
-        if self._db is None:
-            raise RuntimeError("Database not initialized. Call initialize() first")
+        factory = self._get_session_factory()
         cutoff = time.time() - older_than_seconds
-        cursor = await self._db.execute(
-            "DELETE FROM pending_ops WHERE status = 'done' AND created_at < ?",
-            (cutoff,),
-        )
-        await self._db.commit()
-        return cursor.rowcount
+        async with factory() as session:
+            # Count matching rows first, then delete
+            count_result = await session.execute(
+                select(func.count())
+                .select_from(PO)
+                .where(PO.status == "done", PO.created_at < cutoff)
+            )
+            count: int = count_result.scalar_one()
+            if count > 0:
+                await session.execute(delete(PO).where(PO.status == "done", PO.created_at < cutoff))
+                await session.commit()
+            return count
 
     async def close(self) -> None:
         """Close the database connection."""
-        if self._db is not None:
-            await self._db.close()
-            self._db = None
+        if self._engine is not None:
+            await self._engine.dispose()
+            self._engine = None
+        self._session_factory = None

@@ -265,7 +265,7 @@ class TestDirectPublish:
         event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path=unique_path,
-            zone_id="default",
+            zone_id="root",
         )
 
         # Publish directly to NATS via the bus (schedule on main loop)
@@ -405,7 +405,7 @@ class TestDurableSubscriber:
             event = FileEvent(
                 type=FileEventType.FILE_WRITE,
                 path=unique_path,
-                zone_id="default",
+                zone_id="root",
             )
             future = asyncio.run_coroutine_threadsafe(
                 nexus_fs._event_bus.publish(event),
@@ -538,7 +538,7 @@ class TestDeduplication:
         event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path=f"/e2e-nats-test/dedup-{dedup_id}.txt",
-            zone_id="default",
+            zone_id="root",
             event_id=dedup_id,
         )
 

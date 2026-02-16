@@ -414,7 +414,7 @@ def create_nexus_services(
 
     permission_enforcer = PermissionEnforcer(
         metadata_store=metadata_store,
-        rebac_manager=rebac_manager,  # type: ignore[arg-type]
+        rebac_manager=rebac_manager,
         allow_admin_bypass=perm.allow_admin_bypass,
         allow_system_bypass=True,
         audit_store=audit_store,
@@ -455,7 +455,7 @@ def create_nexus_services(
     # --- Mount Manager ---
     from nexus.services.mount_manager import MountManager
 
-    mount_manager = MountManager(session_factory)
+    mount_manager = MountManager(record_store)
 
     # --- Workspace Manager ---
     from nexus.services.workspace_manager import WorkspaceManager
@@ -585,8 +585,8 @@ def create_nexus_services(
     try:
         from nexus.search.zoekt_client import notify_zoekt_sync_complete, notify_zoekt_write
 
-        if hasattr(backend, "_on_write_callback") and backend._on_write_callback is None:
-            backend._on_write_callback = notify_zoekt_write
+        if hasattr(backend, "on_write_callback") and backend.on_write_callback is None:
+            backend.on_write_callback = notify_zoekt_write
         if hasattr(backend, "on_sync_callback") and backend.on_sync_callback is None:
             backend.on_sync_callback = notify_zoekt_sync_complete
     except ImportError:
@@ -771,16 +771,14 @@ def create_nexus_services(
         event_bus=event_bus,
         lock_manager=lock_manager,
         workflow_engine=workflow_engine,
-        server_extras={
-            "observability_subsystem": observability_subsystem,
-            "chunked_upload_service": chunked_upload_service,
-            "manifest_resolver": manifest_resolver,
-            "manifest_metrics": manifest_metrics,
-            "rebac_circuit_breaker": rebac_circuit_breaker,
-            "tool_namespace_middleware": tool_namespace_middleware,
-            "resiliency_manager": resiliency_manager,
-            "delivery_worker": delivery_worker,
-        },
+        observability_subsystem=observability_subsystem,
+        chunked_upload_service=chunked_upload_service,
+        manifest_resolver=manifest_resolver,
+        manifest_metrics=manifest_metrics,
+        rebac_circuit_breaker=rebac_circuit_breaker,
+        tool_namespace_middleware=tool_namespace_middleware,
+        resiliency_manager=resiliency_manager,
+        delivery_worker=delivery_worker,
         agent_registry=agent_registry,
         namespace_manager=namespace_manager,
         api_key_creator=api_key_creator,
@@ -879,6 +877,7 @@ def _create_workflow_engine(record_store: Any, glob_match_fn: Any = None) -> Any
         logger.warning("Workflows require record_store, skipping")
         return None
     try:
+        from nexus.raft.zone_manager import ROOT_ZONE_ID
         from nexus.storage.models import WorkflowExecutionModel, WorkflowModel
         from nexus.workflows.engine import WorkflowEngine
         from nexus.workflows.protocol import WorkflowServices
@@ -888,7 +887,7 @@ def _create_workflow_engine(record_store: Any, glob_match_fn: Any = None) -> Any
             session_factory=record_store.async_session_factory,
             workflow_model=WorkflowModel,
             execution_model=WorkflowExecutionModel,
-            zone_id="default",
+            zone_id=ROOT_ZONE_ID,
         )
         services = WorkflowServices(glob_match=glob_match_fn)
         return WorkflowEngine(workflow_store=workflow_store, services=services)
@@ -1122,13 +1121,17 @@ def create_nexus_fs(
 
         services = _KernelServices(router=router)
     else:
-        # Use provided services but ensure router is set
+        # Use provided services but ensure router is set (frozen — use replace)
         if services.router is None:
-            services.router = router
+            from dataclasses import replace as _dc_replace
 
-    # Inject workflow_engine override if provided directly
+            services = _dc_replace(services, router=router)
+
+    # Inject workflow_engine override if provided directly (frozen — use replace)
     if workflow_engine is not None:
-        services.workflow_engine = workflow_engine
+        from dataclasses import replace as _dc_replace
+
+        services = _dc_replace(services, workflow_engine=workflow_engine)
 
     nx = NexusFS(
         backend=backend,
@@ -1144,11 +1147,6 @@ def create_nexus_fs(
         parsing=parsing,
         services=services,
     )
-
-    # Wire circuit breaker into ReBACService (Issue #726)
-    cb = services.server_extras.get("rebac_circuit_breaker")
-    if cb and hasattr(nx, "rebac_service"):
-        nx.rebac_service._circuit_breaker = cb
 
     # Post-construction I/O (mount restoration, etc.)
     _post_init(nx)

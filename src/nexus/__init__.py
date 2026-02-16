@@ -292,7 +292,8 @@ def connect(
     metadata_store: FileMetadataProtocol
     if cfg.mode == "federation":
         try:
-            from nexus.raft import ZoneAwareMetadataStore
+            from nexus.constants import DEFAULT_GRPC_BIND_ADDR
+            from nexus.raft import FederatedMetadataProxy
             from nexus.raft.zone_manager import ZoneManager
         except ImportError as err:
             raise ImportError(
@@ -301,7 +302,7 @@ def connect(
             ) from err
 
         node_id = int(os.environ.get("NEXUS_NODE_ID", "1"))
-        bind_addr = os.environ.get("NEXUS_BIND_ADDR", "0.0.0.0:2126")
+        bind_addr = os.environ.get("NEXUS_BIND_ADDR", DEFAULT_GRPC_BIND_ADDR)
         zones_dir = os.environ.get("NEXUS_DATA_DIR", str(Path(metadata_path).parent / "zones"))
         zone_mgr = ZoneManager(node_id=node_id, base_path=zones_dir, bind_addr=bind_addr)
 
@@ -324,7 +325,7 @@ def connect(
                     mounts[path.strip()] = zone_id.strip()
             zone_mgr.bootstrap_static(zones=zones, peers=peers, mounts=mounts)
 
-        metadata_store = ZoneAwareMetadataStore.from_zone_manager(zone_mgr)
+        metadata_store = FederatedMetadataProxy.from_zone_manager(zone_mgr)
     else:
         # standalone: single-node embedded Raft (no peers)
         metadata_store = RaftMetadataStore.embedded(metadata_path)

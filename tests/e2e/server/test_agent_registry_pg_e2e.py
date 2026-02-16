@@ -180,9 +180,7 @@ class TestAgentRegistryPostgreSQL:
 
     def test_register_and_get(self, pg_registry):
         """Register an agent and retrieve it from PostgreSQL."""
-        record = pg_registry.register(
-            "e2e-agent-1", "alice", zone_id="default", name="E2E Test Agent"
-        )
+        record = pg_registry.register("e2e-agent-1", "alice", zone_id="root", name="E2E Test Agent")
         assert record.agent_id == "e2e-agent-1"
         assert record.owner_id == "alice"
         assert record.state is AgentState.UNKNOWN
@@ -196,7 +194,7 @@ class TestAgentRegistryPostgreSQL:
     def test_full_lifecycle_postgres(self, pg_registry):
         """Full state machine lifecycle against PostgreSQL."""
         # Register
-        r = pg_registry.register("e2e-lifecycle-1", "alice", zone_id="default")
+        r = pg_registry.register("e2e-lifecycle-1", "alice", zone_id="root")
         assert r.state is AgentState.UNKNOWN
         assert r.generation == 0
 
@@ -634,7 +632,7 @@ class TestNamespaceE2E:
                 subject=("user", "e2e-ns-user"),
                 relation="direct_viewer",
                 object=("file", "/workspace/e2e-project/data.csv"),
-                zone_id="default",
+                zone_id="root",
             )
             tuple_ids.append(result1.tuple_id)
 
@@ -659,7 +657,7 @@ class TestNamespaceE2E:
                 subject=("user", "e2e-ns-user"),
                 relation="direct_viewer",
                 object=("file", "/workspace/e2e-project-2/readme.md"),
-                zone_id="default",
+                zone_id="root",
             )
             tuple_ids.append(result2.tuple_id)
             ns.invalidate(("user", "e2e-ns-user"))
@@ -949,7 +947,7 @@ class TestRPCEndpoints:
 
         base_url = nexus_server_pg["base_url"]
 
-        # Register 2 agents (they go to "default" zone)
+        # Register 2 agents (they go to "root" zone)
         self._rpc_call(
             base_url,
             api_key,
@@ -975,7 +973,7 @@ class TestRPCEndpoints:
             api_key,
             "agent_list_by_zone",
             {
-                "zone_id": "default",
+                "zone_id": "root",
             },
         )
         assert result.get("error") is None, f"list error: {result.get('error')}"
@@ -1106,7 +1104,7 @@ class TestDualWriteBridge:
             json={
                 "jsonrpc": "2.0",
                 "method": "agent_list_by_zone",
-                "params": {"zone_id": "default"},
+                "params": {"zone_id": "root"},
                 "id": 2,
             },
             timeout=10.0,
@@ -1165,7 +1163,7 @@ class TestDualWriteBridge:
             json={
                 "jsonrpc": "2.0",
                 "method": "agent_list_by_zone",
-                "params": {"zone_id": "default"},
+                "params": {"zone_id": "root"},
                 "id": 3,
             },
             timeout=10.0,

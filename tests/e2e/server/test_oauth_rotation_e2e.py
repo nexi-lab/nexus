@@ -294,7 +294,7 @@ class TestOAuthRotationE2E:
                 credential_id=model.credential_id,
                 refresh_token_hash=_hash_token("1//victim_refresh"),
                 rotation_counter=0,
-                zone_id="default",
+                zone_id="root",
                 rotated_at=datetime.now(UTC),
             )
             session.add(history_entry)
@@ -358,14 +358,14 @@ def fastapi_e2e(monkeypatch):
         actor_id="alice@test.com",
         provider="google",
         credential_id="cred-001",
-        zone_id="default",
+        zone_id="root",
     )
     audit_logger.log_event(
         event_type="token_rotated",
         actor_id="alice@test.com",
         provider="google",
         credential_id="cred-001",
-        zone_id="default",
+        zone_id="root",
         details={"rotation_counter": 1},
     )
 
@@ -489,7 +489,7 @@ class TestSecretsAuditRestE2E:
                 result.is_admin = False
                 result.subject_type = "user"
                 result.subject_id = "regular-user"
-                result.zone_id = "default"
+                result.zone_id = "root"
                 result.inherit_permissions = True
                 result.metadata = {}
                 return result

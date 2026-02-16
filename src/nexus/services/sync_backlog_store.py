@@ -54,7 +54,7 @@ class SyncBacklogStore(SyncStoreBase):
         self,
         path: str,
         backend_name: str,
-        zone_id: str = "default",
+        zone_id: str = "root",
         operation_type: str = "write",
         content_hash: str | None = None,
         new_path: str | None = None,
@@ -152,7 +152,7 @@ class SyncBacklogStore(SyncStoreBase):
     def fetch_pending(
         self,
         backend_name: str,
-        zone_id: str = "default",
+        zone_id: str = "root",
         limit: int = 100,
     ) -> list[SyncBacklogEntry]:
         """Fetch pending entries for a backend, FIFO ordered.

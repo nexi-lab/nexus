@@ -155,7 +155,7 @@ class TestPersistentNamespaceViewsMigration:
                     "id": str(uuid.uuid4()),
                     "stype": "user",
                     "sid": "user-99",
-                    "zid": "default",
+                    "zid": "root",
                     "mpj": "[]",
                     "gh": "xyz",
                     "rb": 0,
@@ -173,7 +173,7 @@ class TestPersistentNamespaceViewsMigration:
         )
 
     def test_zone_id_defaults_to_default(self, alembic_runner, alembic_engine):
-        """The zone_id column should default to 'default' via server_default."""
+        """The zone_id column should default to 'root' via server_default."""
         alembic_runner.migrate_up_to(self.TARGET_REVISION)
 
         with alembic_engine.connect() as conn:
@@ -203,4 +203,4 @@ class TestPersistentNamespaceViewsMigration:
             ).fetchone()
 
             assert row is not None
-            assert row[0] == "default", f"Expected zone_id default 'default', got '{row[0]}'"
+            assert row[0] == "root", f"Expected zone_id default 'root', got '{row[0]}'"

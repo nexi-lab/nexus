@@ -14,8 +14,6 @@ from __future__ import annotations
 
 import logging
 
-from nexus.backends.backend import Backend
-
 logger = logging.getLogger(__name__)
 
 
@@ -48,7 +46,9 @@ class OAuthConnectorMixin:
         self.user_email = user_email
         self.provider = provider
 
-        resolved_db = Backend.resolve_database_url(token_manager_db)
+        from nexus.backends.connector_utils import resolve_database_url
+
+        resolved_db = resolve_database_url(token_manager_db)
         if resolved_db.startswith(("postgresql://", "sqlite://", "mysql://")):
             self.token_manager = TokenManager(db_url=resolved_db)
         else:

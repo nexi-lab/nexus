@@ -361,7 +361,7 @@ class NexusFUSEOperations(Operations):
 
         This queues an event for async dispatch without blocking the FUSE operation.
         Events are delivered to:
-        - GlobalEventBus (Redis Pub/Sub for distributed cache invalidation)
+        - RedisEventBus (Redis Pub/Sub for distributed cache invalidation)
         - SubscriptionManager (webhook delivery)
         - TriggerManager (workflow triggers)
 

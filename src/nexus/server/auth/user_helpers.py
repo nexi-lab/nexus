@@ -32,6 +32,7 @@ from nexus.storage.models import (
     UserModel,
     UserOAuthAccountModel,
 )
+from nexus.storage.models.permissions import ReBACTupleModel
 
 logger = logging.getLogger(__name__)
 
@@ -233,7 +234,7 @@ def validate_user_uniqueness(
 # ==============================================================================
 
 
-def get_user_default_zone(rebac_manager: Any, user_id: str, _session: Session) -> str | None:
+def get_user_default_zone(session: Session, user_id: str) -> str | None:
     """Get user's default zone.
 
     Priority:
@@ -242,15 +243,14 @@ def get_user_default_zone(rebac_manager: Any, user_id: str, _session: Session) -
     3. None if user has no zones
 
     Args:
-        rebac_manager: ReBAC manager instance
+        session: SQLAlchemy ORM session
         user_id: User ID
-        session: Database session (for future session preference lookup)
 
     Returns:
         Zone ID or None if user has no zone memberships
     """
     # Get user's zone memberships
-    zone_ids = get_user_zones(rebac_manager, user_id)
+    zone_ids = get_user_zones(session, user_id)
 
     if not zone_ids:
         return None
@@ -261,10 +261,9 @@ def get_user_default_zone(rebac_manager: Any, user_id: str, _session: Session) -
 
 
 def require_zone_context(
-    rebac_manager: Any,
+    session: Session,
     user_id: str,
     zone_id: str | None,
-    session: Session,
     auto_create: bool = False,
 ) -> str:
     """Require zone context for operation.
@@ -273,10 +272,9 @@ def require_zone_context(
     If no default zone, raise error or create default.
 
     Args:
-        rebac_manager: ReBAC manager instance
+        session: SQLAlchemy ORM session
         user_id: User ID
         zone_id: Optional zone ID from request
-        session: Database session
         auto_create: If True, create default zone if user has none
 
     Returns:
@@ -287,12 +285,12 @@ def require_zone_context(
     """
     if zone_id:
         # Verify user belongs to this zone
-        if not user_belongs_to_zone(rebac_manager, user_id, zone_id):
+        if not user_belongs_to_zone(session, user_id, zone_id):
             raise ValueError(f"User {user_id} does not belong to zone {zone_id}")
         return zone_id
 
     # Get default zone
-    default_zone = get_user_default_zone(rebac_manager, user_id, session)
+    default_zone = get_user_default_zone(session, user_id)
     if default_zone:
         return default_zone
 

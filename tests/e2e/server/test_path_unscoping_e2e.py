@@ -125,14 +125,14 @@ class TestZoneScopedPathUnscopingE2E:
         # Write files using internal zone-scoped paths (as provision_user does)
         self._write_zone_scoped_file(
             nexus_fs_local,
-            "default",
+            "root",
             "alice",
             "workspace/hello.txt",
             b"Hello!",
         )
         self._write_zone_scoped_file(
             nexus_fs_local,
-            "default",
+            "root",
             "alice",
             "workspace/data.csv",
             b"a,b,c",
@@ -145,7 +145,7 @@ class TestZoneScopedPathUnscopingE2E:
         # Extract paths
         paths = [f["path"] if isinstance(f, dict) else f for f in files]
 
-        # THE BUG: paths should NOT contain /zone/default/user:alice/...
+        # THE BUG: paths should NOT contain /zone/root/user:alice/...
         for p in paths:
             _assert_no_internal_prefix(p, "list result")
 
@@ -182,14 +182,14 @@ class TestZoneScopedPathUnscopingE2E:
         """glob() strips internal prefixes from zone-scoped matches."""
         self._write_zone_scoped_file(
             nexus_fs_local,
-            "default",
+            "root",
             "alice",
             "workspace/app.py",
             b"import os",
         )
         self._write_zone_scoped_file(
             nexus_fs_local,
-            "default",
+            "root",
             "alice",
             "workspace/test_app.py",
             b"def test(): pass",
@@ -206,7 +206,7 @@ class TestZoneScopedPathUnscopingE2E:
         """grep() strips internal prefixes from zone-scoped results."""
         self._write_zone_scoped_file(
             nexus_fs_local,
-            "default",
+            "root",
             "alice",
             "workspace/search_target.py",
             b"import os\nimport sys",

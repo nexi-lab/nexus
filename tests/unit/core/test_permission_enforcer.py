@@ -190,7 +190,7 @@ class TestPermissionEnforcer:
         ctx = OperationContext(user="alice", groups=["developers"])
 
         enforcer.check("/file.txt", Permission.READ, ctx)
-        assert rebac.last_zone_id == "default"
+        assert rebac.last_zone_id == "root"
 
     def test_filter_list_admin_sees_all(self):
         """Test that admins see all files in filter_list."""

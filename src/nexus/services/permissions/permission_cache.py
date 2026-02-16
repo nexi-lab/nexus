@@ -20,9 +20,9 @@ from typing import TYPE_CHECKING, Any
 from cachetools import TTLCache
 
 if TYPE_CHECKING:
+    from nexus.rebac.manager import ReBACManager
     from nexus.services.permissions.hotspot_detector import HotspotDetector
     from nexus.services.permissions.permission_boundary_cache import PermissionBoundaryCache
-    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +36,7 @@ class PermissionCacheCoordinator:
 
     def __init__(
         self,
-        rebac_manager: EnhancedReBACManager | None = None,
+        rebac_manager: ReBACManager | None = None,
         *,
         boundary_cache: PermissionBoundaryCache | None = None,
         enable_boundary_cache: bool = True,

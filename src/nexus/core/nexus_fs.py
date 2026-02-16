@@ -378,6 +378,7 @@ class NexusFS(  # type: ignore[misc]
                 rebac_manager=self._rebac_manager,
                 enforce_permissions=self._enforce_permissions,
                 enable_audit_logging=True,
+                circuit_breaker=self._services.rebac_circuit_breaker,
             )
 
         # MountService: Dynamic backend mounting operations
@@ -457,13 +458,20 @@ class NexusFS(  # type: ignore[misc]
 
     @property
     def _service_extras(self) -> dict[str, Any]:
-        """Server layer reads extras via this dict interface."""
-        return {k: v for k, v in self._services.server_extras.items() if v is not None}
-
-    @_service_extras.setter
-    def _service_extras(self, value: dict[str, Any]) -> None:
-        """Server layer sets extras via dict assignment."""
-        self._services.server_extras.update(value)
+        """Server layer reads typed service fields as a dict interface."""
+        _fields = (
+            "observability_subsystem",
+            "chunked_upload_service",
+            "manifest_resolver",
+            "manifest_metrics",
+            "rebac_circuit_breaker",
+            "tool_namespace_middleware",
+            "resiliency_manager",
+            "delivery_worker",
+        )
+        return {
+            k: getattr(self._services, k) for k in _fields if getattr(self._services, k) is not None
+        }
 
     @property
     def read_set_cache(self) -> Any | None:

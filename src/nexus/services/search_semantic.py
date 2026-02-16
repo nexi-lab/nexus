@@ -153,12 +153,16 @@ class SemanticSearchMixin:
 
             _file_reader = _NexusFSFileReader(nx) if nx is not None else None
 
+            _sync_sf = (
+                self._record_store.session_factory if self._record_store is not None else None
+            )
             self._semantic_search = SemanticSearch(
                 nx=nx,
                 embedding_provider=emb_provider,
                 chunk_size=chunk_size,
                 chunk_strategy=chunk_strat,
                 engine=record_store_engine,
+                session_factory=_sync_sf,
                 file_reader=_file_reader,
             )
             self._semantic_search.initialize()
@@ -169,12 +173,16 @@ class SemanticSearchMixin:
 
             _file_reader = _NexusFSFileReader(nx) if nx is not None else None
 
+            _sync_sf = (
+                self._record_store.session_factory if self._record_store is not None else None
+            )
             self._semantic_search = SemanticSearch(
                 nx=nx,
                 embedding_provider=emb_provider,
                 chunk_size=chunk_size,
                 chunk_strategy=chunk_strat,
                 engine=record_store_engine,
+                session_factory=_sync_sf,
                 file_reader=_file_reader,
             )
             self._semantic_search.initialize()

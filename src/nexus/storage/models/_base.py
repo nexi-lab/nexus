@@ -2,7 +2,7 @@
 
 Issue #1246 Phase 4: Extracted from monolithic models.py.
 Issue #1286: Added mixins (TimestampMixin, ZoneIsolationMixin, ResourceConfigMixin),
-             uuid_pk() helper, and lru_cache for _get_uuid_server_default.
+             uuid_pk() helper, and _get_uuid_server_default.
 """
 
 from __future__ import annotations
@@ -10,46 +10,32 @@ from __future__ import annotations
 import os
 import uuid
 from datetime import UTC, datetime
-from functools import lru_cache
 
 from sqlalchemy import DateTime, String, Text, TextClause, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 def _generate_uuid() -> str:
-    """Generate a UUID string.
+    """Generate a UUID string (UUIDv4).
 
-    Returns UUIDv4 for maximum compatibility.
-    PostgreSQL 18+ will use native uuidv7() via server_default for better index performance.
+    Used as Python-side default for UUID primary keys.
+    PostgreSQL uses gen_random_uuid() via server_default.
     """
     return str(uuid.uuid4())
 
 
-@lru_cache(maxsize=1)
 def _get_uuid_server_default() -> TextClause | None:
     """Get PostgreSQL server_default for UUID generation.
 
-    Returns uuidv7()::text for PostgreSQL 18+ (timestamp-ordered UUIDs for better B-tree locality).
-    Falls back to gen_random_uuid()::text for PostgreSQL < 18.
-    Returns None for SQLite (uses Python default).
+    Returns gen_random_uuid()::text for PostgreSQL (available on PG 13+).
+    Returns None for SQLite (uses Python default via _generate_uuid).
 
-    Result is cached with lru_cache(maxsize=1) since the DB dialect doesn't change at runtime.
+    Only checks the database URL string — no engine creation or DB probing at import time.
     """
     db_url = os.environ.get("NEXUS_DATABASE_URL", "")
-    if not db_url.startswith(("postgres", "postgresql")):
-        return None
-
-    try:
-        from sqlalchemy import create_engine
-        from sqlalchemy import text as sa_text
-
-        engine = create_engine(db_url)
-        with engine.connect() as conn:
-            conn.execute(sa_text("SELECT uuidv7()"))
-        engine.dispose()
-        return text("uuidv7()::text")
-    except Exception:
+    if db_url.startswith(("postgres", "postgresql")):
         return text("gen_random_uuid()::text")
+    return None
 
 
 class Base(DeclarativeBase):

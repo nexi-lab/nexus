@@ -78,7 +78,7 @@ class GovernanceEnforcedPayment:
         Pre-check: governance constraint check (~1ms).
         Post-analysis: fire-and-forget anomaly detection.
         """
-        zone_id = request.metadata.get("zone_id", "default") if request.metadata else "default"
+        zone_id = request.metadata.get("zone_id", "root") if request.metadata else "root"
 
         # 1. Pre-check: governance constraints
         from nexus.services.governance.models import ConstraintType

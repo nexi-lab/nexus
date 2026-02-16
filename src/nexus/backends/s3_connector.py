@@ -141,9 +141,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
         access_key_id: str | None = None,
         secret_access_key: str | None = None,
         session_token: str | None = None,
-        # Database session for caching support (deprecated, use session_factory)
-        db_session: "Session | None" = None,
-        # Session factory for caching support (preferred)
+        # Session factory for caching support
         session_factory: "type[Session] | None" = None,
     ):
         """
@@ -157,9 +155,8 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
             access_key_id: AWS access key (alternative to credentials_path)
             secret_access_key: AWS secret key (alternative to credentials_path)
             session_token: AWS session token (for temporary credentials)
-            db_session: Optional SQLAlchemy session for caching (deprecated)
             session_factory: Optional session factory (e.g., metadata_store.session_factory)
-                           for caching support. Preferred over db_session.
+                           for caching support.
         """
         try:
             # Configure retry behavior and connection pool for concurrent operations.
@@ -247,9 +244,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
             )
 
             # Store session info for caching support (CacheConnectorMixin)
-            # Prefer session_factory (creates fresh sessions) over db_session
             self.session_factory = session_factory
-            self.db_session = db_session  # Legacy support
 
         except Exception as e:
             if isinstance(e, BackendError):
@@ -1007,7 +1002,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
         """
         Read content from S3 with caching support.
 
-        When caching is enabled (db_session provided):
+        When caching is enabled (session_factory provided):
         1. Check cache for non-stale entry with matching version
         2. If cache hit, return cached content
         3. If cache miss, read from S3 and cache result

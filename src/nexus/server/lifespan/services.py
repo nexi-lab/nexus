@@ -182,7 +182,7 @@ def _startup_key_service(app: FastAPI) -> None:
             # Ensure agent_keys table exists
             _nx_engine = getattr(app.state.nexus_fs, "_sql_engine", None)
             if _nx_engine is not None:
-                AgentKeyModel.__table__.create(_nx_engine, checkfirst=True)  # type: ignore[attr-defined]
+                AgentKeyModel.__table__.create(_nx_engine, checkfirst=True)
 
             # Reuse OAuthCrypto for Fernet encryption of private keys
             _db_url = app.state.database_url or "sqlite:///nexus.db"
@@ -190,7 +190,7 @@ def _startup_key_service(app: FastAPI) -> None:
             _identity_crypto = IdentityCrypto(oauth_crypto=_identity_oauth_crypto)
 
             app.state.key_service = KeyService(
-                session_factory=app.state.nexus_fs.SessionLocal,
+                record_store=app.state.nexus_fs._record_store,
                 crypto=_identity_crypto,
             )
             # Inject into NexusFS for register_agent integration

@@ -45,6 +45,7 @@ from nexus.services.protocols.hook_engine import (
     HookSpec,
 )
 from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol, NamespaceMount
+from nexus.services.protocols.operation_log import OperationLogProtocol
 from nexus.services.protocols.rebac import ReBACBrickProtocol
 from nexus.services.protocols.scheduler import AgentRequest, SchedulerProtocol
 from nexus.services.protocols.search import SearchBrickProtocol
@@ -61,6 +62,7 @@ __all__ = [
     "HookSpec",
     "NamespaceManagerProtocol",
     "NamespaceMount",
+    "OperationLogProtocol",
     "POST_COPY",
     "POST_DELETE",
     "POST_MKDIR",

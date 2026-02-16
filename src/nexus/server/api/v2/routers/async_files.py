@@ -168,7 +168,7 @@ def create_async_files_router(
             return OperationContext(
                 user="anonymous",
                 groups=[],
-                zone_id="default",
+                zone_id="root",
             )
         return get_operation_context(auth_result)
 

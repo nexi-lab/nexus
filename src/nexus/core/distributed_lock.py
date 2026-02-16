@@ -9,7 +9,7 @@ Architecture:
 - RaftLockManager: Raft consensus-based locks (SSOT for strong consistency)
 
 Lock Implementation:
-- Uses Raft consensus via RaftMetadataStore for strong consistency
+- Uses Raft consensus via LockStoreProtocol (e.g., RaftMetadataStore) for strong consistency
 - Lock key: path (resource to lock)
 - Lock value: holder_id (UUID) for ownership verification
 - TTL-based auto-expiry prevents deadlocks from crashed clients
@@ -26,12 +26,54 @@ import logging
 import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
-
-if TYPE_CHECKING:
-    from nexus.storage.raft_metadata_store import RaftMetadataStore
+from typing import Any, Literal, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
+
+
+@runtime_checkable
+class LockStoreProtocol(Protocol):
+    """Protocol for lock-capable metadata stores (e.g., RaftMetadataStore).
+
+    Captures the interface that RaftLockManager needs, decoupling
+    the kernel lock manager from the concrete storage driver
+    (KERNEL-ARCHITECTURE.md §1).
+    """
+
+    def acquire_lock(
+        self,
+        lock_key: str,
+        holder_id: str,
+        *,
+        max_holders: int = 1,
+        ttl_secs: int = 30,
+    ) -> bool:
+        """Atomically acquire a lock."""
+        ...
+
+    def release_lock(self, lock_key: str, holder_id: str) -> bool:
+        """Release a lock held by holder_id."""
+        ...
+
+    def extend_lock(self, lock_key: str, holder_id: str, ttl_secs: int) -> bool:
+        """Extend a lock's TTL."""
+        ...
+
+    def get_lock_info(self, lock_key: str) -> dict[str, Any] | None:
+        """Get information about a lock."""
+        ...
+
+    def list_locks(self, *, prefix: str = "", limit: int = 100) -> list[dict[str, Any]]:
+        """List active locks matching prefix."""
+        ...
+
+    def force_release_lock(self, lock_key: str) -> bool:
+        """Force-release all holders of a lock."""
+        ...
+
+    def get(self, key: str) -> Any:
+        """Get a value by key (used for health checks)."""
+        ...
 
 
 # =============================================================================
@@ -316,8 +358,9 @@ def _next_fence_token() -> int:
 class RaftLockManager(LockManagerBase):
     """Raft-based distributed locking with strong consistency.
 
-    Uses Raft consensus via RaftMetadataStore for CP (strong consistency) locks.
-    This is the SSOT for all distributed locks in Nexus.
+    Uses any LockStoreProtocol-compatible store (e.g., RaftMetadataStore)
+    for CP (strong consistency) locks. This is the SSOT for all
+    distributed locks in Nexus.
 
     Features:
     - Strong consistency via Raft consensus
@@ -330,7 +373,7 @@ class RaftLockManager(LockManagerBase):
     Example:
         >>> from nexus.storage.raft_metadata_store import RaftMetadataStore
         >>> store = RaftMetadataStore.embedded("/var/lib/nexus/metadata")
-        >>> manager = RaftLockManager(store)
+        >>> manager = RaftLockManager(store)  # RaftMetadataStore satisfies LockStoreProtocol
         >>> lock_id = await manager.acquire("default", "/file.txt", timeout=5.0)
         >>> if lock_id:
         ...     try:
@@ -345,11 +388,11 @@ class RaftLockManager(LockManagerBase):
     RETRY_MAX_INTERVAL = 1.0  # Cap at 1 second
     RETRY_MULTIPLIER = 2.0  # Double each retry
 
-    def __init__(self, raft_store: RaftMetadataStore):
+    def __init__(self, raft_store: LockStoreProtocol):
         """Initialize RaftLockManager.
 
         Args:
-            raft_store: RaftMetadataStore instance for lock storage
+            raft_store: LockStoreProtocol provider (e.g., RaftMetadataStore)
         """
         self._store = raft_store
 
@@ -607,13 +650,13 @@ class RaftLockManager(LockManagerBase):
 
 
 def create_lock_manager(
-    raft_store: RaftMetadataStore | None = None,
+    raft_store: LockStoreProtocol | None = None,
     **kwargs: Any,  # noqa: ARG001 - Reserved for future use
 ) -> LockManagerBase:
     """Factory function to create a lock manager instance.
 
     Args:
-        raft_store: RaftMetadataStore for lock storage
+        raft_store: LockStoreProtocol provider for lock storage
         **kwargs: Reserved for future use
 
     Returns:

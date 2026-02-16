@@ -343,12 +343,12 @@ class TestHeartbeatPostgreSQL:
 
         # Heartbeat should write to buffer
         pg_registry.heartbeat("e2e-heartbeat-1")
-        assert "e2e-heartbeat-1" in pg_registry._heartbeat_buffer
+        assert "e2e-heartbeat-1" in pg_registry._heartbeat_buffer._buffer
 
         # Flush should persist to PostgreSQL
         flushed = pg_registry.flush_heartbeats()
         assert flushed >= 1
-        assert len(pg_registry._heartbeat_buffer) == 0
+        assert pg_registry._heartbeat_buffer.stats()["buffer_size"] == 0
 
         # Verify persisted in PostgreSQL
         record = pg_registry.get("e2e-heartbeat-1")

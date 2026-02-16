@@ -120,6 +120,26 @@ jobs:
           find src -name '*.py' -exec wc -l {} \; | sort -rn | head -10 >> $GITHUB_STEP_SUMMARY
           echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
 
+  brick-imports-check:
+    name: Brick Zero-Core-Imports Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Check brick imports
+        run: |
+          python .pre-commit-hooks/check_brick_imports.py
+
+      - name: Report violations
+        if: failure()
+        run: |
+          echo "::error::Bricks must not import from nexus.core or nexus.services internals. See NEXUS-LEGO-ARCHITECTURE.md §1.2."
+
   type-ignore-baseline:
     name: Track Type Ignore Baseline
     runs-on: ubuntu-latest

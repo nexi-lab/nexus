@@ -114,7 +114,7 @@ class RecallStore:
         """
         session = self._session_factory()
         try:
-            from nexus.core.memory_router import MemoryViewRouter
+            from nexus.services.memory.memory_router import MemoryViewRouter
 
             router = MemoryViewRouter(session)
             memories = router.query_memories(
@@ -144,7 +144,7 @@ class RecallStore:
         """
         session = self._session_factory()
         try:
-            from nexus.core.memory_router import MemoryViewRouter
+            from nexus.services.memory.memory_router import MemoryViewRouter
 
             router = MemoryViewRouter(session)
             return router.query_memories(
@@ -189,7 +189,7 @@ class RecallStore:
         """
         session = self._session_factory()
         try:
-            from nexus.core.memory_router import MemoryViewRouter
+            from nexus.services.memory.memory_router import MemoryViewRouter
 
             router = MemoryViewRouter(session)
             result = router.delete_memory(memory_id)

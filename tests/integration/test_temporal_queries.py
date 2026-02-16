@@ -362,7 +362,7 @@ class TestPostgreSQLTimestampPrecision:
     )
     def test_microsecond_precision(self, session):
         """Test that PostgreSQL handles microsecond precision correctly."""
-        from nexus.core.memory_router import MemoryViewRouter
+        from nexus.services.memory.memory_router import MemoryViewRouter
 
         now = datetime.now(UTC)
 

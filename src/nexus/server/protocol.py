@@ -853,7 +853,6 @@ class WorkspaceSnapshotParams:
     """Parameters for workspace_snapshot() method (v0.5.0)."""
 
     workspace_path: str | None = None
-    agent_id: str | None = None  # DEPRECATED
     description: str | None = None
     tags: list[str] | None = None
     created_by: str | None = None
@@ -865,7 +864,6 @@ class WorkspaceRestoreParams:
 
     snapshot_number: int
     workspace_path: str | None = None
-    agent_id: str | None = None  # DEPRECATED
 
 
 @dataclass
@@ -873,7 +871,6 @@ class WorkspaceLogParams:
     """Parameters for workspace_log() method (v0.5.0)."""
 
     workspace_path: str | None = None
-    agent_id: str | None = None  # DEPRECATED
     limit: int = 100
 
 
@@ -884,7 +881,6 @@ class WorkspaceDiffParams:
     snapshot_1: int
     snapshot_2: int
     workspace_path: str | None = None
-    agent_id: str | None = None  # DEPRECATED
 
 
 @dataclass

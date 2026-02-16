@@ -600,7 +600,6 @@ class NexusFilesystem(ABC):
     def workspace_snapshot(
         self,
         workspace_path: str | None = None,
-        agent_id: str | None = None,
         description: str | None = None,
         tags: builtins.list[str] | None = None,
     ) -> dict[str, Any]:
@@ -608,7 +607,6 @@ class NexusFilesystem(ABC):
 
         Args:
             workspace_path: Path to registered workspace
-            agent_id: DEPRECATED - Use workspace_path instead
             description: Human-readable description of snapshot
             tags: List of tags for categorization
 
@@ -626,14 +624,12 @@ class NexusFilesystem(ABC):
         self,
         snapshot_number: int,
         workspace_path: str | None = None,
-        agent_id: str | None = None,
     ) -> dict[str, Any]:
         """Restore workspace to a previous snapshot.
 
         Args:
             snapshot_number: Snapshot version number to restore
             workspace_path: Path to registered workspace
-            agent_id: DEPRECATED - Use workspace_path instead
 
         Returns:
             Restore operation result
@@ -648,14 +644,12 @@ class NexusFilesystem(ABC):
     def workspace_log(
         self,
         workspace_path: str | None = None,
-        agent_id: str | None = None,
         limit: int = 100,
     ) -> builtins.list[dict[str, Any]]:
         """List snapshot history for workspace.
 
         Args:
             workspace_path: Path to registered workspace
-            agent_id: DEPRECATED - Use workspace_path instead
             limit: Maximum number of snapshots to return
 
         Returns:
@@ -672,7 +666,6 @@ class NexusFilesystem(ABC):
         snapshot_1: int,
         snapshot_2: int,
         workspace_path: str | None = None,
-        agent_id: str | None = None,
     ) -> dict[str, Any]:
         """Compare two workspace snapshots.
 
@@ -680,7 +673,6 @@ class NexusFilesystem(ABC):
             snapshot_1: First snapshot number
             snapshot_2: Second snapshot number
             workspace_path: Path to registered workspace
-            agent_id: DEPRECATED - Use workspace_path instead
 
         Returns:
             Diff dict with added, removed, modified files

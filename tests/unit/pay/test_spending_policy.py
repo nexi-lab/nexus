@@ -39,9 +39,9 @@ class TestSpendingPolicy:
     """SpendingPolicy frozen dataclass tests."""
 
     def test_create_minimal(self):
-        policy = SpendingPolicy(policy_id="p1", zone_id="default")
+        policy = SpendingPolicy(policy_id="p1", zone_id="root")
         assert policy.policy_id == "p1"
-        assert policy.zone_id == "default"
+        assert policy.zone_id == "root"
         assert policy.agent_id is None
         assert policy.daily_limit is None
         assert policy.per_tx_limit is None
@@ -69,7 +69,7 @@ class TestSpendingPolicy:
         assert policy.priority == 5
 
     def test_frozen(self):
-        policy = SpendingPolicy(policy_id="p1", zone_id="default")
+        policy = SpendingPolicy(policy_id="p1", zone_id="root")
         with pytest.raises(AttributeError):
             policy.daily_limit = Decimal("100")  # type: ignore[misc]
 
@@ -80,7 +80,7 @@ class TestSpendingLedgerEntry:
     def test_create_with_defaults(self):
         entry = SpendingLedgerEntry(
             agent_id="agent-a",
-            zone_id="default",
+            zone_id="root",
             period_type="daily",
             period_start=date.today(),
         )
@@ -193,9 +193,9 @@ class TestPolicyEvaluationLogic:
         # Prepopulate cache with no policy
         import time
 
-        service._cache[("agent-a", "default")] = (None, time.monotonic() + 60)
+        service._cache[("agent-a", "root")] = (None, time.monotonic() + 60)
 
-        result = await service.evaluate("agent-a", "default", Decimal("1000"))
+        result = await service.evaluate("agent-a", "root", Decimal("1000"))
         assert result.allowed is True
         assert result.policy_id is None
 
@@ -206,13 +206,13 @@ class TestPolicyEvaluationLogic:
 
         policy = SpendingPolicy(
             policy_id="p1",
-            zone_id="default",
+            zone_id="root",
             agent_id="agent-a",
             per_tx_limit=Decimal("10"),
         )
-        service._cache[("agent-a", "default")] = (policy, time.monotonic() + 60)
+        service._cache[("agent-a", "root")] = (policy, time.monotonic() + 60)
 
-        result = await service.evaluate("agent-a", "default", Decimal("15"))
+        result = await service.evaluate("agent-a", "root", Decimal("15"))
         assert result.allowed is False
         assert "per-transaction limit" in result.denied_reason
         assert result.policy_id == "p1"
@@ -224,18 +224,18 @@ class TestPolicyEvaluationLogic:
 
         policy = SpendingPolicy(
             policy_id="p1",
-            zone_id="default",
+            zone_id="root",
             agent_id="agent-a",
             per_tx_limit=Decimal("10"),
         )
-        service._cache[("agent-a", "default")] = (policy, time.monotonic() + 60)
+        service._cache[("agent-a", "root")] = (policy, time.monotonic() + 60)
 
         # Mock _get_spending to return zero
         service._get_spending = AsyncMock(
             return_value={"daily": Decimal("0"), "weekly": Decimal("0"), "monthly": Decimal("0")}
         )
 
-        result = await service.evaluate("agent-a", "default", Decimal("5"))
+        result = await service.evaluate("agent-a", "root", Decimal("5"))
         assert result.allowed is True
 
     @pytest.mark.asyncio
@@ -245,16 +245,16 @@ class TestPolicyEvaluationLogic:
 
         policy = SpendingPolicy(
             policy_id="p1",
-            zone_id="default",
+            zone_id="root",
             agent_id="agent-a",
             daily_limit=Decimal("100"),
         )
-        service._cache[("agent-a", "default")] = (policy, time.monotonic() + 60)
+        service._cache[("agent-a", "root")] = (policy, time.monotonic() + 60)
         service._get_spending = AsyncMock(
             return_value={"daily": Decimal("95"), "weekly": Decimal("0"), "monthly": Decimal("0")}
         )
 
-        result = await service.evaluate("agent-a", "default", Decimal("10"))
+        result = await service.evaluate("agent-a", "root", Decimal("10"))
         assert result.allowed is False
         assert "daily limit" in result.denied_reason
         assert result.remaining_budget.get("daily") == Decimal("5")
@@ -266,16 +266,16 @@ class TestPolicyEvaluationLogic:
 
         policy = SpendingPolicy(
             policy_id="p1",
-            zone_id="default",
+            zone_id="root",
             agent_id="agent-a",
             weekly_limit=Decimal("500"),
         )
-        service._cache[("agent-a", "default")] = (policy, time.monotonic() + 60)
+        service._cache[("agent-a", "root")] = (policy, time.monotonic() + 60)
         service._get_spending = AsyncMock(
             return_value={"daily": Decimal("0"), "weekly": Decimal("495"), "monthly": Decimal("0")}
         )
 
-        result = await service.evaluate("agent-a", "default", Decimal("10"))
+        result = await service.evaluate("agent-a", "root", Decimal("10"))
         assert result.allowed is False
         assert "weekly limit" in result.denied_reason
 
@@ -286,16 +286,16 @@ class TestPolicyEvaluationLogic:
 
         policy = SpendingPolicy(
             policy_id="p1",
-            zone_id="default",
+            zone_id="root",
             agent_id="agent-a",
             monthly_limit=Decimal("2000"),
         )
-        service._cache[("agent-a", "default")] = (policy, time.monotonic() + 60)
+        service._cache[("agent-a", "root")] = (policy, time.monotonic() + 60)
         service._get_spending = AsyncMock(
             return_value={"daily": Decimal("0"), "weekly": Decimal("0"), "monthly": Decimal("1995")}
         )
 
-        result = await service.evaluate("agent-a", "default", Decimal("10"))
+        result = await service.evaluate("agent-a", "root", Decimal("10"))
         assert result.allowed is False
         assert "monthly limit" in result.denied_reason
 
@@ -306,14 +306,14 @@ class TestPolicyEvaluationLogic:
 
         policy = SpendingPolicy(
             policy_id="p1",
-            zone_id="default",
+            zone_id="root",
             agent_id="agent-a",
             daily_limit=Decimal("100"),
             weekly_limit=Decimal("500"),
             monthly_limit=Decimal("2000"),
             per_tx_limit=Decimal("50"),
         )
-        service._cache[("agent-a", "default")] = (policy, time.monotonic() + 60)
+        service._cache[("agent-a", "root")] = (policy, time.monotonic() + 60)
         service._get_spending = AsyncMock(
             return_value={
                 "daily": Decimal("20"),
@@ -322,7 +322,7 @@ class TestPolicyEvaluationLogic:
             }
         )
 
-        result = await service.evaluate("agent-a", "default", Decimal("10"))
+        result = await service.evaluate("agent-a", "root", Decimal("10"))
         assert result.allowed is True
         assert result.remaining_budget["daily"] == Decimal("80")
         assert result.remaining_budget["weekly"] == Decimal("400")
@@ -335,14 +335,14 @@ class TestPolicyEvaluationLogic:
 
         policy = SpendingPolicy(
             policy_id="p1",
-            zone_id="default",
+            zone_id="root",
             agent_id="agent-a",
             per_tx_limit=Decimal("1"),
             enabled=False,
         )
-        service._cache[("agent-a", "default")] = (policy, time.monotonic() + 60)
+        service._cache[("agent-a", "root")] = (policy, time.monotonic() + 60)
 
-        result = await service.evaluate("agent-a", "default", Decimal("1000"))
+        result = await service.evaluate("agent-a", "root", Decimal("1000"))
         assert result.allowed is True
 
     @pytest.mark.asyncio
@@ -350,13 +350,13 @@ class TestPolicyEvaluationLogic:
         """Policy with all None limits allows everything."""
         import time
 
-        policy = SpendingPolicy(policy_id="p1", zone_id="default", agent_id="agent-a")
-        service._cache[("agent-a", "default")] = (policy, time.monotonic() + 60)
+        policy = SpendingPolicy(policy_id="p1", zone_id="root", agent_id="agent-a")
+        service._cache[("agent-a", "root")] = (policy, time.monotonic() + 60)
         service._get_spending = AsyncMock(
             return_value={"daily": Decimal("0"), "weekly": Decimal("0"), "monthly": Decimal("0")}
         )
 
-        result = await service.evaluate("agent-a", "default", Decimal("999999"))
+        result = await service.evaluate("agent-a", "root", Decimal("999999"))
         assert result.allowed is True
 
     @pytest.mark.asyncio
@@ -366,16 +366,16 @@ class TestPolicyEvaluationLogic:
 
         policy = SpendingPolicy(
             policy_id="p1",
-            zone_id="default",
+            zone_id="root",
             agent_id="agent-a",
             per_tx_limit=Decimal("10"),
         )
-        service._cache[("agent-a", "default")] = (policy, time.monotonic() + 60)
+        service._cache[("agent-a", "root")] = (policy, time.monotonic() + 60)
         service._get_spending = AsyncMock(
             return_value={"daily": Decimal("0"), "weekly": Decimal("0"), "monthly": Decimal("0")}
         )
 
-        result = await service.evaluate("agent-a", "default", Decimal("10"))
+        result = await service.evaluate("agent-a", "root", Decimal("10"))
         assert result.allowed is True
 
     @pytest.mark.asyncio
@@ -385,17 +385,17 @@ class TestPolicyEvaluationLogic:
 
         policy = SpendingPolicy(
             policy_id="p1",
-            zone_id="default",
+            zone_id="root",
             agent_id="agent-a",
             daily_limit=Decimal("100"),
         )
-        service._cache[("agent-a", "default")] = (policy, time.monotonic() + 60)
+        service._cache[("agent-a", "root")] = (policy, time.monotonic() + 60)
         service._get_spending = AsyncMock(
             return_value={"daily": Decimal("90"), "weekly": Decimal("0"), "monthly": Decimal("0")}
         )
 
         # 90 + 10 = 100, exactly at limit
-        result = await service.evaluate("agent-a", "default", Decimal("10"))
+        result = await service.evaluate("agent-a", "root", Decimal("10"))
         assert result.allowed is True
 
 

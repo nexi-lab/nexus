@@ -553,7 +553,7 @@ class TestRedisEventBus:
         bus = RedisEventBus(mock_redis_client)
 
         assert bus._channel_name("zone1") == "nexus:events:zone1"
-        assert bus._channel_name("default") == "nexus:events:default"
+        assert bus._channel_name("root") == "nexus:events:root"
         assert bus._channel_name("multi-zone-123") == "nexus:events:multi-zone-123"
 
     @pytest.mark.asyncio

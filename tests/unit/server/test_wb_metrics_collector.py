@@ -132,7 +132,7 @@ def _make_metadata(
         etag=etag,
         mime_type="text/plain",
         version=1,
-        zone_id="default",
+        zone_id="root",
         created_by="user-1",
         owner_id="owner-1",
         created_at=now,
@@ -169,7 +169,7 @@ class TestWriteBufferCollectorIntegration:
         collector = WriteBufferCollector(syncer)
 
         syncer.on_write(_make_metadata(), is_new=True, path="/a.txt")
-        syncer.on_delete(path="/b.txt", zone_id="default")
+        syncer.on_delete(path="/b.txt", zone_id="root")
         syncer.on_rename(old_path="/c.txt", new_path="/d.txt")
 
         families = {f.name: f for f in collector.collect()}

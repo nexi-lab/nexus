@@ -183,7 +183,7 @@ def db_auth_server(tmp_path_factory):
                     session,
                     user_id="admin",
                     name="E2E test key",
-                    zone_id="default",
+                    zone_id="root",
                     is_admin=True,
                 )
                 session.commit()
@@ -216,7 +216,7 @@ def db_auth_server(tmp_path_factory):
                 session,
                 user_id="testuser",
                 name="Non-admin E2E key",
-                zone_id="default",
+                zone_id="root",
                 is_admin=False,
             )
             session.commit()

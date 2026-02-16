@@ -55,13 +55,13 @@ class TestEnqueue:
         result = store.enqueue(
             path="/test/file.txt",
             backend_name="gcs",
-            zone_id="default",
+            zone_id="root",
             operation_type="write",
             content_hash="abc123",
         )
         assert result is True
 
-        entries = store.fetch_pending("gcs", "default")
+        entries = store.fetch_pending("gcs", "root")
         assert len(entries) == 1
         assert entries[0].path == "/test/file.txt"
         assert entries[0].status == "pending"
@@ -70,19 +70,19 @@ class TestEnqueue:
 
     def test_enqueue_coalesces_duplicate_pending(self, store):
         """Multiple enqueues for same path coalesce into one entry."""
-        store.enqueue("/test/file.txt", "gcs", "default", "write", content_hash="v1")
-        store.enqueue("/test/file.txt", "gcs", "default", "write", content_hash="v2")
+        store.enqueue("/test/file.txt", "gcs", "root", "write", content_hash="v1")
+        store.enqueue("/test/file.txt", "gcs", "root", "write", content_hash="v2")
 
-        entries = store.fetch_pending("gcs", "default")
+        entries = store.fetch_pending("gcs", "root")
         assert len(entries) == 1
         assert entries[0].content_hash == "v2"  # Latest wins
 
     def test_enqueue_different_paths_separate_entries(self, store):
         """Different paths create separate entries."""
-        store.enqueue("/test/a.txt", "gcs", "default", "write")
-        store.enqueue("/test/b.txt", "gcs", "default", "write")
+        store.enqueue("/test/a.txt", "gcs", "root", "write")
+        store.enqueue("/test/b.txt", "gcs", "root", "write")
 
-        entries = store.fetch_pending("gcs", "default")
+        entries = store.fetch_pending("gcs", "root")
         assert len(entries) == 2
 
 
@@ -91,28 +91,28 @@ class TestFetchPending:
 
     def test_fetch_pending_returns_fifo_order(self, store):
         """Entries are returned in creation order (FIFO)."""
-        store.enqueue("/test/first.txt", "gcs", "default", "write")
-        store.enqueue("/test/second.txt", "gcs", "default", "write")
-        store.enqueue("/test/third.txt", "gcs", "default", "write")
+        store.enqueue("/test/first.txt", "gcs", "root", "write")
+        store.enqueue("/test/second.txt", "gcs", "root", "write")
+        store.enqueue("/test/third.txt", "gcs", "root", "write")
 
-        entries = store.fetch_pending("gcs", "default")
+        entries = store.fetch_pending("gcs", "root")
         paths = [e.path for e in entries]
         assert paths == ["/test/first.txt", "/test/second.txt", "/test/third.txt"]
 
     def test_fetch_pending_respects_limit(self, store):
         """Limit caps the number of returned entries."""
         for i in range(10):
-            store.enqueue(f"/test/file{i}.txt", "gcs", "default", "write")
+            store.enqueue(f"/test/file{i}.txt", "gcs", "root", "write")
 
-        entries = store.fetch_pending("gcs", "default", limit=3)
+        entries = store.fetch_pending("gcs", "root", limit=3)
         assert len(entries) == 3
 
     def test_fetch_pending_filters_by_backend(self, store):
         """Only entries for the requested backend are returned."""
-        store.enqueue("/test/a.txt", "gcs", "default", "write")
-        store.enqueue("/test/b.txt", "s3", "default", "write")
+        store.enqueue("/test/a.txt", "gcs", "root", "write")
+        store.enqueue("/test/b.txt", "s3", "root", "write")
 
-        gcs_entries = store.fetch_pending("gcs", "default")
+        gcs_entries = store.fetch_pending("gcs", "root")
         assert len(gcs_entries) == 1
         assert gcs_entries[0].backend_name == "gcs"
 
@@ -122,21 +122,21 @@ class TestStatusTransitions:
 
     def test_mark_in_progress_transitions_status(self, store):
         """Pending -> in_progress transition works."""
-        store.enqueue("/test/file.txt", "gcs", "default", "write")
-        entries = store.fetch_pending("gcs", "default")
+        store.enqueue("/test/file.txt", "gcs", "root", "write")
+        entries = store.fetch_pending("gcs", "root")
         entry_id = entries[0].id
 
         result = store.mark_in_progress(entry_id)
         assert result is True
 
         # Should no longer appear in pending
-        remaining = store.fetch_pending("gcs", "default")
+        remaining = store.fetch_pending("gcs", "root")
         assert len(remaining) == 0
 
     def test_mark_completed_transitions_status(self, store):
         """In_progress -> completed transition works."""
-        store.enqueue("/test/file.txt", "gcs", "default", "write")
-        entries = store.fetch_pending("gcs", "default")
+        store.enqueue("/test/file.txt", "gcs", "root", "write")
+        entries = store.fetch_pending("gcs", "root")
         entry_id = entries[0].id
 
         store.mark_in_progress(entry_id)
@@ -145,8 +145,8 @@ class TestStatusTransitions:
 
     def test_mark_failed_increments_retry_count(self, store, db_session_factory):
         """Failed attempt increments retry_count and returns to pending."""
-        store.enqueue("/test/file.txt", "gcs", "default", "write")
-        entries = store.fetch_pending("gcs", "default")
+        store.enqueue("/test/file.txt", "gcs", "root", "write")
+        entries = store.fetch_pending("gcs", "root")
         entry_id = entries[0].id
 
         store.mark_in_progress(entry_id)
@@ -162,8 +162,8 @@ class TestStatusTransitions:
 
     def test_mark_failed_exceeds_max_retries(self, store, db_session_factory):
         """After max_retries, status changes to 'failed'."""
-        store.enqueue("/test/file.txt", "gcs", "default", "write")
-        entries = store.fetch_pending("gcs", "default")
+        store.enqueue("/test/file.txt", "gcs", "root", "write")
+        entries = store.fetch_pending("gcs", "root")
         entry_id = entries[0].id
 
         # Default max_retries is 5, so fail 5 times
@@ -189,7 +189,7 @@ class TestExpireStale:
         entry = SyncBacklogModel(
             path="/test/old.txt",
             backend_name="gcs",
-            zone_id="default",
+            zone_id="root",
             operation_type="write",
             status="pending",
             created_at=old_time,
@@ -205,12 +205,12 @@ class TestExpireStale:
     def test_expire_stale_by_max_entries(self, store, db_session_factory):
         """When pending count > max_entries, oldest are expired."""
         for i in range(5):
-            store.enqueue(f"/test/file{i}.txt", "gcs", "default", "write")
+            store.enqueue(f"/test/file{i}.txt", "gcs", "root", "write")
 
         expired = store.expire_stale(ttl_seconds=999999, max_entries=2)
         assert expired == 3  # 5 - 2 = 3 expired
 
-        remaining = store.fetch_pending("gcs", "default")
+        remaining = store.fetch_pending("gcs", "root")
         assert len(remaining) == 2
 
 
@@ -219,10 +219,10 @@ class TestGetStats:
 
     def test_stats_breakdown_by_status(self, store):
         """Stats correctly count entries by status."""
-        store.enqueue("/test/a.txt", "gcs", "default", "write")
-        store.enqueue("/test/b.txt", "gcs", "default", "write")
+        store.enqueue("/test/a.txt", "gcs", "root", "write")
+        store.enqueue("/test/b.txt", "gcs", "root", "write")
 
-        entries = store.fetch_pending("gcs", "default")
+        entries = store.fetch_pending("gcs", "root")
         store.mark_in_progress(entries[0].id)
 
         stats = store.get_stats()

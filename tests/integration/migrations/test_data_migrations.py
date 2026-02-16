@@ -155,7 +155,7 @@ class TestPersistentNamespaceViewsMigration:
                     "id": str(uuid.uuid4()),
                     "stype": "user",
                     "sid": "user-99",
-                    "zid": "default",
+                    "zid": "root",
                     "mpj": "[]",
                     "gh": "xyz",
                     "rb": 0,
@@ -203,4 +203,4 @@ class TestPersistentNamespaceViewsMigration:
             ).fetchone()
 
             assert row is not None
-            assert row[0] == "default", f"Expected zone_id default 'default', got '{row[0]}'"
+            assert row[0] == "root", f"Expected zone_id default 'default', got '{row[0]}'"

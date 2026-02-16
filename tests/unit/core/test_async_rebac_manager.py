@@ -111,7 +111,7 @@ class TestAsyncReBACManagerCacheOps:
         assert manager_with_cache._l1_cache is not None
         # Cache uses positional args: subject_type, subject_id, permission, object_type, object_id, zone_id
         result = manager_with_cache._l1_cache.get(
-            "user", "alice", "read", "file", "/test.txt", "default"
+            "user", "alice", "read", "file", "/test.txt", "root"
         )
         # Cache miss returns None
         assert result is None
@@ -121,12 +121,10 @@ class TestAsyncReBACManagerCacheOps:
         assert manager_with_cache._l1_cache is not None
 
         # Set cache entry (positional args: subject_type, subject_id, permission, object_type, object_id, result, zone_id)
-        manager_with_cache._l1_cache.set(
-            "user", "alice", "read", "file", "/test.txt", True, "default"
-        )
+        manager_with_cache._l1_cache.set("user", "alice", "read", "file", "/test.txt", True, "root")
 
         # Should hit cache now
         result = manager_with_cache._l1_cache.get(
-            "user", "alice", "read", "file", "/test.txt", "default"
+            "user", "alice", "read", "file", "/test.txt", "root"
         )
         assert result is True

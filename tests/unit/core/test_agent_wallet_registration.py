@@ -70,7 +70,7 @@ class TestAgentRecordCapabilities:
         record = AgentRecord(
             agent_id="agent-1",
             owner_id="alice",
-            zone_id="default",
+            zone_id="root",
             name="Test Agent",
             state=AgentState.UNKNOWN,
             generation=0,
@@ -86,7 +86,7 @@ class TestAgentRecordCapabilities:
         record = AgentRecord(
             agent_id="agent-1",
             owner_id="alice",
-            zone_id="default",
+            zone_id="root",
             name=None,
             state=AgentState.UNKNOWN,
             generation=0,
@@ -163,7 +163,7 @@ class TestRegistryCapabilities:
         record = registry.register(
             "agent-1",
             "alice",
-            zone_id="default",
+            zone_id="root",
             name="Searcher",
             capabilities=["search", "analyze"],
         )
@@ -174,7 +174,7 @@ class TestRegistryCapabilities:
         record = registry.register(
             "agent-2",
             "alice",
-            zone_id="default",
+            zone_id="root",
             metadata={"platform": "langgraph"},
             capabilities=["code"],
         )
@@ -183,7 +183,7 @@ class TestRegistryCapabilities:
 
     def test_register_without_capabilities(self, registry):
         """Without capabilities param, capabilities list is empty."""
-        record = registry.register("agent-3", "alice", zone_id="default")
+        record = registry.register("agent-3", "alice", zone_id="root")
         assert record.capabilities == []
 
     def test_register_empty_capabilities(self, registry):
@@ -191,7 +191,7 @@ class TestRegistryCapabilities:
         record = registry.register(
             "agent-4",
             "alice",
-            zone_id="default",
+            zone_id="root",
             capabilities=[],
         )
         assert record.capabilities == []
@@ -216,7 +216,7 @@ class TestWalletProvisioningOnRegistration:
         mock_fs._agent_registry = agent_registry
         mock_fs._entity_registry = MagicMock()
         mock_fs._extract_user_id = MagicMock(return_value="alice")
-        mock_fs._extract_zone_id = MagicMock(return_value="default")
+        mock_fs._extract_zone_id = MagicMock(return_value="root")
         return mock_fs
 
     def test_wallet_provisioner_called_on_registration(self):
@@ -226,7 +226,7 @@ class TestWalletProvisioningOnRegistration:
 
         # Directly test the provisioner call pattern from register_agent
         agent_id = "alice,DataAnalyst"
-        zone_id = "default"
+        zone_id = "root"
 
         # Simulate the NexusFS register_agent provisioner block
         try:
@@ -241,7 +241,7 @@ class TestWalletProvisioningOnRegistration:
         # This is a no-op test: ensure no error when provisioner is None
         wallet_provisioner = None
         agent_id = "alice,DataAnalyst"
-        zone_id = "default"
+        zone_id = "root"
 
         # Simulate the NexusFS register_agent provisioner block
         if wallet_provisioner is not None:
@@ -254,7 +254,7 @@ class TestWalletProvisioningOnRegistration:
         provisioner = MagicMock(side_effect=RuntimeError("TigerBeetle unavailable"))
 
         agent_id = "alice,DataAnalyst"
-        zone_id = "default"
+        zone_id = "root"
 
         # Simulate the NexusFS register_agent provisioner block (non-blocking)
         wallet_provisioned = False
@@ -283,7 +283,7 @@ class TestWalletCleanupOnDeletion:
         provisioner.cleanup = MagicMock()
 
         agent_id = "alice,DataAnalyst"
-        zone_id = "default"
+        zone_id = "root"
 
         # Simulate the NexusFS delete_agent cleanup block
         cleanup_fn = getattr(provisioner, "cleanup", None)
@@ -308,7 +308,7 @@ class TestWalletCleanupOnDeletion:
         provisioner.cleanup = MagicMock(side_effect=RuntimeError("TB error"))
 
         agent_id = "alice,DataAnalyst"
-        zone_id = "default"
+        zone_id = "root"
 
         # Simulate the NexusFS delete_agent cleanup block (non-blocking)
         cleanup_fn = getattr(provisioner, "cleanup", None)

@@ -26,7 +26,7 @@ import pytest
 
 ADMIN_HEADERS = {
     "X-Nexus-Subject": "user:admin",
-    "X-Nexus-Zone-Id": "default",
+    "X-Nexus-Zone-Id": "root",
 }
 
 

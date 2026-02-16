@@ -134,13 +134,13 @@ class TestWriteBackIntegration:
         event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path="/mnt/gcs/project/file.txt",
-            zone_id="default",
+            zone_id="root",
             etag="abc123",
         )
         await service._on_file_event(event)
 
         # Step 2: Verify backlog entry was created
-        entries = backlog_store.fetch_pending("test_gcs", "default")
+        entries = backlog_store.fetch_pending("test_gcs", "root")
         assert len(entries) == 1
         assert entries[0].path == "/mnt/gcs/project/file.txt"
         assert entries[0].operation_type == "write"
@@ -159,7 +159,7 @@ class TestWriteBackIntegration:
 
         # Step 5: Verify change log was updated
         change_log = change_log_store.get_change_log(
-            "/mnt/gcs/project/file.txt", "test_gcs", "default"
+            "/mnt/gcs/project/file.txt", "test_gcs", "root"
         )
         assert change_log is not None
         assert change_log.content_hash == "new_content_hash"
@@ -174,7 +174,7 @@ class TestWriteBackIntegration:
         assert completed_events[0].path == "/mnt/gcs/project/file.txt"
 
         # Step 7: Verify backlog entry is now completed (no more pending)
-        remaining = backlog_store.fetch_pending("test_gcs", "default")
+        remaining = backlog_store.fetch_pending("test_gcs", "root")
         assert len(remaining) == 0
 
     @pytest.mark.asyncio
@@ -195,13 +195,13 @@ class TestWriteBackIntegration:
             event = FileEvent(
                 type=FileEventType.FILE_WRITE,
                 path="/mnt/gcs/project/file.txt",
-                zone_id="default",
+                zone_id="root",
                 etag=etag,
             )
             await service._on_file_event(event)
 
         # Only 1 pending entry (coalesced)
-        entries = backlog_store.fetch_pending("test_gcs", "default")
+        entries = backlog_store.fetch_pending("test_gcs", "root")
         assert len(entries) == 1
         assert entries[0].content_hash == "v3"  # Latest wins
 
@@ -234,7 +234,7 @@ class TestConflictIntegration:
         change_log_store.upsert_change_log(
             path="/mnt/gcs/project/file.txt",
             backend_name="test_gcs",
-            zone_id="default",
+            zone_id="root",
             content_hash="old_hash",
         )
 
@@ -258,7 +258,7 @@ class TestConflictIntegration:
             FileEvent(
                 type=FileEventType.FILE_WRITE,
                 path="/mnt/gcs/project/file.txt",
-                zone_id="default",
+                zone_id="root",
                 etag="nexus_new_hash",
             )
         )
@@ -292,7 +292,7 @@ class TestConflictIntegration:
         change_log_store.upsert_change_log(
             path="/mnt/gcs/project/file.txt",
             backend_name="test_gcs",
-            zone_id="default",
+            zone_id="root",
             content_hash="old_hash",
         )
 
@@ -316,7 +316,7 @@ class TestConflictIntegration:
             FileEvent(
                 type=FileEventType.FILE_WRITE,
                 path="/mnt/gcs/project/file.txt",
-                zone_id="default",
+                zone_id="root",
                 etag="nexus_old_hash",
             )
         )
@@ -352,7 +352,7 @@ class TestConflictIntegration:
         change_log_store.upsert_change_log(
             path="/mnt/gcs/project/file.txt",
             backend_name="test_gcs",
-            zone_id="default",
+            zone_id="root",
             content_hash="old_hash",
         )
 
@@ -374,7 +374,7 @@ class TestConflictIntegration:
             FileEvent(
                 type=FileEventType.FILE_WRITE,
                 path="/mnt/gcs/project/file.txt",
-                zone_id="default",
+                zone_id="root",
                 etag="nexus_new_hash",
             )
         )
@@ -417,7 +417,7 @@ class TestConflictIntegration:
         change_log_store.upsert_change_log(
             path="/mnt/gcs/project/file.txt",
             backend_name="test_gcs",
-            zone_id="default",
+            zone_id="root",
             content_hash="old_hash",
         )
 
@@ -439,7 +439,7 @@ class TestConflictIntegration:
             FileEvent(
                 type=FileEventType.FILE_WRITE,
                 path="/mnt/gcs/project/file.txt",
-                zone_id="default",
+                zone_id="root",
                 etag="nexus_newer",
             )
         )

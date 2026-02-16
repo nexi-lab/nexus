@@ -36,7 +36,7 @@ class TestDataDirPersistence:
         storage1 = LocalStorageDriver(root=tmp_path)
         store1 = VFSTaskStore(storage=storage1)
         tm1 = TaskManager(store=store1)
-        task = asyncio.get_event_loop().run_until_complete(tm1.create_task(msg, zone_id="default"))
+        task = asyncio.get_event_loop().run_until_complete(tm1.create_task(msg, zone_id="root"))
         task_id = task.id
 
         # Manager #2: read the task (simulates server restart)
@@ -44,7 +44,7 @@ class TestDataDirPersistence:
         store2 = VFSTaskStore(storage=storage2)
         tm2 = TaskManager(store=store2)
         recovered = asyncio.get_event_loop().run_until_complete(
-            tm2.get_task(task_id, zone_id="default")
+            tm2.get_task(task_id, zone_id="root")
         )
 
         assert recovered.id == task_id
@@ -58,10 +58,10 @@ class TestDataDirPersistence:
         storage = LocalStorageDriver(root=tmp_path)
         store = VFSTaskStore(storage=storage)
         tm = TaskManager(store=store)
-        task = asyncio.get_event_loop().run_until_complete(tm.create_task(msg, zone_id="default"))
+        task = asyncio.get_event_loop().run_until_complete(tm.create_task(msg, zone_id="root"))
 
         # Check that the file was created
-        zone_dir = tmp_path / "a2a" / "tasks" / "default"
+        zone_dir = tmp_path / "a2a" / "tasks" / "root"
         assert zone_dir.is_dir()
         json_files = list(zone_dir.glob(f"*_{task.id}.json"))
         assert len(json_files) == 1
@@ -94,14 +94,14 @@ class TestDataDirPersistence:
         msg = Message(role="user", parts=[TextPart(type="text", text="update me")])
         tm = persistent_task_manager
 
-        task = asyncio.get_event_loop().run_until_complete(tm.create_task(msg, zone_id="default"))
-        asyncio.get_event_loop().run_until_complete(tm.cancel_task(task.id, zone_id="default"))
+        task = asyncio.get_event_loop().run_until_complete(tm.create_task(msg, zone_id="root"))
+        asyncio.get_event_loop().run_until_complete(tm.cancel_task(task.id, zone_id="root"))
 
         # Read from a fresh manager
         storage2 = LocalStorageDriver(root=tmp_path)
         store2 = VFSTaskStore(storage=storage2)
         tm2 = TaskManager(store=store2)
         recovered = asyncio.get_event_loop().run_until_complete(
-            tm2.get_task(task.id, zone_id="default")
+            tm2.get_task(task.id, zone_id="root")
         )
         assert recovered.status.state.value == "canceled"

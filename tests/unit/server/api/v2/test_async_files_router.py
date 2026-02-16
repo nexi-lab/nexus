@@ -38,7 +38,7 @@ def _make_mock_get_operation_context():
     """Create a mock get_operation_context function."""
     mock_ctx = MagicMock()
     mock_ctx.user = "test-agent"
-    mock_ctx.zone_id = "default"
+    mock_ctx.zone_id = "root"
 
     def mock_get_operation_context(auth_result):
         return mock_ctx
@@ -115,7 +115,7 @@ def mock_auth_result():
         "authenticated": True,
         "subject_type": "agent",
         "subject_id": "test-agent",
-        "zone_id": "default",
+        "zone_id": "root",
     }
 
 

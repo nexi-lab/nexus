@@ -68,7 +68,7 @@ class TestSubmitFeedback:
             rater_agent_id="agent-a",
             rated_agent_id="agent-b",
             exchange_id="exchange-1",
-            zone_id="default",
+            zone_id="root",
             outcome="positive",
         )
 
@@ -85,7 +85,7 @@ class TestSubmitFeedback:
             rater_agent_id="agent-a",
             rated_agent_id="agent-b",
             exchange_id="exchange-2",
-            zone_id="default",
+            zone_id="root",
             outcome="negative",
         )
         assert event.outcome == "negative"
@@ -96,7 +96,7 @@ class TestSubmitFeedback:
             rater_agent_id="agent-a",
             rated_agent_id="agent-b",
             exchange_id="exchange-3",
-            zone_id="default",
+            zone_id="root",
             outcome="positive",
             reliability_score=0.9,
             quality_score=0.8,
@@ -114,7 +114,7 @@ class TestSubmitFeedback:
             rater_agent_id="agent-a",
             rated_agent_id="agent-b",
             exchange_id="exchange-4",
-            zone_id="default",
+            zone_id="root",
             outcome="positive",
         )
 
@@ -131,7 +131,7 @@ class TestSubmitFeedback:
             rater_agent_id="agent-a",
             rated_agent_id="agent-b",
             exchange_id="exchange-5",
-            zone_id="default",
+            zone_id="root",
             outcome="mixed",
         )
         assert event.outcome == "mixed"
@@ -155,7 +155,7 @@ class TestGetReputation:
             rater_agent_id="agent-a",
             rated_agent_id="agent-b",
             exchange_id="exchange-6",
-            zone_id="default",
+            zone_id="root",
             outcome="positive",
         )
 
@@ -170,7 +170,7 @@ class TestGetReputation:
             rater_agent_id="agent-a",
             rated_agent_id="agent-b",
             exchange_id="exchange-7",
-            zone_id="default",
+            zone_id="root",
             outcome="positive",
         )
 
@@ -194,7 +194,7 @@ class TestFeedbackValidation:
                 rater_agent_id="agent-a",
                 rated_agent_id="agent-a",
                 exchange_id="exchange-8",
-                zone_id="default",
+                zone_id="root",
                 outcome="positive",
             )
 
@@ -204,7 +204,7 @@ class TestFeedbackValidation:
             rater_agent_id="agent-a",
             rated_agent_id="agent-b",
             exchange_id="exchange-9",
-            zone_id="default",
+            zone_id="root",
             outcome="positive",
         )
 
@@ -213,7 +213,7 @@ class TestFeedbackValidation:
                 rater_agent_id="agent-a",
                 rated_agent_id="agent-b",
                 exchange_id="exchange-9",
-                zone_id="default",
+                zone_id="root",
                 outcome="negative",
             )
 
@@ -224,7 +224,7 @@ class TestFeedbackValidation:
                 rater_agent_id="agent-a",
                 rated_agent_id="agent-b",
                 exchange_id="exchange-10",
-                zone_id="default",
+                zone_id="root",
                 outcome="invalid_outcome",
             )
 
@@ -235,7 +235,7 @@ class TestFeedbackValidation:
                 rater_agent_id="agent-a",
                 rated_agent_id="agent-b",
                 exchange_id="exchange-11",
-                zone_id="default",
+                zone_id="root",
                 outcome="positive",
                 reliability_score=1.5,
             )
@@ -247,7 +247,7 @@ class TestFeedbackValidation:
                 rater_agent_id="agent-a",
                 rated_agent_id="agent-b",
                 exchange_id="exchange-12",
-                zone_id="default",
+                zone_id="root",
                 outcome="positive",
                 quality_score=-0.1,
             )
@@ -268,7 +268,7 @@ class TestScoreUpdate:
                 rater_agent_id=f"rater-{i}",
                 rated_agent_id="agent-b",
                 exchange_id=f"exchange-multi-{i}",
-                zone_id="default",
+                zone_id="root",
                 outcome="positive",
             )
 
@@ -285,7 +285,7 @@ class TestScoreUpdate:
                 rater_agent_id=f"rater-pos-{i}",
                 rated_agent_id="agent-b",
                 exchange_id=f"exchange-mix-pos-{i}",
-                zone_id="default",
+                zone_id="root",
                 outcome="positive",
             )
         for i in range(5):
@@ -293,7 +293,7 @@ class TestScoreUpdate:
                 rater_agent_id=f"rater-neg-{i}",
                 rated_agent_id="agent-b",
                 exchange_id=f"exchange-mix-neg-{i}",
-                zone_id="default",
+                zone_id="root",
                 outcome="negative",
             )
 
@@ -308,7 +308,7 @@ class TestScoreUpdate:
             rater_agent_id="agent-a",
             rated_agent_id="agent-b",
             exchange_id="exchange-dim-1",
-            zone_id="default",
+            zone_id="root",
             outcome="positive",
             reliability_score=1.0,  # full positive → alpha += 1.0, beta += 0.0
             quality_score=0.0,  # full negative → alpha += 0.0, beta += 1.0
@@ -338,7 +338,7 @@ class TestCacheInvalidation:
             rater_agent_id="agent-a",
             rated_agent_id="agent-b",
             exchange_id="exchange-cache-1",
-            zone_id="default",
+            zone_id="root",
             outcome="positive",
         )
 
@@ -350,7 +350,7 @@ class TestCacheInvalidation:
             rater_agent_id="agent-c",
             rated_agent_id="agent-b",
             exchange_id="exchange-cache-2",
-            zone_id="default",
+            zone_id="root",
             outcome="positive",
         )
 
@@ -432,14 +432,14 @@ class TestGetFeedbackForExchange:
             rater_agent_id="agent-a",
             rated_agent_id="agent-b",
             exchange_id="exchange-fb-1",
-            zone_id="default",
+            zone_id="root",
             outcome="positive",
         )
         reputation_service.submit_feedback(
             rater_agent_id="agent-b",
             rated_agent_id="agent-a",
             exchange_id="exchange-fb-1",
-            zone_id="default",
+            zone_id="root",
             outcome="negative",
         )
 

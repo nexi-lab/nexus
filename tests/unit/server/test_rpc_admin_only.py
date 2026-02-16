@@ -74,7 +74,7 @@ class FakeContext:
 
     is_admin: bool = False
     user: str = "testuser"
-    zone_id: str = "default"
+    zone_id: str = "root"
 
 
 # Real functions with proper signatures for inspect.signature to work

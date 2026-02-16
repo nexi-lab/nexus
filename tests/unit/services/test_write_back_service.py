@@ -27,7 +27,7 @@ def _make_entry(
     *,
     path: str = "/mnt/gcs/file.txt",
     backend_name: str = "gcs",
-    zone_id: str = "default",
+    zone_id: str = "root",
     operation_type: str = "write",
     content_hash: str | None = "abc123",
     status: str = "pending",
@@ -204,7 +204,7 @@ class TestOnFileEvent:
         event = FileEvent(
             type=FileEventType.FILE_WRITE,
             path="/mnt/gcs/file.txt",
-            zone_id="default",
+            zone_id="root",
             etag="abc",
         )
         await service._on_file_event(event)
@@ -212,7 +212,7 @@ class TestOnFileEvent:
         mock_backlog_store.enqueue.assert_called_once_with(
             path="/mnt/gcs/file.txt",
             backend_name="gcs",
-            zone_id="default",
+            zone_id="root",
             operation_type="write",
             content_hash="abc",
             new_path=None,
@@ -721,22 +721,22 @@ class TestPollLoop:
     ):
         """Poll loop fetches and processes pending entries."""
         entry = _make_entry()
-        mock_backlog_store.fetch_distinct_backend_zones.return_value = [("gcs", "default")]
+        mock_backlog_store.fetch_distinct_backend_zones.return_value = [("gcs", "root")]
         mock_backlog_store.fetch_pending.return_value = [entry]
 
         await service._process_all_backends()
 
         mock_backlog_store.fetch_distinct_backend_zones.assert_called_once()
-        mock_backlog_store.fetch_pending.assert_called_once_with("gcs", "default", limit=50)
+        mock_backlog_store.fetch_pending.assert_called_once_with("gcs", "root", limit=50)
         mock_backlog_store.mark_in_progress.assert_called()
 
     @pytest.mark.asyncio
     async def test_poll_processes_multiple_zones(self, service, mock_backlog_store, mock_event_bus):
         """Poll loop processes entries across multiple zones concurrently."""
-        entry_default = _make_entry(zone_id="default")
+        entry_default = _make_entry(zone_id="root")
         entry_staging = _make_entry(zone_id="staging")
         mock_backlog_store.fetch_distinct_backend_zones.return_value = [
-            ("gcs", "default"),
+            ("gcs", "root"),
             ("gcs", "staging"),
             ("s3", "us-east"),
         ]
@@ -749,7 +749,7 @@ class TestPollLoop:
         await service._process_all_backends()
 
         assert mock_backlog_store.fetch_pending.call_count == 3
-        mock_backlog_store.fetch_pending.assert_any_call("gcs", "default", limit=50)
+        mock_backlog_store.fetch_pending.assert_any_call("gcs", "root", limit=50)
         mock_backlog_store.fetch_pending.assert_any_call("gcs", "staging", limit=50)
         mock_backlog_store.fetch_pending.assert_any_call("s3", "us-east", limit=50)
 

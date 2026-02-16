@@ -63,7 +63,7 @@ def _file_dispute(dispute_service, exchange_id="exchange-1"):
         exchange_id=exchange_id,
         complainant_agent_id="agent-a",
         respondent_agent_id="agent-b",
-        zone_id="default",
+        zone_id="root",
         reason="Test dispute",
     )
 
@@ -103,7 +103,7 @@ class TestFileDispute:
                 exchange_id="exchange-self",
                 complainant_agent_id="agent-a",
                 respondent_agent_id="agent-a",
-                zone_id="default",
+                zone_id="root",
                 reason="Self dispute",
             )
 

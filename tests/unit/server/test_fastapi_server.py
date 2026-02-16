@@ -61,7 +61,7 @@ async def test_get_auth_result_open_access_infers_subject_from_sk_token():
     assert auth["authenticated"] is True
     assert auth["subject_type"] == "user"
     assert auth["subject_id"] == "admin"
-    assert auth["zone_id"] == "default"
+    assert auth["zone_id"] == "root"
     assert auth["metadata"]["open_access"] is True
 
 
@@ -103,7 +103,7 @@ def test_handle_delete_passes_context_to_filesystem():
         groups=[],
         subject_type="user",
         subject_id="admin",
-        zone_id="default",
+        zone_id="root",
         is_admin=True,
     )
     params = SimpleNamespace(path="/nexus_file_structure.pdf")
@@ -130,7 +130,7 @@ def test_handle_delete_falls_back_if_filesystem_delete_has_no_context_param():
         groups=[],
         subject_type="user",
         subject_id="admin",
-        zone_id="default",
+        zone_id="root",
         is_admin=True,
     )
     params = SimpleNamespace(path="/file.txt")
@@ -162,7 +162,7 @@ def test_handle_rename_passes_context_to_filesystem():
         groups=[],
         subject_type="user",
         subject_id="admin",
-        zone_id="default",
+        zone_id="root",
         is_admin=True,
     )
     params = SimpleNamespace(old_path="/a.txt", new_path="/b.txt")
@@ -191,13 +191,13 @@ async def test_auto_dispatch_injects__context_param():
         groups=[],
         subject_type="user",
         subject_id="admin",
-        zone_id="default",
+        zone_id="root",
         is_admin=True,
     )
     params = SimpleNamespace()
 
     result = await fas._auto_dispatch("dummy", params, ctx)
-    assert result == {"subject_id": "admin", "zone_id": "default"}
+    assert result == {"subject_id": "admin", "zone_id": "root"}
 
 
 class TestFastAPIServerAuth:
@@ -215,7 +215,7 @@ class TestFastAPIServerAuth:
             authenticated=True,
             subject_type="user",
             subject_id="alice",
-            zone_id="default",
+            zone_id="root",
             is_admin=False,
             inherit_permissions=True,
         )
@@ -311,7 +311,7 @@ class TestFastAPIServerHandlers:
             groups=[],
             subject_type="user",
             subject_id="admin",
-            zone_id="default",
+            zone_id="root",
             is_admin=True,
         )
         params = SimpleNamespace(path="/test.txt", return_metadata=False)
@@ -336,7 +336,7 @@ class TestFastAPIServerHandlers:
             groups=[],
             subject_type="user",
             subject_id="admin",
-            zone_id="default",
+            zone_id="root",
             is_admin=True,
         )
         params = SimpleNamespace(path="/test.txt", return_metadata=True)
@@ -370,7 +370,7 @@ class TestFastAPIServerHandlers:
             groups=[],
             subject_type="user",
             subject_id="admin",
-            zone_id="default",
+            zone_id="root",
             is_admin=True,
         )
         params = SimpleNamespace(
@@ -413,7 +413,7 @@ class TestFastAPIServerHandlers:
             groups=[],
             subject_type="user",
             subject_id="admin",
-            zone_id="default",
+            zone_id="root",
             is_admin=True,
         )
         params = SimpleNamespace(
@@ -443,7 +443,7 @@ class TestFastAPIServerHandlers:
             groups=[],
             subject_type="user",
             subject_id="admin",
-            zone_id="default",
+            zone_id="root",
             is_admin=True,
         )
         params = SimpleNamespace(
@@ -478,7 +478,7 @@ class TestFastAPIServerHandlers:
             groups=[],
             subject_type="user",
             subject_id="admin",
-            zone_id="default",
+            zone_id="root",
             is_admin=True,
         )
         # No lock param at all (backward compat - old clients)
@@ -520,7 +520,7 @@ class TestFastAPIServerHandlers:
             groups=[],
             subject_type="user",
             subject_id="admin",
-            zone_id="default",
+            zone_id="root",
             is_admin=True,
         )
         params = SimpleNamespace(
@@ -554,7 +554,7 @@ class TestFastAPIServerHandlers:
             groups=[],
             subject_type="user",
             subject_id="admin",
-            zone_id="default",
+            zone_id="root",
             is_admin=True,
         )
         params = SimpleNamespace(path="/test.txt")
@@ -579,7 +579,7 @@ class TestFastAPIServerHandlers:
             groups=[],
             subject_type="user",
             subject_id="admin",
-            zone_id="default",
+            zone_id="root",
             is_admin=True,
         )
         params = SimpleNamespace(path="/test.txt")
@@ -603,7 +603,7 @@ class TestFastAPIServerHandlers:
             groups=[],
             subject_type="user",
             subject_id="admin",
-            zone_id="default",
+            zone_id="root",
             is_admin=True,
         )
         params = SimpleNamespace(path="/newdir")
@@ -627,7 +627,7 @@ class TestFastAPIServerHandlers:
             groups=[],
             subject_type="user",
             subject_id="admin",
-            zone_id="default",
+            zone_id="root",
             is_admin=True,
         )
         params = SimpleNamespace(path="/olddir")
@@ -651,7 +651,7 @@ class TestFastAPIServerHandlers:
             groups=[],
             subject_type="user",
             subject_id="admin",
-            zone_id="default",
+            zone_id="root",
             is_admin=True,
         )
         params = SimpleNamespace(pattern="*.py", path="/workspace")
@@ -684,7 +684,7 @@ class TestFastAPIServerHandlers:
             groups=[],
             subject_type="user",
             subject_id="admin",
-            zone_id="default",
+            zone_id="root",
             is_admin=True,
         )
         params = SimpleNamespace(

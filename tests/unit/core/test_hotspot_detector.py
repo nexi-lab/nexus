@@ -53,7 +53,7 @@ class TestHotspotEntry:
             subject_id="alice",
             resource_type="file",
             permission="read",
-            zone_id="default",
+            zone_id="root",
             access_count=100,
             last_access=time.time(),
         )
@@ -90,7 +90,7 @@ class TestHotspotDetector:
             subject_id="alice",
             resource_type="file",
             permission="read",
-            zone_id="default",
+            zone_id="root",
         )
 
         count = detector.get_access_count(
@@ -98,7 +98,7 @@ class TestHotspotDetector:
             subject_id="alice",
             resource_type="file",
             permission="read",
-            zone_id="default",
+            zone_id="root",
         )
         assert count == 1
 
@@ -127,14 +127,14 @@ class TestHotspotDetector:
         detector = HotspotDetector()
 
         accesses = [
-            ("user", "alice", "file", "read", "default"),
-            ("user", "alice", "file", "read", "default"),
-            ("user", "bob", "file", "write", "default"),
+            ("user", "alice", "file", "read", "root"),
+            ("user", "alice", "file", "read", "root"),
+            ("user", "bob", "file", "write", "root"),
         ]
         detector.record_access_batch(accesses)
 
-        assert detector.get_access_count("user", "alice", "file", "read", "default") == 2
-        assert detector.get_access_count("user", "bob", "file", "write", "default") == 1
+        assert detector.get_access_count("user", "alice", "file", "read", "root") == 2
+        assert detector.get_access_count("user", "bob", "file", "write", "root") == 1
 
     def test_is_hot(self):
         """Test hot detection with threshold."""
@@ -264,7 +264,7 @@ class TestHotspotDetector:
 
         # Create hot entry
         for _ in range(10):
-            detector.record_access("user", "alice", "file", "read", "default")
+            detector.record_access("user", "alice", "file", "read", "root")
 
         # Mock Tiger Cache with cache age close to expiry
         mock_cache = MagicMock()
@@ -282,7 +282,7 @@ class TestHotspotDetector:
 
         # Create hot entry
         for _ in range(10):
-            detector.record_access("user", "alice", "file", "read", "default")
+            detector.record_access("user", "alice", "file", "read", "root")
 
         # Mock Tiger Cache with fresh cache age
         mock_cache = MagicMock()
@@ -299,7 +299,7 @@ class TestHotspotDetector:
 
         # Create hot entry
         for _ in range(10):
-            detector.record_access("user", "alice", "file", "read", "default")
+            detector.record_access("user", "alice", "file", "read", "root")
 
         # Mock Tiger Cache with no cache entry
         mock_cache = MagicMock()
@@ -362,7 +362,7 @@ class TestHotspotPrefetcher:
 
         # Create hot entry
         for _ in range(10):
-            detector.record_access("user", "alice", "file", "read", "default")
+            detector.record_access("user", "alice", "file", "read", "root")
 
         # Mock Tiger Cache with expiring entry
         mock_cache = MagicMock()

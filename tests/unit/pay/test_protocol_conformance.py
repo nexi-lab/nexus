@@ -51,7 +51,7 @@ def protocol_with_destination(request) -> tuple[PaymentProtocol, str]:
     else:
         mock_service = AsyncMock()
         mock_service.transfer = AsyncMock(return_value="tx-conformance")
-        proto = CreditsPaymentProtocol(service=mock_service, zone_id="default")
+        proto = CreditsPaymentProtocol(service=mock_service, zone_id="root")
         return proto, "agent-bob"
 
 

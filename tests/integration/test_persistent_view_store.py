@@ -64,7 +64,7 @@ class TestRoundTrip:
         assert view is not None
         assert view.subject_type == "user"
         assert view.subject_id == "alice"
-        assert view.zone_id is None  # None ↔ "default" mapping
+        assert view.zone_id is None  # None ↔ "root" mapping
         assert view.mount_paths == ("/workspace/a", "/workspace/b")
         assert view.grants_hash == "abcdef0123456789"
         assert view.revision_bucket == 42

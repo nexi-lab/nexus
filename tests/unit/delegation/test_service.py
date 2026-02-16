@@ -113,7 +113,7 @@ class TestDelegateCopyMode:
             worker_id="worker_1",
             worker_name="Worker Agent",
             delegation_mode=DelegationMode.COPY,
-            zone_id="default",
+            zone_id="root",
             ttl_seconds=3600,
         )
 
@@ -147,7 +147,7 @@ class TestDelegateCleanMode:
             worker_id="worker_1",
             worker_name="Worker Agent",
             delegation_mode=DelegationMode.CLEAN,
-            zone_id="default",
+            zone_id="root",
             add_grants=["/workspace/a.txt"],
         )
 
@@ -254,7 +254,7 @@ class TestDelegationChain:
         existing_delegation.removed_grants = "[]"
         existing_delegation.added_grants = "[]"
         existing_delegation.readonly_paths = "[]"
-        existing_delegation.zone_id = "default"
+        existing_delegation.zone_id = "root"
         existing_delegation.created_at = datetime.now(UTC)
 
         session.query.return_value.filter.return_value.first.return_value = existing_delegation
@@ -298,7 +298,7 @@ class TestRevokeDelegation:
         record.removed_grants = "[]"
         record.added_grants = "[]"
         record.readonly_paths = "[]"
-        record.zone_id = "default"
+        record.zone_id = "root"
         record.created_at = datetime.now(UTC)
 
         session.query.return_value.filter.return_value.first.return_value = record

@@ -215,7 +215,7 @@ class TestAPIKeyLifecycle:
                 session,
                 user_id="alice",
                 name="alice-laptop",
-                zone_id="default",
+                zone_id="root",
                 is_admin=True,
             )
             session.commit()
@@ -256,7 +256,7 @@ class TestAPIKeyLifecycle:
                 session,
                 user_id="bob",
                 name="bob-expired",
-                zone_id="default",
+                zone_id="root",
                 expires_at=datetime.now(UTC) - timedelta(hours=1),
             )
             session.commit()
@@ -281,7 +281,7 @@ class TestAPIKeyLifecycle:
                 session,
                 user_id="carol",
                 name="carol-revoked",
-                zone_id="default",
+                zone_id="root",
             )
             session.commit()
 
@@ -391,7 +391,7 @@ class TestPermissionEnforcement:
         admin_ctx = OperationContext(
             user="admin",
             groups=["admins"],
-            zone_id="default",
+            zone_id="root",
             is_admin=True,
         )
         nx.write("/workspace/confidential.txt", b"secret stuff", context=admin_ctx)
@@ -400,7 +400,7 @@ class TestPermissionEnforcement:
         user_ctx = OperationContext(
             user="mallory",
             groups=[],
-            zone_id="default",
+            zone_id="root",
         )
         with pytest.raises(PermissionError, match="[Aa]ccess denied"):
             nx.read("/workspace/confidential.txt", context=user_ctx)
@@ -413,7 +413,7 @@ class TestPermissionEnforcement:
         admin_ctx = OperationContext(
             user="admin",
             groups=["admins"],
-            zone_id="default",
+            zone_id="root",
             is_admin=True,
         )
         nx.write(file_path, b"# readme", context=admin_ctx)
@@ -424,13 +424,13 @@ class TestPermissionEnforcement:
                 subject=("user", "viewer"),
                 relation="direct_viewer",
                 object=("file", file_path),
-                zone_id="default",
+                zone_id="root",
             )
 
         viewer_ctx = OperationContext(
             user="viewer",
             groups=[],
-            zone_id="default",
+            zone_id="root",
         )
 
         # Read should succeed (viewer has read permission)
@@ -447,7 +447,7 @@ class TestPermissionEnforcement:
         admin_ctx = OperationContext(
             user="admin",
             groups=["admins"],
-            zone_id="default",
+            zone_id="root",
             is_admin=True,
         )
         file_path = "/workspace/protected.py"
@@ -457,7 +457,7 @@ class TestPermissionEnforcement:
         user_ctx = OperationContext(
             user="mallory",
             groups=[],
-            zone_id="default",
+            zone_id="root",
         )
         with pytest.raises(PermissionError, match="[Aa]ccess denied"):
             nx.edit(
@@ -474,7 +474,7 @@ class TestPermissionEnforcement:
         admin_ctx = OperationContext(
             user="admin",
             groups=["admins"],
-            zone_id="default",
+            zone_id="root",
             is_admin=True,
         )
         nx.write(file_path, b"def hello():\n    return 'world'\n", context=admin_ctx)
@@ -485,13 +485,13 @@ class TestPermissionEnforcement:
                 subject=("user", "viewer"),
                 relation="direct_viewer",
                 object=("file", file_path),
-                zone_id="default",
+                zone_id="root",
             )
 
         viewer_ctx = OperationContext(
             user="viewer",
             groups=[],
-            zone_id="default",
+            zone_id="root",
         )
 
         # Read should succeed (viewer has read permission)
@@ -518,7 +518,7 @@ class TestPermissionEnforcement:
         admin_ctx = OperationContext(
             user="admin",
             groups=["admins"],
-            zone_id="default",
+            zone_id="root",
             is_admin=True,
         )
         nx.write(file_path, b"x = 1\n", context=admin_ctx)
@@ -529,13 +529,13 @@ class TestPermissionEnforcement:
                 subject=("user", "editor"),
                 relation="direct_editor",
                 object=("file", file_path),
-                zone_id="default",
+                zone_id="root",
             )
 
         editor_ctx = OperationContext(
             user="editor",
             groups=[],
-            zone_id="default",
+            zone_id="root",
         )
 
         # Edit should succeed (editor has write permission)
@@ -579,7 +579,7 @@ class TestStaleSessionDetection:
         admin_ctx = OperationContext(
             user="admin",
             groups=["admins"],
-            zone_id="default",
+            zone_id="root",
             is_admin=True,
         )
         nx.write("/workspace/agent-test.txt", b"hello", context=admin_ctx)
@@ -590,7 +590,7 @@ class TestStaleSessionDetection:
                 subject=("agent", "agent_stale"),
                 relation="direct_viewer",
                 object=("file", "/workspace/agent-test.txt"),
-                zone_id="default",
+                zone_id="root",
             )
 
         # Simulate an agent context with a STALE generation
@@ -612,7 +612,7 @@ class TestStaleSessionDetection:
             stale_ctx = OperationContext(
                 user="owner",
                 groups=[],
-                zone_id="default",
+                zone_id="root",
                 subject_type="agent",
                 subject_id="agent_stale",
                 agent_id="agent_stale",
@@ -632,7 +632,7 @@ class TestStaleSessionDetection:
         admin_ctx = OperationContext(
             user="admin",
             groups=["admins"],
-            zone_id="default",
+            zone_id="root",
             is_admin=True,
         )
         nx.write("/workspace/agent-ok.txt", b"ok", context=admin_ctx)
@@ -642,7 +642,7 @@ class TestStaleSessionDetection:
                 subject=("agent", "agent_current"),
                 relation="direct_viewer",
                 object=("file", "/workspace/agent-ok.txt"),
-                zone_id="default",
+                zone_id="root",
             )
 
         from unittest.mock import MagicMock
@@ -661,7 +661,7 @@ class TestStaleSessionDetection:
             current_ctx = OperationContext(
                 user="owner",
                 groups=[],
-                zone_id="default",
+                zone_id="root",
                 subject_type="agent",
                 subject_id="agent_current",
                 agent_id="agent_current",
@@ -682,7 +682,7 @@ class TestStaleSessionDetection:
         admin_ctx = OperationContext(
             user="admin",
             groups=["admins"],
-            zone_id="default",
+            zone_id="root",
             is_admin=True,
         )
         nx.write("/workspace/deleted-agent.txt", b"secret", context=admin_ctx)
@@ -701,7 +701,7 @@ class TestStaleSessionDetection:
             deleted_ctx = OperationContext(
                 user="owner",
                 groups=[],
-                zone_id="default",
+                zone_id="root",
                 subject_type="agent",
                 subject_id="deleted_agent",
                 agent_id="deleted_agent",
@@ -722,7 +722,7 @@ class TestStaleSessionDetection:
         user_info = {
             "subject_type": "agent",
             "subject_id": "agent_roundtrip",
-            "zone_id": "default",
+            "zone_id": "root",
             "agent_generation": 7,
         }
         token = auth.create_token("agent@test.com", user_info)
@@ -741,7 +741,7 @@ class TestStaleSessionDetection:
             "authenticated": True,
             "subject_type": "agent",
             "subject_id": "sk_agent",
-            "zone_id": "default",
+            "zone_id": "root",
             "is_admin": False,
             "metadata": {"key_id": "k1", "owner_user_id": "alice"},
             # No agent_generation — SK keys don't carry it

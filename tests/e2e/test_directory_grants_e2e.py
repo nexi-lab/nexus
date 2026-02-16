@@ -122,7 +122,7 @@ def nexus_fs_with_tiger(db_with_migrations, tmp_path):
     admin_context = OperationContext(
         user="admin",
         groups=["admins"],
-        zone_id="default",
+        zone_id="root",
         is_admin=True,
     )
     nx._default_context = admin_context
@@ -147,7 +147,7 @@ class TestDirectoryGrantExpansion:
             subject=("user", "alice"),
             relation="reader",
             object=("file", directory_path),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Check that the grant was recorded in tiger_directory_grants
@@ -180,7 +180,7 @@ class TestDirectoryGrantExpansion:
         ctx = OperationContext(
             user="admin",
             groups=["admins"],
-            zone_id="default",
+            zone_id="root",
             is_admin=True,
         )
 
@@ -194,7 +194,7 @@ class TestDirectoryGrantExpansion:
             nx.write(path, f"content of {path}", context=ctx)
 
         # Verify files exist
-        listed = nx.metadata.list(prefix="/workspace/project/", recursive=True, zone_id="default")
+        listed = nx.metadata.list(prefix="/workspace/project/", recursive=True, zone_id="root")
         assert len(listed) == 3, f"Expected 3 files, got {len(listed)}"
 
         # Grant read permission on the directory
@@ -202,7 +202,7 @@ class TestDirectoryGrantExpansion:
             subject=("user", "bob"),
             relation="reader",
             object=("file", "/workspace/project/"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Give a moment for expansion to complete
@@ -242,7 +242,7 @@ class TestDirectoryGrantExpansion:
         ctx = OperationContext(
             user="admin",
             groups=["admins"],
-            zone_id="default",
+            zone_id="root",
             is_admin=True,
         )
 
@@ -251,7 +251,7 @@ class TestDirectoryGrantExpansion:
             subject=("user", "charlie"),
             relation="reader",
             object=("file", "/workspace/shared/"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Now create a new file in that directory
@@ -263,7 +263,7 @@ class TestDirectoryGrantExpansion:
             subject=("user", "charlie"),
             permission="read",
             object=("file", new_file),
-            zone_id="default",
+            zone_id="root",
         )
         assert has_access, "Charlie should have read access to newly created file"
 
@@ -284,7 +284,7 @@ class TestDirectoryGrantExpansion:
         ctx = OperationContext(
             user="admin",
             groups=["admins"],
-            zone_id="default",
+            zone_id="root",
             is_admin=True,
         )
 
@@ -295,13 +295,13 @@ class TestDirectoryGrantExpansion:
             subject=("user", "alice"),
             relation="reader",
             object=("file", "/dir_a/"),
-            zone_id="default",
+            zone_id="root",
         )
         nx.rebac_create(
             subject=("user", "bob"),
             relation="reader",
             object=("file", "/dir_b/"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Create file in dir_a
@@ -315,7 +315,7 @@ class TestDirectoryGrantExpansion:
             subject=("user", "alice"),
             permission="read",
             object=("file", "/dir_a/moveme.txt"),
-            zone_id="default",
+            zone_id="root",
         ), "Alice should have access to file in dir_a"
 
         # Move file to dir_b
@@ -329,7 +329,7 @@ class TestDirectoryGrantExpansion:
             subject=("user", "bob"),
             permission="read",
             object=("file", "/dir_b/moveme.txt"),
-            zone_id="default",
+            zone_id="root",
         )
         assert has_bob_access, "Bob should have access after file moved to dir_b"
 
@@ -493,7 +493,7 @@ class TestTigerCacheIntegration:
             subject=("user", "diana"),
             relation="reader",
             object=("file", "/cache_test/"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Wait for expansion

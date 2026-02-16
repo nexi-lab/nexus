@@ -505,14 +505,14 @@ class TestCreditsPaymentProtocol:
         from nexus.pay.protocol import CreditsPaymentProtocol
 
         mock_service = AsyncMock()
-        proto = CreditsPaymentProtocol(service=mock_service, zone_id="default")
+        proto = CreditsPaymentProtocol(service=mock_service, zone_id="root")
         assert proto.protocol_name == TransactionProtocol.INTERNAL
 
     def test_can_handle_agent_id(self):
         from nexus.pay.protocol import CreditsPaymentProtocol
 
         mock_service = AsyncMock()
-        proto = CreditsPaymentProtocol(service=mock_service, zone_id="default")
+        proto = CreditsPaymentProtocol(service=mock_service, zone_id="root")
         assert proto.can_handle("agent-bob") is True
         assert proto.can_handle("my-service") is True
 
@@ -520,7 +520,7 @@ class TestCreditsPaymentProtocol:
         from nexus.pay.protocol import CreditsPaymentProtocol
 
         mock_service = AsyncMock()
-        proto = CreditsPaymentProtocol(service=mock_service, zone_id="default")
+        proto = CreditsPaymentProtocol(service=mock_service, zone_id="root")
         assert proto.can_handle("0x1234567890abcdef1234567890abcdef12345678") is False
 
     @pytest.mark.asyncio
@@ -565,7 +565,7 @@ class TestCreditsPaymentProtocol:
         mock_service = AsyncMock()
         mock_service.transfer = AsyncMock(side_effect=InsufficientCreditsError("Not enough"))
 
-        proto = CreditsPaymentProtocol(service=mock_service, zone_id="default")
+        proto = CreditsPaymentProtocol(service=mock_service, zone_id="root")
         request = ProtocolTransferRequest(
             from_agent="alice",
             to="bob",
@@ -615,7 +615,7 @@ class TestErrorPropagation:
         mock_service = AsyncMock()
         mock_service.transfer = AsyncMock(side_effect=CreditsError("db error"))
 
-        proto = CreditsPaymentProtocol(service=mock_service, zone_id="default")
+        proto = CreditsPaymentProtocol(service=mock_service, zone_id="root")
         request = ProtocolTransferRequest(
             from_agent="alice",
             to="bob",

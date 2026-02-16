@@ -92,7 +92,7 @@ def _create_record(logger: ExchangeAuditLogger) -> str:
         amount=Decimal("10"),
         status="settled",
         application="gateway",
-        zone_id="default",
+        zone_id="root",
         transfer_id=None,
     )
 

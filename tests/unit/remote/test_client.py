@@ -124,7 +124,7 @@ class TestRemoteNexusFSAuth:
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "authenticated": True,
-            "zone_id": "default",
+            "zone_id": "root",
             "subject_type": "user",
             "subject_id": "admin",
         }
@@ -132,7 +132,7 @@ class TestRemoteNexusFSAuth:
 
         remote_client._fetch_auth_info()
 
-        assert remote_client._zone_id == "default"
+        assert remote_client._zone_id == "root"
         assert remote_client._agent_id is None
 
     def test_fetch_auth_info_agent(self, remote_client):
@@ -141,7 +141,7 @@ class TestRemoteNexusFSAuth:
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "authenticated": True,
-            "zone_id": "default",
+            "zone_id": "root",
             "subject_type": "agent",
             "subject_id": "agent-123",
         }
@@ -149,7 +149,7 @@ class TestRemoteNexusFSAuth:
 
         remote_client._fetch_auth_info()
 
-        assert remote_client._zone_id == "default"
+        assert remote_client._zone_id == "root"
         assert remote_client._agent_id == "agent-123"
 
     def test_fetch_auth_info_not_authenticated(self, remote_client):
@@ -215,7 +215,7 @@ class TestRemoteNexusFSRPCCalls:
     def test_call_rpc_success(self, remote_client):
         """Test successful RPC call."""
         remote_client._ensure_initialized = Mock()
-        remote_client._zone_id = "default"
+        remote_client._zone_id = "root"
         remote_client._agent_id = None
 
         mock_response = Mock()
@@ -240,7 +240,7 @@ class TestRemoteNexusFSRPCCalls:
     def test_call_rpc_with_agent_id(self, remote_client):
         """Test RPC call with agent ID header."""
         remote_client._ensure_initialized = Mock()
-        remote_client._zone_id = "default"
+        remote_client._zone_id = "root"
         remote_client._agent_id = "agent-123"
 
         mock_response = Mock()
@@ -256,7 +256,7 @@ class TestRemoteNexusFSRPCCalls:
             # Verify X-Agent-ID header was set
             call_kwargs = remote_client._client.post.call_args[1]
             assert call_kwargs["headers"]["X-Agent-ID"] == "agent-123"
-            assert call_kwargs["headers"]["X-Nexus-Zone-ID"] == "default"
+            assert call_kwargs["headers"]["X-Nexus-Zone-ID"] == "root"
 
     def test_call_rpc_custom_timeout(self, remote_client):
         """Test RPC call with custom timeout."""

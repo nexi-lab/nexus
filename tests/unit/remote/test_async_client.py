@@ -125,7 +125,7 @@ class TestAsyncRemoteNexusFSAuth:
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "authenticated": True,
-            "zone_id": "default",
+            "zone_id": "root",
             "subject_type": "user",
             "subject_id": "admin",
         }
@@ -133,7 +133,7 @@ class TestAsyncRemoteNexusFSAuth:
 
         await async_client._fetch_auth_info()
 
-        assert async_client._zone_id == "default"
+        assert async_client._zone_id == "root"
         assert async_client._agent_id is None
 
     @pytest.mark.asyncio
@@ -143,7 +143,7 @@ class TestAsyncRemoteNexusFSAuth:
         mock_response.status_code = 200
         mock_response.json.return_value = {
             "authenticated": True,
-            "zone_id": "default",
+            "zone_id": "root",
             "subject_type": "agent",
             "subject_id": "agent-123",
         }
@@ -151,7 +151,7 @@ class TestAsyncRemoteNexusFSAuth:
 
         await async_client._fetch_auth_info()
 
-        assert async_client._zone_id == "default"
+        assert async_client._zone_id == "root"
         assert async_client._agent_id == "agent-123"
 
     @pytest.mark.asyncio
@@ -248,7 +248,7 @@ class TestAsyncRemoteNexusFSRPCCalls:
     async def test_call_rpc_success(self, async_client):
         """Test successful RPC call."""
         async_client._ensure_initialized = AsyncMock()
-        async_client._zone_id = "default"
+        async_client._zone_id = "root"
         async_client._agent_id = None
 
         mock_response = Mock()
@@ -275,7 +275,7 @@ class TestAsyncRemoteNexusFSRPCCalls:
     async def test_call_rpc_with_agent_id(self, async_client):
         """Test RPC call with agent ID header."""
         async_client._ensure_initialized = AsyncMock()
-        async_client._zone_id = "default"
+        async_client._zone_id = "root"
         async_client._agent_id = "agent-123"
 
         mock_response = Mock()
@@ -291,7 +291,7 @@ class TestAsyncRemoteNexusFSRPCCalls:
             # Verify X-Agent-ID header was set
             call_kwargs = async_client._client.post.call_args[1]
             assert call_kwargs["headers"]["X-Agent-ID"] == "agent-123"
-            assert call_kwargs["headers"]["X-Nexus-Zone-ID"] == "default"
+            assert call_kwargs["headers"]["X-Nexus-Zone-ID"] == "root"
 
     @pytest.mark.asyncio
     async def test_call_rpc_custom_timeout(self, async_client):

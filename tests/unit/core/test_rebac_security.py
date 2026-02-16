@@ -50,7 +50,7 @@ def _make_mock_rebac(allowed_map: dict[tuple, bool] | None = None):
     rebac = MagicMock()
 
     def _check(subject, permission, object, zone_id=None):
-        key = (subject, permission, object, zone_id or "default")
+        key = (subject, permission, object, zone_id or "root")
         return allowed_map.get(key, False)
 
     rebac.rebac_check.side_effect = _check
@@ -78,7 +78,7 @@ class TestPermissionEnforcement:
         """User with a granted read permission is allowed to read."""
         rebac = _make_mock_rebac(
             {
-                (("user", "alice"), "read", ("file", "/doc.txt"), "default"): True,
+                (("user", "alice"), "read", ("file", "/doc.txt"), "root"): True,
             }
         )
         enforcer = PermissionEnforcer(rebac_manager=rebac)
@@ -98,8 +98,8 @@ class TestPermissionEnforcement:
         """User with read-only grant cannot write."""
         rebac = _make_mock_rebac(
             {
-                (("user", "alice"), "read", ("file", "/doc.txt"), "default"): True,
-                (("user", "alice"), "write", ("file", "/doc.txt"), "default"): False,
+                (("user", "alice"), "read", ("file", "/doc.txt"), "root"): True,
+                (("user", "alice"), "write", ("file", "/doc.txt"), "root"): False,
             }
         )
         enforcer = PermissionEnforcer(rebac_manager=rebac)
@@ -112,7 +112,7 @@ class TestPermissionEnforcement:
         """User with a granted write permission is allowed."""
         rebac = _make_mock_rebac(
             {
-                (("user", "alice"), "write", ("file", "/doc.txt"), "default"): True,
+                (("user", "alice"), "write", ("file", "/doc.txt"), "root"): True,
             }
         )
         enforcer = PermissionEnforcer(rebac_manager=rebac)
@@ -124,8 +124,8 @@ class TestPermissionEnforcement:
         """Alice can read but Bob cannot."""
         rebac = _make_mock_rebac(
             {
-                (("user", "alice"), "read", ("file", "/doc.txt"), "default"): True,
-                (("user", "bob"), "read", ("file", "/doc.txt"), "default"): False,
+                (("user", "alice"), "read", ("file", "/doc.txt"), "root"): True,
+                (("user", "bob"), "read", ("file", "/doc.txt"), "root"): False,
             }
         )
         enforcer = PermissionEnforcer(rebac_manager=rebac)
@@ -205,7 +205,7 @@ class TestZoneIsolation:
 
         call_kwargs = rebac.rebac_check.call_args
         zone_arg = call_kwargs.kwargs.get("zone_id") or call_kwargs[0][3]
-        assert zone_arg == "default"
+        assert zone_arg == "root"
 
 
 # ---------------------------------------------------------------------------
@@ -220,8 +220,8 @@ class TestPermissionEscalation:
         """A read-only grant does not imply write."""
         rebac = _make_mock_rebac(
             {
-                (("user", "alice"), "read", ("file", "/doc.txt"), "default"): True,
-                (("user", "alice"), "write", ("file", "/doc.txt"), "default"): False,
+                (("user", "alice"), "read", ("file", "/doc.txt"), "root"): True,
+                (("user", "alice"), "write", ("file", "/doc.txt"), "root"): False,
             }
         )
         enforcer = PermissionEnforcer(rebac_manager=rebac)
@@ -233,8 +233,8 @@ class TestPermissionEscalation:
         """A read-only grant does not imply execute."""
         rebac = _make_mock_rebac(
             {
-                (("user", "alice"), "read", ("file", "/script.sh"), "default"): True,
-                (("user", "alice"), "execute", ("file", "/script.sh"), "default"): False,
+                (("user", "alice"), "read", ("file", "/script.sh"), "root"): True,
+                (("user", "alice"), "execute", ("file", "/script.sh"), "root"): False,
             }
         )
         enforcer = PermissionEnforcer(rebac_manager=rebac)
@@ -285,7 +285,7 @@ class TestAdminBehavior:
         """With bypass off, admins go through normal ReBAC."""
         rebac = _make_mock_rebac(
             {
-                (("user", "admin"), "read", ("file", "/file.txt"), "default"): True,
+                (("user", "admin"), "read", ("file", "/file.txt"), "root"): True,
             }
         )
         enforcer = PermissionEnforcer(allow_admin_bypass=False, rebac_manager=rebac)
@@ -415,7 +415,7 @@ class TestPathEdgeCases:
         """Permission check on root path works."""
         rebac = _make_mock_rebac(
             {
-                (("user", "alice"), "read", ("file", "/"), "default"): True,
+                (("user", "alice"), "read", ("file", "/"), "root"): True,
             }
         )
         enforcer = PermissionEnforcer(rebac_manager=rebac)
@@ -428,7 +428,7 @@ class TestPathEdgeCases:
         deep_path = "/a/b/c/d/e/f/g/h/i/j/k/l/m/n/o/p/q/r/s/t/u/v/w/x/y/z/file.txt"
         rebac = _make_mock_rebac(
             {
-                (("user", "alice"), "read", ("file", deep_path), "default"): True,
+                (("user", "alice"), "read", ("file", deep_path), "root"): True,
             }
         )
         enforcer = PermissionEnforcer(rebac_manager=rebac)
@@ -441,7 +441,7 @@ class TestPathEdgeCases:
         path = "/docs/my file (2).txt"
         rebac = _make_mock_rebac(
             {
-                (("user", "alice"), "read", ("file", path), "default"): True,
+                (("user", "alice"), "read", ("file", path), "root"): True,
             }
         )
         enforcer = PermissionEnforcer(rebac_manager=rebac)
@@ -812,7 +812,7 @@ class TestCombinedSecurityScenarios:
         """Agent subjects are checked via ReBAC just like users."""
         rebac = _make_mock_rebac(
             {
-                (("agent", "bot_1"), "read", ("file", "/data.csv"), "default"): True,
+                (("agent", "bot_1"), "read", ("file", "/data.csv"), "root"): True,
             }
         )
         enforcer = PermissionEnforcer(rebac_manager=rebac)

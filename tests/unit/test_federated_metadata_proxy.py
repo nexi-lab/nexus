@@ -421,9 +421,9 @@ class TestFactory:
     def test_from_zone_manager(self, tmp_path):
         root_store = RaftMetadataStore.embedded(str(tmp_path / "root"))
         mgr = FakeZoneManager()
-        mgr.add_zone("default", root_store)
+        mgr.add_zone("root", root_store)
 
-        proxy = FederatedMetadataProxy.from_zone_manager(mgr, root_zone_id="default")
+        proxy = FederatedMetadataProxy.from_zone_manager(mgr, root_zone_id="root")
         assert isinstance(proxy, FederatedMetadataProxy)
 
     def test_from_zone_manager_missing_root(self, tmp_path):

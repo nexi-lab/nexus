@@ -53,7 +53,7 @@ def _make_metadata(
     etag: str | None = "sha256-abc123",
     mime_type: str | None = "text/plain",
     version: int = 1,
-    zone_id: str | None = "default",
+    zone_id: str | None = "root",
     created_by: str | None = "user-1",
     owner_id: str | None = "owner-1",
     is_directory: bool = False,
@@ -240,7 +240,7 @@ class TestRecordCreate:
             select(FilePathModel).where(FilePathModel.virtual_path == "/test/file.txt")
         ).scalar_one()
 
-        assert fp.zone_id == "default"
+        assert fp.zone_id == "root"
 
 
 # ---------------------------------------------------------------------------

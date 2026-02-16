@@ -108,7 +108,7 @@ class TestReBACPermissionCacheRevisionCheck:
         """Test get_with_revision_check returns None for missing entry."""
         cache = ReBACPermissionCache()
         result, revision = cache.get_with_revision_check(
-            "user", "alice", "read", "file", "/doc.txt", zone_id="default", min_revision=None
+            "user", "alice", "read", "file", "/doc.txt", zone_id="root", min_revision=None
         )
         assert result is None
         assert revision == 0
@@ -121,7 +121,7 @@ class TestReBACPermissionCacheRevisionCheck:
         cache.set_revision_fetcher(lambda _zone_id: 100)
 
         # Cache an entry
-        cache.set("user", "alice", "read", "file", "/doc.txt", result=True, zone_id="default")
+        cache.set("user", "alice", "read", "file", "/doc.txt", result=True, zone_id="root")
 
         # Get with min_revision <= current revision should succeed
         result, revision = cache.get_with_revision_check(
@@ -130,7 +130,7 @@ class TestReBACPermissionCacheRevisionCheck:
             "read",
             "file",
             "/doc.txt",
-            zone_id="default",
+            zone_id="root",
             min_revision=50,  # Less than 100
         )
         assert result is True
@@ -144,7 +144,7 @@ class TestReBACPermissionCacheRevisionCheck:
         cache.set_revision_fetcher(lambda _zone_id: 100)
 
         # Cache an entry at revision 100
-        cache.set("user", "alice", "read", "file", "/doc.txt", result=True, zone_id="default")
+        cache.set("user", "alice", "read", "file", "/doc.txt", result=True, zone_id="root")
 
         # Get with min_revision > cached revision should return None
         result, revision = cache.get_with_revision_check(
@@ -153,7 +153,7 @@ class TestReBACPermissionCacheRevisionCheck:
             "read",
             "file",
             "/doc.txt",
-            zone_id="default",
+            zone_id="root",
             min_revision=150,  # Greater than 100
         )
         assert result is None
@@ -165,11 +165,11 @@ class TestReBACPermissionCacheRevisionCheck:
 
         cache.set_revision_fetcher(lambda _zone_id: 100)
 
-        cache.set("user", "alice", "read", "file", "/doc.txt", result=True, zone_id="default")
+        cache.set("user", "alice", "read", "file", "/doc.txt", result=True, zone_id="root")
 
         # Without min_revision, should return cached entry regardless of revision
         result, _revision = cache.get_with_revision_check(
-            "user", "alice", "read", "file", "/doc.txt", zone_id="default", min_revision=None
+            "user", "alice", "read", "file", "/doc.txt", zone_id="root", min_revision=None
         )
         assert result is True
 
@@ -178,10 +178,10 @@ class TestReBACPermissionCacheRevisionCheck:
         cache = ReBACPermissionCache()
         cache.set_revision_fetcher(lambda _zone_id: 42)
 
-        cache.set("user", "alice", "read", "file", "/doc.txt", result=True, zone_id="default")
+        cache.set("user", "alice", "read", "file", "/doc.txt", result=True, zone_id="root")
 
         # Check internal metadata has 4 elements (including revision)
-        key = cache._make_key("user", "alice", "read", "file", "/doc.txt", "default")
+        key = cache._make_key("user", "alice", "read", "file", "/doc.txt", "root")
         metadata = cache._entry_metadata.get(key)
         assert metadata is not None
         assert len(metadata) == 4  # (created_at, ttl, delta, revision)

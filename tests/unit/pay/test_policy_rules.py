@@ -23,7 +23,7 @@ from nexus.pay.policy_rules import RuleContext, RuleResult, evaluate_rules
 def _ctx(
     *,
     agent_id: str = "agent-a",
-    zone_id: str = "default",
+    zone_id: str = "root",
     to: str = "agent-b",
     amount: Decimal = Decimal("10"),
     metadata: dict | None = None,

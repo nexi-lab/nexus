@@ -44,7 +44,7 @@ class MockMemoryModel:
         parent_memory_id: str | None = None,
         child_memory_ids: str | None = None,
         is_archived: bool = False,
-        zone_id: str = "default",
+        zone_id: str = "root",
     ):
         self.memory_id = memory_id
         self.embedding = json.dumps(embedding) if embedding else None

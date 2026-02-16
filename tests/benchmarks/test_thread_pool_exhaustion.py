@@ -259,7 +259,7 @@ def test_in_process_thread_exhaustion(
         context = OperationContext(
             user="test_user",
             groups=[],
-            zone_id="default",
+            zone_id="root",
             subject_type="user",
             subject_id="test_user",
         )
@@ -269,7 +269,7 @@ def test_in_process_thread_exhaustion(
             subject=("user", "test_user"),
             relation="reader",
             object=("file", "/"),
-            zone_id="default",
+            zone_id="root",
         )
 
         print("Created 50 test files")
@@ -375,7 +375,7 @@ async def test_async_thread_exhaustion(
         context = OperationContext(
             user="test_user",
             groups=[],
-            zone_id="default",
+            zone_id="root",
             subject_type="user",
             subject_id="test_user",
         )
@@ -385,7 +385,7 @@ async def test_async_thread_exhaustion(
             subject=("user", "test_user"),
             relation="reader",
             object=("file", "/"),
-            zone_id="default",
+            zone_id="root",
         )
 
         print("Created 100 test files")

@@ -37,9 +37,7 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance for testing."""
     nx = create_nexus_fs(
         backend=LocalBackend(temp_dir),
-        metadata_store=RaftMetadataStore.embedded(
-            str(temp_dir / "raft-metadata"), zone_id="default"
-        ),
+        metadata_store=RaftMetadataStore.embedded(str(temp_dir / "raft-metadata"), zone_id="root"),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         auto_parse=False,
         enforce_permissions=False,
@@ -54,7 +52,7 @@ def nx_with_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
     nx = create_nexus_fs(
         backend=LocalBackend(temp_dir),
         metadata_store=RaftMetadataStore.embedded(
-            str(temp_dir / "raft-metadata-perms"), zone_id="default"
+            str(temp_dir / "raft-metadata-perms"), zone_id="root"
         ),
         record_store=SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db"),
         auto_parse=False,

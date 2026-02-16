@@ -238,7 +238,7 @@ class TestGetMetadataPathUnscoping:
         metadata.created_at = "2024-01-01T00:00:00Z"
         metadata.modified_at = "2024-01-01T00:00:00Z"
         metadata.version = 1
-        metadata.zone_id = "default"
+        metadata.zone_id = "root"
 
         mock_metadata_store = Mock()
         mock_metadata_store.get = Mock(return_value=metadata)

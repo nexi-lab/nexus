@@ -162,7 +162,7 @@ class TestBalanceOperations:
         mock_credits_service.check_budget.return_value = True
         assert await nexuspay.can_afford(amount=Decimal("5.50")) is True
         mock_credits_service.check_budget.assert_called_once_with(
-            nexuspay.agent_id, Decimal("5.50"), zone_id="default"
+            nexuspay.agent_id, Decimal("5.50"), zone_id="root"
         )
 
 

@@ -154,7 +154,7 @@ class TestSetupAdminAPIKey:
         admin_key = "sk-custom_user_key"
         user_id = "superadmin"
 
-        result = setup_admin_api_key(database_url, admin_key, zone_id="default", user_id=user_id)
+        result = setup_admin_api_key(database_url, admin_key, zone_id="root", user_id=user_id)
 
         assert result is True
 

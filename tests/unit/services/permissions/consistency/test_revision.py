@@ -82,12 +82,12 @@ class TestIncrementVersionToken:
     """Test increment_version_token function."""
 
     def test_first_call_returns_v1(self, sqlite_engine, conn_helper):
-        token = increment_version_token(sqlite_engine, conn_helper, zone_id="default")
+        token = increment_version_token(sqlite_engine, conn_helper, zone_id="root")
         assert token == "v1"
 
     def test_second_call_returns_v2(self, sqlite_engine, conn_helper):
-        increment_version_token(sqlite_engine, conn_helper, zone_id="default")
-        token = increment_version_token(sqlite_engine, conn_helper, zone_id="default")
+        increment_version_token(sqlite_engine, conn_helper, zone_id="root")
+        token = increment_version_token(sqlite_engine, conn_helper, zone_id="root")
         assert token == "v2"
 
     def test_monotonic_increments(self, sqlite_engine, conn_helper):
@@ -142,7 +142,7 @@ class TestIncrementVersionTokenPostgres:
         engine = self._make_pg_engine()
         helper, mock_conn, mock_cursor = self._make_pg_conn_helper([{"current_version": 1}])
 
-        token = increment_version_token(engine, helper, zone_id="default")
+        token = increment_version_token(engine, helper, zone_id="root")
 
         assert token == "v1"
         mock_conn.commit.assert_called_once()
@@ -173,7 +173,7 @@ class TestIncrementVersionTokenPostgres:
         engine = self._make_pg_engine()
         helper, _, mock_cursor = self._make_pg_conn_helper([None])
 
-        token = increment_version_token(engine, helper, zone_id="default")
+        token = increment_version_token(engine, helper, zone_id="root")
 
         assert token == "v1"
 

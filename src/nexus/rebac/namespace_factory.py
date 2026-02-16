@@ -13,20 +13,20 @@ from typing import TYPE_CHECKING
 from nexus.rebac.namespace_manager import NamespaceManager
 
 if TYPE_CHECKING:
-    from nexus.rebac.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.manager import ReBACManager
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
 
 def create_namespace_manager(
-    rebac_manager: EnhancedReBACManager,
+    rebac_manager: ReBACManager,
     record_store: RecordStoreABC | None = None,
 ) -> NamespaceManager:
     """Create NamespaceManager with config from environment variables.
 
     Args:
-        rebac_manager: EnhancedReBACManager for ReBAC queries
+        rebac_manager: ReBACManager for ReBAC queries
         record_store: RecordStoreABC for L3 persistent view store (Four Pillars).
             If None, L3 is disabled (graceful degradation).
 

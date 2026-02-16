@@ -29,7 +29,7 @@ if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter
     from nexus.rebac.async_permissions import AsyncPermissionEnforcer
-    from nexus.rebac.manager import EnhancedReBACManager
+    from nexus.rebac.manager import ReBACManager
 
 
 class VersionService:
@@ -93,7 +93,7 @@ class VersionService:
         cas_store: Any,  # Backend with read_content method
         permission_enforcer: AsyncPermissionEnforcer | None = None,
         router: PathRouter | None = None,
-        rebac_manager: EnhancedReBACManager | None = None,
+        rebac_manager: ReBACManager | None = None,
         enforce_permissions: bool = True,
         session_factory: Callable[..., Any] | None = None,  # Task #45: For VersionManager queries
     ):

@@ -17,7 +17,7 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Connection, Engine
 
     from nexus.rebac.cache.tiger.bitmap_cache import TigerCache
-    from nexus.rebac.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.manager import ReBACManager
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ class TigerCacheUpdater:
         self,
         engine: Engine,
         tiger_cache: TigerCache,
-        rebac_manager: EnhancedReBACManager | None = None,
+        rebac_manager: ReBACManager | None = None,
     ):
         """Initialize the updater.
 
@@ -48,7 +48,7 @@ class TigerCacheUpdater:
         self._is_postgresql = "postgresql" in str(engine.url)
         self._last_processed_revision = 0
 
-    def set_rebac_manager(self, manager: EnhancedReBACManager) -> None:
+    def set_rebac_manager(self, manager: ReBACManager) -> None:
         """Set the ReBAC manager for permission computation."""
         self._rebac_manager = manager
         self._tiger_cache.set_rebac_manager(manager)

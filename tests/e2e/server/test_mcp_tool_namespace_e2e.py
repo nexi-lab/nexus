@@ -8,7 +8,7 @@ Issue #1272: Validates the complete flow with a real ReBAC backend:
     5. Validate [TOOL-NS] and [PROFILES] log output
     6. Performance: cold + hot lookups under threshold
 
-Uses real EnhancedReBACManager with in-memory SQLite (not mocks).
+Uses real ReBACManager with in-memory SQLite (not mocks).
 
 Usage:
     uv run pytest tests/e2e/test_mcp_tool_namespace_e2e.py -v --tb=short -p no:xdist -o "addopts=" --log-cli-level=INFO
@@ -31,7 +31,7 @@ from nexus.mcp.profiles import (
     revoke_tools_by_tuple_ids,
 )
 from nexus.mcp.server import create_mcp_server
-from nexus.rebac.manager import EnhancedReBACManager
+from nexus.rebac.manager import ReBACManager
 from nexus.storage.models import Base
 
 logger = logging.getLogger(__name__)
@@ -51,8 +51,8 @@ def rebac_engine():
 
 @pytest.fixture
 def rebac_manager(rebac_engine):
-    """Real EnhancedReBACManager on in-memory SQLite."""
-    return EnhancedReBACManager(engine=rebac_engine, cache_ttl_seconds=1)
+    """Real ReBACManager on in-memory SQLite."""
+    return ReBACManager(engine=rebac_engine, cache_ttl_seconds=1)
 
 
 @pytest.fixture

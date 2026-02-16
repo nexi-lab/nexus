@@ -28,7 +28,7 @@ from nexus.core.path_utils import get_ancestors, get_parent, get_parent_chain
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.rebac.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.manager import ReBACManager
 
 
 class HierarchyManager:
@@ -47,7 +47,7 @@ class HierarchyManager:
 
     def __init__(
         self,
-        rebac_manager: EnhancedReBACManager,
+        rebac_manager: ReBACManager,
         enable_inheritance: bool = True,
     ):
         """Initialize hierarchy manager.

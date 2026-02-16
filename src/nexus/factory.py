@@ -356,9 +356,9 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
     t0 = time.perf_counter()
     try:
         # --- ReBAC Manager ---
-        from nexus.rebac.manager import EnhancedReBACManager
+        from nexus.rebac.manager import ReBACManager
 
-        rebac_manager = EnhancedReBACManager(
+        rebac_manager = ReBACManager(
             engine=ctx.engine,
             cache_ttl_seconds=ctx.cache_ttl_seconds or 300,
             max_depth=10,
@@ -381,7 +381,7 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
         )
 
         # --- Directory Visibility Cache ---
-        from nexus.rebac.dir_visibility_cache import DirectoryVisibilityCache
+        from nexus.rebac.cache.visibility import DirectoryVisibilityCache
 
         dir_visibility_cache = DirectoryVisibilityCache(
             tiger_cache=getattr(rebac_manager, "_tiger_cache", None),

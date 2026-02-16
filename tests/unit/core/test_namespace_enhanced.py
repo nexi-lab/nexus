@@ -36,10 +36,10 @@ def engine():
 
 @pytest.fixture
 def enhanced_rebac_manager(engine):
-    """Create an EnhancedReBACManager for testing."""
-    from nexus.rebac.manager import EnhancedReBACManager
+    """Create an ReBACManager for testing."""
+    from nexus.rebac.manager import ReBACManager
 
-    manager = EnhancedReBACManager(
+    manager = ReBACManager(
         engine=engine,
         cache_ttl_seconds=300,
         max_depth=10,

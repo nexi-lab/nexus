@@ -21,7 +21,7 @@ from nexus.services.permissions.enforcer import PermissionEnforcer
 from nexus.storage.models import MemoryModel
 
 if TYPE_CHECKING:
-    from nexus.rebac.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.rebac.manager import ReBACManager
 
 
 class MemoryPermissionEnforcer(PermissionEnforcer):
@@ -37,7 +37,7 @@ class MemoryPermissionEnforcer(PermissionEnforcer):
         self,
         metadata_store: Any = None,
         acl_store: Any | None = None,  # Deprecated, kept for backward compatibility
-        rebac_manager: EnhancedReBACManager | None = None,
+        rebac_manager: ReBACManager | None = None,
         memory_router: MemoryViewRouter | None = None,
         entity_registry: EntityRegistry | None = None,
     ) -> None:

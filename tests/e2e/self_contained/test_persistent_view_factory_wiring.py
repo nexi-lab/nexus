@@ -18,7 +18,7 @@ from __future__ import annotations
 import pytest
 
 from nexus.cache.persistent_view_postgres import PostgresPersistentViewStore
-from nexus.rebac.manager import EnhancedReBACManager
+from nexus.rebac.manager import ReBACManager
 from nexus.rebac.namespace_factory import create_namespace_manager
 from nexus.rebac.namespace_manager import MountEntry
 from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -38,8 +38,8 @@ def record_store():
 
 @pytest.fixture
 def rebac_manager(record_store):
-    """Create an EnhancedReBACManager."""
-    manager = EnhancedReBACManager(
+    """Create an ReBACManager."""
+    manager = ReBACManager(
         engine=record_store.engine,
         cache_ttl_seconds=300,
         max_depth=10,

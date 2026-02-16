@@ -33,6 +33,7 @@ Usage::
 from __future__ import annotations
 
 import logging
+import os
 import threading
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
@@ -62,13 +63,21 @@ def _get_tracer() -> Any:
         return _tracer
     with _tracer_lock:
         if not _tracer_resolved:
-            # Lazy import to break circular dependency:
-            # rebac_tracing -> server.telemetry -> server.__init__ -> NexusFS -> rebac_service -> rebac_tracing
-            from nexus.server.telemetry import get_tracer
-
-            _tracer = get_tracer("nexus.rebac")
+            _tracer = _resolve_tracer()
             _tracer_resolved = True
     return _tracer
+
+
+def _resolve_tracer() -> Any:
+    """Resolve tracer without importing from server layer."""
+    if os.environ.get("OTEL_ENABLED", "false").lower() not in ("true", "1", "yes"):
+        return None
+    try:
+        from opentelemetry import trace
+
+        return trace.get_tracer("nexus.rebac")
+    except ImportError:
+        return None
 
 
 def reset_tracer() -> None:

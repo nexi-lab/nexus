@@ -197,6 +197,11 @@ class NexusFS(  # type: ignore[misc]
         self.parser_registry = ParserRegistry()
         self.parser_registry.register(MarkItDownParser())
 
+        # Provide parse callback for virtual views (core/ must not import parsers directly)
+        from nexus.parsers import create_default_parse_fn
+
+        self._virtual_view_parse_fn = create_default_parse_fn()
+
         # Initialize new provider registry for read(parsed=True) support
         from nexus.parsers.providers import ProviderRegistry
         from nexus.parsers.providers.base import ProviderConfig

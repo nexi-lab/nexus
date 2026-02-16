@@ -1404,7 +1404,13 @@ class NexusFUSEOperations(Operations):
         # In text mode, try to parse
         if self.mode.value == "text" or (self.mode.value == "smart" and view_type):
             # Use shared parsing logic
-            parsed_content = get_parsed_content(content, path, view_type or "txt")
+            from nexus.parsers import create_default_parse_fn
+
+            if not hasattr(self, "_parse_fn"):
+                self._parse_fn = create_default_parse_fn()
+            parsed_content = get_parsed_content(
+                content, path, view_type or "txt", parse_fn=self._parse_fn
+            )
             # Cache the parsed result
             self.cache.cache_parsed(path, view_type, parsed_content)
             return parsed_content

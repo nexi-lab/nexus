@@ -550,7 +550,7 @@ class AsyncSemanticSearch:
         # Apply adaptive k if enabled (Issue #1021)
         if adaptive_k:
             # Lazy import to break search → llm hard dependency (Issue #1520)
-            from nexus.llm.context_builder import ContextBuilder as _CB
+            from nexus.services.llm_context_builder import ContextBuilder as _CB
 
             if not hasattr(self, "_context_builder") or self._context_builder is None:
                 self._context_builder = _CB()

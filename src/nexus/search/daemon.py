@@ -436,7 +436,7 @@ class SearchDaemon:
 
         # Apply adaptive k if enabled (Issue #1021)
         if adaptive_k:
-            from nexus.llm.context_builder import ContextBuilder
+            from nexus.services.llm_context_builder import ContextBuilder
 
             context_builder = ContextBuilder()
             original_limit = limit

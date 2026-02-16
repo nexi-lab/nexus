@@ -45,8 +45,8 @@ from nexus.search.vector_db import VectorDatabase
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.llm.context_builder import AdaptiveRetrievalConfig
     from nexus.search.ranking import RankingConfig
+    from nexus.services.llm_context_builder import AdaptiveRetrievalConfig
 
 
 @dataclass
@@ -133,10 +133,10 @@ class SemanticSearch:
 
         # Initialize context builder for adaptive retrieval (Issue #1021)
         # Lazy import to break search → llm hard dependency (Issue #1520)
-        from nexus.llm.context_builder import (
+        from nexus.services.llm_context_builder import (
             AdaptiveRetrievalConfig as _ARC,
         )
-        from nexus.llm.context_builder import (
+        from nexus.services.llm_context_builder import (
             ContextBuilder as _CB,
         )
 

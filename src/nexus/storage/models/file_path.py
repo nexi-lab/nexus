@@ -34,7 +34,7 @@ class FilePathModel(Base):
     )
 
     # P0 SECURITY: Defense-in-depth zone isolation
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
 
     # Path information
     virtual_path: Mapped[str] = mapped_column(Text, nullable=False)

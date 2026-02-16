@@ -37,7 +37,7 @@ class TrajectoryModel(Base):
 
     user_id: Mapped[str] = mapped_column(String(255), nullable=False)
     agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
 
     task_description: Mapped[str] = mapped_column(Text, nullable=False)
     task_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
@@ -159,7 +159,7 @@ class PlaybookModel(Base):
 
     user_id: Mapped[str] = mapped_column(String(255), nullable=False)
     agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
 
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)

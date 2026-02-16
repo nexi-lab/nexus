@@ -743,12 +743,6 @@ class TestNexusConfigAdvanced:
         assert config.mode == "federation"
         assert config.url is None
 
-    def test_parsers_list(self) -> None:
-        """Test NexusConfig with parsers list."""
-        parsers = [{"module": "my_parsers", "class": "CSVParser", "priority": 60, "enabled": True}]
-        config = NexusConfig(parsers=parsers)
-        assert config.parsers == parsers
-
     def test_namespaces_list(self) -> None:
         """Test NexusConfig with namespaces list."""
         namespaces = [{"name": "private", "readonly": False, "admin_only": True}]
@@ -838,33 +832,6 @@ class TestNexusConfigAdvanced:
 
 class TestLoadFromEnvironmentAdvanced:
     """Advanced tests for _load_from_environment with more fields."""
-
-    def test_parsers_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test loading parsers from environment variable."""
-        monkeypatch.setenv(
-            "NEXUS_PARSERS", "my_parsers.csv:CSVParser:60,my_parsers.log:LogParser:50"
-        )
-        result = _load_from_environment()
-
-        assert result.parsers is not None
-        assert len(result.parsers) == 2
-        assert result.parsers[0]["module"] == "my_parsers.csv"
-        assert result.parsers[0]["class"] == "CSVParser"
-        assert result.parsers[0]["priority"] == 60
-        assert result.parsers[1]["module"] == "my_parsers.log"
-        assert result.parsers[1]["class"] == "LogParser"
-        assert result.parsers[1]["priority"] == 50
-
-    def test_parsers_from_env_no_priority(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Test loading parsers without priority from environment."""
-        monkeypatch.setenv("NEXUS_PARSERS", "my_parsers.csv:CSVParser")
-        result = _load_from_environment()
-
-        assert result.parsers is not None
-        assert len(result.parsers) == 1
-        assert result.parsers[0]["module"] == "my_parsers.csv"
-        assert result.parsers[0]["class"] == "CSVParser"
-        assert "priority" not in result.parsers[0]
 
     def test_cache_ttl_none_from_env(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Test loading cache_ttl_seconds as None from environment."""

@@ -495,7 +495,7 @@ class NexusFilesystem(Protocol):
             Snapshot metadata dict
 
         Raises:
-            ValueError: If workspace_path not provided and no default set
+            ValueError: If workspace_path not provided
             BackendError: If snapshot cannot be created
         """
         ...
@@ -515,7 +515,7 @@ class NexusFilesystem(Protocol):
             Restore operation result
 
         Raises:
-            ValueError: If workspace_path not provided and no default set
+            ValueError: If workspace_path not provided
             NexusFileNotFoundError: If snapshot not found
         """
         ...
@@ -535,7 +535,7 @@ class NexusFilesystem(Protocol):
             List of snapshot metadata dicts (most recent first)
 
         Raises:
-            ValueError: If workspace_path not provided and no default set
+            ValueError: If workspace_path not provided
         """
         ...
 
@@ -556,7 +556,7 @@ class NexusFilesystem(Protocol):
             Diff dict with added, removed, modified files
 
         Raises:
-            ValueError: If workspace_path not provided and no default set
+            ValueError: If workspace_path not provided
             NexusFileNotFoundError: If either snapshot not found
         """
         ...

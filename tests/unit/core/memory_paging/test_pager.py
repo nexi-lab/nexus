@@ -4,8 +4,8 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from nexus.core.memory_paging import MemoryPager
-from nexus.core.memory_paging.context_manager import MAX_CAPACITY, ContextManager
+from nexus.services.memory.memory_paging import MemoryPager
+from nexus.services.memory.memory_paging.context_manager import MAX_CAPACITY, ContextManager
 from nexus.storage.models import Base, MemoryModel
 
 

@@ -370,9 +370,7 @@ class TestReadBulkFromCache:
 
 class TestReadContentWithCache:
     def test_cache_miss_fetches_from_backend(self, cache_service, file_cache):
-        ctx = OperationContext(
-            user="test", groups=[], backend_path="/file.txt", is_system=True
-        )
+        ctx = OperationContext(user="test", groups=[], backend_path="/file.txt", is_system=True)
 
         with patch("nexus.backends.cache_service.get_file_cache", return_value=file_cache):
             result = cache_service.read_content_with_cache("hash1", ctx)

@@ -243,13 +243,9 @@ class CacheService:
             else:
                 l1_result = l1_cache.get(path)
                 if l1_result is not None:
-                    path_id, content_hash, _disk_path, original_size, _is_text, is_fresh = (
-                        l1_result
-                    )
+                    path_id, content_hash, _disk_path, original_size, _is_text, is_fresh = l1_result
                     if is_fresh:
-                        entry = CacheEntry.from_l1_metadata(
-                            path_id, content_hash, original_size
-                        )
+                        entry = CacheEntry.from_l1_metadata(path_id, content_hash, original_size)
                         logger.info("[CACHE] L1 HIT (Rust metadata): %s", path)
                         return entry
                     else:
@@ -289,9 +285,7 @@ class CacheService:
         if ttl:
             age = (datetime.now(UTC) - entry.synced_at).total_seconds()
             if age > ttl:
-                logger.info(
-                    "[CACHE] L2 TTL EXPIRED: %s (age=%.0fs > ttl=%ds)", path, age, ttl
-                )
+                logger.info("[CACHE] L2 TTL EXPIRED: %s (age=%.0fs > ttl=%ds)", path, age, ttl)
                 return None
 
         # Populate L1 for future reads
@@ -327,9 +321,7 @@ class CacheService:
                     results[path] = entry
                     logger.debug("[CACHE-BULK] L1 HIT: %s", path)
                 else:
-                    path_id, content_hash, _disk_path, original_size, _is_text, is_fresh = (
-                        l1_result
-                    )
+                    path_id, content_hash, _disk_path, original_size, _is_text, is_fresh = l1_result
                     if is_fresh:
                         entry = CacheEntry.from_l1_metadata(
                             path_id, content_hash, original_size, now
@@ -487,9 +479,7 @@ class CacheService:
 
             if session and path_id:
                 try:
-                    file_path_stmt = select(FilePathModel).where(
-                        FilePathModel.path_id == path_id
-                    )
+                    file_path_stmt = select(FilePathModel).where(FilePathModel.path_id == path_id)
                     file_path_result = session.execute(file_path_stmt)
                     file_path = file_path_result.scalar_one_or_none()
                     if file_path:
@@ -606,13 +596,9 @@ class CacheService:
                 cache_zone = entry_zone_id or "root"
                 if original_size <= MAX_CACHE_FILE_SIZE:
                     try:
-                        file_cache.write(
-                            cache_zone, path, content, text_content=content_text
-                        )
+                        file_cache.write(cache_zone, path, content, text_content=content_text)
                     except Exception as e:
-                        logger.warning(
-                            "[CACHE] Failed to write to disk cache: %s: %s", path, e
-                        )
+                        logger.warning("[CACHE] Failed to write to disk cache: %s: %s", path, e)
 
                 meta = {
                     "path_id": path_id,
@@ -664,12 +650,8 @@ class CacheService:
         # Update file_paths in DB
         if session and cache_entries:
             try:
-                size_updates = {
-                    ce.path_id: ce.original_size for ce in cache_entries if ce.path_id
-                }
-                hash_updates = {
-                    ce.path_id: ce.content_hash for ce in cache_entries if ce.path_id
-                }
+                size_updates = {ce.path_id: ce.original_size for ce in cache_entries if ce.path_id}
+                hash_updates = {ce.path_id: ce.content_hash for ce in cache_entries if ce.path_id}
 
                 if size_updates:
                     file_path_stmt = select(FilePathModel).where(

@@ -178,9 +178,7 @@ class CacheConnectorMixin:
         """Get path_ids for multiple virtual paths in a single query."""
         return self._cache_service.get_path_ids_bulk(paths, session)
 
-    def _read_from_cache(
-        self, path: str, original: bool = False
-    ) -> CacheEntry | None:
+    def _read_from_cache(self, path: str, original: bool = False) -> CacheEntry | None:
         """Read content from cache (L1 then L2)."""
         return self._cache_service.read_from_cache(path, original)
 

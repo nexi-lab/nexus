@@ -70,9 +70,9 @@ class NexusFederation:
             # Auto-build factory with TLS config from ZoneManager
             from nexus.raft.client import RaftClient, RaftClientConfig
 
-            tls_cert = getattr(zone_manager, "_tls_cert_path", None)
-            tls_key = getattr(zone_manager, "_tls_key_path", None)
-            tls_ca = getattr(zone_manager, "_tls_ca_path", None)
+            tls_cert = getattr(zone_manager, "tls_cert_path", None)
+            tls_key = getattr(zone_manager, "tls_key_path", None)
+            tls_ca = getattr(zone_manager, "tls_ca_path", None)
             config = RaftClientConfig(
                 tls_cert_path=tls_cert,
                 tls_key_path=tls_key,
@@ -124,8 +124,8 @@ class NexusFederation:
             result = await client.invite_zone(
                 zone_id=new_zone_id,
                 mount_path=remote_path,
-                inviter_node_id=self._mgr._node_id,
-                inviter_address=self._mgr._py_mgr.advertise_addr(),
+                inviter_node_id=self._mgr.node_id,
+                inviter_address=self._mgr.advertise_addr,
             )
             logger.info(
                 "Peer %s joined zone '%s' (node_id=%s)",
@@ -216,8 +216,8 @@ class NexusFederation:
         try:
             await leader_client.join_zone(
                 zone_id=zone_id,
-                node_id=self._mgr._node_id,
-                node_address=self._mgr._py_mgr.advertise_addr(),
+                node_id=self._mgr.node_id,
+                node_address=self._mgr.advertise_addr,
             )
         finally:
             await leader_client.close()

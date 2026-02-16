@@ -14,17 +14,16 @@ from __future__ import annotations
 
 import json
 import uuid
-from contextlib import contextmanager
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any, cast
 
-# Import Permission and OperationContext from the original module (don't duplicate)
+from sqlalchemy import Table, insert, select
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
-if TYPE_CHECKING:
-    pass
-
+from nexus.storage.models._base import Base
+from nexus.storage.models.permissions import AdminBypassAuditModel as ABA
 
 # ============================================================================
 # P0-4: Admin Capabilities and Audit System
@@ -116,6 +115,7 @@ class AuditStore:
     """Immutable audit log store for admin/system bypass tracking (P0-4).
 
     Provides append-only audit trail for all bypass attempts.
+    Uses SQLAlchemy ORM via AdminBypassAuditModel.
     """
 
     def __init__(self, engine: Any):
@@ -128,148 +128,12 @@ class AuditStore:
         self._ensure_tables()
 
     def _ensure_tables(self) -> None:
-        """Ensure audit tables exist."""
-        # Create table if it doesn't exist (for tests and non-migration scenarios)
-        from sqlalchemy import text
-
-        try:
-            with self.engine.connect() as conn:
-                # Check if table exists
-                if self.engine.dialect.name == "sqlite":
-                    result = conn.execute(
-                        text(
-                            "SELECT name FROM sqlite_master WHERE type='table' AND name='admin_bypass_audit'"
-                        )
-                    )
-                    if not result.fetchone():
-                        # Create table (SQLite syntax)
-                        conn.execute(
-                            text("""
-                                CREATE TABLE admin_bypass_audit (
-                                    id TEXT PRIMARY KEY,
-                                    timestamp DATETIME NOT NULL,
-                                    request_id TEXT NOT NULL,
-                                    user_id TEXT NOT NULL,
-                                    zone_id TEXT,
-                                    path TEXT NOT NULL,
-                                    permission TEXT NOT NULL,
-                                    bypass_type TEXT NOT NULL,
-                                    allowed INTEGER NOT NULL,
-                                    capabilities TEXT,
-                                    denial_reason TEXT
-                                )
-                            """)
-                        )
-                        conn.execute(
-                            text(
-                                "CREATE INDEX idx_audit_timestamp ON admin_bypass_audit(timestamp)"
-                            )
-                        )
-                        conn.execute(
-                            text(
-                                "CREATE INDEX idx_audit_user_timestamp ON admin_bypass_audit(user_id, timestamp)"
-                            )
-                        )
-                        conn.execute(
-                            text(
-                                "CREATE INDEX idx_audit_zone_timestamp ON admin_bypass_audit(zone_id, timestamp)"
-                            )
-                        )
-                        conn.commit()
-                elif self.engine.dialect.name == "postgresql":
-                    result = conn.execute(
-                        text(
-                            "SELECT tablename FROM pg_tables WHERE schemaname = 'public' AND tablename = 'admin_bypass_audit'"
-                        )
-                    )
-                    if not result.fetchone():
-                        # Create table (PostgreSQL syntax)
-                        conn.execute(
-                            text("""
-                                CREATE TABLE admin_bypass_audit (
-                                    id VARCHAR(36) PRIMARY KEY,
-                                    timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
-                                    request_id VARCHAR(36) NOT NULL,
-                                    user_id VARCHAR(255) NOT NULL,
-                                    zone_id VARCHAR(255),
-                                    path TEXT NOT NULL,
-                                    permission VARCHAR(50) NOT NULL,
-                                    bypass_type VARCHAR(20) NOT NULL,
-                                    allowed BOOLEAN NOT NULL,
-                                    capabilities TEXT,
-                                    denial_reason TEXT
-                                )
-                            """)
-                        )
-                        conn.execute(
-                            text(
-                                "CREATE INDEX idx_audit_timestamp ON admin_bypass_audit(timestamp)"
-                            )
-                        )
-                        conn.execute(
-                            text(
-                                "CREATE INDEX idx_audit_user_timestamp ON admin_bypass_audit(user_id, timestamp)"
-                            )
-                        )
-                        conn.execute(
-                            text(
-                                "CREATE INDEX idx_audit_zone_timestamp ON admin_bypass_audit(zone_id, timestamp)"
-                            )
-                        )
-                        conn.commit()
-        except (OperationalError, ProgrammingError):
-            # If table creation fails, it might already exist or migrations handle it
-            pass
-
-    @contextmanager
-    def _connection(self) -> Any:
-        """Context manager for database connections.
-
-        Uses engine.connect() which properly goes through the connection pool
-        and respects pool_pre_ping for automatic stale connection detection.
-        """
-        with self.engine.connect() as sa_conn:
-            dbapi_conn = sa_conn.connection.dbapi_connection
-            try:
-                yield dbapi_conn
-                sa_conn.commit()
-            except Exception:
-                sa_conn.rollback()
-                raise
+        """Ensure audit tables exist using ORM model metadata."""
+        with suppress(OperationalError, ProgrammingError):
+            Base.metadata.create_all(self.engine, tables=[cast(Table, ABA.__table__)])
 
     def close(self) -> None:
         """Close database connection (no-op, connections are managed per-operation)."""
-        pass
-
-    def _fix_sql_placeholders(self, sql: str) -> str:
-        """Convert SQLite ? placeholders to PostgreSQL %s if needed."""
-        dialect_name = self.engine.dialect.name
-        if dialect_name == "postgresql":
-            return sql.replace("?", "%s")
-        return sql
-
-    def _create_cursor(self, conn: Any) -> Any:
-        """Create a database cursor (driver-agnostic).
-
-        Returns a plain DBAPI cursor. Callers that need dict-like row
-        access should use ``_rows_as_dicts`` on the fetch results.
-
-        Args:
-            conn: DB-API connection object
-
-        Returns:
-            Database cursor
-        """
-        return conn.cursor()
-
-    @staticmethod
-    def _rows_as_dicts(cursor: Any) -> list[dict[str, Any]]:
-        """Convert cursor results to list of dicts using cursor.description.
-
-        Works with any DBAPI-compliant cursor regardless of driver.
-        """
-        columns = [col[0] for col in cursor.description]
-        return [dict(zip(columns, row, strict=False)) for row in cursor.fetchall()]
 
     def log_bypass(self, entry: AuditLogEntry) -> None:
         """Log admin/system bypass to immutable audit table.
@@ -277,34 +141,22 @@ class AuditStore:
         Args:
             entry: Audit log entry to record
         """
-        with self._connection() as conn:
-            cursor = self._create_cursor(conn)
-
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    """
-                    INSERT INTO admin_bypass_audit (
-                        id, timestamp, request_id, user_id, zone_id, path,
-                        permission, bypass_type, allowed, capabilities, denial_reason
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """
-                ),
-                (
-                    str(uuid.uuid4()),
-                    entry.timestamp,
-                    entry.request_id,
-                    entry.user,
-                    entry.zone_id,
-                    entry.path,
-                    entry.permission,
-                    entry.bypass_type,
-                    entry.allowed,  # Use boolean directly, not int()
-                    json.dumps(entry.capabilities),
-                    entry.denial_reason,
-                ),
+        with self.engine.begin() as conn:
+            conn.execute(
+                insert(ABA).values(
+                    id=str(uuid.uuid4()),
+                    timestamp=entry.timestamp,
+                    request_id=entry.request_id,
+                    user_id=entry.user,
+                    zone_id=entry.zone_id,
+                    path=entry.path,
+                    permission=entry.permission,
+                    bypass_type=entry.bypass_type,
+                    allowed=entry.allowed,
+                    capabilities=json.dumps(entry.capabilities),
+                    denial_reason=entry.denial_reason,
+                )
             )
-            # commit handled by context manager
 
     def query_bypasses(
         self,
@@ -326,48 +178,36 @@ class AuditStore:
         Returns:
             List of audit log entries as dictionaries
         """
-        with self._connection() as conn:
-            cursor = self._create_cursor(conn)
+        stmt = select(ABA).order_by(ABA.timestamp.desc()).limit(limit)
 
-            where_clauses = []
-            params: list[Any] = []
+        if user:
+            stmt = stmt.where(ABA.user_id == user)
+        if zone_id:
+            stmt = stmt.where(ABA.zone_id == zone_id)
+        if start_time:
+            stmt = stmt.where(ABA.timestamp >= start_time.isoformat())
+        if end_time:
+            stmt = stmt.where(ABA.timestamp <= end_time.isoformat())
 
-            if user:
-                where_clauses.append("user_id = ?")
-                params.append(user)
+        with self.engine.connect() as conn:
+            rows = conn.execute(stmt).all()
 
-            if zone_id:
-                where_clauses.append("zone_id = ?")
-                params.append(zone_id)
-
-            if start_time:
-                where_clauses.append("timestamp >= ?")
-                params.append(start_time.isoformat())
-
-            if end_time:
-                where_clauses.append("timestamp <= ?")
-                params.append(end_time.isoformat())
-
-            where_clause = " AND ".join(where_clauses) if where_clauses else "1=1"
-
-            cursor.execute(
-                self._fix_sql_placeholders(
-                    f"""
-                    SELECT id, timestamp, request_id, user_id, zone_id, path,
-                           permission, bypass_type, allowed, capabilities, denial_reason
-                    FROM admin_bypass_audit
-                    WHERE {where_clause}
-                    ORDER BY timestamp DESC
-                    LIMIT ?
-                    """
-                ),
-                (*params, limit),
+        results = []
+        for row in rows:
+            results.append(
+                {
+                    "id": row.id,
+                    "timestamp": row.timestamp,
+                    "request_id": row.request_id,
+                    "user_id": row.user_id,
+                    "zone_id": row.zone_id,
+                    "path": row.path,
+                    "permission": row.permission,
+                    "bypass_type": row.bypass_type,
+                    "allowed": bool(row.allowed),
+                    "capabilities": json.loads(row.capabilities) if row.capabilities else [],
+                    "denial_reason": row.denial_reason,
+                }
             )
 
-            results = []
-            for row in self._rows_as_dicts(cursor):
-                row["allowed"] = bool(row["allowed"])
-                row["capabilities"] = json.loads(row["capabilities"]) if row["capabilities"] else []
-                results.append(row)
-
-            return results
+        return results

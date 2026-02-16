@@ -603,34 +603,38 @@ class TestBulkCheck:
 
     def test_bulk_check_returns_dict_of_results(self, manager):
         """rebac_check_bulk returns dict of results."""
-        # Setup permissions
+        # Setup permissions — use "direct_viewer" which is a valid relation in
+        # the default file namespace schema, ensuring both the Rust and Python
+        # bulk-check paths resolve it identically (the old "viewer-of" relation
+        # was not in the namespace config, so the Rust graph checker could not
+        # resolve it while the Python fallback only did a direct-match).
         manager.rebac_write(
             subject=("user", "alice"),
-            relation="viewer-of",
+            relation="direct_viewer",
             object=("file", "/bulk1.txt"),
             zone_id="org_123",
         )
         manager.rebac_write(
             subject=("user", "alice"),
-            relation="viewer-of",
+            relation="direct_viewer",
             object=("file", "/bulk2.txt"),
             zone_id="org_123",
         )
 
         # Bulk check
         checks = [
-            (("user", "alice"), "viewer-of", ("file", "/bulk1.txt")),
-            (("user", "alice"), "viewer-of", ("file", "/bulk2.txt")),
-            (("user", "alice"), "viewer-of", ("file", "/bulk3.txt")),  # No permission
+            (("user", "alice"), "direct_viewer", ("file", "/bulk1.txt")),
+            (("user", "alice"), "direct_viewer", ("file", "/bulk2.txt")),
+            (("user", "alice"), "direct_viewer", ("file", "/bulk3.txt")),  # No permission
         ]
 
         results = manager.rebac_check_bulk(checks, zone_id="org_123")
 
         assert isinstance(results, dict)
         assert len(results) == 3
-        assert results[(("user", "alice"), "viewer-of", ("file", "/bulk1.txt"))] is True
-        assert results[(("user", "alice"), "viewer-of", ("file", "/bulk2.txt"))] is True
-        assert results[(("user", "alice"), "viewer-of", ("file", "/bulk3.txt"))] is False
+        assert results[(("user", "alice"), "direct_viewer", ("file", "/bulk1.txt"))] is True
+        assert results[(("user", "alice"), "direct_viewer", ("file", "/bulk2.txt"))] is True
+        assert results[(("user", "alice"), "direct_viewer", ("file", "/bulk3.txt"))] is False
 
     def test_bulk_check_empty_list(self, manager):
         """rebac_check_bulk with empty list."""

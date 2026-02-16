@@ -14,7 +14,7 @@ from nexus.llm.context_builder import ContextBuilder
 from nexus.llm.message import Message, MessageRole, TextContent
 
 if TYPE_CHECKING:
-    from nexus.core.nexus_fs import NexusFS
+    from nexus.core.filesystem import NexusFilesystem
     from nexus.llm.provider import LLMProvider
     from nexus.search.semantic import SemanticSearch
 
@@ -42,7 +42,7 @@ class LLMDocumentReader:
 
     def __init__(
         self,
-        nx: NexusFS,
+        nx: NexusFilesystem,
         provider: LLMProvider,
         search: SemanticSearch | None = None,
         system_prompt: str | None = None,
@@ -51,7 +51,7 @@ class LLMDocumentReader:
         """Initialize document reader.
 
         Args:
-            nx: NexusFS instance
+            nx: NexusFilesystem instance
             provider: LLM provider
             search: Semantic search instance (optional - if None, only direct reading works)
             system_prompt: Custom system prompt (optional)

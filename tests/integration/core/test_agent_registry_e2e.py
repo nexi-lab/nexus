@@ -346,7 +346,7 @@ class TestBridgeReliabilityE2E:
         for i in range(10):
             small_registry.register(f"hb-warn-{i}", "alice")
 
-        with caplog.at_level(logging.WARNING, logger="nexus.core.agent_registry"):
+        with caplog.at_level(logging.WARNING, logger="nexus.core.heartbeat_buffer"):
             for i in range(10):
                 small_registry.heartbeat(f"hb-warn-{i}")
 

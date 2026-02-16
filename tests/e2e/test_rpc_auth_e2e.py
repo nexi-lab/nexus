@@ -1,6 +1,6 @@
 """E2E tests for RPC server with authentication.
 
-Tests the _run_async_safe optimization with real auth_provider calls.
+Tests _run_async_safe via sync_bridge with real auth_provider calls.
 """
 
 from nexus.server.auth.database_key import DatabaseAPIKeyAuth
@@ -16,10 +16,6 @@ class TestRPCServerAuthQuickCheck:
         from sqlalchemy.orm import sessionmaker
 
         from nexus.server.rpc_server import RPCRequestHandler
-
-        # Reset executor state
-        RPCRequestHandler._async_executor = None
-        RPCRequestHandler._async_executor_lock = None
 
         # Setup database
         db_path = tmp_path / "auth.db"
@@ -54,23 +50,15 @@ class TestRPCServerAuthQuickCheck:
         handler._validate_auth = lambda: RPCRequestHandler._validate_auth(handler)
 
         try:
-            # Test authentication - this exercises _run_async_safe
+            # Test authentication - this exercises _run_async_safe via sync_bridge
             result = handler._validate_auth()
             assert result is True, "Authentication should succeed"
 
-            # Verify executor was created
-            assert RPCRequestHandler._async_executor is not None
-
-            # Test multiple calls reuse executor
-            executor1 = RPCRequestHandler._async_executor
+            # Test multiple calls work correctly
             result2 = handler._validate_auth()
             assert result2 is True
-            assert RPCRequestHandler._async_executor is executor1
         finally:
             handler.event_loop.close()
-            if RPCRequestHandler._async_executor is not None:
-                RPCRequestHandler._async_executor.shutdown(wait=True)
-                RPCRequestHandler._async_executor = None
 
     def test_run_async_safe_with_invalid_token(self, tmp_path):
         """Test _run_async_safe with invalid token."""
@@ -78,10 +66,6 @@ class TestRPCServerAuthQuickCheck:
         from sqlalchemy.orm import sessionmaker
 
         from nexus.server.rpc_server import RPCRequestHandler
-
-        # Reset
-        RPCRequestHandler._async_executor = None
-        RPCRequestHandler._async_executor_lock = None
 
         # Setup
         db_path = tmp_path / "auth.db"
@@ -108,6 +92,3 @@ class TestRPCServerAuthQuickCheck:
             assert result is False, "Invalid token should fail auth"
         finally:
             handler.event_loop.close()
-            if RPCRequestHandler._async_executor is not None:
-                RPCRequestHandler._async_executor.shutdown(wait=True)
-                RPCRequestHandler._async_executor = None

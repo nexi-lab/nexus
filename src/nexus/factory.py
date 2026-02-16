@@ -387,7 +387,7 @@ def create_nexus_services(
     # --- Mount Manager ---
     from nexus.services.mount_manager import MountManager
 
-    mount_manager = MountManager(session_factory)
+    mount_manager = MountManager(record_store)
 
     # --- Workspace Manager ---
     from nexus.services.workspace_manager import WorkspaceManager

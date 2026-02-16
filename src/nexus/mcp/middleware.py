@@ -253,7 +253,7 @@ class ToolNamespaceMiddleware(Middleware):
     def _get_revision_bucket(self) -> int:
         """Get current zone revision bucket."""
         try:
-            revision = self._rebac_manager._get_zone_revision(self._zone_id)
+            revision = self._rebac_manager.get_zone_revision(self._zone_id)
         except Exception:
             return 0
         return revision // self._revision_window

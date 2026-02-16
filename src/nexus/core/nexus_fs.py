@@ -480,6 +480,11 @@ class NexusFS(  # type: ignore[misc]
         """Public accessor for the ReBACManager instance."""
         return getattr(self, "_rebac_manager", None)
 
+    @property
+    def semantic_search_engine(self) -> Any | None:
+        """Public accessor for the semantic search engine instance."""
+        return self._semantic_search
+
     def _init_performance_optimizations(self) -> None:
         """Initialize performance optimizations for permission checks.
 

@@ -129,13 +129,13 @@ class NexusFSEventsMixin:
             context: Operation context
 
         Returns:
-            Zone ID string (defaults to "default")
+            Zone ID string (defaults to "root")
         """
         if context and hasattr(context, "zone_id") and context.zone_id:
             return context.zone_id
         if hasattr(self, "zone_id") and self.zone_id:
             return self.zone_id
-        return "default"
+        return "root"
 
     def _should_auto__start_cache_invalidation(self) -> bool:
         """Check if cache invalidation should be auto-started.
@@ -657,7 +657,7 @@ class NexusFSEventsMixin:
         cache_observer = getattr(self, "_cache_observer", None)
         if cache_observer is not None:
             revision = self._get_zone_revision()
-            zone_id = getattr(self, "zone_id", None) or "default"
+            zone_id = getattr(self, "zone_id", None) or "root"
             cache_observer.on_write(virtual_path, revision, zone_id)
             logger.debug(f"Cache invalidated (observer): {virtual_path}")
         else:

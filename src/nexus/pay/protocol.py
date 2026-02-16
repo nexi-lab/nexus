@@ -288,7 +288,7 @@ class CreditsPaymentProtocol(PaymentProtocol):
     Catch-all for agent-to-agent transfers (non-wallet destinations).
     """
 
-    def __init__(self, service: Any, zone_id: str = "default") -> None:
+    def __init__(self, service: Any, zone_id: str = "root") -> None:
         self._service = service
         self._zone_id = zone_id
 

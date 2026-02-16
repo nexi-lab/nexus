@@ -40,7 +40,7 @@ class RecallStore:
     def __init__(
         self,
         session_factory: Callable[[], Session],
-        zone_id: str = "default",
+        zone_id: str = "root",
         namespace: str = "recall",
     ):
         """Initialize recall store.

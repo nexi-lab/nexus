@@ -143,7 +143,7 @@ def _row_to_task(row: dict[str, Any]) -> ScheduledTask:
         started_at=row.get("started_at"),
         completed_at=row.get("completed_at"),
         error_message=row.get("error_message"),
-        zone_id=row.get("zone_id", "default"),
+        zone_id=row.get("zone_id", "root"),
         idempotency_key=row.get("idempotency_key"),
     )
 
@@ -170,7 +170,7 @@ class TaskQueue:
         payload: dict[str, Any],
         priority_tier: int,
         effective_tier: int,
-        zone_id: str = "default",
+        zone_id: str = "root",
         deadline: datetime | None = None,
         boost_amount: Decimal = Decimal("0"),
         boost_tiers: int = 0,

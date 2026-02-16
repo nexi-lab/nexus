@@ -50,7 +50,9 @@ class MockBackend(Backend):
             )
         return HandlerResponse.ok(data=self._content[content_hash], backend_name="mock")
 
-    def batch_read_content(self, content_hashes, context=None) -> dict[str, bytes | None]:
+    def batch_read_content(
+        self, content_hashes, context=None, *, contexts=None
+    ) -> dict[str, bytes | None]:
         return {h: self._content.get(h) for h in content_hashes}
 
     def delete_content(self, content_hash, context=None) -> HandlerResponse[None]:

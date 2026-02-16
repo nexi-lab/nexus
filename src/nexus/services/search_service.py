@@ -1360,11 +1360,7 @@ class SearchService(SemanticSearchMixin):
         prefix: str = "",
     ) -> builtins.list[str]:
         """Fetch file paths shared with a user from other zones (Issue #904)."""
-        import sqlite3
         import time as _time
-        from datetime import UTC, datetime
-
-        from nexus.core.rebac import CROSS_ZONE_ALLOWED_RELATIONS
 
         if not self._rebac_manager:
             return []
@@ -1378,48 +1374,26 @@ class SearchService(SemanticSearchMixin):
                 return cached_paths
 
         try:
-            with self._rebac_manager._connection() as conn:
-                cursor = self._rebac_manager._create_cursor(conn)
-                cross_zone_relations = list(CROSS_ZONE_ALLOWED_RELATIONS)
-                placeholders = ", ".join("?" * len(cross_zone_relations))
-                query = f"""
-                    SELECT DISTINCT object_id
-                    FROM rebac_tuples
-                    WHERE relation IN ({placeholders})
-                      AND subject_type = ? AND subject_id = ?
-                      AND object_type = 'file'
-                      AND zone_id != ?
-                      AND (expires_at IS NULL OR expires_at > ?)
-                """
-                base_params: tuple[Any, ...] = (
-                    *cross_zone_relations,
-                    subject_type,
-                    subject_id,
-                    zone_id,
-                    datetime.now(UTC).isoformat(),
+            paths = self._rebac_manager.get_cross_zone_shared_paths(
+                subject_type=subject_type,
+                subject_id=subject_id,
+                zone_id=zone_id,
+                prefix=prefix,
+            )
+            if paths:
+                logger.debug(
+                    f"[CROSS-ZONE] Found {len(paths)} shared paths for {subject_type}:{subject_id}"
                 )
-                if prefix:
-                    query += " AND object_id LIKE ?"
-                    params = (*base_params, f"{prefix}%")
-                else:
-                    params = base_params
-                cursor.execute(self._rebac_manager._fix_sql_placeholders(query), params)
-                paths = []
-                for row in cursor.fetchall():
-                    path = row["object_id"] if isinstance(row, dict) else row[0]
-                    paths.append(path)
-                if paths:
-                    logger.debug(
-                        f"[CROSS-ZONE] Found {len(paths)} shared paths "
-                        f"for {subject_type}:{subject_id}"
-                    )
-                self._cross_zone_cache[cache_key] = (now, paths)
-                return paths
-        except (sqlite3.OperationalError, sqlite3.InterfaceError) as e:
-            logger.error("Cross-zone sharing DB error for %s/%s: %s", subject_type, subject_id, e)
-            return []
+            self._cross_zone_cache[cache_key] = (now, paths)
+            return paths
         except Exception as e:
-            logger.error("Unexpected cross-zone sharing error: %s", e, exc_info=True)
+            logger.error(
+                "Cross-zone sharing error for %s/%s: %s",
+                subject_type,
+                subject_id,
+                e,
+                exc_info=True,
+            )
             return []
 
     # =========================================================================

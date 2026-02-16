@@ -20,6 +20,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 from nexus.core.rebac import (
+    CROSS_ZONE_ALLOWED_RELATIONS,
     DEFAULT_FILE_NAMESPACE,
     DEFAULT_GROUP_NAMESPACE,
     DEFAULT_MEMORY_NAMESPACE,
@@ -2141,6 +2142,63 @@ class ReBACManager:
         Delegates to ExpandEngine (Issue #1459 Phase 8).
         """
         return self._expander.expand(permission, object)
+
+    def get_cross_zone_shared_paths(
+        self,
+        subject_type: str,
+        subject_id: str,
+        zone_id: str,
+        object_type: str = "file",
+        prefix: str = "",
+    ) -> list[str]:
+        """Return distinct object_id paths shared with a subject from other zones.
+
+        Queries rebac_tuples for cross-zone sharing relations (shared-viewer,
+        shared-editor, shared-owner) where the subject matches and the zone
+        differs from the given zone_id. Optionally filters by object_type and
+        path prefix.
+
+        Args:
+            subject_type: Subject entity type (e.g., "user").
+            subject_id: Subject entity ID.
+            zone_id: Current zone to exclude from results.
+            object_type: Object type filter (default: "file").
+            prefix: If non-empty, only return paths starting with this prefix.
+
+        Returns:
+            List of distinct object_id strings matching the criteria.
+        """
+        with self._connection() as conn:
+            cursor = self._create_cursor(conn)
+            cross_zone_relations = list(CROSS_ZONE_ALLOWED_RELATIONS)
+            placeholders = ", ".join("?" * len(cross_zone_relations))
+            query = f"""
+                SELECT DISTINCT object_id
+                FROM rebac_tuples
+                WHERE relation IN ({placeholders})
+                  AND subject_type = ? AND subject_id = ?
+                  AND object_type = ?
+                  AND zone_id != ?
+                  AND (expires_at IS NULL OR expires_at > ?)
+            """
+            params: tuple[Any, ...] = (
+                *cross_zone_relations,
+                subject_type,
+                subject_id,
+                object_type,
+                zone_id,
+                datetime.now(UTC).isoformat(),
+            )
+            if prefix:
+                query += " AND object_id LIKE ?"
+                params = (*params, f"{prefix}%")
+
+            cursor.execute(self._fix_sql_placeholders(query), params)
+            paths = []
+            for row in cursor.fetchall():
+                path = row["object_id"] if isinstance(row, dict) else row[0]
+                paths.append(path)
+            return paths
 
     def _get_direct_subjects(self, relation: str, obj: Entity) -> list[tuple[str, str]]:
         """Get all subjects with direct relation to object. Delegates to TupleRepository."""

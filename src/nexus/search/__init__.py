@@ -52,6 +52,7 @@ from nexus.search.chunking import (
     DocumentChunk,
     DocumentChunker,
 )
+from nexus.search.config import SearchConfig, search_config_from_env
 from nexus.search.contextual_chunking import (
     ChunkContext,
     ContextGenerator,
@@ -104,10 +105,7 @@ from nexus.search.hnsw_config import (
     get_recommended_config,
     get_vector_count,
 )
-from nexus.search.config import SearchConfig, search_config_from_env
 from nexus.search.manifest import SearchBrickManifest, verify_imports
-from nexus.search.protocols import FileReaderProtocol
-from nexus.search.result_builders import build_result_from_row, build_semantic_result
 from nexus.search.mobile_config import (
     EMBEDDING_MODELS,
     RERANKER_MODELS,
@@ -142,6 +140,7 @@ from nexus.search.mobile_providers import (
     download_model,
     download_models_for_tier,
 )
+from nexus.search.protocols import FileReaderProtocol
 from nexus.search.query_expansion import (
     CachedQueryExpander,
     ExpansionResult,
@@ -168,6 +167,7 @@ from nexus.search.ranking import (
     apply_attribute_boosting,
     get_ranking_config_from_env,
 )
+from nexus.search.result_builders import build_result_from_row, build_semantic_result
 from nexus.search.results import BaseSearchResult, detect_matched_field
 from nexus.search.semantic import SemanticSearch, SemanticSearchResult
 from nexus.search.strategies import (

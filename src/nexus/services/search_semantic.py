@@ -163,10 +163,9 @@ class SemanticSearchMixin:
             )
             self._semantic_search.initialize()
         else:
-            from nexus.search.semantic import SemanticSearch
-
             # Issue #1520: Inject FileReaderProtocol when available
             from nexus.factory import _NexusFSFileReader
+            from nexus.search.semantic import SemanticSearch
 
             _file_reader = _NexusFSFileReader(nx) if nx is not None else None
 

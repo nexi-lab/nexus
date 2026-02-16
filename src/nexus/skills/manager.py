@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
@@ -313,8 +312,12 @@ class SkillManager:
         # Write skill file
         if self._filesystem:
             # Create directory
-            with contextlib.suppress(Exception):
+            try:
                 await asyncio.to_thread(self._filesystem.mkdir, skill_dir, parents=True)
+            except FileExistsError:
+                pass
+            except OSError as e:
+                logger.warning("Failed to create directory %s: %s", skill_dir, e)
 
             # Write file
             await asyncio.to_thread(self._filesystem.write, skill_file, skill_md.encode("utf-8"))
@@ -447,8 +450,12 @@ class SkillManager:
         # Write skill file
         if self._filesystem:
             # Create directory
-            with contextlib.suppress(Exception):
+            try:
                 await asyncio.to_thread(self._filesystem.mkdir, skill_dir, parents=True)
+            except FileExistsError:
+                pass
+            except OSError as e:
+                logger.warning("Failed to create directory %s: %s", skill_dir, e)
 
             # Write file
             await asyncio.to_thread(self._filesystem.write, skill_file, skill_md.encode("utf-8"))
@@ -609,8 +616,12 @@ class SkillManager:
         # Write forked skill
         if self._filesystem:
             # Create directory
-            with contextlib.suppress(Exception):
+            try:
                 await asyncio.to_thread(self._filesystem.mkdir, target_dir, parents=True)
+            except FileExistsError:
+                pass
+            except OSError as e:
+                logger.warning("Failed to create directory %s: %s", target_dir, e)
 
             # Write file (CAS deduplication will happen automatically in NexusFS)
             await asyncio.to_thread(self._filesystem.write, target_file, skill_md.encode("utf-8"))
@@ -764,8 +775,12 @@ class SkillManager:
         # Write published skill
         if self._filesystem:
             # Create directory
-            with contextlib.suppress(Exception):
+            try:
                 await asyncio.to_thread(self._filesystem.mkdir, target_dir, parents=True)
+            except FileExistsError:
+                pass
+            except OSError as e:
+                logger.warning("Failed to create directory %s: %s", target_dir, e)
 
             # Write file (CAS deduplication will happen automatically)
             await asyncio.to_thread(self._filesystem.write, target_file, skill_md.encode("utf-8"))

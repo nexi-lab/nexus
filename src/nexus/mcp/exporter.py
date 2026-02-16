@@ -8,7 +8,6 @@ Based on: https://www.anthropic.com/engineering/code-execution-with-mcp
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 from datetime import UTC, datetime
@@ -683,8 +682,12 @@ class MCPToolExporter:
 
         if self._filesystem:
             # Create directory
-            with contextlib.suppress(Exception):
+            try:
                 self._filesystem.mkdir(tool_dir, parents=True)
+            except FileExistsError:
+                pass
+            except OSError as e:
+                logger.warning("Failed to create directory %s: %s", tool_dir, e)
 
             # Write files
             self._filesystem.write(tool_json_path, tool_json.encode("utf-8"))

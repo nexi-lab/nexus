@@ -22,7 +22,6 @@ Runner:
 
 from __future__ import annotations
 
-import contextlib
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
@@ -798,8 +797,10 @@ class SkillService:
 
         # Ensure parent directory exists
         parent_dir = "/".join(path.split("/")[:-1])
-        with contextlib.suppress(Exception):
+        try:
             self._gw.mkdir(parent_dir, context=context)
+        except Exception as e:
+            logger.debug("Failed to create parent directory %s: %s", parent_dir, e)
 
         self._gw.write(path, content, context=context)
 
@@ -1085,8 +1086,10 @@ class SkillService:
             if len(parts) >= 3:
                 import yaml
 
-                with contextlib.suppress(Exception):
+                try:
                     metadata = yaml.safe_load(parts[1]) or {}
+                except Exception as e:
+                    logger.debug("Failed to parse skill YAML frontmatter: %s", e)
                 body = parts[2].strip()
         else:
             # Fallback: parse first heading as name

@@ -14,7 +14,6 @@ Keep Dragonfly for caching only.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
 from collections.abc import AsyncIterator
@@ -316,8 +315,10 @@ class NatsEventBus(EventBusBase):
             logger.debug(f"Durable subscription {consumer_name} cancelled")
             raise
         finally:
-            with contextlib.suppress(Exception):
+            try:
                 await sub.unsubscribe()
+            except Exception as e:
+                logger.debug("NATS cleanup failed: %s", e)
 
     @staticmethod
     def _make_ack_fn(msg: Msg) -> Any:
@@ -412,8 +413,10 @@ class NatsEventBus(EventBusBase):
                 return event
 
         finally:
-            with contextlib.suppress(Exception):
+            try:
                 await sub.unsubscribe()
+            except Exception as e:
+                logger.debug("NATS cleanup failed: %s", e)
 
     # =========================================================================
     # Health & Stats

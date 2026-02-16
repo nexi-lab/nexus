@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from cachetools import LRUCache
+
 from nexus.mcp.klavis_client import KlavisClient, KlavisError
 from nexus.mcp.models import MCPMount
 from nexus.mcp.mount import MCPMountManager
@@ -106,14 +108,17 @@ class MCPConnectionManager:
         mount_manager: MCP mount manager for tool discovery
     """
 
-    # Path for storing connection info
-    CONNECTIONS_PATH = "/skills/system/mcp-connections/"
+    # Default path for storing connection info
+    DEFAULT_CONNECTIONS_PATH = "/skills/system/mcp-connections/"
 
     def __init__(
         self,
         filesystem: NexusFilesystem | None = None,
         registry: MCPProviderRegistry | None = None,
         klavis_api_key: str | None = None,
+        *,
+        connections_path: str = DEFAULT_CONNECTIONS_PATH,
+        max_connections: int = 256,
     ):
         """Initialize connection manager.
 
@@ -121,9 +126,12 @@ class MCPConnectionManager:
             filesystem: Nexus filesystem instance
             registry: Provider registry (loads default if not provided)
             klavis_api_key: Klavis API key (from env KLAVIS_API_KEY if not provided)
+            connections_path: VFS path for storing connection info
+            max_connections: Maximum cached connections (default: 256)
         """
         self.filesystem = filesystem
         self.registry = registry or MCPProviderRegistry.load_default()
+        self.connections_path = connections_path
 
         # Get Klavis API key from env if not provided
         klavis_key = klavis_api_key or os.getenv("KLAVIS_API_KEY")
@@ -132,8 +140,8 @@ class MCPConnectionManager:
         # Create mount manager for tool discovery/storage
         self.mount_manager = MCPMountManager(filesystem)
 
-        # Cache of active connections
-        self._connections: dict[str, MCPConnection] = {}
+        # Cache of active connections (bounded)
+        self._connections: LRUCache[str, MCPConnection] = LRUCache(maxsize=max_connections)
 
         # Load existing connections
         self._load_connections()
@@ -141,8 +149,8 @@ class MCPConnectionManager:
     def _load_connections(self) -> None:
         """Load existing connections from storage."""
         try:
-            if self.filesystem and self.filesystem.exists(self.CONNECTIONS_PATH):
-                items = self.filesystem.list(self.CONNECTIONS_PATH)
+            if self.filesystem and self.filesystem.exists(self.connections_path):
+                items = self.filesystem.list(self.connections_path)
                 for item in items:
                     # Item might be full path, just filename, or dict
                     if isinstance(item, dict):
@@ -151,7 +159,7 @@ class MCPConnectionManager:
                         item_str = str(item)
                     item_name = item_str.split("/")[-1] if "/" in item_str else item_str
                     if item_name.endswith(".json"):
-                        path = f"{self.CONNECTIONS_PATH}{item_name}"
+                        path = f"{self.connections_path}{item_name}"
                         try:
                             raw = self.filesystem.read(path)
                             data = json.loads(
@@ -171,11 +179,11 @@ class MCPConnectionManager:
             if self.filesystem:
                 # Ensure directory exists
                 with contextlib.suppress(Exception):
-                    self.filesystem.mkdir(self.CONNECTIONS_PATH, parents=True)
+                    self.filesystem.mkdir(self.connections_path, parents=True)
 
                 # Use provider_user as filename
                 filename = f"{conn.provider}_{conn.user_id.replace('@', '_at_')}.json"
-                path = f"{self.CONNECTIONS_PATH}{filename}"
+                path = f"{self.connections_path}{filename}"
                 content = json.dumps(conn.to_dict(), indent=2)
                 self.filesystem.write(path, content.encode("utf-8"))
 
@@ -187,7 +195,7 @@ class MCPConnectionManager:
         try:
             if self.filesystem:
                 filename = f"{provider}_{user_id.replace('@', '_at_')}.json"
-                path = f"{self.CONNECTIONS_PATH}{filename}"
+                path = f"{self.connections_path}{filename}"
                 if self.filesystem.exists(path):
                     self.filesystem.delete(path)
         except Exception as e:

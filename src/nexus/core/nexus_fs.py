@@ -847,20 +847,19 @@ class NexusFS(  # type: ignore[misc]
             self._default_context.is_admin,
         )
 
-    # Backward compatibility properties for deprecated instance fields
     @property
     def zone_id(self) -> str | None:
-        """DEPRECATED: Access via context parameter instead. Returns default zone_id for embedded mode."""
+        """Default zone_id from the instance context."""
         return self._default_context.zone_id
 
     @property
     def agent_id(self) -> str | None:
-        """DEPRECATED: Access via context parameter instead. Returns default agent_id for embedded mode."""
+        """Default agent_id from the instance context."""
         return self._default_context.agent_id
 
     @property
     def user_id(self) -> str | None:
-        """DEPRECATED: Access via context parameter instead. Returns default user_id for embedded mode."""
+        """Default user_id from the instance context."""
         return getattr(self._default_context, "user", None)
 
     def _get_memory_api(self, context: dict | None = None) -> Memory:
@@ -1252,7 +1251,6 @@ class NexusFS(  # type: ignore[misc]
         route = self.router.route(
             path,
             zone_id=ctx.zone_id,
-            agent_id=ctx.agent_id,
             is_admin=ctx.is_admin,
             check_write=True,
         )
@@ -1466,7 +1464,6 @@ class NexusFS(  # type: ignore[misc]
         route = self.router.route(
             path,
             zone_id=ctx.zone_id,
-            agent_id=ctx.agent_id,
             is_admin=ctx.is_admin,
             check_write=True,
         )
@@ -2029,7 +2026,6 @@ class NexusFS(  # type: ignore[misc]
             route = self.router.route(
                 path,
                 zone_id=ctx.zone_id,  # v0.6.0: from context
-                agent_id=ctx.agent_id,  # v0.6.0: from context
                 is_admin=ctx.is_admin,  # v0.6.0: from context
                 check_write=False,
             )
@@ -2225,7 +2221,6 @@ class NexusFS(  # type: ignore[misc]
                 route = self.router.route(
                     path.rstrip("/"),
                     zone_id=zone_id,
-                    agent_id=agent_id,
                     is_admin=is_admin,
                     check_write=False,
                 )
@@ -2828,7 +2823,6 @@ class NexusFS(  # type: ignore[misc]
     def workspace_snapshot(
         self,
         workspace_path: str | None = None,
-        agent_id: str | None = None,  # DEPRECATED: For backward compatibility
         description: str | None = None,
         tags: list[str] | None = None,
         created_by: str | None = None,
@@ -2838,7 +2832,6 @@ class NexusFS(  # type: ignore[misc]
 
         Args:
             workspace_path: Path to registered workspace (e.g., "/my-workspace")
-            agent_id: DEPRECATED - Use workspace_path instead
             description: Human-readable description of snapshot
             tags: List of tags for categorization
             created_by: User/agent who created the snapshot
@@ -2857,27 +2850,6 @@ class NexusFS(  # type: ignore[misc]
             >>> snapshot = nx.workspace_snapshot("/my-workspace", description="Initial state")
             >>> print(f"Created snapshot #{snapshot['snapshot_number']}")
         """
-        # Backward compatibility: support old agent_id parameter
-        if workspace_path is None and agent_id:
-            import warnings
-
-            warnings.warn(
-                "agent_id parameter is deprecated. Use workspace_path parameter instead. "
-                "Auto-registering workspace for backward compatibility.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            # Auto-construct path from agent_id (simple format, no zone in path)
-            workspace_path = f"/workspace/{agent_id}"
-
-            # Auto-register if not exists
-            if not self._workspace_registry.get_workspace(workspace_path):
-                self._workspace_registry.register_workspace(
-                    workspace_path,
-                    name=f"auto-{agent_id}",
-                    description=f"Auto-registered workspace for agent {agent_id}",
-                )
-
         if not workspace_path:
             raise ValueError("workspace_path must be provided")
 
@@ -2906,7 +2878,6 @@ class NexusFS(  # type: ignore[misc]
         self,
         snapshot_number: int,
         workspace_path: str | None = None,
-        agent_id: str | None = None,  # DEPRECATED: For backward compatibility
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Restore workspace to a previous snapshot.
@@ -2914,7 +2885,6 @@ class NexusFS(  # type: ignore[misc]
         Args:
             snapshot_number: Snapshot version number to restore
             workspace_path: Path to registered workspace
-            agent_id: DEPRECATED - Use workspace_path instead
             context: Operation context with user, permissions, zone info (uses default if None)
 
         Returns:
@@ -2931,23 +2901,6 @@ class NexusFS(  # type: ignore[misc]
         """
         # Use provided context or default
         ctx = context if context is not None else self._default_context
-
-        # Backward compatibility: support old agent_id parameter
-        if workspace_path is None and agent_id:
-            import warnings
-
-            warnings.warn(
-                "agent_id parameter is deprecated. Use workspace_path parameter instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            workspace_path = f"/workspace/{agent_id}"
-
-        if workspace_path is None:
-            # Fallback to context agent_id, then default context
-            fallback_agent_id = ctx.agent_id or self._default_context.agent_id
-            if fallback_agent_id:
-                workspace_path = f"/workspace/{fallback_agent_id}"
 
         if not workspace_path:
             raise ValueError("workspace_path must be provided")
@@ -2968,7 +2921,6 @@ class NexusFS(  # type: ignore[misc]
     def workspace_log(
         self,
         workspace_path: str | None = None,
-        agent_id: str | None = None,  # DEPRECATED: For backward compatibility
         limit: int = 100,
         context: OperationContext | None = None,
     ) -> list[dict[str, Any]]:
@@ -2976,7 +2928,6 @@ class NexusFS(  # type: ignore[misc]
 
         Args:
             workspace_path: Path to registered workspace
-            agent_id: DEPRECATED - Use workspace_path instead
             limit: Maximum number of snapshots to return
             context: Operation context with user, permissions, zone info (uses default if None)
 
@@ -2994,23 +2945,6 @@ class NexusFS(  # type: ignore[misc]
         """
         # Parse context properly
         ctx = self._parse_context(context)
-
-        # Backward compatibility: support old agent_id parameter
-        if workspace_path is None and agent_id:
-            import warnings
-
-            warnings.warn(
-                "agent_id parameter is deprecated. Use workspace_path parameter instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            workspace_path = f"/workspace/{agent_id}"
-
-        if workspace_path is None:
-            # Fallback to context agent_id, then default context
-            fallback_agent_id = ctx.agent_id or self._default_context.agent_id
-            if fallback_agent_id:
-                workspace_path = f"/workspace/{fallback_agent_id}"
 
         if not workspace_path:
             raise ValueError("workspace_path must be provided")
@@ -3033,7 +2967,6 @@ class NexusFS(  # type: ignore[misc]
         snapshot_1: int,
         snapshot_2: int,
         workspace_path: str | None = None,
-        agent_id: str | None = None,  # DEPRECATED: For backward compatibility
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Compare two workspace snapshots.
@@ -3042,7 +2975,6 @@ class NexusFS(  # type: ignore[misc]
             snapshot_1: First snapshot number
             snapshot_2: Second snapshot number
             workspace_path: Path to registered workspace
-            agent_id: DEPRECATED - Use workspace_path instead
             context: Operation context with user, permissions, zone info (uses default if None)
 
         Returns:
@@ -3059,23 +2991,6 @@ class NexusFS(  # type: ignore[misc]
         """
         # Parse context properly
         ctx = self._parse_context(context)
-
-        # Backward compatibility: support old agent_id parameter
-        if workspace_path is None and agent_id:
-            import warnings
-
-            warnings.warn(
-                "agent_id parameter is deprecated. Use workspace_path parameter instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            workspace_path = f"/workspace/{agent_id}"
-
-        if workspace_path is None:
-            # Fallback to context agent_id, then default context
-            fallback_agent_id = ctx.agent_id or self._default_context.agent_id
-            if fallback_agent_id:
-                workspace_path = f"/workspace/{fallback_agent_id}"
 
         if not workspace_path:
             raise ValueError("workspace_path must be provided")
@@ -9177,7 +9092,6 @@ class NexusFS(  # type: ignore[misc]
             route = self.router.route(
                 file_path,
                 zone_id=zone_id,
-                agent_id=agent_id,
                 is_admin=is_admin,
                 check_write=False,
             )

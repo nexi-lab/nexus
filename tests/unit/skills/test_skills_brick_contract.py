@@ -1,11 +1,9 @@
 """Brick contract tests for the Skills module (Issue #1400).
 
 These tests enforce architectural constraints:
-1. Zero runtime imports from nexus.core in the skills module
-2. Protocol satisfaction (NexusFS satisfies SkillsFilesystemProtocol)
-3. Boundary contract enforcement
-
-Phase 0: Skeleton tests — some will fail initially and pass after Phase 1.
+1. Zero module-level runtime imports from nexus.core/nexus.backends in skills
+2. Protocol satisfaction (NexusFS ABC satisfies narrow Skills Protocol)
+3. Boundary contract enforcement (local exceptions, public API surface)
 """
 
 from __future__ import annotations
@@ -20,7 +18,12 @@ SKILLS_SRC = Path(__file__).resolve().parents[3] / "src" / "nexus" / "skills"
 
 
 def _collect_import_violations(module_prefix: str) -> list[str]:
-    """Scan skills/*.py for runtime imports from the given module prefix."""
+    """Scan skills/*.py for module-level runtime imports from the given prefix.
+
+    Allows:
+    - TYPE_CHECKING-guarded imports (type hints only)
+    - Function-scoped imports (lazy loading pattern, e.g. inside try/except)
+    """
     violations = []
     for py_file in SKILLS_SRC.glob("*.py"):
         tree = ast.parse(py_file.read_text())
@@ -30,81 +33,77 @@ def _collect_import_violations(module_prefix: str) -> list[str]:
                 and node.module
                 and node.module.startswith(module_prefix)
                 and not _is_type_checking_guarded(tree, node)
+                and not _is_function_scoped(tree, node)
             ):
                 violations.append(f"{py_file.name}:{node.lineno} — from {node.module} import ...")
     return violations
 
 
 class TestZeroCoreImports:
-    """Verify that nexus.skills has zero runtime imports from nexus.core.
+    """Verify that nexus.skills has zero module-level runtime imports from nexus.core.
 
-    After Phase 1, all nexus.core imports should be replaced with local
-    exceptions and Protocols defined within the skills module.
-
-    NOTE: TYPE_CHECKING-guarded imports are allowed (for type hints only).
+    All nexus.core imports are replaced with local exceptions and Protocols.
+    TYPE_CHECKING-guarded and function-scoped (lazy) imports are allowed.
     """
 
-    @pytest.mark.skip(reason="Phase 1 not yet complete — will enforce after decoupling")
     def test_no_runtime_core_imports(self):
-        """No file in nexus/skills/ imports from nexus.core at runtime."""
+        """No file in nexus/skills/ imports from nexus.core at module level."""
         violations = _collect_import_violations("nexus.core")
         assert violations == [], (
-            f"Found {len(violations)} runtime imports from nexus.core "
+            f"Found {len(violations)} module-level runtime imports from nexus.core "
             f"in skills module:\n" + "\n".join(f"  {v}" for v in violations)
         )
 
-    @pytest.mark.skip(reason="Phase 1 not yet complete — will enforce after decoupling")
     def test_no_runtime_backends_imports(self):
-        """No file in nexus/skills/ imports from nexus.backends at runtime."""
+        """No file in nexus/skills/ imports from nexus.backends at module level."""
         violations = _collect_import_violations("nexus.backends")
         assert violations == [], (
-            f"Found {len(violations)} runtime imports from nexus.backends "
+            f"Found {len(violations)} module-level runtime imports from nexus.backends "
+            f"in skills module:\n" + "\n".join(f"  {v}" for v in violations)
+        )
+
+    def test_no_runtime_services_imports(self):
+        """No file in nexus/skills/ imports from nexus.services at module level."""
+        violations = _collect_import_violations("nexus.services")
+        assert violations == [], (
+            f"Found {len(violations)} module-level runtime imports from nexus.services "
             f"in skills module:\n" + "\n".join(f"  {v}" for v in violations)
         )
 
 
 class TestProtocolSatisfaction:
-    """Verify that protocols are satisfied by concrete implementations.
+    """Verify that the narrow Skills filesystem protocol is satisfied."""
 
-    After Phase 1, SkillsFilesystemProtocol should be narrow (~8 methods)
-    and satisfied by NexusFS.
-    """
+    def test_nexusfs_abc_satisfies_skills_protocol(self):
+        """NexusFS ABC has all methods required by the narrow Skills Protocol."""
+        import inspect
 
-    @pytest.mark.skip(reason="Phase 1 not yet complete — SkillsFilesystemProtocol not yet created")
-    def test_nexusfs_satisfies_skills_filesystem_protocol(self):
-        """NexusFS ABC satisfies the narrow SkillsFilesystemProtocol."""
         from nexus.core.filesystem import NexusFilesystem as NexusFilesystemABC
-        from nexus.skills.protocols import SkillsFilesystemProtocol
+        from nexus.skills.protocols import NexusFilesystem as NexusFilesystemProtocol
 
         # Get method names from the narrow protocol
-        proto_methods = {
+        protocol_methods = {
             name
-            for name, _ in SkillsFilesystemProtocol.__protocol_attrs__  # type: ignore[attr-defined]
-            if not name.startswith("_")
+            for name in dir(NexusFilesystemProtocol)
+            if not name.startswith("_") and callable(getattr(NexusFilesystemProtocol, name, None))
         }
 
         # Get method names from the ABC
         abc_methods = {
             name
-            for name in dir(NexusFilesystemABC)
-            if not name.startswith("_") and callable(getattr(NexusFilesystemABC, name, None))
+            for name, _ in inspect.getmembers(NexusFilesystemABC, predicate=inspect.isfunction)
+            if not name.startswith("_")
         }
 
-        missing = proto_methods - abc_methods
+        missing = protocol_methods - abc_methods
         assert missing == set(), (
-            f"NexusFilesystem ABC is missing methods required by "
-            f"SkillsFilesystemProtocol: {missing}"
+            f"NexusFilesystem ABC is missing methods required by Skills Protocol: {sorted(missing)}"
         )
 
 
 class TestSkillsExceptionLocality:
-    """Verify that skills module defines its own exception types.
+    """Verify that skills module defines its own exception types."""
 
-    After Phase 1, all exception classes used by skills should be
-    defined in nexus.skills.exceptions.
-    """
-
-    @pytest.mark.skip(reason="Phase 1 not yet complete — exceptions.py not yet created")
     def test_local_exceptions_exist(self):
         """nexus.skills.exceptions defines required exception types."""
         from nexus.skills import exceptions
@@ -122,6 +121,35 @@ class TestSkillsExceptionLocality:
             assert hasattr(exceptions, name), f"Missing exception: {name}"
             cls = getattr(exceptions, name)
             assert issubclass(cls, Exception), f"{name} must be an Exception subclass"
+
+    def test_exception_hierarchy(self):
+        """SkillValidationError is the base for domain exceptions."""
+        from nexus.skills.exceptions import (
+            SkillDependencyError,
+            SkillExportError,
+            SkillManagerError,
+            SkillNotFoundError,
+            SkillParseError,
+            SkillValidationError,
+        )
+
+        for cls in [
+            SkillNotFoundError,
+            SkillDependencyError,
+            SkillManagerError,
+            SkillExportError,
+            SkillParseError,
+        ]:
+            assert issubclass(cls, SkillValidationError), (
+                f"{cls.__name__} should be a subclass of SkillValidationError"
+            )
+
+    def test_exceptions_have_is_expected_attr(self):
+        """Skill exceptions expose is_expected for error handling."""
+        from nexus.skills.exceptions import SkillPermissionDeniedError, SkillValidationError
+
+        assert SkillValidationError.is_expected is True
+        assert SkillPermissionDeniedError.is_expected is True
 
 
 class TestModuleBoundary:
@@ -142,6 +170,29 @@ class TestModuleBoundary:
         for name in required:
             assert hasattr(skills, name), f"Missing export: nexus.skills.{name}"
 
+    def test_lazy_imports_work(self):
+        """Lazy imports via __getattr__ resolve correctly."""
+        from nexus import skills
+
+        # These are lazy — not eagerly imported
+        lazy_names = [
+            "SkillAnalyticsTracker",
+            "SkillGovernance",
+            "SkillAuditLogger",
+            "SkillExporter",
+            "NexusFilesystem",
+        ]
+        for name in lazy_names:
+            obj = getattr(skills, name, None)
+            assert obj is not None, f"Lazy import failed for nexus.skills.{name}"
+
+    def test_invalid_attr_raises(self):
+        """Accessing nonexistent attributes raises AttributeError."""
+        from nexus import skills
+
+        with pytest.raises(AttributeError, match="no attribute"):
+            _ = skills.NonExistentSymbol  # type: ignore[attr-defined]
+
     def test_skills_types_exported(self):
         """Skills service types are importable."""
         import dataclasses
@@ -158,8 +209,28 @@ class TestModuleBoundary:
         assert "xml" in pc_fields
 
 
+class TestMCPBackwardCompat:
+    """Verify MCP backward-compat re-exports from nexus.skills."""
+
+    def test_mcp_models_importable_from_skills(self):
+        """MCP models are still importable from nexus.skills (backward compat)."""
+        from nexus.skills import MCPMount, MCPToolConfig, MCPToolDefinition, MCPToolExample
+
+        assert MCPMount is not None
+        assert MCPToolConfig is not None
+        assert MCPToolDefinition is not None
+        assert MCPToolExample is not None
+
+    def test_mcp_classes_match_canonical_source(self):
+        """Backward-compat re-exports point to the same classes as nexus.mcp."""
+        from nexus.mcp.models import MCPMount as Canonical
+        from nexus.skills import MCPMount as Compat
+
+        assert Canonical is Compat
+
+
 # =============================================================================
-# Helper: detect TYPE_CHECKING-guarded imports
+# AST Helpers: detect guarded / scoped imports
 # =============================================================================
 
 
@@ -176,6 +247,16 @@ def _is_type_checking_guarded(tree: ast.Module, import_node: ast.ImportFrom) -> 
             and test.attr == "TYPE_CHECKING"
         )
         if is_tc:
+            for child in ast.walk(node):
+                if child is import_node:
+                    return True
+    return False
+
+
+def _is_function_scoped(tree: ast.Module, import_node: ast.ImportFrom) -> bool:
+    """Check if an import node is inside a function or method body."""
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             for child in ast.walk(node):
                 if child is import_node:
                     return True

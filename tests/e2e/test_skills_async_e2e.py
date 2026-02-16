@@ -385,3 +385,53 @@ class TestShareLinksE2E:
         logs = rpc_result(test_app, "get_share_link_access_logs", {"link_id": link_id})
         assert "data" in logs
         assert logs["data"]["count"] >= 1
+
+
+# ─── Performance: Discover Timing ─────────────────────────────────────
+
+
+class TestSkillsDiscoverTimingE2E:
+    """Verify discover performance with multiple skills (Issue #1400)."""
+
+    def test_discover_timing_with_skills(self, test_app):
+        """Discover should complete in < 2s even with multiple skills.
+
+        Creates 10 skills, subscribes to them, then measures discover time.
+        Uses 2s threshold (generous for CI environments with cold server).
+        """
+        # Create 10 skills
+        for i in range(10):
+            skill_dir = f"/zone/default/user/admin/skill/perf-{i}/"
+            write_skill(
+                test_app,
+                skill_dir,
+                f"---\nname: Perf Skill {i}\ndescription: Performance test\n---\n# Skill {i}",
+            )
+            rpc_result(test_app, "skills_subscribe", {"skill_path": skill_dir})
+
+        # Time the discover call
+        start = time.time()
+        result = rpc_result(test_app, "skills_discover", {"filter": "subscribed"})
+        elapsed = time.time() - start
+
+        assert result["count"] >= 10
+        assert elapsed < 2.0, f"Discover took {elapsed:.2f}s, expected < 2s"
+
+    def test_prompt_context_timing(self, test_app):
+        """Prompt context generation should complete in < 2s."""
+        # Create and subscribe to a skill
+        skill_dir = "/zone/default/user/admin/skill/timing-prompt/"
+        write_skill(
+            test_app,
+            skill_dir,
+            "---\nname: Timing Skill\ndescription: For timing\n---\n# Content\nBody here.",
+        )
+        rpc_result(test_app, "skills_subscribe", {"skill_path": skill_dir})
+
+        start = time.time()
+        result = rpc_result(test_app, "skills_get_prompt_context")
+        elapsed = time.time() - start
+
+        assert result["count"] >= 1
+        assert "<available_skills>" in result["xml"]
+        assert elapsed < 2.0, f"Prompt context took {elapsed:.2f}s, expected < 2s"

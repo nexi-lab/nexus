@@ -115,10 +115,15 @@ class TestDispatchAdminEnforcement:
 
         admin_context = FakeContext(is_admin=True)
         params = type("Params", (), {})()  # Empty params object
+        exposed_methods = {"admin_op": _fake_admin_method}
 
-        _mock_app_state.state.exposed_methods = {"admin_op": _fake_admin_method}
-
-        result = await _dispatch_method("admin_op", params, admin_context)
+        result = await _dispatch_method(
+            "admin_op",
+            params,
+            admin_context,
+            nexus_fs=MagicMock(),
+            exposed_methods=exposed_methods,
+        )
         assert result == {"result": "admin_ok"}
 
     @pytest.mark.asyncio
@@ -129,11 +134,16 @@ class TestDispatchAdminEnforcement:
 
         non_admin_context = FakeContext(is_admin=False)
         params = type("Params", (), {})()
-
-        _mock_app_state.state.exposed_methods = {"admin_op": _fake_admin_method}
+        exposed_methods = {"admin_op": _fake_admin_method}
 
         with pytest.raises(NexusPermissionError, match="Admin privileges required"):
-            await _dispatch_method("admin_op", params, non_admin_context)
+            await _dispatch_method(
+                "admin_op",
+                params,
+                non_admin_context,
+                nexus_fs=MagicMock(),
+                exposed_methods=exposed_methods,
+            )
 
     @pytest.mark.asyncio
     async def test_none_context_rejected(self, _mock_app_state):
@@ -142,11 +152,16 @@ class TestDispatchAdminEnforcement:
         from nexus.server.fastapi_server import _dispatch_method
 
         params = type("Params", (), {})()
-
-        _mock_app_state.state.exposed_methods = {"admin_op": _fake_admin_method}
+        exposed_methods = {"admin_op": _fake_admin_method}
 
         with pytest.raises(NexusPermissionError, match="Admin privileges required"):
-            await _dispatch_method("admin_op", params, None)
+            await _dispatch_method(
+                "admin_op",
+                params,
+                None,
+                nexus_fs=MagicMock(),
+                exposed_methods=exposed_methods,
+            )
 
     @pytest.mark.asyncio
     async def test_normal_method_not_affected(self, _mock_app_state):
@@ -155,10 +170,15 @@ class TestDispatchAdminEnforcement:
 
         non_admin_context = FakeContext(is_admin=False)
         params = type("Params", (), {})()
+        exposed_methods = {"normal_op": _fake_normal_method}
 
-        _mock_app_state.state.exposed_methods = {"normal_op": _fake_normal_method}
-
-        result = await _dispatch_method("normal_op", params, non_admin_context)
+        result = await _dispatch_method(
+            "normal_op",
+            params,
+            non_admin_context,
+            nexus_fs=MagicMock(),
+            exposed_methods=exposed_methods,
+        )
         assert result == {"result": "normal_ok"}
 
 

@@ -233,7 +233,7 @@ class MemoryPermissionEnforcer(PermissionEnforcer):
         """
         if not self.memory_router:
             # Fall back to base file permission check
-            return self.check(virtual_path, permission, context)
+            return bool(self.check(virtual_path, permission, context))
 
         # Resolve virtual path to memory
         memory = self.memory_router.resolve(virtual_path)

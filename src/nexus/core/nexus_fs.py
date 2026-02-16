@@ -253,9 +253,12 @@ class NexusFS(  # type: ignore[misc]
         self._overlay_resolver = svc.overlay_resolver
         self._wallet_provisioner = svc.wallet_provisioner
 
-        # Agent registry — injected externally (e.g. by FastAPI lifespan) or
-        # lazily created via _ensure_agent_registry() when first needed.
-        self._agent_registry: Any | None = None
+        # Kernel protocol services + async wrappers (Issue #1502)
+        self._agent_registry = svc.agent_registry
+        self._namespace_manager = svc.namespace_manager
+        self._async_agent_registry = svc.async_agent_registry
+        self._async_namespace_manager = svc.async_namespace_manager
+        self._async_vfs_router = svc.async_vfs_router
 
         # Infrastructure services (previously created inline, now injected)
         self._event_bus = svc.event_bus

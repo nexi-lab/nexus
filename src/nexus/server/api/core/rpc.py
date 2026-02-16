@@ -20,12 +20,11 @@ from nexus.core.exceptions import (
     NexusPermissionError,
     ValidationError,
 )
+from nexus.core.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.server.dependencies import require_auth
 from nexus.server.protocol import (
     RPCErrorCode,
     RPCRequest,
-    decode_rpc_message,
-    encode_rpc_message,
     parse_method_params,
 )
 from nexus.server.rate_limiting import RATE_LIMIT_AUTHENTICATED, limiter

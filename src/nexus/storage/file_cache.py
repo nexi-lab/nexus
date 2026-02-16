@@ -1,12 +1,11 @@
 """File-based content cache for L2 storage.
 
-Stores cached content on disk instead of PostgreSQL for:
-- Faster reads (mmap, OS page cache)
-- Lower cost (disk vs managed DB)
-- Zoekt compatibility (direct file indexing)
+Stores cached content on disk with metadata sidecar files:
+- Binary content: {hash}.bin
+- Parsed text: {hash}.txt
+- Metadata: {hash}.meta (JSON — replaces DB ContentCacheModel per data-storage-matrix.md)
 
-PostgreSQL still stores metadata (path, hash, size, synced_at).
-Content is stored in: {cache_dir}/.cache/{zone_id}/{path_hash}/{filename}
+Content is stored in: {cache_dir}/.cache/{zone_id}/{hash[:2]}/{hash[2:4]}/{hash}.*
 
 Performance optimization:
 - Uses Bloom filter for fast cache miss detection (avoids disk I/O)
@@ -15,11 +14,16 @@ Performance optimization:
 Usage:
     file_cache = FileContentCache("/app/data")
 
-    # Write content
-    file_cache.write("zone1", "/mnt/gcs/file.txt", b"content")
+    # Write content with metadata
+    file_cache.write("zone1", "/mnt/gcs/file.txt", b"content",
+                     text_content="parsed text",
+                     meta={"content_hash": "abc", "content_type": "full"})
 
     # Read content
     content = file_cache.read("zone1", "/mnt/gcs/file.txt")
+
+    # Read metadata
+    meta = file_cache.read_meta("zone1", "/mnt/gcs/file.txt")
 
     # Delete content
     file_cache.delete("zone1", "/mnt/gcs/file.txt")
@@ -27,6 +31,7 @@ Usage:
 
 from __future__ import annotations
 
+import json as _json
 import logging
 import os
 import shutil
@@ -183,12 +188,18 @@ class FileContentCache:
         path_hash = self._path_hash(virtual_path)
         return self.cache_dir / zone_id / path_hash[:2] / path_hash[2:4] / f"{path_hash}.txt"
 
+    def _get_meta_cache_path(self, zone_id: str, virtual_path: str) -> Path:
+        """Get the file path for cached metadata (replaces DB ContentCacheModel)."""
+        path_hash = self._path_hash(virtual_path)
+        return self.cache_dir / zone_id / path_hash[:2] / path_hash[2:4] / f"{path_hash}.meta"
+
     def write(
         self,
         zone_id: str,
         virtual_path: str,
         content: bytes,
         text_content: str | None = None,
+        meta: dict[str, Any] | None = None,
     ) -> Path:
         """Write content to cache.
 
@@ -197,6 +208,9 @@ class FileContentCache:
             virtual_path: Virtual file path
             content: Binary content to cache
             text_content: Optional parsed text content
+            meta: Optional metadata dict (replaces DB ContentCacheModel).
+                  Keys: content_hash, content_type, original_size, cached_size,
+                  backend_version, synced_at, parsed_from, parse_metadata, zone_id.
 
         Returns:
             Path to the cached binary file
@@ -220,10 +234,79 @@ class FileContentCache:
             except Exception as e:
                 logger.warning(f"Failed to write text cache {text_path}: {e}")
 
+        # Write metadata sidecar if provided
+        if meta:
+            self.write_meta(zone_id, virtual_path, meta)
+
         # Add to Bloom filter for fast future lookups
         self._bloom_add(zone_id, virtual_path)
 
         return cache_path
+
+    def write_meta(
+        self,
+        zone_id: str,
+        virtual_path: str,
+        meta: dict[str, Any],
+    ) -> None:
+        """Write metadata sidecar file (replaces DB ContentCacheModel).
+
+        Args:
+            zone_id: Zone ID
+            virtual_path: Virtual file path
+            meta: Metadata dict with cache entry properties
+        """
+        meta_path = self._get_meta_cache_path(zone_id, virtual_path)
+        meta_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            meta_path.write_text(_json.dumps(meta), encoding="utf-8")
+        except Exception as e:
+            logger.warning(f"Failed to write meta cache {meta_path}: {e}")
+
+    def read_meta(self, zone_id: str, virtual_path: str) -> dict[str, Any] | None:
+        """Read metadata sidecar file.
+
+        Args:
+            zone_id: Zone ID
+            virtual_path: Virtual file path
+
+        Returns:
+            Metadata dict, or None if not cached
+        """
+        if not self._bloom_check(zone_id, virtual_path):
+            return None
+
+        meta_path = self._get_meta_cache_path(zone_id, virtual_path)
+        if not meta_path.exists():
+            return None
+
+        try:
+            data: dict[str, Any] = _json.loads(meta_path.read_text(encoding="utf-8"))
+            return data
+        except Exception as e:
+            logger.warning(f"Failed to read meta cache {meta_path}: {e}")
+            return None
+
+    def read_meta_bulk(
+        self,
+        zone_id: str,
+        virtual_paths: list[str],
+    ) -> dict[str, dict[str, Any]]:
+        """Read multiple metadata sidecar files.
+
+        Args:
+            zone_id: Zone ID
+            virtual_paths: List of virtual file paths
+
+        Returns:
+            Dict mapping virtual_path to metadata dict (only for cached files)
+        """
+        result: dict[str, dict[str, Any]] = {}
+        for path in virtual_paths:
+            meta = self.read_meta(zone_id, path)
+            if meta is not None:
+                result[path] = meta
+        return result
 
     def read(self, zone_id: str, virtual_path: str) -> bytes | None:
         """Read binary content from cache.
@@ -420,7 +503,7 @@ class FileContentCache:
         return self._get_cache_path(zone_id, virtual_path).exists()
 
     def delete(self, zone_id: str, virtual_path: str) -> bool:
-        """Delete cached content.
+        """Delete cached content (binary, text, and metadata sidecar).
 
         Args:
             zone_id: Zone ID
@@ -447,6 +530,14 @@ class FileContentCache:
                 text_path.unlink()
             except Exception as e:
                 logger.warning(f"Failed to delete text cache {text_path}: {e}")
+
+        # Delete metadata sidecar
+        meta_path = self._get_meta_cache_path(zone_id, virtual_path)
+        if meta_path.exists():
+            try:
+                meta_path.unlink()
+            except Exception as e:
+                logger.warning(f"Failed to delete meta cache {meta_path}: {e}")
 
         return deleted
 

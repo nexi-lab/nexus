@@ -29,7 +29,8 @@ from nexus.backends.cache_mixin import (
 )
 from nexus.backends.sync_pipeline import SyncPipelineService
 from nexus.core.permissions import OperationContext
-from nexus.storage.models import Base, ContentCacheModel, FilePathModel
+from nexus.storage.file_cache import FileContentCache
+from nexus.storage.models import Base, FilePathModel
 
 
 class MockConnector(CacheConnectorMixin):
@@ -245,7 +246,7 @@ class TestStep2LoadCache:
 
         assert len(cached) == 0
 
-    def test_load_partial_cache(self, connector, pipeline, db_session):
+    def test_load_partial_cache(self, connector, pipeline, db_session, tmp_path):
         """Test loading cache with some files cached."""
         session = db_session()
 
@@ -265,42 +266,49 @@ class TestStep2LoadCache:
             zone_id="test_zone",
         )
         session.add_all([path1, path2])
-
-        # Create cache entry for file1 only
-        cache1 = ContentCacheModel(
-            cache_id="cache1",
-            path_id="path1",
-            zone_id="test_zone",
-            content_text="content1",
-            content_hash="hash1",
-            content_type="full",
-            original_size_bytes=8,
-            cached_size_bytes=8,
-            backend_version="v1",
-            synced_at=datetime.now(UTC),
-            stale=False,
-        )
-        session.add(cache1)
         session.commit()
         session.close()
 
-        # Load cache
-        virtual_paths = ["/test/file1.txt", "/test/file2.txt"]
-        cached = pipeline._step2_load_cache(virtual_paths)
+        # Write disk cache metadata for file1 only (replaces ContentCacheModel)
+        # Use "default" zone because MockConnector has no zone_id attribute
+        file_cache = FileContentCache(tmp_path / "cache")
+        file_cache.write(
+            "default",
+            "/test/file1.txt",
+            b"content1",
+            text_content="content1",
+            meta={
+                "content_hash": "hash1",
+                "content_type": "full",
+                "original_size_bytes": 8,
+                "cached_size_bytes": 8,
+                "backend_version": "v1",
+                "stale": False,
+                "zone_id": "default",
+            },
+        )
 
-        assert len(cached) == 1
-        assert "/test/file1.txt" in cached
-        assert "/test/file2.txt" not in cached
+        with patch("nexus.backends.cache_mixin.get_file_cache", return_value=file_cache):
+            # Load cache
+            virtual_paths = ["/test/file1.txt", "/test/file2.txt"]
+            cached = pipeline._step2_load_cache(virtual_paths)
 
-    def test_load_cache_performance(self, connector, pipeline):
-        """Test that bulk cache loading uses single query."""
+            assert len(cached) == 1
+            assert "/test/file1.txt" in cached
+            assert "/test/file2.txt" not in cached
+
+    def test_load_cache_performance(self, connector, pipeline, tmp_path):
+        """Test that bulk cache loading uses read_meta_bulk (single call)."""
         virtual_paths = [f"/test/file{i}.txt" for i in range(100)]
 
-        with patch.object(connector, "_get_path_ids_bulk") as mock_bulk:
-            mock_bulk.return_value = {}
+        file_cache = FileContentCache(tmp_path / "cache")
+        with (
+            patch("nexus.backends.cache_mixin.get_file_cache", return_value=file_cache),
+            patch.object(file_cache, "read_meta_bulk", return_value={}) as mock_bulk,
+        ):
             pipeline._step2_load_cache(virtual_paths)
 
-            # Should use single bulk query, not 100 individual queries
+            # Should use single bulk disk read, not 100 individual reads
             assert mock_bulk.call_count == 1
 
 
@@ -567,8 +575,8 @@ class TestStep5ProcessContent:
 class TestStep6WriteCache:
     """Test Step 6: Batch cache writing."""
 
-    def test_write_cache_entries(self, connector, pipeline, db_session):
-        """Test writing cache entries to database."""
+    def test_write_cache_entries(self, connector, pipeline, db_session, tmp_path):
+        """Test writing cache entries to disk cache."""
         session = db_session()
 
         # Create file_paths entries
@@ -596,17 +604,19 @@ class TestStep6WriteCache:
             }
         ]
 
-        result = SyncResult()
-        pipeline._step6_write_cache(cache_entries, result)
+        file_cache = FileContentCache(tmp_path / "cache")
+        with patch("nexus.backends.cache_mixin.get_file_cache", return_value=file_cache):
+            result = SyncResult()
+            pipeline._step6_write_cache(cache_entries, result)
 
-        # Verify cache was written
-        session = db_session()
-        stmt = session.query(ContentCacheModel).filter_by(path_id="path1")
-        cache_model = stmt.first()
-        assert cache_model is not None
-        assert cache_model.content_text == "content1"
-        assert cache_model.backend_version == "v1"
-        session.close()
+            # Verify cache was written to disk
+            meta = file_cache.read_meta("test_zone", "/test/file1.txt")
+            assert meta is not None
+            assert meta["content_type"] == "full"
+            assert meta["backend_version"] == "v1"
+            # Verify content was written
+            text_content = file_cache.read_text("test_zone", "/test/file1.txt")
+            assert text_content == "content1"
 
     def test_write_cache_error_handling(self, connector, pipeline):
         """Test error handling during cache write."""
@@ -665,7 +675,7 @@ class TestStep7GenerateEmbeddings:
 class TestSyncIntegration:
     """Integration test for full sync flow."""
 
-    def test_full_sync_flow(self, connector, db_session, test_context):
+    def test_full_sync_flow(self, connector, db_session, test_context, tmp_path):
         """Test complete sync operation with all steps."""
         session = db_session()
 
@@ -698,24 +708,26 @@ class TestSyncIntegration:
             "file2.txt": "v2",
         }
 
-        # Run full sync
-        result = connector.sync_content_to_cache(
-            mount_point="/test",
-            generate_embeddings=False,
-            context=test_context,
-        )
+        file_cache = FileContentCache(tmp_path / "cache")
+        with patch("nexus.backends.cache_mixin.get_file_cache", return_value=file_cache):
+            # Run full sync
+            result = connector.sync_content_to_cache(
+                mount_point="/test",
+                generate_embeddings=False,
+                context=test_context,
+            )
 
-        # Verify results
-        assert result.files_scanned == 2
-        assert result.files_synced >= 1  # At least one file synced successfully
-        assert result.bytes_synced > 0
-        assert len(result.errors) == 0
+            # Verify results
+            assert result.files_scanned == 2
+            assert result.files_synced >= 1  # At least one file synced successfully
+            assert result.bytes_synced > 0
+            assert len(result.errors) == 0
 
-        # Verify cache was populated
-        session = db_session()
-        cache_entries = session.query(ContentCacheModel).all()
-        assert len(cache_entries) >= 1  # At least one entry in cache
-        session.close()
+            # Verify disk cache was populated (replaces DB ContentCacheModel check)
+            meta1 = file_cache.read_meta("test_zone", "/test/file1.txt")
+            meta2 = file_cache.read_meta("test_zone", "/test/file2.txt")
+            cached_count = sum(1 for m in [meta1, meta2] if m is not None)
+            assert cached_count >= 1  # At least one entry in cache
 
     def test_sync_with_patterns(self, connector, db_session, test_context):
         """Test sync with include/exclude patterns."""

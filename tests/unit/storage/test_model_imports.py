@@ -21,7 +21,6 @@ EXPECTED_MODELS = [
     "ContentChunkModel",
     "WorkspaceSnapshotModel",
     "DocumentChunkModel",
-    "ContentCacheModel",
     # Permissions
     "ReBACTupleModel",
     "ReBACNamespaceModel",

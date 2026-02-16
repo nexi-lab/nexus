@@ -7,7 +7,7 @@ improve separation of concerns, testability, and readability.
 The sync pipeline orchestrates efficient content syncing from external
 storage backends (GCS, S3, Gmail, etc.) into a two-level cache:
 - L1: In-memory LRU cache (fast, per-process, volatile)
-- L2: PostgreSQL content_cache table (persistent, shared, durable)
+- L2: Disk-based content + metadata sidecar (ephemeral, per-node)
 
 Steps:
     1. Discover files: List and filter files from backend

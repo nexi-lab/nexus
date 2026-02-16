@@ -44,7 +44,7 @@ from starlette.middleware.gzip import GZipMiddleware
 
 from nexus.constants import DEFAULT_GOOGLE_REDIRECT_URI, DEFAULT_NEXUS_URL
 
-# --- Extracted modules (re-exported for backward compatibility) ---
+# --- Extracted modules (re-exported for convenience) ---
 from nexus.server.dependencies import (  # noqa: F401, E402
     get_auth_result,
     get_operation_context,
@@ -166,7 +166,6 @@ _fastapi_app: FastAPI | None = None
 
 # Stream token signing/verification is now in streaming.py.
 # Auth dependencies (get_auth_result, require_auth, get_operation_context) are in dependencies.py.
-# All are imported above for backward compatibility.
 
 
 # ============================================================================

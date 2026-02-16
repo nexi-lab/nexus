@@ -540,7 +540,7 @@ services:
         echo "🧪 Running tests..."
         # Run default tests or custom pytest args passed via docker run
         if [ -z "$$@" ]; then
-          pytest tests/unit/backends/test_local_connector.py tests/integration/test_local_connector.py -v --no-header
+          pytest tests/unit/backends/test_local_connector.py tests/e2e/self_contained/test_local_connector.py -v --no-header
         else
           pytest "$$@"
         fi

@@ -8,17 +8,23 @@ References:
     - Issue #1041: Query router for automatic search strategy selection
     - Issue #1022: Query Complexity Estimator (dependency)
     - Issue #1040: Graph-Enhanced Retrieval (dependency)
+    - Issue #1499: Audit and cleanup
 """
 
 from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from dataclasses import asdict, dataclass, field
+from typing import Any
 
-if TYPE_CHECKING:
-    from nexus.llm.context_builder import ContextBuilder
+from nexus.search.strategies import (
+    AGGREGATION_WORDS,
+    COMPARISON_WORDS,
+    COMPLEX_PATTERNS,
+    MULTIHOP_PATTERNS,
+    TEMPORAL_WORDS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -94,37 +100,24 @@ class RoutedQuery:
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for API response."""
-        return {
-            "original_query": self.original_query,
-            "complexity_score": self.complexity_score,
-            "complexity_class": self.complexity_class,
-            "search_mode": self.search_mode,
-            "graph_mode": self.graph_mode,
-            "adjusted_limit": self.adjusted_limit,
-            "reasoning": self.reasoning,
-            "routing_latency_ms": self.routing_latency_ms,
-            "include_community_summaries": self.include_community_summaries,
-        }
+        return asdict(self)
 
 
 @dataclass
 class QueryRouter:
     """Routes queries to optimal search strategies based on complexity.
 
-    Uses query complexity estimation from ContextBuilder to automatically
+    Uses heuristic-based query complexity estimation to automatically
     select the best search mode and graph mode for each query.
 
     Example:
-        >>> from nexus.llm import ContextBuilder
         >>> from nexus.search import QueryRouter
-        >>> context_builder = ContextBuilder()
-        >>> router = QueryRouter(context_builder)
+        >>> router = QueryRouter()
         >>> routed = router.route("How does authentication work?")
         >>> print(routed.search_mode, routed.graph_mode)
         hybrid low
     """
 
-    context_builder: ContextBuilder | None = None
     config: RoutingConfig = field(default_factory=RoutingConfig)
 
     def route(self, query: str, base_limit: int = 10) -> RoutedQuery:
@@ -139,12 +132,8 @@ class QueryRouter:
         """
         start_time = time.perf_counter()
 
-        # Estimate complexity
-        if self.context_builder is not None:
-            complexity = self.context_builder.estimate_query_complexity(query)
-        else:
-            # Fallback to simple heuristic if no context builder
-            complexity = self._estimate_complexity_fallback(query)
+        # Estimate complexity using heuristic
+        complexity = self._estimate_complexity_fallback(query)
 
         # Classify and get strategy
         complexity_class = self._classify_complexity(complexity)
@@ -188,9 +177,10 @@ class QueryRouter:
             return "very_complex"
 
     def _estimate_complexity_fallback(self, query: str) -> float:
-        """Simple fallback complexity estimation when no context builder available.
+        """Heuristic complexity estimation based on query analysis.
 
-        Uses basic heuristics similar to ContextBuilder but simplified.
+        Uses word-level and pattern-level signals to estimate how complex
+        a query is, without requiring an LLM call.
         """
         score = 0.0
         query_lower = query.lower()
@@ -201,56 +191,23 @@ class QueryRouter:
         score += min(len(words) / 20.0, 0.25)
 
         # Comparison indicators (+0.2)
-        comparison_words = {"vs", "versus", "compare", "comparison", "difference", "between"}
-        if word_set & comparison_words:
+        if word_set & COMPARISON_WORDS:
             score += 0.2
 
         # Temporal indicators (+0.15)
-        temporal_words = {"when", "before", "after", "history", "timeline", "since", "until"}
-        if word_set & temporal_words:
+        if word_set & TEMPORAL_WORDS:
             score += 0.15
 
         # Aggregation indicators (+0.15)
-        aggregation_words = {"all", "every", "summary", "overview", "list", "total"}
-        if word_set & aggregation_words:
+        if word_set & AGGREGATION_WORDS:
             score += 0.15
 
         # Multi-hop patterns (+0.2)
-        multihop_patterns = [
-            "how does",
-            "how do",
-            "why does",
-            "why do",
-            "what happens when",
-            "relationship between",
-            "impact of",
-            "effect of",
-        ]
-        if any(pattern in query_lower for pattern in multihop_patterns):
+        if any(pattern in query_lower for pattern in MULTIHOP_PATTERNS):
             score += 0.2
 
         # Complex question patterns (+0.15)
-        complex_patterns = ["explain", "analyze", "evaluate", "describe how"]
-        if any(pattern in query_lower for pattern in complex_patterns):
+        if any(pattern in query_lower for pattern in COMPLEX_PATTERNS):
             score += 0.15
 
         return min(score, 1.0)
-
-
-def create_query_router(
-    context_builder: ContextBuilder | None = None,
-    config: RoutingConfig | None = None,
-) -> QueryRouter:
-    """Factory function to create a QueryRouter.
-
-    Args:
-        context_builder: Optional ContextBuilder for complexity estimation
-        config: Optional routing configuration
-
-    Returns:
-        Configured QueryRouter instance
-    """
-    return QueryRouter(
-        context_builder=context_builder,
-        config=config or RoutingConfig(),
-    )

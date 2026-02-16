@@ -451,7 +451,7 @@ class ReBACPermissionCache:
         Falls back to 0 if revision fetcher not set (graceful degradation).
 
         Args:
-            zone_id: Zone ID (defaults to "default")
+            zone_id: Zone ID (defaults to "root")
 
         Returns:
             Quantized revision bucket number
@@ -459,7 +459,7 @@ class ReBACPermissionCache:
         if not self._enable_revision_quantization:
             return 0
 
-        effective_zone = zone_id or "default"
+        effective_zone = zone_id or "root"
         current_time = time.time()
 
         # Check local revision cache
@@ -485,12 +485,12 @@ class ReBACPermissionCache:
         Used for tracking revision at cache time for AT_LEAST_AS_FRESH consistency.
 
         Args:
-            zone_id: Zone ID (defaults to "default")
+            zone_id: Zone ID (defaults to "root")
 
         Returns:
             Current revision number, or 0 if unavailable
         """
-        effective_zone = zone_id or "default"
+        effective_zone = zone_id or "root"
         current_time = time.time()
 
         # Check local revision cache first
@@ -532,7 +532,7 @@ class ReBACPermissionCache:
         Returns:
             Cache key string with revision bucket for distributed cache sharing
         """
-        zone_part = zone_id if zone_id else "default"
+        zone_part = zone_id if zone_id else "root"
         revision_bucket = self._get_revision_bucket(zone_id)
         return f"{subject_type}:{subject_id}:{permission}:{object_type}:{object_id}:{zone_part}:r{revision_bucket}"
 
@@ -639,7 +639,7 @@ class ReBACPermissionCache:
             # After a write, check with read-your-writes guarantee
             result, revision = cache.get_with_revision_check(
                 "user", "alice", "read", "file", "/doc.txt",
-                zone_id="default",
+                zone_id="root",
                 min_revision=write_result.revision
             )
             if result is None:
@@ -726,7 +726,7 @@ class ReBACPermissionCache:
                 Inherited permissions use shorter TTL since they depend on parent.
         """
         key = self._make_key(subject_type, subject_id, permission, object_type, object_id, zone_id)
-        zone_part = zone_id if zone_id else "default"
+        zone_part = zone_id if zone_id else "root"
 
         with self._lock:
             # Issue #1077: Get tiered TTL based on relation type
@@ -1146,7 +1146,7 @@ class ReBACPermissionCache:
         Returns:
             Number of entries invalidated
         """
-        zone_part = zone_id if zone_id else "default"
+        zone_part = zone_id if zone_id else "root"
 
         with self._lock:
             # Issue #1077: Use secondary index for O(1) lookup if in targeted mode
@@ -1202,7 +1202,7 @@ class ReBACPermissionCache:
         Returns:
             Number of entries invalidated
         """
-        zone_part = zone_id if zone_id else "default"
+        zone_part = zone_id if zone_id else "root"
 
         with self._lock:
             # Issue #1077: Use secondary index for O(1) lookup if in targeted mode
@@ -1263,7 +1263,7 @@ class ReBACPermissionCache:
         Returns:
             Number of entries invalidated
         """
-        zone_part = zone_id if zone_id else "default"
+        zone_part = zone_id if zone_id else "root"
 
         with self._lock:
             # Issue #1077: Use intersection of indexes for precise O(1) lookup
@@ -1324,7 +1324,7 @@ class ReBACPermissionCache:
         Returns:
             Number of entries invalidated
         """
-        zone_part = zone_id if zone_id else "default"
+        zone_part = zone_id if zone_id else "root"
 
         with self._lock:
             # Issue #1077: Use path prefix index for O(affected) lookup

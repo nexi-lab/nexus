@@ -1138,7 +1138,8 @@ def serve(
             console.print("  • All permissions and relationships")
             console.print()
 
-            from sqlalchemy import create_engine, text
+            from sqlalchemy import create_engine, delete
+            from sqlalchemy import table as sa_table
 
             engine = create_engine(db_url)
 
@@ -1181,7 +1182,7 @@ def serve(
                     with engine.connect() as conn:
                         trans = conn.begin()
                         try:
-                            cursor_result = conn.execute(text(f"DELETE FROM {table_name}"))
+                            cursor_result = conn.execute(delete(sa_table(table_name)))
                             count = cursor_result.rowcount
                             trans.commit()
                             deleted_counts[table_name] = count

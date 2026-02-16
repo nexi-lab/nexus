@@ -43,7 +43,7 @@ first accessed. This reduces import time from ~10s to ~1s for simple use cases.
 
 from __future__ import annotations
 
-__version__ = "0.7.1.dev0"
+__version__ = "0.7.2.dev0"
 __author__ = "Nexi Lab Team"
 __license__ = "Apache-2.0"
 

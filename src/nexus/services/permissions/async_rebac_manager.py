@@ -40,11 +40,11 @@ from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from nexus.core.rebac import (
-    CROSS_ZONE_ALLOWED_RELATIONS,
     WILDCARD_SUBJECT,
     Entity,
     NamespaceConfig,
 )
+from nexus.services.permissions.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 from nexus.services.permissions.rebac_cache import ReBACPermissionCache
 from nexus.storage.models.permissions import (
     ReBACGroupClosureModel as GC,

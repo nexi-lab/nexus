@@ -855,6 +855,20 @@ class NexusFS(  # type: ignore[misc]
             self._default_context.is_admin,
         )
 
+    @property
+    def zone_id(self) -> str | None:
+        """Default zone_id from the instance context."""
+        return self._default_context.zone_id
+
+    @property
+    def agent_id(self) -> str | None:
+        """Default agent_id from the instance context."""
+        return self._default_context.agent_id
+
+    @property
+    def user_id(self) -> str | None:
+        """Default user_id from the instance context."""
+        return getattr(self._default_context, "user", None)
     def _get_memory_api(self, context: dict | None = None) -> Memory:
         """Get Memory API instance with context-specific configuration.
 
@@ -1244,7 +1258,6 @@ class NexusFS(  # type: ignore[misc]
         route = self.router.route(
             path,
             zone_id=ctx.zone_id,
-            agent_id=ctx.agent_id,
             is_admin=ctx.is_admin,
             check_write=True,
         )
@@ -1458,7 +1471,6 @@ class NexusFS(  # type: ignore[misc]
         route = self.router.route(
             path,
             zone_id=ctx.zone_id,
-            agent_id=ctx.agent_id,
             is_admin=ctx.is_admin,
             check_write=True,
         )
@@ -2020,9 +2032,8 @@ class NexusFS(  # type: ignore[misc]
             # Route with access control (read permission needed to check)
             route = self.router.route(
                 path,
-                zone_id=ctx.zone_id,  # v0.6.0: from context
-                agent_id=ctx.agent_id,  # v0.6.0: from context
-                is_admin=ctx.is_admin,  # v0.6.0: from context
+                zone_id=ctx.zone_id,
+                is_admin=ctx.is_admin,
                 check_write=False,
             )
             # Check if it's an explicit directory in the backend
@@ -2213,11 +2224,10 @@ class NexusFS(  # type: ignore[misc]
                     pass
             else:
                 # Non-root path - use router with context
-                zone_id, agent_id, is_admin = self._get_routing_params(context)
+                zone_id, _agent_id, is_admin = self._get_routing_params(context)
                 route = self.router.route(
                     path.rstrip("/"),
                     zone_id=zone_id,
-                    agent_id=agent_id,
                     is_admin=is_admin,
                     check_write=False,
                 )
@@ -2899,12 +2909,6 @@ class NexusFS(  # type: ignore[misc]
         # Use provided context or default
         ctx = context if context is not None else self._default_context
 
-        if workspace_path is None:
-            # Fallback to context agent_id, then default context
-            fallback_agent_id = ctx.agent_id or self._default_context.agent_id
-            if fallback_agent_id:
-                workspace_path = f"/workspace/{fallback_agent_id}"
-
         if not workspace_path:
             raise ValueError("workspace_path must be provided")
 
@@ -2948,12 +2952,6 @@ class NexusFS(  # type: ignore[misc]
         """
         # Parse context properly
         ctx = self._parse_context(context)
-
-        if workspace_path is None:
-            # Fallback to context agent_id, then default context
-            fallback_agent_id = ctx.agent_id or self._default_context.agent_id
-            if fallback_agent_id:
-                workspace_path = f"/workspace/{fallback_agent_id}"
 
         if not workspace_path:
             raise ValueError("workspace_path must be provided")
@@ -3000,12 +2998,6 @@ class NexusFS(  # type: ignore[misc]
         """
         # Parse context properly
         ctx = self._parse_context(context)
-
-        if workspace_path is None:
-            # Fallback to context agent_id, then default context
-            fallback_agent_id = ctx.agent_id or self._default_context.agent_id
-            if fallback_agent_id:
-                workspace_path = f"/workspace/{fallback_agent_id}"
 
         if not workspace_path:
             raise ValueError("workspace_path must be provided")
@@ -9078,12 +9070,10 @@ class NexusFS(  # type: ignore[misc]
             and hasattr(self, "router")
             and hasattr(self, "_get_routing_params")
         ):
-            # NexusFS instance - read directly from backend to bypass filtering
-            zone_id, agent_id, is_admin = self._get_routing_params(context)
+            zone_id, _agent_id, is_admin = self._get_routing_params(context)
             route = self.router.route(
                 file_path,
                 zone_id=zone_id,
-                agent_id=agent_id,
                 is_admin=is_admin,
                 check_write=False,
             )

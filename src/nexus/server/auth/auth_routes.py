@@ -15,25 +15,25 @@ from nexus.server.auth.oauth_user_auth import OAuthUserAuth
 logger = logging.getLogger(__name__)
 
 # ==============================================================================
-# Dependency Injection
+# Injectable DI — set at server startup, accessed via Depends() or direct call
 # ==============================================================================
 
 _auth_provider: DatabaseLocalAuth | None = None
 _oauth_provider: OAuthUserAuth | None = None
-_nexus_fs_instance: Any | None = None  # NexusFS instance for provisioning
+_nexus_fs_instance: Any | None = None
 
 
 def set_auth_provider(provider: DatabaseLocalAuth) -> None:
-    """Set the authentication provider for dependency injection."""
+    """Inject the authentication provider. Called by server layer at startup."""
     global _auth_provider
     _auth_provider = provider
 
 
 def get_auth_provider() -> DatabaseLocalAuth:
-    """Get the authentication provider.
+    """Return the injected auth provider (used as ``Depends(get_auth_provider)``).
 
     Raises:
-        HTTPException: If auth provider is not configured
+        HTTPException: If auth provider has not been injected.
     """
     if _auth_provider is None:
         raise HTTPException(
@@ -43,26 +43,44 @@ def get_auth_provider() -> DatabaseLocalAuth:
     return _auth_provider
 
 
+def reset_auth_provider() -> None:
+    """Reset auth provider to None — only for tests."""
+    global _auth_provider
+    _auth_provider = None
+
+
 def set_oauth_provider(provider: OAuthUserAuth) -> None:
-    """Set the OAuth authentication provider for dependency injection."""
+    """Inject the OAuth authentication provider. Called by server layer at startup."""
     global _oauth_provider
     _oauth_provider = provider
 
 
 def get_oauth_provider() -> OAuthUserAuth | None:
-    """Get the OAuth authentication provider (optional)."""
+    """Return the injected OAuth provider, or None if not configured."""
     return _oauth_provider
 
 
+def reset_oauth_provider() -> None:
+    """Reset OAuth provider to None — only for tests."""
+    global _oauth_provider
+    _oauth_provider = None
+
+
 def set_nexus_instance(nexus_fs: Any) -> None:
-    """Set the global NexusFS instance for user provisioning."""
+    """Inject the NexusFS instance for user provisioning. Called by server layer at startup."""
     global _nexus_fs_instance
     _nexus_fs_instance = nexus_fs
 
 
 def get_nexus_instance() -> Any | None:
-    """Get the global NexusFS instance."""
+    """Return the injected NexusFS instance, or None if not configured."""
     return _nexus_fs_instance
+
+
+def reset_nexus_instance() -> None:
+    """Reset NexusFS instance to None — only for tests."""
+    global _nexus_fs_instance
+    _nexus_fs_instance = None
 
 
 async def get_authenticated_user(
@@ -224,16 +242,6 @@ class OAuthCallbackResponse(BaseModel):
     user: UserResponse
     is_new_user: bool
     message: str = "OAuth authentication successful"
-
-
-class OAuthAccountResponse(BaseModel):
-    """OAuth account information."""
-
-    oauth_account_id: str
-    provider: str
-    provider_email: str
-    created_at: str
-    last_used_at: str | None = None
 
 
 class OAuthCheckResponseExisting(BaseModel):
@@ -1538,43 +1546,3 @@ async def oauth_callback(request: OAuthCallbackRequest) -> OAuthCallbackResponse
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"OAuth callback failed: {e}",
         ) from e
-
-
-@router.get("/oauth/accounts", response_model=list[OAuthAccountResponse])
-async def list_oauth_accounts() -> list[OAuthAccountResponse]:
-    """List linked OAuth accounts for current user.
-
-    Returns:
-        List of linked OAuth accounts
-
-    Raises:
-        401: Not authenticated
-        501: Not implemented
-    """
-    # Stub: requires JWT token authentication middleware
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="OAuth account listing requires JWT token authentication middleware",
-    )
-
-
-@router.delete("/oauth/accounts/{oauth_account_id}")
-async def unlink_oauth_account(_oauth_account_id: str) -> dict[str, Any]:
-    """Unlink an OAuth account.
-
-    Args:
-        oauth_account_id: OAuth account ID to unlink
-
-    Returns:
-        Success message
-
-    Raises:
-        401: Not authenticated
-        404: OAuth account not found
-        501: Not implemented
-    """
-    # Stub: requires JWT token authentication middleware
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="OAuth account unlinking requires JWT token authentication middleware",
-    )

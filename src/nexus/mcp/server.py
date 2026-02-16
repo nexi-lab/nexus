@@ -864,8 +864,8 @@ def create_mcp_server(
             if hasattr(nx_instance.memory, "session"):
                 try:
                     nx_instance.memory.session.rollback()
-                except Exception as e:
-                    logger.debug("Failed to rollback memory session: %s", e)
+                except Exception as rb_err:
+                    logger.debug("Failed to rollback memory session: %s", rb_err)
             return tool_error("internal", f"Error storing memory: {e}", str(e))
 
     @mcp.tool(

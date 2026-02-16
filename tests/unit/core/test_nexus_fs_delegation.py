@@ -581,7 +581,6 @@ class TestSearchServiceDelegation:
             path="/data",
             recursive=False,
             details=True,
-            prefix=None,
             show_parsed=True,
             context=context,
             limit=None,

@@ -3961,9 +3961,7 @@ class ReBACManager:
                             "(zone_id = ? AND subject_type = ? AND subject_id = ? "
                             "AND object_type = ? AND object_id = ?)"
                         )
-                        delete_params.extend(
-                            [tid or "root", subj_type, subj_id, obj_type, obj_id]
-                        )
+                        delete_params.extend([tid or "root", subj_type, subj_id, obj_type, obj_id])
 
                     # Chunk the deletes to avoid too large SQL
                     CHUNK_SIZE = 50

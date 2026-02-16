@@ -183,6 +183,7 @@ def _startup_key_service(app: FastAPI) -> None:
             _nx_engine = getattr(app.state.nexus_fs, "_sql_engine", None)
             if _nx_engine is not None:
                 from sqlalchemy import Table
+
                 cast(Table, AgentKeyModel.__table__).create(_nx_engine, checkfirst=True)
 
             # Reuse OAuthCrypto for Fernet encryption of private keys

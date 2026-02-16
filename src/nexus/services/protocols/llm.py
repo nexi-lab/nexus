@@ -57,7 +57,7 @@ class LLMProtocol(Protocol):
         provider: LLMProvider | None = None,
     ) -> DocumentReadResult: ...
 
-    def llm_read_stream(
+    async def llm_read_stream(
         self,
         path: str,
         prompt: str,

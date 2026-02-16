@@ -25,6 +25,7 @@ We do **not** enforce timeouts in CI (they cause flaky failures on busy runners)
 - **Slow tests**: Mark genuinely slow tests with `@pytest.mark.slow` so they can be deselected when iterating (`-m "not slow"`). Profile with `pytest tests/unit -v --durations=20` to find the slowest tests.
 - **If a test is slow**: Prefer making it faster (smaller data, better mocks, less iteration). If it can't be fast, move it to `tests/integration/` or `tests/e2e/`.
 - **CI**: We rely on the default job timeout; avoid adding step- or per-test timeouts that fail on variable runner load.
+- **Enforcement**: (1) `conftest.py` prints a **warning** (no fail) if the suite exceeds 3 min. (2) CI records duration in the job summary and **fails only if** the suite exceeds **5 min**, so real regressions are caught without flakiness from busy runners.
 
 ## Rules
 

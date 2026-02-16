@@ -471,6 +471,21 @@ class NexusFS(  # type: ignore[misc]
             return getattr(enforcer, "namespace_manager", None)
         return None
 
+    @property
+    def config(self) -> Any | None:
+        """Public accessor for the runtime configuration object."""
+        return self._config
+
+    @property
+    def rebac_manager(self) -> Any | None:
+        """Public accessor for the ReBACManager instance."""
+        return getattr(self, "_rebac_manager", None)
+
+    @property
+    def semantic_search_engine(self) -> Any | None:
+        """Public accessor for the semantic search engine instance."""
+        return self._semantic_search
+
     def _init_performance_optimizations(self) -> None:
         """Initialize performance optimizations for permission checks.
 
@@ -10335,7 +10350,6 @@ class NexusFS(  # type: ignore[misc]
         path: str = "/",
         recursive: bool = True,
         details: bool = False,
-        prefix: str | None = None,
         show_parsed: bool = True,
         context: Any = None,
         limit: int | None = None,
@@ -10346,7 +10360,6 @@ class NexusFS(  # type: ignore[misc]
             path=path,
             recursive=recursive,
             details=details,
-            prefix=prefix,
             show_parsed=show_parsed,
             context=context,
             limit=limit,

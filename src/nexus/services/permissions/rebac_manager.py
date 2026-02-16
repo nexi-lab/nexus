@@ -144,7 +144,7 @@ class ReBACManager:
                 revision_quantization_window=l1_cache_revision_window,
             )
             # Wire up revision fetcher for revision-based cache keys
-            self._l1_cache.set_revision_fetcher(lambda zone_id: self._get_zone_revision(zone_id))
+            self._l1_cache.set_revision_fetcher(lambda zone_id: self.get_zone_revision(zone_id))
             logger.info(
                 f"L1 cache enabled: max_size={l1_cache_size}, ttl={l1_cache_ttl}s, "
                 f"metrics={enable_metrics}, adaptive_ttl={enable_adaptive_ttl}, "
@@ -182,7 +182,7 @@ class ReBACManager:
         """
         return self._repo.supports_old_new_returning
 
-    def _get_zone_revision(self, zone_id: str | None, conn: Any | None = None) -> int:
+    def get_zone_revision(self, zone_id: str | None, conn: Any | None = None) -> int:
         """Get current revision for a zone. Delegates to TupleRepository (Issue #1459)."""
         return self._repo.get_zone_revision(zone_id, conn)
 
@@ -228,6 +228,75 @@ class ReBACManager:
     def _fix_sql_placeholders(self, sql: str) -> str:
         """Convert SQLite ? placeholders to PostgreSQL %s. Delegates to TupleRepository (Issue #1459)."""
         return self._repo.fix_sql_placeholders(sql)
+
+    def list_tuples(
+        self,
+        subject: tuple[str, str] | None = None,
+        relation: str | None = None,
+        relation_in: list[str] | None = None,
+        object: tuple[str, str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """List ReBAC tuples with optional filters.
+
+        Args:
+            subject: (subject_type, subject_id) filter
+            relation: Single relation filter
+            relation_in: Multiple relation filter (mutually exclusive with relation)
+            object: (object_type, object_id) filter
+
+        Returns:
+            List of tuple dicts with keys: tuple_id, subject_type, subject_id,
+            relation, object_type, object_id, created_at, expires_at, zone_id.
+        """
+        conn = self._get_connection()
+        try:
+            query = "SELECT * FROM rebac_tuples WHERE 1=1"
+            params: list[Any] = []
+
+            if subject:
+                query += " AND subject_type = ? AND subject_id = ?"
+                params.extend([subject[0], subject[1]])
+
+            if relation:
+                query += " AND relation = ?"
+                params.append(relation)
+            elif relation_in:
+                placeholders = ", ".join("?" * len(relation_in))
+                query += f" AND relation IN ({placeholders})"
+                params.extend(relation_in)
+
+            if object:
+                query += " AND object_type = ? AND object_id = ?"
+                params.extend([object[0], object[1]])
+
+            query = self._fix_sql_placeholders(query)
+            cursor = self._create_cursor(conn)
+            cursor.execute(query, params)
+
+            results = []
+            for row in cursor.fetchall():
+                try:
+                    zone_id_val = row["zone_id"]
+                except (KeyError, IndexError):
+                    zone_id_val = None
+
+                results.append(
+                    {
+                        "tuple_id": row["tuple_id"],
+                        "subject_type": row["subject_type"],
+                        "subject_id": row["subject_id"],
+                        "relation": row["relation"],
+                        "object_type": row["object_type"],
+                        "object_id": row["object_id"],
+                        "created_at": row["created_at"],
+                        "expires_at": row["expires_at"],
+                        "zone_id": zone_id_val,
+                    }
+                )
+
+            return results
+        finally:
+            self._close_connection(conn)
 
     def _would_create_cycle_with_conn(
         self, conn: Any, subject: Entity, object_entity: Entity, zone_id: str | None

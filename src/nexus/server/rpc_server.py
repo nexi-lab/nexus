@@ -304,7 +304,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
             self._cached_auth_result = result
             return cast(bool, result.authenticated)
 
-        # Fall back to static API key (backward compatibility)
+        # Fall back to static API key
         if self.api_key:
             return bool(token == self.api_key)
 
@@ -411,7 +411,7 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                         admin_capabilities=admin_capabilities,  # P0-4: Admin capabilities
                     )
 
-        # Check for explicit subject header (for backward compatibility)
+        # Check for explicit subject header
         subject_header = self.headers.get("X-Nexus-Subject")
         if subject_header:
             parts = subject_header.split(":", 1)
@@ -1138,7 +1138,6 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 params.path,
                 recursive=params.recursive,
                 details=params.details,
-                prefix=params.prefix,
                 context=context,
             )
             # Debug: Check what we got

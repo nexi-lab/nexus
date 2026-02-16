@@ -473,8 +473,8 @@ class LLMService:
 
         # Get semantic search if available
         search = None
-        if self.nexus_fs and hasattr(self.nexus_fs, "_semantic_search"):
-            search = self.nexus_fs._semantic_search
+        if self.nexus_fs and hasattr(self.nexus_fs, "semantic_search_engine"):
+            search = self.nexus_fs.semantic_search_engine
 
         # Create document reader
         if self.nexus_fs is None:

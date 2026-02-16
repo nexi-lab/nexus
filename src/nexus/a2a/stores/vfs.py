@@ -19,9 +19,10 @@ import json
 import logging
 import re
 import time
-from collections import defaultdict
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+
+from cachetools import LRUCache
 
 from nexus.a2a.models import Task, TaskState
 
@@ -49,13 +50,18 @@ class VFSTaskStore:
         self,
         storage: IPCStorageDriver,
         base_path: str = "/a2a/tasks",
+        *,
+        filename_cache_maxsize: int = 4096,
     ) -> None:
         self._storage = storage
         self._base_path = base_path.rstrip("/")
         # Cache: (zone_id, task_id) -> filename for fast lookups after save
-        self._filename_cache: dict[tuple[str, str], str] = {}
-        # Per-key lock prevents duplicate file creation on concurrent saves
-        self._locks: defaultdict[tuple[str, str], asyncio.Lock] = defaultdict(asyncio.Lock)
+        self._filename_cache: LRUCache[tuple[str, str], str] = LRUCache(
+            maxsize=filename_cache_maxsize,
+        )
+        # Per-key lock prevents duplicate file creation on concurrent saves.
+        # Entries are cleaned up after each save() to bound growth.
+        self._locks: dict[tuple[str, str], asyncio.Lock] = {}
 
     async def save(
         self,
@@ -78,7 +84,12 @@ class VFSTaskStore:
 
         # Lock per (zone_id, task_id) to prevent duplicate file creation
         cache_key = (zone_id, task.id)
-        async with self._locks[cache_key]:
+        lock = self._locks.get(cache_key)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[cache_key] = lock
+
+        async with lock:
             existing_filename = self._filename_cache.get(cache_key)
 
             if existing_filename is None:
@@ -95,6 +106,10 @@ class VFSTaskStore:
                 path = f"{zone_dir}/{filename}"
                 await self._storage.write(path, data, zone_id)
                 self._filename_cache[cache_key] = filename
+
+        # Cleanup: remove lock if nobody else is waiting (bounds dict growth)
+        if not lock.locked():
+            self._locks.pop(cache_key, None)
 
         elapsed_ms = (time.monotonic() - t0) * 1000
         logger.debug("vfs_task_store.save task_id=%s duration_ms=%.1f", task.id, elapsed_ms)

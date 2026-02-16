@@ -56,7 +56,6 @@ class TestReactiveWSIntegration:
             subscription_id="sub1",
             connection_id="conn1",
             zone_id="zone1",
-            mode="read_set",
             query_id="q1",
         )
         await reactive_manager.register(sub, read_set=rs)
@@ -72,8 +71,8 @@ class TestReactiveWSIntegration:
 
         assert sent == 1
         assert len(ws.sent_messages) == 1
-        assert ws.sent_messages[0]["type"] == "event"
-        assert ws.sent_messages[0]["data"]["path"] == "/inbox/a.txt"
+        assert ws.sent_messages[0]["type"] == "batch_update"
+        assert ws.sent_messages[0]["event"]["path"] == "/inbox/a.txt"
 
         await ws_manager.stop()
 
@@ -100,7 +99,6 @@ class TestReactiveWSIntegration:
             subscription_id="sub1",
             connection_id="conn1",
             zone_id="zone1",
-            mode="read_set",
             query_id="q1",
         )
         await reactive_manager.register(sub, read_set=rs)
@@ -120,50 +118,12 @@ class TestReactiveWSIntegration:
         await ws_manager.stop()
 
     @pytest.mark.asyncio
-    async def test_pattern_subscription_backward_compat(
+    async def test_multiple_read_set_subscriptions_same_zone(
         self,
         ws_manager: WebSocketManager,
         reactive_manager: ReactiveSubscriptionManager,
     ) -> None:
-        """Legacy pattern subscriptions still work with reactive manager."""
-        await ws_manager.start()
-
-        ws = MockWebSocket()
-        await ws_manager.connect(
-            websocket=ws,  # type: ignore[arg-type]
-            zone_id="zone1",
-            connection_id="conn1",
-        )
-
-        sub = Subscription(
-            subscription_id="sub1",
-            connection_id="conn1",
-            zone_id="zone1",
-            mode="pattern",
-            patterns=("/inbox/**/*",),
-        )
-        await reactive_manager.register(sub)
-
-        event = FileEvent(
-            type="file_write",
-            path="/inbox/sub/message.txt",
-            zone_id="zone1",
-            revision=20,
-        )
-        sent = await ws_manager.broadcast_to_zone("zone1", event)
-
-        assert sent == 1
-        assert len(ws.sent_messages) == 1
-
-        await ws_manager.stop()
-
-    @pytest.mark.asyncio
-    async def test_mixed_mode_same_zone(
-        self,
-        ws_manager: WebSocketManager,
-        reactive_manager: ReactiveSubscriptionManager,
-    ) -> None:
-        """Both read_set and pattern subscriptions coexist in same zone."""
+        """Multiple read_set subscriptions coexist in same zone."""
         await ws_manager.start()
 
         ws1 = MockWebSocket()
@@ -180,28 +140,29 @@ class TestReactiveWSIntegration:
             connection_id="conn2",
         )
 
-        # conn1: read-set subscription
-        rs = ReadSet(query_id="q1", zone_id="zone1")
-        rs.record_read("file", "/inbox/a.txt", revision=10)
+        # conn1: read-set subscription on /inbox/a.txt
+        rs1 = ReadSet(query_id="q1", zone_id="zone1")
+        rs1.record_read("file", "/inbox/a.txt", revision=10)
 
-        sub_rs = Subscription(
-            subscription_id="sub_rs",
+        sub1 = Subscription(
+            subscription_id="sub1",
             connection_id="conn1",
             zone_id="zone1",
-            mode="read_set",
             query_id="q1",
         )
-        await reactive_manager.register(sub_rs, read_set=rs)
+        await reactive_manager.register(sub1, read_set=rs1)
 
-        # conn2: pattern subscription
-        sub_pat = Subscription(
-            subscription_id="sub_pat",
+        # conn2: read-set subscription also on /inbox/a.txt
+        rs2 = ReadSet(query_id="q2", zone_id="zone1")
+        rs2.record_read("file", "/inbox/a.txt", revision=10)
+
+        sub2 = Subscription(
+            subscription_id="sub2",
             connection_id="conn2",
             zone_id="zone1",
-            mode="pattern",
-            patterns=("/inbox/**/*",),
+            query_id="q2",
         )
-        await reactive_manager.register(sub_pat)
+        await reactive_manager.register(sub2, read_set=rs2)
 
         # Event that matches both
         event = FileEvent(
@@ -241,7 +202,6 @@ class TestReactiveWSIntegration:
             subscription_id="sub1",
             connection_id="conn1",
             zone_id="zone1",
-            mode="read_set",
             query_id="q1",
         )
         await reactive_manager.register(sub, read_set=rs)
@@ -289,20 +249,23 @@ class TestReactiveWSIntegration:
             connection_id="conn1",
         )
 
+        rs = ReadSet(query_id="q1", zone_id="zone1")
+        rs.record_read("file", "/inbox/a.txt", revision=10)
+
         sub = Subscription(
             subscription_id="sub1",
             connection_id="conn1",
             zone_id="zone1",
-            mode="pattern",
+            query_id="q1",
         )
-        await reactive_manager.register(sub)
+        await reactive_manager.register(sub, read_set=rs)
 
         ws_stats = ws_manager.get_stats()
         reactive_stats = reactive_manager.get_stats()
 
         assert ws_stats["current_connections"] == 1
         assert reactive_stats["total_subscriptions"] == 1
-        assert reactive_stats["pattern_subscriptions"] == 1
+        assert reactive_stats["connections_tracked"] == 1
         assert "registry" in reactive_stats
 
         await ws_manager.stop()

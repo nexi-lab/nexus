@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nexus.core.workspace_registry import (
+from nexus.services.workspace.workspace_registry import (
     MemoryConfig,
     WorkspaceConfig,
     WorkspaceRegistry,

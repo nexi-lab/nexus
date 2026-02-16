@@ -376,7 +376,7 @@ def create_nexus_services(
         deferred_permission_buffer.start()
 
     # --- Workspace Registry ---
-    from nexus.core.workspace_registry import WorkspaceRegistry
+    from nexus.services.workspace.workspace_registry import WorkspaceRegistry
 
     workspace_registry = WorkspaceRegistry(
         metadata=metadata_store,

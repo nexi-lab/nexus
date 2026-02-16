@@ -560,29 +560,33 @@ class TestEngineAttribute:
 # ---------------------------------------------------------------------------
 
 
-class TestTracerCaching:
-    """Test that _get_tracer() caches its result."""
+class TestTracerInjection:
+    """Test set_tracer / _get_tracer / reset_tracer lifecycle."""
 
-    def test_tracer_resolved_once(self):
+    def test_set_tracer_makes_it_available(self):
         mock_tracer = MagicMock()
-        resolve_tracer = MagicMock(return_value=mock_tracer)
+        rebac_tracing.set_tracer(mock_tracer)
 
-        with patch.object(rebac_tracing, "_resolve_tracer", resolve_tracer):
-            rebac_tracing.reset_tracer()
-            t1 = rebac_tracing._get_tracer()
-            t2 = rebac_tracing._get_tracer()
+        assert rebac_tracing._get_tracer() is mock_tracer
 
-        assert t1 is mock_tracer
-        assert t2 is mock_tracer
-        assert resolve_tracer.call_count == 1  # Only resolved once
+    def test_get_tracer_returns_none_by_default(self):
+        rebac_tracing.reset_tracer()
+        assert rebac_tracing._get_tracer() is None
 
-    def test_reset_allows_re_resolution(self):
-        resolve_tracer = MagicMock(side_effect=[MagicMock(), MagicMock()])
+    def test_reset_clears_tracer(self):
+        mock_tracer = MagicMock()
+        rebac_tracing.set_tracer(mock_tracer)
+        assert rebac_tracing._get_tracer() is mock_tracer
 
-        with patch.object(rebac_tracing, "_resolve_tracer", resolve_tracer):
-            rebac_tracing.reset_tracer()
-            rebac_tracing._get_tracer()
-            rebac_tracing.reset_tracer()
-            rebac_tracing._get_tracer()
+        rebac_tracing.reset_tracer()
+        assert rebac_tracing._get_tracer() is None
 
-        assert resolve_tracer.call_count == 2
+    def test_set_tracer_overwrites_previous(self):
+        tracer_a = MagicMock()
+        tracer_b = MagicMock()
+
+        rebac_tracing.set_tracer(tracer_a)
+        assert rebac_tracing._get_tracer() is tracer_a
+
+        rebac_tracing.set_tracer(tracer_b)
+        assert rebac_tracing._get_tracer() is tracer_b

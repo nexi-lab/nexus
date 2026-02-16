@@ -438,4 +438,4 @@ class TestWorkflowStore:
     def test_default_zone_id(self, record_store):
         """Test default zone ID."""
         store = WorkflowStore(record_store)
-        assert store._get_zone_id() == "default"
+        assert store._get_zone_id() == "root"

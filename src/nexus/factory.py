@@ -745,7 +745,7 @@ def _create_workflow_engine(record_store: Any, metadata_store: Any) -> Any:
 
         workflow_store = WorkflowStore(
             record_store=record_store,
-            zone_id="default",
+            zone_id="root",
         )
         return init_engine(
             metadata_store=metadata_store,

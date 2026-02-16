@@ -33,7 +33,7 @@ def _get_engine_with_storage():  # type: ignore[no-untyped-def]
         raise RuntimeError("Workflow storage requires a local NexusFS instance with record_store")
 
     # Get zone_id from Nexus filesystem (or use default)
-    zone_id = getattr(nx, "zone_id", None) or "default"
+    zone_id = getattr(nx, "zone_id", None) or "root"
 
     # Create workflow store with record_store
     workflow_store = WorkflowStore(record_store, zone_id=zone_id)

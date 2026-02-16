@@ -30,10 +30,10 @@ class WorkflowStore:
 
         Args:
             record_store: A RecordStoreABC providing session_factory for database access.
-            zone_id: Zone ID (optional, defaults to "default")
+            zone_id: Zone ID (optional, defaults to "root")
         """
         self.session_factory = record_store.session_factory
-        self.zone_id = zone_id or "default"
+        self.zone_id = zone_id or "root"
 
     def _get_zone_id(self) -> str:
         """Get current zone ID."""

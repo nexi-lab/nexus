@@ -185,8 +185,13 @@ def _startup_key_service(app: FastAPI) -> None:
                 AgentKeyModel.__table__.create(_nx_engine, checkfirst=True)  # type: ignore[attr-defined]
 
             # Reuse OAuthCrypto for Fernet encryption of private keys
-            _db_url = app.state.database_url or "sqlite:///nexus.db"
-            _identity_oauth_crypto = OAuthCrypto(db_url=_db_url)
+            import os
+
+            _enc_key = os.environ.get("NEXUS_OAUTH_ENCRYPTION_KEY", "").strip() or None
+            _session_factory = getattr(app.state.nexus_fs, "SessionLocal", None)
+            _identity_oauth_crypto = OAuthCrypto(
+                encryption_key=_enc_key, session_factory=_session_factory
+            )
             _identity_crypto = IdentityCrypto(oauth_crypto=_identity_oauth_crypto)
 
             app.state.key_service = KeyService(

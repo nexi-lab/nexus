@@ -142,10 +142,9 @@ def otel_exporter():
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
 
-    # Inject tracer directly into rebac_tracing module
+    # Inject tracer via set_tracer (DI pattern)
     tracer = provider.get_tracer("nexus.rebac")
-    _rebac_tracing_mod._tracer = tracer
-    _rebac_tracing_mod._tracer_resolved = True
+    _rebac_tracing_mod.set_tracer(tracer)
 
     yield exporter
 
@@ -254,8 +253,7 @@ class TestRealPermissionCheckSpans:
     def test_no_spans_when_otel_disabled(self, manager):
         """When no TracerProvider is configured, no spans should be created."""
         # Ensure tracer is None (OTel disabled)
-        _rebac_tracing_mod._tracer = None
-        _rebac_tracing_mod._tracer_resolved = True
+        _rebac_tracing_mod.reset_tracer()
 
         manager.rebac_write(
             subject=("user", "bob"),

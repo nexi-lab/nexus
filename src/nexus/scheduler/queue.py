@@ -1,6 +1,6 @@
-"""PostgreSQL-backed task queue with priority ordering.
+"""SQLAlchemy async ORM task queue with priority ordering.
 
-Uses SELECT ... FOR UPDATE SKIP LOCKED for concurrent, safe dequeue.
+Uses `with_for_update(skip_locked=True)` for concurrent, safe dequeue.
 Tasks are ordered by (effective_tier ASC, enqueued_at ASC) for
 strict priority ordering with FIFO within each tier.
 
@@ -12,7 +12,10 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, cast
+
+from sqlalchemy import SmallInteger, case, func, select, text, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from nexus.scheduler.constants import (
     AGING_THRESHOLD_SECONDS,
@@ -21,148 +24,47 @@ from nexus.scheduler.constants import (
     PriorityTier,
 )
 from nexus.scheduler.models import ScheduledTask
-
-# =============================================================================
-# SQL Statements
-# =============================================================================
-
-_SQL_ENQUEUE = """
-INSERT INTO scheduled_tasks (
-    agent_id, executor_id, task_type, payload,
-    priority_tier, effective_tier, deadline,
-    boost_amount, boost_tiers, boost_reservation_id,
-    zone_id, idempotency_key
-) VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12)
-RETURNING id::text
-"""
-
-_SQL_DEQUEUE = """
-UPDATE scheduled_tasks
-SET status = 'running', started_at = now()
-WHERE id = (
-    SELECT id FROM scheduled_tasks
-    WHERE status = 'queued'
-    ORDER BY effective_tier ASC, enqueued_at ASC
-    FOR UPDATE SKIP LOCKED
-    LIMIT 1
-)
-RETURNING
-    id::text, agent_id, executor_id, task_type,
-    payload::text, priority_tier, effective_tier,
-    enqueued_at, status, deadline,
-    boost_amount, boost_tiers, boost_reservation_id,
-    started_at, completed_at, error_message,
-    zone_id, idempotency_key
-"""
-
-_SQL_COMPLETE = """
-UPDATE scheduled_tasks
-SET status = $2, completed_at = now(), error_message = $3
-WHERE id = $1::uuid
-"""
-
-_SQL_CANCEL = """
-UPDATE scheduled_tasks
-SET status = 'cancelled'
-WHERE id = $1::uuid AND status = 'queued'
-RETURNING status
-"""
-
-_SQL_GET_TASK = """
-SELECT
-    id::text, agent_id, executor_id, task_type,
-    payload::text, priority_tier, effective_tier,
-    enqueued_at, status, deadline,
-    boost_amount, boost_tiers, boost_reservation_id,
-    started_at, completed_at, error_message,
-    zone_id, idempotency_key
-FROM scheduled_tasks
-WHERE id = $1::uuid
-"""
-
-_SQL_AGING_SWEEP = """
-WITH updated AS (
-    UPDATE scheduled_tasks
-    SET effective_tier = GREATEST(
-        0,
-        LEAST(
-            priority_tier - boost_tiers
-                - FLOOR(EXTRACT(EPOCH FROM ($1::timestamptz - enqueued_at)) / $2)::int,
-            CASE
-                WHEN EXTRACT(EPOCH FROM ($1::timestamptz - enqueued_at)) > $3
-                THEN 1
-                ELSE priority_tier
-            END
-        )
-    )
-    WHERE status = 'queued'
-      AND effective_tier != GREATEST(
-          0,
-          LEAST(
-              priority_tier - boost_tiers
-                  - FLOOR(EXTRACT(EPOCH FROM ($1::timestamptz - enqueued_at)) / $2)::int,
-              CASE
-                  WHEN EXTRACT(EPOCH FROM ($1::timestamptz - enqueued_at)) > $3
-                  THEN 1
-                  ELSE priority_tier
-              END
-          )
-      )
-    RETURNING id
-)
-SELECT count(*) FROM updated
-"""
-
-_SQL_NOTIFY = "SELECT pg_notify('task_enqueued', $1)"
+from nexus.storage.models.scheduler import ScheduledTaskModel
 
 
-# =============================================================================
-# Row-to-Model Conversion
-# =============================================================================
-
-
-def _row_to_task(row: dict[str, Any]) -> ScheduledTask:
-    """Convert a database row (dict) to a ScheduledTask."""
-    payload_raw = row.get("payload", "{}")
+def _model_to_task(m: ScheduledTaskModel) -> ScheduledTask:
+    """Convert a ScheduledTaskModel ORM instance to a ScheduledTask dataclass."""
+    payload_raw = m.payload
     payload = json.loads(payload_raw) if isinstance(payload_raw, str) else payload_raw or {}
 
     return ScheduledTask(
-        id=str(row["id"]),
-        agent_id=row["agent_id"],
-        executor_id=row["executor_id"],
-        task_type=row["task_type"],
+        id=str(m.id),
+        agent_id=m.agent_id,
+        executor_id=m.executor_id,
+        task_type=m.task_type,
         payload=payload,
-        priority_tier=PriorityTier(row["priority_tier"]),
-        effective_tier=row["effective_tier"],
-        enqueued_at=row["enqueued_at"],
-        status=row["status"],
-        deadline=row.get("deadline"),
-        boost_amount=Decimal(str(row.get("boost_amount", 0))),
-        boost_tiers=row.get("boost_tiers", 0),
-        boost_reservation_id=row.get("boost_reservation_id"),
-        started_at=row.get("started_at"),
-        completed_at=row.get("completed_at"),
-        error_message=row.get("error_message"),
-        zone_id=row.get("zone_id", "root"),
-        idempotency_key=row.get("idempotency_key"),
+        priority_tier=PriorityTier(m.priority_tier),
+        effective_tier=m.effective_tier,
+        enqueued_at=m.enqueued_at,
+        status=m.status,
+        deadline=m.deadline,
+        boost_amount=Decimal(str(m.boost_amount)) if m.boost_amount else Decimal("0"),
+        boost_tiers=m.boost_tiers or 0,
+        boost_reservation_id=m.boost_reservation_id,
+        started_at=m.started_at,
+        completed_at=m.completed_at,
+        error_message=m.error_message,
+        zone_id=m.zone_id or "root",
+        idempotency_key=m.idempotency_key,
     )
 
 
-# =============================================================================
-# TaskQueue
-# =============================================================================
-
-
 class TaskQueue:
-    """PostgreSQL-backed priority task queue.
+    """SQLAlchemy async ORM priority task queue.
 
-    All methods take an asyncpg connection as the first argument,
-    allowing callers to manage transactions externally.
+    All methods use async sessions from the provided session factory.
     """
+
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        self._session_factory = session_factory
 
     async def enqueue(
         self,
-        conn: Any,
         *,
         agent_id: str,
         executor_id: str,
@@ -180,7 +82,6 @@ class TaskQueue:
         """Insert a task into the queue.
 
         Args:
-            conn: asyncpg connection.
             agent_id: Submitting agent.
             executor_id: Target executor.
             task_type: Type identifier.
@@ -199,47 +100,71 @@ class TaskQueue:
         """
         payload_json = json.dumps(payload)
 
-        task_id = await conn.fetchval(
-            _SQL_ENQUEUE,
-            agent_id,
-            executor_id,
-            task_type,
-            payload_json,
-            priority_tier,
-            effective_tier,
-            deadline,
-            boost_amount,
-            boost_tiers,
-            boost_reservation_id,
-            zone_id,
-            idempotency_key,
-        )
+        async with self._session_factory() as session:
+            task = ScheduledTaskModel(
+                agent_id=agent_id,
+                executor_id=executor_id,
+                task_type=task_type,
+                payload=payload_json,
+                priority_tier=priority_tier,
+                effective_tier=effective_tier,
+                deadline=deadline,
+                boost_amount=boost_amount,
+                boost_tiers=boost_tiers,
+                boost_reservation_id=boost_reservation_id,
+                zone_id=zone_id,
+                idempotency_key=idempotency_key,
+            )
+            session.add(task)
+            await session.flush()
+            task_id = str(task.id)
 
-        # Notify dispatcher
-        await conn.execute(_SQL_NOTIFY, str(task_id))
+            # pg_notify for dispatcher — requires text() as it's a PG-specific function call
+            await session.execute(text("SELECT pg_notify('task_enqueued', :tid)"), {"tid": task_id})
 
-        return str(task_id)
+            await session.commit()
+            return task_id
 
-    async def dequeue(self, conn: Any) -> ScheduledTask | None:
+    async def dequeue(self) -> ScheduledTask | None:
         """Dequeue the highest-priority task.
 
         Uses FOR UPDATE SKIP LOCKED to safely handle concurrent workers.
         Atomically sets status to 'running'.
 
-        Args:
-            conn: asyncpg connection.
-
         Returns:
             ScheduledTask if available, None if queue is empty.
         """
-        row = await conn.fetchrow(_SQL_DEQUEUE)
-        if row is None:
-            return None
-        return _row_to_task(row)
+        async with self._session_factory() as session:
+            # Subquery: pick the next queued task with row-level lock
+            subq = (
+                select(ScheduledTaskModel.id)
+                .where(ScheduledTaskModel.status == "queued")
+                .order_by(
+                    ScheduledTaskModel.effective_tier.asc(),
+                    ScheduledTaskModel.enqueued_at.asc(),
+                )
+                .limit(1)
+                .with_for_update(skip_locked=True)
+                .scalar_subquery()
+            )
+
+            # Update that row atomically
+            stmt = (
+                update(ScheduledTaskModel)
+                .where(ScheduledTaskModel.id == subq)
+                .values(status="running", started_at=func.now())
+                .returning(ScheduledTaskModel)
+            )
+            result = await session.execute(stmt)
+            row = result.scalars().first()
+            if row is None:
+                return None
+
+            await session.commit()
+            return _model_to_task(row)
 
     async def complete(
         self,
-        conn: Any,
         task_id: str,
         *,
         status: str = TASK_STATUS_COMPLETED,
@@ -248,61 +173,100 @@ class TaskQueue:
         """Mark a task as completed or failed.
 
         Args:
-            conn: asyncpg connection.
             task_id: Task to complete.
             status: Final status ('completed' or 'failed').
             error: Error message if failed.
         """
-        await conn.execute(_SQL_COMPLETE, task_id, status, error)
+        async with self._session_factory() as session:
+            stmt = (
+                update(ScheduledTaskModel)
+                .where(ScheduledTaskModel.id == task_id)
+                .values(status=status, completed_at=func.now(), error_message=error)
+            )
+            await session.execute(stmt)
+            await session.commit()
 
-    async def cancel(self, conn: Any, task_id: str) -> bool:
+    async def cancel(self, task_id: str) -> bool:
         """Cancel a queued task.
 
         Only cancels tasks with status 'queued'. Running tasks cannot
         be cancelled through this method.
 
         Args:
-            conn: asyncpg connection.
             task_id: Task to cancel.
 
         Returns:
             True if cancelled, False if task was not in 'queued' status.
         """
-        result = await conn.fetchval(_SQL_CANCEL, task_id)
-        return result is not None
+        async with self._session_factory() as session:
+            stmt = (
+                update(ScheduledTaskModel)
+                .where(
+                    ScheduledTaskModel.id == task_id,
+                    ScheduledTaskModel.status == "queued",
+                )
+                .values(status="cancelled")
+                .returning(ScheduledTaskModel.status)
+            )
+            result = await session.execute(stmt)
+            row = result.scalar_one_or_none()
+            await session.commit()
+            return row is not None
 
-    async def get_task(self, conn: Any, task_id: str) -> ScheduledTask | None:
+    async def get_task(self, task_id: str) -> ScheduledTask | None:
         """Look up a task by ID.
 
         Args:
-            conn: asyncpg connection.
             task_id: Task ID to look up.
 
         Returns:
             ScheduledTask if found, None otherwise.
         """
-        row = await conn.fetchrow(_SQL_GET_TASK, task_id)
-        if row is None:
-            return None
-        return _row_to_task(row)
+        async with self._session_factory() as session:
+            stmt = select(ScheduledTaskModel).where(ScheduledTaskModel.id == task_id)
+            result = await session.execute(stmt)
+            row = result.scalars().first()
+            if row is None:
+                return None
+            return _model_to_task(row)
 
-    async def aging_sweep(self, conn: Any, now: datetime) -> int:
+    async def aging_sweep(self, now: datetime) -> int:
         """Run aging sweep to recalculate effective_tier for queued tasks.
 
         Updates tasks whose effective_tier has changed due to aging or
         max-wait escalation.
 
         Args:
-            conn: asyncpg connection.
             now: Current timestamp.
 
         Returns:
             Number of tasks updated.
         """
-        count = await conn.fetchval(
-            _SQL_AGING_SWEEP,
-            now,
-            AGING_THRESHOLD_SECONDS,
-            MAX_WAIT_SECONDS,
-        )
-        return count or 0
+        async with self._session_factory() as session:
+            T = ScheduledTaskModel  # noqa: N806 — alias for readability
+
+            # Compute age in seconds
+            age_seconds = func.extract("epoch", now - T.enqueued_at)
+            aging_tiers = func.floor(age_seconds / AGING_THRESHOLD_SECONDS)
+
+            # New effective tier = max(0, min(tier - boost - aging, max_wait_cap))
+            max_wait_cap = case(
+                (age_seconds > MAX_WAIT_SECONDS, 1),
+                else_=T.priority_tier,
+            )
+            new_tier = func.greatest(
+                0,
+                func.least(
+                    T.priority_tier - T.boost_tiers - func.cast(aging_tiers, SmallInteger),
+                    max_wait_cap,
+                ),
+            )
+
+            stmt = (
+                update(T)
+                .where(T.status == "queued", T.effective_tier != new_tier)
+                .values(effective_tier=new_tier)
+            )
+            cursor = cast(Any, await session.execute(stmt))
+            await session.commit()
+            return cursor.rowcount or 0

@@ -4,7 +4,7 @@ The SchedulerService is the main entry point for task scheduling. It:
 1. Validates submissions
 2. Computes priority (4-layer model)
 3. Reserves credits for boosts
-4. Enqueues tasks in PostgreSQL
+4. Enqueues tasks via ORM
 5. Provides status, cancellation, and aging sweep
 
 Related: Issue #1212
@@ -13,7 +13,7 @@ Related: Issue #1212
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from nexus.scheduler.constants import (
     TASK_STATUS_QUEUED,
@@ -40,17 +40,11 @@ class SchedulerService:
     def __init__(
         self,
         *,
-        queue: TaskQueue | None = None,
-        db_pool: Any = None,
+        queue: TaskQueue,
         credits_service: CreditsService | None = None,
     ) -> None:
-        self._queue = queue or TaskQueue()
-        self._pool = db_pool
+        self._queue = queue
         self._credits = credits_service
-
-    async def _get_conn(self) -> Any:
-        """Acquire a connection from the pool."""
-        return await self._pool.acquire()
 
     async def submit_task(self, submission: TaskSubmission) -> ScheduledTask:
         """Submit a task for scheduling.
@@ -58,7 +52,7 @@ class SchedulerService:
         1. Validates the submission
         2. If boost > 0, reserves credits
         3. Computes effective tier
-        4. Enqueues in PostgreSQL
+        4. Enqueues via ORM
         5. Returns the scheduled task
 
         Args:
@@ -89,22 +83,20 @@ class SchedulerService:
         # Compute effective tier
         effective_tier = compute_effective_tier(submission, enqueued_at=now, now=now)
 
-        # Enqueue
-        async with self._pool.acquire() as conn:
-            task_id = await self._queue.enqueue(
-                conn,
-                agent_id=submission.agent_id,
-                executor_id=submission.executor_id,
-                task_type=submission.task_type,
-                payload=submission.payload,
-                priority_tier=submission.priority.value,
-                effective_tier=effective_tier,
-                deadline=submission.deadline,
-                boost_amount=submission.boost_amount,
-                boost_tiers=boost_tiers,
-                boost_reservation_id=boost_reservation_id,
-                idempotency_key=submission.idempotency_key,
-            )
+        # Enqueue via ORM
+        task_id = await self._queue.enqueue(
+            agent_id=submission.agent_id,
+            executor_id=submission.executor_id,
+            task_type=submission.task_type,
+            payload=submission.payload,
+            priority_tier=submission.priority.value,
+            effective_tier=effective_tier,
+            deadline=submission.deadline,
+            boost_amount=submission.boost_amount,
+            boost_tiers=boost_tiers,
+            boost_reservation_id=boost_reservation_id,
+            idempotency_key=submission.idempotency_key,
+        )
 
         return ScheduledTask(
             id=task_id,
@@ -132,8 +124,7 @@ class SchedulerService:
         Returns:
             ScheduledTask if found, None otherwise.
         """
-        async with self._pool.acquire() as conn:
-            return await self._queue.get_task(conn, task_id)
+        return await self._queue.get_task(task_id)
 
     async def cancel_task(self, task_id: str, agent_id: str = "") -> bool:  # noqa: ARG002
         """Cancel a queued task.
@@ -148,18 +139,17 @@ class SchedulerService:
         Returns:
             True if cancelled, False otherwise.
         """
-        async with self._pool.acquire() as conn:
-            # Look up task for boost reservation
-            task = await self._queue.get_task(conn, task_id)
+        # Look up task for boost reservation
+        task = await self._queue.get_task(task_id)
 
-            # Attempt cancellation
-            cancelled = await self._queue.cancel(conn, task_id)
+        # Attempt cancellation
+        cancelled = await self._queue.cancel(task_id)
 
-            # Release boost reservation if cancelled
-            if cancelled and task and task.boost_reservation_id and self._credits:
-                await self._credits.release_reservation(task.boost_reservation_id)
+        # Release boost reservation if cancelled
+        if cancelled and task and task.boost_reservation_id and self._credits:
+            await self._credits.release_reservation(task.boost_reservation_id)
 
-            return cancelled
+        return cancelled
 
     async def dequeue_next(self) -> ScheduledTask | None:
         """Dequeue the highest-priority task for execution.
@@ -167,8 +157,7 @@ class SchedulerService:
         Returns:
             ScheduledTask if available, None if queue is empty.
         """
-        async with self._pool.acquire() as conn:
-            return await self._queue.dequeue(conn)
+        return await self._queue.dequeue()
 
     async def run_aging_sweep(self) -> int:
         """Run one aging sweep cycle.
@@ -180,5 +169,4 @@ class SchedulerService:
             Number of tasks updated.
         """
         now = datetime.now(UTC)
-        async with self._pool.acquire() as conn:
-            return await self._queue.aging_sweep(conn, now)
+        return await self._queue.aging_sweep(now)

@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Module-level references for shutdown — set during startup
-_scheduler_pool: Any = None
+_scheduler_engine: Any = None
 _heartbeat_task: asyncio.Task | None = None
 _stale_detection_task: asyncio.Task | None = None
 
@@ -32,7 +32,7 @@ async def startup_services(app: FastAPI) -> list[asyncio.Task]:
     - SchedulerService (Issue #1212)
     - Task Queue Engine (Issue #574)
     """
-    global _scheduler_pool, _heartbeat_task, _stale_detection_task
+    global _scheduler_engine, _heartbeat_task, _stale_detection_task
 
     bg_tasks: list[asyncio.Task] = []
 
@@ -54,7 +54,7 @@ async def startup_services(app: FastAPI) -> list[asyncio.Task]:
 
 async def shutdown_services(app: FastAPI) -> None:
     """Shutdown services in reverse order."""
-    global _scheduler_pool, _heartbeat_task, _stale_detection_task
+    global _scheduler_engine, _heartbeat_task, _stale_detection_task
 
     # Stop Task Queue runner (Issue #574)
     task_runner = getattr(app.state, "task_runner", None)
@@ -65,14 +65,14 @@ async def shutdown_services(app: FastAPI) -> None:
         except Exception as e:
             logger.warning(f"Error shutting down Task Queue runner: {e}")
 
-    # Shutdown scheduler pool (Issue #1212)
-    if _scheduler_pool:
+    # Shutdown scheduler engine (Issue #1212)
+    if _scheduler_engine:
         try:
-            await _scheduler_pool.close()
-            logger.info("Scheduler pool closed")
+            await _scheduler_engine.dispose()
+            logger.info("Scheduler engine disposed")
         except Exception as e:
-            logger.warning(f"Error closing scheduler pool: {e}")
-        _scheduler_pool = None
+            logger.warning(f"Error disposing scheduler engine: {e}")
+        _scheduler_engine = None
 
     # Cancel agent background tasks and final flush (Issue #1240)
     for task_ref in (_heartbeat_task, _stale_detection_task):
@@ -182,15 +182,23 @@ def _startup_key_service(app: FastAPI) -> None:
             # Ensure agent_keys table exists
             _nx_engine = getattr(app.state.nexus_fs, "_sql_engine", None)
             if _nx_engine is not None:
-                AgentKeyModel.__table__.create(_nx_engine, checkfirst=True)  # type: ignore[attr-defined]
+                AgentKeyModel.__table__.create(_nx_engine, checkfirst=True)
 
             # Reuse OAuthCrypto for Fernet encryption of private keys
             _db_url = app.state.database_url or "sqlite:///nexus.db"
             _identity_oauth_crypto = OAuthCrypto(db_url=_db_url)
             _identity_crypto = IdentityCrypto(oauth_crypto=_identity_oauth_crypto)
 
+            _record_store = getattr(app.state.nexus_fs, "_record_store", None)
+            if _record_store is None:
+                logger.warning(
+                    "[KYA] RecordStore not available, KeyService will not be initialized"
+                )
+                app.state.key_service = None
+                return
+
             app.state.key_service = KeyService(
-                session_factory=app.state.nexus_fs.SessionLocal,
+                record_store=_record_store,
                 crypto=_identity_crypto,
             )
             # Inject into NexusFS for register_agent integration
@@ -301,59 +309,50 @@ def _startup_agent_tasks(app: FastAPI) -> list[asyncio.Task]:
 
 async def _startup_scheduler(app: FastAPI) -> None:
     """Initialize SchedulerService if PostgreSQL database is available (Issue #1212)."""
-    global _scheduler_pool
+    global _scheduler_engine
 
     if not (app.state.database_url and "postgresql" in app.state.database_url):
         return
 
     try:
-        import asyncpg
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
         from nexus.pay.credits import CreditsService
         from nexus.scheduler.queue import TaskQueue
         from nexus.scheduler.service import SchedulerService
+        from nexus.storage.models.scheduler import ScheduledTaskModel
 
-        # Convert SQLAlchemy URL to asyncpg DSN
-        pg_dsn = app.state.database_url.replace("+asyncpg", "").replace("+psycopg2", "")
-        _scheduler_pool = await asyncpg.create_pool(pg_dsn, min_size=2, max_size=5)
+        # Ensure the URL has an async driver
+        db_url = app.state.database_url
+        if "+asyncpg" not in db_url and "+psycopg2" not in db_url:
+            db_url = db_url.replace("postgresql://", "postgresql+asyncpg://")
+        elif "+psycopg2" in db_url:
+            db_url = db_url.replace("+psycopg2", "+asyncpg")
 
-        # Create scheduled_tasks table if it doesn't exist
-        async with _scheduler_pool.acquire() as conn:
-            await conn.execute("""
-                CREATE TABLE IF NOT EXISTS scheduled_tasks (
-                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-                    agent_id TEXT NOT NULL,
-                    executor_id TEXT NOT NULL,
-                    task_type TEXT NOT NULL,
-                    payload JSONB NOT NULL DEFAULT '{}',
-                    priority_tier SMALLINT NOT NULL DEFAULT 2,
-                    deadline TIMESTAMPTZ,
-                    boost_amount NUMERIC(12,6) NOT NULL DEFAULT 0,
-                    boost_tiers SMALLINT NOT NULL DEFAULT 0,
-                    effective_tier SMALLINT NOT NULL DEFAULT 2,
-                    enqueued_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                    started_at TIMESTAMPTZ,
-                    completed_at TIMESTAMPTZ,
-                    status TEXT NOT NULL DEFAULT 'queued',
-                    boost_reservation_id TEXT,
-                    idempotency_key TEXT UNIQUE,
-                    zone_id TEXT NOT NULL DEFAULT 'default',
-                    error_message TEXT
-                )
-            """)
-            await conn.execute("""
-                CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_dequeue
-                ON scheduled_tasks (effective_tier, enqueued_at)
-                WHERE status = 'queued'
-            """)
+        _scheduler_engine = create_async_engine(db_url, pool_size=5, max_overflow=2)
+
+        # Create table via ORM metadata (replaces runtime DDL)
+        async with _scheduler_engine.begin() as conn:
+            await conn.run_sync(
+                ScheduledTaskModel.metadata.create_all,
+                tables=[ScheduledTaskModel.__table__],
+            )
+
+        session_factory = async_sessionmaker(
+            _scheduler_engine, class_=AsyncSession, expire_on_commit=False
+        )
 
         scheduler_service = SchedulerService(
-            queue=TaskQueue(),
-            db_pool=_scheduler_pool,
+            queue=TaskQueue(session_factory=session_factory),
             credits_service=CreditsService(enabled=False),
         )
         app.state.scheduler_service = scheduler_service
-        logger.info("Scheduler service initialized (PostgreSQL)")
+
+        # Store DSN for dispatcher LISTEN/NOTIFY (still needs raw asyncpg)
+        app.state.scheduler_dsn = db_url.replace("+asyncpg", "").replace(
+            "postgresql://", "postgresql://"
+        )
+        logger.info("Scheduler service initialized (SQLAlchemy async ORM)")
     except ImportError as e:
         logger.debug(f"Scheduler service not available: {e}")
     except Exception as e:

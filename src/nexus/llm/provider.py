@@ -14,6 +14,7 @@ from functools import partial
 from typing import Any, cast
 
 import litellm
+from cachetools import LRUCache
 from litellm import PromptTokensDetails
 from litellm import acompletion as litellm_acompletion
 from litellm import completion as litellm_completion
@@ -208,20 +209,26 @@ class LiteLLMResponse(LLMResponse):
 class LLMProvider(ABC):
     """Abstract base class for LLM providers."""
 
-    def __init__(self, config: LLMConfig, metrics: LLMMetrics | None = None):
+    def __init__(
+        self,
+        config: LLMConfig,
+        metrics: LLMMetrics | None = None,
+        *,
+        token_count_cache_maxsize: int = 1000,
+    ):
         """Initialize the provider.
 
         Args:
             config: LLM configuration
             metrics: Optional metrics tracker
+            token_count_cache_maxsize: Max entries in the token count LRU cache
         """
         self.config = copy.deepcopy(config)
         self.metrics = metrics if metrics is not None else LLMMetrics(model_name=config.model)
         self.model_info: ModelInfo | None = None
         self._vision_supported: bool = False
         self._function_calling_active: bool = False
-        self._token_count_cache: dict[str, int] = {}
-        self._token_count_cache_max_size = 1000
+        self._token_count_cache: LRUCache[str, int] = LRUCache(maxsize=token_count_cache_maxsize)
         self.cost_metric_supported = True
 
     @abstractmethod
@@ -771,11 +778,8 @@ class LiteLLMProvider(LLMProvider):
                 )
             )
 
-            # Cache result
+            # Cache result (LRU evicts automatically)
             if cache_key:
-                if len(self._token_count_cache) >= self._token_count_cache_max_size:
-                    # Remove oldest entry
-                    self._token_count_cache.pop(next(iter(self._token_count_cache)))
                 self._token_count_cache[cache_key] = token_count
 
             return token_count

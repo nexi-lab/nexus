@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.core.exceptions import PermissionDeniedError
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
+from nexus.raft.zone_manager import ROOT_ZONE_ID
 
 # Constants duplicated from search_service to avoid circular import
 LIST_PARALLEL_MAX_DEPTH = 100
@@ -276,9 +277,9 @@ class SearchListingMixin:
     def _extract_zone_info(self, context: Any) -> tuple[str, str | None, str | None]:
         """Extract zone_id, subject_type, subject_id from context for DB filtering.
 
-        zone_id always returns a non-None value (defaults to "default").
+        zone_id always returns a non-None value (defaults to ROOT_ZONE_ID).
         """
-        list_zone_id: str = "default"
+        list_zone_id: str = ROOT_ZONE_ID
         subject_type: str | None = None
         subject_id: str | None = None
         if self._enforce_permissions and context:
@@ -764,7 +765,7 @@ class SearchListingMixin:
         allowed_set: set[str],
         backend_dirs: set[str],
         context: Any,
-        zone_id: str = "default",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> set[str]:
         """Infer directory entries from file paths and backend."""
         import time as _time
@@ -814,7 +815,7 @@ class SearchListingMixin:
         allowed_set: set[str],
         directories: set[str],
         context: Any,
-        zone_id: str = "default",
+        zone_id: str = ROOT_ZONE_ID,
     ) -> None:
         """Check backend directories for access using bulk TRAVERSE check."""
         import time as _time

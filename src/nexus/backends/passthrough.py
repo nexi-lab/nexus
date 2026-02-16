@@ -38,7 +38,6 @@ from nexus.core.response import HandlerResponse
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
-    from nexus.services.permissions.permissions_enhanced import EnhancedOperationContext
 
 logger = logging.getLogger(__name__)
 
@@ -490,7 +489,7 @@ class PassthroughBackend(Backend):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: OperationContext | EnhancedOperationContext | None = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[None]:
         """Create a directory in the pointers layer."""
         start_time = time.perf_counter()
@@ -541,7 +540,7 @@ class PassthroughBackend(Backend):
         self,
         path: str,
         recursive: bool = False,
-        context: OperationContext | EnhancedOperationContext | None = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse[None]:
         """Remove a directory from the pointers layer."""
         import shutil

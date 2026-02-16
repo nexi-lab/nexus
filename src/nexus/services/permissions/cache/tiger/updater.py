@@ -7,7 +7,6 @@ entries incrementally via a queue-based approach.
 from __future__ import annotations
 
 import logging
-import sqlite3
 from typing import TYPE_CHECKING
 
 from sqlalchemy import text
@@ -187,7 +186,6 @@ class TigerCacheUpdater:
             return (
                 "database is locked" in err_str
                 or "deadlock" in err_str
-                or isinstance(e, sqlite3.OperationalError)
                 or (isinstance(e, OperationalError) and "lock" in err_str)
             )
 

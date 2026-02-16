@@ -275,10 +275,10 @@ class AuditStore:
                 return conn.cursor()
         elif "sqlite3" in conn_module:
             # SQLite: Ensure Row factory is set for dict-like access
-            import sqlite3
-
             if not hasattr(actual_conn, "row_factory") or actual_conn.row_factory is None:
-                actual_conn.row_factory = sqlite3.Row
+                from sqlite3 import Row as SQLiteRow
+
+                actual_conn.row_factory = SQLiteRow
             return conn.cursor()
         else:
             # Other database - use default cursor

@@ -22,8 +22,13 @@ if TYPE_CHECKING:
     from nexus.core.distributed_lock import RedisLockManager
     from nexus.core.event_bus import RedisEventBus
 
-# Skip: RedisLockManager was removed from nexus.core.distributed_lock
-pytestmark = pytest.mark.skip(
+# Skip entire module if Redis is not available
+pytestmark = pytest.mark.skipif(
+    not os.environ.get("NEXUS_REDIS_URL") and not os.environ.get("REDIS_ENABLED"),
+    reason="Redis not available (set NEXUS_REDIS_URL or REDIS_ENABLED=1)",
+)
+
+_skip_lock_manager = pytest.mark.skip(
     reason="TODO: https://github.com/nexi-lab/nexus/issues/1702 — RedisLockManager removed from source; tests need rewrite for RaftLockManager",
 )
 
@@ -285,6 +290,7 @@ class TestRedisEventBusIntegration:
 # =============================================================================
 
 
+@_skip_lock_manager
 class TestRedisLockManagerIntegration:
     """Integration tests for RedisLockManager with real Redis."""
 
@@ -509,6 +515,7 @@ class TestRedisLockManagerIntegration:
 # =============================================================================
 
 
+@_skip_lock_manager
 class TestDistributedWorkflows:
     """Integration tests for combined event and lock workflows."""
 
@@ -1284,6 +1291,7 @@ class TestEventTypes:
 # =============================================================================
 
 
+@_skip_lock_manager
 class TestLockCornerCases:
     """Tests for lock manager corner cases and edge conditions."""
 
@@ -1751,6 +1759,7 @@ class TestDistributedSpecific:
 # =============================================================================
 
 
+@_skip_lock_manager
 @pytest.mark.skipif(
     not os.environ.get("NEXUS_REDIS_URL") and not os.environ.get("REDIS_ENABLED"),
     reason="Redis not available (set NEXUS_REDIS_URL or REDIS_ENABLED=1)",
@@ -1812,6 +1821,7 @@ class TestAdditionalEdgeCases:
 # =============================================================================
 
 
+@_skip_lock_manager
 @pytest.mark.skipif(
     not os.environ.get("NEXUS_REDIS_URL") and not os.environ.get("REDIS_ENABLED"),
     reason="Redis not available (set NEXUS_REDIS_URL or REDIS_ENABLED=1)",

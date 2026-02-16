@@ -31,6 +31,7 @@ from cachetools import TTLCache
 from sqlalchemy import select
 
 from nexus.core.exceptions import AuthenticationError
+from nexus.raft.zone_manager import ROOT_ZONE_ID
 from nexus.storage.models import OAuthCredentialModel
 from nexus.storage.token_rotation_store import TokenRotationStore
 
@@ -143,7 +144,7 @@ class TokenManager:
         provider: str,
         user_email: str,
         credential: OAuthCredential,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         created_by: str | None = None,
         user_id: str | None = None,
         ip_address: str | None = None,
@@ -156,7 +157,7 @@ class TokenManager:
         if not provider or not provider.strip():
             raise ValueError("Provider name cannot be empty")
         if zone_id is None:
-            zone_id = "root"
+            zone_id = ROOT_ZONE_ID
 
         encrypted_access_token = self.crypto.encrypt_token(credential.access_token)
         encrypted_refresh_token = None
@@ -249,7 +250,7 @@ class TokenManager:
         self,
         provider: str,
         user_email: str,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         ip_address: str | None = None,
     ) -> str:
         """Get a valid access token (with automatic refresh and rotation).
@@ -265,7 +266,7 @@ class TokenManager:
         8. Return valid access_token
         """
         if zone_id is None:
-            zone_id = "root"
+            zone_id = ROOT_ZONE_ID
 
         # Check cache first (fast path — no lock needed)
         cache_key = (provider, user_email, zone_id)
@@ -494,7 +495,7 @@ class TokenManager:
             return count
 
     async def get_credential(
-        self, provider: str, user_email: str, zone_id: str = "root"
+        self, provider: str, user_email: str, zone_id: str = ROOT_ZONE_ID
     ) -> OAuthCredential | None:
         """Get credential (decrypted) without automatic refresh."""
         with self.SessionLocal() as session:
@@ -515,12 +516,12 @@ class TokenManager:
         self,
         provider: str,
         user_email: str,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         ip_address: str | None = None,
     ) -> bool:
         """Revoke an OAuth credential."""
         if zone_id is None:
-            zone_id = "root"
+            zone_id = ROOT_ZONE_ID
         with self.SessionLocal() as session:
             stmt = select(OAuthCredentialModel).where(
                 OAuthCredentialModel.provider == provider,
@@ -679,7 +680,7 @@ class TokenManager:
                     provider=provider or None,
                     credential_id=credential_id,
                     token_family_id=token_family_id,
-                    zone_id=zone_id or "root",
+                    zone_id=zone_id or ROOT_ZONE_ID,
                     ip_address=ip_address,
                     details=details,
                 )

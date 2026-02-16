@@ -2750,7 +2750,7 @@ class EnhancedReBACManager(ReBACManager):
 
         Delegates to consistency.revision module (Issue #1459).
         """
-        return increment_version_token(self.engine, self._repo, zone_id)
+        return increment_version_token(self.engine, zone_id)
 
     def _get_cached_check_zone_aware_bounded(
         self,

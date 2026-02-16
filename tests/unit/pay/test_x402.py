@@ -701,7 +701,7 @@ class TestWebhookProcessing:
 
             mock_credits_service.provision_wallet.assert_called_once_with(
                 agent_id="agent-123",
-                zone_id="default",
+                zone_id="root",
             )
 
 

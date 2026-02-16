@@ -69,7 +69,6 @@ class ReBACPermissionCache:
         denial_ttl_seconds: int = 60,
         enable_metrics: bool = True,
         enable_adaptive_ttl: bool = False,
-        quantization_interval: int = 0,  # DEPRECATED: Use revision_quantization_window
         revision_quantization_window: int = 10,
         enable_revision_quantization: bool = True,
         ttl_jitter_percent: float = 0.2,
@@ -90,7 +89,6 @@ class ReBACPermissionCache:
                 Shorter TTL for denials ensures revoked access is reflected quickly (Issue #877)
             enable_metrics: Track hit rates and latency (default: True)
             enable_adaptive_ttl: Adjust TTL based on write frequency (default: False)
-            quantization_interval: DEPRECATED - was broken (Issue #909). Ignored.
             revision_quantization_window: Number of revisions per quantization bucket
                 (default: 10). Cache keys remain stable within a revision window.
             enable_revision_quantization: Enable revision-based cache keys (default: True)
@@ -111,17 +109,6 @@ class ReBACPermissionCache:
                 - "targeted": Use secondary indexes for O(1) invalidation (default)
                 - "zone_wide": Legacy O(n) full cache scan
         """
-        # Deprecation warning for old parameter
-        if quantization_interval > 0:
-            import warnings
-
-            warnings.warn(
-                "quantization_interval is deprecated and was broken (Issue #909). "
-                "Use revision_quantization_window for revision-based quantization.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-
         self._max_size = max_size
         self._ttl_seconds = ttl_seconds
         self._denial_ttl_seconds = denial_ttl_seconds

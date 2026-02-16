@@ -13,23 +13,75 @@ Extracted from: nexus_fs_oauth.py (1,116 lines)
 
 from __future__ import annotations
 
+import asyncio
 import builtins
 import logging
+import time
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
-
-from cachetools import TTLCache
 
 from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
 from nexus.core.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
 
-# In-memory cache for PKCE data (state -> pkce_data)
-# TTLCache with 10-minute TTL prevents unbounded growth (Issue #997)
-_pkce_cache: TTLCache[str, dict[str, str]] = TTLCache(maxsize=1000, ttl=600)
-
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
+
+
+@dataclass(frozen=True)
+class _PKCEEntry:
+    """Immutable PKCE state entry with creation timestamp."""
+
+    pkce_data: dict[str, str]
+    created_at: float = field(default_factory=time.monotonic)
+
+
+class PKCEStateStore:
+    """Async-safe, instance-level PKCE state store with TTL and max size.
+
+    Replaces the previous module-level ``_pkce_cache`` dict (Issue #1597).
+    Thread-safe for concurrent FastAPI requests via ``asyncio.Lock``.
+    Entries auto-expire after ``ttl`` seconds and abandoned flows are
+    evicted lazily on each ``save()`` call.
+    """
+
+    def __init__(self, ttl: float = 600.0, max_size: int = 10_000) -> None:
+        self._store: dict[str, _PKCEEntry] = {}
+        self._lock = asyncio.Lock()
+        self._ttl = ttl
+        self._max_size = max_size
+
+    async def save(self, state: str, pkce_data: dict[str, str]) -> None:
+        """Store PKCE data keyed by state token."""
+        entry = _PKCEEntry(pkce_data=pkce_data)
+        async with self._lock:
+            self._evict_expired()
+            if len(self._store) >= self._max_size:
+                raise RuntimeError(
+                    f"PKCE state store capacity exceeded (max_size={self._max_size})"
+                )
+            self._store[state] = entry
+
+    async def pop(self, state: str) -> dict[str, str] | None:
+        """Retrieve and delete PKCE data (single-use). Returns None if missing/expired."""
+        async with self._lock:
+            entry = self._store.pop(state, None)
+            if entry is None:
+                return None
+            if (time.monotonic() - entry.created_at) > self._ttl:
+                return None  # Expired — already popped from store
+            return entry.pkce_data
+
+    def _evict_expired(self) -> None:
+        """Remove expired entries. Must be called under lock."""
+        now = time.monotonic()
+        self._store = {k: v for k, v in self._store.items() if (now - v.created_at) <= self._ttl}
+
+    @property
+    def size(self) -> int:
+        """Current number of entries (for monitoring/testing)."""
+        return len(self._store)
 
 
 class OAuthService:
@@ -97,6 +149,8 @@ class OAuthService:
         oauth_factory: Any | None = None,
         token_manager: Any | None = None,
         nexus_fs: Any | None = None,
+        *,
+        pkce_store: PKCEStateStore | None = None,
     ):
         """Initialize OAuth service.
 
@@ -104,10 +158,12 @@ class OAuthService:
             oauth_factory: OAuthProviderFactory for creating provider instances
             token_manager: TokenManager for credential storage
             nexus_fs: NexusFS instance for filesystem operations (used by mcp_connect)
+            pkce_store: Optional PKCE state store (defaults to in-memory with 10min TTL)
         """
         self._oauth_factory = oauth_factory
         self._token_manager = token_manager
         self.nexus_fs = nexus_fs
+        self._pkce_store = pkce_store or PKCEStateStore()
 
         logger.info("[OAuthService] Initialized")
 
@@ -238,7 +294,9 @@ class OAuthService:
         self._register_provider(provider_instance)
 
         # Get authorization URL with PKCE support if needed
-        return self._get_authorization_url_with_pkce_support(provider_instance, provider, state)
+        return await self._get_authorization_url_with_pkce_support(
+            provider_instance, provider, state
+        )
 
     @rpc_expose(description="Exchange OAuth authorization code for tokens")
     async def oauth_exchange_code(
@@ -328,7 +386,7 @@ class OAuthService:
             requires_pkce = provider_config and provider_config.requires_pkce
 
             if requires_pkce:
-                pkce_verifier = self._get_pkce_verifier(provider, code_verifier, state)
+                pkce_verifier = await self._get_pkce_verifier(provider, code_verifier, state)
                 credential = await provider_instance.exchange_code_pkce(code, pkce_verifier)
             else:
                 credential = await provider_instance.exchange_code(code)
@@ -1214,7 +1272,7 @@ class OAuthService:
         token_manager = self._get_token_manager()
         token_manager.register_provider(provider_instance.provider_name, provider_instance)
 
-    def _get_authorization_url_with_pkce_support(
+    async def _get_authorization_url_with_pkce_support(
         self,
         provider_instance: Any,
         provider: str,
@@ -1238,12 +1296,11 @@ class OAuthService:
 
         if requires_pkce:
             auth_url, pkce_data = provider_instance.get_authorization_url_with_pkce(state=state)
-            # Store PKCE data in module-level cache
-            from nexus.services.oauth_service import _pkce_cache
-
-            _pkce_cache[state] = pkce_data
+            await self._pkce_store.save(state, pkce_data)
             logger.info(
-                f"Generated OAuth authorization URL for {provider} with PKCE (state={state})"
+                "Generated OAuth authorization URL for %s with PKCE (state=%s)",
+                provider,
+                state,
             )
             return {
                 "url": auth_url,
@@ -1252,13 +1309,13 @@ class OAuthService:
             }
         else:
             auth_url = provider_instance.get_authorization_url(state=state)
-            logger.info(f"Generated OAuth authorization URL for {provider} (state={state})")
+            logger.info("Generated OAuth authorization URL for %s (state=%s)", provider, state)
             return {
                 "url": auth_url,
                 "state": state,
             }
 
-    def _get_pkce_verifier(
+    async def _get_pkce_verifier(
         self,
         provider: str,
         code_verifier: str | None,
@@ -1281,15 +1338,12 @@ class OAuthService:
         if code_verifier:
             return code_verifier
 
-        # Try to get from cache using state
+        # Atomic pop from instance-level PKCE store (single-use)
         if state:
-            from nexus.services.oauth_service import _pkce_cache
-
-            pkce_data = _pkce_cache.get(state)
+            pkce_data = await self._pkce_store.pop(state)
             if pkce_data:
                 verifier = pkce_data.get("code_verifier")
                 if verifier:
-                    _pkce_cache.pop(state, None)  # Clean up cache
                     return verifier
 
         # PKCE verifier not found

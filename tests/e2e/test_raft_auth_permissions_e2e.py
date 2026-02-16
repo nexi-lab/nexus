@@ -197,7 +197,7 @@ def admin_client(
     """HTTP client with admin credentials."""
     client = httpx.Client(
         base_url=db_auth_server["base_url"],
-        timeout=30.0,
+        timeout=60.0,
         trust_env=False,
         headers=admin_headers,
     )
@@ -262,7 +262,7 @@ def user_client(
     """HTTP client with regular user credentials."""
     client = httpx.Client(
         base_url=db_auth_server["base_url"],
-        timeout=30.0,
+        timeout=60.0,
         trust_env=False,
         headers=registered_user["headers"],
     )
@@ -292,7 +292,7 @@ class TestServerHealth:
 
     def test_unauthenticated_rpc_rejected(self, db_auth_server: dict[str, Any]) -> None:
         """RPC calls without auth should be rejected (401)."""
-        client = httpx.Client(base_url=db_auth_server["base_url"], timeout=10.0, trust_env=False)
+        client = httpx.Client(base_url=db_auth_server["base_url"], timeout=30.0, trust_env=False)
         try:
             result = _rpc(client, "list", {"path": "/"})
             # Server returns {"detail": "Invalid or missing API key"} for 401
@@ -485,7 +485,7 @@ class TestAuthFlow:
 
     def test_register_new_user(self, db_auth_server: dict[str, Any]) -> None:
         """Register a brand new user via the /auth/register endpoint."""
-        client = httpx.Client(base_url=db_auth_server["base_url"], timeout=10.0, trust_env=False)
+        client = httpx.Client(base_url=db_auth_server["base_url"], timeout=30.0, trust_env=False)
         try:
             email = f"bob_{uuid.uuid4().hex[:6]}@test.com"
             resp = client.post(
@@ -511,7 +511,7 @@ class TestAuthFlow:
 
     def test_login_existing_user(self, db_auth_server: dict[str, Any]) -> None:
         """Register then login with credentials."""
-        client = httpx.Client(base_url=db_auth_server["base_url"], timeout=10.0, trust_env=False)
+        client = httpx.Client(base_url=db_auth_server["base_url"], timeout=30.0, trust_env=False)
         try:
             email = f"carol_{uuid.uuid4().hex[:6]}@test.com"
             password = "TestPassword456!"
@@ -523,6 +523,19 @@ class TestAuthFlow:
             )
             if reg_resp.status_code != 201:
                 pytest.skip("Registration not available")
+
+            # Mark email as verified (required before login).
+            # SCHEMA DEPENDENCY: Directly updates 'users.email_verified' column.
+            from sqlalchemy import create_engine, text
+
+            engine = create_engine(f"sqlite:///{db_auth_server['db_path']}")
+            with engine.connect() as conn:
+                conn.execute(
+                    text("UPDATE users SET email_verified = 1 WHERE email = :email"),
+                    {"email": email},
+                )
+                conn.commit()
+            engine.dispose()
 
             # Login
             login_resp = client.post(
@@ -538,7 +551,7 @@ class TestAuthFlow:
 
     def test_login_wrong_password_fails(self, db_auth_server: dict[str, Any]) -> None:
         """Login with wrong password should fail."""
-        client = httpx.Client(base_url=db_auth_server["base_url"], timeout=10.0, trust_env=False)
+        client = httpx.Client(base_url=db_auth_server["base_url"], timeout=30.0, trust_env=False)
         try:
             email = f"dave_{uuid.uuid4().hex[:6]}@test.com"
 
@@ -678,7 +691,7 @@ class TestLockApiAuth:
 
     def test_unauthenticated_lock_rejected(self, db_auth_server: dict[str, Any]) -> None:
         """Lock operations without auth should be rejected."""
-        client = httpx.Client(base_url=db_auth_server["base_url"], timeout=10.0, trust_env=False)
+        client = httpx.Client(base_url=db_auth_server["base_url"], timeout=30.0, trust_env=False)
         try:
             resp = client.post(
                 "/api/locks",

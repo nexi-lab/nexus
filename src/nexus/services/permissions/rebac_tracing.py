@@ -3,8 +3,8 @@
 Issue #702: OTel tracing for ReBAC permission debugging.
 
 This module provides zero-overhead tracing helpers for the ReBAC permission
-subsystem.  When OTel is disabled (``OTEL_ENABLED != true``), every public
-function reduces to a no-op — no spans, no attributes, no allocations.
+subsystem.  When no tracer is injected, every public function reduces to a
+no-op — no spans, no attributes, no allocations.
 
 Span hierarchy::
 
@@ -19,6 +19,7 @@ authorization (no official semantic convention exists yet).
 Usage::
 
     from nexus.services.permissions.rebac_tracing import (
+        set_tracer,
         start_check_span,
         record_check_result,
         start_cache_lookup_span,
@@ -33,8 +34,6 @@ Usage::
 from __future__ import annotations
 
 import logging
-import os
-import threading
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from typing import Any, TypeVar
@@ -44,46 +43,30 @@ _F = TypeVar("_F", bound=Callable[..., Any])
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
-# Module-level lazy tracer (Decision #3A — zero overhead when disabled)
+# Injectable tracer (server layer calls set_tracer() at startup)
 # ---------------------------------------------------------------------------
 
-_tracer_resolved = False
 _tracer: Any = None  # opentelemetry.trace.Tracer | None
-_tracer_lock = threading.Lock()
+
+
+def set_tracer(tracer: Any) -> None:
+    """Inject a tracer instance.
+
+    Called by the server layer (``setup_telemetry()``) at startup.
+    When not called, all tracing helpers are no-ops.
+    """
+    global _tracer
+    _tracer = tracer
 
 
 def _get_tracer() -> Any:
-    """Return a cached tracer instance, or *None* when OTel is disabled.
-
-    Thread-safe via double-checked locking: the fast path (already resolved)
-    requires no lock acquisition.
-    """
-    global _tracer_resolved, _tracer
-    if _tracer_resolved:
-        return _tracer
-    with _tracer_lock:
-        if not _tracer_resolved:
-            _tracer = _resolve_tracer()
-            _tracer_resolved = True
+    """Return the injected tracer, or *None* when tracing is disabled."""
     return _tracer
 
 
-def _resolve_tracer() -> Any:
-    """Resolve tracer without importing from server layer."""
-    if os.environ.get("OTEL_ENABLED", "false").lower() not in ("true", "1", "yes"):
-        return None
-    try:
-        from opentelemetry import trace
-
-        return trace.get_tracer("nexus.rebac")
-    except ImportError:
-        return None
-
-
 def reset_tracer() -> None:
-    """Reset cached tracer — only for tests."""
-    global _tracer_resolved, _tracer
-    _tracer_resolved = False
+    """Reset tracer to None — only for tests."""
+    global _tracer
     _tracer = None
 
 

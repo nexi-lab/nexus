@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import builtins
+import contextlib
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -131,11 +132,19 @@ class SemanticSearchMixin:
             from nexus.search.async_search import AsyncSemanticSearch
             from nexus.search.semantic import SemanticSearch
 
+            # Prefer injected async_session_factory from RecordStoreABC (Issue #1597).
+            # Base property raises NotImplementedError (not AttributeError),
+            # so getattr() default won't catch it.
+            _async_sf = None
+            if self._record_store is not None:
+                with contextlib.suppress(NotImplementedError, AttributeError):
+                    _async_sf = self._record_store.async_session_factory
             self._async_search = AsyncSemanticSearch(
                 database_url=database_url,
                 embedding_provider=emb_provider,
                 chunk_size=chunk_size,
                 chunk_strategy=chunk_strat,
+                async_session_factory=_async_sf,
             )
             await self._async_search.initialize()
 
@@ -417,6 +426,10 @@ class SemanticSearchMixin:
             # Use async search for high-throughput (non-blocking DB operations)
             from nexus.search.async_search import AsyncSemanticSearch
 
+            # Prefer injected async_session_factory from RecordStoreABC (Issue #1597)
+            _async_sf = None
+            with contextlib.suppress(NotImplementedError, AttributeError):
+                _async_sf = self._record_store.async_session_factory
             self._async_search = AsyncSemanticSearch(
                 database_url=database_url,
                 embedding_provider=emb_provider,
@@ -424,6 +437,7 @@ class SemanticSearchMixin:
                 chunk_strategy=chunk_strat,
                 contextual_chunking=contextual_chunking,
                 context_generator=context_generator,
+                async_session_factory=_async_sf,
             )
             await self._async_search.initialize()
 

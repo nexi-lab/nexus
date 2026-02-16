@@ -48,4 +48,4 @@ def run_sync(fn: Callable[..., _T]) -> Callable[..., Coroutine[Any, Any, _T]]:
     async def wrapper(*args: Any, **kwargs: Any) -> _T:
         return await asyncio.to_thread(fn, *args, **kwargs)
 
-    return wrapper
+    return wrapper  # type: ignore[return-value]

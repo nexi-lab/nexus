@@ -24,6 +24,7 @@ def nexus_error_handler(_request: Request, exc: Exception) -> JSONResponse:
     - Unexpected errors: System errors (backend failures, bugs)
     """
     from nexus.core.exceptions import (
+        AccessDeniedError,
         AuthenticationError,
         BackendError,
         ConflictError,
@@ -32,15 +33,16 @@ def nexus_error_handler(_request: Request, exc: Exception) -> JSONResponse:
         NexusFileNotFoundError,
         NexusPermissionError,
         ParserError,
-        PermissionDeniedError,
+        PathNotMountedError,
         ValidationError,
     )
 
-    # Determine HTTP status code and error type based on exception
-    if isinstance(exc, NexusFileNotFoundError):
+    # Determine HTTP status code and error type based on exception.
+    # NexusPermissionError check catches PermissionDeniedError (subclass).
+    if isinstance(exc, (NexusFileNotFoundError, PathNotMountedError)):
         status_code = 404
         error_type = "Not Found"
-    elif isinstance(exc, (NexusPermissionError, PermissionDeniedError)):
+    elif isinstance(exc, (NexusPermissionError, AccessDeniedError)):
         status_code = 403
         error_type = "Forbidden"
     elif isinstance(exc, AuthenticationError):

@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from nexus.backends.local import LocalBackend
-from nexus.core.exceptions import NotFoundError
+from nexus.core.exceptions import NexusFileNotFoundError
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -127,7 +127,7 @@ class TestTimeTravelDebug:
             assert state_before["content"] == b"Content before delete"
 
             # Cannot read file at delete operation (it's been deleted)
-            with pytest.raises(NotFoundError):
+            with pytest.raises(NexusFileNotFoundError):
                 time_travel.get_file_at_operation(path, op_delete)
 
     def test_time_travel_list_directory(self, nx, record_store):
@@ -313,7 +313,7 @@ class TestTimeTravelDebug:
             time_travel = TimeTravelReader(session, nx.backend)
 
             # Try to read with fake operation ID
-            with pytest.raises(NotFoundError):
+            with pytest.raises(NexusFileNotFoundError):
                 time_travel.get_operation_by_id("fake-operation-id")
 
     def test_time_travel_metadata_preservation(self, nx, record_store):

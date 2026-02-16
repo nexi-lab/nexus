@@ -286,7 +286,7 @@ impl NexusFs {
                             if let CacheLookup::Hit(entry) = cache.get(path) {
                                 return Ok((entry.content, entry.etag));
                             }
-                            return Err(e);
+                            return Err(e.into());
                         }
                     }
                 }
@@ -309,7 +309,7 @@ impl NexusFs {
                 // Shouldn't happen without etag, but handle gracefully
                 Err(anyhow::anyhow!("Unexpected 304 response"))
             }
-            Err(e) => Err(e),
+            Err(e) => Err(e.into()),
         }
     }
 }

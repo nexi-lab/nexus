@@ -1,5 +1,7 @@
 """Skill lifecycle management: create, fork, publish, and versioning."""
 
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import logging
@@ -7,21 +9,21 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.exceptions import PermissionDeniedError, ValidationError
-from nexus.core.permissions import OperationContext
+from nexus.skills.exceptions import SkillPermissionDeniedError, SkillValidationError
 from nexus.skills.models import SkillMetadata
 from nexus.skills.parser import SkillParser
 from nexus.skills.protocols import NexusFilesystem
 from nexus.skills.registry import SkillNotFoundError, SkillRegistry
 
 if TYPE_CHECKING:
+    from nexus.core.permissions import OperationContext
     from nexus.services.permissions.rebac_manager import ReBACManager
     from nexus.skills.governance import SkillGovernance
 
 logger = logging.getLogger(__name__)
 
 
-class SkillManagerError(ValidationError):
+class SkillManagerError(SkillValidationError):
     """Raised when skill management operations fail."""
 
     pass
@@ -67,8 +69,8 @@ class SkillManager:
         self,
         filesystem: NexusFilesystem | None = None,
         registry: SkillRegistry | None = None,
-        rebac_manager: "ReBACManager | None" = None,
-        governance: "SkillGovernance | None" = None,
+        rebac_manager: ReBACManager | None = None,
+        governance: SkillGovernance | None = None,
     ):
         """Initialize skill manager.
 
@@ -229,7 +231,7 @@ class SkillManager:
 
         Raises:
             SkillManagerError: If creation fails
-            PermissionDeniedError: If creator lacks permission
+            SkillPermissionDeniedError: If creator lacks permission
 
         Example:
             >>> path = await manager.create_skill(
@@ -509,7 +511,7 @@ class SkillManager:
         Raises:
             SkillNotFoundError: If source skill not found
             SkillManagerError: If fork fails
-            PermissionDeniedError: If creator lacks read permission on source
+            SkillPermissionDeniedError: If creator lacks read permission on source
 
         Example:
             >>> path = await manager.fork_skill(
@@ -528,7 +530,7 @@ class SkillManager:
         if creator_id and not await self._check_permission(
             creator_type, creator_id, "fork", source_name, zone_id
         ):
-            raise PermissionDeniedError(
+            raise SkillPermissionDeniedError(
                 f"No permission to fork skill '{source_name}'. "
                 f"Subject ({creator_type}:{creator_id}) lacks 'fork' permission."
             )
@@ -663,7 +665,7 @@ class SkillManager:
         Raises:
             SkillNotFoundError: If skill not found in source tier
             SkillManagerError: If publish fails
-            PermissionDeniedError: If publisher lacks publish permission
+            SkillPermissionDeniedError: If publisher lacks publish permission
 
         Example:
             >>> # Publish agent skill to zone library
@@ -704,7 +706,7 @@ class SkillManager:
         if publisher_id and not await self._check_permission(
             publisher_type, publisher_id, "publish", name, zone_id
         ):
-            raise PermissionDeniedError(
+            raise SkillPermissionDeniedError(
                 f"No permission to publish skill '{name}'. "
                 f"Subject ({publisher_type}:{publisher_id}) lacks 'publish' permission."
             )

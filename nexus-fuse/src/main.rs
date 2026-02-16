@@ -4,7 +4,8 @@
 //! fast startup time (<100ms vs ~10s for Python version).
 
 mod cache;
-mod client;
+pub mod client;
+pub mod error;
 mod fs;
 
 use clap::{Parser, Subcommand};

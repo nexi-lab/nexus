@@ -38,7 +38,13 @@ def _b64(text: str) -> dict:
     return {"__type__": "bytes", "data": base64.b64encode(text.encode()).decode()}
 
 
-def rpc(client, method: str, params: dict | None = None) -> dict:
+OTHER_USER_HEADERS = {
+    "X-Nexus-Subject": "user:bob",
+    "X-Nexus-Zone-Id": "default",
+}
+
+
+def rpc(client, method: str, params: dict | None = None, headers: dict | None = None) -> dict:
     """Make a JSON-RPC call and return the parsed response."""
     body = {
         "jsonrpc": "2.0",
@@ -46,13 +52,13 @@ def rpc(client, method: str, params: dict | None = None) -> dict:
         "params": params or {},
         "id": 1,
     }
-    resp = client.post(f"/api/nfs/{method}", json=body, headers=HEADERS)
+    resp = client.post(f"/api/nfs/{method}", json=body, headers=headers or HEADERS)
     return {"status": resp.status_code, "body": resp.json()}
 
 
-def rpc_result(client, method: str, params: dict | None = None):
+def rpc_result(client, method: str, params: dict | None = None, headers: dict | None = None):
     """Make a JSON-RPC call and return just the result (assert 200 + no error)."""
-    data = rpc(client, method, params)
+    data = rpc(client, method, params, headers=headers)
     assert data["status"] == 200, f"Expected 200, got {data['status']}: {data['body']}"
     body = data["body"]
     assert "error" not in body or body.get("error") is None, (
@@ -385,3 +391,122 @@ class TestShareLinksE2E:
         logs = rpc_result(test_app, "get_share_link_access_logs", {"link_id": link_id})
         assert "data" in logs
         assert logs["data"]["count"] >= 1
+
+
+# ─── Performance: Discover Timing ─────────────────────────────────────
+
+
+class TestSkillsDiscoverTimingE2E:
+    """Verify discover performance with multiple skills (Issue #1400)."""
+
+    def test_discover_timing_with_skills(self, test_app):
+        """Discover should complete in < 2s even with multiple skills.
+
+        Creates 10 skills, subscribes to them, then measures discover time.
+        Uses 2s threshold (generous for CI environments with cold server).
+        """
+        # Create 10 skills
+        for i in range(10):
+            skill_dir = f"/zone/default/user/admin/skill/perf-{i}/"
+            write_skill(
+                test_app,
+                skill_dir,
+                f"---\nname: Perf Skill {i}\ndescription: Performance test\n---\n# Skill {i}",
+            )
+            rpc_result(test_app, "skills_subscribe", {"skill_path": skill_dir})
+
+        # Time the discover call
+        start = time.time()
+        result = rpc_result(test_app, "skills_discover", {"filter": "subscribed"})
+        elapsed = time.time() - start
+
+        assert result["count"] >= 10
+        assert elapsed < 2.0, f"Discover took {elapsed:.2f}s, expected < 2s"
+
+    def test_prompt_context_timing(self, test_app):
+        """Prompt context generation should complete in < 2s."""
+        # Create and subscribe to a skill
+        skill_dir = "/zone/default/user/admin/skill/timing-prompt/"
+        write_skill(
+            test_app,
+            skill_dir,
+            "---\nname: Timing Skill\ndescription: For timing\n---\n# Content\nBody here.",
+        )
+        rpc_result(test_app, "skills_subscribe", {"skill_path": skill_dir})
+
+        start = time.time()
+        result = rpc_result(test_app, "skills_get_prompt_context")
+        elapsed = time.time() - start
+
+        assert result["count"] >= 1
+        assert "<available_skills>" in result["xml"]
+        assert elapsed < 2.0, f"Prompt context took {elapsed:.2f}s, expected < 2s"
+
+
+# ─── Cross-User Permission Enforcement ────────────────────────────────
+
+
+class TestSkillsPermissionEnforcementE2E:
+    """Verify non-owner users cannot access private skills (Issue #1400).
+
+    Tests cross-user permission enforcement:
+    - bob cannot discover admin's private skills
+    - bob can see admin's skills after they're shared publicly
+    - bob cannot load admin's private skill content
+    """
+
+    def test_other_user_cannot_discover_private_skills(self, test_app):
+        """A different user should not discover another user's private skills."""
+        # Admin creates a private skill
+        skill_dir = "/zone/default/user/admin/skill/private-only/"
+        write_skill(
+            test_app,
+            skill_dir,
+            "---\nname: Private Skill\ndescription: Admin only\n---\n# Secret",
+        )
+
+        # Bob discovers — should NOT see admin's private skill
+        result = rpc_result(
+            test_app, "skills_discover", {"filter": "all"}, headers=OTHER_USER_HEADERS
+        )
+        private_names = [s["name"] for s in result["skills"]]
+        assert "Private Skill" not in private_names
+
+    def test_other_user_sees_public_skill_after_share(self, test_app):
+        """After sharing publicly, another user should discover the skill."""
+        skill_dir = "/zone/default/user/admin/skill/goes-public/"
+        write_skill(
+            test_app,
+            skill_dir,
+            "---\nname: Goes Public\ndescription: Will be shared\n---\n# Public",
+        )
+
+        # Share publicly (as admin)
+        rpc_result(
+            test_app,
+            "skills_share",
+            {"skill_path": skill_dir, "share_with": "public"},
+        )
+
+        # Bob discovers — should see the public skill
+        result = rpc_result(
+            test_app, "skills_discover", {"filter": "public"}, headers=OTHER_USER_HEADERS
+        )
+        public_names = [s["name"] for s in result["skills"]]
+        assert "Goes Public" in public_names
+
+    def test_other_user_cannot_load_private_skill(self, test_app):
+        """A different user cannot load another user's private skill content."""
+        skill_dir = "/zone/default/user/admin/skill/no-load/"
+        write_skill(
+            test_app,
+            skill_dir,
+            "---\nname: No Load\ndescription: Cannot be loaded by bob\n---\n# Restricted",
+        )
+
+        # Bob tries to load — should get an error
+        data = rpc(test_app, "skills_load", {"skill_path": skill_dir}, headers=OTHER_USER_HEADERS)
+        body = data["body"]
+        # Either HTTP error or RPC error is acceptable
+        has_error = data["status"] != 200 or (body.get("error") is not None)
+        assert has_error, "Non-owner should not be able to load a private skill"

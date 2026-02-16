@@ -1404,7 +1404,7 @@ def skills_mcp_export_tools(
     try:
         import asyncio
 
-        from nexus.skills.mcp_exporter import MCPToolExporter
+        from nexus.mcp.exporter import MCPToolExporter
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         exporter = MCPToolExporter(nx)
@@ -1448,7 +1448,7 @@ def skills_mcp_list_tools(
         nexus skills mcp list-tools --category search
     """
     try:
-        from nexus.skills.mcp_exporter import NEXUS_TOOLS
+        from nexus.mcp.exporter import NEXUS_TOOLS
 
         # Filter by category if specified
         tools = NEXUS_TOOLS
@@ -1569,8 +1569,8 @@ def skills_mcp_mount(
     try:
         import asyncio
 
-        from nexus.skills.mcp_models import MCPMount
-        from nexus.skills.mcp_mount import MCPMountManager
+        from nexus.mcp.models import MCPMount
+        from nexus.mcp.mount import MCPMountManager
 
         # Validate: need either command or url
         if not command and not url:
@@ -1896,7 +1896,7 @@ def skills_mcp_unmount(
     try:
         import asyncio
 
-        from nexus.skills.mcp_mount import MCPMountManager
+        from nexus.mcp.mount import MCPMountManager
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         manager = MCPMountManager(nx)
@@ -1928,7 +1928,7 @@ def skills_mcp_list_mounts(
         nexus skills mcp list-mounts --all
     """
     try:
-        from nexus.skills.mcp_mount import MCPMountManager
+        from nexus.mcp.mount import MCPMountManager
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         manager = MCPMountManager(nx)
@@ -1986,7 +1986,7 @@ def skills_mcp_tools(
         nexus skills mcp tools github --json
     """
     try:
-        from nexus.skills.mcp_mount import MCPMountManager
+        from nexus.mcp.mount import MCPMountManager
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         manager = MCPMountManager(nx)
@@ -2109,7 +2109,7 @@ def skills_mcp_remove(
     try:
         import asyncio
 
-        from nexus.skills.mcp_mount import MCPMountManager
+        from nexus.mcp.mount import MCPMountManager
 
         nx = get_filesystem(backend_config, enforce_permissions=False)
         manager = MCPMountManager(nx)

@@ -29,9 +29,9 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from nexus.mcp.klavis_client import KlavisClient, KlavisError
+from nexus.mcp.models import MCPMount
+from nexus.mcp.mount import MCPMountManager
 from nexus.mcp.provider_registry import MCPProviderRegistry, ProviderConfig, ProviderType
-from nexus.skills.mcp_models import MCPMount
-from nexus.skills.mcp_mount import MCPMountManager
 
 if TYPE_CHECKING:
     from nexus.skills.protocols import NexusFilesystem

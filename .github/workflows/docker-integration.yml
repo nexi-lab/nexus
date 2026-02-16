@@ -29,6 +29,10 @@ on:
       - 'configs/*.yaml'
       - 'configs/*.yml'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   docker-build-and-init:
     name: Docker Build & Init Test

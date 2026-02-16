@@ -14,7 +14,6 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
-from nexus.core.nexus_fs import NexusFS
 
 
 def register_commands(cli: click.Group) -> None:
@@ -52,6 +51,8 @@ def work(
         nexus work ready --json
     """
     try:
+        from nexus.core.nexus_fs import NexusFS
+
         nx = get_filesystem(backend_config)
 
         # Only standalone mode has metadata store with work views

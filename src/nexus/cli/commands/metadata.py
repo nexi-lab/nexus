@@ -19,7 +19,6 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
-from nexus.core.nexus_fs import NexusFS
 
 
 @click.command()
@@ -35,6 +34,8 @@ def info(
         nexus info /workspace/data.txt
     """
     try:
+        from nexus.core.nexus_fs import NexusFS
+
         nx = get_filesystem(backend_config)
 
         # Check if file exists first
@@ -132,6 +133,7 @@ def export_metadata(
     """
     try:
         from nexus.core.export_import import ExportFilter
+        from nexus.core.nexus_fs import NexusFS
 
         nx = get_filesystem(backend_config)
 
@@ -243,6 +245,7 @@ def import_metadata(
     """
     try:
         from nexus.core.export_import import ImportOptions
+        from nexus.core.nexus_fs import NexusFS
 
         nx = get_filesystem(backend_config)
 

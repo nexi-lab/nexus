@@ -20,10 +20,10 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 from nexus.core.rebac import (
-    CROSS_ZONE_ALLOWED_RELATIONS,
     Entity,
     NamespaceConfig,
 )
+from nexus.services.permissions.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 from nexus.services.permissions.default_namespaces import (
     DEFAULT_FILE_NAMESPACE,
     DEFAULT_GROUP_NAMESPACE,
@@ -150,6 +150,11 @@ class ReBACManager:
                 f"metrics={enable_metrics}, adaptive_ttl={enable_adaptive_ttl}, "
                 f"revision_window={l1_cache_revision_window}"
             )
+
+        # Use SQLAlchemy sessionmaker for proper connection management
+        from sqlalchemy.orm import sessionmaker
+
+        self.SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 
         # Backward-compat aliases for code accessing _conn_map / _pg_version directly
         self._conn_map = self._repo._conn_map

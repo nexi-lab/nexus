@@ -154,7 +154,7 @@ class GCSConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin):
             prefix: Optional prefix for all paths in bucket (e.g., "data/")
             access_token: OAuth access token (alternative to credentials_path)
             db_session: Optional SQLAlchemy session for caching (deprecated)
-            session_factory: Optional session factory (e.g., metadata_store.SessionLocal)
+            session_factory: Optional session factory (e.g., metadata_store.session_factory)
                            for caching support. Preferred over db_session.
         """
         try:

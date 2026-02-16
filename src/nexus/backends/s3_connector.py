@@ -158,7 +158,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
             secret_access_key: AWS secret key (alternative to credentials_path)
             session_token: AWS session token (for temporary credentials)
             db_session: Optional SQLAlchemy session for caching (deprecated)
-            session_factory: Optional session factory (e.g., metadata_store.SessionLocal)
+            session_factory: Optional session factory (e.g., metadata_store.session_factory)
                            for caching support. Preferred over db_session.
         """
         try:

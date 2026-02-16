@@ -6,11 +6,13 @@ accessed files. Uses size-based eviction to prevent memory bloat.
 Supports transparent LZ4 compression for 3-4x capacity improvement (Issue #908).
 """
 
-import contextlib
+import logging
 import threading
 from collections import OrderedDict
 
 import lz4.frame
+
+logger = logging.getLogger(__name__)
 
 # LZ4 frame magic bytes for detection
 _LZ4_MAGIC = b"\x04\x22\x4d\x18"
@@ -91,8 +93,10 @@ class ContentCache:
             if len(content) >= 4 and content[:4] == _LZ4_MAGIC:
                 # Suppress decompression errors for content that starts with
                 # LZ4 magic but isn't valid LZ4 (e.g., random binary data)
-                with contextlib.suppress(Exception):
+                try:
                     content = lz4.frame.decompress(content)
+                except (ValueError, Exception) as e:
+                    logger.debug("[CACHE] Decompression failed, treating as miss: %s", e)
 
             return content
 

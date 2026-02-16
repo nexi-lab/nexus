@@ -436,8 +436,10 @@ class LocalDiskCache:
             block_path = self._get_block_path(content_hash, block_idx)
             if not block_path.exists():
                 break
-            with contextlib.suppress(Exception):
+            try:
                 block_path.unlink()
+            except Exception as e:
+                logger.debug("Failed to delete cache block %s: %s", block_path, e)
 
         self._current_size_bytes -= entry.size_bytes
         self._stats.evictions += 1

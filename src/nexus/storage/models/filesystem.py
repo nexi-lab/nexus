@@ -37,7 +37,7 @@ class DirectoryEntryModel(Base):
     __tablename__ = "directory_entries"
 
     zone_id: Mapped[str] = mapped_column(
-        String(255), primary_key=True, nullable=False, default="default"
+        String(255), primary_key=True, nullable=False, default="root"
     )
     parent_path: Mapped[str] = mapped_column(String(4096), primary_key=True, nullable=False)
     entry_name: Mapped[str] = mapped_column(String(255), primary_key=True, nullable=False)

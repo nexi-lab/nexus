@@ -63,7 +63,7 @@ class ReputationScoreModel(Base):
     global_trust_score: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # Zone scope
-    zone_id: Mapped[str] = mapped_column(String(36), nullable=False, default="default")
+    zone_id: Mapped[str] = mapped_column(String(36), nullable=False, default="root")
 
     # Last update timestamp
     updated_at: Mapped[datetime] = mapped_column(

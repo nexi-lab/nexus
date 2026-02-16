@@ -50,7 +50,7 @@ class ReputationEventModel(Base):
     rater_agent_id: Mapped[str] = mapped_column(String(255), nullable=False)
     rated_agent_id: Mapped[str] = mapped_column(String(255), nullable=False)
     exchange_id: Mapped[str] = mapped_column(String(36), nullable=False)
-    zone_id: Mapped[str] = mapped_column(String(36), nullable=False, default="default")
+    zone_id: Mapped[str] = mapped_column(String(36), nullable=False, default="root")
 
     # Event classification
     event_type: Mapped[str] = mapped_column(String(30), nullable=False)

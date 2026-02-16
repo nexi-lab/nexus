@@ -133,7 +133,7 @@ class BaseRegistry(Generic[T]):
 
         try:
             package = importlib.import_module(package_name)
-        except Exception:
+        except (ImportError, ModuleNotFoundError):
             logger.error("Failed to import package %s", package_name, exc_info=True)
             return 0
 
@@ -143,7 +143,7 @@ class BaseRegistry(Generic[T]):
             fqn = f"{package_name}.{module_name}"
             try:
                 module = importlib.import_module(fqn)
-            except Exception:
+            except (ImportError, ModuleNotFoundError):
                 logger.warning("Failed to import %s", fqn)
                 continue
 
@@ -154,7 +154,7 @@ class BaseRegistry(Generic[T]):
                         self.register(_key_fn(obj), instance, allow_overwrite=True)  # type: ignore[arg-type]
                         count += 1
                         logger.debug("Discovered %s from %s", attr_name, fqn)
-                    except Exception:
+                    except (TypeError, RuntimeError, ValueError):
                         logger.warning("Failed to instantiate %s from %s", attr_name, fqn)
 
         if count:

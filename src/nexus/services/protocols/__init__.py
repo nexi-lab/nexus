@@ -50,6 +50,7 @@ from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol,
 from nexus.services.protocols.parse import ParseProtocol
 from nexus.services.protocols.payment import PaymentProtocol
 from nexus.services.protocols.rebac import ReBACBrickProtocol
+from nexus.services.protocols.sandbox import SandboxProtocol
 from nexus.services.protocols.scheduler import AgentRequest, SchedulerProtocol
 from nexus.services.protocols.search import SearchBrickProtocol
 
@@ -80,6 +81,7 @@ __all__ = [
     "ParseProtocol",
     "PaymentProtocol",
     "ReBACBrickProtocol",
+    "SandboxProtocol",
     "SchedulerProtocol",
     "SearchBrickProtocol",
 ]

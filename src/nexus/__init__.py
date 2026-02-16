@@ -292,7 +292,7 @@ def connect(
     metadata_store: FileMetadataProtocol
     if cfg.mode == "federation":
         try:
-            from nexus.raft import ZoneAwareMetadataStore
+            from nexus.raft import FederatedMetadataProxy
             from nexus.raft.zone_manager import ZoneManager
         except ImportError as err:
             raise ImportError(
@@ -324,7 +324,7 @@ def connect(
                     mounts[path.strip()] = zone_id.strip()
             zone_mgr.bootstrap_static(zones=zones, peers=peers, mounts=mounts)
 
-        metadata_store = ZoneAwareMetadataStore.from_zone_manager(zone_mgr)
+        metadata_store = FederatedMetadataProxy.from_zone_manager(zone_mgr)
     else:
         # standalone: single-node embedded Raft (no peers)
         metadata_store = RaftMetadataStore.embedded(metadata_path)

@@ -1,11 +1,11 @@
-"""Zone-aware metadata proxy for cross-zone DT_MOUNT traversal.
+"""Federated metadata proxy for cross-zone DT_MOUNT traversal.
 
 Implements FileMetadataProtocol and routes each operation to the
 correct zone's RaftMetadataStore via ZonePathResolver.
 
 Usage:
     # Create from ZoneManager
-    proxy = ZoneAwareMetadataStore.from_zone_manager(zone_manager, root_zone_id="default")
+    proxy = FederatedMetadataProxy.from_zone_manager(zone_manager, root_zone_id="default")
 
     # Inject into NexusFS — no NexusFS changes needed
     fs = NexusFS(backend=backend, metadata_store=proxy)
@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class ZoneAwareMetadataStore(FileMetadataProtocol):
+class FederatedMetadataProxy(FileMetadataProtocol):
     """Proxy that routes metadata operations across zones via DT_MOUNT.
 
     Transparent to callers — all paths are in the global namespace.
@@ -62,7 +62,7 @@ class ZoneAwareMetadataStore(FileMetadataProtocol):
         cls,
         zone_manager: Any,
         root_zone_id: str = ROOT_ZONE_ID,
-    ) -> ZoneAwareMetadataStore:
+    ) -> FederatedMetadataProxy:
         """Create from a ZoneManager instance.
 
         Args:
@@ -70,7 +70,7 @@ class ZoneAwareMetadataStore(FileMetadataProtocol):
             root_zone_id: ID of the root zone.
 
         Returns:
-            ZoneAwareMetadataStore proxy.
+            FederatedMetadataProxy proxy.
         """
         from nexus.raft.zone_path_resolver import ZonePathResolver
 

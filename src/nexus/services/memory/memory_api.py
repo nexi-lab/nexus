@@ -150,7 +150,7 @@ class Memory:
         from nexus.services.memory.versioning import MemoryVersioning
 
         self._versioning = MemoryVersioning(
-            session=session,
+            session_factory=lambda: session,
             memory_router=self.memory_router,
             permission_enforcer=self.permission_enforcer,
             backend=backend,

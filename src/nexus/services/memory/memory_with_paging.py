@@ -18,8 +18,8 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.memory_paging import MemoryPager
 from nexus.services.memory.memory_api import Memory
+from nexus.services.memory.memory_paging import MemoryPager
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session

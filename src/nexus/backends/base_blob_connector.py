@@ -30,7 +30,6 @@ from nexus.core.response import HandlerResponse
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
-    from nexus.services.permissions.permissions_enhanced import EnhancedOperationContext
 
 
 class BaseBlobStorageConnector(Backend):
@@ -806,7 +805,7 @@ class BaseBlobStorageConnector(Backend):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: "OperationContext | EnhancedOperationContext | None" = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[None]:
         """
         Create directory marker in blob storage.
@@ -893,7 +892,7 @@ class BaseBlobStorageConnector(Backend):
         self,
         path: str,
         recursive: bool = False,
-        context: "OperationContext | EnhancedOperationContext | None" = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[None]:
         """
         Remove directory from blob storage.

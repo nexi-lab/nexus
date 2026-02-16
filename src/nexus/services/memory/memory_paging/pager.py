@@ -15,10 +15,10 @@ from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.memory_paging.archival_store import ArchivalStore
-from nexus.core.memory_paging.context_manager import ContextManager
-from nexus.core.memory_paging.namespace_util import strip_tier_prefix
-from nexus.core.memory_paging.recall_store import RecallStore
+from nexus.services.memory.memory_paging.archival_store import ArchivalStore
+from nexus.services.memory.memory_paging.context_manager import ContextManager
+from nexus.services.memory.memory_paging.namespace_util import strip_tier_prefix
+from nexus.services.memory.memory_paging.recall_store import RecallStore
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session

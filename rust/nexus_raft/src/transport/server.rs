@@ -27,15 +27,18 @@ use super::proto::nexus::raft::{
 use super::{NodeAddress, Result, TransportError};
 use crate::raft::{
     Command, CommandResult, FullStateMachine, RaftError, WitnessStateMachine, ZoneConsensus,
-    ZoneConsensusDriver, ZoneRaftRegistry,
+    ZoneRaftRegistry,
 };
 use crate::storage::RedbStore;
 use bincode;
+use dashmap::DashMap;
 use prost::Message;
 use protobuf::Message as ProtobufV2Message;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::sync::Arc;
+use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
+use tokio::task::JoinHandle;
 use tonic::{Request, Response, Status};
 
 /// Configuration for Raft transport server.
@@ -941,106 +944,160 @@ impl ZoneApiService for ZoneApiServiceImpl {
 }
 
 // =============================================================================
-// Witness Server (lightweight, vote-only — separate StateMachine type)
+// Witness Zone Registry — multi-zone witness (mirrors ZoneRaftRegistry for
+// FullStateMachine, but uses WitnessStateMachine and witness RaftConfig)
 // =============================================================================
 
-/// Shared state for the Witness server, backed by `ZoneConsensus<WitnessStateMachine>` handle.
-pub struct WitnessServerState {
-    /// The ZoneConsensus handle (Clone + Send + Sync).
-    pub node: ZoneConsensus<WitnessStateMachine>,
-    /// This node's ID.
-    pub node_id: u64,
-    /// Known peers.
-    pub peers: HashMap<u64, NodeAddress>,
+/// A single witness zone entry.
+struct WitnessZoneEntry {
+    node: ZoneConsensus<WitnessStateMachine>,
+    shutdown_tx: tokio::sync::watch::Sender<bool>,
+    _transport_handle: JoinHandle<()>,
 }
 
-impl WitnessServerState {
-    /// Create a new witness server state.
+/// Multi-zone registry for witness nodes.
+///
+/// Each zone gets its own `ZoneConsensus<WitnessStateMachine>` + `TransportLoop`.
+/// The witness participates in leader election for every zone but never applies
+/// state machine entries or serves reads.
+pub struct WitnessZoneRegistry {
+    zones: DashMap<String, WitnessZoneEntry>,
+    base_path: PathBuf,
+    node_id: u64,
+    tls: Option<super::TlsConfig>,
+}
+
+impl WitnessZoneRegistry {
+    /// Create a new empty witness zone registry.
+    pub fn new(base_path: PathBuf, node_id: u64, tls: Option<super::TlsConfig>) -> Self {
+        Self {
+            zones: DashMap::new(),
+            base_path,
+            node_id,
+            tls,
+        }
+    }
+
+    /// Create a witness Raft group for a zone (static bootstrap).
     ///
-    /// Returns `(state, driver)` — the driver must be passed to the transport loop.
-    pub fn new(
-        node_id: u64,
-        db_path: &str,
+    /// Opens zone-specific storage at `{base_path}/{zone_id}/`, creates a
+    /// `ZoneConsensus<WitnessStateMachine>`, and spawns a `TransportLoop` task.
+    pub fn create_zone(
+        &self,
+        zone_id: &str,
         peers: Vec<NodeAddress>,
-    ) -> Result<(Self, ZoneConsensusDriver<WitnessStateMachine>)> {
+        runtime_handle: &tokio::runtime::Handle,
+    ) -> Result<ZoneConsensus<WitnessStateMachine>> {
         use crate::raft::{RaftConfig, RaftStorage};
-        let sm_path = std::path::Path::new(db_path).join("sm");
-        let raft_path = std::path::Path::new(db_path).join("raft");
+        use crate::transport::{ClientConfig, RaftClientPool, TransportLoop};
 
-        let store = RedbStore::open(&sm_path)
+        if self.zones.contains_key(zone_id) {
+            return Err(TransportError::Connection(format!(
+                "Witness zone '{}' already exists",
+                zone_id
+            )));
+        }
+
+        // Zone-specific storage
+        let zone_path = self.base_path.join(zone_id);
+        let store = RedbStore::open(zone_path.join("sm"))
             .map_err(|e| TransportError::Connection(format!("Failed to open store: {}", e)))?;
-
-        let raft_storage = RaftStorage::open(&raft_path).map_err(|e| {
+        let raft_storage = RaftStorage::open(zone_path.join("raft")).map_err(|e| {
             TransportError::Connection(format!("Failed to open raft storage: {}", e))
         })?;
-
         let state_machine = WitnessStateMachine::new(&store).map_err(|e| {
             TransportError::Connection(format!("Failed to create witness state machine: {}", e))
         })?;
 
+        // Witness RaftConfig (no replication log, cannot become leader)
         let peer_ids: Vec<u64> = peers.iter().map(|p| p.id).collect();
-        let config = RaftConfig::witness(node_id, peer_ids);
+        let config = RaftConfig::witness(self.node_id, peer_ids);
 
-        let (handle, driver) = ZoneConsensus::new(config, raft_storage, state_machine, None)
+        let (handle, mut driver) = ZoneConsensus::new(config, raft_storage, state_machine, None)
             .map_err(|e| {
                 TransportError::Connection(format!("Failed to create witness ZoneConsensus: {}", e))
             })?;
 
+        // Shared peer map
         let peer_map: HashMap<u64, NodeAddress> = peers.into_iter().map(|p| (p.id, p)).collect();
+        let shared_peers: super::SharedPeerMap = Arc::new(RwLock::new(peer_map));
+        driver.set_peer_map(shared_peers.clone());
 
-        Ok((
-            Self {
-                node: handle,
-                node_id,
-                peers: peer_map,
-            },
+        // Spawn transport loop with zone_id routing
+        let client_config = ClientConfig {
+            tls: self.tls.clone(),
+            ..Default::default()
+        };
+        let transport_loop = TransportLoop::new(
             driver,
-        ))
+            shared_peers,
+            RaftClientPool::with_config(client_config),
+        )
+        .with_zone_id(zone_id.to_string());
+
+        let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+        let transport_handle = runtime_handle.spawn(transport_loop.run(shutdown_rx));
+
+        tracing::info!(
+            "Witness zone '{}' created (node_id={})",
+            zone_id,
+            self.node_id,
+        );
+
+        self.zones.insert(
+            zone_id.to_string(),
+            WitnessZoneEntry {
+                node: handle.clone(),
+                shutdown_tx,
+                _transport_handle: transport_handle,
+            },
+        );
+
+        Ok(handle)
+    }
+
+    /// Get the ZoneConsensus handle for a zone.
+    pub fn get_node(&self, zone_id: &str) -> Option<ZoneConsensus<WitnessStateMachine>> {
+        self.zones.get(zone_id).map(|e| e.node.clone())
+    }
+
+    /// List all zone IDs.
+    pub fn list_zones(&self) -> Vec<String> {
+        self.zones.iter().map(|e| e.key().clone()).collect()
+    }
+
+    /// Shutdown all zones.
+    pub fn shutdown_all(&self) {
+        for entry in self.zones.iter() {
+            let _ = entry.shutdown_tx.send(true);
+        }
+        self.zones.clear();
+        tracing::info!("All witness zones shut down");
     }
 }
 
-/// A gRPC server for Raft witness nodes.
+// =============================================================================
+// Witness gRPC Server (zone-routed, serves all witness zones on one port)
+// =============================================================================
+
+/// A gRPC server for multi-zone Raft witness nodes.
+///
+/// Routes incoming `step_message` requests to the correct zone's
+/// `ZoneConsensus<WitnessStateMachine>` by `zone_id`.
 pub struct RaftWitnessServer {
     config: ServerConfig,
-    state: Arc<WitnessServerState>,
-    /// The driver, held temporarily until passed to the transport loop.
-    driver: Option<ZoneConsensusDriver<WitnessStateMachine>>,
+    registry: Arc<WitnessZoneRegistry>,
 }
 
 impl RaftWitnessServer {
-    /// Create a new witness server.
-    pub fn new(node_id: u64, db_path: &str, peers: Vec<NodeAddress>) -> Result<Self> {
-        Self::with_config(node_id, db_path, ServerConfig::default(), peers)
-    }
-
-    /// Create a new witness server with custom configuration.
-    pub fn with_config(
-        node_id: u64,
-        db_path: &str,
-        config: ServerConfig,
-        peers: Vec<NodeAddress>,
-    ) -> Result<Self> {
-        let (state, driver) = WitnessServerState::new(node_id, db_path, peers)?;
-        Ok(Self {
-            config,
-            state: Arc::new(state),
-            driver: Some(driver),
-        })
+    /// Create a witness server backed by a multi-zone registry.
+    pub fn new(registry: Arc<WitnessZoneRegistry>, config: ServerConfig) -> Self {
+        Self { config, registry }
     }
 
     /// Get the bind address.
     pub fn bind_address(&self) -> SocketAddr {
         self.config.bind_address
-    }
-
-    /// Get the ZoneConsensus handle.
-    pub fn node(&self) -> ZoneConsensus<WitnessStateMachine> {
-        self.state.node.clone()
-    }
-
-    /// Take the driver out (must be passed to the transport loop).
-    pub fn take_driver(&mut self) -> ZoneConsensusDriver<WitnessStateMachine> {
-        self.driver.take().expect("driver already taken")
     }
 
     /// Start the gRPC server with graceful shutdown.
@@ -1050,14 +1107,16 @@ impl RaftWitnessServer {
     ) -> Result<()> {
         let addr = self.config.bind_address;
         let tls_enabled = self.config.tls.is_some();
+        let zone_count = self.registry.list_zones().len();
         tracing::info!(
-            "Starting Raft Witness gRPC server on {} (tls={})",
+            "Starting Raft Witness gRPC server on {} (tls={}, zones={})",
             addr,
             tls_enabled,
+            zone_count,
         );
 
         let service = WitnessServiceImpl {
-            state: self.state.clone(),
+            registry: self.registry.clone(),
         };
 
         let mut builder = tonic::transport::Server::builder();
@@ -1082,19 +1141,33 @@ impl RaftWitnessServer {
     }
 }
 
-/// Witness implementation of ZoneTransportService — only step_message is active.
+/// Witness implementation of ZoneTransportService — routes by zone_id.
 struct WitnessServiceImpl {
-    state: Arc<WitnessServerState>,
+    registry: Arc<WitnessZoneRegistry>,
 }
 
 #[tonic::async_trait]
 impl ZoneTransportService for WitnessServiceImpl {
     /// Handle a raw raft-rs message forwarded from another node.
+    ///
+    /// Routes to the correct zone's ZoneConsensus by `req.zone_id`.
     async fn step_message(
         &self,
         request: Request<StepMessageRequest>,
     ) -> std::result::Result<Response<StepMessageResponse>, Status> {
         let req = request.into_inner();
+
+        // Route by zone_id — same pattern as ZoneTransportServiceImpl for full nodes
+        let node = self.registry.get_node(&req.zone_id).ok_or_else(|| {
+            Status::not_found(format!(
+                "zone '{}' not found on witness",
+                if req.zone_id.is_empty() {
+                    "<empty>"
+                } else {
+                    &req.zone_id
+                }
+            ))
+        })?;
 
         let msg = match raft::eraftpb::Message::parse_from_bytes(&req.message) {
             Ok(m) => m,
@@ -1107,13 +1180,14 @@ impl ZoneTransportService for WitnessServiceImpl {
         };
 
         tracing::trace!(
-            "[Witness] StepMessage: type={:?}, from={}, term={}",
+            "[Witness] StepMessage [zone={}]: type={:?}, from={}, term={}",
+            req.zone_id,
             msg.get_msg_type(),
             msg.from,
             msg.term,
         );
 
-        if let Err(e) = self.state.node.step(msg) {
+        if let Err(e) = node.step(msg) {
             return Ok(Response::new(StepMessageResponse {
                 success: false,
                 error: Some(format!("Failed to step message: {}", e)),

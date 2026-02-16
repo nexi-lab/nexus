@@ -29,12 +29,6 @@ def temp_dir() -> Generator[Path, None, None]:
 @pytest.fixture
 def nx(temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance with ReBAC enabled and permissions enforced."""
-    # Isolate ReBAC database per test to prevent cross-test state pollution
-    # The global _engine cache in database.py must be reset for each test
-    import nexus.storage.database as db_module
-
-    db_module._engine = None
-
     rebac_db = temp_dir / "rebac.db"
     monkeypatch.setenv("NEXUS_DATABASE_URL", f"sqlite:///{rebac_db}")
     monkeypatch.delenv("POSTGRES_URL", raising=False)

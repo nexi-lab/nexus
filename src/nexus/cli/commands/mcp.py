@@ -59,8 +59,7 @@ def _add_api_key_middleware(mcp_server: Any) -> None:
     try:
         from starlette.middleware.base import BaseHTTPMiddleware
 
-        from nexus.mcp import set_request_api_key
-        from nexus.mcp.server import _request_api_key
+        from nexus.mcp import reset_request_api_key, set_request_api_key
 
         class APIKeyMiddleware(BaseHTTPMiddleware):
             """Middleware to extract API key from HTTP headers."""
@@ -91,7 +90,7 @@ def _add_api_key_middleware(mcp_server: Any) -> None:
                 finally:
                     # Clean up context
                     if token is not None:
-                        _request_api_key.reset(token)
+                        reset_request_api_key(token)
 
         # Add middleware to the underlying Starlette app
         # FastMCP's http_app is a method that returns the Starlette application

@@ -23,7 +23,6 @@ if TYPE_CHECKING:
     from nexus_fast import BloomFilter
 
     from nexus.core.permissions import OperationContext
-    from nexus.services.permissions.permissions_enhanced import EnhancedOperationContext
 
 logger = logging.getLogger(__name__)
 
@@ -826,7 +825,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: "OperationContext | EnhancedOperationContext | None" = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[None]:
         """Create directory in virtual directory structure.
 
@@ -890,7 +889,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         self,
         path: str,
         recursive: bool = False,
-        context: "OperationContext | EnhancedOperationContext | None" = None,
+        context: "OperationContext | None" = None,
     ) -> HandlerResponse[None]:
         """Remove directory from virtual directory structure.
 

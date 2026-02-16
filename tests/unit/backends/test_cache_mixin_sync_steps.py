@@ -273,10 +273,10 @@ class TestStep2LoadCache:
         session.close()
 
         # Write disk cache metadata for file1 only (replaces ContentCacheModel)
-        # Use "default" zone because MockConnector has no zone_id attribute
+        # Use "root" zone — MockConnector has no zone_id attribute, fallback is "root"
         file_cache = FileContentCache(tmp_path / "cache")
         file_cache.write(
-            "default",
+            "root",
             "/test/file1.txt",
             b"content1",
             text_content="content1",
@@ -287,7 +287,7 @@ class TestStep2LoadCache:
                 "cached_size_bytes": 8,
                 "backend_version": "v1",
                 "stale": False,
-                "zone_id": "default",
+                "zone_id": "root",
             },
         )
 

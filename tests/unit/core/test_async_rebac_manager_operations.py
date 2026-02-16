@@ -61,6 +61,8 @@ async def engine(temp_db: Path) -> AsyncGenerator[AsyncEngine, None]:
                 object_type TEXT NOT NULL,
                 object_id TEXT NOT NULL,
                 zone_id TEXT NOT NULL DEFAULT 'default',
+                subject_zone_id TEXT NOT NULL DEFAULT 'default',
+                object_zone_id TEXT NOT NULL DEFAULT 'default',
                 conditions TEXT,
                 expires_at TEXT,
                 created_at TIMESTAMP,

@@ -459,12 +459,14 @@ Memory operations have distinct properties from File I/O:
 | Scenario | Caller | Freq | Latency | Mutation | Scope | Auth | State | Fed | Why Exists |
 |----------|--------|------|---------|----------|-------|------|-------|-----|------------|
 | **Route** | System | Hot-path | Ultra-low | Read | Path | None | Stateless | Zone-aware | Resolve virtual path → backend + physical path |
-| **Add/Remove Mount** | System | Rare | Normal | Write | System | None | Persistent | Zone-aware | Modify mount table |
-| **List Mounts** | System | Occasional | Low | Read | System | None | Stateless | Zone-aware | Enumerate mount table |
+| ~~Add/Remove Mount~~ | ~~System~~ | ~~Rare~~ | ~~Normal~~ | ~~Write~~ | ~~System~~ | ~~None~~ | ~~Persistent~~ | ~~Zone-aware~~ | → Moved to Mount Management §1.7 (P10 MountProtocol) |
+| ~~List Mounts~~ | ~~System~~ | ~~Occasional~~ | ~~Low~~ | ~~Read~~ | ~~System~~ | ~~None~~ | ~~Stateless~~ | ~~Zone-aware~~ | → Moved to Mount Management §1.7 (P10 MountProtocol) |
 
-**Step 1 Analysis:** Internal kernel primitive — the mount table. System-initiated (user mounts go through Mount Management §1.7, which delegates to VFS Router). Hot-path routing on every file operation.
+**Step 1 Analysis:** Internal kernel primitive — path resolution. System-initiated (user mounts go through Mount Management §1.7, which delegates to VFS Router). Hot-path routing on every file operation.
 
-**Decision: Keep as separate domain — VFS Routing.** This is a kernel-only internal primitive, like Linux's `lookup_slow()` in VFS.
+In Linux, `vfsmount` (kernel) has two layers: `lookup_slow()` is the hot-path resolution (kernel, called on every syscall), while `mount(2)`/`umount(2)` are rare administrative ops handled by userspace tools. Only `lookup_slow()` must be in the kernel — mount table CRUD can live in userspace.
+
+**Decision: Split VFS Routing.** Only `route()` is kernel-native (hot-path, every operation). `add_mount()`/`remove_mount()`/`list_mounts()` move to P10 MountProtocol (Service tier) — they're admin ops, not data-plane primitives. VFSRouterProtocol shrinks from 4 methods to 1.
 
 ### 1.25 Storage Connector
 
@@ -654,7 +656,7 @@ Memory operations have distinct properties from File I/O:
 | S16 | **Namespace Visibility** | Service | dcache / mount namespace |
 | S17 | **Event Log (Audit)** | Service | `auditd` / `syslog` |
 | S18 | **Payment** | Service | (no analogue — billing) |
-| S19 | **VFS Routing** | Kernel | VFS `lookup_slow()` / mount table |
+| S19 | **VFS Routing** | Kernel | VFS `lookup_slow()` (route only; mount CRUD → P10 Service) |
 | S20 | **Storage Connector** | Kernel (driver) | block device drivers |
 | S21 | **Agent Memory** | Service | `/proc` with temporal semantics |
 | S22 | **ACE** (trajectories/playbooks/feedback) | Service | (no analogue — AI-native) |
@@ -686,7 +688,7 @@ Memory operations have distinct properties from File I/O:
 | P2 | **ContentStoreProtocol** | `core/protocols/connector.py` | Kernel | Sync | 6 (Small) | Standalone | block device read/write | Content-addressable blob storage |
 | P3 | **DirectoryOpsProtocol** | `core/protocols/connector.py` | Kernel | Sync | 3 (Micro) | Standalone | `inode_operations` mkdir/rmdir | Directory entry management |
 | P4 | **ConnectorProtocol** | `core/protocols/connector.py` | Kernel | Sync | 13 (Medium) | Composed (P2+P3) | storage driver | Full storage backend interface (ContentStore + DirectoryOps + lifecycle) |
-| P5 | **VFSRouterProtocol** | `core/protocols/vfs_router.py` | Kernel | Async | 4 (Small) | Standalone | VFS `lookup_slow()` | Route virtual path → backend + physical path |
+| P5 | **VFSRouterProtocol** | `core/protocols/vfs_router.py` | Kernel | Async | 1 (Micro) | Standalone | VFS `lookup_slow()` | Route virtual path → backend + physical path. Mount CRUD moved to P10 MountProtocol. |
 | P6 | **SearchProtocol** | `services/protocols/search.py` | Service | Mixed | 6 (Small) | Standalone | `readdir` + custom | Unified find interface (glob/grep/semantic) |
 | P7 | **SearchBrickProtocol** | `services/protocols/search.py` | Service | Mixed | 5 (Small) | Standalone | search daemon | Per-brick search with indexing lifecycle |
 | P8 | **PermissionProtocol** | `services/protocols/permission.py` | Service | Sync | 6 (Small) | Standalone | SELinux / Zanzibar | ReBAC check/write/delete/expand |
@@ -728,7 +730,7 @@ Memory operations have distinct properties from File I/O:
 | Protocol Pair | Why They're Distinct |
 |---------------|---------------------|
 | P1 (FileMetadata) ↔ P2 (ContentStore) | Metadata paths vs blob content — different data planes |
-| P5 (VFSRouter) ↔ P10 (Mount) | Kernel routing table vs user-facing mount lifecycle |
+| P5 (VFSRouter) ↔ P10 (Mount) | Kernel path resolution (1 method: `route()`) vs service-tier mount lifecycle (add/remove/sync/save/load + mount CRUD absorbed from former P5) |
 | P6 (Search) ↔ P13 (LLM) | Pattern matching vs AI inference — different compute models |
 | P8 (Permission) ↔ P18 (NamespaceManager) | Graph traversal authorization vs binary visibility check |
 | P14 (AgentRegistry) ↔ P15 (Scheduler) | Identity/state machine vs work queue — different state models |
@@ -820,7 +822,7 @@ Map each surviving scenario (S1-S28) to its canonical Ops ABC (existing or propo
 | **S16** Namespace Visibility | **P18** NamespaceManagerProtocol | EXISTS | Service | EXACT | 3 methods: is_visible/get_mount_table/invalidate |
 | **S17** Event Log (Audit) | **P19** EventLogProtocol (service) | EXISTS | Service | EXACT | 8 methods: append/batch/read/truncate/sync/close |
 | **S18** Payment | **P21** PaymentProtocol | EXISTS | Service | EXACT | Strategy pattern: protocol_name/can_handle/transfer |
-| **S19** VFS Routing | **P5** VFSRouterProtocol | EXISTS | Kernel | EXACT | 4 methods: route/add_mount/remove_mount/list_mounts |
+| **S19** VFS Routing | **P5** VFSRouterProtocol | EXISTS | Kernel | EXACT | 1 method: `route()` only. Mount CRUD moved to P10 MountProtocol (Service). |
 | **S20** Storage Connector | **P4** ConnectorProtocol | EXISTS | Kernel (driver) | EXACT | 13 methods: content + directory + lifecycle |
 | **S21** Agent Memory | *(new)* **MemoryProtocol** | MISSING | Service | — | Needs: store/get/edit/delete/search/invalidate/revalidate/history/lineage |
 | **S22** ACE | *(new)* **TrajectoryProtocol** | MISSING | Service | — | Needs: start/log_step/complete/feedback/score/playbook CRUD/reflect/curate |

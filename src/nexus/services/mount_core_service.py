@@ -119,11 +119,7 @@ class MountCoreService:
         config = backend_config.copy()
 
         # Auto-inject token_manager_db for OAuth backends
-        if (
-            backend_type
-            in ("gdrive_connector", "gmail_connector", "x_connector", "slack_connector")
-            and "token_manager_db" not in config
-        ):
+        if self._needs_token_manager_db(backend_type, config):
             try:
                 database_url = self._gw.get_database_url()
                 config["token_manager_db"] = database_url
@@ -341,6 +337,19 @@ class MountCoreService:
     # =========================================================================
     # Helper Methods
     # =========================================================================
+
+    @staticmethod
+    def _needs_token_manager_db(backend_type: str, config: dict[str, Any]) -> bool:
+        """Check if backend needs token_manager_db auto-injection."""
+        if "token_manager_db" in config:
+            return False
+        from nexus.backends.registry import ConnectorRegistry
+
+        try:
+            info = ConnectorRegistry.get_info(backend_type)
+        except KeyError:
+            return False
+        return info.user_scoped and "token_manager_db" in info.connection_args
 
     def _create_backend(self, backend_type: str, config: dict[str, Any]) -> Any:
         """Create backend instance from type and config.

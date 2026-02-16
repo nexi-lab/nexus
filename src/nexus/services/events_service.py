@@ -16,16 +16,16 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from nexus.core.path_utils import validate_path
+from nexus.core.protocols.connector import PassthroughProtocol
 from nexus.core.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
-    from nexus.backends.passthrough import PassthroughBackend
     from nexus.core.distributed_lock import LockManagerBase
     from nexus.core.event_bus import EventBusBase
     from nexus.core.file_watcher import FileWatcher
@@ -190,8 +190,10 @@ class EventsService:
             logger.debug(f"Using same-box file watcher for {path}")
             from nexus.core.event_bus import FileEvent
 
-            assert self._backend.is_passthrough, "Backend must be passthrough for this operation"
-            pt_backend = cast("PassthroughBackend", self._backend)
+            assert isinstance(self._backend, PassthroughProtocol), (
+                "Backend must implement PassthroughProtocol for this operation"
+            )
+            pt_backend = self._backend
 
             watch_path = path.rstrip("/")
             if "*" in path or "?" in path:
@@ -292,8 +294,10 @@ class EventsService:
         if self._is_same_box():
             mode = "mutex" if max_holders == 1 else f"semaphore({max_holders})"
             logger.debug(f"Using same-box lock for {path} ({mode})")
-            assert self._backend.is_passthrough, "Backend must be passthrough for this operation"
-            pt_backend = cast("PassthroughBackend", self._backend)
+            assert isinstance(self._backend, PassthroughProtocol), (
+                "Backend must implement PassthroughProtocol for this operation"
+            )
+            pt_backend = self._backend
             lock_id = pt_backend.lock(path, timeout=timeout, max_holders=max_holders)
 
             if lock_id:
@@ -390,8 +394,10 @@ class EventsService:
 
         # Layer 1: Same-box in-memory locking
         if self._is_same_box():
-            assert self._backend.is_passthrough, "Backend must be passthrough for this operation"
-            pt_backend = cast("PassthroughBackend", self._backend)
+            assert isinstance(self._backend, PassthroughProtocol), (
+                "Backend must implement PassthroughProtocol for this operation"
+            )
+            pt_backend = self._backend
             released = pt_backend.unlock(lock_id)
             if released:
                 logger.debug(f"Same-box lock released: {lock_id}")
@@ -450,10 +456,10 @@ class EventsService:
         if self._metadata_cache is not None:
             virtual_path = path
             if self._is_same_box():
-                assert self._backend.is_passthrough, (
-                    "Backend must be passthrough for this operation"
+                assert isinstance(self._backend, PassthroughProtocol), (
+                    "Backend must implement PassthroughProtocol for this operation"
                 )
-                pt_backend = cast("PassthroughBackend", self._backend)
+                pt_backend = self._backend
                 base_path = str(pt_backend.base_path)
                 if path.startswith(base_path):
                     virtual_path = path[len(base_path) :]
@@ -547,8 +553,10 @@ class EventsService:
 
         # Layer 1: Same-box file watching (OS-native callbacks)
         if self._is_same_box():
-            assert self._backend.is_passthrough, "Backend must be passthrough for this operation"
-            pt_backend = cast("PassthroughBackend", self._backend)
+            assert isinstance(self._backend, PassthroughProtocol), (
+                "Backend must implement PassthroughProtocol for this operation"
+            )
+            pt_backend = self._backend
             try:
                 watcher = self._get_file_watcher()
 

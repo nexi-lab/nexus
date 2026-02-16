@@ -76,7 +76,7 @@ async def _close_streams_after(task_manager: TaskManager, delay: float = 0.05) -
     being cleanly shut down, preventing hangs in tests.
     """
     await asyncio.sleep(delay)
-    for queues in task_manager._active_streams.values():
+    for queues in task_manager.stream_registry._active_streams.values():
         for q in queues:
             q.put_nowait(None)
 

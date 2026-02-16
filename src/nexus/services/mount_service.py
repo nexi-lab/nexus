@@ -28,6 +28,20 @@ from nexus.core.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
 
+
+def _needs_token_manager_db(backend_type: str, config: dict[str, Any]) -> bool:
+    """Check if backend needs token_manager_db auto-injection."""
+    if "token_manager_db" in config:
+        return False
+    from nexus.backends.registry import ConnectorRegistry
+
+    try:
+        info = ConnectorRegistry.get_info(backend_type)
+    except KeyError:
+        return False
+    return info.user_scoped and "token_manager_db" in info.connection_args
+
+
 # Type alias for progress callback: (files_scanned: int, current_path: str) -> None
 ProgressCallback = Callable[[int, str], None]
 
@@ -163,10 +177,7 @@ class MountService:
             config = backend_config.copy()
 
             # Auto-inject token_manager_db for OAuth-backed connectors
-            if (
-                backend_type in ("gdrive_connector", "gmail_connector", "x_connector")
-                and "token_manager_db" not in config
-            ):
+            if _needs_token_manager_db(backend_type, config):
                 # Use centralized database URL resolution
                 if self.nexus_fs:
                     try:
@@ -692,7 +703,7 @@ class MountService:
 
         # Normalize token_manager_db for OAuth-backed mounts
         backend_type = mount_config["backend_type"]
-        if backend_type in ("gdrive_connector", "gmail_connector", "x_connector"):
+        if _needs_token_manager_db(backend_type, backend_config):
             if self.nexus_fs:
                 try:
                     database_url = get_database_url(self.nexus_fs)

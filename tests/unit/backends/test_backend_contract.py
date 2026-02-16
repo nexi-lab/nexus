@@ -1,15 +1,4 @@
-"""Backend contract tests (Issue #1601).
-
-Defines the behavioral contract that ALL Backend implementations must satisfy.
-Uses the MockBackend as a reference implementation and runs the same tests
-against LocalBackend (via tmp_path) for real-world validation.
-
-Tests verify:
-- Content operations (CAS semantics)
-- Directory operations
-- Capability flags
-- Protocol conformance (ContentStoreProtocol, ConnectorProtocol)
-"""
+"""Backend contract tests -- parametrized across MockBackend and LocalBackend (Issue #1601)."""
 
 from __future__ import annotations
 
@@ -25,11 +14,6 @@ from nexus.core.protocols.connector import (
     DirectoryOpsProtocol,
 )
 from nexus.core.response import HandlerResponse
-
-# ---------------------------------------------------------------------------
-# Reusable MockBackend (copied from tests/unit/cache/mock_backend.py to
-# avoid import issues with conftest)
-# ---------------------------------------------------------------------------
 
 
 class _MockBackend(Backend):
@@ -113,9 +97,12 @@ class _MockBackend(Backend):
         return HandlerResponse.ok(data=path in self._dirs, backend_name="mock")
 
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
+class _IncompleteBackend:
+    """Missing most protocol methods -- should fail isinstance checks."""
+
+    @property
+    def name(self) -> str:
+        return "incomplete"
 
 
 @pytest.fixture()
@@ -130,154 +117,128 @@ def local_backend(tmp_path: Any) -> Backend:
     return LocalBackend(root_path=str(tmp_path / "nexus-data"))
 
 
-# ---------------------------------------------------------------------------
-# Contract test class — parametrized by backend fixture
-# ---------------------------------------------------------------------------
+@pytest.fixture(params=["mock", "local"])
+def backend(request: Any, tmp_path: Any) -> Backend:
+    """Parametrized fixture providing mock and local backends."""
+    if request.param == "mock":
+        return _MockBackend()
+    elif request.param == "local":
+        from nexus.backends.local import LocalBackend
+
+        return LocalBackend(root_path=str(tmp_path / "nexus-data"))
+    raise ValueError(f"Unknown backend: {request.param}")
 
 
-class BackendContractTests:
-    """Reusable contract tests for any Backend implementation.
+class TestBackendContract:
+    """Contract tests run against all backend implementations."""
 
-    Subclass or use parametrize to run against different backends.
-    """
+    # -- Content Operations (CAS) --
 
-    # === Content Operations (CAS) ===
-
-    @staticmethod
-    def test_write_then_read_roundtrip(backend: Backend) -> None:
+    def test_write_then_read_roundtrip(self, backend: Backend) -> None:
         content = b"hello world"
         write_resp = backend.write_content(content)
         assert write_resp.success
         content_hash = write_resp.data
-
+        assert content_hash is not None
         read_resp = backend.read_content(content_hash)
         assert read_resp.success
         assert read_resp.data == content
 
-    @staticmethod
-    def test_content_exists_after_write(backend: Backend) -> None:
+    def test_content_exists_after_write(self, backend: Backend) -> None:
         content = b"test exists"
-        write_resp = backend.write_content(content)
-        content_hash = write_resp.data
-
+        content_hash = backend.write_content(content).data
+        assert content_hash is not None
         exists_resp = backend.content_exists(content_hash)
         assert exists_resp.success
         assert exists_resp.data is True
 
-    @staticmethod
-    def test_content_not_exists_for_unknown(backend: Backend) -> None:
-        fake_hash = "0" * 64
-        exists_resp = backend.content_exists(fake_hash)
+    def test_content_not_exists_for_unknown(self, backend: Backend) -> None:
+        exists_resp = backend.content_exists("0" * 64)
         assert exists_resp.success
         assert exists_resp.data is False
 
-    @staticmethod
-    def test_delete_removes_content(backend: Backend) -> None:
+    def test_delete_removes_content(self, backend: Backend) -> None:
         content = b"delete me"
-        write_resp = backend.write_content(content)
-        content_hash = write_resp.data
-
+        content_hash = backend.write_content(content).data
+        assert content_hash is not None
         del_resp = backend.delete_content(content_hash)
         assert del_resp.success
+        assert backend.content_exists(content_hash).data is False
 
-        exists_resp = backend.content_exists(content_hash)
-        assert exists_resp.data is False
-
-    @staticmethod
-    def test_write_is_idempotent(backend: Backend) -> None:
+    def test_write_is_idempotent(self, backend: Backend) -> None:
         """CAS: writing same content twice returns same hash."""
         content = b"idempotent data"
-        hash1 = backend.write_content(content).data
-        hash2 = backend.write_content(content).data
-        assert hash1 == hash2
+        resp1 = backend.write_content(content)
+        resp2 = backend.write_content(content)
+        assert resp1.data is not None
+        assert resp2.data is not None
+        assert resp1.data == resp2.data
 
-    @staticmethod
-    def test_get_content_size_correct(backend: Backend) -> None:
+    def test_get_content_size_correct(self, backend: Backend) -> None:
         content = b"measure me"
-        write_resp = backend.write_content(content)
-        content_hash = write_resp.data
-
+        content_hash = backend.write_content(content).data
+        assert content_hash is not None
         size_resp = backend.get_content_size(content_hash)
         assert size_resp.success
         assert size_resp.data == len(content)
 
-    @staticmethod
-    def test_get_ref_count_after_writes(backend: Backend) -> None:
+    def test_get_ref_count_after_writes(self, backend: Backend) -> None:
         content = b"ref counting"
         backend.write_content(content)
-        write_resp = backend.write_content(content)  # Second write
-        content_hash = write_resp.data
-
+        content_hash = backend.write_content(content).data  # Second write
+        assert content_hash is not None
         ref_resp = backend.get_ref_count(content_hash)
         assert ref_resp.success
+        assert ref_resp.data is not None
         assert ref_resp.data >= 2
 
-    @staticmethod
-    def test_read_nonexistent_content_fails(backend: Backend) -> None:
-        fake_hash = "a" * 64
-        read_resp = backend.read_content(fake_hash)
+    def test_read_nonexistent_content_fails(self, backend: Backend) -> None:
+        read_resp = backend.read_content("a" * 64)
         assert not read_resp.success
 
-    @staticmethod
-    def test_delete_nonexistent_is_safe(backend: Backend) -> None:
+    def test_delete_nonexistent_is_safe(self, backend: Backend) -> None:
         """Deleting non-existent content should not raise."""
-        fake_hash = "b" * 64
-        del_resp = backend.delete_content(fake_hash)
-        # Should return not_found but not crash
+        del_resp = backend.delete_content("b" * 64)
         assert not del_resp.success
 
-    @staticmethod
-    def test_batch_read_partial_missing(backend: Backend) -> None:
+    def test_batch_read_partial_missing(self, backend: Backend) -> None:
         content = b"batch test"
-        write_resp = backend.write_content(content)
-        real_hash = write_resp.data
+        real_hash = backend.write_content(content).data
+        assert real_hash is not None
         fake_hash = "c" * 64
-
         results = backend.batch_read_content([real_hash, fake_hash])
         assert results[real_hash] == content
         assert results[fake_hash] is None
 
-    # === Directory Operations ===
+    # -- Directory Operations --
 
-    @staticmethod
-    def test_mkdir_creates_directory(backend: Backend) -> None:
+    def test_mkdir_creates_directory(self, backend: Backend) -> None:
         resp = backend.mkdir("/testdir", exist_ok=True)
         assert resp.success
-
         is_dir_resp = backend.is_directory("/testdir")
         assert is_dir_resp.success
         assert is_dir_resp.data is True
 
-    @staticmethod
-    def test_rmdir_removes_directory(backend: Backend) -> None:
+    def test_rmdir_removes_directory(self, backend: Backend) -> None:
         backend.mkdir("/toremove", exist_ok=True)
-        resp = backend.rmdir("/toremove")
-        assert resp.success
+        assert backend.rmdir("/toremove").success
+        assert backend.is_directory("/toremove").data is False
 
-        is_dir_resp = backend.is_directory("/toremove")
-        assert is_dir_resp.data is False
-
-    @staticmethod
-    def test_is_directory_false_for_nonexistent(backend: Backend) -> None:
+    def test_is_directory_false_for_nonexistent(self, backend: Backend) -> None:
         resp = backend.is_directory("/nonexistent")
         assert resp.success
         assert resp.data is False
 
-    @staticmethod
-    def test_mkdir_parents(backend: Backend) -> None:
-        resp = backend.mkdir("/a/b/c", parents=True, exist_ok=True)
-        assert resp.success
+    def test_mkdir_parents(self, backend: Backend) -> None:
+        assert backend.mkdir("/a/b/c", parents=True, exist_ok=True).success
 
-    @staticmethod
-    def test_mkdir_exist_ok(backend: Backend) -> None:
+    def test_mkdir_exist_ok(self, backend: Backend) -> None:
         backend.mkdir("/existing", exist_ok=True)
-        resp = backend.mkdir("/existing", exist_ok=True)
-        assert resp.success
+        assert backend.mkdir("/existing", exist_ok=True).success
 
-    # === Capability Flags ===
+    # -- Capability Flags --
 
-    @staticmethod
-    def test_capability_flags_are_booleans(backend: Backend) -> None:
+    def test_capability_flags_are_booleans(self, backend: Backend) -> None:
         assert isinstance(backend.user_scoped, bool)
         assert isinstance(backend.is_connected, bool)
         assert isinstance(backend.is_passthrough, bool)
@@ -285,231 +246,62 @@ class BackendContractTests:
         assert isinstance(backend.has_virtual_filesystem, bool)
         assert isinstance(backend.has_token_manager, bool)
 
-    @staticmethod
-    def test_name_returns_string(backend: Backend) -> None:
+    def test_name_returns_string(self, backend: Backend) -> None:
         assert isinstance(backend.name, str)
         assert len(backend.name) > 0
 
-    # === Connection Lifecycle ===
+    # -- Connection Lifecycle --
 
-    @staticmethod
-    def test_connect_returns_status(backend: Backend) -> None:
-        resp = backend.connect()
-        assert resp.success is True
+    def test_connect_returns_status(self, backend: Backend) -> None:
+        assert backend.connect().success is True
 
-    @staticmethod
-    def test_check_connection_returns_status(backend: Backend) -> None:
-        resp = backend.check_connection()
-        assert isinstance(resp.success, bool)
+    def test_check_connection_returns_status(self, backend: Backend) -> None:
+        assert isinstance(backend.check_connection().success, bool)
 
-    @staticmethod
-    def test_disconnect_does_not_raise(backend: Backend) -> None:
+    def test_disconnect_does_not_raise(self, backend: Backend) -> None:
         backend.disconnect()  # Should not raise
 
-    # === Protocol Conformance ===
+    # -- Protocol Conformance --
 
-    @staticmethod
-    def test_backend_satisfies_content_store_protocol(backend: Backend) -> None:
+    def test_backend_satisfies_content_store_protocol(self, backend: Backend) -> None:
         assert isinstance(backend, ContentStoreProtocol)
 
-    @staticmethod
-    def test_backend_satisfies_directory_ops_protocol(backend: Backend) -> None:
+    def test_backend_satisfies_directory_ops_protocol(self, backend: Backend) -> None:
         assert isinstance(backend, DirectoryOpsProtocol)
 
-    @staticmethod
-    def test_backend_satisfies_connector_protocol(backend: Backend) -> None:
+    def test_backend_satisfies_connector_protocol(self, backend: Backend) -> None:
         assert isinstance(backend, ConnectorProtocol)
 
-    # === Context Passthrough ===
+    # -- Context Passthrough --
 
-    @staticmethod
-    def test_write_with_context(backend: Backend) -> None:
+    def test_write_with_context(self, backend: Backend) -> None:
         """Passing context=None should not crash."""
-        resp = backend.write_content(b"ctx test", context=None)
-        assert resp.success
+        assert backend.write_content(b"ctx test", context=None).success
 
-    @staticmethod
-    def test_read_with_context(backend: Backend) -> None:
-        write_resp = backend.write_content(b"ctx read", context=None)
-        read_resp = backend.read_content(write_resp.data, context=None)
-        assert read_resp.success
+    def test_read_with_context(self, backend: Backend) -> None:
+        content_hash = backend.write_content(b"ctx read", context=None).data
+        assert content_hash is not None
+        assert backend.read_content(content_hash, context=None).success
 
 
-# ---------------------------------------------------------------------------
-# Run contract tests against MockBackend
-# ---------------------------------------------------------------------------
+class TestLocalBackendSpecific:
+    """LocalBackend-specific tests not covered by contract."""
+
+    def test_local_has_root_path(self, local_backend: Backend) -> None:
+        assert local_backend.has_root_path is True
 
 
-class TestMockBackendContract:
-    """Contract tests against MockBackend (reference implementation)."""
+class TestNegativeProtocolConformance:
+    """Incomplete objects must NOT satisfy protocols."""
 
-    @pytest.fixture(autouse=True)
-    def _setup(self, mock_backend: _MockBackend) -> None:
-        self.backend = mock_backend
+    def test_incomplete_not_content_store(self) -> None:
+        obj = _IncompleteBackend()
+        assert not isinstance(obj, ContentStoreProtocol)
 
-    def test_write_then_read_roundtrip(self) -> None:
-        BackendContractTests.test_write_then_read_roundtrip(self.backend)
+    def test_incomplete_not_connector(self) -> None:
+        obj = _IncompleteBackend()
+        assert not isinstance(obj, ConnectorProtocol)
 
-    def test_content_exists_after_write(self) -> None:
-        BackendContractTests.test_content_exists_after_write(self.backend)
-
-    def test_content_not_exists_for_unknown(self) -> None:
-        BackendContractTests.test_content_not_exists_for_unknown(self.backend)
-
-    def test_delete_removes_content(self) -> None:
-        BackendContractTests.test_delete_removes_content(self.backend)
-
-    def test_write_is_idempotent(self) -> None:
-        BackendContractTests.test_write_is_idempotent(self.backend)
-
-    def test_get_content_size_correct(self) -> None:
-        BackendContractTests.test_get_content_size_correct(self.backend)
-
-    def test_get_ref_count_after_writes(self) -> None:
-        BackendContractTests.test_get_ref_count_after_writes(self.backend)
-
-    def test_read_nonexistent_content_fails(self) -> None:
-        BackendContractTests.test_read_nonexistent_content_fails(self.backend)
-
-    def test_delete_nonexistent_is_safe(self) -> None:
-        BackendContractTests.test_delete_nonexistent_is_safe(self.backend)
-
-    def test_batch_read_partial_missing(self) -> None:
-        BackendContractTests.test_batch_read_partial_missing(self.backend)
-
-    def test_mkdir_creates_directory(self) -> None:
-        BackendContractTests.test_mkdir_creates_directory(self.backend)
-
-    def test_rmdir_removes_directory(self) -> None:
-        BackendContractTests.test_rmdir_removes_directory(self.backend)
-
-    def test_is_directory_false_for_nonexistent(self) -> None:
-        BackendContractTests.test_is_directory_false_for_nonexistent(self.backend)
-
-    def test_mkdir_parents(self) -> None:
-        BackendContractTests.test_mkdir_parents(self.backend)
-
-    def test_mkdir_exist_ok(self) -> None:
-        BackendContractTests.test_mkdir_exist_ok(self.backend)
-
-    def test_capability_flags_are_booleans(self) -> None:
-        BackendContractTests.test_capability_flags_are_booleans(self.backend)
-
-    def test_name_returns_string(self) -> None:
-        BackendContractTests.test_name_returns_string(self.backend)
-
-    def test_connect_returns_status(self) -> None:
-        BackendContractTests.test_connect_returns_status(self.backend)
-
-    def test_check_connection_returns_status(self) -> None:
-        BackendContractTests.test_check_connection_returns_status(self.backend)
-
-    def test_disconnect_does_not_raise(self) -> None:
-        BackendContractTests.test_disconnect_does_not_raise(self.backend)
-
-    def test_backend_satisfies_content_store_protocol(self) -> None:
-        BackendContractTests.test_backend_satisfies_content_store_protocol(self.backend)
-
-    def test_backend_satisfies_directory_ops_protocol(self) -> None:
-        BackendContractTests.test_backend_satisfies_directory_ops_protocol(self.backend)
-
-    def test_backend_satisfies_connector_protocol(self) -> None:
-        BackendContractTests.test_backend_satisfies_connector_protocol(self.backend)
-
-    def test_write_with_context(self) -> None:
-        BackendContractTests.test_write_with_context(self.backend)
-
-    def test_read_with_context(self) -> None:
-        BackendContractTests.test_read_with_context(self.backend)
-
-
-# ---------------------------------------------------------------------------
-# Run contract tests against LocalBackend (real filesystem)
-# ---------------------------------------------------------------------------
-
-
-class TestLocalBackendContract:
-    """Contract tests against LocalBackend (real filesystem)."""
-
-    @pytest.fixture(autouse=True)
-    def _setup(self, local_backend: Backend) -> None:
-        self.backend = local_backend
-
-    def test_write_then_read_roundtrip(self) -> None:
-        BackendContractTests.test_write_then_read_roundtrip(self.backend)
-
-    def test_content_exists_after_write(self) -> None:
-        BackendContractTests.test_content_exists_after_write(self.backend)
-
-    def test_content_not_exists_for_unknown(self) -> None:
-        BackendContractTests.test_content_not_exists_for_unknown(self.backend)
-
-    def test_delete_removes_content(self) -> None:
-        BackendContractTests.test_delete_removes_content(self.backend)
-
-    def test_write_is_idempotent(self) -> None:
-        BackendContractTests.test_write_is_idempotent(self.backend)
-
-    def test_get_content_size_correct(self) -> None:
-        BackendContractTests.test_get_content_size_correct(self.backend)
-
-    def test_get_ref_count_after_writes(self) -> None:
-        BackendContractTests.test_get_ref_count_after_writes(self.backend)
-
-    def test_read_nonexistent_content_fails(self) -> None:
-        BackendContractTests.test_read_nonexistent_content_fails(self.backend)
-
-    def test_delete_nonexistent_is_safe(self) -> None:
-        BackendContractTests.test_delete_nonexistent_is_safe(self.backend)
-
-    def test_batch_read_partial_missing(self) -> None:
-        BackendContractTests.test_batch_read_partial_missing(self.backend)
-
-    def test_mkdir_creates_directory(self) -> None:
-        BackendContractTests.test_mkdir_creates_directory(self.backend)
-
-    def test_rmdir_removes_directory(self) -> None:
-        BackendContractTests.test_rmdir_removes_directory(self.backend)
-
-    def test_is_directory_false_for_nonexistent(self) -> None:
-        BackendContractTests.test_is_directory_false_for_nonexistent(self.backend)
-
-    def test_mkdir_parents(self) -> None:
-        BackendContractTests.test_mkdir_parents(self.backend)
-
-    def test_mkdir_exist_ok(self) -> None:
-        BackendContractTests.test_mkdir_exist_ok(self.backend)
-
-    def test_capability_flags_are_booleans(self) -> None:
-        BackendContractTests.test_capability_flags_are_booleans(self.backend)
-
-    def test_name_returns_string(self) -> None:
-        BackendContractTests.test_name_returns_string(self.backend)
-
-    def test_connect_returns_status(self) -> None:
-        BackendContractTests.test_connect_returns_status(self.backend)
-
-    def test_check_connection_returns_status(self) -> None:
-        BackendContractTests.test_check_connection_returns_status(self.backend)
-
-    def test_disconnect_does_not_raise(self) -> None:
-        BackendContractTests.test_disconnect_does_not_raise(self.backend)
-
-    def test_backend_satisfies_content_store_protocol(self) -> None:
-        BackendContractTests.test_backend_satisfies_content_store_protocol(self.backend)
-
-    def test_backend_satisfies_directory_ops_protocol(self) -> None:
-        BackendContractTests.test_backend_satisfies_directory_ops_protocol(self.backend)
-
-    def test_backend_satisfies_connector_protocol(self) -> None:
-        BackendContractTests.test_backend_satisfies_connector_protocol(self.backend)
-
-    def test_write_with_context(self) -> None:
-        BackendContractTests.test_write_with_context(self.backend)
-
-    def test_read_with_context(self) -> None:
-        BackendContractTests.test_read_with_context(self.backend)
-
-    def test_local_has_root_path(self) -> None:
-        """LocalBackend-specific: has_root_path should be True."""
-        assert self.backend.has_root_path is True
+    def test_incomplete_not_directory_ops(self) -> None:
+        obj = _IncompleteBackend()
+        assert not isinstance(obj, DirectoryOpsProtocol)

@@ -5,37 +5,28 @@ Implements:
 - ``POST /a2a`` — JSON-RPC 2.0 dispatch for all A2A methods
 - SSE streaming via ``StreamingResponse`` for ``sendStreamingMessage``
   and ``subscribeToTask``
+
+This module handles only HTTP concerns (auth, body parsing, error
+wrapping).  Business logic lives in ``handlers.py`` and
+``streaming.py``.
 """
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-import time
-from collections.abc import AsyncGenerator, Awaitable, Callable
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse, Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response
+from pydantic import ValidationError
 
 from nexus.a2a.agent_card import AgentCardCache
-from nexus.a2a.exceptions import (
-    A2AError,
-    InvalidParamsError,
-    MethodNotFoundError,
-    PushNotificationNotSupportedError,
-)
-from nexus.a2a.models import (
-    TERMINAL_STATES,
-    A2AErrorData,
-    A2ARequest,
-    A2AResponse,
-    SendParams,
-    TaskIdParams,
-    TaskQueryParams,
-    TaskState,
-)
+from nexus.a2a.exceptions import A2AError
+from nexus.a2a.handlers import dispatch
+from nexus.a2a.models import A2AErrorData, A2ARequest, A2AResponse
+from nexus.a2a.streaming import handle_streaming
 from nexus.a2a.task_manager import TaskManager
 from nexus.constants import DEFAULT_NEXUS_URL
 
@@ -44,9 +35,20 @@ logger = logging.getLogger(__name__)
 # Type alias for the injected auth callback
 AuthFn = Callable[[Request], Awaitable[dict[str, Any] | None]]
 
-# SSE configuration
-SSE_KEEPALIVE_INTERVAL = 15  # seconds
-SSE_MAX_LIFETIME = 1800  # 30 minutes
+
+def _error_response(
+    request_id: str | int | None,
+    code: int,
+    message: str,
+    data: dict[str, Any] | None = None,
+) -> JSONResponse:
+    """Build a JSON-RPC error JSONResponse."""
+    error = A2AErrorData(code=code, message=message, data=data)
+    resp = A2AResponse.from_error(request_id, error)
+    return JSONResponse(
+        content=resp.model_dump(mode="json", exclude_none=True),
+        status_code=200,
+    )
 
 
 def build_router(
@@ -60,34 +62,30 @@ def build_router(
 ) -> APIRouter:
     """Build and return the A2A FastAPI router.
 
-    This function is called once during server startup.
-
     Parameters
     ----------
     task_manager:
         Optional pre-built TaskManager (useful for testing).
-        When *None* a new instance is created.
     auth_required:
         When *True*, all A2A operational endpoints require a valid
-        ``Authorization`` header.  The Agent Card endpoint remains
-        public regardless of this setting.
+        ``Authorization`` header.
     auth_fn:
-        Optional async callback ``(Request) -> dict | None`` that
-        resolves authentication.  Injected by the server layer so
-        that this module has **zero** imports from ``nexus.server``.
+        Optional async callback ``(Request) -> dict | None`` for
+        authentication.
     """
     effective_base_url = base_url or DEFAULT_NEXUS_URL
 
     router = APIRouter(tags=["a2a"])
     if task_manager is None:
         task_manager = TaskManager()
-    tm: TaskManager = task_manager  # Final binding for closure narrowing
+    tm: TaskManager = task_manager
+    stream_registry = tm.stream_registry
 
-    # Per-router Agent Card cache (no shared global state)
+    # Per-router Agent Card cache
     card_cache = AgentCardCache()
 
     # ------------------------------------------------------------------
-    # Closure-local auth helper (captures auth_fn)
+    # Closure-local auth helper
     # ------------------------------------------------------------------
 
     async def _get_auth_result(request: Request) -> dict[str, Any] | None:
@@ -100,11 +98,10 @@ def build_router(
             return None
 
     # ------------------------------------------------------------------
-    # Closure-local extended card handler (captures card_cache + config)
+    # Closure-local extended card handler
     # ------------------------------------------------------------------
 
     async def _handle_extended_card() -> dict[str, Any]:
-        """Return the full Agent Card (authenticated endpoint)."""
         card = card_cache.get_card()
         if card is None:
             card_bytes = card_cache.get_card_bytes(config=config, base_url=effective_base_url)
@@ -118,12 +115,6 @@ def build_router(
 
     @router.get("/.well-known/agent.json")
     async def get_agent_card() -> Response:
-        """Serve the A2A Agent Card.
-
-        This is a public endpoint — no authentication required.
-        Other agents use it to discover capabilities before initiating
-        communication.
-        """
         card_bytes = card_cache.get_card_bytes(
             config=config,
             base_url=effective_base_url,
@@ -136,19 +127,7 @@ def build_router(
 
     @router.post("/a2a")
     async def a2a_dispatch(request: Request) -> Response:
-        """A2A JSON-RPC 2.0 endpoint.
-
-        Dispatches to the appropriate handler based on the ``method`` field.
-        Streaming methods return SSE responses.
-
-        **Authentication**: When the server has authentication enabled, all
-        A2A requests require a valid ``Authorization`` header. This follows
-        real-world A2A implementations (ServiceNow, LangSmith, etc.) which
-        require auth for all operational endpoints.
-        """
-        # Enforce authentication when server has auth configured
-        # Per A2A spec: "All A2A requests must include a valid Authorization header"
-        # Reference: https://a2a-protocol.org/latest/topics/enterprise-ready/
+        # Enforce authentication
         if auth_required:
             auth_header = request.headers.get("Authorization")
             if not auth_header:
@@ -173,29 +152,17 @@ def build_router(
                 headers={"WWW-Authenticate": 'Bearer realm="A2A"'},
             )
 
+        # Parse JSON body
         try:
             body = await request.json()
         except Exception:
-            error = A2AErrorData(code=-32700, message="Parse error")
-            resp = A2AResponse.from_error(None, error)
-            return JSONResponse(
-                content=resp.model_dump(mode="json", exclude_none=True),
-                status_code=200,
-            )
+            return _error_response(None, -32700, "Parse error")
 
+        # Validate JSON-RPC request
         try:
             rpc_request = A2ARequest.model_validate(body)
-        except Exception as e:
-            error = A2AErrorData(
-                code=-32600,
-                message="Invalid request",
-                data={"detail": str(e)},
-            )
-            resp = A2AResponse.from_error(body.get("id"), error)
-            return JSONResponse(
-                content=resp.model_dump(mode="json", exclude_none=True),
-                status_code=200,
-            )
+        except ValidationError as e:
+            return _error_response(body.get("id"), -32600, "Invalid request", {"detail": str(e)})
 
         method = rpc_request.method
         params = rpc_request.params or {}
@@ -206,37 +173,24 @@ def build_router(
         # Streaming methods return SSE
         if method in ("a2a.tasks.sendStreamingMessage", "a2a.tasks.subscribeToTask"):
             try:
-                return await _handle_streaming(
+                return await handle_streaming(
                     method=method,
                     params=params,
                     request_id=request_id,
                     zone_id=zone_id,
                     agent_id=agent_id,
                     task_manager=tm,
+                    stream_registry=stream_registry,
                 )
             except A2AError as e:
-                resp = A2AResponse.from_error(
-                    request_id,
-                    A2AErrorData(code=e.code, message=e.message, data=e.data),
-                )
-                return JSONResponse(
-                    content=resp.model_dump(mode="json", exclude_none=True),
-                    status_code=200,
-                )
+                return _error_response(request_id, e.code, e.message, e.data)
             except Exception:
                 logger.exception("Unexpected error in A2A streaming dispatch")
-                resp = A2AResponse.from_error(
-                    request_id,
-                    A2AErrorData(code=-32603, message="Internal error"),
-                )
-                return JSONResponse(
-                    content=resp.model_dump(mode="json", exclude_none=True),
-                    status_code=200,
-                )
+                return _error_response(request_id, -32603, "Internal error")
 
         # Non-streaming methods return JSON-RPC
         try:
-            result = await _dispatch(
+            result = await dispatch(
                 method=method,
                 params=params,
                 zone_id=zone_id,
@@ -266,258 +220,8 @@ def build_router(
 
 
 # ======================================================================
-# Dispatch table
-# ======================================================================
-
-
-async def _dispatch(
-    *,
-    method: str,
-    params: dict[str, Any],
-    zone_id: str,
-    agent_id: str | None,
-    task_manager: TaskManager,
-    handle_extended_card: Callable[[], Awaitable[dict[str, Any]]],
-) -> Any:
-    """Route a JSON-RPC method to its handler."""
-
-    if method == "a2a.tasks.send":
-        return await _handle_send(params, zone_id, agent_id, task_manager)
-    elif method == "a2a.tasks.get":
-        return await _handle_get(params, zone_id, task_manager)
-    elif method == "a2a.tasks.cancel":
-        return await _handle_cancel(params, zone_id, task_manager)
-    elif method == "a2a.agent.getExtendedAgentCard":
-        return await handle_extended_card()
-    elif method in (
-        "a2a.tasks.createPushNotificationConfig",
-        "a2a.tasks.getPushNotificationConfig",
-        "a2a.tasks.deletePushNotificationConfig",
-        "a2a.tasks.listPushNotificationConfigs",
-    ):
-        raise PushNotificationNotSupportedError()
-    else:
-        raise MethodNotFoundError(data={"method": method})
-
-
-# ======================================================================
-# Method handlers
-# ======================================================================
-
-
-async def _handle_send(
-    params: dict[str, Any],
-    zone_id: str,
-    agent_id: str | None,
-    task_manager: TaskManager,
-) -> dict[str, Any]:
-    """Handle a2a.tasks.send — create or continue a task."""
-    try:
-        send_params = SendParams.model_validate(params)
-    except Exception as e:
-        raise InvalidParamsError(data={"detail": str(e)}) from e
-
-    # If params include an existing taskId (continuation), update it
-    task_id = params.get("taskId")
-    if task_id:
-        task = await task_manager.get_task(task_id, zone_id=zone_id)
-        # Reject continuation of terminal tasks
-        if task.status.state in TERMINAL_STATES:
-            raise InvalidParamsError(
-                data={
-                    "taskId": task_id,
-                    "currentState": task.status.state.value,
-                    "detail": "Cannot continue a task in terminal state.",
-                }
-            )
-        # Add message to history and transition to working
-        task = await task_manager.update_task_state(
-            task_id,
-            TaskState.WORKING,
-            zone_id=zone_id,
-            message=send_params.message,
-        )
-        return task.model_dump(mode="json")
-
-    # New task
-    task = await task_manager.create_task(
-        send_params.message,
-        zone_id=zone_id,
-        agent_id=agent_id,
-        metadata=send_params.metadata,
-    )
-    return task.model_dump(mode="json")
-
-
-async def _handle_get(
-    params: dict[str, Any],
-    zone_id: str,
-    task_manager: TaskManager,
-) -> dict[str, Any]:
-    """Handle a2a.tasks.get — retrieve a task by ID."""
-    try:
-        query_params = TaskQueryParams.model_validate(params)
-    except Exception as e:
-        raise InvalidParamsError(data={"detail": str(e)}) from e
-
-    task = await task_manager.get_task(
-        query_params.taskId,
-        zone_id=zone_id,
-        history_length=query_params.historyLength,
-    )
-    return task.model_dump(mode="json")
-
-
-async def _handle_cancel(
-    params: dict[str, Any],
-    zone_id: str,
-    task_manager: TaskManager,
-) -> dict[str, Any]:
-    """Handle a2a.tasks.cancel — cancel a running task."""
-    try:
-        cancel_params = TaskIdParams.model_validate(params)
-    except Exception as e:
-        raise InvalidParamsError(data={"detail": str(e)}) from e
-
-    task = await task_manager.cancel_task(cancel_params.taskId, zone_id=zone_id)
-    return task.model_dump(mode="json")
-
-
-# ======================================================================
-# SSE streaming
-# ======================================================================
-
-
-async def _sse_event_loop(
-    task: Any,
-    queue: asyncio.Queue[dict[str, Any] | None],
-    task_manager: TaskManager,
-) -> AsyncGenerator[str, None]:
-    """Shared SSE event loop with keepalive and max lifetime.
-
-    Used by both ``sendStreamingMessage`` and ``subscribeToTask``.
-    """
-    try:
-        # First event: current task state
-        yield _format_sse_event({"task": task.model_dump(mode="json")})
-
-        # If already terminal, stop
-        if task.status.state in TERMINAL_STATES:
-            return
-
-        start_time = time.monotonic()
-        while True:
-            if time.monotonic() - start_time > SSE_MAX_LIFETIME:
-                break
-            try:
-                event = await asyncio.wait_for(queue.get(), timeout=SSE_KEEPALIVE_INTERVAL)
-            except TimeoutError:
-                yield ": keepalive\n\n"
-                continue
-            if event is None:
-                break
-            yield _format_sse_event(event)
-            status_update = event.get("statusUpdate")
-            if status_update and status_update.get("final"):
-                break
-    except (asyncio.CancelledError, GeneratorExit):
-        pass
-    finally:
-        task_manager.unregister_stream(task.id, queue)
-
-
-async def _handle_streaming(
-    *,
-    method: str,
-    params: dict[str, Any],
-    request_id: str | int,
-    zone_id: str,
-    agent_id: str | None,
-    task_manager: TaskManager,
-) -> Response:
-    """Handle streaming methods — returns an SSE StreamingResponse."""
-
-    if method == "a2a.tasks.sendStreamingMessage":
-        return await _handle_send_streaming(params, request_id, zone_id, agent_id, task_manager)
-    elif method == "a2a.tasks.subscribeToTask":
-        return await _handle_subscribe(params, request_id, zone_id, task_manager)
-    else:
-        # Should not reach here
-        error = A2AErrorData(code=-32601, message="Method not found")
-        resp = A2AResponse.from_error(request_id, error)
-        return JSONResponse(
-            content=resp.model_dump(mode="json", exclude_none=True),
-            status_code=200,
-        )
-
-
-async def _handle_send_streaming(
-    params: dict[str, Any],
-    _request_id: str | int,
-    zone_id: str,
-    agent_id: str | None,
-    task_manager: TaskManager,
-) -> StreamingResponse:
-    """Handle a2a.tasks.sendStreamingMessage — SSE response."""
-    try:
-        send_params = SendParams.model_validate(params)
-    except Exception as e:
-        raise InvalidParamsError(data={"detail": str(e)}) from e
-
-    task = await task_manager.create_task(
-        send_params.message,
-        zone_id=zone_id,
-        agent_id=agent_id,
-        metadata=send_params.metadata,
-    )
-    queue = task_manager.register_stream(task.id)
-
-    return StreamingResponse(
-        _sse_event_loop(task, queue, task_manager),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
-async def _handle_subscribe(
-    params: dict[str, Any],
-    _request_id: str | int,
-    zone_id: str,
-    task_manager: TaskManager,
-) -> StreamingResponse:
-    """Handle a2a.tasks.subscribeToTask — SSE response for existing task."""
-    try:
-        subscribe_params = TaskIdParams.model_validate(params)
-    except Exception as e:
-        raise InvalidParamsError(data={"detail": str(e)}) from e
-
-    task = await task_manager.get_task(subscribe_params.taskId, zone_id=zone_id)
-    queue = task_manager.register_stream(task.id)
-
-    return StreamingResponse(
-        _sse_event_loop(task, queue, task_manager),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
-# ======================================================================
 # Utilities
 # ======================================================================
-
-
-def _format_sse_event(data: dict[str, Any]) -> str:
-    """Format a dict as an SSE event string."""
-    payload = json.dumps(data, default=str)
-    return f"data: {payload}\n\n"
 
 
 def _extract_zone_id(auth_result: dict[str, Any] | None) -> str:

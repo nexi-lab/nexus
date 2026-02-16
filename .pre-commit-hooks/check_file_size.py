@@ -25,8 +25,9 @@ EXCEPTIONS = [
     "src/nexus/core/nexus_fs_mounts.py",  # 2,048 lines - Phase 2 refactoring
     "src/nexus/core/nexus_fs_oauth.py",  # 1,116 lines - Phase 2 refactoring
     "src/nexus/core/nexus_fs_skills.py",  # 874 lines - Phase 2 refactoring
-    "src/nexus/services/permissions/rebac_manager.py",  # 4,400 lines - Phase 2 consolidation
-    "src/nexus/services/permissions/rebac_manager_enhanced.py",  # 4,500 lines - Phase 2 consolidation
+    "src/nexus/rebac/manager.py",  # 5,288 lines - flattened from rebac_manager + enhanced (#1385)
+    "src/nexus/services/permissions/rebac_manager.py",  # 4,400 lines - backward compat shim
+    "src/nexus/services/permissions/rebac_manager_enhanced.py",  # backward compat shim
     "src/nexus/services/permissions/tiger_cache.py",  # 2,896 lines - Leopard-style directory grants
     "src/nexus/services/permissions/nexus_fs_rebac.py",  # 2,192 lines - NexusFS mixin
     "src/nexus/remote/client.py",  # 5,000 lines - Phase 4 splitting

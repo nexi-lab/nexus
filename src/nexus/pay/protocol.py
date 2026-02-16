@@ -25,6 +25,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from nexus.pay.audit_types import TransactionProtocol
+from nexus.pay.credits import CreditsError
 from nexus.pay.x402 import validate_wallet_address
 
 if TYPE_CHECKING:
@@ -32,12 +33,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Legacy method name mapping: old name → TransactionProtocol value
-_LEGACY_METHOD_MAP: dict[str, str] = {
-    "credits": "internal",
-}
-
-# Reverse mapping: TransactionProtocol → user-facing method name for Receipt
+# Mapping: TransactionProtocol → user-facing method name for Receipt
 _PROTOCOL_TO_METHOD: dict[TransactionProtocol, str] = {
     TransactionProtocol.INTERNAL: "credits",
     TransactionProtocol.X402: "x402",
@@ -169,17 +165,16 @@ class ProtocolRegistry:
     """Registry for payment protocols with name-based lookup and auto-detection.
 
     Supports:
-        - register/get/unregister by protocol name
+        - register/get/unregister by protocol method name
         - resolve() with explicit method or auto-detection
-        - Legacy name mapping (e.g., 'credits' → 'internal')
     """
 
     def __init__(self) -> None:
         self._protocols: dict[str, PaymentProtocol] = {}
 
     def register(self, protocol: PaymentProtocol) -> None:
-        """Register a protocol by its name."""
-        name = str(protocol.protocol_name)
+        """Register a protocol by its user-facing method name."""
+        name = get_protocol_method_name(protocol.protocol_name)
         self._protocols[name] = protocol
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug("Registered protocol: %s", name)
@@ -190,9 +185,7 @@ class ProtocolRegistry:
         Raises:
             ProtocolNotFoundError: If protocol not found.
         """
-        # Apply legacy mapping
-        resolved_name = _LEGACY_METHOD_MAP.get(name, name)
-        protocol = self._protocols.get(resolved_name)
+        protocol = self._protocols.get(name)
         if protocol is None:
             raise ProtocolNotFoundError(
                 f"Protocol '{name}' not found. Available: {', '.join(self._protocols.keys())}"
@@ -201,8 +194,7 @@ class ProtocolRegistry:
 
     def unregister(self, name: str) -> None:
         """Remove a protocol by name. No-op if not registered."""
-        resolved_name = _LEGACY_METHOD_MAP.get(name, name)
-        self._protocols.pop(resolved_name, None)
+        self._protocols.pop(name, None)
 
     def resolve(
         self,
@@ -323,6 +315,8 @@ class CreditsPaymentProtocol(PaymentProtocol):
                 timestamp=datetime.now(UTC),
                 metadata={},
             )
+        except CreditsError:
+            raise
         except Exception as e:
             raise ProtocolError(f"Credits transfer failed: {e}") from e
 
@@ -335,8 +329,7 @@ class CreditsPaymentProtocol(PaymentProtocol):
 def get_protocol_method_name(protocol: TransactionProtocol) -> str:
     """Get user-facing method name for a protocol enum value.
 
-    Maps protocol enums to backwards-compatible method names
-    (e.g., INTERNAL → "credits").
+    Maps protocol enums to method names (e.g., INTERNAL → "credits").
     """
     return _PROTOCOL_TO_METHOD.get(protocol, str(protocol))
 

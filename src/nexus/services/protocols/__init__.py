@@ -44,6 +44,7 @@ from nexus.services.protocols.hook_engine import (
     HookResult,
     HookSpec,
 )
+from nexus.services.protocols.memory import MemoryProtocol
 from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol, NamespaceMount
 from nexus.services.protocols.rebac import ReBACBrickProtocol
 from nexus.services.protocols.scheduler import AgentRequest, SchedulerProtocol
@@ -59,6 +60,7 @@ __all__ = [
     "HookId",
     "HookResult",
     "HookSpec",
+    "MemoryProtocol",
     "NamespaceManagerProtocol",
     "NamespaceMount",
     "POST_COPY",

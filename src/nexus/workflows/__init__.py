@@ -7,7 +7,7 @@ data transformation, and multi-step operations.
 
 from nexus.workflows.actions import BUILTIN_ACTIONS, BaseAction
 from nexus.workflows.api import WorkflowAPI, get_workflow_api
-from nexus.workflows.engine import WorkflowEngine, get_engine, init_engine
+from nexus.workflows.engine import WorkflowEngine, get_engine, init_engine, reset_engine, set_engine
 from nexus.workflows.loader import WorkflowLoader
 from nexus.workflows.storage import WorkflowStore
 from nexus.workflows.triggers import BUILTIN_TRIGGERS, BaseTrigger, TriggerManager
@@ -34,6 +34,8 @@ __all__ = [
     # Engine functions
     "get_engine",
     "init_engine",
+    "set_engine",
+    "reset_engine",
     # Types
     "WorkflowDefinition",
     "WorkflowAction",

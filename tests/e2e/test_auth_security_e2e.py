@@ -743,7 +743,7 @@ class TestStaleSessionDetection:
             "subject_id": "sk_agent",
             "zone_id": "default",
             "is_admin": False,
-            "metadata": {"key_id": "k1", "legacy_user_id": "alice"},
+            "metadata": {"key_id": "k1"},
             # No agent_generation — SK keys don't carry it
         }
         ctx = get_operation_context(auth_result)

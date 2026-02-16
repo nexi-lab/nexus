@@ -211,3 +211,30 @@ class AuditStore:
             )
 
         return results
+
+
+# ============================================================================
+# DEPRECATED aliases — Issue #1460
+# All known import sites have been migrated. These remain only for any
+# out-of-tree code that may still reference the old names.
+# ============================================================================
+
+
+def __getattr__(name: str) -> type:  # noqa: N807
+    import warnings
+
+    from nexus.core.types import OperationContext
+    from nexus.services.permissions.enforcer import PermissionEnforcer
+
+    _ALIASES = {
+        "EnhancedOperationContext": OperationContext,
+        "EnhancedPermissionEnforcer": PermissionEnforcer,
+    }
+    if name in _ALIASES:
+        warnings.warn(
+            f"{name} is deprecated, use {_ALIASES[name].__name__} directly (Issue #1460)",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return _ALIASES[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

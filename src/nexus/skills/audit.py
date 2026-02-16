@@ -8,31 +8,12 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Any, Protocol
+from typing import Any
 
-from nexus.core.exceptions import ValidationError
+from nexus.skills.exceptions import SkillValidationError
+from nexus.skills.types import DatabaseConnection
 
 logger = logging.getLogger(__name__)
-
-
-class DatabaseConnection(Protocol):
-    """Protocol for database connections."""
-
-    def execute(self, query: str, params: dict[str, Any] | None = None) -> Any:
-        """Execute a query."""
-        ...
-
-    def fetchall(self, query: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-        """Fetch all results from a query."""
-        ...
-
-    def fetchone(self, query: str, params: dict[str, Any] | None = None) -> dict[str, Any] | None:
-        """Fetch one result from a query."""
-        ...
-
-    def commit(self) -> None:
-        """Commit the transaction."""
-        ...
 
 
 class AuditAction(StrEnum):
@@ -65,13 +46,13 @@ class AuditLogEntry:
             ValidationError: If validation fails.
         """
         if not self.audit_id:
-            raise ValidationError("audit_id is required")
+            raise SkillValidationError("audit_id is required")
 
         if not self.skill_name:
-            raise ValidationError("skill_name is required")
+            raise SkillValidationError("skill_name is required")
 
         if not isinstance(self.action, AuditAction):
-            raise ValidationError(f"action must be AuditAction, got {type(self.action)}")
+            raise SkillValidationError(f"action must be AuditAction, got {type(self.action)}")
 
 
 class SkillAuditLogger:

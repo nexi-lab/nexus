@@ -49,6 +49,23 @@ chrono = "0.4"
 # Libc for FUSE types
 libc = "0.2"
 
+[dev-dependencies]
+# Mocking HTTP requests for tests
+mockito = "1.7"
+
+# Async runtime for tests
+tokio = { version = "1", features = ["rt", "macros"] }
+
+# URL parsing
+url = "2.5"
+
+# Test coverage (optional, for CI)
+# Run with: cargo tarpaulin --out Html
+# Or: cargo llvm-cov --html
+
+# Benchmarking (will add benchmark file later)
+criterion = "0.5"
+
 [profile.release]
 opt-level = 3
 lto = true

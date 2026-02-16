@@ -319,7 +319,7 @@ class MCPService:
             - Tools are automatically synced after mounting
         """
         from nexus.core.exceptions import ValidationError
-        from nexus.skills.mcp_models import MCPMount
+        from nexus.mcp.models import MCPMount
 
         # Validate: need either command or url
         if not command and not url:
@@ -490,8 +490,8 @@ class MCPService:
         """
         from typing import cast
 
-        from nexus.core.nexus_fs import NexusFilesystem
-        from nexus.skills.mcp_mount import MCPMountManager
+        from nexus.mcp.mount import MCPMountManager
+        from nexus.skills.protocols import NexusFilesystem
 
         if self.nexus_fs is None:
             raise RuntimeError("NexusFS not configured for MCPService")

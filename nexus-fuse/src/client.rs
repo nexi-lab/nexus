@@ -3,7 +3,7 @@
 
 #![allow(dead_code)]
 
-use anyhow::{anyhow, Result};
+use crate::error::NexusClientError;
 use log::debug;
 use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION, CONTENT_TYPE, IF_NONE_MATCH};
@@ -89,7 +89,7 @@ pub struct NexusClient {
 
 impl NexusClient {
     /// Create a new Nexus client.
-    pub fn new(base_url: &str, api_key: &str, agent_id: Option<String>) -> Result<Self> {
+    pub fn new(base_url: &str, api_key: &str, agent_id: Option<String>) -> Result<Self, NexusClientError> {
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .connect_timeout(std::time::Duration::from_secs(5))
@@ -101,6 +101,22 @@ impl NexusClient {
             api_key: api_key.to_string(),
             agent_id,
         })
+    }
+
+    /// Map HTTP status code to NexusClientError.
+    fn status_to_error(status: reqwest::StatusCode, body: String) -> NexusClientError {
+        match status.as_u16() {
+            404 => NexusClientError::NotFound(body),
+            429 => NexusClientError::RateLimited,
+            500..=599 => NexusClientError::ServerError {
+                status: status.as_u16(),
+                message: body,
+            },
+            _ => NexusClientError::ServerError {
+                status: status.as_u16(),
+                message: body,
+            },
+        }
     }
 
     /// Build headers for requests.
@@ -121,7 +137,7 @@ impl NexusClient {
     }
 
     /// Call a JSON-RPC method.
-    fn rpc_call<T: for<'de> Deserialize<'de>>(&self, method: &str, params: Value) -> Result<T> {
+    fn rpc_call<T: for<'de> Deserialize<'de>>(&self, method: &str, params: Value) -> Result<T, NexusClientError> {
         let url = format!("{}/api/nfs/{}", self.base_url, method);
 
         // Build proper JSON-RPC request
@@ -143,26 +159,28 @@ impl NexusClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let text = resp.text().unwrap_or_default();
-            if status.as_u16() == 404 || text.contains("not found") || text.contains("Not Found") {
-                return Err(anyhow!("not found"));
-            }
-            return Err(anyhow!("{} failed: {} - {}", method, status, text));
+            return Err(Self::status_to_error(status, text));
         }
 
         let rpc_resp: JsonRpcResponse<T> = resp.json()?;
 
         if let Some(err) = rpc_resp.error {
             if err.message.contains("not found") || err.message.contains("Not Found") {
-                return Err(anyhow!("not found"));
+                return Err(NexusClientError::NotFound(err.message));
             }
-            return Err(anyhow!("RPC error {}: {}", err.code, err.message));
+            return Err(NexusClientError::InvalidResponse(format!(
+                "RPC error {}: {}",
+                err.code, err.message
+            )));
         }
 
-        rpc_resp.result.ok_or_else(|| anyhow!("no result in response"))
+        rpc_resp
+            .result
+            .ok_or_else(|| NexusClientError::InvalidResponse("no result in response".to_string()))
     }
 
     /// Get current user info.
-    pub fn whoami(&self) -> Result<UserInfo> {
+    pub fn whoami(&self) -> Result<UserInfo, NexusClientError> {
         let url = format!("{}/api/auth/whoami", self.base_url);
         debug!("GET {}", url);
 
@@ -173,18 +191,16 @@ impl NexusClient {
             .send()?;
 
         if !resp.status().is_success() {
-            return Err(anyhow!(
-                "whoami failed: {} - {}",
-                resp.status(),
-                resp.text().unwrap_or_default()
-            ));
+            let status = resp.status();
+            let text = resp.text().unwrap_or_default();
+            return Err(Self::status_to_error(status, text));
         }
 
         Ok(resp.json()?)
     }
 
     /// List directory contents.
-    pub fn list(&self, path: &str) -> Result<Vec<FileEntry>> {
+    pub fn list(&self, path: &str) -> Result<Vec<FileEntry>, NexusClientError> {
         // Use details=true, recursive=false to get entry types from server
         #[derive(Deserialize)]
         struct DetailedEntry {
@@ -257,21 +273,21 @@ impl NexusClient {
     }
 
     /// Get file/directory metadata.
-    pub fn stat(&self, path: &str) -> Result<FileMetadata> {
+    pub fn stat(&self, path: &str) -> Result<FileMetadata, NexusClientError> {
         self.rpc_call("stat", json!({"path": path}))
     }
 
     /// Read file contents.
-    pub fn read(&self, path: &str) -> Result<Vec<u8>> {
+    pub fn read(&self, path: &str) -> Result<Vec<u8>, NexusClientError> {
         match self.read_with_etag(path, None)? {
             ReadResponse::Content { content, .. } => Ok(content),
-            ReadResponse::NotModified => Err(anyhow!("Unexpected 304 without etag")),
+            ReadResponse::NotModified => Err(NexusClientError::InvalidResponse("Unexpected 304 without etag".to_string())),
         }
     }
 
     /// Read file contents with ETag support for conditional requests.
     /// If `if_none_match` is provided and content hasn't changed, returns NotModified.
-    pub fn read_with_etag(&self, path: &str, if_none_match: Option<&str>) -> Result<ReadResponse> {
+    pub fn read_with_etag(&self, path: &str, if_none_match: Option<&str>) -> Result<ReadResponse, NexusClientError> {
         use base64::{engine::general_purpose::STANDARD, Engine};
 
         let url = format!("{}/api/nfs/read", self.base_url);
@@ -310,9 +326,9 @@ impl NexusClient {
             let status = resp.status();
             let text = resp.text().unwrap_or_default();
             if status.as_u16() == 404 || text.contains("not found") || text.contains("Not Found") {
-                return Err(anyhow!("not found"));
+                return Err(NexusClientError::NotFound("not found".to_string()));
             }
-            return Err(anyhow!("read failed: {} - {}", status, text));
+            return Err(Self::status_to_error(status, text));
         }
 
         // Extract ETag from response headers
@@ -341,21 +357,24 @@ impl NexusClient {
         if let Some(err) = rpc_resp.error {
             if err.message.contains("not found") || err.message.contains("Not Found")
                 || err.message.contains("CAS content not found") {
-                return Err(anyhow!("not found"));
+                return Err(NexusClientError::NotFound(err.message));
             }
-            return Err(anyhow!("RPC error {}: {}", err.code, err.message));
+            return Err(NexusClientError::InvalidResponse(format!(
+                "RPC error {}: {}",
+                err.code, err.message
+            )));
         }
 
-        let result = rpc_resp.result.ok_or_else(|| anyhow!("no result in response"))?;
+        let result = rpc_resp.result.ok_or_else(|| NexusClientError::InvalidResponse("no result in response".to_string()))?;
         let content = STANDARD
             .decode(&result.data)
-            .map_err(|e| anyhow!("base64 decode error: {}", e))?;
+            .map_err(|e| NexusClientError::InvalidResponse(format!("base64 decode error: {}", e)))?;
 
         Ok(ReadResponse::Content { content, etag })
     }
 
     /// Write file contents.
-    pub fn write(&self, path: &str, content: &[u8]) -> Result<()> {
+    pub fn write(&self, path: &str, content: &[u8]) -> Result<(), NexusClientError> {
         use base64::{engine::general_purpose::STANDARD, Engine};
 
         // API expects {"__type__": "bytes", "data": "base64..."} format
@@ -370,19 +389,19 @@ impl NexusClient {
     }
 
     /// Create directory.
-    pub fn mkdir(&self, path: &str) -> Result<()> {
+    pub fn mkdir(&self, path: &str) -> Result<(), NexusClientError> {
         let _: Value = self.rpc_call("mkdir", json!({"path": path}))?;
         Ok(())
     }
 
     /// Delete file or directory.
-    pub fn delete(&self, path: &str) -> Result<()> {
+    pub fn delete(&self, path: &str) -> Result<(), NexusClientError> {
         let _: Value = self.rpc_call("delete", json!({"path": path}))?;
         Ok(())
     }
 
     /// Rename/move file or directory.
-    pub fn rename(&self, old_path: &str, new_path: &str) -> Result<()> {
+    pub fn rename(&self, old_path: &str, new_path: &str) -> Result<(), NexusClientError> {
         let _: Value = self.rpc_call("rename", json!({
             "old_path": old_path,
             "new_path": new_path

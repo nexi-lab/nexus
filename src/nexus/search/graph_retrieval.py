@@ -28,7 +28,9 @@ if TYPE_CHECKING:
     from nexus.search.embeddings import EmbeddingProvider
     from nexus.search.graph_store import Entity, GraphStore, Relationship
     from nexus.search.semantic import SemanticSearch, SemanticSearchResult
-    from nexus.services.ace.memory_hierarchy import HierarchicalMemoryManager
+
+# Type alias for HierarchicalMemoryManager (Issue #1520: avoid nexus.services import)
+HierarchicalMemoryManager = Any
 
 logger = logging.getLogger(__name__)
 

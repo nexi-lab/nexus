@@ -1,11 +1,8 @@
-"""Unit tests for PostgreSQLStorageDriver.
+"""Unit tests for RecordStoreStorageDriver.
 
 Tests use an in-memory SQLite database with a real SQLAlchemy session
 factory, verifying ORM queries and error handling without requiring
-a real PostgreSQL instance.
-
-For true integration testing against PostgreSQL, see
-tests/integration/ipc/storage/ (marked with @pytest.mark.integration).
+a real database instance.
 
 Rewritten for Issue #1469: driver now uses RecordStoreABC session_factory
 instead of raw asyncpg.
@@ -18,8 +15,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from nexus.ipc.storage.postgresql_driver import (
-    PostgreSQLStorageDriver,
+from nexus.ipc.storage.recordstore_driver import (
+    RecordStoreStorageDriver,
     _basename,
     _parent_dir,
 )
@@ -50,8 +47,8 @@ def session_factory():
 
 @pytest.fixture
 def driver(session_factory):
-    """Create a PostgreSQLStorageDriver with test session factory."""
-    return PostgreSQLStorageDriver(session_factory=session_factory)
+    """Create a RecordStoreStorageDriver with test session factory."""
+    return RecordStoreStorageDriver(session_factory=session_factory)
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +123,7 @@ class TestHelperFunctions:
 # ---------------------------------------------------------------------------
 
 
-class TestPostgreSQLStorageDriverRead:
+class TestRecordStoreStorageDriverRead:
     """Tests for read operations."""
 
     @pytest.mark.asyncio
@@ -155,7 +152,7 @@ class TestPostgreSQLStorageDriverRead:
 # ---------------------------------------------------------------------------
 
 
-class TestPostgreSQLStorageDriverWrite:
+class TestRecordStoreStorageDriverWrite:
     """Tests for write operations."""
 
     @pytest.mark.asyncio
@@ -179,7 +176,7 @@ class TestPostgreSQLStorageDriverWrite:
 # ---------------------------------------------------------------------------
 
 
-class TestPostgreSQLStorageDriverListDir:
+class TestRecordStoreStorageDriverListDir:
     """Tests for list_dir operations."""
 
     @pytest.mark.asyncio
@@ -211,7 +208,7 @@ class TestPostgreSQLStorageDriverListDir:
 # ---------------------------------------------------------------------------
 
 
-class TestPostgreSQLStorageDriverCountDir:
+class TestRecordStoreStorageDriverCountDir:
     """Tests for count_dir operations."""
 
     @pytest.mark.asyncio
@@ -245,7 +242,7 @@ class TestPostgreSQLStorageDriverCountDir:
 # ---------------------------------------------------------------------------
 
 
-class TestPostgreSQLStorageDriverRename:
+class TestRecordStoreStorageDriverRename:
     """Tests for rename operations."""
 
     @pytest.mark.asyncio
@@ -275,7 +272,7 @@ class TestPostgreSQLStorageDriverRename:
 # ---------------------------------------------------------------------------
 
 
-class TestPostgreSQLStorageDriverMkdir:
+class TestRecordStoreStorageDriverMkdir:
     """Tests for mkdir operations."""
 
     @pytest.mark.asyncio
@@ -297,7 +294,7 @@ class TestPostgreSQLStorageDriverMkdir:
 # ---------------------------------------------------------------------------
 
 
-class TestPostgreSQLStorageDriverExists:
+class TestRecordStoreStorageDriverExists:
     """Tests for exists operations."""
 
     @pytest.mark.asyncio
@@ -336,7 +333,7 @@ class TestPostgreSQLStorageDriverExists:
 # ---------------------------------------------------------------------------
 
 
-class TestPostgreSQLStorageDriverZoneIsolation:
+class TestRecordStoreStorageDriverZoneIsolation:
     """Tests that zone_id properly isolates data."""
 
     @pytest.mark.asyncio

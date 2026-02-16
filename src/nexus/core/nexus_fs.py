@@ -19,6 +19,7 @@ from nexus.core.hash_fast import hash_content
 
 if TYPE_CHECKING:
     from nexus.services.memory.memory_api import Memory
+    from nexus.services.permissions.entity_registry import EntityRegistry
 from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol
 from nexus.core.cache_store import CacheStoreABC, NullCacheStore
 from nexus.core.config import (
@@ -727,11 +728,8 @@ class NexusFS(  # type: ignore[misc]
             >>> results = nx.memory.query(memory_type="preference")
         """
         if self._memory_api is None:
-            from nexus.services.permissions.entity_registry import EntityRegistry
-
             # Get or create entity registry (v0.5.0: Pass SessionFactory instead of Session)
-            if self._entity_registry is None:
-                self._entity_registry = EntityRegistry(self.SessionLocal)
+            self._ensure_entity_registry()
 
             # Create a session from SessionLocal
             session = self.SessionLocal()
@@ -875,11 +873,9 @@ class NexusFS(  # type: ignore[misc]
             Memory API instance
         """
         from nexus.services.memory.memory_api import Memory
-        from nexus.services.permissions.entity_registry import EntityRegistry
 
         # Get or create entity registry
-        if self._entity_registry is None:
-            self._entity_registry = EntityRegistry(self.SessionLocal)
+        self._ensure_entity_registry()
 
         # Create a session
         session = self.SessionLocal()
@@ -905,8 +901,6 @@ class NexusFS(  # type: ignore[misc]
         Returns:
             OperationContext instance
         """
-        from nexus.core.permissions import OperationContext
-
         # If already an OperationContext, return as-is
         if isinstance(context, OperationContext):
             return context
@@ -922,6 +916,17 @@ class NexusFS(  # type: ignore[misc]
             is_admin=context.get("is_admin", False),
             is_system=context.get("is_system", False),
         )
+
+    def _ensure_entity_registry(self) -> EntityRegistry:
+        """Lazily create and cache an EntityRegistry instance.
+
+        Consolidates 7 deferred import sites (Issue #1291).
+        """
+        if self._entity_registry is None:
+            from nexus.services.permissions.entity_registry import EntityRegistry
+
+            self._entity_registry = EntityRegistry(self.SessionLocal)
+        return self._entity_registry
 
     def _validate_path(self, path: str, allow_root: bool = False) -> str:
         """
@@ -1070,8 +1075,6 @@ class NexusFS(  # type: ignore[misc]
             return
 
         # Use default context if none provided
-        from nexus.core.permissions import OperationContext
-
         ctx_raw = context or self._default_context
         assert isinstance(ctx_raw, OperationContext), "Context must be OperationContext"
         ctx: OperationContext = ctx_raw
@@ -1410,8 +1413,6 @@ class NexusFS(  # type: ignore[misc]
         path = self._validate_path(path)
 
         # P0 Fixes: Create OperationContext
-        from nexus.core.permissions import OperationContext
-
         if context is not None:
             ctx = (
                 context
@@ -1567,8 +1568,6 @@ class NexusFS(  # type: ignore[misc]
 
         if not has_rebac:
             # Fallback to permission enforcer if no ReBAC
-            from nexus.core.permissions import OperationContext
-
             assert isinstance(context, OperationContext), "Context must be OperationContext"
             return self._permission_enforcer.check(path, permission, context)
 
@@ -2787,8 +2786,6 @@ class NexusFS(  # type: ignore[misc]
 
         # Read file content with system bypass for background parsing
         # Auto-parse is a system operation that should not be subject to user permissions
-        from nexus.core.permissions import OperationContext
-
         parse_ctx = OperationContext(user="system_parser", groups=[], zone_id=None, is_system=True)
         content = self.read(path, context=parse_ctx)
 
@@ -4155,10 +4152,7 @@ class NexusFS(  # type: ignore[misc]
             >>> for agent in agents:
             ...     print(f"{agent['agent_id']}: {agent['name']}")
         """
-        if not self._entity_registry:
-            from nexus.services.permissions.entity_registry import EntityRegistry
-
-            self._entity_registry = EntityRegistry(self.SessionLocal)
+        self._ensure_entity_registry()
 
         entities = self._entity_registry.get_entities_by_type("agent")
         result = []
@@ -4258,10 +4252,7 @@ class NexusFS(  # type: ignore[misc]
             ...     if agent.get('api_key'):
             ...         print(f"Has API key: {agent['api_key'][:10]}...")
         """
-        if not self._entity_registry:
-            from nexus.services.permissions.entity_registry import EntityRegistry
-
-            self._entity_registry = EntityRegistry(self.SessionLocal)
+        self._ensure_entity_registry()
 
         entity = self._entity_registry.get_entity("agent", agent_id)
         if not entity:
@@ -4789,10 +4780,7 @@ class NexusFS(  # type: ignore[misc]
         }
 
         # Initialize entity registry
-        if not self._entity_registry:
-            from nexus.services.permissions.entity_registry import EntityRegistry
-
-            self._entity_registry = EntityRegistry(self.SessionLocal)
+        self._ensure_entity_registry()
 
         session = self.SessionLocal()
         api_key = None

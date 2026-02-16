@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771266023305,
+  "lastUpdate": 1771274277068,
   "repoUrl": "https://github.com/nexi-lab/nexus",
   "entries": {
     "Benchmark": [
@@ -11850,6 +11850,156 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.00002593161035450739",
             "extra": "mean: 1.559854417187445 msec\nrounds: 640"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "taofeng.nju@gmail.com",
+            "name": "oliverfeng",
+            "username": "windoliver"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "13636a7e0b6622ea0cccb8a80e1f82a1466819d3",
+          "message": "refactor(#1254): reduce broad exception handlers — phase 2 (#1777)\n\n* ci: add develop branch to CI workflow triggers (#1772)\n\n* docs(#1767): Service Lifecycle Model — Phase 1 (DI) + Phase 2 (LKM hot-swap) (#1768)\n\n* refactor(#1703): Bridge Backend ABC with ConnectorProtocol — layered protocols, validation, type migration (#1751)\n\n* refactor(#1703): bridge Backend ABC with ConnectorProtocol — layered protocols, validation, type migration\n\n- Add 3 layered protocols: StreamingProtocol, BatchContentProtocol,\n  DirectoryListingProtocol for ISP-compliant capability narrowing\n- Add registration-time ConnectorProtocol conformance validation in\n  ConnectorRegistry.register() using hasattr-based member checking\n  (issubclass() unsupported for Protocols with @property members)\n- Migrate 7 consumer type hints from Backend → ConnectorProtocol in\n  core/router, core/protocols/vfs_router, services/overlay_resolver,\n  services/workspace_manager, services/chunked_upload_service,\n  services/events_service, connectors/mount_hooks\n- Activate OAuthCapableProtocol in nexus_fs.close() replacing brittle\n  hasattr(\"token_manager\") check with isinstance()\n- Add 23 protocol conformance tests covering positive/negative cases,\n  concrete backends, OAuth detection, registry validation, and a\n  sync-check guard to prevent _CONNECTOR_PROTOCOL_MEMBERS drift\n\n* chore(#1703): fix ruff format in registry.py\n\n* fix(#413): remove direct engine creation and env var reads from OAuthCrypto (#1734)\n\n* fix(#413): remove direct engine creation and env var reads from OAuthCrypto — DI via session_factory\n\n- Remove `db_url` parameter and `import os` from OAuthCrypto\n- Remove `create_engine`, `Base.metadata.create_all`, `sessionmaker` fallback path\n- Remove direct `os.environ.get(\"NEXUS_OAUTH_ENCRYPTION_KEY\")` read\n- Remove sqlite dialect-specific branching (`check_same_thread`)\n- Make `session_factory` keyword-only; callers pass encryption_key + session_factory\n- Update callers in fastapi_server.py, lifespan/services.py, token_manager.py\n- Remove unused `database_url` param from `_initialize_oauth_provider`\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#566): move module-level global state to app.state in lifespan/services.py\n\n- Remove module-level mutable globals: _scheduler_pool, _heartbeat_task, _stale_detection_task\n- Remove all `global` keyword usage\n- Store lifecycle state on app.state instead (federation-safe, per-app instance)\n- Remove unused `Any` import\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#474): replace private attribute access across module boundaries in oauth_service\n\n- Replace factory._oauth_config.providers with factory.list_providers() (public API)\n- Replace nexus_fs._config with nexus_fs.config (new public property)\n- Add config property to NexusFS for public access to runtime configuration\n- Also fix nexus_fs._config access in lifespan/services.py\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#357): expose public rebac_manager property on NexusFS, use in warmer.py\n\nReplace private _rebac_manager access in cache/warmer.py with the new\npublic rebac_manager property on NexusFS, eliminating cross-module\nprivate attribute access.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#358): replace private attribute access in read_set_cache with public API\n\nAdd register_eviction_callback() to MetadataCache so ReadSetAwareCache\nno longer reaches into _path_cache._on_evict across module boundaries.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#362): use public rebac_manager property in portability services\n\nReplace private _rebac_manager access via getattr in export_service.py\nand import_service.py with the public rebac_manager property on NexusFS.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#356): eliminate cross-module private attribute access in 8 service files\n\n- nexus_fs.py: add public `semantic_search_engine` property\n- llm_service.py: use `semantic_search_engine` instead of `_semantic_search`\n- rebac_manager.py: make `get_zone_revision` public, add `list_tuples` method,\n  delete backward-compat `_get_zone_revision` alias\n- namespace_manager.py: use public `get_zone_revision` (4 occurrences)\n- rebac_service.py: delegate to `rebac_manager.list_tuples()` instead of\n  accessing 4 private methods for raw SQL\n- bitmap_cache.py: add public `resource_map` property\n- permission_cache.py: use `tiger_cache.resource_map.get_int_ids_batch()`\n  instead of `_resource_map._engine.connect()`\n- mcp/middleware.py: use public `get_zone_revision` instead of private\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#380): use public list_mounts() instead of private _mounts in mount_hooks\n\nReplace `router._mounts` with `router.list_mounts()` which is the\nexisting public API on PathRouter for listing registered mounts.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#539): make 6 private connector methods public for sync_pipeline\n\nRename private methods to public API on CacheConnectorMixin and connectors:\n- _read_bulk_from_cache → read_bulk_from_cache\n- _batch_get_versions → batch_get_versions (4 connector files)\n- _batch_read_from_backend → batch_read_from_backend\n- _parse_content → parse_content\n- _batch_write_to_cache → batch_write_to_cache\n- _generate_embeddings → generate_embeddings_for_path\n\nUpdated all callers in sync_pipeline.py and nexus_fs_core.py.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#575): fix macOS test failures — remove stale xfail + fix cache zone mismatch\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#584): remove legacy pattern mode from reactive subscriptions — read-set only\n\nRemove backward-compat pattern-matching mode (O(L×P) glob scan) from\nReactiveSubscriptionManager, keeping only O(1) read-set mode via\nReadSetRegistry. Delete legacy broadcast path, _matches_filters, and\n_path_matches_pattern from WebSocketManager. Update all tests.\n\n- Subscription dataclass: remove mode/patterns fields\n- ReactiveSubscriptionManager: remove _pattern_subs_by_zone, pattern branch\n- WebSocketManager: remove _broadcast_legacy, _matches_filters, patterns param\n- events.py: remove patterns from WS connect/message\n- Tests: rewrite unit + integration tests for read-set-only mode\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#1734): update tests to use public batch method names\n\nTests referenced private methods (_batch_get_versions, _batch_write_to_cache,\n_batch_read_from_backend, _read_bulk_from_cache) that were renamed to public\nmethods (without _ prefix). Updated all test mocks, assertions, and comments.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#585): remove dead SessionLocal backward-compat alias from record_store\n\n- Delete the SessionLocal property alias from SQLAlchemyRecordStore (dead code —\n  all callers use NexusFS.SessionLocal which is a separate attribute)\n- Update docstrings in version_manager, s3_connector, gcs_connector to reference\n  session_factory instead of SessionLocal\n- Update models/__init__.py docstring: \"backward compatibility\" → \"convenient access\"\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#1734): update tests to patch public method names instead of private\n\n- _generate_embeddings → generate_embeddings_for_path (connector method)\n- _get_zone_revision → get_zone_revision (EnhancedReBACManager method)\n\nFixes 5 CI test failures on ubuntu and macos.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#586): delete backward-compat aliases, deprecated prefix param, and stale labels from core/\n\n- Remove dead DistributedLockManager = RaftLockManager alias (zero imports)\n- Delete deprecated `prefix` parameter from filesystem.list() chain\n  (filesystem ABC → scoped_filesystem → async_scoped_filesystem →\n   nexus_fs → search_service → async_client → rpc_server)\n- Clean misleading \"backward-compat\" labels from event_bus_nats subscribe,\n  file_watcher one-shot API, and workspace_manifest comments\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#1734): fix dcache revision bucket test — mock bucket for deterministic hit\n\nThe test_same_revision_bucket_returns_cached test was failing because\nthe _grant_file helper (rebac_write) increments the zone revision before\nthe first is_visible call, and the subsequent rebac_write pushes the\nrevision across a bucket boundary (revision_window=2). This means\nrevision goes 0→1 (bucket 0) then 1→2 (bucket 1), causing a dcache miss\ninstead of the expected hit.\n\nFix: mock _get_current_revision_bucket to return a fixed value (5) for\nboth is_visible calls, matching the pattern used by\ntest_different_revision_bucket_misses. This properly tests that within\nthe same revision bucket, dcache entries are hit.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#582): clean backward-compat labels, delete dead re-exports and dead code in server/\n\n- Delete dead rpc_expose re-export from protocol.py (zero imports)\n- Delete deprecated prefix field from ListParams (removed from chain in #586)\n- Delete dead duplicate api_key kwarg handling in auth/factory.py\n- Clean \"backward compatibility\" labels from rpc_server, fastapi_server,\n  path_utils, protocol, and v1/dependencies\n- Remove stale deprecation notice from get_database_url\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#1734): remove deprecated prefix param from skills NexusFilesystem protocol\n\nThe `prefix` parameter was removed from `core.filesystem.NexusFilesystem.list()`\nbut the skills protocol still had it, causing 16 mypy arg-type errors.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#559): delete 5 backward-compat shim/protocol files, clean 20+ service files\n\n- Delete permissions/leopard.py and permissions/dir_visibility_cache.py\n  shims; update callers to canonical cache.leopard / cache.visibility paths\n- Delete vestigial protocols/event_log.py (different interface from active\n  event_log/protocol.py, zero implementations) and its dedicated tests\n- Remove unused session_factory param from event_log/factory.py and caller\n- Remove subsystem.py re-exports of ContextIdentity/extract_context_identity;\n  update all callers to import from canonical nexus.core.types\n- Strip \"backward compatibility\" labels from 12+ service/memory/search files\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#1734): remove stale prefix param from test mock to match updated Protocol\n\nThe MinimalFilesystem mock in test_protocol_compatibility.py still had\n`prefix=None` in its list() signature after the Protocol was cleaned up.\nRemove it to keep the mock aligned with the narrowed Protocol.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#1734): remove deprecated prefix param from SearchProtocol and fix test\n\n- Remove prefix param from SearchProtocol.list() to match SearchService\n- Update test_list_with_prefix to use path=\"/dir\" instead of prefix=\"/dir\"\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#1734): fix 5 mypy errors — public get_zone_revision, add list_tuples, fix NamespaceManager import\n\n- Make ReBACManager._get_zone_revision public (matching services/permissions copy)\n  Fixes attr-defined error in mcp/middleware.py and no-any-return\n- Add ReBACManager.list_tuples() method (matching services/permissions copy)\n  Fixes attr-defined error in services/rebac_service.py\n- Fix SandboxAuthService NamespaceManager import to use nexus.rebac.namespace_manager\n  (matches what the factory actually returns)\n  Fixes arg-type error in server/lifespan/services.py\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#1734): replace deprecated prefix= with path= in list test\n\nSearchService.list() no longer accepts `prefix` parameter.\nUse `path=\"/a/\", recursive=True` instead to achieve the same filtering.\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Opus 4.6 <noreply@anthropic.com>\n\n* docs(#1767): add Service Lifecycle Model — Phase 1 (DI) + Phase 2 (LKM hot-swap)\n\n- §1: Change Services Linux analogue from systemd → LKM (correct in-process analogy)\n- §1: Add Phase 1 (init-time DI, distro composition) + Phase 2 (ServiceRegistry\n  with lifecycle protocol, dependency graph, refcounting) with gap highlights\n- §3: Rewrite NexusFS section to target-first with brief gap note\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: oliverfeng <taofeng.nju@gmail.com>\nCo-authored-by: Claude Opus 4.6 <noreply@anthropic.com>\n\n* fix(#1602): add PermissionEnforcer re-export to core.permissions\n\nThe #1519 refactor moved PermissionEnforcer to services/permissions/\nbut didn't add a backward-compat re-export. This broke 3 test files\nthat import from nexus.core.permissions. Add re-export to unblock CI.\n\n* fix(#1602): fix PermissionEnforcer import cycle\n\nReplace re-export in core/permissions.py (caused circular import\ndetected by test_import_cycles) with direct imports from\nservices.permissions.enforcer in the 3 affected test files.\n\n* refactor(#1254): eliminate all contextlib.suppress(Exception) — phase 2 sweep\n\nReplace ~60 broad contextlib.suppress(Exception) patterns with explicit\ntry/except blocks that log errors instead of silently swallowing them.\n\nCategories converted:\n- Cache operations: debug-log failures instead of silent suppress\n- mkdir/directory creation: catch FileExistsError (silent) + OSError (warn)\n- Cleanup/shutdown: debug-log failures during teardown\n- NATS subscriptions: debug-log unsubscribe failures\n- File watcher: narrow to OSError/ValueError for OS handle cleanup\n- Security-sensitive: warn-level + exc_info for role removal failures\n- Bulk delete: error collection pattern (log summary, not per-item)\n\nAlso removes stale nexus_fs_versions mypy entry from pyproject.toml.\n\n32 files modified, 0 contextlib.suppress(Exception) remaining.\n\n* chore: trigger CI\n\n* fix(#1254): remove unused contextlib imports and fix E402 lint error\n\nRemove leftover `import contextlib` from 6 files where all\ncontextlib.suppress(Exception) usages were replaced with try/except.\nMove logger declaration after imports in cli/commands/server.py (E402).\n\n* fix(#1254): ruff format 3 files\n\n* fix(#1254): rename shadowed exception variable in mcp/server.py\n\n---------\n\nCo-authored-by: elfenlieds7 <songym@sudoprivacy.com>\nCo-authored-by: Claude Opus 4.6 <noreply@anthropic.com>",
+          "timestamp": "2026-02-16T12:34:57-08:00",
+          "tree_id": "42882d75a8a0eb67b55b9dea468fcb7a0a7de88c",
+          "url": "https://github.com/nexi-lab/nexus/commit/13636a7e0b6622ea0cccb8a80e1f82a1466819d3"
+        },
+        "date": 1771274275634,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/benchmarks/test_async_permission_performance.py::test_permission_overhead_acceptable",
+            "value": 335.0282428809284,
+            "unit": "iter/sec",
+            "range": "stddev: 0.009603539745173766",
+            "extra": "mean: 2.9848229850741497 msec\nrounds: 469"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_write_small_file",
+            "value": 355.2734355812948,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0009233153277792321",
+            "extra": "mean: 2.814733385184879 msec\nrounds: 405"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_read_small_file",
+            "value": 16935.423226137595,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000013660473180373457",
+            "extra": "mean: 59.04783049393367 usec\nrounds: 16318"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_read_cached_file",
+            "value": 16632.283685171435,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000013581551241442921",
+            "extra": "mean: 60.12403461417347 usec\nrounds: 17305"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_exists_check",
+            "value": 44036.089695787814,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0008303545758529592",
+            "extra": "mean: 22.70864663298324 usec\nrounds: 44342"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestGlobBenchmarks::test_list_large_directory",
+            "value": 230.83137145520195,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000686929805730655",
+            "extra": "mean: 4.332166783465447 msec\nrounds: 254"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestGlobBenchmarks::test_glob_simple_pattern",
+            "value": 185.77473264185787,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00034434067233654695",
+            "extra": "mean: 5.382863351647666 msec\nrounds: 182"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestGlobBenchmarks::test_list_1k_files",
+            "value": 58.33951489717446,
+            "unit": "iter/sec",
+            "range": "stddev: 0.02387665966121603",
+            "extra": "mean: 17.141040712500555 msec\nrounds: 80"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestHashingBenchmarks::test_sha256_medium",
+            "value": 23750.232399613436,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000016970031951271495",
+            "extra": "mean: 42.10485115153131 usec\nrounds: 24011"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestPermissionBenchmarks::test_permission_check_bulk_python",
+            "value": 2651.7915590426273,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000044362853635140805",
+            "extra": "mean: 377.10354593670576 usec\nrounds: 1698"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestPermissionBenchmarks::test_permission_check_bulk_rust",
+            "value": 4903.943180252199,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004184660540932669",
+            "extra": "mean: 203.91753396061412 usec\nrounds: 2444"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBulkOperationBenchmarks::test_write_batch_10",
+            "value": 42.95073721766871,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0009696670864323516",
+            "extra": "mean: 23.28248744444434 msec\nrounds: 45"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBulkOperationBenchmarks::test_read_bulk_10",
+            "value": 1444.0139478359938,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000414566385010479",
+            "extra": "mean: 692.5140865146108 usec\nrounds: 1572"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBlake3HashingBenchmarks::test_hash_1mb_content",
+            "value": 3957.336822333851,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000058555744481139056",
+            "extra": "mean: 252.69519499991588 usec\nrounds: 4000"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBlake3HashingBenchmarks::test_hash_smart_1mb_content",
+            "value": 18457.947364811906,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000002688315014046532",
+            "extra": "mean: 54.17720509412615 usec\nrounds: 17314"
+          },
+          {
+            "name": "tests/benchmarks/test_search_benchmarks.py::TestPythonRegexBenchmarks::test_python_regex_simple_10k_lines",
+            "value": 3903.0379758608365,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000021155849652891955",
+            "extra": "mean: 256.21067644863086 usec\nrounds: 3987"
+          },
+          {
+            "name": "tests/benchmarks/test_search_benchmarks.py::TestRustGrepBenchmarks::test_rust_grep_10k_lines",
+            "value": 1009.4697695780898,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000016035707226341812",
+            "extra": "mean: 990.6190657080818 usec\nrounds: 974"
+          },
+          {
+            "name": "tests/benchmarks/test_search_benchmarks.py::TestHybridSearchFusionBenchmarks::test_rrf_fusion_1k_results",
+            "value": 556.2046491088745,
+            "unit": "iter/sec",
+            "range": "stddev: 0.006761381416561851",
+            "extra": "mean: 1.7978993911722134 msec\nrounds: 657"
           }
         ]
       }

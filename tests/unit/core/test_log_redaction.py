@@ -89,7 +89,11 @@ def test_all_expected_patterns_present() -> None:
         ("sk_api_key", "sk-abcdefghijklmnopqrstuvwxyz12345", True),
         ("sk_api_key", "sk-short", False),  # Too short (<20 chars)
         # --- nexus_api_key ---
-        ("nexus_api_key", "api_key=sk-test_admin_550e8400-e29b-41d4-a716-446655440000_a1b2c3d4", True),
+        (
+            "nexus_api_key",
+            "api_key=sk-test_admin_550e8400-e29b-41d4-a716-446655440000_a1b2c3d4",
+            True,
+        ),
         # --- postgres_url ---
         ("postgres_url", "Connecting to postgresql://user:secret@host:5432/mydb", True),
         ("postgres_url", "postgres://admin:p4ssw0rd@db.example.com/prod", True),
@@ -160,15 +164,13 @@ def test_individual_pattern(
     result = redact_text(input_text)
     if expected_contains_redacted:
         assert "[REDACTED]" in result, (
-            f"Pattern '{pattern_name}' should redact: {input_text!r}\n"
-            f"Got: {result!r}"
+            f"Pattern '{pattern_name}' should redact: {input_text!r}\nGot: {result!r}"
         )
         # Verify the original secret is NOT in the output
         # (the non-secret parts may remain)
     else:
         assert "[REDACTED]" not in result, (
-            f"Pattern '{pattern_name}' should NOT redact: {input_text!r}\n"
-            f"Got: {result!r}"
+            f"Pattern '{pattern_name}' should NOT redact: {input_text!r}\nGot: {result!r}"
         )
 
 

@@ -72,7 +72,9 @@ class _RedactionPattern:
 
     __slots__ = ("name", "regex", "replacement")
 
-    def __init__(self, name: str, pattern: str, flags: int = re.IGNORECASE, replacement: str = _REDACTED) -> None:
+    def __init__(
+        self, name: str, pattern: str, flags: int = re.IGNORECASE, replacement: str = _REDACTED
+    ) -> None:
         self.name = name
         self.regex = re.compile(pattern, flags)
         self.replacement = replacement
@@ -164,21 +166,21 @@ _GENERIC_API_KEY_ASSIGNMENT = _RedactionPattern(
 # The default set of patterns, ordered from most specific to least specific
 # to minimize false-positive overlap.
 BUILT_IN_SECRET_PATTERNS: tuple[_RedactionPattern, ...] = (
-    _PEM_PRIVATE_KEY,       # Most distinctive (multi-line)
-    _NEXUS_API_KEY,         # Before generic sk- (more specific)
-    _BEARER_TOKEN,          # "Bearer " prefix is distinctive
-    _JWT_TOKEN,             # "eyJ" prefix is distinctive
-    _AWS_ACCESS_KEY,        # AKIA/ASIA prefix
-    _AWS_SECRET_KEY,        # Named key assignment
-    _SK_API_KEY,            # sk- prefix (generic)
-    _POSTGRES_URL,          # Protocol-specific URLs
+    _PEM_PRIVATE_KEY,  # Most distinctive (multi-line)
+    _NEXUS_API_KEY,  # Before generic sk- (more specific)
+    _BEARER_TOKEN,  # "Bearer " prefix is distinctive
+    _JWT_TOKEN,  # "eyJ" prefix is distinctive
+    _AWS_ACCESS_KEY,  # AKIA/ASIA prefix
+    _AWS_SECRET_KEY,  # Named key assignment
+    _SK_API_KEY,  # sk- prefix (generic)
+    _POSTGRES_URL,  # Protocol-specific URLs
     _MYSQL_URL,
     _MONGODB_URL,
     _REDIS_URL,
-    _DJANGO_SECRET_KEY,     # Named key assignment
+    _DJANGO_SECRET_KEY,  # Named key assignment
     _GENERIC_API_KEY_ASSIGNMENT,  # Named key assignment (broad)
-    _GENERIC_PASSWORD,      # Named value assignment (broadest)
-    _FERNET_KEY,            # Base64 string (broadest, last)
+    _GENERIC_PASSWORD,  # Named value assignment (broadest)
+    _FERNET_KEY,  # Base64 string (broadest, last)
 )
 
 # Trigger substrings for heuristic pre-check.
@@ -234,7 +236,9 @@ def redact_text(text: str, patterns: tuple[_RedactionPattern, ...] | None = None
     # Heuristic pre-check: only for built-in patterns (we know their triggers).
     # Custom patterns skip this check since we don't know their trigger strings.
     # Use identity check (`is`) to detect built-in vs custom.
-    if patterns is BUILT_IN_SECRET_PATTERNS and not any(trigger in text for trigger in _TRIGGER_SUBSTRINGS):
+    if patterns is BUILT_IN_SECRET_PATTERNS and not any(
+        trigger in text for trigger in _TRIGGER_SUBSTRINGS
+    ):
         return text
 
     result = text

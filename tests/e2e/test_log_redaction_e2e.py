@@ -189,15 +189,12 @@ def test_log_redaction_e2e(redaction_server: dict) -> None:
     # Check API key is not in raw form
     # The full Nexus API key pattern should be redacted
     assert _TEST_API_KEY not in log_content, (
-        f"API key leaked in logs!\n"
-        f"Key: {_TEST_API_KEY[:20]}...\n"
-        f"Found in log output"
+        f"API key leaked in logs!\nKey: {_TEST_API_KEY[:20]}...\nFound in log output"
     )
 
     # The DB password in connection strings should be redacted
     assert "supersecret_p4ssw0rd" not in log_content, (
-        "Database password leaked in logs!\n"
-        "Found in log output"
+        "Database password leaked in logs!\nFound in log output"
     )
 
 

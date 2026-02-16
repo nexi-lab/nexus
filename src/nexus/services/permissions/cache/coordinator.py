@@ -62,7 +62,7 @@ class CacheCoordinator:
 
         # On write:
         coordinator.invalidate_for_write(
-            zone_id="default",
+            zone_id="root",
             subject=("user", "alice"),
             relation="editor",
             object=("file", "/doc.txt"),

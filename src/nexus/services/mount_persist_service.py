@@ -360,7 +360,7 @@ class MountPersistService:
             return OperationContext(
                 user=subject_id,
                 groups=[],
-                zone_id=mount.get("zone_id", "default"),
+                zone_id=mount.get("zone_id", "root"),
                 subject_type=subject_type,
                 subject_id=subject_id,
             )

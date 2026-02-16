@@ -112,7 +112,7 @@ class EventsService:
             return context.zone_id
         if self._zone_id:
             return self._zone_id
-        return "default"
+        return "root"
 
     # =========================================================================
     # System Readiness

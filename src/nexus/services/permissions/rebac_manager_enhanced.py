@@ -263,7 +263,7 @@ class EnhancedReBACManager(ReBACManager):
         permission: str,
         object: tuple[str, str],
         context: dict[str, Any] | None = None,
-        zone_id: str | None = None,  # Issue #773: Defaults to "default" internally
+        zone_id: str | None = None,  # Issue #773: Defaults to "root" internally
         consistency: ConsistencyLevel | ConsistencyRequirement | None = None,
     ) -> bool:
         """Check permission with explicit consistency control (P0-1, Issue #1081).
@@ -632,7 +632,7 @@ class EnhancedReBACManager(ReBACManager):
         permission: str,
         object: tuple[str, str],
         context: dict[str, Any] | None = None,
-        zone_id: str | None = None,  # Issue #773: Defaults to "default" internally
+        zone_id: str | None = None,  # Issue #773: Defaults to "root" internally
         consistency: ConsistencyLevel = ConsistencyLevel.EVENTUAL,
         min_revision: int | None = None,  # Issue #1081: For AT_LEAST_AS_FRESH mode
     ) -> CheckResult:
@@ -681,7 +681,7 @@ class EnhancedReBACManager(ReBACManager):
                     f"rebac_check called without zone_id, defaulting to 'default'. "
                     f"This is only allowed in development. Stack:\n{''.join(traceback.format_stack()[-5:])}"
                 )
-            zone_id = "default"
+            zone_id = "root"
 
         subject_entity = Entity(subject[0], subject[1])
         object_entity = Entity(object[0], object[1])
@@ -1435,7 +1435,7 @@ class EnhancedReBACManager(ReBACManager):
         object: tuple[str, str],
         expires_at: datetime | None = None,
         conditions: dict[str, Any] | None = None,
-        zone_id: str | None = None,  # Issue #773: Defaults to "default" internally
+        zone_id: str | None = None,  # Issue #773: Defaults to "root" internally
         subject_zone_id: str | None = None,  # Defaults to zone_id if not provided
         object_zone_id: str | None = None,  # Defaults to zone_id if not provided
     ) -> WriteResult:
@@ -1935,7 +1935,7 @@ class EnhancedReBACManager(ReBACManager):
         self,
         permission: str,
         object: tuple[str, str],
-        zone_id: str = "default",
+        zone_id: str = "root",
     ) -> list[tuple[str, str]]:
         """Find all subjects with permission on object (zone-scoped).
 
@@ -1952,7 +1952,7 @@ class EnhancedReBACManager(ReBACManager):
             return ReBACManager.rebac_expand(self, permission, object)
 
         if not zone_id:
-            zone_id = "default"
+            zone_id = "root"
 
         object_entity = Entity(object[0], object[1])
         subjects: set[tuple[str, str]] = set()
@@ -2532,7 +2532,7 @@ class EnhancedReBACManager(ReBACManager):
                 return True
 
         # Try Boundary Cache (O(1) inheritance shortcut for files)
-        effective_zone = zone_id or "default"
+        effective_zone = zone_id or "root"
         if (
             object[0] == "file"
             and permission in ("read", "write", "execute")
@@ -2745,7 +2745,7 @@ class EnhancedReBACManager(ReBACManager):
             context,
         )
 
-    def _get_version_token(self, zone_id: str = "default") -> str:
+    def _get_version_token(self, zone_id: str = "root") -> str:
         """Get current version token (P0-1).
 
         Delegates to consistency.revision module (Issue #1459).
@@ -3317,7 +3317,7 @@ class EnhancedReBACManager(ReBACManager):
                         row["relation"],
                         row["object_type"],
                         row["object_id"],
-                        row["zone_id"] or "default",
+                        row["zone_id"] or "root",
                         now,
                     ),
                 )

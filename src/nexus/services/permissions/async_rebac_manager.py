@@ -306,7 +306,7 @@ class AsyncReBACManager:
         subject: tuple[str, str],
         permission: str,
         object: tuple[str, str],
-        zone_id: str | None = None,  # Issue #773: Defaults to "default" internally
+        zone_id: str | None = None,  # Issue #773: Defaults to "root" internally
         context: dict[str, Any] | None = None,
     ) -> bool:
         """Check permission asynchronously.
@@ -330,7 +330,7 @@ class AsyncReBACManager:
             ... )
         """
         if not zone_id:
-            zone_id = "default"
+            zone_id = "root"
 
         # Ensure namespaces are loaded
         await self._load_namespaces()
@@ -655,7 +655,7 @@ class AsyncReBACManager:
             return {}
 
         if not zone_id:
-            zone_id = "default"
+            zone_id = "root"
 
         await self._load_namespaces()
 
@@ -1006,7 +1006,7 @@ class AsyncReBACManager:
         subject: tuple[str, str],
         relation: str,
         object: tuple[str, str],
-        zone_id: str | None = None,  # Issue #773: Defaults to "default" internally
+        zone_id: str | None = None,  # Issue #773: Defaults to "root" internally
         subject_relation: str | None = None,
         conditions: dict[str, Any] | None = None,
         expires_at: datetime | None = None,
@@ -1029,7 +1029,7 @@ class AsyncReBACManager:
         import uuid
 
         if not zone_id:
-            zone_id = "default"
+            zone_id = "root"
 
         tuple_id = str(uuid.uuid4())
         now = datetime.now(UTC)
@@ -1093,7 +1093,7 @@ class AsyncReBACManager:
         subject: tuple[str, str],
         relation: str,
         object: tuple[str, str],
-        zone_id: str | None = None,  # Issue #773: Defaults to "default" internally
+        zone_id: str | None = None,  # Issue #773: Defaults to "root" internally
     ) -> bool:
         """Delete a relationship tuple (async).
 
@@ -1107,7 +1107,7 @@ class AsyncReBACManager:
             True if tuple was deleted, False if not found
         """
         if not zone_id:
-            zone_id = "default"
+            zone_id = "root"
 
         async with self._session() as session:
             result = await session.execute(

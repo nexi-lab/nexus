@@ -14,8 +14,6 @@ Write path: L3 first (source of truth) -> L2 (if available) -> L1
 Related: Issue #682
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 import time
@@ -35,12 +33,11 @@ from nexus.storage.models.permissions import TigerResourceMapModel as TRM
 if TYPE_CHECKING:
     from sqlalchemy.engine import Connection, Engine
 
-    from nexus.cache.dragonfly import DragonflyTigerCache
+    from nexus.cache.base import TigerCacheProtocol
     from nexus.services.permissions.cache.tiger.resource_map import TigerResourceMap
     from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass
 class CacheKey:
@@ -69,7 +66,6 @@ class CacheKey:
             )
         )
 
-
 class TigerCache:
     """Pre-materialized permission cache using Roaring Bitmaps.
 
@@ -90,7 +86,7 @@ class TigerCache:
         engine: Engine,
         resource_map: TigerResourceMap | None = None,
         rebac_manager: EnhancedReBACManager | None = None,
-        dragonfly_cache: DragonflyTigerCache | None = None,
+        dragonfly_cache: TigerCacheProtocol | None = None,
     ):
         """Initialize Tiger Cache.
 
@@ -108,7 +104,7 @@ class TigerCache:
         self._is_postgresql = "postgresql" in str(engine.url)
 
         # L2: Dragonfly distributed cache (optional)
-        self._dragonfly: DragonflyTigerCache | None = dragonfly_cache
+        self._dragonfly: TigerCacheProtocol | None = dragonfly_cache
         self._dragonfly_url: str | None = None  # Cached URL for sync Redis client
 
         # L1: In-memory cache for hot entries
@@ -127,14 +123,14 @@ class TigerCache:
         """Public accessor for the resource map."""
         return self._resource_map
 
-    def set_dragonfly_cache(self, dragonfly_cache: DragonflyTigerCache | None) -> None:
+    def set_dragonfly_cache(self, dragonfly_cache: TigerCacheProtocol | None) -> None:
         """Set or update the Dragonfly cache backend.
 
         This allows late binding of the Dragonfly cache after initialization,
         useful when the cache factory initializes after TigerCache.
 
         Args:
-            dragonfly_cache: DragonflyTigerCache instance or None to disable
+            dragonfly_cache: TigerCacheProtocol instance or None to disable
         """
         self._dragonfly = dragonfly_cache
         if dragonfly_cache:

@@ -30,8 +30,6 @@ Performance targets:
 Issue: #951
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import logging
@@ -51,7 +49,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 @dataclass
 class DaemonStats:
     """Runtime statistics for the search daemon."""
@@ -69,7 +66,6 @@ class DaemonStats:
     zoekt_available: bool = False
     embedding_cache_connected: bool = False
 
-
 @dataclass
 class SearchResult(BaseSearchResult):
     """Unified search result from daemon.
@@ -78,7 +74,6 @@ class SearchResult(BaseSearchResult):
     """
 
     search_type: str = "hybrid"
-
 
 @dataclass
 class DaemonConfig:
@@ -109,7 +104,6 @@ class DaemonConfig:
     entropy_filtering: bool = False
     entropy_threshold: float = 0.35  # SimpleMem's τ_redundant
     entropy_alpha: float = 0.5  # Balance entity vs semantic novelty
-
 
 class SearchDaemon:
     """Long-running search service with pre-warmed indexes.
@@ -411,10 +405,10 @@ class SearchDaemon:
     async def _check_embedding_cache(self) -> None:
         """Check if embedding cache (Dragonfly) is connected."""
         try:
-            from nexus.cache.dragonfly import DragonflyEmbeddingCache
+            from nexus.cache.factory import get_cache_factory
 
-            cache = DragonflyEmbeddingCache()  # type: ignore[call-arg]
-            self.stats.embedding_cache_connected = await cache.is_connected()  # type: ignore[attr-defined]
+            factory = get_cache_factory()
+            self.stats.embedding_cache_connected = factory.has_cache_store
 
             if self.stats.embedding_cache_connected:
                 logger.info("Embedding cache (Dragonfly) connected")
@@ -1008,10 +1002,8 @@ class SearchDaemon:
             "zoekt_available": self.stats.zoekt_available,
         }
 
-
 # Global singleton for easy access
 _daemon_instance: SearchDaemon | None = None
-
 
 def get_search_daemon() -> SearchDaemon | None:
     """Get the global search daemon instance.
@@ -1021,7 +1013,6 @@ def get_search_daemon() -> SearchDaemon | None:
     """
     return _daemon_instance
 
-
 def set_search_daemon(daemon: SearchDaemon) -> None:
     """Set the global search daemon instance.
 
@@ -1030,7 +1021,6 @@ def set_search_daemon(daemon: SearchDaemon) -> None:
     """
     global _daemon_instance
     _daemon_instance = daemon
-
 
 async def create_and_start_daemon(
     database_url: str | None = None,

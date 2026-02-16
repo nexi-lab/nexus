@@ -13,7 +13,7 @@ from cachetools import LRUCache
 
 from nexus.workflows.actions import BUILTIN_ACTIONS
 from nexus.workflows.protocol import WorkflowServices
-from nexus.workflows.triggers import BUILTIN_TRIGGERS, TriggerManager
+from nexus.workflows.triggers import BUILTIN_TRIGGERS, TriggerFactory, TriggerManager
 from nexus.workflows.types import (
     TriggerType,
     WorkflowContext,
@@ -45,7 +45,7 @@ class WorkflowEngine:
         self.enabled_workflows: LRUCache[str, bool] = LRUCache(maxsize=max_workflows)
         self.workflow_ids: LRUCache[str, str] = LRUCache(maxsize=max_workflows)
         self.action_registry = BUILTIN_ACTIONS.copy()
-        self.trigger_registry = BUILTIN_TRIGGERS.copy()
+        self.trigger_registry: dict[TriggerType, TriggerFactory] = BUILTIN_TRIGGERS.copy()
 
         if plugin_registry:
             self._discover_plugin_extensions()

@@ -18,7 +18,7 @@ from nexus.workflows.protocol import (
     WorkflowServices,
 )
 from nexus.workflows.storage import WorkflowStore
-from nexus.workflows.triggers import BUILTIN_TRIGGERS, BaseTrigger, TriggerManager
+from nexus.workflows.triggers import BUILTIN_TRIGGERS, BaseTrigger, TriggerFactory, TriggerManager
 from nexus.workflows.types import (
     ActionResult,
     TriggerType,
@@ -60,4 +60,5 @@ __all__ = [
     # Built-in registries
     "BUILTIN_ACTIONS",
     "BUILTIN_TRIGGERS",
+    "TriggerFactory",
 ]

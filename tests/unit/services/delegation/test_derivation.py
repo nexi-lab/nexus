@@ -109,9 +109,7 @@ class TestDeriveCopy:
             ("direct_editor", "/a.py"),
             ("direct_editor", "/b.py"),
         ]
-        result = derive_grants(
-            grants, DelegationMode.COPY, readonly_paths=["/a.py"]
-        )
+        result = derive_grants(grants, DelegationMode.COPY, readonly_paths=["/a.py"])
         relation_map = {g.object_id: g.relation for g in result}
         assert relation_map["/a.py"] == "direct_viewer"  # downgraded
         assert relation_map["/b.py"] == "direct_editor"  # unchanged
@@ -119,9 +117,7 @@ class TestDeriveCopy:
     def test_copy_readonly_does_not_affect_viewer(self):
         """Readonly_paths on a viewer grant keeps it as viewer."""
         grants = [("direct_viewer", "/readonly.py")]
-        result = derive_grants(
-            grants, DelegationMode.COPY, readonly_paths=["/readonly.py"]
-        )
+        result = derive_grants(grants, DelegationMode.COPY, readonly_paths=["/readonly.py"])
         assert result[0].relation == "direct_viewer"
 
     def test_copy_with_scope_prefix(self):
@@ -129,9 +125,7 @@ class TestDeriveCopy:
             ("direct_editor", "/workspace/proj/a.py"),
             ("direct_editor", "/workspace/other/b.py"),
         ]
-        result = derive_grants(
-            grants, DelegationMode.COPY, scope_prefix="/workspace/proj"
-        )
+        result = derive_grants(grants, DelegationMode.COPY, scope_prefix="/workspace/proj")
         ids = {g.object_id for g in result}
         assert ids == {"/workspace/proj/a.py"}
 
@@ -159,25 +153,19 @@ class TestDeriveClean:
             ("direct_editor", "/b.py"),
             ("direct_viewer", "/c.py"),
         ]
-        result = derive_grants(
-            grants, DelegationMode.CLEAN, add_grants=["/a.py"]
-        )
+        result = derive_grants(grants, DelegationMode.CLEAN, add_grants=["/a.py"])
         ids = {g.object_id for g in result}
         assert ids == {"/a.py"}
 
     def test_clean_preserves_parent_relation(self):
         grants = [("direct_viewer", "/a.py")]
-        result = derive_grants(
-            grants, DelegationMode.CLEAN, add_grants=["/a.py"]
-        )
+        result = derive_grants(grants, DelegationMode.CLEAN, add_grants=["/a.py"])
         assert result[0].relation == "direct_viewer"
 
     def test_clean_escalation_raises(self):
         grants = [("direct_editor", "/a.py")]
         with pytest.raises(EscalationError, match="not held by parent"):
-            derive_grants(
-                grants, DelegationMode.CLEAN, add_grants=["/secret.py"]
-            )
+            derive_grants(grants, DelegationMode.CLEAN, add_grants=["/secret.py"])
 
     def test_clean_empty_add_returns_empty(self):
         grants = [("direct_editor", "/a.py")]
@@ -226,9 +214,7 @@ class TestDeriveShared:
             ("direct_editor", "/workspace/proj/a.py"),
             ("direct_editor", "/workspace/other/b.py"),
         ]
-        result = derive_grants(
-            grants, DelegationMode.SHARED, scope_prefix="/workspace/proj"
-        )
+        result = derive_grants(grants, DelegationMode.SHARED, scope_prefix="/workspace/proj")
         ids = {g.object_id for g in result}
         assert ids == {"/workspace/proj/a.py"}
 

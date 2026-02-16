@@ -50,9 +50,15 @@ class DelegationScopeModel(BaseModel):
     """Fine-grained scope constraints for a delegation."""
 
     allowed_operations: list[str] = Field(default_factory=list, description="Permitted operations")
-    resource_patterns: list[str] = Field(default_factory=list, description="Glob patterns for resources")
-    budget_limit: str | None = Field(default=None, description="Max spend in credits (decimal string)")
-    max_depth: int = Field(default=0, description="Max sub-delegation depth (0 = no sub-delegation)")
+    resource_patterns: list[str] = Field(
+        default_factory=list, description="Glob patterns for resources"
+    )
+    budget_limit: str | None = Field(
+        default=None, description="Max spend in credits (decimal string)"
+    )
+    max_depth: int = Field(
+        default=0, description="Max sub-delegation depth (0 = no sub-delegation)"
+    )
 
 
 class DelegateRequest(BaseModel):
@@ -78,8 +84,12 @@ class DelegateRequest(BaseModel):
         description="Delegation TTL in seconds (max 86400 = 24h)",
     )
     intent: str = Field(default="", description="Immutable purpose description for audit")
-    can_sub_delegate: bool = Field(default=False, description="Allow worker to create sub-delegations")
-    scope: DelegationScopeModel | None = Field(default=None, description="Fine-grained scope constraints")
+    can_sub_delegate: bool = Field(
+        default=False, description="Allow worker to create sub-delegations"
+    )
+    scope: DelegationScopeModel | None = Field(
+        default=None, description="Fine-grained scope constraints"
+    )
 
 
 class DelegateResponse(BaseModel):
@@ -189,7 +199,9 @@ async def create_delegation(
         scope = DelegationScope(
             allowed_operations=frozenset(request.scope.allowed_operations),
             resource_patterns=frozenset(request.scope.resource_patterns),
-            budget_limit=Decimal(request.scope.budget_limit) if request.scope.budget_limit else None,
+            budget_limit=Decimal(request.scope.budget_limit)
+            if request.scope.budget_limit
+            else None,
             max_depth=request.scope.max_depth,
         )
 
@@ -269,7 +281,9 @@ async def list_delegations(
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
     limit: int = Query(default=50, ge=1, le=200, description="Max records to return"),
     offset: int = Query(default=0, ge=0, description="Records to skip"),
-    status: str | None = Query(default=None, description="Filter by status (active/revoked/expired/completed)"),
+    status: str | None = Query(
+        default=None, description="Filter by status (active/revoked/expired/completed)"
+    ),
 ) -> DelegationListResponse:
     """List delegations created by the calling agent with pagination."""
     subject_type = auth_result.get("subject_type", "")

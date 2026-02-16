@@ -545,12 +545,16 @@ class DelegationService:
 
         scope_json = None
         if scope is not None:
-            scope_json = json.dumps({
-                "allowed_operations": sorted(scope.allowed_operations),
-                "resource_patterns": sorted(scope.resource_patterns),
-                "budget_limit": str(scope.budget_limit) if scope.budget_limit is not None else None,
-                "max_depth": scope.max_depth,
-            })
+            scope_json = json.dumps(
+                {
+                    "allowed_operations": sorted(scope.allowed_operations),
+                    "resource_patterns": sorted(scope.resource_patterns),
+                    "budget_limit": str(scope.budget_limit)
+                    if scope.budget_limit is not None
+                    else None,
+                    "max_depth": scope.max_depth,
+                }
+            )
 
         with self._session() as session:
             model = DelegationRecordModel(
@@ -647,9 +651,7 @@ class DelegationService:
             for key in keys:
                 DatabaseAPIKeyAuth.revoke_key(session, key.key_id)
 
-    def _update_delegation_status(
-        self, delegation_id: str, status: DelegationStatus
-    ) -> None:
+    def _update_delegation_status(self, delegation_id: str, status: DelegationStatus) -> None:
         """Update delegation record status (soft-delete pattern, Issue 8A)."""
         from nexus.storage.models.agents import DelegationRecordModel
 

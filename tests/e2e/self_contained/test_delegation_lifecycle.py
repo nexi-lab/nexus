@@ -375,7 +375,9 @@ class TestDelegationLifecycle:
         with pytest.raises(DelegationNotFoundError):
             delegation_service.revoke_delegation("nonexistent_id")
 
-    def test_revoke_already_revoked_raises(self, delegation_service, entity_registry, rebac_manager):
+    def test_revoke_already_revoked_raises(
+        self, delegation_service, entity_registry, rebac_manager
+    ):
         """Revoking an already-revoked delegation raises DelegationError."""
         _register_coordinator(entity_registry, rebac_manager)
 

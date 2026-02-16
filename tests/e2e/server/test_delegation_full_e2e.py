@@ -543,16 +543,12 @@ class TestFullDelegationLifecycle:
             )
 
         # Get first page
-        page1, total = delegation_service.list_delegations(
-            "coordinator_agent", limit=2, offset=0
-        )
+        page1, total = delegation_service.list_delegations("coordinator_agent", limit=2, offset=0)
         assert total == 5
         assert len(page1) == 2
 
         # Get second page
-        page2, total2 = delegation_service.list_delegations(
-            "coordinator_agent", limit=2, offset=2
-        )
+        page2, total2 = delegation_service.list_delegations("coordinator_agent", limit=2, offset=2)
         assert total2 == 5
         assert len(page2) == 2
 

@@ -82,9 +82,7 @@ def user_auth() -> dict[str, Any]:
     }
 
 
-def _create_test_app(
-    mock_service: Any, auth_result: dict[str, Any]
-) -> FastAPI:
+def _create_test_app(mock_service: Any, auth_result: dict[str, Any]) -> FastAPI:
     """Create FastAPI app with real router and dependency overrides.
 
     Issue 6A: Uses real router from delegation.py with FastAPI

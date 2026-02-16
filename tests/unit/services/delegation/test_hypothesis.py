@@ -82,11 +82,9 @@ class TestAntiEscalationInvariant:
         # Pick a random subset of parent grant IDs as add_grants
         parent_ids = list({obj_id for _, obj_id in parent_grants})
         # Use first few as add_grants
-        add_grants = parent_ids[:min(3, len(parent_ids))]
+        add_grants = parent_ids[: min(3, len(parent_ids))]
 
-        result = derive_grants(
-            parent_grants, DelegationMode.CLEAN, add_grants=add_grants
-        )
+        result = derive_grants(parent_grants, DelegationMode.CLEAN, add_grants=add_grants)
         derived_ids = {g.object_id for g in result}
         assert derived_ids <= set(parent_ids)
 
@@ -99,9 +97,7 @@ class TestAntiEscalationInvariant:
             return  # Skip if the extra path happens to be in parent
 
         with pytest.raises(EscalationError):
-            derive_grants(
-                parent_grants, DelegationMode.CLEAN, add_grants=[extra_path]
-            )
+            derive_grants(parent_grants, DelegationMode.CLEAN, add_grants=[extra_path])
 
 
 # ---------------------------------------------------------------------------
@@ -126,9 +122,7 @@ class TestPrivilegeMonotonicity:
         # Use all parent paths as readonly
         readonly_paths = list(parent_map.keys())
 
-        result = derive_grants(
-            parent_grants, DelegationMode.COPY, readonly_paths=readonly_paths
-        )
+        result = derive_grants(parent_grants, DelegationMode.COPY, readonly_paths=readonly_paths)
 
         for grant in result:
             parent_relation = parent_map.get(grant.object_id)
@@ -151,15 +145,14 @@ class TestScopePrefixProperty:
     @settings(max_examples=200, deadline=None)
     def test_all_derived_match_prefix(self, parent_grants, prefix):
         """With scope_prefix set, all derived grants match the prefix."""
-        result = derive_grants(
-            parent_grants, DelegationMode.COPY, scope_prefix=prefix
-        )
+        result = derive_grants(parent_grants, DelegationMode.COPY, scope_prefix=prefix)
         normalized_prefix = prefix.rstrip("/") + "/"
         for grant in result:
-            assert (
-                grant.object_id.startswith(normalized_prefix)
-                or grant.object_id == prefix.rstrip("/")
-            ), f"Grant {grant.object_id} does not match prefix {prefix}"
+            assert grant.object_id.startswith(
+                normalized_prefix
+            ) or grant.object_id == prefix.rstrip("/"), (
+                f"Grant {grant.object_id} does not match prefix {prefix}"
+            )
 
     @given(parent_grants=_grant_list)
     @settings(max_examples=100, deadline=None)
@@ -192,9 +185,7 @@ class TestRemoveGrantsProperty:
         remove = [parent_ids[0]]
 
         result_full = derive_grants(parent_grants, DelegationMode.COPY)
-        result_removed = derive_grants(
-            parent_grants, DelegationMode.COPY, remove_grants=remove
-        )
+        result_removed = derive_grants(parent_grants, DelegationMode.COPY, remove_grants=remove)
 
         full_ids = {g.object_id for g in result_full}
         removed_ids = {g.object_id for g in result_removed}

@@ -16,7 +16,6 @@ environments without Docker.
 
 from __future__ import annotations
 
-import subprocess
 import time
 import uuid
 
@@ -30,6 +29,10 @@ NODE1_URL = "http://localhost:2026"
 NODE2_URL = "http://localhost:2027"
 WITNESS_URL = "http://localhost:2028"  # witness doesn't serve HTTP API
 HEALTH_TIMEOUT = 60  # seconds to wait for cluster to be healthy
+
+# Deterministic admin key set via NEXUS_API_KEY in docker-compose.cross-platform-test.yml.
+# The entrypoint registers this key in the database on startup — no runtime creation needed.
+E2E_ADMIN_API_KEY = "sk-test-federation-e2e-admin-key"
 
 
 # ---------------------------------------------------------------------------
@@ -72,31 +75,6 @@ def _wait_healthy(urls: list[str], timeout: float = HEALTH_TIMEOUT) -> None:
             pytest.fail(f"Timed out waiting for {url} to become healthy")
 
 
-def _create_admin_key(node: str = "nexus-node-1") -> str:
-    """Create an admin API key via docker exec."""
-    result = subprocess.run(
-        [
-            "docker",
-            "exec",
-            node,
-            "bash",
-            "-c",
-            "python3 /app/scripts/create_admin_key.py "
-            "postgresql://postgres:nexus@postgres:5432/nexus admin",
-        ],
-        capture_output=True,
-        text=True,
-        timeout=30,
-    )
-    if result.returncode != 0:
-        pytest.fail(f"Failed to create admin key: {result.stderr}")
-    # Parse "API Key: sk-..." from output
-    for line in result.stdout.splitlines():
-        if line.startswith("API Key:"):
-            return line.split(":", 1)[1].strip()
-    pytest.fail(f"Could not parse API key from output: {result.stdout}")
-
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -117,8 +95,8 @@ def cluster():
 
 @pytest.fixture(scope="module")
 def api_key(cluster):
-    """Get an admin API key for the cluster."""
-    return _create_admin_key()
+    """Admin API key pre-registered via NEXUS_API_KEY in docker-compose."""
+    return E2E_ADMIN_API_KEY
 
 
 # ---------------------------------------------------------------------------

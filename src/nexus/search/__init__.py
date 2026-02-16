@@ -104,7 +104,10 @@ from nexus.search.hnsw_config import (
     get_recommended_config,
     get_vector_count,
 )
+from nexus.search.config import SearchConfig, search_config_from_env
 from nexus.search.manifest import SearchBrickManifest, verify_imports
+from nexus.search.protocols import FileReaderProtocol
+from nexus.search.result_builders import build_result_from_row, build_semantic_result
 from nexus.search.mobile_config import (
     EMBEDDING_MODELS,
     RERANKER_MODELS,
@@ -194,7 +197,12 @@ from nexus.search.zoekt_client import (
 __all__ = [
     # Search Brick (Issue #1520)
     "BaseSearchResult",
+    "FileReaderProtocol",
     "SearchBrickManifest",
+    "SearchConfig",
+    "build_result_from_row",
+    "build_semantic_result",
+    "search_config_from_env",
     "verify_imports",
     # Strategy Enums (Issue #929, #1520)
     "SearchStrategy",

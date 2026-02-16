@@ -5,7 +5,6 @@ Validates:
 - frozen=True prevents mutation (raises FrozenInstanceError)
 - dataclasses.replace() creates modified copies
 - KernelServices allows mutation (not frozen)
-- Backward-compat aliases (LRUCacheConfig, SecurityConfig, FeatureFlags)
 """
 
 from __future__ import annotations
@@ -17,7 +16,6 @@ import pytest
 from nexus.core.config import (
     CacheConfig,
     DistributedConfig,
-    FeatureFlags,
     KernelServices,
     MemoryConfig,
     ParseConfig,
@@ -260,27 +258,3 @@ class TestKernelServices:
             "server_extras",
         }
         assert expected_fields.issubset(field_names), f"Missing: {expected_fields - field_names}"
-
-
-# ---------------------------------------------------------------------------
-# Backward-compat aliases
-# ---------------------------------------------------------------------------
-
-
-class TestBackwardCompatAliases:
-    """Verify backward-compat aliases still work."""
-
-    def test_lru_cache_config_is_cache_config(self) -> None:
-        from nexus.core.config import LRUCacheConfig
-
-        assert LRUCacheConfig is CacheConfig
-
-    def test_security_config_is_permission_config(self) -> None:
-        from nexus.core.config import SecurityConfig
-
-        assert SecurityConfig is PermissionConfig
-
-    def test_feature_flags_accepts_kwargs(self) -> None:
-        """FeatureFlags stub accepts any kwargs without error."""
-        ff = FeatureFlags(enable_tiger_cache=True, enable_deferred=False)
-        assert ff is not None

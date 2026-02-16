@@ -347,31 +347,12 @@ Resolved:"""
         return replacements
 
     def _get_default_provider(self) -> Any:
-        """Try to get a default LLM provider."""
-        import os
+        """Return None — callers must inject an LLM provider via constructor.
 
-        try:
-            from pydantic import SecretStr
-
-            from nexus.llm import LiteLLMProvider, LLMConfig
-
-            if os.environ.get("ANTHROPIC_API_KEY"):
-                config = LLMConfig(
-                    model="claude-sonnet-4-20250514",
-                    api_key=SecretStr(os.environ["ANTHROPIC_API_KEY"]),
-                    max_output_tokens=1024,
-                )
-                return LiteLLMProvider(config)
-            elif os.environ.get("OPENAI_API_KEY"):
-                config = LLMConfig(
-                    model="gpt-4o-mini",
-                    api_key=SecretStr(os.environ["OPENAI_API_KEY"]),
-                    max_output_tokens=1024,
-                )
-                return LiteLLMProvider(config)
-        except Exception:
-            pass
-
+        Kernel modules must not read environment variables directly
+        (KERNEL-ARCHITECTURE §3). The service layer is responsible for
+        constructing and injecting LLM providers.
+        """
         return None
 
 

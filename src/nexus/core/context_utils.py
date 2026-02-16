@@ -25,7 +25,7 @@ def get_zone_id(context: Any) -> str:
         context: Operation context object (may have zone_id attribute)
 
     Returns:
-        Zone ID string, defaults to "default" if not found
+        Zone ID string, defaults to "root" if not found
 
     Examples:
         >>> ctx = OperationContext(zone_id="acme")
@@ -36,7 +36,7 @@ def get_zone_id(context: Any) -> str:
     """
     if context and hasattr(context, "zone_id") and context.zone_id:
         return str(context.zone_id)
-    return "default"
+    return "root"
 
 
 def get_user_identity(context: Any) -> tuple[str, str | None]:

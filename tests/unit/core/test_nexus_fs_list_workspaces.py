@@ -83,15 +83,15 @@ class TestListWorkspacesFiltering:
     def test_filters_by_path_prefix(self, nexus_fs) -> None:
         """Workspaces in user's zone-scoped path should be returned."""
         nexus_fs._workspace_registry.list_workspaces.return_value = [
-            _make_workspace("/zone/default/user/alice/workspace/project1", created_by="bob"),
-            _make_workspace("/zone/default/user/bob/workspace/project2", created_by="bob"),
+            _make_workspace("/zone/root/user/alice/workspace/project1", created_by="bob"),
+            _make_workspace("/zone/root/user/bob/workspace/project2", created_by="bob"),
         ]
 
         ctx = _make_context(user_id="alice", zone_id="root")
         result = nexus_fs.list_workspaces(context=ctx)
 
         assert len(result) == 1
-        assert result[0]["path"] == "/zone/default/user/alice/workspace/project1"
+        assert result[0]["path"] == "/zone/root/user/alice/workspace/project1"
 
     def test_filters_by_created_by(self, nexus_fs) -> None:
         """Workspaces created by the user at any path should be returned."""
@@ -110,11 +110,11 @@ class TestListWorkspacesFiltering:
         """Should return workspaces matching EITHER created_by OR path prefix."""
         nexus_fs._workspace_registry.list_workspaces.return_value = [
             # Matches path prefix (but created_by is different)
-            _make_workspace("/zone/default/user/alice/workspace/scoped", created_by="system"),
+            _make_workspace("/zone/root/user/alice/workspace/scoped", created_by="system"),
             # Matches created_by (but path is non-standard)
             _make_workspace("/custom/path", created_by="alice"),
             # Matches neither
-            _make_workspace("/zone/default/user/bob/workspace/bobs", created_by="bob"),
+            _make_workspace("/zone/root/user/bob/workspace/bobs", created_by="bob"),
         ]
 
         ctx = _make_context(user_id="alice", zone_id="root")
@@ -122,13 +122,13 @@ class TestListWorkspacesFiltering:
 
         assert len(result) == 2
         paths = [r["path"] for r in result]
-        assert "/zone/default/user/alice/workspace/scoped" in paths
+        assert "/zone/root/user/alice/workspace/scoped" in paths
         assert "/custom/path" in paths
 
     def test_returns_empty_when_no_matches(self, nexus_fs) -> None:
         """Should return empty list when no workspaces match."""
         nexus_fs._workspace_registry.list_workspaces.return_value = [
-            _make_workspace("/zone/default/user/bob/workspace/project", created_by="bob"),
+            _make_workspace("/zone/root/user/bob/workspace/project", created_by="bob"),
         ]
 
         ctx = _make_context(user_id="alice", zone_id="root")
@@ -148,7 +148,7 @@ class TestListWorkspacesFiltering:
     def test_workspace_with_none_created_by_only_matches_prefix(self, nexus_fs) -> None:
         """Workspaces with None created_by should only match by path prefix."""
         nexus_fs._workspace_registry.list_workspaces.return_value = [
-            _make_workspace("/zone/default/user/alice/workspace/legacy", created_by=None),
+            _make_workspace("/zone/root/user/alice/workspace/legacy", created_by=None),
             _make_workspace("/other/path", created_by=None),
         ]
 
@@ -156,7 +156,7 @@ class TestListWorkspacesFiltering:
         result = nexus_fs.list_workspaces(context=ctx)
 
         assert len(result) == 1
-        assert result[0]["path"] == "/zone/default/user/alice/workspace/legacy"
+        assert result[0]["path"] == "/zone/root/user/alice/workspace/legacy"
 
     def test_context_with_user_attr_fallback(self, nexus_fs) -> None:
         """Context with 'user' attribute (instead of 'user_id') should work."""
@@ -174,7 +174,7 @@ class TestListWorkspacesFiltering:
     def test_workspace_matching_both_conditions_not_duplicated(self, nexus_fs) -> None:
         """Workspace matching both created_by AND path should appear once."""
         nexus_fs._workspace_registry.list_workspaces.return_value = [
-            _make_workspace("/zone/default/user/alice/workspace/project", created_by="alice"),
+            _make_workspace("/zone/root/user/alice/workspace/project", created_by="alice"),
         ]
 
         ctx = _make_context(user_id="alice", zone_id="root")

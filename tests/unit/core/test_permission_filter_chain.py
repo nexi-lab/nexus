@@ -244,7 +244,7 @@ class TestZonePreFilterStrategy:
         paths = [
             "/zones/other_zone/secret.txt",
             "/workspace/ok.txt",
-            "/zones/default/mine.txt",
+            "/zones/root/mine.txt",
         ]
         ctx = _make_ctx(paths, mock_cache, mock_rebac, zone_id="root")
 
@@ -254,7 +254,7 @@ class TestZonePreFilterStrategy:
         assert result.allowed == []
         assert "/zones/other_zone/secret.txt" not in result.remaining
         assert "/workspace/ok.txt" in result.remaining
-        assert "/zones/default/mine.txt" in result.remaining
+        assert "/zones/root/mine.txt" in result.remaining
         assert len(result.remaining) == 2
 
     def test_same_zone_kept(self, mock_cache, mock_rebac):

@@ -4,9 +4,11 @@ Strips internal zone/user prefixes from paths before returning
 them to API clients. This ensures users see clean, user-friendly paths
 instead of internal storage paths.
 
-Internal path format:
-    /zone/{zone_id}/...                      → /...
-    /zone/{zone_id}/user:{user_id}/...       → /...
+Internal path formats:
+    /zone/{zone_id}/...                      -> /...
+    /zone/{zone_id}/user:{user_id}/...       -> /...
+    /tenant:{zone_id}/...                    -> /...
+    /tenant:{zone_id}/user:{user_id}/...     -> /...
 
 Related: Issue #1202 - list('/') returns paths with /tenant: prefix
 """
@@ -37,10 +39,11 @@ def unscope_internal_path(path: str) -> str:
     """Strip internal zone/user prefix from a storage path.
 
     Converts internal storage paths to user-friendly paths by removing
-    the zone and user prefix segments.
+    the zone/tenant and user prefix segments.
 
     Args:
-        path: Internal storage path (e.g., "/zone/default/workspace/file.txt")
+        path: Internal storage path (e.g., "/zone/default/workspace/file.txt"
+              or "/tenant:default/workspace/file.txt")
 
     Returns:
         User-friendly path (e.g., "/workspace/file.txt")
@@ -49,6 +52,10 @@ def unscope_internal_path(path: str) -> str:
         >>> unscope_internal_path("/zone/acme/connector/gcs/file.txt")
         '/connector/gcs/file.txt'
         >>> unscope_internal_path("/zone/acme/user:alice/workspace/file.txt")
+        '/workspace/file.txt'
+        >>> unscope_internal_path("/tenant:default/connector/gcs/file.txt")
+        '/connector/gcs/file.txt'
+        >>> unscope_internal_path("/tenant:default/user:admin/workspace/file.txt")
         '/workspace/file.txt'
         >>> unscope_internal_path("/workspace/file.txt")
         '/workspace/file.txt'
@@ -63,6 +70,11 @@ def unscope_internal_path(path: str) -> str:
         skip = 2  # skip "zone" + zone_id
         if len(parts) > 2 and parts[2].startswith("user:"):
             skip = 3
+    elif parts and parts[0].startswith("tenant:"):
+        # Legacy format: /tenant:{zone_id}/... or /tenant:{zone_id}/user:{user_id}/...
+        skip = 1  # skip "tenant:{zone_id}"
+        if len(parts) > 1 and parts[1].startswith("user:"):
+            skip = 2
 
     if skip == 0:
         return path if path else "/"

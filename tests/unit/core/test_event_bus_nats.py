@@ -219,7 +219,7 @@ class TestNatsEventBusPublish:
         await bus.publish(event)
 
         call_args = js.publish.call_args
-        assert call_args[0][0] == "nexus.events.default.file_write"
+        assert call_args[0][0] == "nexus.events.root.file_write"
 
     @pytest.mark.asyncio
     async def test_publish_requires_start(self, make_bus, sample_event):

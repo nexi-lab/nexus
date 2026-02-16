@@ -50,7 +50,6 @@ class TigerResourceMap:
         self,
         resource_type: str,
         resource_id: str,
-        _zone_id: str | None = None,  # Deprecated: kept for API compatibility, ignored
         conn: Connection | None = None,
     ) -> int:
         """Get or create an integer ID for a resource.
@@ -58,7 +57,6 @@ class TigerResourceMap:
         Args:
             resource_type: Type of resource (e.g., "file")
             resource_id: String ID of resource (e.g., UUID or path)
-            zone_id: DEPRECATED - ignored, kept for API compatibility
             conn: Optional database connection
 
         Returns:

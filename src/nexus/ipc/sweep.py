@@ -37,7 +37,7 @@ class TTLSweeper:
     def __init__(
         self,
         vfs: VFSOperations,
-        zone_id: str = "default",
+        zone_id: str = "root",
         interval: float = DEFAULT_SWEEP_INTERVAL,
     ) -> None:
         self._vfs = vfs

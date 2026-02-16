@@ -1135,9 +1135,7 @@ class TigerCache:
 
         try:
             # Step 1: Get or create resource int ID (separate transaction to avoid commit conflicts)
-            resource_int_id = self._resource_map.get_or_create_int_id(
-                resource_type, resource_id, zone_id
-            )
+            resource_int_id = self._resource_map.get_or_create_int_id(resource_type, resource_id)
 
             with self._engine.begin() as conn:
                 # Step 2: Load existing bitmap from DB (if exists)

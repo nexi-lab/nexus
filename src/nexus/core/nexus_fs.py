@@ -197,6 +197,11 @@ class NexusFS(  # type: ignore[misc]
         self.parser_registry = ParserRegistry()
         self.parser_registry.register(MarkItDownParser())
 
+        # Provide parse callback for virtual views (core/ must not import parsers directly)
+        from nexus.parsers import create_default_parse_fn
+
+        self._virtual_view_parse_fn = create_default_parse_fn()
+
         # Initialize new provider registry for read(parsed=True) support
         from nexus.parsers.providers import ProviderRegistry
         from nexus.parsers.providers.base import ProviderConfig
@@ -6789,7 +6794,7 @@ class NexusFS(  # type: ignore[misc]
         """Extract subject from operation context.
 
         Args:
-            context: Operation context (OperationContext, EnhancedOperationContext, or dict)
+            context: Operation context (OperationContext or dict)
 
         Returns:
             Subject tuple (type, id) or None if not found
@@ -6853,7 +6858,7 @@ class NexusFS(  # type: ignore[misc]
 
         Args:
             resource: Resource tuple (object_type, object_id)
-            context: Operation context (OperationContext, EnhancedOperationContext, or dict)
+            context: Operation context (OperationContext or dict)
             required_permission: Permission level required (default: "execute" for ownership)
 
         Raises:
@@ -6960,7 +6965,7 @@ class NexusFS(  # type: ignore[misc]
         object: tuple[str, str],
         expires_at: datetime | None = None,
         zone_id: str | None = None,
-        context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
+        context: Any = None,  # Accept OperationContext or dict
         column_config: dict[str, Any] | None = None,  # Column-level permissions for dynamic_viewer
     ) -> dict[str, Any]:
         """Create a relationship tuple in ReBAC system.
@@ -7055,7 +7060,7 @@ class NexusFS(  # type: ignore[misc]
         # Use zone_id from context if not explicitly provided
         effective_zone_id = zone_id
         if effective_zone_id is None and context:
-            # Handle both dict and OperationContext/EnhancedOperationContext
+            # Handle both dict and OperationContext
             if isinstance(context, dict):
                 effective_zone_id = context.get("zone")
             elif hasattr(context, "zone_id"):
@@ -7301,7 +7306,7 @@ class NexusFS(  # type: ignore[misc]
         subject: tuple[str, str],
         permission: str,
         object: tuple[str, str],
-        context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
+        context: Any = None,  # Accept OperationContext or dict
         zone_id: str | None = None,
     ) -> bool:
         """Check if subject has permission on object via ReBAC.
@@ -7370,7 +7375,7 @@ class NexusFS(  # type: ignore[misc]
         # Use zone_id from operation context if not explicitly provided
         effective_zone_id = zone_id
         if effective_zone_id is None and context:
-            # Handle both dict and OperationContext/EnhancedOperationContext
+            # Handle both dict and OperationContext
             if isinstance(context, dict):
                 effective_zone_id = context.get("zone")
             elif hasattr(context, "zone_id"):
@@ -7455,7 +7460,7 @@ class NexusFS(  # type: ignore[misc]
         permission: str,
         object: tuple[str, str],
         zone_id: str | None = None,
-        context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
+        context: Any = None,  # Accept OperationContext or dict
     ) -> dict:
         """Explain why a subject has or doesn't have permission on an object.
 
@@ -7516,7 +7521,7 @@ class NexusFS(  # type: ignore[misc]
         # Use zone_id from context if not explicitly provided
         effective_zone_id = zone_id
         if effective_zone_id is None and context:
-            # Handle both dict and OperationContext/EnhancedOperationContext
+            # Handle both dict and OperationContext
             if isinstance(context, dict):
                 effective_zone_id = context.get("zone")
             elif hasattr(context, "zone_id"):
@@ -8287,7 +8292,7 @@ class NexusFS(  # type: ignore[misc]
         zone_id: str | None = None,
         user_zone_id: str | None = None,
         expires_at: datetime | None = None,
-        context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
+        context: Any = None,  # Accept OperationContext or dict
     ) -> dict[str, Any]:
         """Share a resource with a specific user, regardless of zone.
 
@@ -8386,7 +8391,7 @@ class NexusFS(  # type: ignore[misc]
         zone_id: str | None = None,
         group_zone_id: str | None = None,
         expires_at: datetime | None = None,
-        context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
+        context: Any = None,  # Accept OperationContext or dict
     ) -> dict[str, Any]:
         """Share a resource with a group (all members get access).
 

@@ -208,7 +208,7 @@ nav:
       - Skills System: concepts/skills-system.md
       - Multi-Tenancy: concepts/multi-tenancy.md
       - When to Use What: concepts/when-to-use-what.md
-      - Architecture: ARCHITECTURE.md
+      - Architecture: architecture/KERNEL-ARCHITECTURE.md
       - Core Tenets: CORE_TENETS.md
 
   - Examples:

@@ -52,7 +52,7 @@ class ZonePathResolver:
     """Resolve paths across zone boundaries via DT_MOUNT entries.
 
     Usage:
-        resolver = ZonePathResolver(zone_manager, root_zone_id="default")
+        resolver = ZonePathResolver(zone_manager, root_zone_id=ROOT_ZONE_ID)
         resolved = resolver.resolve("/shared/docs/file.txt")
         metadata = resolved.store.get(resolved.path)
     """

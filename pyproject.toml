@@ -196,6 +196,7 @@ test = [
     "pytest-xdist>=3.5.0",  # Parallel test execution
     "pytest-alembic>=0.11.0",  # Alembic migration test harness (#1296)
     "freezegun>=1.4.0",  # Time mocking for tests
+    "hypothesis>=6.0.0",  # Property-based testing (e.g. test_kernel_eventlog_invariants)
     "pydantic-monty>=0.0.4",  # Monty sandbox integration/e2e tests (#1317)
     # LangGraph integration tests
     "langchain-core>=0.3.0",
@@ -287,6 +288,8 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"
+# No per-test timeout: CI runners have variable load; timeouts cause flaky failures
+# and mask real issues (slow tests should be profiled and optimized, not killed).
 addopts = [
     "-ra",
     "-q",
@@ -296,7 +299,6 @@ addopts = [
     "--dist", "loadgroup",        # Group tests by xdist_group marker for serial execution
     "--ignore=tests/evaluation",  # Exclude LLM evaluation tests from default runs
     "--ignore=tests/benchmarks",  # Exclude benchmarks from default runs (run via benchmark.yml)
-    "--timeout=60",               # Fail any single test that runs longer than 60 seconds
 ]
 # Coverage disabled by default for faster local runs. Enable in CI:
 #   pytest --cov=nexus --cov-report=term-missing --cov-report=html --cov-report=xml

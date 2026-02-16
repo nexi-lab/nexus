@@ -17,6 +17,7 @@ from typing import Any, cast
 from sqlalchemy import SmallInteger, case, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from nexus.raft.zone_manager import ROOT_ZONE_ID
 from nexus.scheduler.constants import (
     AGING_THRESHOLD_SECONDS,
     MAX_WAIT_SECONDS,
@@ -49,7 +50,7 @@ def _model_to_task(m: ScheduledTaskModel) -> ScheduledTask:
         started_at=m.started_at,
         completed_at=m.completed_at,
         error_message=m.error_message,
-        zone_id=m.zone_id or "root",
+        zone_id=m.zone_id or ROOT_ZONE_ID,
         idempotency_key=m.idempotency_key,
     )
 
@@ -72,7 +73,7 @@ class TaskQueue:
         payload: dict[str, Any],
         priority_tier: int,
         effective_tier: int,
-        zone_id: str = "root",
+        zone_id: str = ROOT_ZONE_ID,
         deadline: datetime | None = None,
         boost_amount: Decimal = Decimal("0"),
         boost_tiers: int = 0,

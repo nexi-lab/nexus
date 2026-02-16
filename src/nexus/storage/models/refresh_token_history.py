@@ -40,7 +40,7 @@ class RefreshTokenHistoryModel(Base):
     credential_id: Mapped[str] = mapped_column(String(36), nullable=False)
     refresh_token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     rotation_counter: Mapped[int] = mapped_column(Integer, nullable=False)
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
 
     rotated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

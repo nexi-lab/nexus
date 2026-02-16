@@ -100,7 +100,7 @@ class MountConfigModel(TimestampMixin, Base):
     backend_config: Mapped[str] = mapped_column(Text, nullable=False)
 
     owner_user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     conflict_strategy: Mapped[str | None] = mapped_column(String(50), nullable=True, default=None)
@@ -308,7 +308,7 @@ class UserSessionModel(Base):
 
     user_id: Mapped[str] = mapped_column(String(255), nullable=False)
     agent_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=lambda: datetime.now(UTC)

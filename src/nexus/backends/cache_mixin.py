@@ -411,7 +411,7 @@ class CacheConnectorMixin:
         # L2: Disk-based lookup for remaining paths (metadata sidecar + content files)
         file_cache = get_file_cache()
 
-        # Determine zone -- use connector's zone_id or "root"
+        # Determine zone — use connector's zone_id or "root"
         cache_zone = getattr(self, "zone_id", None) or "root"
 
         # Read metadata sidecars in bulk

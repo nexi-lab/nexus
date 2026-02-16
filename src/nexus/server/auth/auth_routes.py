@@ -9,6 +9,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
 
+from nexus.raft.zone_manager import ROOT_ZONE_ID
 from nexus.server.auth.database_local import DatabaseLocalAuth
 from nexus.server.auth.oauth_user_auth import OAuthUserAuth
 
@@ -1233,7 +1234,7 @@ async def oauth_confirm(request: OAuthConfirmRequest) -> OAuthConfirmResponse:
                     raise ValueError("Existing user email is required")
                 # User exists but not linked to OAuth - auto-link them
                 user_id = existing_user.user_id
-                zone_id = "root"  # Use their existing zone
+                zone_id = existing_user.zone_id or ROOT_ZONE_ID
 
                 with session.begin():
                     # Create OAuth account link

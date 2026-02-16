@@ -5,7 +5,7 @@ correct zone's RaftMetadataStore via ZonePathResolver.
 
 Usage:
     # Create from ZoneManager
-    proxy = FederatedMetadataProxy.from_zone_manager(zone_manager, root_zone_id="default")
+    proxy = FederatedMetadataProxy.from_zone_manager(zone_manager, root_zone_id=ROOT_ZONE_ID)
 
     # Inject into NexusFS — no NexusFS changes needed
     fs = NexusFS(backend=backend, metadata_store=proxy)

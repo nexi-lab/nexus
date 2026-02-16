@@ -66,7 +66,7 @@ class TimestampMixin:
 class ZoneIsolationMixin:
     """Mixin providing a zone_id column for multi-zone isolation."""
 
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
 
 
 class ResourceConfigMixin:

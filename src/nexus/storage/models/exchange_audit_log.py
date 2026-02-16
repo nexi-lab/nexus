@@ -60,7 +60,7 @@ class ExchangeAuditLogModel(Base):
     currency: Mapped[str] = mapped_column(String(10), nullable=False, default="credits")
 
     # Context
-    zone_id: Mapped[str] = mapped_column(String(36), nullable=False, default="default")
+    zone_id: Mapped[str] = mapped_column(String(36), nullable=False, default="root")
     trace_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     metadata_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     transfer_id: Mapped[str | None] = mapped_column(String(255), nullable=True)

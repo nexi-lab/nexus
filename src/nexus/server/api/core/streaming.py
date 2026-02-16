@@ -11,6 +11,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import Response, StreamingResponse
 
 from nexus.core.exceptions import NexusFileNotFoundError, NexusPermissionError
+from nexus.raft.zone_manager import ROOT_ZONE_ID
 from nexus.server.streaming import _verify_stream_token
 
 logger = logging.getLogger(__name__)
@@ -23,7 +24,7 @@ async def stream_file(
     request: Request,
     path: str,
     token: str = Query(..., description="Signed stream token"),
-    zone_id: str = Query("default", description="Zone ID"),
+    zone_id: str = Query(ROOT_ZONE_ID, description="Zone ID"),
 ) -> Response | StreamingResponse:
     """Stream file content with HTTP Range support (RFC 9110).
 

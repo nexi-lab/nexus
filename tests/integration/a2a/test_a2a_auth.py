@@ -315,6 +315,112 @@ class TestAuthCallback:
         assert data["error"] == "Unauthorized"
 
 
+class TestAuthProgrammingErrorPropagation:
+    """Verify that programming errors in auth_fn propagate (not silently swallowed).
+
+    After narrowing the broad ``except Exception`` handler in router.py (#1591),
+    only expected auth failures (OSError, ConnectionError, TimeoutError,
+    RuntimeError, ValueError, KeyError) are treated as unauthenticated.
+    All other exceptions (TypeError, AttributeError, etc.) propagate as 500s.
+    """
+
+    def test_auth_fn_type_error_propagates(self) -> None:
+        """TypeError in auth_fn should propagate, not be swallowed."""
+
+        async def buggy_auth_fn(request: Any) -> dict[str, Any] | None:
+            # Simulate a programming error (wrong argument type)
+            bad_arg: Any = None
+            return len(bad_arg)
+
+        app = FastAPI()
+        router = build_router(
+            base_url="http://testserver",
+            auth_required=False,
+            auth_fn=buggy_auth_fn,
+        )
+        app.include_router(router)
+        client = TestClient(app, raise_server_exceptions=False)
+
+        body = _rpc_body(
+            "a2a.tasks.send",
+            {"message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]}},
+        )
+        response = client.post("/a2a", json=body)
+        # TypeError should NOT be swallowed — FastAPI returns 500
+        assert response.status_code == 500
+
+    def test_auth_fn_attribute_error_propagates(self) -> None:
+        """AttributeError in auth_fn should propagate, not be swallowed."""
+
+        async def buggy_auth_fn(request: Any) -> dict[str, Any] | None:
+            result: Any = request.nonexistent_attribute
+            return result
+
+        app = FastAPI()
+        router = build_router(
+            base_url="http://testserver",
+            auth_required=False,
+            auth_fn=buggy_auth_fn,
+        )
+        app.include_router(router)
+        client = TestClient(app, raise_server_exceptions=False)
+
+        body = _rpc_body(
+            "a2a.tasks.send",
+            {"message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]}},
+        )
+        response = client.post("/a2a", json=body)
+        assert response.status_code == 500
+
+    def test_auth_fn_os_error_handled_gracefully(self) -> None:
+        """OSError (network failure) should be handled gracefully."""
+
+        async def network_failure_auth_fn(request: Any) -> dict[str, Any] | None:
+            raise OSError("Connection refused")
+
+        app = FastAPI()
+        router = build_router(
+            base_url="http://testserver",
+            auth_required=False,
+            auth_fn=network_failure_auth_fn,
+        )
+        app.include_router(router)
+        client = TestClient(app)
+
+        body = _rpc_body(
+            "a2a.tasks.send",
+            {"message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]}},
+        )
+        response = client.post("/a2a", json=body)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["result"]["id"]
+
+    def test_auth_fn_value_error_handled_gracefully(self) -> None:
+        """ValueError (invalid token format) should be handled gracefully."""
+
+        async def bad_token_auth_fn(request: Any) -> dict[str, Any] | None:
+            raise ValueError("Invalid token format")
+
+        app = FastAPI()
+        router = build_router(
+            base_url="http://testserver",
+            auth_required=False,
+            auth_fn=bad_token_auth_fn,
+        )
+        app.include_router(router)
+        client = TestClient(app)
+
+        body = _rpc_body(
+            "a2a.tasks.send",
+            {"message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]}},
+        )
+        response = client.post("/a2a", json=body)
+        assert response.status_code == 200
+        data = response.json()
+        assert data["result"]["id"]
+
+
 class TestAuthBestPractices:
     def test_www_authenticate_header_present(self, app_with_auth: FastAPI) -> None:
         """401 responses include WWW-Authenticate header per OAuth 2.0 spec."""

@@ -194,7 +194,7 @@ class NexusRPCTransport:
         try:
             result = self.call("ping", {}, timeout=timeout)
             return bool(result.get("status") == "ok")
-        except Exception:
+        except (ConnectionError, TimeoutError, OSError, ValueError):
             return False
 
     def close(self) -> None:

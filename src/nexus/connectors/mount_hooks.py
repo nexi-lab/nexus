@@ -121,8 +121,8 @@ def generate_all_skill_docs(
     results = []
 
     # Get all mounts from router
-    if hasattr(router, "_mounts"):
-        for mount_config in router._mounts:
+    if hasattr(router, "list_mounts"):
+        for mount_config in router.list_mounts():
             result = on_mount(
                 backend=mount_config.backend,
                 mount_path=mount_config.mount_point,

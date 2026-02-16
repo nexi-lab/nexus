@@ -21,6 +21,8 @@ Domain modules:
     models.operation_log   -- OperationLogModel
     models.audit_checkpoint -- AuditCheckpointModel
     models.exchange_audit_log -- ExchangeAuditLogModel
+    models.identity        -- AgentKeyModel (Issue #1355)
+    models.a2a             -- A2ATaskModel
     models.ipc_message     -- IPCMessageModel (Issue #1469)
 """
 
@@ -32,6 +34,9 @@ from nexus.storage.models._base import ZoneIsolationMixin as ZoneIsolationMixin
 from nexus.storage.models._base import _generate_uuid as _generate_uuid
 from nexus.storage.models._base import _get_uuid_server_default as _get_uuid_server_default
 from nexus.storage.models._base import uuid_pk as uuid_pk
+
+# Domain: A2A (Task persistence)
+from nexus.storage.models.a2a import A2ATaskModel as A2ATaskModel
 
 # Domain: ACE (Trajectories, Feedback, Playbooks)
 from nexus.storage.models.ace import PlaybookModel as PlaybookModel
@@ -67,6 +72,9 @@ from nexus.storage.models.filesystem import DirectoryEntryModel as DirectoryEntr
 from nexus.storage.models.filesystem import DocumentChunkModel as DocumentChunkModel
 from nexus.storage.models.filesystem import FileMetadataModel as FileMetadataModel
 from nexus.storage.models.filesystem import WorkspaceSnapshotModel as WorkspaceSnapshotModel
+
+# Domain: Identity (Agent signing keys, Issue #1355)
+from nexus.storage.models.identity import AgentKeyModel as AgentKeyModel
 
 # Domain: Infrastructure (Sandbox, Config, Sessions, Migrations)
 from nexus.storage.models.infrastructure import MigrationHistoryModel as MigrationHistoryModel

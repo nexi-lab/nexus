@@ -25,7 +25,7 @@ from sqlalchemy import select, update
 
 from nexus.identity.crypto import IdentityCrypto
 from nexus.identity.did import create_did_key
-from nexus.identity.models import AgentKeyModel
+from nexus.storage.models import AgentKeyModel
 
 
 def _utcnow_naive() -> datetime:

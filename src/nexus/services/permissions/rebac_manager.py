@@ -21,14 +21,16 @@ from typing import TYPE_CHECKING, Any, cast
 
 from nexus.core.rebac import (
     CROSS_ZONE_ALLOWED_RELATIONS,
+    Entity,
+    NamespaceConfig,
+)
+from nexus.services.permissions.default_namespaces import (
     DEFAULT_FILE_NAMESPACE,
     DEFAULT_GROUP_NAMESPACE,
     DEFAULT_MEMORY_NAMESPACE,
     DEFAULT_PLAYBOOK_NAMESPACE,
     DEFAULT_SKILL_NAMESPACE,
     DEFAULT_TRAJECTORY_NAMESPACE,
-    Entity,
-    NamespaceConfig,
 )
 from nexus.services.permissions.graph.expand import ExpandEngine
 from nexus.services.permissions.graph.traversal import PermissionComputer

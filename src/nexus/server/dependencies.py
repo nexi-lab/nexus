@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import logging
+import os
 from typing import Any
 
 from cachetools import TTLCache
@@ -48,6 +49,22 @@ def _set_cached_auth(token: str, result: dict[str, Any]) -> None:
 def _reset_auth_cache() -> None:
     """Reset the auth cache. Used by tests for isolation."""
     _AUTH_CACHE.clear()
+
+
+# NEXUS_STATIC_ADMINS: comma-separated subject IDs that get admin privileges
+# in open access mode (no api_key, no auth_provider). Parsed once at import.
+# WARNING: In open access mode, identity comes from unauthenticated headers.
+# This should ONLY be used in development/testing, never in production.
+_STATIC_ADMINS_CSV = os.environ.get("NEXUS_STATIC_ADMINS", "")
+_STATIC_ADMINS: frozenset[str] = frozenset(
+    a.strip() for a in _STATIC_ADMINS_CSV.split(",") if a.strip()
+)
+if _STATIC_ADMINS:
+    logger.warning(
+        "[AUTH] NEXUS_STATIC_ADMINS configured: %s. "
+        "Grants admin privileges in open access mode. DO NOT use in production.",
+        _STATIC_ADMINS,
+    )
 
 
 async def resolve_auth(
@@ -99,9 +116,11 @@ async def resolve_auth(
                 subject_type = "user"
                 subject_id = parsed.user
 
+        is_admin = subject_id in _STATIC_ADMINS if subject_id else False
+
         return {
             "authenticated": True,
-            "is_admin": False,
+            "is_admin": is_admin,
             "subject_type": subject_type,
             "subject_id": subject_id,
             "zone_id": zone_id,

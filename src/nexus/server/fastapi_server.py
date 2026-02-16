@@ -282,30 +282,19 @@ async def lifespan(_app: FastAPI) -> Any:
     # Initialize async ReBAC manager if database URL provided
     if _app.state.database_url:
         try:
-            from nexus.rebac.async_manager import AsyncReBACManager
+            from nexus.services.permissions.async_rebac_manager import (
+                AsyncReBACManager,
+                create_async_engine_from_url,
+            )
 
-            # Issue #1385: AsyncReBACManager is a thin asyncio.to_thread() wrapper
-            # around the sync ReBACManager. Use the existing sync manager from NexusFS.
-            sync_rebac = getattr(_app.state, "nexus_fs", None)
-            sync_rebac = getattr(sync_rebac, "_rebac_manager", None) if sync_rebac else None
-            if sync_rebac:
-                _app.state.async_rebac_manager = AsyncReBACManager(sync_rebac)
-                logger.info("Async ReBAC manager initialized (wrapping sync manager)")
-            else:
-                # Fallback: create a fresh sync manager for async wrapper
-                from nexus.rebac.manager import ReBACManager
-
-                from sqlalchemy import create_engine as _create_engine
-
-                _sync_engine = _create_engine(_app.state.database_url)
-                _sync_mgr = ReBACManager(engine=_sync_engine)
-                _app.state.async_rebac_manager = AsyncReBACManager(_sync_mgr)
-                logger.info("Async ReBAC manager initialized (fresh sync manager)")
+            engine = create_async_engine_from_url(_app.state.database_url)
+            _app.state.async_rebac_manager = AsyncReBACManager(engine)
+            logger.info("Async ReBAC manager initialized")
 
             # Issue #940: Initialize AsyncNexusFS with permission enforcement
             try:
                 from nexus.core.async_nexus_fs import AsyncNexusFS
-                from nexus.rebac.async_permissions import AsyncPermissionEnforcer
+                from nexus.services.permissions.async_permissions import AsyncPermissionEnforcer
 
                 backend_root = os.getenv("NEXUS_BACKEND_ROOT", ".nexus-data/backend")
                 tenant_id = os.getenv("NEXUS_TENANT_ID", "default")
@@ -315,31 +304,25 @@ async def lifespan(_app: FastAPI) -> Any:
                     "yes",
                 )
 
-                # Issue #1239: Create namespace manager for per-subject visibility
-                # Issue #1265: Factory function handles L3 persistent store wiring
-                namespace_manager = None
-                if enforce_permissions and hasattr(_app.state, "nexus_fs"):
+                # Issue #1239 / #1502: Read NamespaceManager from factory
+                namespace_manager = (
+                    getattr(_app.state.nexus_fs, "_namespace_manager", None)
+                    if hasattr(_app.state, "nexus_fs")
+                    else None
+                )
+                if namespace_manager is not None:
+                    # Wire event-driven invalidation: rebac_write → namespace cache (Issue #1244)
                     sync_rebac = getattr(_app.state.nexus_fs, "_rebac_manager", None)
                     if sync_rebac:
-                        from nexus.rebac.namespace_factory import (
-                            create_namespace_manager,
-                        )
-
-                        ns_record_store = getattr(_app.state.nexus_fs, "_record_store", None)
-                        namespace_manager = create_namespace_manager(
-                            rebac_manager=sync_rebac,
-                            record_store=ns_record_store,
-                        )
-                        # Wire event-driven invalidation: rebac_write → namespace cache (Issue #1244)
                         sync_rebac.register_namespace_invalidator(
                             "namespace_dcache",
                             lambda st, sid, _zid: namespace_manager.invalidate((st, sid)),
                         )
-                        logger.info(
-                            "[NAMESPACE] NamespaceManager initialized for AsyncPermissionEnforcer "
-                            "(using sync rebac_manager, L3=%s, event-driven invalidation=enabled)",
-                            "enabled" if ns_record_store else "disabled",
-                        )
+                    logger.info(
+                        "[NAMESPACE] NamespaceManager read from factory for "
+                        "AsyncPermissionEnforcer (event-driven invalidation=%s)",
+                        "enabled" if sync_rebac else "disabled",
+                    )
 
                 # Create permission enforcer with async ReBAC
                 # Note: agent_registry may not be initialized yet (it's set later
@@ -641,7 +624,7 @@ async def lifespan(_app: FastAPI) -> Any:
                 # Start DirectoryGrantExpander worker for large directory grants (Leopard-style)
                 # This processes pending directory grants asynchronously in background
                 try:
-                    from nexus.rebac.tiger_cache import DirectoryGrantExpander
+                    from nexus.services.permissions.tiger_cache import DirectoryGrantExpander
 
                     expander = DirectoryGrantExpander(
                         engine=_app.state.nexus_fs._rebac_manager.engine,
@@ -725,37 +708,17 @@ async def lifespan(_app: FastAPI) -> Any:
         except Exception as e:
             logger.debug(f"[WARMUP] Server startup warmup skipped: {e}")
 
-    # Issue #1240: Initialize AgentRegistry for agent lifecycle tracking
-    if _app.state.nexus_fs and getattr(_app.state.nexus_fs, "SessionLocal", None):
-        try:
-            from nexus.services.agents.agent_registry import AgentRegistry
-
-            _app.state.agent_registry = AgentRegistry(
-                session_factory=_app.state.nexus_fs.SessionLocal,
-                entity_registry=getattr(_app.state.nexus_fs, "_entity_registry", None),
-                flush_interval=60,
-            )
-            # Inject into NexusFS for RPC methods
-            _app.state.nexus_fs._agent_registry = _app.state.agent_registry
-
-            # Wire into sync PermissionEnforcer
-            perm_enforcer = getattr(_app.state.nexus_fs, "_permission_enforcer", None)
-            if perm_enforcer is not None:
-                perm_enforcer.agent_registry = _app.state.agent_registry
-
-            # Issue #1440: Create async wrapper for protocol conformance
-            from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
-
-            _app.state.async_agent_registry = AsyncAgentRegistry(_app.state.agent_registry)
-
-            logger.info("[AGENT-REG] AgentRegistry initialized and wired")
-        except Exception as e:
-            logger.warning(f"[AGENT-REG] Failed to initialize AgentRegistry: {e}")
-            _app.state.agent_registry = None
-            _app.state.async_agent_registry = None
+    # Issue #1240 / #1502: AgentRegistry from factory (via KernelServices)
+    _app.state.agent_registry = getattr(_app.state.nexus_fs, "_agent_registry", None)
+    _app.state.async_agent_registry = getattr(_app.state.nexus_fs, "_async_agent_registry", None)
+    if _app.state.agent_registry is not None:
+        # Wire into sync PermissionEnforcer (cross-cutting concern)
+        perm_enforcer = getattr(_app.state.nexus_fs, "_permission_enforcer", None)
+        if perm_enforcer is not None:
+            perm_enforcer.agent_registry = _app.state.agent_registry
+        logger.info("[AGENT-REG] AgentRegistry read from factory-created services")
     else:
-        _app.state.agent_registry = None
-        _app.state.async_agent_registry = None
+        logger.info("[AGENT-REG] AgentRegistry not available (no session_factory?)")
 
     # Issue #1355: Initialize KeyService for agent identity
     if _app.state.nexus_fs and getattr(_app.state.nexus_fs, "SessionLocal", None):
@@ -900,32 +863,9 @@ async def lifespan(_app: FastAPI) -> Any:
                 # Attach smart router for Monty -> Docker -> E2B routing (Issue #1317)
                 sandbox_mgr.wire_router()
 
-                # Get NamespaceManager if available (best-effort)
-                # Issue #1265: Factory function handles L3 persistent store wiring
-                namespace_manager = None
-                sync_rebac = getattr(_app.state.nexus_fs, "_rebac_manager", None)
-                if sync_rebac:
-                    try:
-                        from nexus.rebac.namespace_factory import (
-                            create_namespace_manager,
-                        )
-
-                        ns_record_store = getattr(_app.state.nexus_fs, "_record_store", None)
-                        namespace_manager = create_namespace_manager(
-                            rebac_manager=sync_rebac,
-                            record_store=ns_record_store,
-                        )
-                        # Wire event-driven invalidation for sandbox namespace (Issue #1244)
-                        sync_rebac.register_namespace_invalidator(
-                            "sandbox_namespace_dcache",
-                            lambda st, sid, _zid: namespace_manager.invalidate((st, sid)),  # type: ignore[union-attr]
-                        )
-                    except Exception as e:
-                        logger.info(
-                            "[SANDBOX-AUTH] NamespaceManager not available (%s), "
-                            "sandbox mount tables will be empty",
-                            e,
-                        )
+                # Issue #1502: Read NamespaceManager from factory
+                # (event-driven invalidation already wired above)
+                namespace_manager = getattr(_app.state.nexus_fs, "_namespace_manager", None)
 
                 _app.state.sandbox_auth_service = SandboxAuthService(
                     agent_registry=_app.state.agent_registry,
@@ -1657,7 +1597,7 @@ def _register_routes(app: FastAPI) -> None:
         if has_rebac:
             cb = getattr(_fastapi_app.state, "rebac_circuit_breaker", None)
             if cb:
-                from nexus.rebac.circuit_breaker import CircuitState
+                from nexus.services.permissions.circuit_breaker import CircuitState
 
                 cb_state = cb.state
                 if cb_state == CircuitState.CLOSED:
@@ -3419,7 +3359,7 @@ def _handle_admin_create_key(params: Any, context: Any) -> dict[str, Any]:
     from datetime import timedelta
 
     from nexus.server.auth.database_key import DatabaseAPIKeyAuth
-    from nexus.rebac.entity_registry import EntityRegistry
+    from nexus.services.permissions.entity_registry import EntityRegistry
 
     _require_admin(context)
 

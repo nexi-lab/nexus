@@ -11,6 +11,7 @@ Tests OWASP Agentic Top 10 (ASI03) attack vectors:
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -76,7 +77,8 @@ def crypto(mock_oauth_crypto: MagicMock) -> IdentityCrypto:
 
 @pytest.fixture
 def key_service(session_factory: Any, crypto: IdentityCrypto) -> KeyService:
-    return KeyService(session_factory=session_factory, crypto=crypto, cache_ttl=0)
+    record_store = SimpleNamespace(session_factory=session_factory)
+    return KeyService(record_store=record_store, crypto=crypto, cache_ttl=0)
 
 
 # ---------------------------------------------------------------------------

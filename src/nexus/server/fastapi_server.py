@@ -725,7 +725,10 @@ async def lifespan(_app: FastAPI) -> Any:
         _app.state.async_agent_registry = None
 
     # Issue #1355: Initialize KeyService for agent identity
-    if _app.state.nexus_fs and getattr(_app.state.nexus_fs, "SessionLocal", None):
+    _kya_record_store = (
+        getattr(_app.state.nexus_fs, "_record_store", None) if _app.state.nexus_fs else None
+    )
+    if _kya_record_store is not None:
         try:
             from nexus.identity.crypto import IdentityCrypto
             from nexus.identity.key_service import KeyService
@@ -734,7 +737,7 @@ async def lifespan(_app: FastAPI) -> Any:
 
             # Ensure agent_keys table exists (AgentKeyModel is imported lazily,
             # after SQLAlchemyRecordStore.create_all already ran)
-            _nx_engine = getattr(_app.state.nexus_fs, "_sql_engine", None)
+            _nx_engine = getattr(_kya_record_store, "engine", None)
             if _nx_engine is not None:
                 AgentKeyModel.__table__.create(_nx_engine, checkfirst=True)
 
@@ -744,7 +747,7 @@ async def lifespan(_app: FastAPI) -> Any:
             _identity_crypto = IdentityCrypto(token_encryptor=_identity_oauth_crypto)
 
             _app.state.key_service = KeyService(
-                session_factory=_app.state.nexus_fs.SessionLocal,
+                record_store=_kya_record_store,
                 crypto=_identity_crypto,
             )
             # Inject into NexusFS for register_agent integration

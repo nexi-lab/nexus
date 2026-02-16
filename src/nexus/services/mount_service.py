@@ -32,10 +32,10 @@ logger = logging.getLogger(__name__)
 ProgressCallback = Callable[[int, str], None]
 
 if TYPE_CHECKING:
-    from nexus.core.mount_manager import MountManager
     from nexus.core.nexus_fs import NexusFilesystem
     from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter
+    from nexus.services.mount_manager import MountManager
 
 
 class MountService:

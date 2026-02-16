@@ -2,10 +2,13 @@
 
 Provides fixtures for:
 - isolated_db: Isolated SQLite database for each test
+- metadata_store: Raft metadata store (from integration tests)
+- record_store: In-memory SQLAlchemy record store (from integration tests)
 - nexus_server: Actual nexus serve process running on a free port
-- test_client: httpx client for making real HTTP requests
+- test_app: httpx client for making real HTTP requests
+- nexus_fs: Direct NexusFS instance (no server)
 
-These are TRUE e2e tests that start the actual server process.
+Merged from tests/integration/conftest.py and tests/e2e/conftest.py.
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 import uuid
 from contextlib import closing, suppress
 from pathlib import Path
@@ -27,6 +31,13 @@ import pytest
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
+
+# Conditionally ignore MCP tests if fastmcp is not installed
+# This must be done at collection time, before any imports from test files
+try:
+    import fastmcp  # noqa: F401
+except ImportError:
+    collect_ignore_glob = ["self_contained/mcp/*"]
 
 # Add src directory to Python path for local development
 _src_path = Path(__file__).parent.parent.parent / "src"
@@ -254,3 +265,48 @@ def nexus_fs(isolated_db, tmp_path):
     yield nx
 
     nx.close()
+
+
+def wait_for_server(url: str, timeout: float = 30.0) -> bool:
+    """Wait for server to be ready by polling /health endpoint.
+
+    Shared helper — previously duplicated across multiple test files.
+    """
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            response = httpx.get(f"{url}/health", timeout=1.0, trust_env=False)
+            if response.status_code == 200:
+                return True
+        except (httpx.ConnectError, httpx.ReadTimeout):
+            pass
+        time.sleep(0.1)
+    return False
+
+
+@pytest.fixture
+def metadata_store(tmp_path):
+    """Create Raft metadata store for tests (primary production path).
+
+    Uses RaftMetadataStore (Strong Consistency, primary production default).
+
+    Returns:
+        RaftMetadataStore: Raft-backed metadata store (SC mode)
+    """
+    store = RaftMetadataStore.embedded(str(tmp_path / "raft-metadata"))
+    yield store
+    # Cleanup handled by tmp_path
+
+
+@pytest.fixture
+def record_store():
+    """Create in-memory RecordStore for tests.
+
+    Uses in-memory SQLite for test isolation.
+
+    Returns:
+        SQLAlchemyRecordStore: In-memory SQLite record store
+    """
+    store = SQLAlchemyRecordStore()  # defaults to sqlite:///:memory:
+    yield store
+    store.close()

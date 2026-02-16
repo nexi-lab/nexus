@@ -1466,7 +1466,10 @@ class NexusFUSEOperations(Operations):
         """
         try:
             # Read full file content (uses cache hierarchy)
-            content = self._get_file_content(path, None)
+            # A1-B: readahead is triggered from open() where auth was verified;
+            # skip redundant context check to avoid passing credentials on
+            # background threads.
+            content = self._get_file_content(path, None, skip_auth=True)
 
             # Return requested range
             end = min(offset + size, len(content))

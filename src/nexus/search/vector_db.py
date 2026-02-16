@@ -75,6 +75,14 @@ class VectorDatabase:
         self.bm25_available = False  # Set to True if pg_textsearch BM25 is available
         self._sqlite_vec_loaded = False  # Track if we've set up the event listener
 
+    def get_stats(self) -> dict[str, Any]:
+        """Return statistics about the vector database."""
+        return {
+            "vec_enabled": self.vec_available,
+            "bm25_enabled": self.bm25_available,
+            "db_type": self.db_type,
+        }
+
     def initialize(self) -> None:
         """Initialize vector extensions and create FTS tables."""
         if self._initialized:

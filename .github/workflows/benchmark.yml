@@ -70,18 +70,19 @@ jobs:
             --benchmark-warmup-iterations=3 \
             -o "addopts=" -v
 
-      - name: Check if gh-pages branch exists
-        id: gh-pages-check
+      - name: Ensure gh-pages branch exists
         run: |
-          if git ls-remote --heads origin gh-pages | grep -q gh-pages; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+          if ! git ls-remote --heads origin gh-pages | grep -q gh-pages; then
+            echo "Creating gh-pages branch..."
+            git checkout --orphan gh-pages
+            git reset --hard
+            git commit --allow-empty -m "Initialize gh-pages for benchmark data"
+            git push origin gh-pages
+            git checkout -
           fi
 
       - name: Store benchmark results
         uses: benchmark-action/github-action-benchmark@v1
-        if: steps.gh-pages-check.outputs.exists == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
         with:
           tool: pytest
           output-file-path: benchmark-results.json
@@ -93,7 +94,6 @@ jobs:
           auto-push: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
           summary-always: true
-          skip-fetch-gh-pages: ${{ steps.gh-pages-check.outputs.exists == 'false' }}
 
   benchmark-full:
     name: Benchmark (Full Suite)
@@ -148,13 +148,15 @@ jobs:
             --benchmark-warmup-iterations=3 \
             -o "addopts=" -v
 
-      - name: Check if gh-pages branch exists
-        id: gh-pages-check
+      - name: Ensure gh-pages branch exists
         run: |
-          if git ls-remote --heads origin gh-pages | grep -q gh-pages; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
+          if ! git ls-remote --heads origin gh-pages | grep -q gh-pages; then
+            echo "Creating gh-pages branch..."
+            git checkout --orphan gh-pages
+            git reset --hard
+            git commit --allow-empty -m "Initialize gh-pages for benchmark data"
+            git push origin gh-pages
+            git checkout -
           fi
 
       - name: Store full benchmark results
@@ -167,4 +169,3 @@ jobs:
           auto-push: true
           github-token: ${{ secrets.GITHUB_TOKEN }}
           summary-always: true
-          skip-fetch-gh-pages: ${{ steps.gh-pages-check.outputs.exists == 'false' }}

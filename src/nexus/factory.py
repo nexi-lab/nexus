@@ -796,7 +796,8 @@ def _create_distributed_infra(
 ) -> tuple[Any, Any]:
     """Create event bus and lock manager (was NexusFS.__init__ lines 439-521).
 
-    Returns (event_bus, lock_manager) tuple. Either may be None.
+    Returns (event_bus, lock_manager) tuple.
+    Either event_bus or lock_manager may be None.
     """
     import logging
 

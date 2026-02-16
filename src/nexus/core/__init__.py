@@ -131,7 +131,7 @@ def get_async_rebac_manager() -> type:
 
 def get_async_rebac_bridge() -> type:
     """Get AsyncReBACBridge class (lazy import)."""
-    from nexus.core.async_bridge import AsyncReBACBridge
+    from nexus.services.permissions.async_bridge import AsyncReBACBridge
 
     return AsyncReBACBridge
 

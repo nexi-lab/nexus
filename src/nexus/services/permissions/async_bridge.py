@@ -8,7 +8,7 @@ allowing the sync server to benefit from async database pooling and
 non-blocking I/O.
 
 Usage:
-    from nexus.core.async_bridge import AsyncReBACBridge
+    from nexus.services.permissions.async_bridge import AsyncReBACBridge
 
     # Initialize once at server startup
     bridge = AsyncReBACBridge(database_url)

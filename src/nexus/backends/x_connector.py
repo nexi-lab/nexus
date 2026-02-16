@@ -49,6 +49,7 @@ from nexus.backends.oauth_mixin import OAuthConnectorMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.core import glob_fast
 from nexus.core.exceptions import BackendError
+from nexus.core.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
@@ -623,11 +624,12 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
         finally:
             await client.close()
 
+    @timed_response
     def read_content(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,
-    ) -> bytes:
+    ) -> HandlerResponse[bytes]:
         """
         Read content from X API via virtual path.
 
@@ -638,15 +640,14 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
             context: Operation context with backend_path
 
         Returns:
-            File content as bytes (JSON)
-
-        Raises:
-            BackendError: If operation fails
+            HandlerResponse with JSON content as bytes in data field
         """
         if not context or not hasattr(context, "backend_path") or not context.backend_path:
-            raise BackendError(
-                "X connector requires context with backend_path",
-                backend="x",
+            return HandlerResponse.error(
+                message="X connector requires context with backend_path",
+                code=400,
+                is_expected=True,
+                backend_name=self.name,
             )
 
         path = context.backend_path
@@ -662,18 +663,28 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
         ttl = self.cache_ttl.get(endpoint_type, 300)
         cached = self._get_cached(cache_key, user_email_for_cache, ttl)
         if cached:
-            return cached
+            return HandlerResponse.ok(
+                data=cached,
+                backend_name=self.name,
+                path=path,
+            )
 
         # Fetch from API
         from nexus.core.sync_bridge import run_sync
 
-        return run_sync(self._read_content_async(context, endpoint_type, params))
+        content = run_sync(self._read_content_async(context, endpoint_type, params))
+        return HandlerResponse.ok(
+            data=content,
+            backend_name=self.name,
+            path=path,
+        )
 
+    @timed_response
     def write_content(
         self,
         content: bytes,
         context: "OperationContext | None" = None,
-    ) -> str:
+    ) -> HandlerResponse[str]:
         """
         Write content (post tweet or save draft).
 
@@ -682,25 +693,29 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
             context: Operation context with backend_path
 
         Returns:
-            Content hash (tweet ID for posted tweets)
-
-        Raises:
-            BackendError: If operation fails
-            PermissionError: If path is read-only
+            HandlerResponse with content hash (tweet ID for posted tweets) in data field
         """
         if not context or not hasattr(context, "backend_path") or not context.backend_path:
-            raise BackendError(
-                "X connector requires context with backend_path",
-                backend="x",
+            return HandlerResponse.error(
+                message="X connector requires context with backend_path",
+                code=400,
+                is_expected=True,
+                backend_name=self.name,
             )
 
         path = context.backend_path
 
         # Check if path is writable
         if not self._is_writable(path):
-            raise PermissionError(
-                f"Path '{path}' is read-only. "
-                f"Writable paths: /x/posts/new.json, /x/posts/drafts/*.json"
+            return HandlerResponse.error(
+                message=(
+                    f"Path '{path}' is read-only. "
+                    f"Writable paths: /x/posts/new.json, /x/posts/drafts/*.json"
+                ),
+                code=403,
+                is_expected=True,
+                backend_name=self.name,
+                path=path,
             )
 
         # Parse content
@@ -716,7 +731,11 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
             draft_file = Path(self.cache_dir) / "drafts" / f"{draft_id}.json"
             draft_file.parent.mkdir(exist_ok=True)
             draft_file.write_bytes(content)
-            return draft_id
+            return HandlerResponse.ok(
+                data=draft_id,
+                backend_name=self.name,
+                path=path,
+            )
 
         # Post tweet
         async def _post_tweet() -> str:
@@ -744,13 +763,19 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
 
         from nexus.core.sync_bridge import run_sync
 
-        return run_sync(_post_tweet())
+        tweet_id = run_sync(_post_tweet())
+        return HandlerResponse.ok(
+            data=tweet_id,
+            backend_name=self.name,
+            path=path,
+        )
 
+    @timed_response
     def delete_content(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,
-    ) -> None:
+    ) -> HandlerResponse[None]:
         """
         Delete content (delete tweet or draft).
 
@@ -758,14 +783,15 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
             content_hash: Ignored for X connector
             context: Operation context with backend_path
 
-        Raises:
-            BackendError: If operation fails
-            PermissionError: If path cannot be deleted
+        Returns:
+            HandlerResponse indicating success or failure
         """
         if not context or not hasattr(context, "backend_path") or not context.backend_path:
-            raise BackendError(
-                "X connector requires context with backend_path",
-                backend="x",
+            return HandlerResponse.error(
+                message="X connector requires context with backend_path",
+                code=400,
+                is_expected=True,
+                backend_name=self.name,
             )
 
         path = context.backend_path
@@ -781,14 +807,24 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
 
             # Skip special files
             if tweet_id in ("new", "all"):
-                raise BackendError(f"Cannot delete special file: {path}", backend="x")
+                return HandlerResponse.error(
+                    message=f"Cannot delete special file: {path}",
+                    code=400,
+                    is_expected=True,
+                    backend_name=self.name,
+                    path=path,
+                )
 
             # Check if it's a draft
             if "drafts/" in normalized_path:
                 draft_file = Path(self.cache_dir) / "drafts" / f"{tweet_id}.json"
                 if draft_file.exists():
                     draft_file.unlink()
-                return
+                return HandlerResponse.ok(
+                    data=None,
+                    backend_name=self.name,
+                    path=path,
+                )
 
             # Delete tweet via API
             async def _delete_tweet() -> None:
@@ -809,20 +845,35 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
                 run_sync(_delete_tweet())
             except BackendError as e:
                 if "403" in str(e) or "Forbidden" in str(e):
-                    raise PermissionError(
-                        f"Cannot delete tweet {tweet_id}: Not owned by user"
-                    ) from e
+                    return HandlerResponse.error(
+                        message=f"Cannot delete tweet {tweet_id}: Not owned by user",
+                        code=403,
+                        is_expected=True,
+                        backend_name=self.name,
+                        path=path,
+                    )
                 raise
-            return
+            return HandlerResponse.ok(
+                data=None,
+                backend_name=self.name,
+                path=path,
+            )
 
         # Cannot delete other paths
-        raise PermissionError(f"Path '{path}' cannot be deleted")
+        return HandlerResponse.error(
+            message=f"Path '{path}' cannot be deleted",
+            code=403,
+            is_expected=True,
+            backend_name=self.name,
+            path=path,
+        )
 
+    @timed_response
     def content_exists(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,
-    ) -> bool:
+    ) -> HandlerResponse[bool]:
         """
         Check if content exists.
 
@@ -833,23 +884,34 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
             context: Operation context with backend_path
 
         Returns:
-            True if path exists
+            HandlerResponse with True if path exists, False otherwise in data field
         """
         if not context or not hasattr(context, "backend_path"):
-            return False
+            return HandlerResponse.ok(
+                data=False,
+                backend_name=self.name,
+            )
 
         try:
             # Try to resolve path
             self._resolve_path(context.backend_path or "")
-            return True
+            return HandlerResponse.ok(
+                data=True,
+                backend_name=self.name,
+                path=context.backend_path,
+            )
         except BackendError:
-            return False
+            return HandlerResponse.ok(
+                data=False,
+                backend_name=self.name,
+            )
 
+    @timed_response
     def get_content_size(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,
-    ) -> int:
+    ) -> HandlerResponse[int]:
         """
         Get content size.
 
@@ -860,16 +922,20 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
             context: Operation context
 
         Returns:
-            Content size in bytes (estimated)
+            HandlerResponse with content size in bytes (estimated) in data field
         """
         # Return approximate size (tweets are usually small)
-        return 1024  # 1 KB estimate
+        return HandlerResponse.ok(
+            data=1024,  # 1 KB estimate
+            backend_name=self.name,
+        )
 
+    @timed_response
     def get_ref_count(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,
-    ) -> int:
+    ) -> HandlerResponse[int]:
         """
         Get reference count (always 1 for X connector).
 
@@ -878,50 +944,56 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
             context: Operation context
 
         Returns:
-            Always 1 (no reference counting)
+            HandlerResponse with reference count (always 1) in data field
         """
-        return 1
+        return HandlerResponse.ok(
+            data=1,
+            backend_name=self.name,
+        )
 
+    @timed_response
     def mkdir(
         self,
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
         context: "OperationContext | None" = None,
-    ) -> None:
-        """
-        Create directory (not supported for X connector).
-
-        Raises:
-            NotImplementedError: X connector has fixed virtual structure
-        """
-        raise NotImplementedError(
-            "X connector has a fixed virtual structure. "
-            "mkdir() is not supported. "
-            "Available paths: /x/timeline/, /x/posts/, /x/mentions/, etc."
+    ) -> HandlerResponse[None]:
+        """Create directory (not supported - fixed structure)."""
+        return HandlerResponse.error(
+            message=(
+                "X connector has a fixed virtual structure. "
+                "mkdir() is not supported. "
+                "Available paths: /x/timeline/, /x/posts/, /x/mentions/, etc."
+            ),
+            code=405,
+            is_expected=True,
+            backend_name=self.name,
+            path=path,
         )
 
+    @timed_response
     def rmdir(
         self,
         path: str,
         recursive: bool = False,
         context: "OperationContext | None" = None,
-    ) -> None:
-        """
-        Remove directory (not supported for X connector).
-
-        Raises:
-            NotImplementedError: X connector has fixed virtual structure
-        """
-        raise NotImplementedError(
-            "X connector has a fixed virtual structure. rmdir() is not supported."
+    ) -> HandlerResponse[None]:
+        """Remove directory (not supported - fixed structure)."""
+        return HandlerResponse.error(
+            message="X connector has a fixed virtual structure. rmdir() is not supported.",
+            code=405,
+            is_expected=True,
+            backend_name=self.name,
+            path=path,
         )
 
+    @timed_response
     def is_directory(
         self,
         path: str,
         context: "OperationContext | None" = None,
-    ) -> bool:
+    ) -> HandlerResponse[bool]:
         """
         Check if path is a directory.
 
@@ -930,7 +1002,7 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
             context: Operation context (unused)
 
         Returns:
-            True if path is a virtual directory
+            HandlerResponse with True if path is a virtual directory in data field
         """
         path = path.strip("/")
 
@@ -946,7 +1018,11 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
             "x/users",
         }
 
-        return path in VIRTUAL_DIRS
+        return HandlerResponse.ok(
+            data=path in VIRTUAL_DIRS,
+            backend_name=self.name,
+            path=path,
+        )
 
     def list_dir(
         self,

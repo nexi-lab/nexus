@@ -13,7 +13,7 @@ import contextlib
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from sqlalchemy import select
 
@@ -296,12 +296,12 @@ class CacheConnectorMixin:
         """
         # Prefer session factory pattern (creates session per operation)
         if hasattr(self, "session_factory") and self.session_factory is not None:
-            return self.session_factory()
+            return cast("Session", self.session_factory())
         # Fall back to existing session
         if hasattr(self, "db_session") and self.db_session is not None:
-            return self.db_session
+            return cast("Session", self.db_session)
         if hasattr(self, "_db_session") and self._db_session is not None:
-            return self._db_session
+            return cast("Session", self._db_session)
         raise RuntimeError("No database session available for caching")
 
     def _get_path_id(self, path: str, session: Session) -> str | None:

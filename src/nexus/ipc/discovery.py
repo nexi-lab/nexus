@@ -54,7 +54,7 @@ class AgentDiscovery:
     def __init__(
         self,
         vfs: VFSOperations,
-        zone_id: str = "root",
+        zone_id: str,
         cache_ttl_seconds: float = 10.0,
     ) -> None:
         self._vfs = vfs

@@ -15,6 +15,7 @@ Usage:
 
 from __future__ import annotations
 
+import inspect
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -36,7 +37,8 @@ class BackendFactory:
         """Create a backend instance by type name and config dict.
 
         Uses ConnectorRegistry for all registered connectors. Extra kwargs
-        (e.g., ``session_factory``) are passed directly to the constructor.
+        (e.g., ``session_factory``) are passed directly to the constructor
+        only if the constructor accepts them.
 
         Args:
             backend_type: Backend type identifier (e.g., "local", "gcs_connector")
@@ -55,7 +57,10 @@ class BackendFactory:
 
         _ensure_optional_backends_registered()
 
-        info = ConnectorRegistry.get_info(backend_type)
+        try:
+            info = ConnectorRegistry.get_info(backend_type)
+        except KeyError:
+            raise RuntimeError(f"Unsupported backend type: {backend_type}") from None
         connector_cls = info.connector_class
         mapping = info.config_mapping
 
@@ -70,7 +75,18 @@ class BackendFactory:
             if key not in mapping and key not in kwargs:
                 kwargs[key] = value
 
-        # Merge extra kwargs (session_factory, metadata_store, etc.)
-        kwargs.update(extra_kwargs)
+        # Only pass extra kwargs the constructor actually accepts
+        if extra_kwargs:
+            sig = inspect.signature(connector_cls.__init__)
+            accepts_var_keyword = any(
+                p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()
+            )
+            if accepts_var_keyword:
+                kwargs.update(extra_kwargs)
+            else:
+                accepted_params = set(sig.parameters.keys()) - {"self"}
+                for key, value in extra_kwargs.items():
+                    if key in accepted_params:
+                        kwargs[key] = value
 
         return connector_cls(**kwargs)

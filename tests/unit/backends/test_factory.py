@@ -39,8 +39,8 @@ class TestBackendFactory:
         assert backend.is_passthrough is True
 
     def test_unknown_backend_type_raises(self) -> None:
-        """Unknown backend type raises KeyError."""
-        with pytest.raises(KeyError, match="Unknown connector"):
+        """Unknown backend type raises RuntimeError."""
+        with pytest.raises(RuntimeError, match="Unsupported backend type"):
             BackendFactory.create("nonexistent_backend", {})
 
     def test_extra_kwargs_passed_through(self, tmp_path: Any) -> None:

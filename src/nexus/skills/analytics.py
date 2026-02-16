@@ -7,34 +7,12 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import Any
 
-from nexus.core.exceptions import ValidationError
+from nexus.skills.exceptions import SkillValidationError
+from nexus.skills.types import DatabaseConnection
 
 logger = logging.getLogger(__name__)
-
-
-class DatabaseConnection(Protocol):
-    """Protocol for database connections.
-
-    This allows analytics to work with different database backends.
-    """
-
-    def execute(self, query: str, params: dict[str, Any] | None = None) -> Any:
-        """Execute a query."""
-        ...
-
-    def fetchall(self, query: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-        """Fetch all results from a query."""
-        ...
-
-    def fetchone(self, query: str, params: dict[str, Any] | None = None) -> dict[str, Any] | None:
-        """Fetch one result from a query."""
-        ...
-
-    def commit(self) -> None:
-        """Commit the transaction."""
-        ...
 
 
 @dataclass
@@ -57,13 +35,15 @@ class SkillUsageRecord:
             ValidationError: If validation fails.
         """
         if not self.usage_id:
-            raise ValidationError("usage_id is required")
+            raise SkillValidationError("usage_id is required")
 
         if not self.skill_name:
-            raise ValidationError("skill_name is required")
+            raise SkillValidationError("skill_name is required")
 
         if self.execution_time is not None and self.execution_time < 0:
-            raise ValidationError(f"execution_time cannot be negative, got {self.execution_time}")
+            raise SkillValidationError(
+                f"execution_time cannot be negative, got {self.execution_time}"
+            )
 
 
 @dataclass

@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from nexus.skills.mcp_models import MCPToolConfig, MCPToolDefinition, MCPToolExample
+from nexus.mcp.models import MCPToolConfig, MCPToolDefinition, MCPToolExample
 
 if TYPE_CHECKING:
     from nexus.skills.protocols import NexusFilesystem
@@ -562,7 +562,7 @@ class MCPToolExporter:
 
     Example:
         >>> from nexus import connect
-        >>> from nexus.skills.mcp_exporter import MCPToolExporter
+        >>> from nexus.mcp.exporter import MCPToolExporter
         >>>
         >>> nx = connect()
         >>> exporter = MCPToolExporter(nx)

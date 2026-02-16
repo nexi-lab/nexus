@@ -42,7 +42,10 @@ Usage:
 """
 
 from nexus.mcp.connection_manager import MCPConnection, MCPConnectionError, MCPConnectionManager
+from nexus.mcp.exporter import MCPToolExporter
 from nexus.mcp.klavis_client import KlavisClient, KlavisError, KlavisMCPInstance, KlavisOAuthResult
+from nexus.mcp.models import MCPMount, MCPToolConfig, MCPToolDefinition, MCPToolExample
+from nexus.mcp.mount import MCPMountError, MCPMountManager
 from nexus.mcp.provider_registry import (
     BackendConfig,
     MCPConfig,
@@ -80,4 +83,14 @@ __all__ = [
     "OAuthConfig",
     "MCPConfig",
     "BackendConfig",
+    # Models (moved from nexus.skills)
+    "MCPMount",
+    "MCPToolConfig",
+    "MCPToolDefinition",
+    "MCPToolExample",
+    # Mount manager (moved from nexus.skills)
+    "MCPMountManager",
+    "MCPMountError",
+    # Exporter (moved from nexus.skills)
+    "MCPToolExporter",
 ]

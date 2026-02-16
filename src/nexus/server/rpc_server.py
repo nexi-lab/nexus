@@ -1138,7 +1138,6 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                 params.path,
                 recursive=params.recursive,
                 details=params.details,
-                prefix=params.prefix,
                 context=context,
             )
             # Debug: Check what we got

@@ -232,11 +232,11 @@ class SlackConnectorBackend(Backend, CacheConnectorMixin, OAuthConnectorMixin):
         from nexus.core.sync_bridge import run_sync
 
         try:
-            # Default to 'default' zone if not specified
+            # Default to 'root' zone if not specified
             zone_id = (
                 context.zone_id
                 if context and hasattr(context, "zone_id") and context.zone_id
-                else "default"
+                else "root"
             )
 
             access_token = run_sync(

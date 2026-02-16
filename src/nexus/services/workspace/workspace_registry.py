@@ -195,7 +195,7 @@ class WorkspaceRegistry:
             path: Absolute path to workspace directory
             name: Optional friendly name
             description: Human-readable description
-            created_by: User/agent who created it (legacy, prefer context)
+            created_by: User/agent who created it (prefer context)
             metadata: Additional metadata
             context: OperationContext with user_id and agent_id (v0.5.0)
             session_id: If provided, workspace is session-scoped (temporary). If None, persistent. (v0.5.0)
@@ -469,7 +469,7 @@ class WorkspaceRegistry:
             path: Absolute path to memory directory
             name: Optional friendly name
             description: Human-readable description
-            created_by: User/agent who created it (legacy, prefer context)
+            created_by: User/agent who created it (prefer context)
             metadata: Additional metadata
             context: OperationContext with user_id and agent_id (v0.5.0)
             session_id: If provided, memory is session-scoped (temporary). If None, persistent. (v0.5.0)

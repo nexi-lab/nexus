@@ -1613,7 +1613,7 @@ class SearchService(SemanticSearchMixin):
             file_pattern: Optional glob pattern to filter files (e.g., "*.py")
             ignore_case: If True, case-insensitive search
             max_results: Maximum number of results (default: 100)
-            search_mode: Deprecated, kept for backward compat
+            search_mode: Unused (reserved for future search mode selection)
             context: Operation context for permission filtering
         """
         if path and path != "/":

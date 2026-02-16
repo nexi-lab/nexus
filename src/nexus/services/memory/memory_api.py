@@ -288,7 +288,7 @@ class Memory:
             importance: Importance score (0.0-1.0).
             namespace: Hierarchical namespace for organization (e.g., "knowledge/geography/facts"). v0.8.0
             path_key: Optional unique key within namespace for upsert mode. v0.8.0
-            state: Memory state ('inactive', 'active'). Defaults to 'active' for backward compatibility. #368
+            state: Memory state ('inactive', 'active'). Defaults to 'active'. #368
             _metadata: Additional metadata (deprecated, use structured content dict instead).
             context: Optional operation context to override identity (v0.7.1+).
             resolve_coreferences: Resolve pronouns to entity names for context-independence. #1027
@@ -728,7 +728,7 @@ class Memory:
                 event_before_dt = event_before
 
         # #1185: Parse as_of_event and as_of_system for bi-temporal queries
-        # Fall back to as_of for backward compatibility
+        # Fall back to as_of if as_of_event not specified
         effective_as_of_event = as_of_event or as_of
         valid_at_point = (
             (

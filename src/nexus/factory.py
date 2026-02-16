@@ -1045,13 +1045,17 @@ def create_nexus_fs(
 
         services = _KernelServices(router=router)
     else:
-        # Use provided services but ensure router is set
+        # Use provided services but ensure router is set (frozen — use replace)
         if services.router is None:
-            services.router = router
+            from dataclasses import replace as _dc_replace
 
-    # Inject workflow_engine override if provided directly
+            services = _dc_replace(services, router=router)
+
+    # Inject workflow_engine override if provided directly (frozen — use replace)
     if workflow_engine is not None:
-        services.workflow_engine = workflow_engine
+        from dataclasses import replace as _dc_replace
+
+        services = _dc_replace(services, workflow_engine=workflow_engine)
 
     nx = NexusFS(
         backend=backend,

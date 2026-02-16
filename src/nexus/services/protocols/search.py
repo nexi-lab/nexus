@@ -19,9 +19,10 @@ References:
 from __future__ import annotations
 
 import builtins
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
-from nexus.core.permissions import OperationContext
+if TYPE_CHECKING:
+    from nexus.core.types import OperationContext
 
 # =============================================================================
 # Issue #1520: Search Brick Protocol

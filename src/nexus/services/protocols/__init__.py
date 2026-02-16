@@ -1,5 +1,11 @@
 """Service-layer protocol interfaces (Issue #1383).
 
+Convention (Issue #1291):
+- All protocols use @runtime_checkable for test-time isinstance() checks.
+- Do NOT use isinstance(obj, Protocol) in production hot paths.
+- All data classes use @dataclass(frozen=True, slots=True).
+- TYPE_CHECKING for all nexus.* imports (except zero-dep leaf modules).
+
 These protocols define domain-service contracts. They are NOT kernel primitives —
 they live in services/ because their implementations depend on one or more of the
 Four Pillars (Metastore, RecordStore, ObjectStore, CacheStore) rather than being

@@ -5301,8 +5301,8 @@ class NexusFS(  # type: ignore[misc]
         """Recursively delete a directory and all its contents.
 
         Strategy:
-        1. Try physical deletion first (for LocalBackend) - fastest and most reliable
-        2. Fall back to virtual filesystem deletion if physical deletion fails
+        1. Delegate to backend's rmdir(recursive=True) - backend handles physical deletion
+        2. Fall back to virtual filesystem deletion if backend deletion fails
 
         Args:
             dir_path: Directory path to delete
@@ -5312,46 +5312,22 @@ class NexusFS(  # type: ignore[misc]
             True if directory was deleted (or had content deleted), False otherwise
         """
         import logging
-        import os
-        import shutil
 
         logger = logging.getLogger(__name__)
 
         directory_removed = False
         had_content = False  # Track if directory had any content
 
-        # Approach 1: Physical deletion (for LocalBackend) - Try first for efficiency
-        if hasattr(self, "backend") and self.backend.has_root_path is True:
+        # Approach 1: Delegate to backend's rmdir (handles physical deletion internally)
+        if hasattr(self, "backend"):
             try:
-                # Convert virtual path to physical path
-                # LocalBackend stores directories under "dirs" subdirectory
-                physical_path = self.backend.root_path / "dirs" / dir_path.lstrip("/")
-                if physical_path.exists() and physical_path.is_dir():
-                    # Check if directory actually has content (not just an empty stub)
-                    from contextlib import suppress
-
-                    with suppress(OSError):
-                        # Use os.listdir to check if directory has any files/subdirs
-                        dir_contents = os.listdir(physical_path)
-                        if dir_contents:
-                            had_content = True  # Directory has actual content
-
-                    try:
-                        # shutil.rmtree() removes entire directory tree in one go
-                        shutil.rmtree(physical_path)
-                        directory_removed = True
-                        logger.info(f"Deleted physical directory: {dir_path}")
-                    except OSError as e:
-                        logger.debug(f"shutil.rmtree failed for {physical_path}: {e}")
-                        # Try os.rmdir() for empty directories
-                        try:
-                            os.rmdir(physical_path)
-                            directory_removed = True
-                            logger.info(f"Deleted empty physical directory: {dir_path}")
-                        except OSError as e2:
-                            logger.debug(f"os.rmdir failed for {physical_path}: {e2}")
+                response = self.backend.rmdir(dir_path, recursive=True, context=context)
+                if response.success:
+                    directory_removed = True
+                    had_content = True
+                    logger.info(f"Deleted directory via backend: {dir_path}")
             except Exception as e:
-                logger.debug(f"Physical deletion failed for {dir_path}: {e}")
+                logger.debug(f"Backend rmdir failed for {dir_path}: {e}")
 
         # If physical deletion worked, still need to clean up metadata and permissions
         if directory_removed:

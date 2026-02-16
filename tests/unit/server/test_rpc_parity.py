@@ -292,8 +292,6 @@ def test_all_public_methods_are_exposed_or_excluded():
         "locked",  # Async context manager - distributed lock acquisition
         # Consistency migration - server-side orchestration only (Issue #1180)
         "migrate_consistency_mode",  # Internal - SC↔EC migration orchestrator, exposed via PATCH endpoint
-        # Workflow event queue - server-side background task (Issue #1522)
-        "ensure_workflow_consumer",  # Internal - starts bounded workflow event queue consumer
     }
 
     # Get all public methods

@@ -134,7 +134,7 @@ curl -X POST http://localhost:8081/mcp \
 For multi-user scenarios, infrastructure (middleware, proxy, gateway) can set per-request API keys without exposing them to AI agents:
 
 ```python
-from nexus.mcp.server import set_request_api_key, _request_api_key
+from nexus.mcp import set_request_api_key, reset_request_api_key
 
 # In middleware/proxy code:
 token = set_request_api_key("sk-user-api-key-xyz")
@@ -142,7 +142,7 @@ try:
     # MCP tool calls here will use this API key
     result = mcp_server.call_tool("nexus_read_file", path="/data.txt")
 finally:
-    _request_api_key.reset(token)
+    reset_request_api_key(token)
 ```
 
 ---

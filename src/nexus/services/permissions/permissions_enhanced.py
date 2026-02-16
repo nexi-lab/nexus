@@ -249,10 +249,10 @@ class AuditStore:
         return sql
 
     def _create_cursor(self, conn: Any) -> Any:
-        """Create a cursor with appropriate cursor factory for the database type.
+        """Create a database cursor (driver-agnostic).
 
-        For PostgreSQL: Uses RealDictCursor to return dict-like rows
-        For SQLite: Ensures Row factory is set for dict-like access
+        Returns a plain DBAPI cursor. Callers that need dict-like row
+        access should use ``_rows_as_dicts`` on the fetch results.
 
         Args:
             conn: DB-API connection object
@@ -260,29 +260,16 @@ class AuditStore:
         Returns:
             Database cursor
         """
-        # Detect database type based on underlying DBAPI connection
-        # SQLAlchemy wraps connections in _ConnectionFairy, need to check dbapi_connection
-        actual_conn = conn.dbapi_connection if hasattr(conn, "dbapi_connection") else conn
-        conn_module = type(actual_conn).__module__
+        return conn.cursor()
 
-        # Check if this is a PostgreSQL connection (psycopg2)
-        if "psycopg2" in conn_module:
-            try:
-                import psycopg2.extras
+    @staticmethod
+    def _rows_as_dicts(cursor: Any) -> list[dict[str, Any]]:
+        """Convert cursor results to list of dicts using cursor.description.
 
-                return conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-            except (ImportError, AttributeError):
-                return conn.cursor()
-        elif "sqlite3" in conn_module:
-            # SQLite: Ensure Row factory is set for dict-like access
-            if not hasattr(actual_conn, "row_factory") or actual_conn.row_factory is None:
-                from sqlite3 import Row as SQLiteRow
-
-                actual_conn.row_factory = SQLiteRow
-            return conn.cursor()
-        else:
-            # Other database - use default cursor
-            return conn.cursor()
+        Works with any DBAPI-compliant cursor regardless of driver.
+        """
+        columns = [col[0] for col in cursor.description]
+        return [dict(zip(columns, row, strict=False)) for row in cursor.fetchall()]
 
     def log_bypass(self, entry: AuditLogEntry) -> None:
         """Log admin/system bypass to immutable audit table.
@@ -378,23 +365,9 @@ class AuditStore:
             )
 
             results = []
-            for row in cursor.fetchall():
-                results.append(
-                    {
-                        "id": row["id"],
-                        "timestamp": row["timestamp"],
-                        "request_id": row["request_id"],
-                        "user_id": row["user_id"],
-                        "zone_id": row["zone_id"],
-                        "path": row["path"],
-                        "permission": row["permission"],
-                        "bypass_type": row["bypass_type"],
-                        "allowed": bool(row["allowed"]),
-                        "capabilities": json.loads(row["capabilities"])
-                        if row["capabilities"]
-                        else [],
-                        "denial_reason": row["denial_reason"],
-                    }
-                )
+            for row in self._rows_as_dicts(cursor):
+                row["allowed"] = bool(row["allowed"])
+                row["capabilities"] = json.loads(row["capabilities"]) if row["capabilities"] else []
+                results.append(row)
 
             return results

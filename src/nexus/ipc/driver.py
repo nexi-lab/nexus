@@ -61,12 +61,17 @@ class IPCVFSDriver(Backend):
         self._zone_id = zone_id
         self._publisher = event_publisher
         self._max_inbox_size = max_inbox_size
-        # Long-lived event loop for sync-to-async bridging (HIGH-1 fix).
+        # Eagerly create sync-to-async bridge — immutable after init.
         # The Backend ABC is sync, but IPCStorageDriver is async.
         # A single background loop avoids per-call ThreadPoolExecutor overhead
         # and keeps event-loop-bound resources (e.g., asyncpg pools) working.
-        self._bg_loop: asyncio.AbstractEventLoop | None = None
-        self._bg_thread: threading.Thread | None = None
+        self._bg_loop: asyncio.AbstractEventLoop = asyncio.new_event_loop()
+        self._bg_thread = threading.Thread(
+            target=self._bg_loop.run_forever,
+            daemon=True,
+            name="ipc-driver-loop",
+        )
+        self._bg_thread.start()
 
     # === Identity & Capability Flags ===
 
@@ -269,31 +274,12 @@ class IPCVFSDriver(Backend):
 
     # === Internal Helpers ===
 
-    def _ensure_bg_loop(self) -> asyncio.AbstractEventLoop:
-        """Ensure the background event loop and thread are running."""
-        if self._bg_loop is None or not self._bg_loop.is_running():
-            self._bg_loop = asyncio.new_event_loop()
-            self._bg_thread = threading.Thread(
-                target=self._bg_loop.run_forever,
-                daemon=True,
-                name="ipc-driver-loop",
-            )
-            self._bg_thread.start()
-        return self._bg_loop
-
     def _run_async(self, coro: Any) -> Any:
         """Run an async coroutine from sync Backend methods.
 
         The Backend ABC uses sync methods, but IPCStorageDriver is async.
-        Uses a long-lived background event loop to avoid per-call overhead
-        and keep event-loop-bound resources (asyncpg pools) working.
+        Dispatches to the background event loop created at construction
+        time (immutable after init).
         """
-        try:
-            asyncio.get_running_loop()
-            # We're inside a running event loop — dispatch to background loop
-            loop = self._ensure_bg_loop()
-            future = asyncio.run_coroutine_threadsafe(coro, loop)
-            return future.result(timeout=30)
-        except RuntimeError:
-            # No running loop — safe to use asyncio.run directly
-            return asyncio.run(coro)
+        future = asyncio.run_coroutine_threadsafe(coro, self._bg_loop)
+        return future.result(timeout=30)

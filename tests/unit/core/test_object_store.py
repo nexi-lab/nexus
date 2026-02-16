@@ -11,14 +11,77 @@ Parametrized across LocalBackend and MockBackend.
 
 from __future__ import annotations
 
+import hashlib
 import time
 
 import pytest
 
+from nexus.backends.backend import Backend
 from nexus.backends.local import LocalBackend
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import BackendObjectStore, ObjectStoreABC
-from tests.unit.cache.mock_backend import MockBackend
+from nexus.core.response import HandlerResponse
+
+
+class MockBackend(Backend):
+    """Minimal in-memory Backend for ObjectStoreABC conformance tests."""
+
+    def __init__(self) -> None:
+        self._content: dict[str, bytes] = {}
+        self._ref_counts: dict[str, int] = {}
+
+    @property
+    def name(self) -> str:
+        return "mock"
+
+    def write_content(self, content, context=None) -> HandlerResponse[str]:
+        h = hashlib.sha256(content).hexdigest()
+        if h in self._content:
+            self._ref_counts[h] += 1
+        else:
+            self._content[h] = content
+            self._ref_counts[h] = 1
+        return HandlerResponse.ok(data=h, backend_name="mock")
+
+    def read_content(self, content_hash, context=None) -> HandlerResponse[bytes]:
+        if content_hash not in self._content:
+            return HandlerResponse.not_found(
+                path=content_hash, message="Content not found", backend_name="mock"
+            )
+        return HandlerResponse.ok(data=self._content[content_hash], backend_name="mock")
+
+    def batch_read_content(self, content_hashes, context=None) -> dict[str, bytes | None]:
+        return {h: self._content.get(h) for h in content_hashes}
+
+    def delete_content(self, content_hash, context=None) -> HandlerResponse[None]:
+        if content_hash not in self._content:
+            return HandlerResponse.not_found(path=content_hash, backend_name="mock")
+        self._ref_counts[content_hash] -= 1
+        if self._ref_counts[content_hash] <= 0:
+            del self._content[content_hash]
+            del self._ref_counts[content_hash]
+        return HandlerResponse.ok(data=None, backend_name="mock")
+
+    def content_exists(self, content_hash, context=None) -> HandlerResponse[bool]:
+        return HandlerResponse.ok(data=content_hash in self._content, backend_name="mock")
+
+    def get_content_size(self, content_hash, context=None) -> HandlerResponse[int]:
+        if content_hash not in self._content:
+            return HandlerResponse.not_found(path=content_hash, backend_name="mock")
+        return HandlerResponse.ok(data=len(self._content[content_hash]), backend_name="mock")
+
+    def get_ref_count(self, content_hash, context=None) -> HandlerResponse[int]:
+        return HandlerResponse.ok(data=self._ref_counts.get(content_hash, 0), backend_name="mock")
+
+    def mkdir(self, path, parents=False, exist_ok=False, context=None) -> HandlerResponse[None]:
+        return HandlerResponse.ok(data=None, backend_name="mock")
+
+    def rmdir(self, path, recursive=False, context=None) -> HandlerResponse[None]:
+        return HandlerResponse.ok(data=None, backend_name="mock")
+
+    def is_directory(self, path, context=None) -> HandlerResponse[bool]:
+        return HandlerResponse.ok(data=False, backend_name="mock")
+
 
 # === Fixtures ===
 

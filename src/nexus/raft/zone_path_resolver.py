@@ -63,6 +63,13 @@ class ZonePathResolver:
     def root_zone_id(self) -> str:
         return self._root_zone_id
 
+    def get_store(self, zone_id: str) -> RaftMetadataStore | None:
+        """Get the metadata store for a zone by ID.
+
+        Delegates to the underlying ZoneManager.
+        """
+        return self._zone_manager.get_store(zone_id)
+
     def resolve(self, path: str) -> ResolvedPath:
         """Resolve a path, crossing DT_MOUNT boundaries as needed.
 

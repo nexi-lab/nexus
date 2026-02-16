@@ -178,7 +178,7 @@ class FederatedMetadataProxy(FileMetadataProtocol):
 
         while queue:
             mount_chain, zone_id = queue.pop(0)
-            store = self._resolver._zone_manager.get_store(zone_id)
+            store = self._resolver.get_store(zone_id)
             if store is None:
                 logger.warning("Mount target zone '%s' not found, skipping", zone_id)
                 continue
@@ -266,7 +266,7 @@ class FederatedMetadataProxy(FileMetadataProtocol):
             zone_groups[key].append(zone_meta)
 
         for zone_id, metas in zone_groups.items():
-            store = self._resolver._zone_manager.get_store(zone_id)
+            store = self._resolver.get_store(zone_id)
             if store is not None:
                 store.put_batch(metas)
 
@@ -280,7 +280,7 @@ class FederatedMetadataProxy(FileMetadataProtocol):
             zone_groups[key].append(resolved.path)
 
         for zone_id, zone_paths in zone_groups.items():
-            store = self._resolver._zone_manager.get_store(zone_id)
+            store = self._resolver.get_store(zone_id)
             if store is not None:
                 store.delete_batch(zone_paths)
 
@@ -328,13 +328,13 @@ class FederatedMetadataProxy(FileMetadataProtocol):
         return result
 
     def increment_revision(self, zone_id: str) -> int:
-        store = self._resolver._zone_manager.get_store(zone_id)
+        store = self._resolver.get_store(zone_id)
         if store is None:
             return self._root_store.increment_revision(zone_id)
         return store.increment_revision(zone_id)
 
     def get_revision(self, zone_id: str) -> int:
-        store = self._resolver._zone_manager.get_store(zone_id)
+        store = self._resolver.get_store(zone_id)
         if store is None:
             return self._root_store.get_revision(zone_id)
         return store.get_revision(zone_id)

@@ -261,6 +261,27 @@ class ZoneManager:
     def node_id(self) -> int:
         return self._node_id
 
+    @property
+    def advertise_addr(self) -> str:
+        """Public address this node advertises to peers."""
+        addr: str = self._py_mgr.advertise_addr()
+        return addr
+
+    @property
+    def tls_cert_path(self) -> str | None:
+        """TLS certificate path (if configured)."""
+        return self._tls_cert_path
+
+    @property
+    def tls_key_path(self) -> str | None:
+        """TLS key path (if configured)."""
+        return self._tls_key_path
+
+    @property
+    def tls_ca_path(self) -> str | None:
+        """TLS CA certificate path (if configured)."""
+        return self._tls_ca_path
+
     def mount(
         self,
         parent_zone_id: str,

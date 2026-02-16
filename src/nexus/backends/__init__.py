@@ -17,6 +17,7 @@ from nexus.backends.registry import (
     create_connector_from_config,
     register_connector,
 )
+from nexus.core.object_store import BackendObjectStore, ObjectStoreABC
 
 # Optional backends - LAZY IMPORTS for faster CLI startup
 # These are imported on-demand when actually used, not at module load time
@@ -125,7 +126,9 @@ def _register_optional_backends() -> None:
 __all__ = [
     # Base classes
     "Backend",
+    "BackendObjectStore",
     "HandlerStatusResponse",
+    "ObjectStoreABC",
     "BaseBlobStorageConnector",
     "CacheConnectorMixin",
     "CacheEntry",

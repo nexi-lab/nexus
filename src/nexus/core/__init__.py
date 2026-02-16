@@ -12,12 +12,15 @@ from typing import TYPE_CHECKING, Any
 # Lightweight imports (always loaded) - these are fast
 # =============================================================================
 from nexus.core.exceptions import (
+    AccessDeniedError,
     BackendError,
     InvalidPathError,
     MetadataError,
     NexusError,
     NexusFileNotFoundError,
     NexusPermissionError,
+    PathNotMountedError,
+    PermissionDeniedError,
     ValidationError,
 )
 from nexus.core.path_interner import (
@@ -149,12 +152,15 @@ __all__ = [
     "NexusFS",
     "ScopedFilesystem",
     # Exceptions (always loaded - lightweight)
-    "NexusError",
-    "NexusFileNotFoundError",
-    "NexusPermissionError",
+    "AccessDeniedError",
     "BackendError",
     "InvalidPathError",
     "MetadataError",
+    "NexusError",
+    "NexusFileNotFoundError",
+    "NexusPermissionError",
+    "PathNotMountedError",
+    "PermissionDeniedError",
     "ValidationError",
     # Path interning (Issue #912)
     "PathInterner",

@@ -333,12 +333,6 @@ class SkillDocMixin:
             logger.warning(f"Failed to write skill docs to {skill_dir}: {e}")
             return result
 
-    # Keep old method for backwards compatibility
-    def write_skill_doc(self, mount_path: str, filesystem: Any = None) -> str | None:
-        """Deprecated: Use write_skill_docs() instead."""
-        result = self.write_skill_docs(mount_path, filesystem)
-        return result.get("skill_md")
-
     def _format_display_name(self) -> str:
         """Format SKILL_NAME as display name."""
         return self.SKILL_NAME.replace("_", " ").replace("-", " ").title()

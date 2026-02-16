@@ -10,7 +10,7 @@ import pytest
 from pydantic import ValidationError
 
 from nexus.core.distributed_lock import RaftLockManager
-from nexus.server.fastapi_server import (
+from nexus.server.api.v1.models.locks import (
     LOCK_MAX_TTL,
     LockAcquireRequest,
     LockExtendRequest,

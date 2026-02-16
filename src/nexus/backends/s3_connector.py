@@ -29,7 +29,6 @@ Authentication:
 """
 
 import logging
-import time
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
@@ -43,7 +42,7 @@ from nexus.backends.cache_mixin import CacheConnectorMixin
 from nexus.backends.multipart_upload_mixin import MultipartUploadMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
-from nexus.core.response import HandlerResponse
+from nexus.core.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -389,6 +388,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
         except Exception:
             return None
 
+    @timed_response
     def get_file_info(
         self,
         path: str,
@@ -452,8 +452,6 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
             if error_code == "404" or error_code == "NoSuchKey":
                 return HandlerResponse.not_found(path, backend_name=self.name)
             return HandlerResponse.error(f"S3 error: {error_code}", backend_name=self.name)
-        except Exception as e:
-            return HandlerResponse.error(f"Failed to get file info: {e}", backend_name=self.name)
 
     def generate_presigned_url(
         self,
@@ -996,6 +994,7 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
 
     # === Override Content Operations with Caching ===
 
+    @timed_response
     def read_content(
         self,
         content_hash: str,
@@ -1016,15 +1015,12 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
         Returns:
             HandlerResponse with file content as bytes in data field
         """
-        start_time = time.perf_counter()
-
         if not context or not context.backend_path:
             return HandlerResponse.error(
                 message="S3 connector requires backend_path in OperationContext. "
                 "This backend reads files from actual paths, not CAS hashes.",
                 code=400,
                 is_expected=True,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name=self.name,
             )
 
@@ -1032,66 +1028,56 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
         cache_path = self._get_cache_path(context) or context.backend_path
         blob_path = self._get_blob_path(context.backend_path)
 
-        try:
-            # Check cache first if enabled
-            # PERF FIX (Issue #847): Trust L1 cache TTL instead of making API call on every hit.
-            # Previously, get_version() was called on every cache hit (50-200ms API call),
-            # which negated the benefit of L1 caching (<1ms). Now we rely on TTL-based
-            # expiration (default 5 min) which is sufficient for most use cases.
-            # Users needing real-time consistency can use --no-cache.
-            if self._has_caching():
-                import contextlib
+        # Check cache first if enabled
+        # PERF FIX (Issue #847): Trust L1 cache TTL instead of making API call on every hit.
+        # Previously, get_version() was called on every cache hit (50-200ms API call),
+        # which negated the benefit of L1 caching (<1ms). Now we rely on TTL-based
+        # expiration (default 5 min) which is sufficient for most use cases.
+        # Users needing real-time consistency can use --no-cache.
+        if self._has_caching():
+            import contextlib
 
-                with contextlib.suppress(Exception):
-                    cached = self._read_from_cache(cache_path, original=True)
-                    if cached and not cached.stale and cached.content_binary:
-                        logger.info(f"[S3] Cache hit (TTL-based) for {cache_path}")
-                        return HandlerResponse.ok(
-                            data=cached.content_binary,
-                            execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                            backend_name=self.name,
-                            path=blob_path,
-                        )
-
-            # Read from S3 backend
-            logger.info(f"[S3] Cache miss, reading from backend: {cache_path}")
-
-            # Determine if we should use version ID
-            version_id = None
-            if self.versioning_enabled and content_hash and self._is_version_id(content_hash):
-                version_id = content_hash
-
-            content, response_version_id = self._download_blob(blob_path, version_id)
-
-            # Cache the result if caching is enabled
-            if self._has_caching():
-                import contextlib
-
-                with contextlib.suppress(Exception):
-                    # Use version ID from download instead of making extra API call
-                    zone_id = getattr(context, "zone_id", None)
-                    self._write_to_cache(
-                        path=cache_path,
-                        content=content,
-                        backend_version=response_version_id,
-                        zone_id=zone_id,
+            with contextlib.suppress(Exception):
+                cached = self._read_from_cache(cache_path, original=True)
+                if cached and not cached.stale and cached.content_binary:
+                    logger.info(f"[S3] Cache hit (TTL-based) for {cache_path}")
+                    return HandlerResponse.ok(
+                        data=cached.content_binary,
+                        backend_name=self.name,
+                        path=blob_path,
                     )
 
-            return HandlerResponse.ok(
-                data=content,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=blob_path,
-            )
+        # Read from S3 backend
+        logger.info(f"[S3] Cache miss, reading from backend: {cache_path}")
 
-        except Exception as e:
-            return HandlerResponse.from_exception(
-                e,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=blob_path,
-            )
+        # Determine if we should use version ID
+        version_id = None
+        if self.versioning_enabled and content_hash and self._is_version_id(content_hash):
+            version_id = content_hash
 
+        content, response_version_id = self._download_blob(blob_path, version_id)
+
+        # Cache the result if caching is enabled
+        if self._has_caching():
+            import contextlib
+
+            with contextlib.suppress(Exception):
+                # Use version ID from download instead of making extra API call
+                zone_id = getattr(context, "zone_id", None)
+                self._write_to_cache(
+                    path=cache_path,
+                    content=content,
+                    backend_version=response_version_id,
+                    zone_id=zone_id,
+                )
+
+        return HandlerResponse.ok(
+            data=content,
+            backend_name=self.name,
+            path=blob_path,
+        )
+
+    @timed_response
     def write_content(
         self,
         content: bytes,
@@ -1111,15 +1097,12 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
         Returns:
             HandlerResponse with version ID (S3 version or content hash) in data field
         """
-        start_time = time.perf_counter()
-
         if not context or not context.backend_path:
             return HandlerResponse.error(
                 message="S3 connector requires backend_path in OperationContext. "
                 "This backend stores files at actual paths, not CAS hashes.",
                 code=400,
                 is_expected=True,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name=self.name,
             )
 
@@ -1129,42 +1112,33 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
         # Get actual blob path from backend_path
         blob_path = self._get_blob_path(context.backend_path)
 
-        try:
-            # Detect appropriate Content-Type with charset for proper encoding
-            content_type = self._detect_content_type(context.backend_path, content)
+        # Detect appropriate Content-Type with charset for proper encoding
+        content_type = self._detect_content_type(context.backend_path, content)
 
-            # Upload blob
-            new_version = self._upload_blob(blob_path, content, content_type)
+        # Upload blob
+        new_version = self._upload_blob(blob_path, content, content_type)
 
-            # Update cache after write if caching is enabled
-            # Per design doc: both S3 and cache should be updated when write succeeds
-            if self._has_caching():
-                import contextlib
+        # Update cache after write if caching is enabled
+        # Per design doc: both S3 and cache should be updated when write succeeds
+        if self._has_caching():
+            import contextlib
 
-                with contextlib.suppress(Exception):
-                    zone_id = getattr(context, "zone_id", None)
-                    self._write_to_cache(
-                        path=cache_path,
-                        content=content,
-                        backend_version=new_version,
-                        zone_id=zone_id,
-                    )
+            with contextlib.suppress(Exception):
+                zone_id = getattr(context, "zone_id", None)
+                self._write_to_cache(
+                    path=cache_path,
+                    content=content,
+                    backend_version=new_version,
+                    zone_id=zone_id,
+                )
 
-            return HandlerResponse.ok(
-                data=new_version,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=blob_path,
-            )
+        return HandlerResponse.ok(
+            data=new_version,
+            backend_name=self.name,
+            path=blob_path,
+        )
 
-        except Exception as e:
-            return HandlerResponse.from_exception(
-                e,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=blob_path,
-            )
-
+    @timed_response
     def write_content_with_version_check(
         self,
         content: bytes,
@@ -1182,38 +1156,24 @@ class S3ConnectorBackend(BaseBlobStorageConnector, CacheConnectorMixin, Multipar
         Returns:
             HandlerResponse with new version ID (S3 version or content hash) in data field
         """
-        start_time = time.perf_counter()
-
         if not context or not context.backend_path:
             return HandlerResponse.error(
                 message="S3 connector requires backend_path in OperationContext. "
                 "This backend stores files at actual paths, not CAS hashes.",
                 code=400,
                 is_expected=True,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name=self.name,
             )
 
-        blob_path = self._get_blob_path(context.backend_path)
+        # Get cache path (prefers virtual_path over backend_path)
+        cache_path = self._get_cache_path(context) or context.backend_path
 
-        try:
-            # Get cache path (prefers virtual_path over backend_path)
-            cache_path = self._get_cache_path(context) or context.backend_path
+        # Version check if requested
+        if expected_version is not None:
+            self._check_version(cache_path, expected_version, context)
 
-            # Version check if requested
-            if expected_version is not None:
-                self._check_version(cache_path, expected_version, context)
-
-            # Perform the write (returns HandlerResponse)
-            return self.write_content(content, context)
-
-        except Exception as e:
-            return HandlerResponse.from_exception(
-                e,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=blob_path,
-            )
+        # Perform the write (returns HandlerResponse)
+        return self.write_content(content, context)
 
     # === Multipart Upload Operations (Issue #788) ===
 

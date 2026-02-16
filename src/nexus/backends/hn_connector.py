@@ -39,7 +39,6 @@ Example:
 import asyncio
 import json
 import logging
-import time
 from typing import TYPE_CHECKING, Any
 
 import httpx
@@ -49,7 +48,7 @@ from nexus.backends.cache_mixin import CacheConnectorMixin, SyncResult
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.connectors.base import SkillDocMixin
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
-from nexus.core.response import HandlerResponse
+from nexus.core.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -114,7 +113,10 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
     SKILL_NAME = "hn"
 
     user_scoped = False  # Public API, no per-user auth
-    has_virtual_filesystem = True  # Uses virtual directory structure, not metadata-backed
+
+    @property
+    def has_virtual_filesystem(self) -> bool:  # noqa: D102
+        return True
 
     CONNECTION_ARGS: dict[str, ConnectionArg] = {
         "cache_ttl": ConnectionArg(
@@ -391,6 +393,7 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
 
     # === Backend Interface Implementation ===
 
+    @timed_response
     def read_content(
         self,
         content_hash: str,
@@ -408,89 +411,75 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
         Returns:
             HandlerResponse with JSON content as bytes in data field
         """
-        start_time = time.perf_counter()
-
         if not context or not context.backend_path:
             return HandlerResponse.error(
                 message="HN connector requires context with backend_path",
                 code=400,
                 is_expected=True,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name=self.name,
             )
 
         path = context.backend_path
         cache_path = self._get_cache_path(context) or path
 
-        try:
-            # Check cache first (if caching enabled)
-            if self._has_caching():
-                cached = self._read_from_cache(cache_path, original=True)
-                if cached and not cached.stale and cached.content_binary:
-                    logger.info(f"[HN] Cache hit: {path}")
-                    return HandlerResponse.ok(
-                        data=cached.content_binary,
-                        execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                        backend_name=self.name,
-                        path=path,
-                    )
-
-            # Resolve path
-            feed, rank = self._resolve_path(path)
-
-            if rank is None:
-                return HandlerResponse.error(
-                    message=f"Cannot read directory: {path}. Use list_dir() instead.",
-                    code=400,
-                    is_expected=True,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
+        # Check cache first (if caching enabled)
+        if self._has_caching():
+            cached = self._read_from_cache(cache_path, original=True)
+            if cached and not cached.stale and cached.content_binary:
+                logger.info(f"[HN] Cache hit: {path}")
+                return HandlerResponse.ok(
+                    data=cached.content_binary,
                     backend_name=self.name,
                     path=path,
                 )
 
-            # Fetch from HN API
-            logger.info(f"[HN] Fetching from API: {feed}/{rank}")
+        # Resolve path
+        feed, rank = self._resolve_path(path)
 
-            async def _fetch() -> bytes:
-                try:
-                    story = await self._fetch_feed_story(feed, rank)
-                    content = json.dumps(story, indent=2, ensure_ascii=False).encode("utf-8")
-                    return content
-                finally:
-                    await self._close_client()
-
-            from nexus.core.sync_bridge import run_sync
-
-            content = run_sync(_fetch())
-
-            # Cache the result
-            if self._has_caching():
-                try:
-                    zone_id = getattr(context, "zone_id", None)
-                    self._write_to_cache(
-                        path=cache_path,
-                        content=content,
-                        backend_version=None,  # No versioning for HN
-                        zone_id=zone_id,
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to cache {path}: {e}")
-
-            return HandlerResponse.ok(
-                data=content,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
+        if rank is None:
+            return HandlerResponse.error(
+                message=f"Cannot read directory: {path}. Use list_dir() instead.",
+                code=400,
+                is_expected=True,
                 backend_name=self.name,
                 path=path,
             )
 
-        except Exception as e:
-            return HandlerResponse.from_exception(
-                e,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
-                backend_name=self.name,
-                path=path,
-            )
+        # Fetch from HN API
+        logger.info(f"[HN] Fetching from API: {feed}/{rank}")
 
+        async def _fetch() -> bytes:
+            try:
+                story = await self._fetch_feed_story(feed, rank)
+                content = json.dumps(story, indent=2, ensure_ascii=False).encode("utf-8")
+                return content
+            finally:
+                await self._close_client()
+
+        from nexus.core.sync_bridge import run_sync
+
+        content = run_sync(_fetch())
+
+        # Cache the result
+        if self._has_caching():
+            try:
+                zone_id = getattr(context, "zone_id", None)
+                self._write_to_cache(
+                    path=cache_path,
+                    content=content,
+                    backend_version=None,  # No versioning for HN
+                    zone_id=zone_id,
+                )
+            except Exception as e:
+                logger.warning(f"Failed to cache {path}: {e}")
+
+        return HandlerResponse.ok(
+            data=content,
+            backend_name=self.name,
+            path=path,
+        )
+
+    @timed_response
     def write_content(
         self,
         content: bytes,
@@ -501,10 +490,10 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
             message="HN connector is read-only. HackerNews API does not support posting.",
             code=405,
             is_expected=True,
-            execution_time_ms=0.0,
             backend_name=self.name,
         )
 
+    @timed_response
     def delete_content(
         self,
         content_hash: str,
@@ -515,22 +504,19 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
             message="HN connector is read-only. HackerNews API does not support deletion.",
             code=405,
             is_expected=True,
-            execution_time_ms=0.0,
             backend_name=self.name,
         )
 
+    @timed_response
     def content_exists(
         self,
         content_hash: str,
         context: "OperationContext | None" = None,
     ) -> HandlerResponse[bool]:
         """Check if content exists."""
-        start_time = time.perf_counter()
-
         if not context or not context.backend_path:
             return HandlerResponse.ok(
                 data=False,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name=self.name,
             )
 
@@ -539,17 +525,16 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
             exists = feed != "" and (rank is None or 1 <= rank <= self.stories_per_feed)
             return HandlerResponse.ok(
                 data=exists,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name=self.name,
                 path=context.backend_path,
             )
         except BackendError:
             return HandlerResponse.ok(
                 data=False,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name=self.name,
             )
 
+    @timed_response
     def get_content_size(
         self,
         content_hash: str,
@@ -560,25 +545,22 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
         Performance optimization: Checks cache first for actual size.
         Falls back to 10KB estimate if not cached.
         """
-        start_time = time.perf_counter()
-
         # OPTIMIZATION: Check cache first for actual size
         if context and hasattr(context, "virtual_path") and context.virtual_path:
             cached_size = self._get_size_from_cache(context.virtual_path)
             if cached_size is not None:
                 return HandlerResponse.ok(
                     data=cached_size,
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
                     backend_name=self.name,
                 )
 
         # Fallback: Return approximate size estimate
         return HandlerResponse.ok(
             data=10 * 1024,  # 10 KB estimate
-            execution_time_ms=(time.perf_counter() - start_time) * 1000,
             backend_name=self.name,
         )
 
+    @timed_response
     def get_ref_count(
         self,
         content_hash: str,
@@ -587,12 +569,12 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
         """Get reference count (always 1 for HN connector)."""
         return HandlerResponse.ok(
             data=1,
-            execution_time_ms=0.0,
             backend_name=self.name,
         )
 
     # === Directory Operations ===
 
+    @timed_response
     def mkdir(
         self,
         path: str,
@@ -605,11 +587,11 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
             message="HN connector has a fixed virtual structure. mkdir() is not supported.",
             code=405,
             is_expected=True,
-            execution_time_ms=0.0,
             backend_name=self.name,
             path=path,
         )
 
+    @timed_response
     def rmdir(
         self,
         path: str,
@@ -621,19 +603,17 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
             message="HN connector has a fixed virtual structure. rmdir() is not supported.",
             code=405,
             is_expected=True,
-            execution_time_ms=0.0,
             backend_name=self.name,
             path=path,
         )
 
+    @timed_response
     def is_directory(
         self,
         path: str,
         context: "OperationContext | None" = None,
     ) -> HandlerResponse[bool]:
         """Check if path is a directory."""
-        start_time = time.perf_counter()
-
         path = path.strip("/")
 
         # Handle hn prefix
@@ -644,7 +624,6 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
         if path == "" or path == "hn":
             return HandlerResponse.ok(
                 data=True,
-                execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 backend_name=self.name,
                 path=path,
             )
@@ -652,7 +631,6 @@ class HNConnectorBackend(Backend, CacheConnectorMixin, SkillDocMixin):
         is_dir = path in {"top", "new", "best", "ask", "show", "jobs"}
         return HandlerResponse.ok(
             data=is_dir,
-            execution_time_ms=(time.perf_counter() - start_time) * 1000,
             backend_name=self.name,
             path=path,
         )

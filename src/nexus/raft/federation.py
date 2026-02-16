@@ -35,7 +35,7 @@ class NexusFederation:
         from nexus.raft.zone_manager import ZoneManager
         from nexus.raft.client import RaftClient
 
-        mgr = ZoneManager(node_id=1, base_path="./zones", bind_addr="0.0.0.0:2126")
+        mgr = ZoneManager(node_id=1, base_path="./zones")  # bind_addr from NEXUS_BIND_ADDR env
         mgr.bootstrap()
 
         fed = NexusFederation(

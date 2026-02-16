@@ -23,8 +23,8 @@ Example (Metastore - embedded mode):
 Example (ZoneManager - consensus mode):
     from nexus.raft import ZoneManager
 
-    mgr = ZoneManager(1, "/var/lib/nexus/zones", "0.0.0.0:2126")
-    handle = mgr.create_zone("default", ["2@peer:2126"])
+    mgr = ZoneManager(node_id=1, base_path="/var/lib/nexus/zones")  # bind_addr from NEXUS_BIND_ADDR env
+    handle = mgr.create_zone("root", ["2@peer:2126"])
     handle.set_metadata("/path/to/file", metadata_bytes)  # replicated via consensus
 
 Example (RaftClient - remote):

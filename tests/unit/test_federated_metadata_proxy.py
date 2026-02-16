@@ -1,4 +1,4 @@
-"""Tests for ZoneAwareMetadataStore — cross-zone metadata proxy.
+"""Tests for FederatedMetadataProxy — cross-zone metadata proxy.
 
 Verifies that the proxy correctly routes operations across zones,
 remaps paths between global and zone-relative namespaces, and
@@ -8,7 +8,7 @@ handles batch operations grouped by zone.
 import pytest
 
 from nexus.core._metadata_generated import DT_MOUNT, DT_REG, FileMetadata
-from nexus.raft.zone_aware_metadata import ZoneAwareMetadataStore
+from nexus.raft.federated_metadata_proxy import FederatedMetadataProxy
 from nexus.raft.zone_path_resolver import ZonePathResolver
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
@@ -49,7 +49,7 @@ def two_zones(tmp_path):
     )
 
     resolver = ZonePathResolver(mgr, root_zone_id="root")
-    proxy = ZoneAwareMetadataStore(resolver, root_store)
+    proxy = FederatedMetadataProxy(resolver, root_store)
 
     return proxy, root_store, beta_store, mgr
 
@@ -423,13 +423,13 @@ class TestFactory:
         mgr = FakeZoneManager()
         mgr.add_zone("default", root_store)
 
-        proxy = ZoneAwareMetadataStore.from_zone_manager(mgr, root_zone_id="default")
-        assert isinstance(proxy, ZoneAwareMetadataStore)
+        proxy = FederatedMetadataProxy.from_zone_manager(mgr, root_zone_id="default")
+        assert isinstance(proxy, FederatedMetadataProxy)
 
     def test_from_zone_manager_missing_root(self, tmp_path):
         mgr = FakeZoneManager()
         with pytest.raises(RuntimeError, match="not found"):
-            ZoneAwareMetadataStore.from_zone_manager(mgr, root_zone_id="missing")
+            FederatedMetadataProxy.from_zone_manager(mgr, root_zone_id="missing")
 
 
 # =========================================================================
@@ -472,7 +472,7 @@ class TestNestedMount:
         )
 
         resolver = ZonePathResolver(mgr, root_zone_id="root")
-        proxy = ZoneAwareMetadataStore(resolver, root_store)
+        proxy = FederatedMetadataProxy(resolver, root_store)
 
         # Write through proxy at nested mount path
         proxy.put(
@@ -545,7 +545,7 @@ class TestNestedMount:
         )
 
         resolver = ZonePathResolver(mgr, root_zone_id="root")
-        proxy = ZoneAwareMetadataStore(resolver, root_store)
+        proxy = FederatedMetadataProxy(resolver, root_store)
 
         results = proxy.list("/mnt/deep/")
         paths = {m.path for m in results}

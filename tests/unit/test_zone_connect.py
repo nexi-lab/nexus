@@ -1,4 +1,4 @@
-"""Tests for ZoneAwareMetadataStore integration with nexus.connect().
+"""Tests for FederatedMetadataProxy integration with nexus.connect().
 
 Verifies:
 - from_zone_manager() factory wires zone_manager ref for clean shutdown
@@ -9,7 +9,7 @@ Verifies:
 import pytest
 
 from nexus.core._metadata_generated import DT_MOUNT, DT_REG, FileMetadata
-from nexus.raft.zone_aware_metadata import ZoneAwareMetadataStore
+from nexus.raft.federated_metadata_proxy import FederatedMetadataProxy
 from nexus.raft.zone_path_resolver import ZonePathResolver
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
@@ -54,7 +54,7 @@ def zone_setup(tmp_path):
     )
 
     resolver = ZonePathResolver(mgr, root_zone_id="root")
-    proxy = ZoneAwareMetadataStore(resolver, root_store, zone_manager=mgr)
+    proxy = FederatedMetadataProxy(resolver, root_store, zone_manager=mgr)
 
     return proxy, root_store, beta_store, mgr
 
@@ -74,7 +74,7 @@ class TestZoneManagerLifecycle:
         mgr = FakeZoneManager()
         mgr.add_zone("root", store)
         resolver = ZonePathResolver(mgr, root_zone_id="root")
-        proxy = ZoneAwareMetadataStore(resolver, store)  # no zone_manager
+        proxy = FederatedMetadataProxy(resolver, store)  # no zone_manager
         proxy.close()  # should not raise
 
 

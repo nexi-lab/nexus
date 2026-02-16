@@ -1,4 +1,4 @@
-"""SQLAlchemy models for agent identity (KYA — Issue #1355).
+"""SQLAlchemy models for agent identity (KYA -- Issue #1355).
 
 AgentKeyModel stores Ed25519 signing keys for agent identity.
 Keys are separate from AgentRecordModel (Decision #2B) to support:
@@ -12,18 +12,12 @@ reusing the existing OAuthCrypto infrastructure.
 
 from __future__ import annotations
 
-import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Index, Integer, LargeBinary, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from nexus.storage.models import Base
-
-
-def _generate_uuid() -> str:
-    """Generate a UUID4 string for key_id."""
-    return str(uuid.uuid4())
+from nexus.storage.models._base import Base, _generate_uuid
 
 
 class AgentKeyModel(Base):
@@ -40,14 +34,14 @@ class AgentKeyModel(Base):
 
     __tablename__ = "agent_keys"
 
-    # Primary key — UUID referenced in RFC 9421 keyid parameter
+    # Primary key -- UUID referenced in RFC 9421 keyid parameter
     key_id: Mapped[str] = mapped_column(
         String(36),
         primary_key=True,
         default=_generate_uuid,
     )
 
-    # Owner agent — references agent_records.agent_id
+    # Owner agent -- references agent_records.agent_id
     agent_id: Mapped[str] = mapped_column(
         String(255),
         nullable=False,

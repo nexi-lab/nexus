@@ -729,8 +729,8 @@ async def lifespan(_app: FastAPI) -> Any:
         try:
             from nexus.identity.crypto import IdentityCrypto
             from nexus.identity.key_service import KeyService
-            from nexus.identity.models import AgentKeyModel  # noqa: F401 — register with Base
             from nexus.server.auth.oauth_crypto import OAuthCrypto
+            from nexus.storage.models import AgentKeyModel  # noqa: F401 — register with Base
 
             # Ensure agent_keys table exists (AgentKeyModel is imported lazily,
             # after SQLAlchemyRecordStore.create_all already ran)

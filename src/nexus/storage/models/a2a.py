@@ -2,29 +2,16 @@
 
 Stores A2A task state, messages, artifacts, and push notification configs
 in the same database used by the rest of Nexus (PostgreSQL or SQLite).
-
-Note: This module imports ``Base`` from ``nexus.storage.models`` for
-SQLAlchemy model registration.  This coupling is ACCEPTED because:
-1. ``DatabaseTaskStore`` is the deprecated store path
-2. This import is lazy (only triggered when DatabaseTaskStore is used)
-3. The same pattern is used by ``nexus.identity.models`` and others
-4. The primary store paths (InMemory, VFS) have zero external imports
 """
 
 from __future__ import annotations
 
-import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
-from nexus.storage.models import Base
-
-
-def _generate_task_id() -> str:
-    """Generate a UUID string for task IDs."""
-    return str(uuid.uuid4())
+from nexus.storage.models._base import Base, _generate_uuid
 
 
 class A2ATaskModel(Base):
@@ -33,7 +20,7 @@ class A2ATaskModel(Base):
     __tablename__ = "a2a_tasks"
 
     # Primary key
-    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_generate_task_id)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_generate_uuid)
 
     # Context for multi-turn conversations
     context_id: Mapped[str | None] = mapped_column(String(36), nullable=True)

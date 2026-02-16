@@ -22,8 +22,7 @@ from sqlalchemy.pool import StaticPool
 from nexus.identity.crypto import IdentityCrypto
 from nexus.identity.did import resolve_did_key
 from nexus.identity.key_service import KeyService
-from nexus.identity.models import AgentKeyModel
-from nexus.storage.models import Base
+from nexus.storage.models import AgentKeyModel, Base
 
 
 def _utcnow_naive() -> datetime:

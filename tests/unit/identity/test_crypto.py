@@ -142,11 +142,11 @@ class TestPrivateKeyEncryption:
 
     def test_encrypt_without_oauth_crypto_raises(self, crypto_no_fernet: IdentityCrypto) -> None:
         private, _ = crypto_no_fernet.generate_keypair()
-        with pytest.raises(ValueError, match="OAuthCrypto is required"):
+        with pytest.raises(ValueError, match="TokenEncryptor is required"):
             crypto_no_fernet.encrypt_private_key(private)
 
     def test_decrypt_without_oauth_crypto_raises(self, crypto_no_fernet: IdentityCrypto) -> None:
-        with pytest.raises(ValueError, match="OAuthCrypto is required"):
+        with pytest.raises(ValueError, match="TokenEncryptor is required"):
             crypto_no_fernet.decrypt_private_key("some_encrypted_data")
 
     def test_encrypted_key_is_string(self, crypto_with_fernet: IdentityCrypto) -> None:

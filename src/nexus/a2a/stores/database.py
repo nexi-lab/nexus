@@ -43,7 +43,7 @@ class DatabaseTaskStore:
         agent_id: str | None = None,
     ) -> None:
         def _do_save() -> None:
-            from nexus.a2a.db import A2ATaskModel
+            from nexus.storage.models import A2ATaskModel
 
             session = self._session_factory()
             try:
@@ -79,7 +79,7 @@ class DatabaseTaskStore:
 
     async def get(self, task_id: str, *, zone_id: str) -> Task | None:
         def _do_get() -> Task | None:
-            from nexus.a2a.db import A2ATaskModel
+            from nexus.storage.models import A2ATaskModel
 
             session = self._session_factory()
             try:
@@ -94,7 +94,7 @@ class DatabaseTaskStore:
 
     async def delete(self, task_id: str, *, zone_id: str) -> bool:
         def _do_delete() -> bool:
-            from nexus.a2a.db import A2ATaskModel
+            from nexus.storage.models import A2ATaskModel
 
             session = self._session_factory()
             try:
@@ -124,7 +124,7 @@ class DatabaseTaskStore:
         def _do_list() -> list[Task]:
             from sqlalchemy import select
 
-            from nexus.a2a.db import A2ATaskModel
+            from nexus.storage.models import A2ATaskModel
 
             session = self._session_factory()
             try:

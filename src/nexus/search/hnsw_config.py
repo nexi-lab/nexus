@@ -11,9 +11,24 @@ References:
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, ClassVar
+
+# Safe SQL identifier pattern (letters, digits, underscores only)
+_SAFE_IDENTIFIER = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
+# Safe memory size pattern (e.g., "512MB", "4GB", "1024kB")
+_SAFE_MEM_SIZE = re.compile(r"^\d+\s*[kKMGT]?[bB]$")
+
+
+def _validate_identifier(name: str, label: str) -> str:
+    """Validate a SQL identifier to prevent injection."""
+    if not _SAFE_IDENTIFIER.match(name):
+        msg = f"Invalid SQL identifier for {label}: {name!r}"
+        raise ValueError(msg)
+    return name
+
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -157,11 +172,22 @@ class HNSWConfig:
 
         Returns:
             SQL CREATE INDEX statement.
+
+        Raises:
+            ValueError: If any identifier contains unsafe characters.
         """
-        return f"""CREATE INDEX IF NOT EXISTS {index_name}
-ON {table}
-USING hnsw ({column} {operator_class})
-WITH (m = {self.m}, ef_construction = {self.ef_construction})"""
+        _validate_identifier(table, "table")
+        _validate_identifier(column, "column")
+        _validate_identifier(index_name, "index_name")
+        _validate_identifier(operator_class, "operator_class")
+        m = int(self.m)
+        ef = int(self.ef_construction)
+        return (
+            f"CREATE INDEX IF NOT EXISTS {index_name}\n"
+            f"ON {table}\n"
+            f"USING hnsw ({column} {operator_class})\n"
+            f"WITH (m = {m}, ef_construction = {ef})"
+        )
 
     def get_search_settings_sql(self) -> str:
         """Generate SQL to set search parameters.
@@ -169,16 +195,25 @@ WITH (m = {self.m}, ef_construction = {self.ef_construction})"""
         Returns:
             SQL SET statements for ef_search.
         """
-        return f"SET LOCAL hnsw.ef_search = {self.ef_search}"
+        return f"SET LOCAL hnsw.ef_search = {int(self.ef_search)}"
 
     def get_build_settings_sql(self) -> str:
         """Generate SQL to set index build parameters.
 
         Returns:
             SQL SET statements for maintenance_work_mem and parallel workers.
+
+        Raises:
+            ValueError: If maintenance_work_mem is not a valid memory size.
         """
-        return f"""SET maintenance_work_mem = '{self.maintenance_work_mem}';
-SET max_parallel_maintenance_workers = {self.max_parallel_workers}"""
+        mem = self.maintenance_work_mem
+        if not _SAFE_MEM_SIZE.match(mem):
+            msg = f"Invalid memory size for maintenance_work_mem: {mem!r}"
+            raise ValueError(msg)
+        workers = int(self.max_parallel_workers)
+        return (
+            f"SET maintenance_work_mem = '{mem}';\nSET max_parallel_maintenance_workers = {workers}"
+        )
 
     def apply_search_settings(self, session: Session) -> None:
         """Apply search settings to a SQLAlchemy session.
@@ -188,7 +223,7 @@ SET max_parallel_maintenance_workers = {self.max_parallel_workers}"""
         """
         from sqlalchemy import text
 
-        session.execute(text(f"SET LOCAL hnsw.ef_search = {self.ef_search}"))
+        session.execute(text("SET LOCAL hnsw.ef_search = :val"), {"val": self.ef_search})
 
     def apply_build_settings(self, session: Session) -> None:
         """Apply index build settings to a SQLAlchemy session.
@@ -198,8 +233,11 @@ SET max_parallel_maintenance_workers = {self.max_parallel_workers}"""
         """
         from sqlalchemy import text
 
-        session.execute(text(f"SET maintenance_work_mem = '{self.maintenance_work_mem}'"))
-        session.execute(text(f"SET max_parallel_maintenance_workers = {self.max_parallel_workers}"))
+        session.execute(text("SET maintenance_work_mem = :val"), {"val": self.maintenance_work_mem})
+        session.execute(
+            text("SET max_parallel_maintenance_workers = :val"),
+            {"val": self.max_parallel_workers},
+        )
 
 
 def get_vector_count(session: Session, table: str = "document_chunks") -> int:
@@ -212,10 +250,13 @@ def get_vector_count(session: Session, table: str = "document_chunks") -> int:
     Returns:
         Number of rows with non-null embeddings.
     """
-    from sqlalchemy import text
+    from sqlalchemy import column, func, select
+    from sqlalchemy import table as sa_table
 
     try:
-        result = session.execute(text(f"SELECT COUNT(*) FROM {table} WHERE embedding IS NOT NULL"))
+        tbl = sa_table(table)
+        stmt = select(func.count()).select_from(tbl).where(column("embedding").isnot(None))
+        result = session.execute(stmt)
         return result.scalar() or 0
     except Exception:
         # embedding column doesn't exist yet

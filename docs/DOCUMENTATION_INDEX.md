@@ -56,10 +56,10 @@ Complete guide to Nexus documentation organized by topic.
 
 | Document | Description |
 |----------|-------------|
-| [System Architecture](architecture/ARCHITECTURE.md) | Overall design |
+| [Kernel Architecture](architecture/KERNEL-ARCHITECTURE.md) | OS-inspired 3-layer architecture |
 | [ReBAC Architecture](architecture/rebac.md) | Permission system internals |
-| [Tenant Isolation](architecture/tenant-isolation.md) | Multi-zone isolation |
-| [Default Context](architecture/default-context.md) | Context design |
+| [Tenant Isolation](design/tenant-isolation.md) | Multi-zone isolation |
+| [Default Context](development/default-context.md) | Context design |
 
 ---
 

@@ -209,8 +209,8 @@ class XConnectorBackend(Backend, OAuthConnectorMixin):
 
         # Get OAuth token
         zone_id: str = (
-            context.zone_id if context and hasattr(context, "zone_id") else "default"
-        ) or "default"
+            context.zone_id if context and hasattr(context, "zone_id") else "root"
+        ) or "root"
 
         try:
             access_token = await self.token_manager.get_valid_token(

@@ -43,7 +43,7 @@ def _insert_undelivered(
     session_factory,
     path: str = "/test.txt",
     operation_type: str = "write",
-    zone_id: str = "default",
+    zone_id: str = "root",
     agent_id: str | None = None,
     new_path: str | None = None,
 ) -> str:
@@ -88,7 +88,7 @@ class TestBuildFileEvent:
 
         assert event.type == FileEventType.FILE_WRITE
         assert event.path == "/test.txt"
-        assert event.zone_id == "default"
+        assert event.zone_id == "root"
 
     def test_delete_maps_to_file_delete(self, record_store: SQLAlchemyRecordStore) -> None:
         from nexus.services.event_log.delivery_worker import EventDeliveryWorker

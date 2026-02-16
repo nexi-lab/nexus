@@ -45,7 +45,7 @@ def _make_record(
     record_id: str = "test-id-1",
     path: str = "/test/file.txt",
     backend_name: str = "gcs",
-    zone_id: str = "default",
+    zone_id: str = "root",
     strategy: ConflictStrategy = ConflictStrategy.KEEP_NEWER,
     outcome: ResolutionOutcome = ResolutionOutcome.NEXUS_WINS,
     status: ConflictStatus = ConflictStatus.AUTO_RESOLVED,

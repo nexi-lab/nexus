@@ -75,7 +75,7 @@ def _ctx(
         backend_content_hash="backend_hash",
         path="/test/file.txt",
         backend_name="test_backend",
-        zone_id="default",
+        zone_id="root",
     )
 
 
@@ -365,7 +365,7 @@ class TestConflictRecord:
             id="test-id",
             path="/test.txt",
             backend_name="gcs",
-            zone_id="default",
+            zone_id="root",
             strategy=ConflictStrategy.KEEP_NEWER,
             outcome=ResolutionOutcome.NEXUS_WINS,
             nexus_content_hash="abc",

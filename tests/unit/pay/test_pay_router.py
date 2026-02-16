@@ -56,7 +56,7 @@ def app(mock_credits_service, mock_x402_client, mock_auth_result):
             api_key="nx_live_test-agent",
             credits_service=mock_credits_service,
             x402_client=mock_x402_client,
-            zone_id="default",
+            zone_id="root",
         )
 
     app.dependency_overrides[get_nexuspay] = _mock_nexuspay
@@ -582,9 +582,7 @@ class TestAgentIsolation:
 
         assert response.status_code == 200
         # Verify the SDK was called with the correct agent_id
-        mock_credits_service.get_balance_with_reserved.assert_called_once_with(
-            "test-agent", "default"
-        )
+        mock_credits_service.get_balance_with_reserved.assert_called_once_with("test-agent", "root")
 
     def test_transfer_from_authenticated_agent(self, client, mock_credits_service):
         """Transfer should always be FROM the authenticated agent."""

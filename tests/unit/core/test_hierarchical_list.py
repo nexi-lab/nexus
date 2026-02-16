@@ -56,7 +56,7 @@ def test_hierarchical_directory_listing_empty_subdirectory(nexus_fs):
     system_ctx = EnhancedOperationContext(
         user="admin",
         groups=[],
-        zone_id="default",
+        zone_id="root",
         is_admin=True,
         is_system=False,
         subject_type="user",
@@ -76,7 +76,7 @@ def test_hierarchical_directory_listing_empty_subdirectory(nexus_fs):
         subject=("agent", "joe"),
         relation="direct_viewer",  # Use direct_viewer (viewer is a union, not a base relation)
         object=("file", "/workspace/joe"),
-        zone_id="default",
+        zone_id="root",
         context=system_ctx,
     )
 
@@ -87,7 +87,7 @@ def test_hierarchical_directory_listing_empty_subdirectory(nexus_fs):
     joe_ctx = EnhancedOperationContext(
         user="joe",
         groups=[],
-        zone_id="default",
+        zone_id="root",
         is_admin=False,
         is_system=False,
         subject_type="agent",  # Match the ReBAC tuple subject type
@@ -122,7 +122,7 @@ def test_hierarchical_directory_listing_with_files(nexus_fs):
     system_ctx = EnhancedOperationContext(
         user="admin",
         groups=[],
-        zone_id="default",
+        zone_id="root",
         is_admin=True,
         is_system=False,
         subject_type="user",
@@ -142,7 +142,7 @@ def test_hierarchical_directory_listing_with_files(nexus_fs):
         subject=("agent", "joe"),
         relation="direct_viewer",
         object=("file", "/workspace/joe/file.txt"),
-        zone_id="default",
+        zone_id="root",
         context=system_ctx,
     )
 
@@ -153,7 +153,7 @@ def test_hierarchical_directory_listing_with_files(nexus_fs):
     joe_ctx = EnhancedOperationContext(
         user="joe",
         groups=[],
-        zone_id="default",
+        zone_id="root",
         is_admin=False,
         is_system=False,
         subject_type="agent",  # Match the ReBAC tuple subject type
@@ -194,7 +194,7 @@ def test_deeply_nested_hierarchical_listing(nexus_fs):
     system_ctx = EnhancedOperationContext(
         user="admin",
         groups=[],
-        zone_id="default",
+        zone_id="root",
         is_admin=True,
         is_system=False,
         subject_type="user",
@@ -217,7 +217,7 @@ def test_deeply_nested_hierarchical_listing(nexus_fs):
         subject=("agent", "joe"),
         relation="direct_viewer",
         object=("file", f"{deep_path}/file.txt"),
-        zone_id="default",
+        zone_id="root",
         context=system_ctx,
     )
 
@@ -228,7 +228,7 @@ def test_deeply_nested_hierarchical_listing(nexus_fs):
     joe_ctx = EnhancedOperationContext(
         user="joe",
         groups=[],
-        zone_id="default",
+        zone_id="root",
         is_admin=False,
         is_system=False,
         subject_type="agent",  # Match the ReBAC tuple subject type

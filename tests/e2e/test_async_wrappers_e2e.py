@@ -134,7 +134,7 @@ class TestAsyncAgentRegistryE2E:
         """Register → transition → heartbeat → list → unregister."""
         # Register
         info = await async_registry.register(
-            "e2e-agent-1", "alice", zone_id="default", name="E2E Agent"
+            "e2e-agent-1", "alice", zone_id="root", name="E2E Agent"
         )
         assert isinstance(info, AgentInfo)
         assert info.agent_id == "e2e-agent-1"
@@ -161,7 +161,7 @@ class TestAsyncAgentRegistryE2E:
         assert idle.state == "IDLE"
 
         # List by zone
-        agents = await async_registry.list_by_zone("default")
+        agents = await async_registry.list_by_zone("root")
         assert any(a.agent_id == "e2e-agent-1" for a in agents)
 
         # Unregister
@@ -191,9 +191,7 @@ class TestAsyncAgentRegistryE2E:
         """Multiple concurrent registrations via asyncio.gather."""
 
         async def register(i: int) -> AgentInfo:
-            return await async_registry.register(
-                f"e2e-concurrent-{i}", f"user-{i}", zone_id="default"
-            )
+            return await async_registry.register(f"e2e-concurrent-{i}", f"user-{i}", zone_id="root")
 
         results = await asyncio.gather(*[register(i) for i in range(10)])
         assert len(results) == 10
@@ -447,7 +445,7 @@ class TestServerLifespanWiring:
             info = await state.async_agent_registry.register(
                 "lifespan-agent",
                 "admin",
-                zone_id="default",
+                zone_id="root",
                 name="Lifespan Test",
             )
             assert info.agent_id == "lifespan-agent"
@@ -462,7 +460,7 @@ class TestServerLifespanWiring:
             assert connected.state == "CONNECTED"
 
             # List agents in zone (simulates permission-aware listing)
-            agents = await state.async_agent_registry.list_by_zone("default")
+            agents = await state.async_agent_registry.list_by_zone("root")
             assert len(agents) == 1
             assert agents[0].agent_id == "lifespan-agent"
 

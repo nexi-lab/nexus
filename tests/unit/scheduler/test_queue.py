@@ -76,7 +76,7 @@ class TestEnqueue:
             payload={"key": "value"},
             priority_tier=PriorityTier.NORMAL,
             effective_tier=2,
-            zone_id="default",
+            zone_id="root",
         )
 
         assert task_id == "task-uuid-123"
@@ -98,7 +98,7 @@ class TestEnqueue:
             boost_amount=Decimal("0.02"),
             boost_tiers=2,
             boost_reservation_id="res-789",
-            zone_id="default",
+            zone_id="root",
         )
 
         assert task_id == "task-uuid-456"
@@ -118,7 +118,7 @@ class TestEnqueue:
             priority_tier=PriorityTier.HIGH,
             effective_tier=1,
             deadline=deadline,
-            zone_id="default",
+            zone_id="root",
         )
 
         assert task_id == "task-uuid-789"
@@ -136,7 +136,7 @@ class TestEnqueue:
             payload={},
             priority_tier=PriorityTier.NORMAL,
             effective_tier=2,
-            zone_id="default",
+            zone_id="root",
         )
 
         # Should have called execute for NOTIFY
@@ -186,7 +186,7 @@ class TestDequeue:
                 "started_at": now,
                 "completed_at": None,
                 "error_message": None,
-                "zone_id": "default",
+                "zone_id": "root",
                 "idempotency_key": None,
             }
         )
@@ -332,7 +332,7 @@ class TestGetTask:
                 "started_at": None,
                 "completed_at": None,
                 "error_message": None,
-                "zone_id": "default",
+                "zone_id": "root",
                 "idempotency_key": None,
             }
         )

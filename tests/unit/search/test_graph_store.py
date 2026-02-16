@@ -267,7 +267,7 @@ class TestGraphStoreInit:
         store = GraphStore(mock_session)
 
         assert store.session == mock_session
-        assert store.zone_id == "default"
+        assert store.zone_id == "root"
         assert store.embedding_provider is None
         assert store.merge_threshold == 0.85
         assert store.confidence_threshold == 0.75

@@ -138,7 +138,7 @@ class TestChangeLogStorePostgres:
         store.upsert_change_log(
             path="/mnt/gcs/test.txt",
             backend_name="gcs",
-            zone_id="default",
+            zone_id="root",
             size_bytes=1024,
             backend_version="gen-1",
         )
@@ -147,12 +147,12 @@ class TestChangeLogStorePostgres:
         store.upsert_change_log(
             path="/mnt/gcs/test.txt",
             backend_name="gcs",
-            zone_id="default",
+            zone_id="root",
             size_bytes=2048,
             backend_version="gen-2",
         )
 
-        entry = store.get_change_log("/mnt/gcs/test.txt", "gcs", "default")
+        entry = store.get_change_log("/mnt/gcs/test.txt", "gcs", "root")
         assert entry is not None
         assert entry.size_bytes == 2048
         assert entry.backend_version == "gen-2"
@@ -163,7 +163,7 @@ class TestChangeLogStorePostgres:
             store.upsert_change_log(
                 path="/mnt/gcs/test.txt",
                 backend_name="gcs",
-                zone_id="default",
+                zone_id="root",
                 size_bytes=1024 * (i + 1),
                 backend_version=f"gen-{i}",
             )
@@ -187,26 +187,26 @@ class TestChangeLogStorePostgres:
         store.upsert_change_log(
             path="/mnt/gcs/deleted.txt",
             backend_name="gcs",
-            zone_id="default",
+            zone_id="root",
             size_bytes=512,
             backend_version="gen-99",
         )
 
         # Verify it exists
-        entry = store.get_change_log("/mnt/gcs/deleted.txt", "gcs", "default")
+        entry = store.get_change_log("/mnt/gcs/deleted.txt", "gcs", "root")
         assert entry is not None
 
         # Delete it
-        result = store.delete_change_log("/mnt/gcs/deleted.txt", "gcs", "default")
+        result = store.delete_change_log("/mnt/gcs/deleted.txt", "gcs", "root")
         assert result is True
 
         # Verify it's gone
-        entry = store.get_change_log("/mnt/gcs/deleted.txt", "gcs", "default")
+        entry = store.get_change_log("/mnt/gcs/deleted.txt", "gcs", "root")
         assert entry is None
 
     def test_delete_nonexistent_returns_true(self, store: ChangeLogStore):
         """Test deleting a non-existent entry returns True (no error)."""
-        result = store.delete_change_log("/mnt/gcs/nonexistent.txt", "gcs", "default")
+        result = store.delete_change_log("/mnt/gcs/nonexistent.txt", "gcs", "root")
         assert result is True
 
     def test_get_last_sync_time(self, store: ChangeLogStore):
@@ -214,24 +214,24 @@ class TestChangeLogStorePostgres:
         store.upsert_change_log(
             path="/mnt/gcs/a.txt",
             backend_name="gcs",
-            zone_id="default",
+            zone_id="root",
             size_bytes=100,
         )
         store.upsert_change_log(
             path="/mnt/gcs/b.txt",
             backend_name="gcs",
-            zone_id="default",
+            zone_id="root",
             size_bytes=200,
         )
 
-        last_sync = store.get_last_sync_time("gcs", "default")
+        last_sync = store.get_last_sync_time("gcs", "root")
         assert last_sync is not None
         # Should be very recent (within last 10 seconds)
         assert (datetime.now(UTC).replace(tzinfo=None) - last_sync).total_seconds() < 10
 
     def test_get_last_sync_time_empty(self, store: ChangeLogStore):
         """Test get_last_sync_time returns None when no entries exist."""
-        result = store.get_last_sync_time("nonexistent-backend", "default")
+        result = store.get_last_sync_time("nonexistent-backend", "root")
         assert result is None
 
     def test_zone_isolation(self, store: ChangeLogStore):
@@ -291,7 +291,7 @@ class TestChangeLogStorePostgres:
         result = store.upsert_change_log(
             path="/mnt/gcs/minimal.txt",
             backend_name="gcs",
-            zone_id="default",
+            zone_id="root",
             size_bytes=None,
             mtime=None,
             backend_version=None,
@@ -299,7 +299,7 @@ class TestChangeLogStorePostgres:
         )
         assert result is True
 
-        entry = store.get_change_log("/mnt/gcs/minimal.txt", "gcs", "default")
+        entry = store.get_change_log("/mnt/gcs/minimal.txt", "gcs", "root")
         assert entry is not None
         assert entry.size_bytes is None
         assert entry.mtime is None
@@ -317,7 +317,7 @@ class TestChangeLogStorePostgres:
                 id=str(uuid.uuid4()),
                 path="/mnt/gcs/dup.txt",
                 backend_name="gcs",
-                zone_id="default",
+                zone_id="root",
                 size_bytes=100,
                 synced_at=datetime.now(UTC),
             )
@@ -331,7 +331,7 @@ class TestChangeLogStorePostgres:
                 id=str(uuid.uuid4()),
                 path="/mnt/gcs/dup.txt",
                 backend_name="gcs",
-                zone_id="default",
+                zone_id="root",
                 size_bytes=200,
                 synced_at=datetime.now(UTC),
             )

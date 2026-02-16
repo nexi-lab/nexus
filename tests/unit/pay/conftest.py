@@ -67,7 +67,7 @@ def mock_auth_result():
         "authenticated": True,
         "subject_type": "agent",
         "subject_id": "test-agent",
-        "zone_id": "default",
+        "zone_id": "root",
         "is_admin": False,
         "x_agent_id": None,
         "metadata": {},

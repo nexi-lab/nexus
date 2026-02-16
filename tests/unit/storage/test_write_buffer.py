@@ -36,7 +36,7 @@ def _make_metadata(
         etag=etag,
         mime_type="text/plain",
         version=1,
-        zone_id="default",
+        zone_id="root",
         created_by="user-1",
         owner_id="owner-1",
         created_at=now,
@@ -178,7 +178,7 @@ class TestFlushBehavior:
             _make_metadata(path="/test/db_record.txt", etag="db-hash"),
             is_new=True,
             path="/test/db_record.txt",
-            zone_id="default",
+            zone_id="root",
             agent_id="agent-1",
         )
 
@@ -220,7 +220,7 @@ class TestFlushBehavior:
         # Then delete
         buf2 = WriteBuffer(session_factory, flush_interval_ms=10000)
         buf2.start()
-        buf2.enqueue_delete(path="/test/to_delete.txt", zone_id="default")
+        buf2.enqueue_delete(path="/test/to_delete.txt", zone_id="root")
         buf2.stop(timeout=5.0)
 
         with session_factory() as session:
@@ -237,7 +237,7 @@ class TestFlushBehavior:
         buf.enqueue_rename(
             old_path="/test/old.txt",
             new_path="/test/new.txt",
-            zone_id="default",
+            zone_id="root",
         )
         buf.stop(timeout=5.0)
 
@@ -336,7 +336,7 @@ class TestEnhancedMetrics:
 
         buf.enqueue_write(_make_metadata(path="/a.txt"), is_new=True, path="/a.txt")
         buf.enqueue_write(_make_metadata(path="/b.txt"), is_new=True, path="/b.txt")
-        buf.enqueue_delete(path="/c.txt", zone_id="default")
+        buf.enqueue_delete(path="/c.txt", zone_id="root")
         buf.enqueue_rename(old_path="/d.txt", new_path="/e.txt")
 
         by_type = buf.metrics["enqueued_by_type"]

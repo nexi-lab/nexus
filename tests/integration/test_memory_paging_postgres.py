@@ -79,14 +79,14 @@ def api_keys(pg_session_factory):
             session,
             user_id="pg-admin",
             name="PG Admin Key",
-            zone_id="default",
+            zone_id="root",
             is_admin=True,
         )
         normal_key_id, normal_raw = DatabaseAPIKeyAuth.create_key(
             session,
             user_id="pg-normal",
             name="PG Normal Key",
-            zone_id="default",
+            zone_id="root",
             is_admin=False,
         )
         session.commit()

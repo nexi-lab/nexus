@@ -145,7 +145,7 @@ class TestGmailDirectoryListing:
                     physical_path=f"/{dir_name}",
                     size=0,
                     mime_type="inode/directory",
-                    zone_id="default",
+                    zone_id="root",
                 )
             )
 
@@ -176,7 +176,7 @@ class TestGmailDirectoryListing:
                 physical_path="/INBOX",
                 size=0,
                 mime_type="inode/directory",  # This marks it as directory
-                zone_id="default",
+                zone_id="root",
             )
         )
         nx.metadata.put(
@@ -186,7 +186,7 @@ class TestGmailDirectoryListing:
                 physical_path="/file.yaml",
                 size=100,
                 mime_type="application/yaml",  # Regular file
-                zone_id="default",
+                zone_id="root",
             )
         )
 
@@ -223,7 +223,7 @@ class TestGmailDirectoryListing:
                 physical_path="/INBOX",
                 size=0,
                 mime_type="inode/directory",
-                zone_id="default",
+                zone_id="root",
             )
         )
 
@@ -271,7 +271,7 @@ class TestGmailDirectoryListing:
                 physical_path="/INBOX",
                 size=0,
                 mime_type="inode/directory",
-                zone_id="default",
+                zone_id="root",
             )
         )
         # Files in directory
@@ -282,7 +282,7 @@ class TestGmailDirectoryListing:
                 physical_path="/INBOX/email1.yaml",
                 size=500,
                 mime_type="application/yaml",
-                zone_id="default",
+                zone_id="root",
             )
         )
 
@@ -349,7 +349,7 @@ class TestAgentCreationFix:
     def test_register_agent_uses_correct_metadata_method(self, nx: NexusFS) -> None:
         """Test that register_agent uses metadata.get() instead of get_file_metadata()."""
         # Create an agent
-        context = {"user_id": "test_user", "zone_id": "default"}
+        context = {"user_id": "test_user", "zone_id": "root"}
 
         try:
             result = nx.register_agent(
@@ -375,7 +375,7 @@ class TestAgentCreationFix:
 
     def test_register_agent_prevents_duplicate(self, nx: NexusFS) -> None:
         """Test that register_agent prevents creating duplicate agents."""
-        context = {"user_id": "test_user", "zone_id": "default"}
+        context = {"user_id": "test_user", "zone_id": "root"}
 
         # Create first agent
         result1 = nx.register_agent(

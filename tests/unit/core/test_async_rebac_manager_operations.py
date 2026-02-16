@@ -137,7 +137,7 @@ class TestAsyncWriteTuple:
             subject=("user", "alice"),
             relation="direct_owner",
             object=("file", "/doc.txt"),
-            zone_id="default",
+            zone_id="root",
         )
         assert tuple_id is not None
         assert isinstance(tuple_id, str)
@@ -162,7 +162,7 @@ class TestAsyncWriteTuple:
             subject=("user", "charlie"),
             relation="direct_owner",
             object=("file", "/doc.txt"),
-            zone_id="default",
+            zone_id="root",
             expires_at=future_time,
         )
         assert tuple_id is not None
@@ -174,7 +174,7 @@ class TestAsyncWriteTuple:
             subject=("user", "dave"),
             relation="direct_owner",
             object=("file", "/doc.txt"),
-            zone_id="default",
+            zone_id="root",
             conditions={"ip_range": "10.0.0.0/8"},
         )
         assert tuple_id is not None
@@ -188,7 +188,7 @@ class TestAsyncWriteTuple:
                 subject=("user", f"user_{i}"),
                 relation="direct_owner",
                 object=("file", f"/file_{i}.txt"),
-                zone_id="default",
+                zone_id="root",
             )
             tuple_ids.append(tid)
         assert len(tuple_ids) == 5
@@ -206,7 +206,7 @@ class TestAsyncDeleteTuple:
             subject=("user", "alice"),
             relation="direct_owner",
             object=("file", "/to_delete.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Verify it exists via check
@@ -214,7 +214,7 @@ class TestAsyncDeleteTuple:
             subject=("user", "alice"),
             permission="read",
             object=("file", "/to_delete.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Delete
@@ -222,7 +222,7 @@ class TestAsyncDeleteTuple:
             subject=("user", "alice"),
             relation="direct_owner",
             object=("file", "/to_delete.txt"),
-            zone_id="default",
+            zone_id="root",
         )
         assert deleted is True
 
@@ -231,7 +231,7 @@ class TestAsyncDeleteTuple:
             subject=("user", "alice"),
             permission="read",
             object=("file", "/to_delete.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
     @pytest.mark.asyncio
@@ -241,7 +241,7 @@ class TestAsyncDeleteTuple:
             subject=("user", "nobody"),
             relation="direct_owner",
             object=("file", "/nonexistent.txt"),
-            zone_id="default",
+            zone_id="root",
         )
         assert deleted is False
 
@@ -257,7 +257,7 @@ class TestAsyncRebacCheck:
             subject=("user", "alice"),
             relation="direct_owner",
             object=("file", "/check_doc.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Check permission
@@ -265,7 +265,7 @@ class TestAsyncRebacCheck:
             subject=("user", "alice"),
             permission="read",
             object=("file", "/check_doc.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
     @pytest.mark.asyncio
@@ -275,7 +275,7 @@ class TestAsyncRebacCheck:
             subject=("user", "stranger"),
             permission="read",
             object=("file", "/secret.txt"),
-            zone_id="default",
+            zone_id="root",
         )
         assert result is False
 
@@ -287,7 +287,7 @@ class TestAsyncRebacCheck:
             subject=("user", "alice"),
             relation="direct_owner",
             object=("file", "/alice_doc.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Alice has access
@@ -295,7 +295,7 @@ class TestAsyncRebacCheck:
             subject=("user", "alice"),
             permission="read",
             object=("file", "/alice_doc.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Bob doesn't
@@ -303,7 +303,7 @@ class TestAsyncRebacCheck:
             subject=("user", "bob"),
             permission="read",
             object=("file", "/alice_doc.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
     @pytest.mark.asyncio
@@ -315,7 +315,7 @@ class TestAsyncRebacCheck:
             subject=("user", "expired_user"),
             relation="direct_owner",
             object=("file", "/expired.txt"),
-            zone_id="default",
+            zone_id="root",
             expires_at=past_time,
         )
 
@@ -324,7 +324,7 @@ class TestAsyncRebacCheck:
             subject=("user", "expired_user"),
             permission="read",
             object=("file", "/expired.txt"),
-            zone_id="default",
+            zone_id="root",
         )
         assert result is False
 
@@ -403,14 +403,14 @@ class TestAsyncRebacCheckBulk:
                 subject=("user", f"bulk_user_{i}"),
                 relation="direct_owner",
                 object=("file", f"/bulk_file_{i}.txt"),
-                zone_id="default",
+                zone_id="root",
             )
 
         # Bulk check - returns dict mapping check -> result
         checks = [
             (("user", f"bulk_user_{i}"), "read", ("file", f"/bulk_file_{i}.txt")) for i in range(3)
         ]
-        results = await manager.rebac_check_bulk(checks, zone_id="default")
+        results = await manager.rebac_check_bulk(checks, zone_id="root")
 
         assert len(results) == 3
         assert all(v is True for v in results.values())
@@ -423,13 +423,13 @@ class TestAsyncRebacCheckBulk:
             subject=("user", "mixed_user"),
             relation="direct_owner",
             object=("file", "/allowed.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         check_allowed = (("user", "mixed_user"), "read", ("file", "/allowed.txt"))
         check_denied = (("user", "mixed_user"), "read", ("file", "/denied.txt"))
         checks = [check_allowed, check_denied]
-        results = await manager.rebac_check_bulk(checks, zone_id="default")
+        results = await manager.rebac_check_bulk(checks, zone_id="root")
 
         assert results[check_allowed] is True
         assert results[check_denied] is False
@@ -437,7 +437,7 @@ class TestAsyncRebacCheckBulk:
     @pytest.mark.asyncio
     async def test_bulk_check_empty_list(self, manager: AsyncReBACManager) -> None:
         """Test bulk check with empty list."""
-        results = await manager.rebac_check_bulk([], zone_id="default")
+        results = await manager.rebac_check_bulk([], zone_id="root")
         assert results == {}  # Returns empty dict, not list
 
 
@@ -452,7 +452,7 @@ class TestAsyncCacheBehavior:
             subject=("user", "cache_user"),
             relation="direct_owner",
             object=("file", "/cache_test.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # First check (cache miss)
@@ -460,7 +460,7 @@ class TestAsyncCacheBehavior:
             subject=("user", "cache_user"),
             permission="read",
             object=("file", "/cache_test.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Second check (cache hit)
@@ -468,7 +468,7 @@ class TestAsyncCacheBehavior:
             subject=("user", "cache_user"),
             permission="read",
             object=("file", "/cache_test.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         assert result1 is True
@@ -487,7 +487,7 @@ class TestAsyncCacheBehavior:
             subject=("user", "inv_user"),
             permission="read",
             object=("file", "/inv_doc.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Write tuple
@@ -495,7 +495,7 @@ class TestAsyncCacheBehavior:
             subject=("user", "inv_user"),
             relation="direct_owner",
             object=("file", "/inv_doc.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Now should have access (cache invalidated)
@@ -503,7 +503,7 @@ class TestAsyncCacheBehavior:
             subject=("user", "inv_user"),
             permission="read",
             object=("file", "/inv_doc.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
     @pytest.mark.asyncio
@@ -514,7 +514,7 @@ class TestAsyncCacheBehavior:
             subject=("user", "del_user"),
             relation="direct_owner",
             object=("file", "/del_doc.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Should have access
@@ -522,7 +522,7 @@ class TestAsyncCacheBehavior:
             subject=("user", "del_user"),
             permission="read",
             object=("file", "/del_doc.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Delete tuple
@@ -530,7 +530,7 @@ class TestAsyncCacheBehavior:
             subject=("user", "del_user"),
             relation="direct_owner",
             object=("file", "/del_doc.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Should no longer have access (cache invalidated)
@@ -538,7 +538,7 @@ class TestAsyncCacheBehavior:
             subject=("user", "del_user"),
             permission="read",
             object=("file", "/del_doc.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
 
@@ -554,7 +554,7 @@ class TestAsyncConcurrency:
                 subject=("user", f"conc_user_{i}"),
                 relation="direct_owner",
                 object=("file", f"/conc_file_{i}.txt"),
-                zone_id="default",
+                zone_id="root",
             )
 
         # Write 10 tuples concurrently
@@ -573,7 +573,7 @@ class TestAsyncConcurrency:
                 subject=("user", f"check_user_{i}"),
                 relation="direct_owner",
                 object=("file", f"/check_file_{i}.txt"),
-                zone_id="default",
+                zone_id="root",
             )
 
         async def check_permission(i: int) -> bool:
@@ -581,7 +581,7 @@ class TestAsyncConcurrency:
                 subject=("user", f"check_user_{i}"),
                 permission="read",
                 object=("file", f"/check_file_{i}.txt"),
-                zone_id="default",
+                zone_id="root",
             )
 
         # Check 5 permissions concurrently
@@ -601,14 +601,14 @@ class TestAsyncPermissionHierarchy:
             subject=("user", "reader"),
             relation="reader",
             object=("file", "/readable.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         assert await manager.rebac_check(
             subject=("user", "reader"),
             permission="read",
             object=("file", "/readable.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
     @pytest.mark.asyncio
@@ -618,7 +618,7 @@ class TestAsyncPermissionHierarchy:
             subject=("user", "writer"),
             relation="writer",
             object=("file", "/writable.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Has read
@@ -626,7 +626,7 @@ class TestAsyncPermissionHierarchy:
             subject=("user", "writer"),
             permission="read",
             object=("file", "/writable.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Has write
@@ -634,7 +634,7 @@ class TestAsyncPermissionHierarchy:
             subject=("user", "writer"),
             permission="write",
             object=("file", "/writable.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
     @pytest.mark.asyncio
@@ -644,7 +644,7 @@ class TestAsyncPermissionHierarchy:
             subject=("user", "owner"),
             relation="owner",
             object=("file", "/owned.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Has read
@@ -652,7 +652,7 @@ class TestAsyncPermissionHierarchy:
             subject=("user", "owner"),
             permission="read",
             object=("file", "/owned.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Has write
@@ -660,7 +660,7 @@ class TestAsyncPermissionHierarchy:
             subject=("user", "owner"),
             permission="write",
             object=("file", "/owned.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Has admin
@@ -668,7 +668,7 @@ class TestAsyncPermissionHierarchy:
             subject=("user", "owner"),
             permission="admin",
             object=("file", "/owned.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
     @pytest.mark.asyncio
@@ -678,7 +678,7 @@ class TestAsyncPermissionHierarchy:
             subject=("user", "readonly"),
             relation="reader",
             object=("file", "/readonly.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Has read
@@ -686,7 +686,7 @@ class TestAsyncPermissionHierarchy:
             subject=("user", "readonly"),
             permission="read",
             object=("file", "/readonly.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # No write
@@ -694,7 +694,7 @@ class TestAsyncPermissionHierarchy:
             subject=("user", "readonly"),
             permission="write",
             object=("file", "/readonly.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
 
@@ -712,7 +712,7 @@ class TestAsyncNamespaceConfig:
             subject=("user", "test"),
             permission="read",
             object=("file", "/test.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Now should be loaded
@@ -727,7 +727,7 @@ class TestAsyncNamespaceConfig:
             subject=("user", "test"),
             permission="read",
             object=("file", "/test.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Get namespace
@@ -743,7 +743,7 @@ class TestAsyncNamespaceConfig:
             subject=("user", "test"),
             permission="read",
             object=("file", "/test.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Get nonexistent
@@ -764,14 +764,14 @@ class TestAsyncManagerWithoutCache:
             subject=("user", "nocache"),
             relation="direct_owner",
             object=("file", "/nocache.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         result = await manager_no_cache.rebac_check(
             subject=("user", "nocache"),
             permission="read",
             object=("file", "/nocache.txt"),
-            zone_id="default",
+            zone_id="root",
         )
         assert result is True
 
@@ -798,7 +798,7 @@ class TestWildcardPublicAccess:
             subject=("*", "*"),  # Wildcard subject
             relation="reader",
             object=("file", "/public/doc.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Any user should have access
@@ -806,21 +806,21 @@ class TestWildcardPublicAccess:
             subject=("user", "alice"),
             permission="read",
             object=("file", "/public/doc.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         assert await manager.rebac_check(
             subject=("user", "bob"),
             permission="read",
             object=("file", "/public/doc.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         assert await manager.rebac_check(
             subject=("agent", "some-agent"),
             permission="read",
             object=("file", "/public/doc.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
     @pytest.mark.asyncio
@@ -852,7 +852,7 @@ class TestWildcardPublicAccess:
             subject=("*", "*"),
             relation="reader",
             object=("file", "/public/readonly.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Should have read
@@ -860,7 +860,7 @@ class TestWildcardPublicAccess:
             subject=("user", "random"),
             permission="read",
             object=("file", "/public/readonly.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Should NOT have write
@@ -868,7 +868,7 @@ class TestWildcardPublicAccess:
             subject=("user", "random"),
             permission="write",
             object=("file", "/public/readonly.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
     @pytest.mark.asyncio
@@ -879,7 +879,7 @@ class TestWildcardPublicAccess:
             subject=("user", "specific-user"),
             relation="reader",
             object=("file", "/private/doc.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Specific user has access
@@ -887,7 +887,7 @@ class TestWildcardPublicAccess:
             subject=("user", "specific-user"),
             permission="read",
             object=("file", "/private/doc.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Random user does NOT have access
@@ -895,7 +895,7 @@ class TestWildcardPublicAccess:
             subject=("user", "random-user"),
             permission="read",
             object=("file", "/private/doc.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
     @pytest.mark.asyncio
@@ -906,7 +906,7 @@ class TestWildcardPublicAccess:
             subject=("*", "*"),
             relation="reader",
             object=("file", "/mixed/doc.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Create specific user writer access
@@ -914,7 +914,7 @@ class TestWildcardPublicAccess:
             subject=("user", "editor"),
             relation="writer",
             object=("file", "/mixed/doc.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Random user has read (via wildcard)
@@ -922,7 +922,7 @@ class TestWildcardPublicAccess:
             subject=("user", "random"),
             permission="read",
             object=("file", "/mixed/doc.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Random user does NOT have write
@@ -930,7 +930,7 @@ class TestWildcardPublicAccess:
             subject=("user", "random"),
             permission="write",
             object=("file", "/mixed/doc.txt"),
-            zone_id="default",
+            zone_id="root",
         )
 
         # Editor has both read and write
@@ -938,11 +938,11 @@ class TestWildcardPublicAccess:
             subject=("user", "editor"),
             permission="read",
             object=("file", "/mixed/doc.txt"),
-            zone_id="default",
+            zone_id="root",
         )
         assert await manager.rebac_check(
             subject=("user", "editor"),
             permission="write",
             object=("file", "/mixed/doc.txt"),
-            zone_id="default",
+            zone_id="root",
         )

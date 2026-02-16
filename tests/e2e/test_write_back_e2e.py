@@ -43,7 +43,7 @@ def _make_entry(
     entry_id: str = "entry-1",
     path: str = "/mnt/local/test.txt",
     backend_name: str = "local_conn",
-    zone_id: str = "default",
+    zone_id: str = "root",
     operation_type: str = "write",
     content_hash: str | None = "abc123",
 ) -> SyncBacklogEntry:
@@ -130,7 +130,7 @@ def gateway_with_local(local_backend):
         "readonly": False,
         "backend_name": "local_conn",
         "conflict_strategy": None,
-        "zone_id": "default",
+        "zone_id": "root",
     }
     gw.list_mounts.return_value = [
         {
@@ -191,7 +191,7 @@ class TestWriteBackE2ERoundTrip:
         )
 
         # Process pending entries
-        await service._process_pending("local_conn", "default")
+        await service._process_pending("local_conn", "root")
 
         # Verify the file was written to the backend dir
         written_file = backend_dir / "test.txt"
@@ -213,11 +213,11 @@ class TestWriteBackE2ERoundTrip:
         service._backlog_store.enqueue(
             path="/mnt/local/test.txt",
             backend_name="local_conn",
-            zone_id="default",
+            zone_id="root",
             operation_type="write",
             content_hash="abc123",
         )
-        await service._process_pending("local_conn", "default")
+        await service._process_pending("local_conn", "root")
 
         event_types = [e.type for e in mock_event_bus._published]
         assert FileEventType.SYNC_TO_BACKEND_COMPLETED in event_types
@@ -236,11 +236,11 @@ class TestWriteBackE2ERoundTrip:
         service._backlog_store.enqueue(
             path="/mnt/local/test.txt",
             backend_name="local_conn",
-            zone_id="default",
+            zone_id="root",
             operation_type="delete",
             content_hash=None,
         )
-        await service._process_pending("local_conn", "default")
+        await service._process_pending("local_conn", "root")
 
         # Verify file was removed
         assert not target.exists(), "File should have been deleted"
@@ -260,17 +260,17 @@ class TestWriteBackE2ERoundTrip:
             "readonly": False,
             "backend_name": "local_conn",
             "conflict_strategy": None,
-            "zone_id": "default",
+            "zone_id": "root",
         }
 
         service._backlog_store.enqueue(
             path="/mnt/local/subdir",
             backend_name="local_conn",
-            zone_id="default",
+            zone_id="root",
             operation_type="mkdir",
             content_hash=None,
         )
-        await service._process_pending("local_conn", "default")
+        await service._process_pending("local_conn", "root")
 
         assert (backend_dir / "subdir").is_dir()
 
@@ -288,11 +288,11 @@ class TestWriteBackE2ERoundTrip:
         service._backlog_store.enqueue(
             path="/mnt/local/bad.txt",
             backend_name="local_conn",
-            zone_id="default",
+            zone_id="root",
             operation_type="write",
             content_hash="hash",
         )
-        await service._process_pending("local_conn", "default")
+        await service._process_pending("local_conn", "root")
 
         stats = service.get_stats()
         assert stats["metrics"]["changes_failed"] >= 1
@@ -330,7 +330,7 @@ class TestWriteBackE2EConflict:
         service._backlog_store.enqueue(
             path="/mnt/local/test.txt",
             backend_name="local_conn",
-            zone_id="default",
+            zone_id="root",
             operation_type="write",
             content_hash="nexus_hash",
         )
@@ -339,11 +339,11 @@ class TestWriteBackE2EConflict:
         service._change_log_store.upsert_change_log(
             path="/mnt/local/test.txt",
             backend_name="local_conn",
-            zone_id="default",
+            zone_id="root",
             content_hash="old_hash",
         )
 
-        await service._process_pending("local_conn", "default")
+        await service._process_pending("local_conn", "root")
 
         # With KEEP_NEWER and nexus mtime > backend, nexus wins
         assert target.read_bytes() == b"nexus content"

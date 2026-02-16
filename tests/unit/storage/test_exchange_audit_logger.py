@@ -65,7 +65,7 @@ def _make_record_kwargs(**overrides: Any) -> dict[str, Any]:
         "currency": "credits",
         "status": "settled",
         "application": "gateway",
-        "zone_id": "default",
+        "zone_id": "root",
         "trace_id": None,
         "metadata": None,
         "transfer_id": "tx-001",
@@ -98,7 +98,7 @@ class TestRecordCreation:
         assert row.currency == "credits"
         assert row.status == "settled"
         assert row.application == "gateway"
-        assert row.zone_id == "default"
+        assert row.zone_id == "root"
         assert row.transfer_id == "tx-001"
 
     def test_record_returns_uuid_string(self, audit_logger: ExchangeAuditLogger) -> None:
@@ -164,7 +164,7 @@ class TestHashComputation:
             currency="credits",
             status="settled",
             application="gateway",
-            zone_id="default",
+            zone_id="root",
             trace_id=None,
             transfer_id="tx-001",
             created_at=ts,
@@ -187,7 +187,7 @@ class TestHashComputation:
             "currency": "credits",
             "status": "settled",
             "application": "gateway",
-            "zone_id": "default",
+            "zone_id": "root",
             "trace_id": None,
             "transfer_id": "tx-001",
             "created_at": ts,
@@ -207,7 +207,7 @@ class TestHashComputation:
             "currency": "credits",
             "status": "settled",
             "application": "gateway",
-            "zone_id": "default",
+            "zone_id": "root",
             "trace_id": None,
             "transfer_id": "tx-001",
             "created_at": ts,
@@ -430,7 +430,7 @@ class TestAggregations:
                 )
             )
 
-        agg = audit_logger.get_aggregations(zone_id="default")
+        agg = audit_logger.get_aggregations(zone_id="root")
         assert int(float(agg["total_volume"])) == 30
         assert agg["tx_count"] == 3
 
@@ -447,7 +447,7 @@ class TestAggregations:
             **_make_record_kwargs(buyer_agent_id="bob", amount=Decimal("10"), transfer_id="top-3")
         )
 
-        agg = audit_logger.get_aggregations(zone_id="default")
+        agg = audit_logger.get_aggregations(zone_id="root")
         assert len(agg["top_buyers"]) >= 2
         # Alice should be first (highest volume)
         assert agg["top_buyers"][0]["agent_id"] == "alice"

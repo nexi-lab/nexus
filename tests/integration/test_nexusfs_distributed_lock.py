@@ -887,16 +887,14 @@ class TestMultiThreadingContention:
                 await client.connect()
                 try:
                     lock_mgr = RedisLockManager(client)
-                    lock_id = await lock_mgr.acquire(
-                        "default", "/file_a.txt", timeout=5.0, ttl=30.0
-                    )
+                    lock_id = await lock_mgr.acquire("root", "/file_a.txt", timeout=5.0, ttl=30.0)
                     assert lock_id is not None
                     try:
                         timing["t1_start"] = time.time()
                         await asyncio.sleep(0.5)
                         timing["t1_end"] = time.time()
                     finally:
-                        await lock_mgr.release(lock_id, "default", "/file_a.txt")
+                        await lock_mgr.release(lock_id, "root", "/file_a.txt")
                 finally:
                     await client.disconnect()
 
@@ -914,12 +912,10 @@ class TestMultiThreadingContention:
                 try:
                     lock_mgr = RedisLockManager(client)
                     timing["t2_start"] = time.time()
-                    lock_id = await lock_mgr.acquire(
-                        "default", "/file_b.txt", timeout=5.0, ttl=30.0
-                    )
+                    lock_id = await lock_mgr.acquire("root", "/file_b.txt", timeout=5.0, ttl=30.0)
                     assert lock_id is not None
                     timing["t2_end"] = time.time()
-                    await lock_mgr.release(lock_id, "default", "/file_b.txt")
+                    await lock_mgr.release(lock_id, "root", "/file_b.txt")
                 finally:
                     await client.disconnect()
 
@@ -980,7 +976,7 @@ class TestMultiThreadingContention:
                     lock_mgr = RedisLockManager(client)
                     # Acquire lock with short TTL, then "crash" (don't release)
                     lock_id = await lock_mgr.acquire(
-                        "default", "/crash_test.txt", timeout=5.0, ttl=SHORT_TTL
+                        "root", "/crash_test.txt", timeout=5.0, ttl=SHORT_TTL
                     )
                     assert lock_id is not None
                     # Simulate crash: don't call release(), just exit
@@ -1005,12 +1001,12 @@ class TestMultiThreadingContention:
                     await asyncio.sleep(SHORT_TTL + 0.5)
                     start = time.time()
                     lock_id = await lock_mgr.acquire(
-                        "default", "/crash_test.txt", timeout=5.0, ttl=30.0
+                        "root", "/crash_test.txt", timeout=5.0, ttl=30.0
                     )
                     if lock_id:
                         result["t2_acquired"] = True
                         result["t2_time"] = time.time() - start
-                        await lock_mgr.release(lock_id, "default", "/crash_test.txt")
+                        await lock_mgr.release(lock_id, "root", "/crash_test.txt")
                 finally:
                     await client.disconnect()
 
@@ -1073,7 +1069,7 @@ class TestMultiThreadingContention:
                     lock_mgr = RedisLockManager(client)
                     for i in range(NUM_OPERATIONS):
                         lock_id = await lock_mgr.acquire(
-                            "default", "/data.json", timeout=30.0, ttl=30.0
+                            "root", "/data.json", timeout=30.0, ttl=30.0
                         )
                         assert lock_id is not None
                         try:
@@ -1083,7 +1079,7 @@ class TestMultiThreadingContention:
                             data["items"].append({"writer": writer_id, "op": i})
                             data_file.write_text(json.dumps(data))
                         finally:
-                            await lock_mgr.release(lock_id, "default", "/data.json")
+                            await lock_mgr.release(lock_id, "root", "/data.json")
                         await asyncio.sleep(0.05)
                 finally:
                     await client.disconnect()
@@ -1110,7 +1106,7 @@ class TestMultiThreadingContention:
                     for _ in range(NUM_OPERATIONS):
                         # Readers must also lock with mutex (file write is not atomic)
                         lock_id = await lock_mgr.acquire(
-                            "default", "/data.json", timeout=30.0, ttl=30.0
+                            "root", "/data.json", timeout=30.0, ttl=30.0
                         )
                         assert lock_id is not None
                         try:
@@ -1121,7 +1117,7 @@ class TestMultiThreadingContention:
                             assert isinstance(data["items"], list)
                             read_results.append(data["version"])
                         finally:
-                            await lock_mgr.release(lock_id, "default", "/data.json")
+                            await lock_mgr.release(lock_id, "root", "/data.json")
                         await asyncio.sleep(0.03)
                 finally:
                     await client.disconnect()

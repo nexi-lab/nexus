@@ -106,25 +106,25 @@ def _setup_coordinator(entity_registry, rebac_manager):
                 "subject": ("agent", "coordinator_agent"),
                 "relation": "direct_editor",
                 "object": ("file", "/workspace/project/src/main.py"),
-                "zone_id": "default",
+                "zone_id": "root",
             },
             {
                 "subject": ("agent", "coordinator_agent"),
                 "relation": "direct_editor",
                 "object": ("file", "/workspace/project/src/utils.py"),
-                "zone_id": "default",
+                "zone_id": "root",
             },
             {
                 "subject": ("agent", "coordinator_agent"),
                 "relation": "direct_viewer",
                 "object": ("file", "/workspace/project/docs/readme.md"),
-                "zone_id": "default",
+                "zone_id": "root",
             },
             {
                 "subject": ("agent", "coordinator_agent"),
                 "relation": "direct_editor",
                 "object": ("file", "/workspace/secret/credentials.json"),
-                "zone_id": "default",
+                "zone_id": "root",
             },
         ]
     )
@@ -155,7 +155,7 @@ class TestFullDelegationLifecycle:
             worker_id="worker_copy_1",
             worker_name="Copy Worker",
             delegation_mode=DelegationMode.COPY,
-            zone_id="default",
+            zone_id="root",
             scope_prefix="/workspace/project",
             ttl_seconds=3600,
         )
@@ -171,7 +171,7 @@ class TestFullDelegationLifecycle:
             subject=("agent", "worker_copy_1"),
             permission="read",
             object_type="file",
-            zone_id="default",
+            zone_id="root",
         )
         worker_read_ids = {obj_id for _, obj_id in worker_read}
 
@@ -197,7 +197,7 @@ class TestFullDelegationLifecycle:
             subject=("agent", "worker_copy_1"),
             permission="read",
             object_type="file",
-            zone_id="default",
+            zone_id="root",
         )
         assert len(worker_read_after) == 0
 
@@ -220,7 +220,7 @@ class TestFullDelegationLifecycle:
             worker_id="worker_readonly",
             worker_name="Readonly Worker",
             delegation_mode=DelegationMode.COPY,
-            zone_id="default",
+            zone_id="root",
             scope_prefix="/workspace/project",
             readonly_paths=["/workspace/project/src/main.py"],
         )
@@ -230,7 +230,7 @@ class TestFullDelegationLifecycle:
             subject=("agent", "worker_readonly"),
             permission="read",
             object_type="file",
-            zone_id="default",
+            zone_id="root",
         )
         worker_read_ids = {obj_id for _, obj_id in worker_read}
         assert "/workspace/project/src/main.py" in worker_read_ids
@@ -240,7 +240,7 @@ class TestFullDelegationLifecycle:
             subject=("agent", "worker_readonly"),
             permission="write",
             object_type="file",
-            zone_id="default",
+            zone_id="root",
         )
         worker_write_ids = {obj_id for _, obj_id in worker_write}
         assert "/workspace/project/src/main.py" not in worker_write_ids
@@ -264,7 +264,7 @@ class TestFullDelegationLifecycle:
             worker_id="worker_clean_1",
             worker_name="Clean Worker",
             delegation_mode=DelegationMode.CLEAN,
-            zone_id="default",
+            zone_id="root",
             add_grants=["/workspace/project/src/main.py"],
         )
 
@@ -272,7 +272,7 @@ class TestFullDelegationLifecycle:
             subject=("agent", "worker_clean_1"),
             permission="read",
             object_type="file",
-            zone_id="default",
+            zone_id="root",
         )
         worker_read_ids = {obj_id for _, obj_id in worker_read}
 
@@ -299,7 +299,7 @@ class TestFullDelegationLifecycle:
             worker_id="worker_shared_1",
             worker_name="Shared Worker",
             delegation_mode=DelegationMode.SHARED,
-            zone_id="default",
+            zone_id="root",
         )
 
         # Coordinator's grants
@@ -307,7 +307,7 @@ class TestFullDelegationLifecycle:
             subject=("agent", "coordinator_agent"),
             permission="read",
             object_type="file",
-            zone_id="default",
+            zone_id="root",
         )
         coord_read_ids = {obj_id for _, obj_id in coord_read}
 
@@ -316,7 +316,7 @@ class TestFullDelegationLifecycle:
             subject=("agent", "worker_shared_1"),
             permission="read",
             object_type="file",
-            zone_id="default",
+            zone_id="root",
         )
         worker_read_ids = {obj_id for _, obj_id in worker_read}
 
@@ -340,7 +340,7 @@ class TestFullDelegationLifecycle:
             worker_id="worker_chain_a",
             worker_name="Chain A",
             delegation_mode=DelegationMode.COPY,
-            zone_id="default",
+            zone_id="root",
         )
 
         # Worker tries to delegate → must fail
@@ -351,7 +351,7 @@ class TestFullDelegationLifecycle:
                 worker_id="worker_chain_b",
                 worker_name="Chain B",
                 delegation_mode=DelegationMode.COPY,
-                zone_id="default",
+                zone_id="root",
             )
 
     def test_escalation_blocked(
@@ -371,7 +371,7 @@ class TestFullDelegationLifecycle:
                 worker_id="worker_esc",
                 worker_name="Escalation Worker",
                 delegation_mode=DelegationMode.CLEAN,
-                zone_id="default",
+                zone_id="root",
                 add_grants=["/admin/supersecret.txt"],  # coordinator doesn't have this
             )
 
@@ -391,7 +391,7 @@ class TestFullDelegationLifecycle:
             worker_id="worker_multi_1",
             worker_name="Worker 1",
             delegation_mode=DelegationMode.CLEAN,
-            zone_id="default",
+            zone_id="root",
             add_grants=["/workspace/project/src/main.py"],
         )
 
@@ -401,7 +401,7 @@ class TestFullDelegationLifecycle:
             worker_id="worker_multi_2",
             worker_name="Worker 2",
             delegation_mode=DelegationMode.CLEAN,
-            zone_id="default",
+            zone_id="root",
             add_grants=["/workspace/project/docs/readme.md"],
         )
 
@@ -433,7 +433,7 @@ class TestFullDelegationLifecycle:
             worker_id="worker_remove",
             worker_name="Remove Worker",
             delegation_mode=DelegationMode.COPY,
-            zone_id="default",
+            zone_id="root",
             remove_grants=["/workspace/secret/credentials.json"],
         )
 
@@ -441,7 +441,7 @@ class TestFullDelegationLifecycle:
             subject=("agent", "worker_remove"),
             permission="read",
             object_type="file",
-            zone_id="default",
+            zone_id="root",
         )
         worker_read_ids = {obj_id for _, obj_id in worker_read}
 

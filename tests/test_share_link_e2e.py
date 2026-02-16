@@ -224,7 +224,7 @@ class E2ETestRunner:
         user_info = {
             "subject_id": user.user_id,
             "subject_type": "user",
-            "zone_id": "default",
+            "zone_id": "root",
             "email": user.email,
             "name": user.display_name or user.username or user.email,
         }

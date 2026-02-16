@@ -72,7 +72,7 @@ def _make_request(
     from_agent: str = "agent-a",
     to: str = "agent-b",
     amount: Decimal = Decimal("10.0"),
-    zone_id: str = "default",
+    zone_id: str = "root",
 ) -> ProtocolTransferRequest:
     return ProtocolTransferRequest(
         from_agent=from_agent,
@@ -202,5 +202,5 @@ class TestPostAnalysis:
         mock_graph_service.check_constraint.assert_awaited_once_with(
             from_agent="agent-a",
             to_agent="agent-b",
-            zone_id="default",
+            zone_id="root",
         )

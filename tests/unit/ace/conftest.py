@@ -22,7 +22,7 @@ def _patch_operation_context():
     mock_ctx = MagicMock()
     mock_ctx.user_id = "test-agent"
     mock_ctx.user = "test-agent"
-    mock_ctx.zone_id = "default"
+    mock_ctx.zone_id = "root"
     mock_ctx.agent_id = None
 
     with (
@@ -45,7 +45,7 @@ def mock_auth_result():
         "authenticated": True,
         "subject_type": "agent",
         "subject_id": "test-agent",
-        "zone_id": "default",
+        "zone_id": "root",
         "is_admin": False,
         "x_agent_id": None,
         "metadata": {},

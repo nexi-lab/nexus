@@ -66,7 +66,7 @@ def _make_request(
     from_agent: str = "agent-a",
     to: str = "agent-b",
     amount: Decimal = Decimal("10"),
-    zone_id: str = "default",
+    zone_id: str = "root",
 ) -> ProtocolTransferRequest:
     return ProtocolTransferRequest(
         from_agent=from_agent,
@@ -116,10 +116,10 @@ class TestTransferAllowed:
         mock_inner_protocol.transfer.assert_called_once_with(request)
         mock_policy_service.evaluate.assert_called_once_with(
             agent_id="agent-a",
-            zone_id="default",
+            zone_id="root",
             amount=Decimal("10"),
             to="agent-b",
-            metadata={"zone_id": "default"},
+            metadata={"zone_id": "root"},
         )
 
     @pytest.mark.asyncio
@@ -135,7 +135,7 @@ class TestTransferAllowed:
 
         mock_policy_service.record_spending.assert_called_once_with(
             agent_id="agent-a",
-            zone_id="default",
+            zone_id="root",
             amount=Decimal("10"),
         )
 
@@ -167,7 +167,7 @@ class TestTransferAllowed:
 
         mock_policy_service.evaluate.assert_called_once_with(
             agent_id="agent-a",
-            zone_id="default",
+            zone_id="root",
             amount=Decimal("10"),
             to="agent-b",
             metadata={},

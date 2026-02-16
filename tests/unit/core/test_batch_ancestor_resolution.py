@@ -47,7 +47,7 @@ def _make_enforcer(
     return enforcer
 
 
-def _ctx(user: str = "alice", zone_id: str = "default") -> OperationContext:
+def _ctx(user: str = "alice", zone_id: str = "root") -> OperationContext:
     return OperationContext(user=user, groups=[], zone_id=zone_id)
 
 
@@ -144,7 +144,7 @@ class TestCheckRebacSequential:
             permission_name="read",
             object_type="file",
             object_id="/workspace/file.txt",
-            zone_id="default",
+            zone_id="root",
         )
         assert result is True
         # The first call should be the direct check
@@ -169,7 +169,7 @@ class TestCheckRebacSequential:
             permission_name="traverse",
             object_type="file",
             object_id="/workspace",
-            zone_id="default",
+            zone_id="root",
         )
         assert result is True
 
@@ -188,7 +188,7 @@ class TestCheckRebacSequential:
             permission_name="traverse",
             object_type="file",
             object_id="/workspace",
-            zone_id="default",
+            zone_id="root",
         )
         assert result is True
 
@@ -208,7 +208,7 @@ class TestCheckRebacSequential:
             permission_name="read",
             object_type="file",
             object_id="/workspace/file.txt",
-            zone_id="default",
+            zone_id="root",
         )
         assert result is True
 
@@ -231,11 +231,11 @@ class TestCheckRebacSequential:
             permission_name="read",
             object_type="file",
             object_id="/workspace/file.txt",
-            zone_id="default",
+            zone_id="root",
         )
         assert result is True
         boundary_cache.get_boundary.assert_called_once_with(
-            "default", "user", "alice", "read", "/workspace/file.txt"
+            "root", "user", "alice", "read", "/workspace/file.txt"
         )
         # Sequential first does a direct check (miss), then the boundary check (hit).
         # No parent walk occurs beyond that, so exactly 2 rebac_check calls.
@@ -267,7 +267,7 @@ class TestCheckRebacBatched:
             permission_name="read",
             object_type="file",
             object_id="/a/b/c/d.txt",
-            zone_id="default",
+            zone_id="root",
         )
         assert result is True
         mgr.rebac_check_bulk.assert_called_once()
@@ -294,7 +294,7 @@ class TestCheckRebacBatched:
             permission_name="read",
             object_type="file",
             object_id="/a/b/c/d.txt",
-            zone_id="default",
+            zone_id="root",
         )
         assert result is True
 
@@ -317,7 +317,7 @@ class TestCheckRebacBatched:
             permission_name="traverse",
             object_type="file",
             object_id="/a/b/c/d.txt",
-            zone_id="default",
+            zone_id="root",
         )
         assert result is True
 
@@ -343,12 +343,12 @@ class TestCheckRebacBatched:
             permission_name="read",
             object_type="file",
             object_id="/a/b/c/d.txt",
-            zone_id="default",
+            zone_id="root",
         )
         assert result is True
         # Boundary cache should have been written
         boundary_cache.set_boundary.assert_called_once_with(
-            "default", "user", "alice", "read", "/a/b/c/d.txt", "/a/b"
+            "root", "user", "alice", "read", "/a/b/c/d.txt", "/a/b"
         )
 
     def test_all_checks_denied_returns_false(self):
@@ -367,7 +367,7 @@ class TestCheckRebacBatched:
             permission_name="read",
             object_type="file",
             object_id="/a/b/c/d.txt",
-            zone_id="default",
+            zone_id="root",
         )
         assert result is False
 
@@ -388,7 +388,7 @@ class TestConsistency:
         subject = ("user", "alice")
         object_type = "file"
         object_id = "/a/b/c/file.txt"
-        zone_id = "default"
+        zone_id = "root"
         permission_name = "read"
         granting_path = "/a/b"
 

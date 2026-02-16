@@ -260,7 +260,7 @@ class TestAuthCallback:
             "a2a.tasks.send",
             {"message": {"role": "user", "parts": [{"type": "text", "text": "hi"}]}},
         )
-        # Should succeed despite auth_fn failure (defaults to zone="default")
+        # Should succeed despite auth_fn failure (defaults to zone="root")
         response = client.post("/a2a", json=body)
         assert response.status_code == 200
         data = response.json()

@@ -36,7 +36,7 @@ class TestUploadSession:
         assert session.upload_length == 1024
         assert session.upload_offset == 0
         assert session.status == UploadStatus.CREATED
-        assert session.zone_id == "default"
+        assert session.zone_id == "root"
         assert session.user_id == "anonymous"
         assert session.metadata == {}
         assert session.checksum_algorithm is None

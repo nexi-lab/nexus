@@ -38,7 +38,7 @@ class TestGetZoneId:
         context.zone_id = None
 
         result = get_zone_id(context)
-        assert result == "default"
+        assert result == "root"
 
     def test_get_zone_id_without_zone_id_attribute(self):
         """Test that missing zone_id attribute defaults to 'default'."""
@@ -49,12 +49,12 @@ class TestGetZoneId:
 
         context = SimpleContext()
         result = get_zone_id(context)
-        assert result == "default"
+        assert result == "root"
 
     def test_get_zone_id_with_none_context(self):
         """Test that None context defaults to 'default'."""
         result = get_zone_id(None)
-        assert result == "default"
+        assert result == "root"
 
     def test_get_zone_id_with_empty_string(self):
         """Test that empty string zone_id defaults to 'default'."""
@@ -62,7 +62,7 @@ class TestGetZoneId:
         context.zone_id = ""
 
         result = get_zone_id(context)
-        assert result == "default"
+        assert result == "root"
 
 
 class TestGetUserIdentity:

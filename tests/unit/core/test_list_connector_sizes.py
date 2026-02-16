@@ -141,7 +141,7 @@ class TestListConnectorSizes:
                 backend_name="mock_connector",
                 physical_path="/file1.txt",
                 size=1234,
-                zone_id="default",
+                zone_id="root",
             )
         )
         nx.metadata.put(
@@ -150,7 +150,7 @@ class TestListConnectorSizes:
                 backend_name="mock_connector",
                 physical_path="/file2.yaml",
                 size=5678,
-                zone_id="default",
+                zone_id="root",
             )
         )
         nx.metadata.put(
@@ -159,7 +159,7 @@ class TestListConnectorSizes:
                 backend_name="mock_connector",
                 physical_path="/file3.md",
                 size=9012,
-                zone_id="default",
+                zone_id="root",
             )
         )
 
@@ -234,7 +234,7 @@ class TestListConnectorSizes:
                 backend_name="mock_connector",
                 physical_path="/file1.txt",
                 size=large_size,
-                zone_id="default",
+                zone_id="root",
             )
         )
 
@@ -265,7 +265,7 @@ class TestListConnectorSizes:
                 backend_name="mock_connector",
                 physical_path="/file1.txt",
                 size=file_size,
-                zone_id="default",
+                zone_id="root",
             )
         )
 
@@ -309,7 +309,7 @@ class TestListConnectorSizesRegression:
                 backend_name="mock_connector",
                 physical_path="/file1.txt",
                 size=100,
-                zone_id="default",
+                zone_id="root",
             )
         )
 

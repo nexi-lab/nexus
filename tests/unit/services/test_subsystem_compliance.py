@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import pytest
 
+from nexus.raft.zone_manager import ROOT_ZONE_ID
 from nexus.services.subsystem import ContextIdentity, extract_context_identity
 
 
@@ -34,7 +35,7 @@ class TestExtractContextIdentity:
 
     def test_none_context_returns_defaults(self) -> None:
         identity = extract_context_identity(None)
-        assert identity.zone_id == "default"
+        assert identity.zone_id == ROOT_ZONE_ID
         assert identity.user_id == "anonymous"
         assert identity.is_admin is False
 
@@ -52,12 +53,12 @@ class TestExtractContextIdentity:
         assert identity.user_id == "alice"
         assert identity.is_admin is True
 
-    def test_none_zone_id_defaults_to_default(self) -> None:
+    def test_none_zone_id_defaults_to_root(self) -> None:
         from nexus.core.permissions import OperationContext
 
         ctx = OperationContext(user="bob", groups=[], zone_id=None)
         identity = extract_context_identity(ctx)
-        assert identity.zone_id == "default"
+        assert identity.zone_id == ROOT_ZONE_ID
 
     def test_subject_id_used_when_available(self) -> None:
         """subject_id is accessible on OperationContext."""

@@ -48,7 +48,9 @@ def test_protocol_is_subset_of_abc() -> None:
             protocol_methods.add(name)
 
     missing_from_abc = protocol_methods - abc_methods
-    assert not missing_from_abc, f"Narrow Protocol has methods not on ABC: {sorted(missing_from_abc)}"
+    assert not missing_from_abc, (
+        f"Narrow Protocol has methods not on ABC: {sorted(missing_from_abc)}"
+    )
 
 
 def test_protocol_covers_required_methods() -> None:

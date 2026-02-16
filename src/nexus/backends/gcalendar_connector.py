@@ -58,7 +58,7 @@ from nexus.connectors.calendar.schemas import (
     UpdateEventSchema,
 )
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
-from nexus.core.response import HandlerResponse
+from nexus.core.response import HandlerResponse, timed_response
 
 # Suppress annoying googleapiclient discovery cache warnings
 logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)
@@ -432,6 +432,7 @@ send_notifications: true
     # Backend Interface - Read Operations
     # =========================================================================
 
+    @timed_response
     def read_content(
         self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[bytes]:
@@ -510,6 +511,7 @@ send_notifications: true
     # Backend Interface - Write Operations (CUD)
     # =========================================================================
 
+    @timed_response
     def write_content(
         self, content: bytes, context: OperationContext | None = None
     ) -> HandlerResponse[str]:
@@ -689,6 +691,7 @@ send_notifications: true
                 self.clear_checkpoint(checkpoint.checkpoint_id)
             raise BackendError(f"Failed to update event: {e}", backend="gcalendar") from e
 
+    @timed_response
     def delete_content(
         self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[None]:
@@ -827,6 +830,7 @@ send_notifications: true
     # Backend Interface - Directory Operations
     # =========================================================================
 
+    @timed_response
     def content_exists(
         self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[bool]:
@@ -845,6 +849,7 @@ send_notifications: true
                 data=False, backend_name="gcalendar", path=context.backend_path
             )
 
+    @timed_response
     def get_content_size(
         self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[int]:
@@ -862,6 +867,7 @@ send_notifications: true
         response = self.read_content(content_hash, context)
         return HandlerResponse.ok(data=len(response.unwrap()), backend_name="gcalendar")
 
+    @timed_response
     def get_ref_count(
         self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[int]:
@@ -890,6 +896,7 @@ send_notifications: true
         except Exception:
             return None
 
+    @timed_response
     def is_directory(
         self, path: str, context: OperationContext | None = None
     ) -> HandlerResponse[bool]:
@@ -984,6 +991,7 @@ send_notifications: true
                 backend="gcalendar",
             ) from e
 
+    @timed_response
     def mkdir(
         self,
         path: str,
@@ -998,6 +1006,7 @@ send_notifications: true
             backend="gcalendar",
         )
 
+    @timed_response
     def rmdir(
         self,
         path: str,

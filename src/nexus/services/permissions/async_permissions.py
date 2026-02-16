@@ -258,12 +258,13 @@ class AsyncPermissionEnforcer:
 
     def _get_object_type(self, path: str) -> str:
         """Determine object type from path and backend."""
-        # Check if path matches a backend mount
+        from nexus.services.permissions.object_type_mapper import ObjectTypeMapper
+
+        mapper = ObjectTypeMapper()
         for mount_point, backend in self.backends.items():
             if path.startswith(mount_point):
-                return str(backend.get_object_type(path[len(mount_point) :]))
+                return mapper.get_object_type(backend, path[len(mount_point) :])
 
-        # Default to "file"
         return "file"
 
     def _permission_to_name(self, permission: Permission) -> str:

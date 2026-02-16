@@ -482,7 +482,7 @@ class TestGetOperationContext:
         ctx = get_operation_context({})
         assert ctx.user == "anonymous"
         assert ctx.subject_type == "user"
-        assert ctx.zone_id == "default"
+        assert ctx.zone_id == "root"
         assert ctx.is_admin is False
 
     def test_agent_generation_from_auth_result(self):

@@ -6,6 +6,7 @@ from typing import Any
 
 import requests
 from authlib.jose import JoseError, JsonWebKey, jwt
+from cachetools import TTLCache
 
 from nexus.server.auth.base import AuthProvider, AuthResult
 
@@ -66,6 +67,8 @@ class OIDCAuth(AuthProvider):
         admin_emails: list[str] | None = None,
         allow_default_zone: bool = False,  # P0-2: Strict zone binding
         require_zone: bool = False,  # P0-2: Deny if zone cannot be derived
+        *,
+        jwks_cache_ttl: int = JWKS_CACHE_TTL,
     ):
         """Initialize OIDC authentication.
 
@@ -79,6 +82,7 @@ class OIDCAuth(AuthProvider):
             admin_emails: List of admin email addresses
             allow_default_zone: Allow fallback to default zone if claim missing
             require_zone: Deny authentication if zone cannot be derived
+            jwks_cache_ttl: TTL in seconds for JWKS cache (default: 3600)
         """
         self.issuer = issuer
         self.audience = audience
@@ -90,9 +94,8 @@ class OIDCAuth(AuthProvider):
         self.allow_default_zone = allow_default_zone
         self.require_zone = require_zone
 
-        # JWKS cache (P0-3)
-        self._jwks_cache: dict[str, Any] | None = None
-        self._jwks_cache_time: float = 0
+        # JWKS cache — bounded TTLCache replaces manual dict + timestamp (P0-3)
+        self._jwks_cache: TTLCache[str, dict[str, Any]] = TTLCache(maxsize=4, ttl=jwks_cache_ttl)
 
         logger.info(f"Initialized OIDCAuth for issuer: {issuer} (JWKS: {self.jwks_uri})")
 
@@ -131,25 +134,23 @@ class OIDCAuth(AuthProvider):
         Raises:
             ValueError: If JWKS fetch fails
         """
-        # Check cache (P0-3: JWKS caching with TTL)
-        now = time.time()
-        if self._jwks_cache and (now - self._jwks_cache_time) < JWKS_CACHE_TTL:
+        # Check TTLCache (P0-3: JWKS caching with TTL)
+        cached = self._jwks_cache.get(self.jwks_uri)
+        if cached is not None:
             logger.debug("Using cached JWKS")
-            return self._jwks_cache
+            return cached
 
         # Fetch fresh JWKS
         try:
             logger.info(f"Fetching JWKS from {self.jwks_uri}")
             response = requests.get(self.jwks_uri, timeout=10)
             response.raise_for_status()
-            jwks = response.json()
+            jwks: dict[str, Any] = response.json()
 
-            # Cache the result
-            self._jwks_cache = jwks
-            self._jwks_cache_time = now
+            # Cache the result (TTLCache handles expiration)
+            self._jwks_cache[self.jwks_uri] = jwks
 
-            result: dict[str, Any] = dict(jwks)
-            return result
+            return jwks
         except Exception as e:
             logger.error("Failed to fetch JWKS from %s: %s", self.jwks_uri, e, exc_info=True)
             # P0-3: Fail closed on JWKS fetch error

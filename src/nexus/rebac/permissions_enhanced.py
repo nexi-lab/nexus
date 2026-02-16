@@ -17,16 +17,13 @@ import uuid
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 # Import Permission and OperationContext from the original module (don't duplicate)
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
-from nexus.core.permissions import OperationContext, PermissionEnforcer
-
-if TYPE_CHECKING:
-    pass
-
+from nexus.core.permissions import OperationContext
+from nexus.services.permissions.enforcer import PermissionEnforcer
 
 # ============================================================================
 # P0-4: Admin Capabilities and Audit System

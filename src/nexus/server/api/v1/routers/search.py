@@ -19,7 +19,6 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from nexus.server.api.v1.dependencies import (
-    get_database_url,
     get_nexus_fs,
     get_optional_search_daemon,
     get_search_daemon,
@@ -45,7 +44,6 @@ async def _graph_enhanced_search(
     graph_mode: str,
     *,
     nexus_fs: Any,
-    database_url: str | None,
     search_daemon: Any,
 ) -> list:
     """Execute graph-enhanced search using GraphEnhancedRetriever (Issue #1040).
@@ -61,7 +59,6 @@ async def _graph_enhanced_search(
         alpha: Semantic vs keyword weight
         graph_mode: Graph enhancement mode (low, high, dual)
         nexus_fs: NexusFS instance (injected)
-        database_url: Database URL string (injected)
         search_daemon: SearchDaemon instance (injected)
 
     Returns:
@@ -76,10 +73,8 @@ async def _graph_enhanced_search(
     from nexus.search.graph_store import GraphStore
     from nexus.search.semantic import SemanticSearchResult
 
-    # Get database URL
-    db_url = database_url
-    if not db_url:
-        db_url = nexus_fs._record_store.database_url if nexus_fs._record_store else None
+    # Get database URL from NexusFS record store
+    db_url = nexus_fs._record_store.database_url if nexus_fs._record_store else None
 
     # Convert to async URL
     if not db_url:
@@ -228,7 +223,6 @@ async def search_query(
     _auth_result: dict[str, Any] = Depends(require_auth),
     search_daemon: Any = Depends(get_search_daemon),
     nexus_fs: Any = Depends(get_nexus_fs),
-    database_url: str = Depends(get_database_url),
 ) -> dict[str, Any]:
     """Execute a fast search query using the search daemon.
 
@@ -313,7 +307,6 @@ async def search_query(
                 alpha=alpha,
                 graph_mode=effective_graph_mode,
                 nexus_fs=nexus_fs,
-                database_url=database_url,
                 search_daemon=search_daemon,
             )
             latency_ms = (time.perf_counter() - start_time) * 1000

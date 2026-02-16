@@ -86,19 +86,6 @@ def get_key_service(request: Request) -> Any:
     return svc
 
 
-def get_database_url(request: Request) -> str:
-    """Get database URL from app.state, raising 503 if not configured.
-
-    .. deprecated::
-        Prefer ``get_async_session_factory()`` — services should not construct
-        their own engines from raw URLs (RecordStoreABC bypass).
-    """
-    url: str | None = getattr(request.app.state, "database_url", None)
-    if not url:
-        raise HTTPException(status_code=503, detail="Database URL not configured")
-    return url
-
-
 def get_async_session_factory(request: Request) -> Any:
     """Get async session factory from RecordStoreABC, raising 503 if not available.
 

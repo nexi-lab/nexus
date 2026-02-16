@@ -2,14 +2,19 @@
 
 Tests the SDK interface, ensuring it properly re-exports core functionality
 and provides a clean, stable API for third-party tools.
+
+Per KERNEL-ARCHITECTURE: "Drivers are config-time DI" — SDK consumers should
+use connect() to get a Filesystem, not import concrete driver classes.
 """
 
 import pytest
 
 from nexus.sdk import (
+    WILDCARD_SUBJECT,
     Backend,
     BackendError,
     Config,
+    Entity,
     FileNotFoundError,
     Filesystem,
     InvalidPathError,
@@ -49,12 +54,36 @@ class TestSDKImports:
         assert callable(load_config)
 
     def test_filesystem_imports(self):
-        """Test that filesystem ABC is available."""
+        """Test that Filesystem ABC is available."""
         assert Filesystem is not None
 
     def test_backend_imports(self):
-        """Test that backend ABC is available."""
+        """Test that Backend ABC is available."""
         assert Backend is not None
+
+    def test_concrete_drivers_not_exported(self):
+        """Test that concrete driver classes are NOT exported from SDK.
+
+        Per KERNEL-ARCHITECTURE: "Drivers are config-time DI" — SDK consumers
+        should use connect() to get a Filesystem, not import concrete classes.
+        """
+        import nexus.sdk
+
+        assert not hasattr(nexus.sdk, "LocalBackend")
+        assert not hasattr(nexus.sdk, "GCSBackend")
+        assert not hasattr(nexus.sdk, "NexusFS")
+        assert not hasattr(nexus.sdk, "RemoteNexusFS")
+
+    def test_service_internals_not_exported(self):
+        """Test that service internals are NOT exported from SDK.
+
+        PermissionEnforcer and ReBACManager are service internals, not
+        part of the public SDK API.
+        """
+        import nexus.sdk
+
+        assert not hasattr(nexus.sdk, "PermissionEnforcer")
+        assert not hasattr(nexus.sdk, "ReBACManager")
 
     def test_exception_imports(self):
         """Test that exception classes are available."""
@@ -67,12 +96,14 @@ class TestSDKImports:
         assert ValidationError is not None
 
     def test_permission_imports(self):
-        """Test that permission classes are available."""
+        """Test that permission data types are available."""
         assert OperationContext is not None
 
     def test_rebac_imports(self):
-        """Test that ReBAC classes are available."""
+        """Test that ReBAC data types are available."""
         assert ReBACTuple is not None
+        assert Entity is not None
+        assert WILDCARD_SUBJECT is not None
 
     def test_router_imports(self):
         """Test that router classes are available."""
@@ -171,7 +202,7 @@ class TestSDKOperations:
 
 
 class TestSDKBackwardCompatibility:
-    """Test backward compatibility with existing code."""
+    """Test SDK interface consistency."""
 
     def test_sdk_compatible_with_core(self, tmp_path):
         """Test that SDK returns same types as core modules."""

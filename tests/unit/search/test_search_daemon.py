@@ -332,6 +332,35 @@ class TestSearchDaemonWithMocks:
         assert results[0].path == "/test/file.py"
 
 
+class TestSearchDaemonSessionFactory:
+    """Tests for async_session created once in _init_database_pool (Issue #1597)."""
+
+    def test_async_session_none_before_startup(self) -> None:
+        """Test that _async_session is None before startup."""
+        daemon = SearchDaemon(DaemonConfig(database_url=None, refresh_enabled=False))
+        assert daemon._async_session is None
+
+    @pytest.mark.asyncio
+    async def test_semantic_search_returns_empty_without_session(self) -> None:
+        """Test that _semantic_search returns [] when _async_session is None."""
+        daemon = SearchDaemon(DaemonConfig(database_url=None, refresh_enabled=False))
+        daemon._async_engine = MagicMock()  # Engine exists but no session factory
+        daemon._async_session = None
+
+        results = await daemon._semantic_search("query", limit=10, path_filter=None)
+        assert results == []
+
+    @pytest.mark.asyncio
+    async def test_search_fts_returns_empty_without_session(self) -> None:
+        """Test that _search_fts returns [] when _async_session is None."""
+        daemon = SearchDaemon(DaemonConfig(database_url=None, refresh_enabled=False))
+        daemon._async_engine = MagicMock()  # Engine exists but no session factory
+        daemon._async_session = None
+
+        results = await daemon._search_fts("query", limit=10, path_filter=None)
+        assert results == []
+
+
 class TestGlobalDaemonAccessors:
     """Tests for global daemon accessor functions."""
 

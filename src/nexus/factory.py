@@ -605,6 +605,52 @@ def create_nexus_services(
     except ImportError as _e:
         _factory_logger.debug("ToolNamespaceMiddleware unavailable: %s", _e)
 
+    # --- Agent Registry (Issue #1502) ---
+    agent_registry: Any = None
+    async_agent_registry: Any = None
+    if session_factory is not None:
+        try:
+            from nexus.services.agents.agent_registry import AgentRegistry
+            from nexus.services.agents.async_agent_registry import AsyncAgentRegistry
+
+            agent_registry = AgentRegistry(
+                session_factory=session_factory,
+                entity_registry=entity_registry,
+                flush_interval=60,
+            )
+            async_agent_registry = AsyncAgentRegistry(agent_registry)
+            _factory_logger.debug("[FACTORY] AgentRegistry + AsyncAgentRegistry created")
+        except ImportError as _e:
+            _factory_logger.debug("AgentRegistry unavailable: %s", _e)
+
+    # --- Namespace Manager (Issue #1502) ---
+    namespace_manager: Any = None
+    async_namespace_manager: Any = None
+    try:
+        from nexus.services.permissions.async_namespace_manager import AsyncNamespaceManager
+        from nexus.services.permissions.namespace_factory import (
+            create_namespace_manager as _create_ns_manager,
+        )
+
+        namespace_manager = _create_ns_manager(
+            rebac_manager=rebac_manager,
+            record_store=record_store,
+        )
+        async_namespace_manager = AsyncNamespaceManager(namespace_manager)
+        _factory_logger.debug("[FACTORY] NamespaceManager + AsyncNamespaceManager created")
+    except ImportError as _e:
+        _factory_logger.debug("NamespaceManager unavailable: %s", _e)
+
+    # --- Async VFS Router (Issue #1502) ---
+    async_vfs_router: Any = None
+    try:
+        from nexus.services.routing.async_router import AsyncVFSRouter
+
+        async_vfs_router = AsyncVFSRouter(router)
+        _factory_logger.debug("[FACTORY] AsyncVFSRouter created")
+    except ImportError as _e:
+        _factory_logger.debug("AsyncVFSRouter unavailable: %s", _e)
+
     # --- Infrastructure: event bus + lock manager (moved from NexusFS.__init__) ---
     event_bus: Any = None
     lock_manager: Any = None
@@ -650,6 +696,11 @@ def create_nexus_services(
             "resiliency_manager": resiliency_manager,
             "delivery_worker": delivery_worker,
         },
+        agent_registry=agent_registry,
+        namespace_manager=namespace_manager,
+        async_agent_registry=async_agent_registry,
+        async_namespace_manager=async_namespace_manager,
+        async_vfs_router=async_vfs_router,
     )
 
 
@@ -691,14 +742,13 @@ def _create_distributed_infra(
 
         # Initialize event bus
         if dist.event_bus_backend == "nats":
-            from nexus.core.event_bus import create_event_bus, set_global_event_bus
+            from nexus.core.event_bus import create_event_bus
 
             event_bus = create_event_bus(
                 backend="nats",
                 nats_url=dist.nats_url,
                 session_factory=session_factory,
             )
-            set_global_event_bus(event_bus)
             logger.info(
                 "Distributed event bus initialized (NATS JetStream: %s, SSOT: PostgreSQL)",
                 dist.nats_url,
@@ -710,14 +760,13 @@ def _create_distributed_infra(
             event_url_resolved = coordination_url_resolved or os.getenv("NEXUS_DRAGONFLY_URL")
             if event_url_resolved:
                 from nexus.cache.dragonfly import DragonflyClient
-                from nexus.core.event_bus import RedisEventBus, set_global_event_bus
+                from nexus.core.event_bus import RedisEventBus
 
                 event_client = DragonflyClient(url=event_url_resolved)
                 event_bus = RedisEventBus(
                     event_client,
                     session_factory=session_factory,
                 )
-                set_global_event_bus(event_bus)
                 logger.info(
                     "Distributed event bus initialized (dragonfly: %s, SSOT: PostgreSQL)",
                     event_url_resolved,

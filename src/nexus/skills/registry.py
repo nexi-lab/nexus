@@ -91,7 +91,7 @@ class SkillRegistry:
         paths: dict[str, str] = {**cls.TIER_PATHS}
 
         if context:
-            zone_id = context.zone_id or "default"
+            zone_id = context.zone_id or "root"
 
             # Zone-level skills: /zone/{tid}/skill/
             paths["zone"] = f"/zone/{zone_id}/skill/"

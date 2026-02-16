@@ -1342,7 +1342,10 @@ class TestTruncateContextForwarding:
         self, mock_nexus_fs: MagicMock, mock_context: MagicMock
     ) -> NexusFUSEOperations:
         return NexusFUSEOperations(
-            mock_nexus_fs, MountMode.SMART, cache_config={}, context=mock_context
+            mock_nexus_fs,
+            MountMode.SMART,
+            cache_config={"readahead_enabled": False},
+            context=mock_context,
         )
 
     def test_truncate_without_fh_passes_context(

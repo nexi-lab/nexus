@@ -93,8 +93,15 @@ def build_router(
             return None
         try:
             return await auth_fn(request)
-        except Exception:
-            logger.warning("auth_fn raised; treating as unauthenticated", exc_info=True)
+        except (OSError, ConnectionError, TimeoutError, RuntimeError, ValueError, KeyError) as exc:
+            # Expected auth failures: network issues, service unavailability,
+            # invalid tokens, missing claims.  Treat as unauthenticated.
+            # Programming errors (TypeError, AttributeError, etc.) propagate.
+            logger.warning(
+                "auth_fn raised %s; treating as unauthenticated",
+                type(exc).__name__,
+                exc_info=True,
+            )
             return None
 
     # ------------------------------------------------------------------
@@ -152,10 +159,11 @@ def build_router(
                 headers={"WWW-Authenticate": 'Bearer realm="A2A"'},
             )
 
-        # Parse JSON body
+        # Parse JSON body — Starlette raises ValueError (json.JSONDecodeError)
+        # or UnicodeDecodeError on malformed input.
         try:
             body = await request.json()
-        except Exception:
+        except (ValueError, UnicodeDecodeError):
             return _error_response(None, -32700, "Parse error")
 
         # Validate JSON-RPC request
@@ -184,7 +192,13 @@ def build_router(
                 )
             except A2AError as e:
                 return _error_response(request_id, e.code, e.message, e.data)
+            except ValidationError as e:
+                logger.warning("Bad request in A2A streaming dispatch: %s", e)
+                return _error_response(request_id, -32602, "Invalid params")
             except Exception:
+                # Last-resort boundary handler: log and return JSON-RPC internal
+                # error.  Keeps the server running; prevents unhandled exceptions
+                # from producing raw 500 responses.
                 logger.exception("Unexpected error in A2A streaming dispatch")
                 return _error_response(request_id, -32603, "Internal error")
 
@@ -204,7 +218,16 @@ def build_router(
                 request_id,
                 A2AErrorData(code=e.code, message=e.message, data=e.data),
             )
+        except ValidationError as e:
+            logger.warning("Bad request in A2A dispatch: %s", e)
+            resp = A2AResponse.from_error(
+                request_id,
+                A2AErrorData(code=-32602, message="Invalid params"),
+            )
         except Exception:
+            # Last-resort boundary handler: log and return JSON-RPC internal
+            # error.  Keeps the server running; prevents unhandled exceptions
+            # from producing raw 500 responses.
             logger.exception("Unexpected error in A2A dispatch")
             resp = A2AResponse.from_error(
                 request_id,

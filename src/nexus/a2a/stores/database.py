@@ -12,6 +12,8 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, TypeVar
 
+from sqlalchemy.exc import SQLAlchemyError
+
 from nexus.a2a.models import Task, TaskState
 from nexus.a2a.stores.serialization import task_from_db_row, task_to_db_columns
 
@@ -75,7 +77,7 @@ class DatabaseTaskStore:
                 existing.agent_id = agent_id
                 try:
                     session.commit()
-                except Exception:
+                except SQLAlchemyError:
                     session.rollback()
                     raise
             else:
@@ -90,7 +92,7 @@ class DatabaseTaskStore:
                 session.add(model)
                 try:
                     session.commit()
-                except Exception:
+                except SQLAlchemyError:
                     session.rollback()
                     raise
 
@@ -117,7 +119,7 @@ class DatabaseTaskStore:
             session.delete(row)
             try:
                 session.commit()
-            except Exception:
+            except SQLAlchemyError:
                 session.rollback()
                 raise
             return True

@@ -196,8 +196,8 @@ def test_log_redaction_e2e(redaction_server: dict) -> None:
 
     # The DB password in connection strings should be redacted
     assert "supersecret_p4ssw0rd" not in log_content, (
-        f"Database password leaked in logs!\n"
-        f"Found in log output"
+        "Database password leaked in logs!\n"
+        "Found in log output"
     )
 
 

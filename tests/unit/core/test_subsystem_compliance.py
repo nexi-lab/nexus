@@ -52,7 +52,7 @@ class TestExtractContextIdentity:
         assert identity.user_id == "alice"
         assert identity.is_admin is True
 
-    def test_none_zone_id_defaults_to_default(self) -> None:
+    def test_none_zone_id_defaults_to_root(self) -> None:
         from nexus.core.permissions import OperationContext
 
         ctx = OperationContext(user="bob", groups=[], zone_id=None)

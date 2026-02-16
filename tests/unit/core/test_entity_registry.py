@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from nexus.services.permissions.entity_registry import EntityRegistry
+from nexus.rebac.entity_registry import EntityRegistry
 from nexus.storage.models import Base
 
 

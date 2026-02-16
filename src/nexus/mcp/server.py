@@ -166,8 +166,10 @@ def create_mcp_server(
         # Try to get API key from FastMCP context state first (if Context is available)
         request_api_key = None
         if ctx and hasattr(ctx, "get_state"):
-            with contextlib.suppress(Exception):
+            try:
                 request_api_key = ctx.get_state("api_key")
+            except Exception as e:
+                logger.debug("Failed to get API key from context state: %s", e)
 
         # Fallback to context variable (set by Starlette middleware)
         if not request_api_key:
@@ -860,8 +862,10 @@ def create_mcp_server(
             return f"Successfully stored memory: {content[:80]}..."
         except Exception as e:
             if hasattr(nx_instance.memory, "session"):
-                with contextlib.suppress(Exception):
+                try:
                     nx_instance.memory.session.rollback()
+                except Exception as rb_err:
+                    logger.debug("Failed to rollback memory session: %s", rb_err)
             return tool_error("internal", f"Error storing memory: {e}", str(e))
 
     @mcp.tool(

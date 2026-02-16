@@ -8,7 +8,6 @@ This module contains server-related CLI commands for:
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import sys
 import time
@@ -24,6 +23,8 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def start_background_mount_sync(nx: NexusFilesystem) -> None:
@@ -1257,13 +1258,15 @@ def serve(
             zone_id = "default"
 
             # User might already exist, ignore errors
-            with contextlib.suppress(Exception):
+            try:
                 entity_registry.register_entity(
                     entity_type="user",
                     entity_id=admin_user,
                     parent_type="zone",
                     parent_id=zone_id,
                 )
+            except Exception as e:
+                logger.debug("Entity registration skipped (may already exist): %s", e)
 
             # Create API key using DatabaseAPIKeyAuth
             try:
@@ -1420,28 +1423,34 @@ def serve(
             and nx._rebac_manager
             and hasattr(nx._rebac_manager, "get_cache_stats")
         ):
-            with contextlib.suppress(Exception):
+            try:
                 cache_stats_before = nx._rebac_manager.get_cache_stats()
+            except Exception as e:
+                logger.debug("Failed to get cache stats before warmup: %s", e)
 
         warmed_count = 0
         try:
             # Warm up common paths (non-blocking, best effort)
             common_paths = ["/", "/workspace", "/tmp", "/data"]
             for path in common_paths:
-                with contextlib.suppress(Exception):
+                try:
                     # Check if path exists and warm permission cache
                     if nx.exists(path):
                         # List directory to warm listing cache
-                        with contextlib.suppress(Exception):
+                        try:
                             nx.list(path, recursive=False, details=False)
                             warmed_count += 1
+                        except Exception as e:
+                            logger.debug("Failed to warm listing cache for %s: %s", path, e)
+                except Exception as e:
+                    logger.debug("Failed to warm permission cache for %s: %s", path, e)
 
             elapsed = time.time() - start_time
             console.print(f" [green]✓[/green] ({warmed_count} paths, {elapsed:.2f}s)")
 
             # Show cache stats if available
             if cache_stats_before:
-                with contextlib.suppress(Exception):
+                try:
                     cache_stats_after = nx._rebac_manager.get_cache_stats()  # type: ignore[attr-defined]
                     l2_before = cache_stats_before.get("l2_size", 0)
                     l2_after = cache_stats_after.get("l2_size", 0)
@@ -1449,6 +1458,8 @@ def serve(
 
                     if l2_warmed > 0:
                         console.print(f"  [dim]L2 permission cache: +{l2_warmed} entries[/dim]")
+                except Exception as e:
+                    logger.debug("Failed to get cache stats after warmup: %s", e)
 
         except Exception as e:
             console.print(f" [yellow]⚠ [/yellow] ({str(e)})")

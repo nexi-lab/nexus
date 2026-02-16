@@ -8,7 +8,6 @@ Based on: https://www.anthropic.com/engineering/code-execution-with-mcp
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 from datetime import UTC, datetime
@@ -288,8 +287,12 @@ class MCPMountManager:
             if self._filesystem:
                 # Ensure mount directory exists
                 mount_dir = f"{self.MCP_TOOLS_PATH}{mount.name}/"
-                with contextlib.suppress(Exception):
+                try:
                     self._filesystem.mkdir(mount_dir, parents=True)
+                except FileExistsError:
+                    pass
+                except OSError as e:
+                    logger.warning("Failed to create directory %s: %s", mount_dir, e)
 
                 self._filesystem.write(mount_json_path, content.encode("utf-8"))
             else:
@@ -860,8 +863,12 @@ class MCPMountManager:
         if self._filesystem:
             # Ensure directory exists
             if mount.tools_path:
-                with contextlib.suppress(Exception):
+                try:
                     self._filesystem.mkdir(mount.tools_path, parents=True)
+                except FileExistsError:
+                    pass
+                except OSError as e:
+                    logger.warning("Failed to create directory %s: %s", mount.tools_path, e)
 
             # Write tool.json
             self._filesystem.write(tool_json_path, tool_json.encode("utf-8"))
@@ -892,8 +899,12 @@ class MCPMountManager:
 
         if self._filesystem:
             if mount.tools_path:
-                with contextlib.suppress(Exception):
+                try:
                     self._filesystem.mkdir(mount.tools_path, parents=True)
+                except FileExistsError:
+                    pass
+                except OSError as e:
+                    logger.warning("Failed to create directory %s: %s", mount.tools_path, e)
             self._filesystem.write(skill_md_path, skill_md.encode("utf-8"))
         else:
             if mount.tools_path:

@@ -10,7 +10,7 @@ Usage:
         get_zone_revision_for_grant,
     )
 
-    token = increment_version_token(engine, conn_helper, zone_id="org_acme")
+    token = increment_version_token(engine, zone_id="org_acme")
     revision = get_zone_revision_for_grant(engine, zone_id="org_acme")
 
 Related: Issue #1459 (decomposition), P0-1 (consistency levels)
@@ -19,39 +19,21 @@ Related: Issue #1459 (decomposition), P0-1 (consistency levels)
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING
 
+from sqlalchemy import func, select, update
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
+from nexus.storage.models.permissions import ReBACVersionSequenceModel as RBVS
+
 logger = logging.getLogger(__name__)
-
-
-class ConnectionHelper(Protocol):
-    """Protocol for database connection helpers.
-
-    Matches the interface provided by ReBACManager / TupleRepository.
-    """
-
-    def connection(self) -> Any:
-        """Context manager yielding a DBAPI connection."""
-        ...
-
-    def create_cursor(self, conn: Any) -> Any:
-        """Create a cursor with appropriate factory."""
-        ...
-
-    def fix_sql_placeholders(self, sql: str) -> str:
-        """Convert ? placeholders to %s for PostgreSQL."""
-        ...
 
 
 def increment_version_token(
     engine: Engine,
-    conn_helper: ConnectionHelper,
     zone_id: str = "root",
 ) -> str:
     """Atomically increment and return the version token for a zone.
@@ -68,64 +50,56 @@ def increment_version_token(
 
     Args:
         engine: SQLAlchemy engine (for dialect detection)
-        conn_helper: Connection helper (for DB access)
         zone_id: Zone ID to increment version for
 
     Returns:
         Monotonic version token string (e.g., "v123")
     """
-    with conn_helper.connection() as conn:
-        cursor = conn_helper.create_cursor(conn)
+    if engine.dialect.name == "postgresql":
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
 
-        if engine.dialect.name == "postgresql":
-            # Atomic increment-and-return
-            cursor.execute(
-                """
-                INSERT INTO rebac_version_sequences (zone_id, current_version, updated_at)
-                VALUES (%s, 1, NOW())
-                ON CONFLICT (zone_id)
-                DO UPDATE SET current_version = rebac_version_sequences.current_version + 1,
-                              updated_at = NOW()
-                RETURNING current_version
-                """,
-                (zone_id,),
+        stmt = (
+            pg_insert(RBVS)
+            .values(zone_id=zone_id, current_version=1, updated_at=func.now())
+            .on_conflict_do_update(
+                index_elements=[RBVS.zone_id],
+                set_={
+                    "current_version": RBVS.current_version + 1,
+                    "updated_at": func.now(),
+                },
             )
-            row = cursor.fetchone()
-            version = row["current_version"] if row else 1
-        else:
-            # SQLite: Atomic INSERT OR IGNORE + UPDATE to avoid race conditions
-            now_iso = datetime.now(UTC).isoformat()
-            cursor.execute(
-                conn_helper.fix_sql_placeholders(
-                    """
-                    INSERT OR IGNORE INTO rebac_version_sequences
-                        (zone_id, current_version, updated_at)
-                    VALUES (?, 0, ?)
-                    """
-                ),
-                (zone_id, now_iso),
-            )
-            cursor.execute(
-                conn_helper.fix_sql_placeholders(
-                    """
-                    UPDATE rebac_version_sequences
-                    SET current_version = current_version + 1, updated_at = ?
-                    WHERE zone_id = ?
-                    """
-                ),
-                (now_iso, zone_id),
-            )
-            cursor.execute(
-                conn_helper.fix_sql_placeholders(
-                    "SELECT current_version FROM rebac_version_sequences WHERE zone_id = ?"
-                ),
-                (zone_id,),
-            )
-            row = cursor.fetchone()
-            version = row["current_version"] if row else 1
+            .returning(RBVS.current_version)
+        )
+        with engine.begin() as conn:
+            result = conn.execute(stmt)
+            row = result.fetchone()
+            version = row.current_version if row else 1
+    else:
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
-        conn.commit()
-        return f"v{version}"
+        # SQLite: INSERT OR IGNORE + UPDATE to avoid race conditions
+        insert_stmt = (
+            sqlite_insert(RBVS)
+            .values(zone_id=zone_id, current_version=0, updated_at=func.now())
+            .on_conflict_do_nothing(index_elements=[RBVS.zone_id])
+        )
+        update_stmt = (
+            update(RBVS)
+            .where(RBVS.zone_id == zone_id)
+            .values(
+                current_version=RBVS.current_version + 1,
+                updated_at=func.now(),
+            )
+        )
+        select_stmt = select(RBVS.current_version).where(RBVS.zone_id == zone_id)
+
+        with engine.begin() as conn:
+            conn.execute(insert_stmt)
+            conn.execute(update_stmt)
+            row = conn.execute(select_stmt).fetchone()
+            version = row.current_version if row else 1
+
+    return f"v{version}"
 
 
 def get_zone_revision_for_grant(engine: Engine, zone_id: str) -> int:
@@ -142,16 +116,10 @@ def get_zone_revision_for_grant(engine: Engine, zone_id: str) -> int:
     Returns:
         Current revision number (0 if not found or on error)
     """
-    from sqlalchemy import text
-
     try:
-        query = text("""
-            SELECT current_version FROM rebac_version_sequences
-            WHERE zone_id = :zone_id
-        """)
+        stmt = select(RBVS.current_version).where(RBVS.zone_id == zone_id)
         with engine.connect() as conn:
-            result = conn.execute(query, {"zone_id": zone_id})
-            row = result.fetchone()
+            row = conn.execute(stmt).fetchone()
             return int(row.current_version) if row else 0
     except (OperationalError, ProgrammingError):
         return 0

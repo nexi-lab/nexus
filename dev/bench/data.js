@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1771245993287,
+  "lastUpdate": 1771247047288,
   "repoUrl": "https://github.com/nexi-lab/nexus",
   "entries": {
     "Benchmark": [
@@ -9750,6 +9750,156 @@ window.BENCHMARK_DATA = {
             "unit": "iter/sec",
             "range": "stddev: 0.006801472328540559",
             "extra": "mean: 1.7995099174456672 msec\nrounds: 642"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "taofeng.nju@gmail.com",
+            "name": "oliverfeng",
+            "username": "windoliver"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "bf98b60a30acc2910710555c7341c370a46893c1",
+          "message": "refactor(#1400): extract Skills (9,391 LOC) into self-contained brick (#1701)\n\n* test(#1400): add targeted skill service tests + brick contract skeleton\n\n- Add 21 targeted tests for _discover_impl covering all filter modes\n  (subscribed, owned, public, shared, all), metadata loading with\n  system context fallback, error paths for _find_public_skills and\n  _find_direct_viewer_skills, and _load_assigned_skills edge cases\n- Add brick contract test skeleton with AST-based zero-core-imports\n  check (skipped until Phase 1), protocol satisfaction tests, and\n  module boundary verification\n- Baseline: 289 + 45 + 23 = 357 tests passing\n\n* refactor(#1400): decouple skills from nexus.core — local exceptions, narrow protocol, DI\n\nPhase 1 of skills brick extraction:\n\n- Create nexus.skills.exceptions with local exception types (SkillValidationError,\n  SkillPermissionDeniedError, etc.) replacing nexus.core.exceptions imports\n- Add SkillOperationContext and DatabaseConnection Protocols to types.py\n- Narrow protocols.py from 1,078 LOC to 123 LOC (6 methods skills actually uses)\n- Inject ServiceMap via DI in skill_generator.py (lazy runtime fallback)\n- Move OperationContext imports to TYPE_CHECKING blocks\n- Add from __future__ import annotations to registry.py, manager.py, importer.py\n- Update scoped_filesystem.py to import from core.filesystem directly\n- Update all tests to use new exception types\n\n* refactor(#1400): extract MCP subsystem (2,449 LOC) from skills to nexus/mcp/\n\nMove mcp_models.py, mcp_mount.py, mcp_exporter.py from nexus/skills/ to\nnexus/mcp/ as models.py, mount.py, exporter.py. Update all 12 importing\nfiles across CLI, services, tests. MCPMountError is now a standalone\nexception to break the circular import between nexus.mcp and nexus.skills.\n\n- git mv 3 MCP source files + 1 test file\n- Update nexus/mcp/__init__.py with new re-exports\n- Update all lazy imports in cli/commands/skills.py (8 locations)\n- Update services/mcp_service.py, oauth_service.py, connection_manager.py\n- Move test_mcp_skills.py to tests/unit/mcp/\n- 621 tests pass, ruff clean\n\n* refactor(#1400): pipeline discover + batch ReBAC + _build_skill_info helper\n\nExtract _build_skill_info() to eliminate 6x SkillInfo construction\nrepetition. Pre-compute public_set and shared_set in the \"all\" filter\nto use O(1) set lookups instead of O(n) per-skill ReBAC calls. Pass\npre-computed paths to _collect_skill_paths to avoid double queries.\nRemove dead filter code in the \"all\" path (already handled by early returns).\n\n* perf(#1400): lazy imports + subscription caching\n\n- Convert skills/__init__.py to lazy imports via __getattr__ (PEP 562):\n  eager: Skill, SkillMetadata, SkillParser, SkillRegistry, SkillManager\n  lazy: Analytics, Governance, Audit, Exporter, Templates, MCP compat\n- Add request-scoped subscription cache to SkillService keyed by\n  (user_id, zone_id) — avoids repeated YAML parsing in discover flow\n- Invalidate cache on _save_subscriptions writes\n\n* test(#1400): finalize contract tests + E2E timing assertions\n\n- Un-skip all brick contract tests (13 tests, all green):\n  - Zero core/backends/services imports at module level (AST scan)\n  - Protocol satisfaction (NexusFS ABC satisfies narrow Skills Protocol)\n  - Local exception hierarchy + is_expected attribute\n  - Lazy imports via __getattr__ resolve correctly\n  - MCP backward-compat re-exports match canonical nexus.mcp source\n- Add function-scoped import detection to AST checker (allows\n  skill_generator.py's lazy try/except pattern)\n- Add E2E timing assertions for discover (10 skills < 2s)\n  and prompt context generation (< 2s)\n\n* test(#1400): add cross-user permission enforcement E2E tests\n\n- Add 3 tests validating non-owner permission enforcement:\n  - bob cannot discover admin's private skills\n  - bob sees admin's skill after public share\n  - bob cannot load admin's private skill content\n- Extend rpc/rpc_result helpers with custom headers parameter\n- All 20 E2E tests pass with real FastAPI server + permissions\n\n* style: ruff format test_protocol_compatibility.py\n\n* fix(#1400): fix connection_manager import after MCP extraction + rebase\n\n* fix(#1400): fix mypy errors — write signature, TYPE_CHECKING imports, cast fix\n\n- Protocol write() now uses explicit params (if_match, if_none_match, force)\n  instead of **kwargs to match NexusFilesystem ABC signature\n- Add TYPE_CHECKING block in skills/__init__.py so mypy resolves lazy imports\n- Fix mcp_service.py cast to use narrow Protocol instead of core ABC\n\n* chore: remove accidentally committed plan files\n\n* fix(#1400): add delete() to narrow NexusFilesystem Protocol\n\nconnection_manager.py calls filesystem.delete() which was missing\nfrom the narrow Protocol, causing mypy attr-defined error.",
+          "timestamp": "2026-02-16T05:00:40-08:00",
+          "tree_id": "1e4c9a99cd9bdb6af465b4ceb006b9ee88957210",
+          "url": "https://github.com/nexi-lab/nexus/commit/bf98b60a30acc2910710555c7341c370a46893c1"
+        },
+        "date": 1771247045885,
+        "tool": "pytest",
+        "benches": [
+          {
+            "name": "tests/benchmarks/test_async_permission_performance.py::test_permission_overhead_acceptable",
+            "value": 376.6780973015206,
+            "unit": "iter/sec",
+            "range": "stddev: 0.006516368957305489",
+            "extra": "mean: 2.654786692308067 msec\nrounds: 481"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_write_small_file",
+            "value": 339.422651021442,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0008505603064876234",
+            "extra": "mean: 2.94617933420368 msec\nrounds: 383"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_read_small_file",
+            "value": 15199.917246479841,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00004114676977030321",
+            "extra": "mean: 65.78983186448536 usec\nrounds: 15999"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_read_cached_file",
+            "value": 16303.450366792107,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000017773982163636456",
+            "extra": "mean: 61.336709561606845 usec\nrounds: 17267"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestFileOperationBenchmarks::test_exists_check",
+            "value": 53472.40413536487,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001715269165240883",
+            "extra": "mean: 18.701235079472205 usec\nrounds: 45474"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestGlobBenchmarks::test_list_large_directory",
+            "value": 247.05990461907598,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0002755243542063121",
+            "extra": "mean: 4.0476013359667915 msec\nrounds: 253"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestGlobBenchmarks::test_glob_simple_pattern",
+            "value": 182.98686390752212,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0004098965929191968",
+            "extra": "mean: 5.464873153437833 msec\nrounds: 189"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestGlobBenchmarks::test_list_1k_files",
+            "value": 66.77751846025686,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0015529212534797399",
+            "extra": "mean: 14.975099750002803 msec\nrounds: 76"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestHashingBenchmarks::test_sha256_medium",
+            "value": 23740.91469864493,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000017084321227167037",
+            "extra": "mean: 42.12137622722167 usec\nrounds: 23834"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestPermissionBenchmarks::test_permission_check_bulk_python",
+            "value": 2587.443017746507,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000045646140431646614",
+            "extra": "mean: 386.48194110606323 usec\nrounds: 1664"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestPermissionBenchmarks::test_permission_check_bulk_rust",
+            "value": 4893.5535313970395,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000037534288156264",
+            "extra": "mean: 204.3504773339047 usec\nrounds: 3331"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBulkOperationBenchmarks::test_write_batch_10",
+            "value": 42.63167529934348,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0011215542460379932",
+            "extra": "mean: 23.456737108696263 msec\nrounds: 46"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBulkOperationBenchmarks::test_read_bulk_10",
+            "value": 1419.0339990357663,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00028010372993568386",
+            "extra": "mean: 704.7047503298018 usec\nrounds: 1514"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBlake3HashingBenchmarks::test_hash_1mb_content",
+            "value": 3976.242315791892,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0000057300004735956925",
+            "extra": "mean: 251.49372713741266 usec\nrounds: 4035"
+          },
+          {
+            "name": "tests/benchmarks/test_core_operations.py::TestBlake3HashingBenchmarks::test_hash_smart_1mb_content",
+            "value": 17737.205328428234,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000003157356096882647",
+            "extra": "mean: 56.37866741031937 usec\nrounds: 17481"
+          },
+          {
+            "name": "tests/benchmarks/test_search_benchmarks.py::TestPythonRegexBenchmarks::test_python_regex_simple_10k_lines",
+            "value": 3903.5334575660722,
+            "unit": "iter/sec",
+            "range": "stddev: 0.000009566822283268522",
+            "extra": "mean: 256.17815522030116 usec\nrounds: 3975"
+          },
+          {
+            "name": "tests/benchmarks/test_search_benchmarks.py::TestRustGrepBenchmarks::test_rust_grep_10k_lines",
+            "value": 1018.4024737940487,
+            "unit": "iter/sec",
+            "range": "stddev: 0.00001827600724197138",
+            "extra": "mean: 981.9300578429563 usec\nrounds: 1020"
+          },
+          {
+            "name": "tests/benchmarks/test_search_benchmarks.py::TestHybridSearchFusionBenchmarks::test_rrf_fusion_1k_results",
+            "value": 522.1660439358978,
+            "unit": "iter/sec",
+            "range": "stddev: 0.0074076795366806",
+            "extra": "mean: 1.915099634710759 msec\nrounds: 605"
           }
         ]
       }

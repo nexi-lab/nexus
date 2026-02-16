@@ -166,7 +166,7 @@ class ExchangeAuditLogger:
         currency: str = "credits",
         status: str,
         application: str,
-        zone_id: str = "default",
+        zone_id: str = "root",
         trace_id: str | None = None,
         metadata: dict[str, Any] | None = None,
         transfer_id: str | None = None,

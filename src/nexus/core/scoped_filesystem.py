@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
 
-from nexus.skills.protocols import NexusFilesystem
+from nexus.core.filesystem import NexusFilesystem
 
 
 class ScopedFilesystem:

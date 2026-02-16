@@ -66,8 +66,10 @@ async def startup_search(app: FastAPI) -> list[asyncio.Task]:
         app.state.search_daemon_enabled = True
         set_search_daemon(app.state.search_daemon)
 
-        # Set NexusFS reference for index refresh (Issue #1024)
-        app.state.search_daemon._nexus_fs = app.state.nexus_fs
+        # Issue #1520: Set FileReaderProtocol for index refresh (replaces _nexus_fs)
+        from nexus.factory import _NexusFSFileReader
+
+        app.state.search_daemon._file_reader = _NexusFSFileReader(app.state.nexus_fs)
 
         stats = app.state.search_daemon.get_stats()
         logger.info(

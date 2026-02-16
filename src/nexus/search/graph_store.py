@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import and_, delete, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 
-from nexus.storage.models import (
+from nexus.search.models import (
     EntityMentionModel,
     EntityModel,
     RelationshipModel,

@@ -1,7 +1,7 @@
-"""Full end-to-end test for delegation API with real server (Issue #1271).
+"""Full end-to-end test for delegation API with real server (Issue #1271, #1618).
 
-Uses create_app() with real NexusFS, ReBAC permissions enabled,
-StaticAPIKeyAuth, and validates the complete delegation flow:
+Uses real NexusFS components, ReBAC permissions enabled,
+and validates the complete delegation flow including #1618 features:
 1. Coordinator agent authenticates
 2. Coordinator creates files and gets grants
 3. POST /api/v2/agents/delegate (copy mode)
@@ -9,7 +9,9 @@ StaticAPIKeyAuth, and validates the complete delegation flow:
 5. Worker can read files within granted namespace
 6. Worker cannot read files outside namespace
 7. DELETE to revoke delegation
-8. GET to list delegations
+8. GET to list delegations with pagination
+9. Sub-delegation chain (A→B→C)
+10. Soft-delete revocation pattern
 
 Requires real EnhancedReBACManager + NamespaceManager + EntityRegistry.
 """
@@ -21,7 +23,7 @@ from sqlalchemy.pool import StaticPool
 
 from nexus.services.agents.agent_registry import AgentRegistry
 from nexus.services.delegation.errors import DelegationChainError, EscalationError
-from nexus.services.delegation.models import DelegationMode
+from nexus.services.delegation.models import DelegationMode, DelegationStatus
 from nexus.services.delegation.service import DelegationService
 from nexus.services.permissions.entity_registry import EntityRegistry
 from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
@@ -143,7 +145,6 @@ class TestFullDelegationLifecycle:
         delegation_service,
         entity_registry,
         rebac_manager,
-        session_factory,
     ):
         """Full flow: setup coordinator → delegate copy → verify grants → revoke."""
         _setup_coordinator(entity_registry, rebac_manager)
@@ -183,13 +184,15 @@ class TestFullDelegationLifecycle:
         # Worker should NOT have access to /workspace/secret/
         assert "/workspace/secret/credentials.json" not in worker_read_ids
 
-        # Step 3: List delegations
-        delegations = delegation_service.list_delegations("coordinator_agent")
+        # Step 3: List delegations (#1618: returns tuple with pagination)
+        delegations, total = delegation_service.list_delegations("coordinator_agent")
+        assert total == 1
         assert len(delegations) == 1
         assert delegations[0].agent_id == "worker_copy_1"
         assert delegations[0].scope_prefix == "/workspace/project"
+        assert delegations[0].status == DelegationStatus.ACTIVE
 
-        # Step 4: Revoke
+        # Step 4: Revoke (soft-delete-first pattern, #1618)
         delegation_service.revoke_delegation(result.delegation_id)
 
         # Step 5: Verify worker no longer has grants
@@ -201,15 +204,19 @@ class TestFullDelegationLifecycle:
         )
         assert len(worker_read_after) == 0
 
-        # Step 6: Verify delegation record is gone
+        # Step 6: get_delegation returns None (ACTIVE filter)
         assert delegation_service.get_delegation("worker_copy_1") is None
+
+        # Step 7: get_delegation_by_id shows REVOKED status (audit trail)
+        record = delegation_service.get_delegation_by_id(result.delegation_id)
+        assert record is not None
+        assert record.status == DelegationStatus.REVOKED
 
     def test_copy_mode_with_readonly_downgrade(
         self,
         delegation_service,
         entity_registry,
         rebac_manager,
-        session_factory,
     ):
         """Delegate with readonly_paths → worker can read but not write those files."""
         _setup_coordinator(entity_registry, rebac_manager)
@@ -253,7 +260,6 @@ class TestFullDelegationLifecycle:
         delegation_service,
         entity_registry,
         rebac_manager,
-        session_factory,
     ):
         """Clean mode: only explicitly added grants from parent."""
         _setup_coordinator(entity_registry, rebac_manager)
@@ -288,7 +294,6 @@ class TestFullDelegationLifecycle:
         delegation_service,
         entity_registry,
         rebac_manager,
-        session_factory,
     ):
         """Shared mode: worker gets same view as coordinator."""
         _setup_coordinator(entity_registry, rebac_manager)
@@ -328,12 +333,11 @@ class TestFullDelegationLifecycle:
         delegation_service,
         entity_registry,
         rebac_manager,
-        session_factory,
     ):
-        """A delegated worker cannot create further delegations."""
+        """A delegated worker cannot create further delegations (default)."""
         _setup_coordinator(entity_registry, rebac_manager)
 
-        # Create worker via delegation
+        # Create worker via delegation (can_sub_delegate=False by default)
         delegation_service.delegate(
             coordinator_agent_id="coordinator_agent",
             coordinator_owner_id="alice",
@@ -354,12 +358,51 @@ class TestFullDelegationLifecycle:
                 zone_id="root",
             )
 
+    def test_delegation_chain_allowed_with_sub_delegate(
+        self,
+        delegation_service,
+        entity_registry,
+        rebac_manager,
+    ):
+        """#1618: Sub-delegation chain allowed when can_sub_delegate=True."""
+        _setup_coordinator(entity_registry, rebac_manager)
+
+        # A → B with can_sub_delegate=True
+        delegation_service.delegate(
+            coordinator_agent_id="coordinator_agent",
+            coordinator_owner_id="alice",
+            worker_id="worker_sub_b",
+            worker_name="Sub Worker B",
+            delegation_mode=DelegationMode.COPY,
+            zone_id="default",
+            can_sub_delegate=True,
+            intent="Coordinate sub-tasks",
+        )
+
+        # B → C
+        result_c = delegation_service.delegate(
+            coordinator_agent_id="worker_sub_b",
+            coordinator_owner_id="alice",
+            worker_id="worker_sub_c",
+            worker_name="Sub Worker C",
+            delegation_mode=DelegationMode.COPY,
+            zone_id="default",
+            intent="Execute specific task",
+        )
+
+        # Verify chain
+        chain = delegation_service.get_delegation_chain(result_c.delegation_id)
+        assert len(chain) == 2
+        assert chain[0].agent_id == "worker_sub_c"
+        assert chain[0].depth == 1
+        assert chain[1].agent_id == "worker_sub_b"
+        assert chain[1].depth == 0
+
     def test_escalation_blocked(
         self,
         delegation_service,
         entity_registry,
         rebac_manager,
-        session_factory,
     ):
         """Cannot grant worker access to files coordinator doesn't have."""
         _setup_coordinator(entity_registry, rebac_manager)
@@ -380,7 +423,6 @@ class TestFullDelegationLifecycle:
         delegation_service,
         entity_registry,
         rebac_manager,
-        session_factory,
     ):
         """Coordinator can create multiple delegations."""
         _setup_coordinator(entity_registry, rebac_manager)
@@ -406,23 +448,30 @@ class TestFullDelegationLifecycle:
         )
 
         # Both delegations exist
-        delegations = delegation_service.list_delegations("coordinator_agent")
-        assert len(delegations) == 2
+        delegations, total = delegation_service.list_delegations("coordinator_agent")
+        assert total == 2
         worker_ids = {d.agent_id for d in delegations}
         assert worker_ids == {"worker_multi_1", "worker_multi_2"}
 
-        # Revoke one, other still active
+        # Revoke one
         delegation_service.revoke_delegation(r1.delegation_id)
-        delegations = delegation_service.list_delegations("coordinator_agent")
-        assert len(delegations) == 1
-        assert delegations[0].agent_id == "worker_multi_2"
+
+        # Filter by ACTIVE status — only 1 remains
+        active_delegations, active_total = delegation_service.list_delegations(
+            "coordinator_agent", status_filter=DelegationStatus.ACTIVE
+        )
+        assert active_total == 1
+        assert active_delegations[0].agent_id == "worker_multi_2"
+
+        # Without filter — both still visible (audit trail)
+        all_delegations, all_total = delegation_service.list_delegations("coordinator_agent")
+        assert all_total == 2
 
     def test_copy_mode_remove_grants(
         self,
         delegation_service,
         entity_registry,
         rebac_manager,
-        session_factory,
     ):
         """Copy mode with remove_grants excludes specified paths."""
         _setup_coordinator(entity_registry, rebac_manager)
@@ -449,3 +498,61 @@ class TestFullDelegationLifecycle:
         assert "/workspace/secret/credentials.json" not in worker_read_ids
         # Others still there
         assert "/workspace/project/src/main.py" in worker_read_ids
+
+    def test_delegation_with_intent(
+        self,
+        delegation_service,
+        entity_registry,
+        rebac_manager,
+    ):
+        """#1618: Intent is persisted and retrievable."""
+        _setup_coordinator(entity_registry, rebac_manager)
+
+        result = delegation_service.delegate(
+            coordinator_agent_id="coordinator_agent",
+            coordinator_owner_id="alice",
+            worker_id="worker_intent",
+            worker_name="Intent Worker",
+            delegation_mode=DelegationMode.COPY,
+            zone_id="default",
+            intent="Run security scan on project files",
+        )
+
+        record = delegation_service.get_delegation_by_id(result.delegation_id)
+        assert record is not None
+        assert record.intent == "Run security scan on project files"
+
+    def test_pagination(
+        self,
+        delegation_service,
+        entity_registry,
+        rebac_manager,
+    ):
+        """#1618: Pagination with limit/offset."""
+        _setup_coordinator(entity_registry, rebac_manager)
+
+        # Create 5 delegations
+        for i in range(5):
+            delegation_service.delegate(
+                coordinator_agent_id="coordinator_agent",
+                coordinator_owner_id="alice",
+                worker_id=f"worker_page_{i}",
+                worker_name=f"Page Worker {i}",
+                delegation_mode=DelegationMode.COPY,
+                zone_id="default",
+            )
+
+        # Get first page
+        page1, total = delegation_service.list_delegations("coordinator_agent", limit=2, offset=0)
+        assert total == 5
+        assert len(page1) == 2
+
+        # Get second page
+        page2, total2 = delegation_service.list_delegations("coordinator_agent", limit=2, offset=2)
+        assert total2 == 5
+        assert len(page2) == 2
+
+        # Pages should not overlap
+        page1_ids = {d.delegation_id for d in page1}
+        page2_ids = {d.delegation_id for d in page2}
+        assert page1_ids.isdisjoint(page2_ids)

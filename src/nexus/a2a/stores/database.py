@@ -31,6 +31,11 @@ _DB_EXECUTOR = ThreadPoolExecutor(max_workers=20, thread_name_prefix="a2a-db")
 class DatabaseTaskStore:
     """SQLAlchemy-backed task store.
 
+    .. deprecated::
+        DatabaseTaskStore is deprecated.  Use ``VFSTaskStore`` for
+        filesystem-backed persistence (§17.6 convergence).  This store
+        will be removed in a future release.
+
     Parameters
     ----------
     record_store:

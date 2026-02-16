@@ -149,6 +149,9 @@ class KernelServices:
     lock_manager: Any = None
     workflow_engine: WorkflowProtocol | None = None
 
+    # Auth services — injected from server layer (Issue #1519, 3A)
+    api_key_creator: Any = None  # APIKeyCreatorProtocol
+
     # Server-layer services — explicitly typed fields instead of opaque dict
     observability_subsystem: Any = None
     chunked_upload_service: Any = None
@@ -167,6 +170,13 @@ class KernelServices:
     async_agent_registry: Any = None
     async_namespace_manager: Any = None
     async_vfs_router: Any = None
+
+    # Pre-built domain services (Issue #1519, 4B)
+    # When set, _wire_services() uses these instead of building internally.
+    # Enables factory pre-wiring and test-time mock injection.
+    rebac_service: Any = None
+    search_service: Any = None
+    events_service: Any = None
 
 
 # ---------------------------------------------------------------------------

@@ -2,8 +2,8 @@
 
 Provides utility functions for:
 - User lookup by various identifiers (email, username, OAuth, external ID)
-- ReBAC group-based zone membership management
-- Zone group naming conventions
+- ReBAC group-based zone membership management (re-exported from core)
+- Zone group naming conventions (re-exported from core)
 - User creation with uniqueness checks
 """
 
@@ -14,16 +14,18 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-# ==============================================================================
-# ReBAC Group Naming Helpers — canonical source: services/permissions/utils/zone.py
-# Re-exported here for backward compatibility with server-layer callers.
-# ==============================================================================
-from nexus.services.permissions.utils.zone import (  # noqa: F401 — re-exported
+# Issue #1519, 3A: Zone helper functions moved to core/zone_helpers.py
+# (no server dependencies). Re-exported here for backward compatibility.
+from nexus.core.zone_helpers import (  # noqa: F401
+    add_user_to_zone,
     can_invite_to_zone,
+    get_user_zones,
     is_zone_admin,
     is_zone_group,
     is_zone_owner,
     parse_zone_from_group,
+    remove_user_from_zone,
+    user_belongs_to_zone,
     zone_group_id,
 )
 from nexus.storage.models import (
@@ -33,191 +35,6 @@ from nexus.storage.models import (
 from nexus.storage.models.permissions import ReBACTupleModel
 
 logger = logging.getLogger(__name__)
-
-
-def add_user_to_zone(
-    rebac_manager: Any,
-    user_id: str,
-    zone_id: str,
-    role: str = "member",
-    caller_user_id: str | None = None,
-) -> str:
-    """Add user to zone via ReBAC group.
-
-    SECURITY: Only zone admins/owners can invite users.
-
-    Args:
-        rebac_manager: ReBAC manager instance
-        user_id: User ID to add
-        zone_id: Zone ID
-        role: Role in zone ("owner", "admin", or "member")
-        caller_user_id: Optional user ID of caller (for permission check)
-
-    Returns:
-        ReBAC tuple ID
-
-    Raises:
-        PermissionError: If caller is not zone admin/owner
-        ValueError: If role is invalid
-
-    Example:
-        # Add user as member (requires admin/owner)
-        add_user_to_zone(rebac_mgr, "bob", "acme", "member", caller_user_id="alice")
-
-        # Add user as admin (requires admin/owner)
-        add_user_to_zone(rebac_mgr, "bob", "acme", "admin", caller_user_id="alice")
-
-        # Add user as owner (requires owner)
-        add_user_to_zone(rebac_mgr, "bob", "acme", "owner", caller_user_id="alice")
-    """
-    # SECURITY: Check if caller can invite users
-    if caller_user_id:
-        # Only owners can add other owners
-        if role == "owner":
-            if not is_zone_owner(rebac_manager, caller_user_id, zone_id):
-                raise PermissionError(
-                    f"Only zone owners can add other owners. "
-                    f"User '{caller_user_id}' is not owner of zone '{zone_id}'"
-                )
-        else:
-            # Admins and owners can add admins/members
-            if not can_invite_to_zone(rebac_manager, caller_user_id, zone_id):
-                raise PermissionError(
-                    f"Only zone admins/owners can invite users. "
-                    f"User '{caller_user_id}' is not admin/owner of zone '{zone_id}'"
-                )
-
-    # Validate role
-    if role not in ("owner", "admin", "member"):
-        raise ValueError(f"Invalid role '{role}'. Must be 'owner', 'admin', or 'member'")
-
-    # Determine group ID based on role
-    group_id = zone_group_id(zone_id)
-    if role == "owner":
-        group_id = f"{group_id}-owners"
-    elif role == "admin":
-        group_id = f"{group_id}-admins"
-    # else: role == "member" -> use base group_id
-
-    result = rebac_manager.rebac_write(
-        subject=("user", user_id),
-        relation="member",
-        object=("group", group_id),
-        zone_id=zone_id,
-    )
-    return str(result.tuple_id)
-
-
-def remove_user_from_zone(
-    rebac_manager: Any,
-    user_id: str,
-    zone_id: str,
-    role: str | None = None,
-) -> None:
-    """Remove user from zone via ReBAC group.
-
-    Args:
-        rebac_manager: ReBAC manager instance
-        user_id: User ID
-        zone_id: Zone ID
-        role: Optional role to remove ("owner", "admin", or "member"). If None, removes all.
-
-    Note:
-        Removing owners should be done carefully - ensure at least one owner remains.
-    """
-    if role is None:
-        # Remove from all groups (owner, admin, member)
-        import contextlib
-
-        for r in ["owner", "admin", "member"]:
-            # Ignore errors if tuple doesn't exist
-            with contextlib.suppress(Exception):
-                remove_user_from_zone(rebac_manager, user_id, zone_id, r)
-        return
-
-    group_id = zone_group_id(zone_id)
-    if role == "owner":
-        group_id = f"{group_id}-owners"
-    elif role == "admin":
-        group_id = f"{group_id}-admins"
-    # else: role == "member" -> use base group_id
-
-    rebac_manager.rebac_delete(
-        subject=("user", user_id),
-        relation="member",
-        object=("group", group_id),
-        zone_id=zone_id,
-    )
-
-
-def get_user_zones(session: Session, user_id: str) -> list[str]:
-    """Get list of zone IDs that user belongs to.
-
-    Queries ReBACTupleModel via ORM to find all zones where the user
-    has any relation (owner, admin, member).
-
-    Args:
-        session: SQLAlchemy ORM session
-        user_id: User ID
-
-    Returns:
-        List of zone IDs
-
-    Example:
-        zones = get_user_zones(session, "user-123")
-        # Returns: ["acme", "techcorp"]
-    """
-    try:
-        stmt = (
-            select(ReBACTupleModel.zone_id)
-            .where(
-                ReBACTupleModel.subject_type == "user",
-                ReBACTupleModel.subject_id == user_id,
-                ReBACTupleModel.zone_id.isnot(None),
-            )
-            .distinct()
-        )
-        return [zid for zid in session.scalars(stmt).all() if zid]
-    except Exception:
-        logger.warning("Failed to fetch zone IDs for user %s", user_id, exc_info=True)
-        return []
-
-
-def user_belongs_to_zone(session: Session, user_id: str, zone_id: str) -> bool:
-    """Check if user belongs to zone.
-
-    Queries ReBACTupleModel via ORM for any tuple where the user is the
-    subject and the zone_id matches. This covers all roles (owner, admin,
-    member) since add_user_to_zone() always sets zone_id on the tuple.
-
-    Args:
-        session: SQLAlchemy ORM session
-        user_id: User ID
-        zone_id: Zone ID
-
-    Returns:
-        True if user belongs to zone
-    """
-    try:
-        stmt = (
-            select(ReBACTupleModel.tuple_id)
-            .where(
-                ReBACTupleModel.subject_type == "user",
-                ReBACTupleModel.subject_id == user_id,
-                ReBACTupleModel.zone_id == zone_id,
-            )
-            .limit(1)
-        )
-        return session.scalar(stmt) is not None
-    except Exception:
-        logger.warning(
-            "Failed to check zone membership for user %s in zone %s",
-            user_id,
-            zone_id,
-            exc_info=True,
-        )
-        return False
-
 
 # ==============================================================================
 # User Lookup Functions

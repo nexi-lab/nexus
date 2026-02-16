@@ -168,8 +168,9 @@ class SearchDaemon:
         self._pending_refresh_paths: set[str] = set()
         self._refresh_lock = asyncio.Lock()
 
-        # NexusFS reference for reading file content (set by FastAPI server)
-        self._nexus_fs: Any = None
+        # FileReaderProtocol reference for reading file content (set by FastAPI server)
+        # Issue #1520: Replaces direct NexusFS dependency
+        self._file_reader: Any = None
 
         # Latency tracking (circular buffer)
         self._latencies: list[float] = []
@@ -882,8 +883,8 @@ class SearchDaemon:
         """
         logger.debug(f"Refreshing indexes for {len(paths)} files")
 
-        if not self._bm25s_index or not self._nexus_fs:
-            logger.debug("BM25S index or NexusFS not available, skipping refresh")
+        if not self._bm25s_index or not self._file_reader:
+            logger.debug("BM25S index or file reader not available, skipping refresh")
             return
 
         indexed_count = 0
@@ -892,11 +893,10 @@ class SearchDaemon:
 
         for path in paths:
             try:
-                # Read file content
-                content_bytes = self._nexus_fs.read(path)
-                if not content_bytes:
+                # Read file content (Issue #1520: FileReaderProtocol returns str)
+                content = self._file_reader.read_text(path)
+                if not content:
                     continue
-                content = content_bytes.decode("utf-8", errors="replace")
 
                 # Get path_id for indexing
                 path_id = path  # Use path as ID for now

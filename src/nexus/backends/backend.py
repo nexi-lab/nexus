@@ -379,7 +379,11 @@ class Backend(ABC):
         pass
 
     def batch_read_content(
-        self, content_hashes: list[str], context: "OperationContext | None" = None
+        self,
+        content_hashes: list[str],
+        context: "OperationContext | None" = None,
+        *,
+        contexts: "dict[str, OperationContext] | None" = None,
     ) -> dict[str, bytes | None]:
         """
         Read multiple content items by their hashes (batch operation).
@@ -390,7 +394,10 @@ class Backend(ABC):
 
         Args:
             content_hashes: List of SHA-256 hashes as hex strings
-            context: Operation context with user/zone info (optional, for user-scoped backends)
+            context: Shared operation context (used when per-hash context is not available)
+            contexts: Per-hash operation contexts mapping content_hash -> OperationContext.
+                     Used by path-based backends (S3, etc.) that need per-file backend_path.
+                     Falls back to ``context`` for hashes not in this dict.
 
         Returns:
             Dictionary mapping content_hash -> content bytes
@@ -402,7 +409,8 @@ class Backend(ABC):
         """
         result: dict[str, bytes | None] = {}
         for content_hash in content_hashes:
-            response = self.read_content(content_hash, context=context)
+            ctx = contexts.get(content_hash, context) if contexts else context
+            response = self.read_content(content_hash, context=ctx)
             if response.success:
                 result[content_hash] = response.data
             else:

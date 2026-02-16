@@ -45,7 +45,7 @@ from nexus.llm.message import (
     ToolCall,
     ToolFunction,
 )
-from nexus.llm.metrics import LLMMetrics, MetricsStore, ResponseLatency, TokenUsage
+from nexus.llm.metrics import LLMMetrics, ResponseLatency, TokenUsage
 from nexus.llm.provider import LiteLLMProvider, LLMProvider, LLMResponse
 
 __all__ = [
@@ -74,7 +74,6 @@ __all__ = [
     "LLMMetrics",
     "TokenUsage",
     "ResponseLatency",
-    "MetricsStore",
     # Cancellation
     "CancellationToken",
     "AsyncCancellationToken",

@@ -96,7 +96,7 @@ class HierarchicalMemoryManager:
         self,
         consolidation_engine: ConsolidationEngine,
         session: Session,
-        zone_id: str = "default",
+        zone_id: str = "root",
     ):
         """Initialize the hierarchical memory manager.
 
@@ -578,7 +578,7 @@ def build_hierarchy(
     session: Session,
     memories: list[MemoryModel] | None = None,
     memory_ids: list[str] | None = None,
-    zone_id: str = "default",
+    zone_id: str = "root",
     **kwargs: Any,
 ) -> HierarchyResult:
     """Synchronous wrapper for build_hierarchy_async.

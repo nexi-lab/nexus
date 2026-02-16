@@ -9,7 +9,7 @@ import asyncio
 import logging
 import os
 from contextlib import suppress
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -173,13 +173,15 @@ def _startup_key_service(app: FastAPI) -> None:
         try:
             from nexus.identity.crypto import IdentityCrypto
             from nexus.identity.key_service import KeyService
-            from nexus.identity.models import AgentKeyModel  # noqa: F401 — register with Base
             from nexus.server.auth.oauth_crypto import OAuthCrypto
+            from nexus.storage.models.identity import AgentKeyModel
 
             # Ensure agent_keys table exists
             _nx_engine = getattr(app.state.nexus_fs, "_sql_engine", None)
             if _nx_engine is not None:
-                AgentKeyModel.__table__.create(_nx_engine, checkfirst=True)  # type: ignore[attr-defined]
+                from sqlalchemy import Table
+
+                cast(Table, AgentKeyModel.__table__).create(_nx_engine, checkfirst=True)
 
             # Reuse OAuthCrypto for Fernet encryption of private keys
             _enc_key = os.environ.get("NEXUS_OAUTH_ENCRYPTION_KEY", "").strip() or None
@@ -190,7 +192,7 @@ def _startup_key_service(app: FastAPI) -> None:
             _identity_crypto = IdentityCrypto(oauth_crypto=_identity_oauth_crypto)
 
             app.state.key_service = KeyService(
-                session_factory=app.state.nexus_fs.SessionLocal,
+                record_store=app.state.nexus_fs._record_store,
                 crypto=_identity_crypto,
             )
             # Inject into NexusFS for register_agent integration
@@ -463,3 +465,6 @@ async def _startup_workflow_engine(app: FastAPI) -> None:
             logger.info("Workflow engine started — loaded workflows from storage")
         except Exception as e:
             logger.warning(f"Workflow engine startup failed (non-fatal): {e}")
+
+    # Expose on app.state so routers can access without reaching into NexusFS
+    app.state.workflow_engine = engine

@@ -110,7 +110,7 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         self._cas_bloom = None
         self._bloom_capacity = bloom_capacity
         self._bloom_fp_rate = bloom_fp_rate
-        self._on_write_callback = on_write_callback
+        self.on_write_callback = on_write_callback
         self._ensure_roots()
         self._cas = CASBlobStore(self.cas_root)
         self._init_cas_bloom_filter()
@@ -288,9 +288,9 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         self._cas_bloom_add(content_hash)
 
         # Notify search brick of write (e.g., Zoekt reindex) via callback (Issue #1520)
-        if is_new and self._on_write_callback is not None:
+        if is_new and self.on_write_callback is not None:
             content_path = self._hash_to_path(content_hash)
-            self._on_write_callback(str(content_path))
+            self.on_write_callback(str(content_path))
 
         return HandlerResponse.ok(
             data=content_hash,
@@ -620,9 +620,9 @@ class LocalBackend(Backend, ChunkedStorageMixin, MultipartUploadMixin):
         self._cas_bloom_add(content_hash)
 
         # Notify search brick of write (e.g., Zoekt reindex) via callback
-        if result.is_new and self._on_write_callback is not None:
+        if result.is_new and self.on_write_callback is not None:
             content_path = self._hash_to_path(content_hash)
-            self._on_write_callback(str(content_path))
+            self.on_write_callback(str(content_path))
 
         return HandlerResponse.ok(
             data=content_hash,

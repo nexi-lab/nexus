@@ -70,15 +70,26 @@ class TableStats:
 
 
 # Shared SELECT column list for pg_stat_statements queries (DRY — Issue #762)
-_STAT_COLUMNS = """
-    query,
-    calls,
-    round(total_exec_time::numeric, 2) as total_time_ms,
-    round(mean_exec_time::numeric, 2) as mean_time_ms,
-    round(min_exec_time::numeric, 2) as min_time_ms,
-    round(max_exec_time::numeric, 2) as max_time_ms,
-    rows
-"""
+_STAT_COLUMNS = (
+    "query, calls,"
+    " round(total_exec_time::numeric, 2) as total_time_ms,"
+    " round(mean_exec_time::numeric, 2) as mean_time_ms,"
+    " round(min_exec_time::numeric, 2) as min_time_ms,"
+    " round(max_exec_time::numeric, 2) as max_time_ms,"
+    " rows"
+)
+
+# Pre-built queries using _STAT_COLUMNS (avoid f-string SQL — Issue #326)
+_QUERY_SLOWEST = text(
+    f"SELECT {_STAT_COLUMNS} FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT :limit"
+)
+_QUERY_MOST_FREQUENT = text(
+    f"SELECT {_STAT_COLUMNS} FROM pg_stat_statements ORDER BY calls DESC LIMIT :limit"
+)
+_QUERY_SLOW_AVERAGE = text(
+    f"SELECT {_STAT_COLUMNS} FROM pg_stat_statements"
+    " WHERE mean_exec_time > :min_mean_time ORDER BY mean_exec_time DESC LIMIT :limit"
+)
 
 
 def _row_to_query_stats(row: Any) -> QueryStats:
@@ -145,12 +156,7 @@ class PgMonitor:
             logger.warning("pg_stat_statements not enabled")
             return []
 
-        result = self.session.execute(
-            text(
-                f"SELECT {_STAT_COLUMNS} FROM pg_stat_statements ORDER BY total_exec_time DESC LIMIT :limit"
-            ),
-            {"limit": limit},
-        )
+        result = self.session.execute(_QUERY_SLOWEST, {"limit": limit})
         return [_row_to_query_stats(row) for row in result]
 
     def get_most_frequent_queries(self, limit: int = 10) -> list[QueryStats]:
@@ -166,12 +172,7 @@ class PgMonitor:
             logger.warning("pg_stat_statements not enabled")
             return []
 
-        result = self.session.execute(
-            text(
-                f"SELECT {_STAT_COLUMNS} FROM pg_stat_statements ORDER BY calls DESC LIMIT :limit"
-            ),
-            {"limit": limit},
-        )
+        result = self.session.execute(_QUERY_MOST_FREQUENT, {"limit": limit})
         return [_row_to_query_stats(row) for row in result]
 
     def get_slow_average_queries(
@@ -193,11 +194,7 @@ class PgMonitor:
             return []
 
         result = self.session.execute(
-            text(
-                f"SELECT {_STAT_COLUMNS} FROM pg_stat_statements"
-                " WHERE mean_exec_time > :min_mean_time ORDER BY mean_exec_time DESC LIMIT :limit"
-            ),
-            {"min_mean_time": min_mean_time_ms, "limit": limit},
+            _QUERY_SLOW_AVERAGE, {"min_mean_time": min_mean_time_ms, "limit": limit}
         )
         return [_row_to_query_stats(row) for row in result]
 

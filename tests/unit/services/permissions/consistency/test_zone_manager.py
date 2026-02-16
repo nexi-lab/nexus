@@ -30,9 +30,9 @@ class TestZoneManagerDefaults:
         zone_id, subj_z, obj_z, cross = mgr.validate_write_zones(
             zone_id=None, subject_zone_id=None, object_zone_id=None, relation="editor"
         )
-        assert zone_id == "default"
-        assert subj_z == "default"
-        assert obj_z == "default"
+        assert zone_id == "root"
+        assert subj_z == "root"
+        assert obj_z == "root"
         assert cross is False
 
     def test_empty_zone_id_defaults_to_default(self):
@@ -40,9 +40,9 @@ class TestZoneManagerDefaults:
         zone_id, subj_z, obj_z, cross = mgr.validate_write_zones(
             zone_id="", subject_zone_id=None, object_zone_id=None, relation="viewer"
         )
-        assert zone_id == "default"
-        assert subj_z == "default"
-        assert obj_z == "default"
+        assert zone_id == "root"
+        assert subj_z == "root"
+        assert obj_z == "root"
 
     def test_explicit_zone_id_preserved(self):
         mgr = ZoneManager(enforce=True)
@@ -206,9 +206,9 @@ class TestZoneManagerKillSwitch:
             object_zone_id=None,
             relation="editor",
         )
-        assert zone_id == "default"
-        assert subj_z == "default"
-        assert obj_z == "default"
+        assert zone_id == "root"
+        assert subj_z == "root"
+        assert obj_z == "root"
         assert cross is False
 
 

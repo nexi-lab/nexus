@@ -10,12 +10,15 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar
 
 from sqlalchemy.exc import SQLAlchemyError
 
 from nexus.a2a.models import Task, TaskState
 from nexus.a2a.stores.serialization import task_from_db_row, task_to_db_columns
+
+if TYPE_CHECKING:
+    from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -32,30 +35,12 @@ class DatabaseTaskStore:
 
     Parameters
     ----------
-    session_factory:
-        A callable that returns a SQLAlchemy ``Session`` (sync).
-    executor:
-        Optional ``ThreadPoolExecutor`` for DB operations.  When *None*
-        (the default) a per-instance pool is created (Decision 14).
+    record_store:
+        A ``RecordStoreABC`` providing ``session_factory`` for database access.
     """
 
-    def __init__(
-        self,
-        session_factory: Any,
-        *,
-        executor: ThreadPoolExecutor | None = None,
-    ) -> None:
-        import warnings
-
-        warnings.warn(
-            "DatabaseTaskStore is deprecated. Use VFSTaskStore for "
-            "filesystem-backed persistence. This store will be removed "
-            "in a future release.",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        self._session_factory = session_factory
-        self._executor = executor or ThreadPoolExecutor(max_workers=20, thread_name_prefix="a2a-db")
+    def __init__(self, record_store: RecordStoreABC) -> None:
+        self._session_factory = record_store.session_factory
 
     async def _run_in_session(self, fn: Callable[..., _T]) -> _T:
         """Run a sync function in the dedicated DB thread pool.
@@ -85,7 +70,7 @@ class DatabaseTaskStore:
         agent_id: str | None = None,
     ) -> None:
         def _do_save(session: Any) -> None:
-            from nexus.a2a.db import A2ATaskModel
+            from nexus.storage.models import A2ATaskModel
 
             existing = session.get(A2ATaskModel, task.id)
             if existing is not None and existing.zone_id == zone_id:
@@ -120,7 +105,7 @@ class DatabaseTaskStore:
 
     async def get(self, task_id: str, *, zone_id: str) -> Task | None:
         def _do_get(session: Any) -> Task | None:
-            from nexus.a2a.db import A2ATaskModel
+            from nexus.storage.models import A2ATaskModel
 
             row = session.get(A2ATaskModel, task_id)
             if row is None or row.zone_id != zone_id:
@@ -131,7 +116,7 @@ class DatabaseTaskStore:
 
     async def delete(self, task_id: str, *, zone_id: str) -> bool:
         def _do_delete(session: Any) -> bool:
-            from nexus.a2a.db import A2ATaskModel
+            from nexus.storage.models import A2ATaskModel
 
             row = session.get(A2ATaskModel, task_id)
             if row is None or row.zone_id != zone_id:
@@ -158,7 +143,7 @@ class DatabaseTaskStore:
         def _do_list(session: Any) -> list[Task]:
             from sqlalchemy import select
 
-            from nexus.a2a.db import A2ATaskModel
+            from nexus.storage.models import A2ATaskModel
 
             stmt = (
                 select(A2ATaskModel)

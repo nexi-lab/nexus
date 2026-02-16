@@ -277,7 +277,11 @@ async def get_operation_logger(
     from nexus.storage.operation_logger import OperationLogger
 
     context = _get_operation_context(auth_result)
-    session = nexus_fs.SessionLocal()
+    _record_store = getattr(nexus_fs, "_record_store", None)
+    session_factory = (
+        _record_store.session_factory if _record_store is not None else nexus_fs.SessionLocal
+    )
+    session = session_factory()
     zone_id = context.zone_id or "root"
 
     return OperationLogger(session=session), zone_id
@@ -326,7 +330,10 @@ async def get_exchange_audit_logger(
     context = _get_operation_context(auth_result)
     zone_id = context.zone_id or "root"
 
-    session_factory = nexus_fs.SessionLocal
+    _record_store = getattr(nexus_fs, "_record_store", None)
+    session_factory = (
+        _record_store.session_factory if _record_store is not None else nexus_fs.SessionLocal
+    )
     return ExchangeAuditLogger(session_factory=session_factory), zone_id
 
 
@@ -347,7 +354,10 @@ async def get_reputation_context(
     from nexus.services.reputation.dispute_service import DisputeService
     from nexus.services.reputation.reputation_service import ReputationService
 
-    session_factory = nexus_fs.SessionLocal
+    _record_store = getattr(nexus_fs, "_record_store", None)
+    session_factory = (
+        _record_store.session_factory if _record_store is not None else nexus_fs.SessionLocal
+    )
     reputation_service = ReputationService(
         session_factory=session_factory,
         cache_maxsize=10_000,

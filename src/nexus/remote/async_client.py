@@ -410,13 +410,6 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
 
         spec = METHOD_REGISTRY.get(name)
 
-        if spec is not None and spec.deprecated_message is not None:
-
-            async def _deprecated(*_args: Any, **_kwargs: Any) -> None:
-                raise NotImplementedError(spec.deprecated_message)
-
-            return _deprecated
-
         async def _async_proxy(*args: Any, **kwargs: Any) -> Any:
             return await self._dispatch_rpc(name, spec, args, kwargs)
 

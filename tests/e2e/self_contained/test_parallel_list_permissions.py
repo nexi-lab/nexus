@@ -40,7 +40,7 @@ def _make_backend(tree: dict[str, list[str]]) -> MagicMock:
 
 def _make_context(
     user: str = "alice",
-    zone_id: str = "default",
+    zone_id: str = "root",
     is_admin: bool = False,
 ) -> OperationContext:
     """Create an OperationContext for testing."""

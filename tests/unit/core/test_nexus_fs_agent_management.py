@@ -237,7 +237,7 @@ class TestDetermineAgentKeyExpiration:
                 key_hash="hash",
                 subject_type="user",
                 subject_id="alice",
-                zone_id="default",
+                zone_id="root",
                 expires_at=datetime.now(UTC) + timedelta(days=30),
                 revoked=0,
             )
@@ -263,7 +263,7 @@ class TestDetermineAgentKeyExpiration:
                 key_hash="hash",
                 subject_type="user",
                 subject_id="alice",
-                zone_id="default",
+                zone_id="root",
                 expires_at=None,
                 revoked=0,
             )
@@ -307,7 +307,7 @@ class TestDetermineAgentKeyExpiration:
                 key_hash="hash",
                 subject_type="user",
                 subject_id="alice",
-                zone_id="default",
+                zone_id="root",
                 expires_at=datetime.now(UTC) - timedelta(days=1),  # Expired
                 revoked=0,
             )
@@ -332,7 +332,7 @@ class TestDetermineAgentKeyExpiration:
                 key_hash="hash",
                 subject_type="agent",
                 subject_id="alice,agent1",
-                zone_id="default",
+                zone_id="root",
                 expires_at=datetime.now(UTC) + timedelta(days=10),
                 revoked=0,
             )
@@ -345,7 +345,7 @@ class TestDetermineAgentKeyExpiration:
                 key_hash="hash2",
                 subject_type="user",
                 subject_id="alice",
-                zone_id="default",
+                zone_id="root",
                 expires_at=datetime.now(UTC) + timedelta(days=30),
                 revoked=0,
             )
@@ -372,7 +372,7 @@ class TestDetermineAgentKeyExpiration:
                 key_hash="hash",
                 subject_type="user",
                 subject_id="alice",
-                zone_id="default",
+                zone_id="root",
                 expires_at=datetime.now(UTC) + timedelta(days=30),
                 revoked=1,  # Revoked
             )
@@ -396,7 +396,7 @@ class TestDeleteAgentCleanup:
     ) -> None:
         """Test that delete_agent revokes all API keys for the agent."""
         # Register agent first
-        context = {"user_id": "alice", "zone_id": "default"}
+        context = {"user_id": "alice", "zone_id": "root"}
         nx.register_agent(
             agent_id="alice,test_agent",
             name="Test Agent",
@@ -413,7 +413,7 @@ class TestDeleteAgentCleanup:
                 key_hash="hash",
                 subject_type="agent",
                 subject_id="alice,test_agent",
-                zone_id="default",
+                zone_id="root",
                 revoked=0,
             )
             session.add(agent_key)
@@ -467,7 +467,7 @@ class TestDeleteAgentCleanup:
 
     def test_delete_agent_removes_directory(self, nx: NexusFS) -> None:
         """Test that delete_agent removes agent directory."""
-        context = {"user_id": "alice", "zone_id": "default"}
+        context = {"user_id": "alice", "zone_id": "root"}
         nx.register_agent(
             agent_id="alice,test_agent",
             name="Test Agent",
@@ -509,7 +509,7 @@ class TestDeleteAgentCleanup:
         original_rebac_delete = nx.rebac_delete
         nx.rebac_delete = MagicMock(return_value=True)
 
-        context = {"user_id": "alice", "zone_id": "default"}
+        context = {"user_id": "alice", "zone_id": "root"}
         nx.register_agent(
             agent_id="alice,test_agent",
             name="Test Agent",
@@ -531,7 +531,7 @@ class TestDeleteAgentCleanup:
 
     def test_delete_agent_handles_missing_directory(self, nx: NexusFS) -> None:
         """Test that delete_agent handles missing directory gracefully."""
-        context = {"user_id": "alice", "zone_id": "default"}
+        context = {"user_id": "alice", "zone_id": "root"}
 
         # Register agent
         nx.register_agent(
@@ -572,7 +572,7 @@ class TestDeleteAgentCleanup:
         original_rebac_manager = nx._rebac_manager
         nx._rebac_manager = None
 
-        context = {"user_id": "alice", "zone_id": "default"}
+        context = {"user_id": "alice", "zone_id": "root"}
         nx.register_agent(
             agent_id="alice,test_agent",
             name="Test Agent",

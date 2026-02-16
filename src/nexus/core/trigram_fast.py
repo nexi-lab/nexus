@@ -95,7 +95,7 @@ def get_index_path(zone_id: str, base_dir: str = "") -> str:
     # Sanitize zone_id to prevent path traversal.
     safe_zone_id = os.path.basename(zone_id)
     if not safe_zone_id:
-        safe_zone_id = "default"
+        safe_zone_id = "root"
     return os.path.join(base_dir, f"{safe_zone_id}.trgm")
 
 

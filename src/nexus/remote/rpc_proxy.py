@@ -123,14 +123,6 @@ class RPCProxyBase:
 
         spec = METHOD_REGISTRY.get(name)
 
-        # Deprecated methods
-        if spec is not None and spec.deprecated_message is not None:
-
-            def _deprecated(*_args: Any, **_kwargs: Any) -> None:
-                raise NotImplementedError(spec.deprecated_message)
-
-            return _deprecated
-
         # Build proxy method
         def _proxy(*args: Any, **kwargs: Any) -> Any:
             return self._dispatch_rpc(name, spec, args, kwargs)

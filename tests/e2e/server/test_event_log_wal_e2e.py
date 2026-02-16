@@ -244,7 +244,7 @@ def nexus_server_with_permissions(isolated_db, tmp_path):
         )
 
     # Mint admin JWT token (--auth-type local validates JWTs, not static keys)
-    admin_token = _mint_jwt(jwt_secret, "admin", "default", is_admin=True)
+    admin_token = _mint_jwt(jwt_secret, "admin", "root", is_admin=True)
 
     yield {
         "port": port,
@@ -280,7 +280,7 @@ class TestWALWithPermissions:
         admin_token = info["admin_token"]
         jwt_secret = info["jwt_secret"]
 
-        user_token = _mint_jwt(jwt_secret, "alice", "default", is_admin=False)
+        user_token = _mint_jwt(jwt_secret, "alice", "root", is_admin=False)
 
         with httpx.Client(base_url=base_url, timeout=30.0, trust_env=False) as client:
             # 1. Health check
@@ -302,7 +302,7 @@ class TestWALWithPermissions:
                     "subject": ["user", "alice"],
                     "relation": "direct_editor",
                     "object": ["file", "/workspace"],
-                    "zone_id": "default",
+                    "zone_id": "root",
                 },
                 admin_token,
             )
@@ -353,7 +353,7 @@ class TestWALWithPermissions:
         admin_token = info["admin_token"]
 
         # Create a user with no grants
-        user_token = _mint_jwt(jwt_secret, "bob", "default", is_admin=False)
+        user_token = _mint_jwt(jwt_secret, "bob", "root", is_admin=False)
 
         with httpx.Client(base_url=base_url, timeout=30.0, trust_env=False) as client:
             # Admin: create the directory

@@ -42,13 +42,14 @@ def get_async_nexus_fs(request: Request) -> Any:
 def get_lock_manager(request: Request) -> Any:
     """Get the distributed lock manager from NexusFS, raising 503 if not configured."""
     fs = get_nexus_fs(request)
-    if not fs._has_distributed_locks():
+    lock_mgr = getattr(fs, "_lock_manager", None)
+    if lock_mgr is None:
         raise HTTPException(
             status_code=503,
             detail="Distributed lock manager not configured. "
             "Enable Redis/Dragonfly for distributed locking.",
         )
-    return fs._lock_manager
+    return lock_mgr
 
 
 def get_subscription_manager(request: Request) -> Any:

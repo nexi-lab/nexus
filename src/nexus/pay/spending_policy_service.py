@@ -631,36 +631,38 @@ class SpendingPolicyService:
         Called fire-and-forget after a successful transfer.
         Also updates in-memory rate limit counters.
         """
-        from sqlalchemy import text as sa_text
+        from sqlalchemy import func
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        from nexus.storage.models.spending_policy import SpendingLedgerModel
 
         micro_amount = credits_to_micro(amount)
 
         async with self._session_factory() as session, session.begin():
             for period_type in ("daily", "weekly", "monthly"):
                 period_start = _current_period_start(period_type)
-                # UPSERT: insert or increment
-                stmt = sa_text("""
-                    INSERT INTO spending_ledger
-                        (agent_id, zone_id, period_type, period_start,
-                         amount_spent, tx_count, updated_at)
-                    VALUES (:agent_id, :zone_id, :period_type,
-                            :period_start, :amount, 1, NOW())
-                    ON CONFLICT (agent_id, zone_id, period_type, period_start)
-                    DO UPDATE SET
-                        amount_spent = spending_ledger.amount_spent + :amount,
-                        tx_count = spending_ledger.tx_count + 1,
-                        updated_at = NOW()
-                """)
-                await session.execute(
-                    stmt,
-                    {
-                        "agent_id": agent_id,
-                        "zone_id": zone_id,
-                        "period_type": period_type,
-                        "period_start": period_start,
-                        "amount": micro_amount,
-                    },
+                # UPSERT via ORM: insert or increment
+                stmt = (
+                    pg_insert(SpendingLedgerModel)
+                    .values(
+                        agent_id=agent_id,
+                        zone_id=zone_id,
+                        period_type=period_type,
+                        period_start=period_start,
+                        amount_spent=micro_amount,
+                        tx_count=1,
+                        updated_at=func.now(),
+                    )
+                    .on_conflict_do_update(
+                        constraint="uq_spending_ledger_agent_period",
+                        set_={
+                            "amount_spent": SpendingLedgerModel.amount_spent + micro_amount,
+                            "tx_count": SpendingLedgerModel.tx_count + 1,
+                            "updated_at": func.now(),
+                        },
+                    )
                 )
+                await session.execute(stmt)
 
         # Update rate limit counters
         self.record_rate_limit_hit(agent_id, zone_id)

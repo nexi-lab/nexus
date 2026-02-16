@@ -509,7 +509,7 @@ class DelegationService:
                     "subject": ("agent", worker_id),
                     "relation": grant.relation,
                     "object": (grant.object_type, grant.object_id),
-                    "zone_id": zone_id or "default",
+                    "zone_id": zone_id or "root",
                     "expires_at": expires_at,
                     "conditions": json.dumps({"delegated_by": coordinator_agent_id}),
                 }
@@ -586,10 +586,10 @@ class DelegationService:
         expires_at: datetime | None,
     ) -> str:
         """Create API key for the worker agent."""
-        from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+        from nexus.identity.api_key_ops import create_api_key
 
         with self._session() as session:
-            _, raw_key = DatabaseAPIKeyAuth.create_key(
+            _key_id, raw_key = create_api_key(
                 session,
                 user_id=owner_id,
                 name=f"delegation:{worker_name}",
@@ -636,7 +636,7 @@ class DelegationService:
 
     def _revoke_worker_api_key(self, worker_id: str) -> None:
         """Revoke all API keys for the worker agent."""
-        from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+        from nexus.identity.api_key_ops import revoke_api_key
         from nexus.storage.models.auth import APIKeyModel
 
         with self._session() as session:
@@ -649,7 +649,7 @@ class DelegationService:
                 .all()
             )
             for key in keys:
-                DatabaseAPIKeyAuth.revoke_key(session, key.key_id)
+                revoke_api_key(session, key.key_id)
 
     def _update_delegation_status(self, delegation_id: str, status: DelegationStatus) -> None:
         """Update delegation record status (soft-delete pattern, Issue 8A)."""

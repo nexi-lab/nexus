@@ -15,8 +15,8 @@ Usage:
     # Consensus mode (multi-node with Raft via ZoneManager)
     from nexus.raft import ZoneManager
     mgr = ZoneManager(1, "/var/lib/nexus/zones", "0.0.0.0:2126")
-    handle = mgr.create_zone("default", ["2@peer:2126"])
-    store = RaftMetadataStore(engine=handle, zone_id="default")
+    handle = mgr.create_zone("root", ["2@peer:2126"])
+    store = RaftMetadataStore(engine=handle, zone_id="root")
 
     # Remote mode (thin client)
     store = await RaftMetadataStore.remote("10.0.0.2:2026")
@@ -116,8 +116,8 @@ class RaftMetadataStore(FileMetadataProtocol):
         # Consensus mode (via ZoneManager + ZoneHandle)
         from nexus.raft import ZoneManager
         mgr = ZoneManager(1, "/var/lib/nexus/zones", "0.0.0.0:2126")
-        handle = mgr.create_zone("default", ["2@peer:2126"])
-        store = RaftMetadataStore(engine=handle, zone_id="default")
+        handle = mgr.create_zone("root", ["2@peer:2126"])
+        store = RaftMetadataStore(engine=handle, zone_id="root")
         store.put(metadata)  # replicated
 
         # Remote mode (thin client)
@@ -451,9 +451,9 @@ class RaftMetadataStore(FileMetadataProtocol):
         """
         # RaftMetadataStore is zone-local: each zone has its own sled database.
         # zone_id parameter accepted for API consistency but filtering is inherent.
-        # RaftMetadataStore is zone-local. Non-zoned stores serve the "default" zone,
-        # so zone_id="default" is always allowed. Only assert on specific zone_ids.
-        if zone_id is not None and zone_id != "default":
+        # RaftMetadataStore is zone-local. Non-zoned stores serve the "root" zone,
+        # so zone_id="root" is always allowed. Only assert on specific zone_ids.
+        if zone_id is not None and zone_id != "root":
             assert self._zone_id is not None, (
                 f"zone_id filter '{zone_id}' passed to a non-zone-scoped store"
             )
@@ -517,9 +517,9 @@ class RaftMetadataStore(FileMetadataProtocol):
         Memory usage is O(limit) instead of O(total).
         """
         # RaftMetadataStore is zone-local: zone_id accepted for API consistency.
-        # RaftMetadataStore is zone-local. Non-zoned stores serve the "default" zone,
-        # so zone_id="default" is always allowed. Only assert on specific zone_ids.
-        if zone_id is not None and zone_id != "default":
+        # RaftMetadataStore is zone-local. Non-zoned stores serve the "root" zone,
+        # so zone_id="root" is always allowed. Only assert on specific zone_ids.
+        if zone_id is not None and zone_id != "root":
             assert self._zone_id is not None, (
                 f"zone_id filter '{zone_id}' passed to a non-zone-scoped store"
             )
@@ -1078,9 +1078,9 @@ class RaftMetadataStore(FileMetadataProtocol):
             List of file metadata
         """
         # RaftMetadataStore is zone-local: zone_id accepted for API consistency.
-        # RaftMetadataStore is zone-local. Non-zoned stores serve the "default" zone,
-        # so zone_id="default" is always allowed. Only assert on specific zone_ids.
-        if zone_id is not None and zone_id != "default":
+        # RaftMetadataStore is zone-local. Non-zoned stores serve the "root" zone,
+        # so zone_id="root" is always allowed. Only assert on specific zone_ids.
+        if zone_id is not None and zone_id != "root":
             assert self._zone_id is not None, (
                 f"zone_id filter '{zone_id}' passed to a non-zone-scoped store"
             )

@@ -1,9 +1,14 @@
 """Protocols (interfaces) for IPC brick dependencies.
 
-The IPC brick depends on VFS and EventBus capabilities but does NOT
-import from ``nexus.core`` directly. Instead, it defines minimal
-Protocol interfaces here. The real implementations are injected at
-wiring time (factory/builder).
+The IPC brick depends on EventBus capabilities and a pluggable storage
+driver (``IPCStorageDriver``) but does NOT import from ``nexus.core``
+directly. It defines minimal Protocol interfaces here for event
+publishing/subscribing. The real implementations are injected at wiring
+time (factory/builder).
+
+``VFSOperations`` is retained for the ``VFSStorageDriver`` adapter and
+``ProxyVFSBrick``, but IPC delivery/sweep/discovery/provisioning
+components use ``IPCStorageDriver`` from ``nexus.ipc.storage.protocol``.
 
 This keeps the IPC brick testable in isolation — unit tests inject
 in-memory fakes that satisfy these Protocols.

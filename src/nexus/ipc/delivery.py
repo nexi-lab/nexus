@@ -1,7 +1,7 @@
-"""Message sending and processing for filesystem-as-IPC.
+"""Message sending and processing for IPC.
 
-MessageSender: writes messages to recipient inboxes with backpressure,
-    permission checks (via VFS), and best-effort EventBus notification.
+MessageSender: writes messages to recipient inboxes with backpressure
+    and best-effort EventBus notification.
 
 MessageProcessor: reads messages from an agent's inbox, invokes a handler,
     and manages the lifecycle (inbox -> processed on success, inbox ->
@@ -30,7 +30,8 @@ from nexus.ipc.exceptions import (
     InboxFullError,
     InboxNotFoundError,
 )
-from nexus.ipc.protocols import EventPublisher, VFSOperations
+from nexus.ipc.protocols import EventPublisher
+from nexus.ipc.storage.protocol import IPCStorageDriver
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,7 @@ DEFAULT_MAX_PAYLOAD_BYTES = 1_048_576
 
 
 class MessageSender:
-    """Sends messages to agent inboxes via VFS writes.
+    """Sends messages to agent inboxes via IPCStorageDriver.
 
     Each send operation:
     1. Validates the envelope
@@ -56,7 +57,7 @@ class MessageSender:
     6. Publishes EventBus notification (best-effort)
 
     Args:
-        vfs: VFS operations for file read/write.
+        storage: Storage driver for IPC read/write operations.
         event_publisher: EventBus publisher for notifications. Optional.
         zone_id: Zone ID for multi-tenant isolation.
         max_inbox_size: Maximum messages per inbox before backpressure.
@@ -64,14 +65,14 @@ class MessageSender:
 
     def __init__(
         self,
-        vfs: VFSOperations,
+        storage: IPCStorageDriver,
         event_publisher: EventPublisher | None = None,
         *,
         zone_id: str,
         max_inbox_size: int = DEFAULT_MAX_INBOX_SIZE,
         max_payload_bytes: int = DEFAULT_MAX_PAYLOAD_BYTES,
     ) -> None:
-        self._vfs = vfs
+        self._storage = storage
         self._publisher = event_publisher
         self._zone_id = zone_id
         self._max_inbox_size = max_inbox_size
@@ -100,26 +101,26 @@ class MessageSender:
 
         # 3. Check inbox exists
         recipient_inbox = inbox_path(envelope.recipient)
-        if not await self._vfs.exists(recipient_inbox, self._zone_id):
+        if not await self._storage.exists(recipient_inbox, self._zone_id):
             raise InboxNotFoundError(envelope.recipient)
 
         # 4. Check backpressure (count_dir is more efficient than list_dir)
-        inbox_count = await self._vfs.count_dir(recipient_inbox, self._zone_id)
+        inbox_count = await self._storage.count_dir(recipient_inbox, self._zone_id)
         if inbox_count >= self._max_inbox_size:
             raise InboxFullError(envelope.recipient, inbox_count, self._max_inbox_size)
 
         # 5. Write to recipient's inbox
         msg_path = message_path_in_inbox(envelope.recipient, envelope.id, envelope.timestamp)
-        await self._vfs.write(msg_path, data, self._zone_id)
+        await self._storage.write(msg_path, data, self._zone_id)
 
         # 6. Copy to sender's outbox (audit trail, best-effort)
         try:
             outbox_dir = outbox_path(envelope.sender)
-            if await self._vfs.exists(outbox_dir, self._zone_id):
+            if await self._storage.exists(outbox_dir, self._zone_id):
                 outbox_msg_path = message_path_in_outbox(
                     envelope.sender, envelope.id, envelope.timestamp
                 )
-                await self._vfs.write(outbox_msg_path, data, self._zone_id)
+                await self._storage.write(outbox_msg_path, data, self._zone_id)
         except Exception:
             logger.warning(
                 "Failed to write outbox copy for message %s from %s",
@@ -211,7 +212,7 @@ class MessageProcessor:
     - Duplicate: skip (dedup via in-memory ID set)
 
     Args:
-        vfs: VFS operations for file read/write/rename.
+        storage: Storage driver for IPC read/write/rename.
         agent_id: The agent whose inbox to process.
         handler: Async callback invoked for each valid message.
         zone_id: Zone ID for multi-tenant isolation.
@@ -220,14 +221,14 @@ class MessageProcessor:
 
     def __init__(
         self,
-        vfs: VFSOperations,
+        storage: IPCStorageDriver,
         agent_id: str,
         handler: MessageHandler,
         *,
         zone_id: str,
         max_dedup_size: int = 10_000,
     ) -> None:
-        self._vfs = vfs
+        self._storage = storage
         self._agent_id = agent_id
         self._handler = handler
         self._zone_id = zone_id
@@ -242,7 +243,7 @@ class MessageProcessor:
         """
         agent_inbox = inbox_path(self._agent_id)
         try:
-            filenames = await self._vfs.list_dir(agent_inbox, self._zone_id)
+            filenames = await self._storage.list_dir(agent_inbox, self._zone_id)
         except Exception:
             logger.warning(
                 "Failed to list inbox for agent %s",
@@ -270,7 +271,7 @@ class MessageProcessor:
         """
         # Read and parse envelope
         try:
-            data = await self._vfs.read(msg_path, self._zone_id)
+            data = await self._storage.read(msg_path, self._zone_id)
             envelope = MessageEnvelope.from_bytes(data)
         except FileNotFoundError:
             # File was already moved/processed by another processor (race condition).
@@ -302,7 +303,7 @@ class MessageProcessor:
                 dl_path = message_path_in_dead_letter(
                     self._agent_id, envelope.id, envelope.timestamp
                 )
-                await self._vfs.rename(msg_path, dl_path, self._zone_id)
+                await self._storage.rename(msg_path, dl_path, self._zone_id)
             except Exception as e:
                 logger.debug(
                     "Best-effort cleanup of duplicate message %s failed: %s", envelope.id, e
@@ -336,7 +337,7 @@ class MessageProcessor:
         # Success: move to processed
         try:
             dest = message_path_in_processed(self._agent_id, envelope.id, envelope.timestamp)
-            await self._vfs.rename(msg_path, dest, self._zone_id)
+            await self._storage.rename(msg_path, dest, self._zone_id)
         except Exception:
             logger.warning(
                 "Failed to move processed message %s (handler already succeeded)",
@@ -358,7 +359,7 @@ class MessageProcessor:
         """Move a message to the dead letter directory."""
         try:
             dest = message_path_in_dead_letter(self._agent_id, envelope.id, envelope.timestamp)
-            await self._vfs.rename(msg_path, dest, self._zone_id)
+            await self._storage.rename(msg_path, dest, self._zone_id)
             logger.info(
                 "Message %s moved to dead_letter for agent %s (reason: %s)",
                 envelope.id,
@@ -377,7 +378,7 @@ class MessageProcessor:
         try:
             filename = msg_path.rsplit("/", 1)[-1]
             dest = f"{dead_letter_path(self._agent_id)}/{filename}"
-            await self._vfs.rename(msg_path, dest, self._zone_id)
+            await self._storage.rename(msg_path, dest, self._zone_id)
             logger.info(
                 "Malformed message moved to dead_letter for agent %s: %s (reason: %s)",
                 self._agent_id,

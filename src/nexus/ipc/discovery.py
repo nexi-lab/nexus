@@ -1,10 +1,10 @@
-"""Agent discovery via filesystem.
+"""Agent discovery via IPC storage.
 
-Agents discover each other by listing the filesystem:
-- ``ls /agents/`` = who exists
+Agents discover each other by querying the storage driver:
+- ``list_dir /agents/`` = who exists
 - ``read /agents/{id}/AGENT.json`` = capabilities and status
 
-Bridges internal discovery (filesystem) with external discovery
+Bridges internal discovery (IPC storage) with external discovery
 (A2A Agent Card at ``/.well-known/agent.json``).
 """
 
@@ -17,7 +17,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from nexus.ipc.conventions import AGENTS_ROOT, agent_card_path
-from nexus.ipc.protocols import VFSOperations
+from nexus.ipc.storage.protocol import IPCStorageDriver
 
 logger = logging.getLogger(__name__)
 
@@ -44,20 +44,20 @@ class DiscoveredAgent:
 
 
 class AgentDiscovery:
-    """Discovers agents by reading the filesystem.
+    """Discovers agents by reading IPC storage.
 
     Args:
-        vfs: VFS operations for listing and reading.
+        storage: Storage driver for IPC listing and reading.
         zone_id: Zone ID for multi-tenant isolation.
     """
 
     def __init__(
         self,
-        vfs: VFSOperations,
-        zone_id: str,
+        storage: IPCStorageDriver,
+        zone_id: str = "root",
         cache_ttl_seconds: float = 10.0,
     ) -> None:
-        self._vfs = vfs
+        self._storage = storage
         self._zone_id = zone_id
         self._cache_ttl = cache_ttl_seconds
         self._cache: list[DiscoveredAgent] | None = None
@@ -70,7 +70,7 @@ class AgentDiscovery:
             List of agent directory names under ``/agents/``.
         """
         try:
-            entries = await self._vfs.list_dir(AGENTS_ROOT, self._zone_id)
+            entries = await self._storage.list_dir(AGENTS_ROOT, self._zone_id)
             return sorted(entries)
         except Exception:
             logger.warning(
@@ -91,7 +91,7 @@ class AgentDiscovery:
         """
         card_path = agent_card_path(agent_id)
         try:
-            data = await self._vfs.read(card_path, self._zone_id)
+            data = await self._storage.read(card_path, self._zone_id)
             card_dict = json.loads(data)
         except Exception:
             logger.debug(

@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 
 from nexus.ipc.conventions import AGENTS_ROOT, dead_letter_path, inbox_path
 from nexus.ipc.envelope import MessageEnvelope
-from nexus.ipc.protocols import VFSOperations
+from nexus.ipc.storage.protocol import IPCStorageDriver
 
 logger = logging.getLogger(__name__)
 
@@ -29,18 +29,18 @@ class TTLSweeper:
     the server process.
 
     Args:
-        vfs: VFS operations for file listing, reading, and renaming.
+        storage: Storage driver for IPC listing, reading, and renaming.
         zone_id: Zone ID for multi-tenant isolation.
         interval: Seconds between sweep cycles.
     """
 
     def __init__(
         self,
-        vfs: VFSOperations,
-        zone_id: str,
+        storage: IPCStorageDriver,
+        zone_id: str = "root",
         interval: float = DEFAULT_SWEEP_INTERVAL,
     ) -> None:
-        self._vfs = vfs
+        self._storage = storage
         self._zone_id = zone_id
         self._interval = interval
         self._running = False
@@ -72,7 +72,7 @@ class TTLSweeper:
         """
         expired_count = 0
         try:
-            agent_ids = await self._vfs.list_dir(AGENTS_ROOT, self._zone_id)
+            agent_ids = await self._storage.list_dir(AGENTS_ROOT, self._zone_id)
         except Exception:
             logger.debug("Cannot list %s for sweep", AGENTS_ROOT)
             return 0
@@ -102,7 +102,7 @@ class TTLSweeper:
         expired = 0
 
         try:
-            filenames = await self._vfs.list_dir(agent_inbox, self._zone_id)
+            filenames = await self._storage.list_dir(agent_inbox, self._zone_id)
         except Exception:
             return 0
 
@@ -119,11 +119,11 @@ class TTLSweeper:
 
             msg_path = f"{agent_inbox}/{filename}"
             try:
-                data = await self._vfs.read(msg_path, self._zone_id)
+                data = await self._storage.read(msg_path, self._zone_id)
                 envelope = MessageEnvelope.from_bytes(data)
                 if envelope.is_expired():
                     dest = f"{dead_letter_path(agent_id)}/{filename}"
-                    await self._vfs.rename(msg_path, dest, self._zone_id)
+                    await self._storage.rename(msg_path, dest, self._zone_id)
                     expired += 1
                     logger.debug(
                         "Expired message %s moved to dead_letter for agent %s",

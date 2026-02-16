@@ -213,12 +213,7 @@ def workflows_runs(workflow_name: str, limit: int) -> None:
     try:
         console.print("[yellow]Workflow execution history not yet implemented.[/yellow]")
         console.print(f"This will show the last {limit} executions of '{workflow_name}'")
-
-        # TODO: Implement when database storage is ready
-        # from nexus.workflows import get_engine
-        # engine = get_engine()
-        # executions = engine.get_executions(workflow_name, limit=limit)
-        # ... display in table ...
+        # TODO(#1443): implement workflow execution history when database storage is ready
 
     except Exception as e:
         handle_error(e)

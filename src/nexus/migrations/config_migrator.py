@@ -232,11 +232,6 @@ class ConfigMigrator:
             Dictionary mapping old names to new names
         """
         renames: dict[str, str] = {}
-
-        # Add version-specific renames
-        # if from_version < "0.7.0" <= to_version:
-        #     renames["old_field"] = "new_field"
-
         return renames
 
     def _get_new_required_fields(
@@ -254,9 +249,4 @@ class ConfigMigrator:
             Dictionary mapping field names to default values
         """
         new_fields: dict[str, Any] = {}
-
-        # Add version-specific new fields
-        # if from_version < "0.7.0" <= to_version:
-        #     new_fields["new_required_field"] = "default_value"
-
         return new_fields

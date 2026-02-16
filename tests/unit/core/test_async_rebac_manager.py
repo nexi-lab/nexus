@@ -87,17 +87,18 @@ class TestCreateAsyncEngineFromUrl:
     def test_postgresql_url(self, mock_store_cls: MagicMock) -> None:
         """Test creating engine from PostgreSQL URL.
 
-        Mocks SQLAlchemyRecordStore to avoid requiring psycopg2 in CI.
+        Mocks SQLAlchemyRecordStore to avoid requiring psycopg2/asyncpg in CI.
         """
-        from sqlalchemy.ext.asyncio import create_async_engine as _create
+        from sqlalchemy import make_url
 
-        mock_engine = _create("postgresql+asyncpg://user/pass@localhost/db")
+        mock_engine = MagicMock()
+        mock_engine.url = make_url("postgresql+asyncpg://user:pass@localhost/db")
         mock_store = MagicMock()
         mock_store._async_engine = mock_engine
         mock_store.async_session_factory = MagicMock()
         mock_store_cls.return_value = mock_store
 
-        url = "postgresql://user/pass@localhost/db"
+        url = "postgresql://user:pass@localhost/db"
         engine = create_async_engine_from_url(url)
         assert "asyncpg" in str(engine.url)
 

@@ -4,13 +4,11 @@ from datetime import datetime
 
 import pytest
 
+from nexus.core.rpc_codec import RPCEncoder, decode_rpc_message, encode_rpc_message
 from nexus.server.protocol import (
-    RPCEncoder,
     RPCErrorCode,
     RPCRequest,
     RPCResponse,
-    decode_rpc_message,
-    encode_rpc_message,
     parse_method_params,
 )
 

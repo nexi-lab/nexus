@@ -21,9 +21,6 @@ logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
 
-# Dedicated thread pool for DB operations (Decision 14)
-_DB_EXECUTOR = ThreadPoolExecutor(max_workers=20, thread_name_prefix="a2a-db")
-
 
 class DatabaseTaskStore:
     """SQLAlchemy-backed task store.
@@ -37,9 +34,17 @@ class DatabaseTaskStore:
     ----------
     session_factory:
         A callable that returns a SQLAlchemy ``Session`` (sync).
+    executor:
+        Optional ``ThreadPoolExecutor`` for DB operations.  When *None*
+        (the default) a per-instance pool is created (Decision 14).
     """
 
-    def __init__(self, session_factory: Any) -> None:
+    def __init__(
+        self,
+        session_factory: Any,
+        *,
+        executor: ThreadPoolExecutor | None = None,
+    ) -> None:
         import warnings
 
         warnings.warn(
@@ -50,6 +55,7 @@ class DatabaseTaskStore:
             stacklevel=2,
         )
         self._session_factory = session_factory
+        self._executor = executor or ThreadPoolExecutor(max_workers=20, thread_name_prefix="a2a-db")
 
     async def _run_in_session(self, fn: Callable[..., _T]) -> _T:
         """Run a sync function in the dedicated DB thread pool.
@@ -69,7 +75,7 @@ class DatabaseTaskStore:
             finally:
                 session.close()
 
-        return await loop.run_in_executor(_DB_EXECUTOR, _wrapper)
+        return await loop.run_in_executor(self._executor, _wrapper)
 
     async def save(
         self,

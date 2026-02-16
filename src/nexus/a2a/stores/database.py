@@ -41,6 +41,7 @@ class DatabaseTaskStore:
 
     def __init__(self, record_store: RecordStoreABC) -> None:
         self._session_factory = record_store.session_factory
+        self._executor = ThreadPoolExecutor(max_workers=20, thread_name_prefix="a2a-db")
 
     async def _run_in_session(self, fn: Callable[..., _T]) -> _T:
         """Run a sync function in the dedicated DB thread pool.

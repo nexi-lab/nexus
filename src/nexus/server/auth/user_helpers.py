@@ -9,7 +9,6 @@ Provides utility functions for:
 
 import logging
 from datetime import UTC, datetime
-from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -32,7 +31,6 @@ from nexus.storage.models import (
     UserModel,
     UserOAuthAccountModel,
 )
-from nexus.storage.models.permissions import ReBACTupleModel
 
 logger = logging.getLogger(__name__)
 

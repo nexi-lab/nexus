@@ -147,7 +147,7 @@ between VFS and storage. Without it, the kernel cannot describe files.
 ### NexusFS — Syscall Dispatch Layer
 
 `NexusFS` is the kernel entry point, analogous to Linux's syscall layer (`sys_open`,
-`sys_read`). It wires VFSRouter + MetastoreABC + ObjectStoreABC into
+`sys_read`). It wires VFSRouter + FileMetadataProtocol + ObjectStoreABC into
 user-facing operations (read, write, list, mkdir, mount). NexusFS contains
 **no service business logic** — services are accessed through `ServiceRegistry`
 (Phase 2) or thin delegation stubs (Phase 1).

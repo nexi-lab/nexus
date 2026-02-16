@@ -92,6 +92,7 @@ EXPORT_FORMATS = {
     description="Google Drive with OAuth 2.0 authentication",
     category="oauth",
     requires=["google-api-python-client", "google-auth-oauthlib"],
+    service_name="google-drive",
 )
 class GoogleDriveConnectorBackend(Backend):
     """

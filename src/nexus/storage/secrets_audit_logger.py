@@ -157,17 +157,11 @@ class SecretsAuditLogger:
             metadata_hash=metadata_h,
         )
 
-        session = self._session_factory()
-        try:
+        with self._session_factory() as session:
             session.add(row)
             session.flush()
             record_id: str = row.id
             session.commit()
-        except Exception:
-            session.rollback()
-            raise
-        finally:
-            session.close()
 
         return record_id
 
@@ -177,12 +171,9 @@ class SecretsAuditLogger:
 
     def get_event(self, record_id: str) -> SecretsAuditLogModel | None:
         """Get a single audit event by ID."""
-        session = self._session_factory()
-        try:
+        with self._session_factory() as session:
             stmt = select(SecretsAuditLogModel).where(SecretsAuditLogModel.id == record_id)
             return session.execute(stmt).scalar_one_or_none()
-        finally:
-            session.close()
 
     def list_events_cursor(
         self,
@@ -192,19 +183,13 @@ class SecretsAuditLogger:
         cursor: str | None = None,
     ) -> tuple[list[SecretsAuditLogModel], str | None]:
         """Query events with cursor-based pagination."""
-        session = self._session_factory()
-        try:
+        with self._session_factory() as session:
             return self._query.list_cursor(session, filters=filters, limit=limit, cursor=cursor)
-        finally:
-            session.close()
 
     def count_events(self, **filters: Any) -> int:
         """Count matching events."""
-        session = self._session_factory()
-        try:
+        with self._session_factory() as session:
             return self._query.count(session, filters=filters)
-        finally:
-            session.close()
 
     def iter_events(
         self,
@@ -213,8 +198,7 @@ class SecretsAuditLogger:
         limit: int = 10_000,
     ) -> list[SecretsAuditLogModel]:
         """Fetch matching events (for export), capped at ``limit``."""
-        session = self._session_factory()
-        try:
+        with self._session_factory() as session:
             stmt = (
                 select(SecretsAuditLogModel)
                 .order_by(
@@ -226,8 +210,6 @@ class SecretsAuditLogger:
             if filters:
                 stmt = self._query.apply_filters(stmt, filters=filters)
             return list(session.execute(stmt).scalars())
-        finally:
-            session.close()
 
     # ------------------------------------------------------------------
     # Integrity verification

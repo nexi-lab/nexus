@@ -197,8 +197,8 @@ async def health_check_detailed(request: Request) -> dict[str, Any]:
 
     # Circuit breaker health (Issue #1366)
     _resiliency_mgr = (
-        state.nexus_fs._service_extras.get("resiliency_manager")
-        if state.nexus_fs and hasattr(state.nexus_fs, "_service_extras")
+        getattr(state.nexus_fs, "_service_extras", {}).get("resiliency_manager")
+        if state.nexus_fs
         else None
     )
     if _resiliency_mgr is not None:

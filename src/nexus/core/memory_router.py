@@ -7,15 +7,19 @@ Includes temporal query operators (Issue #1023) for time-based filtering.
 Includes version tracking (#1184) for memory audit trails.
 """
 
+from __future__ import annotations
+
 import uuid
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
-from nexus.services.permissions.entity_registry import EntityRegistry
 from nexus.storage.models import MemoryModel, VersionHistoryModel
+
+if TYPE_CHECKING:
+    from nexus.services.permissions.entity_registry import EntityRegistry
 
 
 class MemoryViewRouter:
@@ -29,7 +33,11 @@ class MemoryViewRouter:
             entity_registry: Entity registry instance (creates new if None).
         """
         self.session = session
-        self.entity_registry = entity_registry or EntityRegistry(session)
+        if entity_registry is None:
+            from nexus.services.permissions.entity_registry import EntityRegistry
+
+            entity_registry = EntityRegistry(session)
+        self.entity_registry = entity_registry
 
     @staticmethod
     def is_memory_path(path: str) -> bool:

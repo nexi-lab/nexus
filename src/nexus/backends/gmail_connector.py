@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.backends.backend import Backend
 from nexus.backends.cache_mixin import IMMUTABLE_VERSION, CacheConnectorMixin
 from nexus.backends.gmail_connector_utils import fetch_emails_batch, list_emails_by_folder
+from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.connectors.base import (
     CheckpointMixin,
     ConfirmLevel,
@@ -72,6 +73,13 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@register_connector(
+    "gmail_connector",
+    description="Gmail with OAuth 2.0 authentication (read-only)",
+    category="oauth",
+    requires=["google-api-python-client", "google-auth-oauthlib"],
+    service_name="gmail",
+)
 class GmailConnectorBackend(
     Backend,
     CacheConnectorMixin,
@@ -157,6 +165,32 @@ class GmailConnectorBackend(
 
     # Error registry for self-correcting messages
     ERROR_REGISTRY = ERROR_REGISTRY
+
+    # Connection arguments for registry-based instantiation
+    CONNECTION_ARGS: dict[str, ConnectionArg] = {
+        "token_manager_db": ConnectionArg(
+            type=ArgType.PATH,
+            description="Path to TokenManager database or database URL",
+            required=True,
+        ),
+        "user_email": ConnectionArg(
+            type=ArgType.STRING,
+            description="User email for OAuth lookup (None for multi-user from context)",
+            required=False,
+        ),
+        "provider": ConnectionArg(
+            type=ArgType.STRING,
+            description="OAuth provider name from config",
+            required=False,
+            default="gmail",
+        ),
+        "max_message_per_label": ConnectionArg(
+            type=ArgType.INTEGER,
+            description="Maximum number of messages to fetch per label folder",
+            required=False,
+            default=200,
+        ),
+    }
 
     def __init__(
         self,

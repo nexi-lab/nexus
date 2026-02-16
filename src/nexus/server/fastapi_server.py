@@ -248,6 +248,16 @@ def create_app(
     else:
         app.state.async_session_factory = None
 
+    # Expose sync session_factory from RecordStoreABC (Issue #1519).
+    # This is the canonical way for sync endpoints to get database sessions
+    # without reaching into NexusFS.SessionLocal internals.
+    if _record_store is not None:
+        app.state.session_factory = _record_store.session_factory
+    elif hasattr(nexus_fs, "SessionLocal") and nexus_fs.SessionLocal is not None:
+        app.state.session_factory = nexus_fs.SessionLocal
+    else:
+        app.state.session_factory = None
+
     # Thread pool and timeout settings (Issue #932)
     app.state.thread_pool_size = thread_pool_size or int(
         os.environ.get("NEXUS_THREAD_POOL_SIZE", "200")
@@ -422,7 +432,7 @@ def create_app(
 
         from nexus.server.pg_metrics_collector import QueryObserverCollector
 
-        obs_sub = nexus_fs._service_extras.get("observability_subsystem")
+        obs_sub = getattr(nexus_fs, "_service_extras", {}).get("observability_subsystem")
         if obs_sub is not None:
             REGISTRY.register(QueryObserverCollector(obs_sub.observer))
     except Exception:

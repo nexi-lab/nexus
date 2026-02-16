@@ -535,9 +535,9 @@ class CachingBackendWrapper(Backend):
         self._metrics_initialized = True
 
         try:
-            from nexus.server.telemetry import is_telemetry_enabled
+            import os
 
-            if not is_telemetry_enabled():
+            if os.environ.get("OTEL_ENABLED", "false").lower() not in ("true", "1", "yes"):
                 return None
 
             from opentelemetry import metrics

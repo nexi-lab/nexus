@@ -506,10 +506,9 @@ def create_connector(name: str, **config: Any) -> Backend:
         ...     project_id="my-project"
         ... )
     """
-    # Ensure optional backends are registered on first use
-    _ensure_optional_backends_registered()
-    connector_cls = ConnectorRegistry.get(name)
-    return connector_cls(**config)
+    from nexus.backends.factory import BackendFactory
+
+    return BackendFactory.create(name, config)
 
 
 def create_connector_from_config(name: str, backend_config: dict[str, Any]) -> Backend:
@@ -534,24 +533,6 @@ def create_connector_from_config(name: str, backend_config: dict[str, Any]) -> B
         ...     {"bucket": "my-bucket", "project_id": "my-project"}
         ... )
     """
-    # Ensure optional backends are registered on first use
-    _ensure_optional_backends_registered()
-    info = ConnectorRegistry.get_info(name)
-    connector_cls = info.connector_class
+    from nexus.backends.factory import BackendFactory
 
-    # Get auto-derived config mapping from ConnectorInfo
-    mapping = info.config_mapping
-
-    # Build constructor kwargs by mapping config keys
-    kwargs: dict[str, Any] = {}
-    for config_key, param_name in mapping.items():
-        if config_key in backend_config:
-            kwargs[param_name] = backend_config[config_key]
-
-    # Also pass through any keys that match parameter names directly
-    # (for future extensibility without updating mappings)
-    for key, value in backend_config.items():
-        if key not in mapping and key not in kwargs:
-            kwargs[key] = value
-
-    return connector_cls(**kwargs)
+    return BackendFactory.create(name, backend_config)

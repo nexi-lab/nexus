@@ -385,7 +385,7 @@ def create_nexus_services(
     )
 
     # --- Mount Manager ---
-    from nexus.core.mount_manager import MountManager
+    from nexus.services.mount_manager import MountManager
 
     mount_manager = MountManager(session_factory)
 

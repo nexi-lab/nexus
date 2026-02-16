@@ -22,11 +22,10 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from nexus.services.agents.agent_record import AgentRecord, AgentState
-
 if TYPE_CHECKING:
     from nexus.sandbox.events import AgentEventLog
     from nexus.sandbox.sandbox_manager import SandboxManager
+    from nexus.services.agents.agent_record import AgentRecord
     from nexus.services.agents.agent_registry import AgentRegistry
     from nexus.services.permissions.namespace_manager import NamespaceManager
 
@@ -160,6 +159,8 @@ class SandboxAuthService:
             )
 
         # Step 3: Transition agent to CONNECTED (new session)
+        from nexus.services.agents.agent_record import AgentState
+
         connected_record = await asyncio.to_thread(
             self._registry.transition, agent_id, AgentState.CONNECTED
         )
@@ -242,6 +243,8 @@ class SandboxAuthService:
 
         # Transition agent to IDLE (best-effort — don't fail the stop)
         try:
+            from nexus.services.agents.agent_record import AgentState
+
             await asyncio.to_thread(self._registry.transition, agent_id, AgentState.IDLE)
         except Exception:
             logger.warning(

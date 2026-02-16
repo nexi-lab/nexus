@@ -74,14 +74,13 @@ except ImportError:
 
 # Import event system for firing events from FUSE operations (Issue #1115)
 try:
-    from nexus.core.event_bus import FileEvent, FileEventType, get_global_event_bus
+    from nexus.core.event_bus import FileEvent, FileEventType
 
     HAS_EVENT_BUS = True
 except ImportError:
     HAS_EVENT_BUS = False
     FileEvent = None  # type: ignore[misc,assignment]
     FileEventType = None  # type: ignore[misc,assignment]
-    get_global_event_bus = None  # type: ignore[assignment]
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +189,7 @@ class NexusFUSEOperations(Operations):
         cache_config: dict[str, Any] | None = None,
         context: OperationContext | None = None,
         namespace_manager: NamespaceManager | None = None,
+        event_bus: Any | None = None,
     ) -> None:
         """Initialize FUSE operations.
 
@@ -208,11 +208,13 @@ class NexusFUSEOperations(Operations):
             namespace_manager: Optional NamespaceManager for direct O(log m) visibility
                     checks (A2-B). When provided, _check_namespace_visible() bypasses the
                     full RPC/PermissionEnforcer pipeline and calls is_visible() directly.
+            event_bus: Optional EventBusBase instance for distributing file events.
         """
         self.nexus_fs = nexus_fs
         self.mode = mode
         self._context = context
         self._namespace_manager = namespace_manager
+        self._event_bus = event_bus
         self.fd_counter = 0
         self.open_files: dict[int, dict[str, Any]] = {}
         self._files_lock = threading.RLock()
@@ -367,7 +369,7 @@ class NexusFUSEOperations(Operations):
         if not self._enable_events or not HAS_EVENT_BUS:
             return
 
-        if FileEvent is None or get_global_event_bus is None:
+        if FileEvent is None:
             return
 
         try:
@@ -401,11 +403,10 @@ class NexusFUSEOperations(Operations):
             event: FileEvent to dispatch
         """
         try:
-            # 1. Publish to global event bus (distributed cache invalidation)
-            event_bus = get_global_event_bus()
-            if event_bus is not None:
+            # 1. Publish to event bus (distributed cache invalidation)
+            if self._event_bus is not None:
                 try:
-                    await event_bus.publish(event)
+                    await self._event_bus.publish(event)
                 except Exception as e:
                     logger.debug(f"[FUSE-EVENT] Event bus publish failed: {e}")
 
@@ -1404,7 +1405,13 @@ class NexusFUSEOperations(Operations):
         # In text mode, try to parse
         if self.mode.value == "text" or (self.mode.value == "smart" and view_type):
             # Use shared parsing logic
-            parsed_content = get_parsed_content(content, path, view_type or "txt")
+            from nexus.parsers import create_default_parse_fn
+
+            if not hasattr(self, "_parse_fn"):
+                self._parse_fn = create_default_parse_fn()
+            parsed_content = get_parsed_content(
+                content, path, view_type or "txt", parse_fn=self._parse_fn
+            )
             # Cache the parsed result
             self.cache.cache_parsed(path, view_type, parsed_content)
             return parsed_content
@@ -1460,7 +1467,10 @@ class NexusFUSEOperations(Operations):
         """
         try:
             # Read full file content (uses cache hierarchy)
-            content = self._get_file_content(path, None)
+            # A1-B: readahead is triggered from open() where auth was verified;
+            # skip redundant context check to avoid passing credentials on
+            # background threads.
+            content = self._get_file_content(path, None, skip_auth=True)
 
             # Return requested range
             end = min(offset + size, len(content))

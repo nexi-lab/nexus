@@ -27,10 +27,6 @@ def get_default_agent_metadata() -> dict[str, Any]:
     }
 
 
-# For backwards compatibility
-DEFAULT_AGENT_METADATA = get_default_agent_metadata()
-
-
 def create_impersonated_user_agent(
     nx: Any, user_id: str, context: Any, metadata: dict[str, Any] | None = None
 ) -> dict[str, Any] | None:

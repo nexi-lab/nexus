@@ -849,22 +849,6 @@ class NexusFS(  # type: ignore[misc]
             self._default_context.is_admin,
         )
 
-    # Backward compatibility properties for deprecated instance fields
-    @property
-    def zone_id(self) -> str | None:
-        """DEPRECATED: Access via context parameter instead. Returns default zone_id for embedded mode."""
-        return self._default_context.zone_id
-
-    @property
-    def agent_id(self) -> str | None:
-        """DEPRECATED: Access via context parameter instead. Returns default agent_id for embedded mode."""
-        return self._default_context.agent_id
-
-    @property
-    def user_id(self) -> str | None:
-        """DEPRECATED: Access via context parameter instead. Returns default user_id for embedded mode."""
-        return getattr(self._default_context, "user", None)
-
     def _get_memory_api(self, context: dict | None = None) -> Memory:
         """Get Memory API instance with context-specific configuration.
 

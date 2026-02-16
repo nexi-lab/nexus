@@ -79,7 +79,7 @@ def list_files(
 
                 # Get directory listing at operation
                 files = time_travel.list_files_at_operation(
-                    path, at_operation, zone_id=nx.zone_id, recursive=recursive
+                    path, at_operation, zone_id=nx._default_context.zone_id, recursive=recursive
                 )
 
             nx.close()

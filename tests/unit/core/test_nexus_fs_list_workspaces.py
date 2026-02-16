@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from nexus.core.workspace_registry import WorkspaceConfig
+from nexus.services.workspace.workspace_registry import WorkspaceConfig
 
 
 def _make_workspace(path: str, created_by: str | None = None) -> WorkspaceConfig:

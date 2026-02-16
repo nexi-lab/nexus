@@ -4,6 +4,8 @@ import posixpath
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from nexus.core.exceptions import AccessDeniedError, InvalidPathError, PathNotMountedError
+
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
 
@@ -46,24 +48,6 @@ class NamespaceConfig:
     readonly: bool = False  # Whether namespace is read-only
     admin_only: bool = False  # Whether namespace requires admin access
     requires_zone: bool = True  # Whether namespace requires zone isolation
-
-
-class PathNotMountedError(Exception):
-    """Raised when no mount exists for path."""
-
-    pass
-
-
-class InvalidPathError(Exception):
-    """Raised when path is invalid or contains security issues."""
-
-    pass
-
-
-class AccessDeniedError(Exception):
-    """Raised when access to path is denied."""
-
-    pass
 
 
 class PathRouter:
@@ -176,7 +160,7 @@ class PathRouter:
         # Find longest matching prefix
         matched_mount = self._match_longest_prefix(virtual_path)
         if not matched_mount:
-            raise PathNotMountedError(f"No mount found for path: {virtual_path}")
+            raise PathNotMountedError(virtual_path)
 
         # Strip prefix
         backend_path = self._strip_mount_prefix(virtual_path, matched_mount.mount_point)
@@ -361,15 +345,15 @@ class PathRouter:
         """
         # Ensure absolute path
         if not path.startswith("/"):
-            raise InvalidPathError(f"Path must be absolute: {path}")
+            raise InvalidPathError(path, "Path must be absolute")
 
         # Check for null bytes
         if "\0" in path:
-            raise InvalidPathError("Path contains null byte")
+            raise InvalidPathError(path, "Path contains null byte")
 
         # Check for control characters
         if any(ord(c) < 32 for c in path if c not in ("\t", "\n")):
-            raise InvalidPathError("Path contains control characters")
+            raise InvalidPathError(path, "Path contains control characters")
 
         # Normalize first - this resolves . and .. segments
         # SECURITY: Must normalize BEFORE checking for path traversal
@@ -379,7 +363,7 @@ class PathRouter:
         # After normalization, check for path traversal
         # If normalized path doesn't start with /, it escaped root
         if not normalized.startswith("/"):
-            raise InvalidPathError(f"Path traversal detected: {path}")
+            raise InvalidPathError(path, "Path traversal detected")
 
         # Additional security check: detect if path traversal changed the namespace
         # Extract first path component (namespace) before and after normalization
@@ -396,7 +380,7 @@ class PathRouter:
                 # If namespace changed or normalized to empty, path traversal occurred
                 if orig_namespace != norm_namespace or norm_namespace == "":
                     raise InvalidPathError(
-                        f"Path traversal detected: {path} (attempted to escape namespace)"
+                        path, "Path traversal detected (attempted to escape namespace)"
                     )
 
         return normalized
@@ -429,7 +413,7 @@ class PathRouter:
         parts = path.lstrip("/").split("/")
 
         if not parts or parts[0] == "":
-            raise InvalidPathError("Cannot parse root path")
+            raise InvalidPathError(path, "Cannot parse root path")
 
         namespace = parts[0]
 

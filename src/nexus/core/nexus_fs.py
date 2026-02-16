@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from nexus.backends.backend import Backend
 from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
+from nexus.raft.zone_manager import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
     from nexus.services.memory.memory_api import Memory
@@ -230,11 +231,11 @@ class NexusFS(  # type: ignore[misc]
         self._parser_threads: list[threading.Thread] = []
         self._parser_threads_lock = threading.Lock()
 
-        # Create default context (zone_id defaults to "default")
+        # Create default context
         self._default_context = OperationContext(
             user="anonymous",
             groups=[],
-            zone_id="default",
+            zone_id=ROOT_ZONE_ID,
             agent_id=None,
             is_admin=is_admin,
             is_system=False,
@@ -270,6 +271,12 @@ class NexusFS(  # type: ignore[misc]
         self._lock_manager = svc.lock_manager
         self.enable_workflows = distributed.enable_workflows
         self.workflow_engine = svc.workflow_engine
+
+        # Bounded workflow event queue (#1522)
+        self._workflow_queue: asyncio.Queue[tuple[str, dict]] | None = None
+        self._workflow_consumer_task: asyncio.Task[None] | None = None  # type: ignore[assignment]  # allowed
+        if self.enable_workflows and self.workflow_engine:
+            self._workflow_queue = asyncio.Queue(maxsize=1000)
 
         # Initialize OAuth token manager (lazy initialization in mixin)
         self._token_manager = None
@@ -1695,8 +1702,9 @@ class NexusFS(  # type: ignore[misc]
 
         try:
             all_descendants = self.metadata.list(prefix)
-        except Exception:
+        except Exception as exc:
             # If metadata query fails, return False
+            logger.debug("Metadata query failed for prefix %s: %s", prefix, exc)
             return False
 
         # OPTIMIZATION 5 (legacy): Use Tiger Cache for batch descendant check
@@ -4151,10 +4159,10 @@ class NexusFS(  # type: ignore[misc]
                             if isinstance(config_content, bytes):
                                 config_data = yaml.safe_load(config_content.decode("utf-8"))
                                 inherit_perms = config_data.get("inherit_permissions")
-                        except Exception:
-                            pass  # If can't read config, will use default
-                except Exception:
-                    pass
+                        except Exception as exc:
+                            logger.debug("Failed to read agent config at %s: %s", config_path, exc)
+                except Exception as exc:
+                    logger.debug("Failed to parse agent entity_id for config lookup: %s", exc)
 
                 # Default to True if not found (agents without API keys inherit by default)
                 agent_info["inherit_permissions"] = (
@@ -4283,11 +4291,10 @@ class NexusFS(  # type: ignore[misc]
                                 agent_info["system_prompt"] = config_data["system_prompt"]
                             if config_data.get("tools"):
                                 agent_info["tools"] = config_data["tools"]
-                        except Exception:
-                            # If can't read config, that's okay - agent might not have config file yet
-                            pass
-                except Exception:
-                    pass
+                        except Exception as exc:
+                            logger.debug("Failed to read agent config for %s: %s", agent_id, exc)
+                except Exception as exc:
+                    logger.debug("Failed to parse agent_id %s for config lookup: %s", agent_id, exc)
             else:
                 agent_info["has_api_key"] = False
                 # If no API key, try to read from config.yaml or use default True
@@ -4338,10 +4345,10 @@ class NexusFS(  # type: ignore[misc]
                                     agent_info["system_prompt"] = config_data["system_prompt"]
                                 if config_data.get("tools"):
                                     agent_info["tools"] = config_data["tools"]
-                        except Exception:
-                            pass  # If can't read config, will use default
-                except Exception:
-                    pass
+                        except Exception as exc:
+                            logger.debug("Failed to read agent config at %s: %s", config_path, exc)
+                except Exception as exc:
+                    logger.debug("Failed to parse agent entity_id for config lookup: %s", exc)
 
                 # Default to True if not found (agents without API keys inherit by default)
                 agent_info["inherit_permissions"] = (
@@ -5170,8 +5177,8 @@ class NexusFS(  # type: ignore[misc]
                             try:
                                 self.rebac_delete(tuple_id)
                                 deleted_count += 1
-                            except Exception:
-                                pass  # Continue with other tuples
+                            except Exception as exc:
+                                logger.warning("Failed to delete ReBAC tuple %s: %s", tuple_id, exc)
                     result["deleted_permissions"] = deleted_count
                     logger.info(f"Deleted {deleted_count} ReBAC permissions for user {user_id}")
                 else:
@@ -5317,8 +5324,10 @@ class NexusFS(  # type: ignore[misc]
                     # Clear cache for parent too
                     if parent_path:
                         self._exists_cache.pop(parent_path, None)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug(
+                    "Failed to invalidate caches after directory deletion of %s: %s", dir_path, exc
+                )
 
             # Clear tiger cache entries for the directory and children
             if hasattr(self, "rebac_manager") and hasattr(self.rebac_manager, "_tiger_cache"):
@@ -5371,8 +5380,8 @@ class NexusFS(  # type: ignore[misc]
                     try:
                         self.list(child_path, recursive=False, context=context)
                         is_dir = True
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.debug("Path %s is not a listable directory: %s", child_path, exc)
                 elif isinstance(item, dict):
                     child_path = item.get("path")
                     if not child_path:

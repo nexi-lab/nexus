@@ -81,8 +81,10 @@ def handle_query_memories(nexus_fs: NexusFS, params: Any, context: Any) -> dict[
                 embedding_provider_obj = create_embedding_provider(
                     provider=params.embedding_provider
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(
+                    "Failed to create embedding provider %s: %s", params.embedding_provider, e
+                )
 
         search_mode = params.search_mode or "hybrid"
         memories = memory_api.search(

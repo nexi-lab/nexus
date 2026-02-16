@@ -228,7 +228,7 @@ class NexusFSCoreMixin:
 
     def _fire_workflow_event(
         self,
-        trigger_type: Any,
+        trigger_type: str,
         event_context: dict[str, Any],
         label: str,
     ) -> None:
@@ -238,19 +238,31 @@ class NexusFSCoreMixin:
         Does nothing if workflows are not enabled.
 
         Args:
-            trigger_type: TriggerType enum value (FILE_WRITE, FILE_DELETE, FILE_RENAME).
+            trigger_type: String trigger type (e.g. "file_write", "file_delete").
             event_context: Event payload dict.
             label: Human-readable label for task/thread naming (e.g. "file_write:/foo.txt").
         """
         if not (self.enable_workflows and self.workflow_engine):  # type: ignore[attr-defined]
             return
 
-        from nexus.core.sync_bridge import fire_and_forget
+        # Bounded queue: try to enqueue, drop on overflow
+        queue = getattr(self, "_workflow_queue", None)
+        if queue is not None:
+            try:
+                queue.put_nowait((trigger_type, event_context))
+            except Exception:
+                logger.warning("Workflow event queue full, dropping event: %s", label)
+        else:
+            # Fallback: fire-and-forget (no queue — CLI or pre-startup)
+            from nexus.core.sync_bridge import fire_and_forget
 
-        fire_and_forget(
-            self.workflow_engine.fire_event(trigger_type, event_context)  # type: ignore[attr-defined]
-        )
+            fire_and_forget(
+                self.workflow_engine.fire_event(trigger_type, event_context)  # type: ignore[attr-defined]
+            )
+
         if self.subscription_manager:  # type: ignore[attr-defined]
+            from nexus.core.sync_bridge import fire_and_forget
+
             event_type = label.split(":")[0] if ":" in label else label
             fire_and_forget(
                 self.subscription_manager.broadcast(  # type: ignore[attr-defined]
@@ -259,6 +271,34 @@ class NexusFSCoreMixin:
                     event_context.get("zone_id", "default"),
                 )
             )
+
+    async def _start_workflow_consumer(self) -> None:
+        """Background consumer for bounded workflow event queue (#1522)."""
+        queue = self._workflow_queue  # type: ignore[attr-defined]
+        engine = self.workflow_engine  # type: ignore[attr-defined]
+        while True:
+            trigger_type, event_context = await queue.get()
+            try:
+                await engine.fire_event(trigger_type, event_context)
+            except Exception as e:
+                logger.error("Workflow event processing failed: %s", e)
+            finally:
+                queue.task_done()
+
+    def ensure_workflow_consumer(self) -> None:
+        """Start the workflow consumer task if not already running."""
+        if (
+            getattr(self, "_workflow_queue", None) is None
+            or getattr(self, "_workflow_consumer_task", None) is not None
+        ):
+            return
+        try:
+            loop = asyncio.get_running_loop()
+            self._workflow_consumer_task = loop.create_task(  # type: ignore[attr-defined]
+                self._start_workflow_consumer()
+            )
+        except RuntimeError:
+            pass  # No event loop — consumer starts when server starts
 
     # =========================================================================
     # Zookie Consistency Token Support - Issue #1187
@@ -1116,7 +1156,8 @@ class NexusFSCoreMixin:
             try:
                 validated_path = self._validate_path(path)
                 validated_paths.append(validated_path)
-            except Exception:
+            except Exception as exc:
+                logger.debug("Path validation failed in read_bulk for %s: %s", path, exc)
                 if skip_errors:
                     results[path] = None
                     continue
@@ -1391,7 +1432,10 @@ class NexusFSCoreMixin:
                                         "size": len(content),
                                     }
                                 )
-                            except Exception:
+                            except Exception as exc:
+                                logger.debug(
+                                    "Failed to read content for %s during batch read: %s", path, exc
+                                )
                                 if skip_errors:
                                     results[path] = None
                                 else:
@@ -2005,8 +2049,8 @@ class NexusFSCoreMixin:
                 self.metadata.set_file_metadata(path, "parsed_text", None)
                 self.metadata.set_file_metadata(path, "parsed_at", None)
                 self.metadata.set_file_metadata(path, "parser_name", None)
-            except Exception:
-                pass  # Ignore errors - cache invalidation is best-effort
+            except Exception as e:
+                logger.debug("Failed to invalidate parsed_text cache for %s: %s", path, e)
 
         # P0-3: Create parent relationship tuples for file inheritance
         # This enables permission inheritance from parent directories
@@ -2087,11 +2131,9 @@ class NexusFSCoreMixin:
         )
 
         # v0.7.0: Fire workflow event for automatic trigger execution
-        from nexus.workflows.types import TriggerType
-
         is_new_file = meta is None or meta.etag is None
         self._fire_workflow_event(
-            TriggerType.FILE_WRITE,
+            "file_write",
             {
                 "file_path": path,
                 "size": len(content),
@@ -3011,10 +3053,8 @@ class NexusFSCoreMixin:
             cache_observer.on_delete(path, new_revision, zone_id or "default")
 
         # v0.7.0: Fire workflow event for automatic trigger execution
-        from nexus.workflows.types import TriggerType
-
         self._fire_workflow_event(
-            TriggerType.FILE_DELETE,
+            "file_delete",
             {
                 "file_path": path,
                 "size": meta.size,
@@ -3258,10 +3298,8 @@ class NexusFSCoreMixin:
         )
 
         # v0.7.0: Fire workflow event for automatic trigger execution
-        from nexus.workflows.types import TriggerType
-
         self._fire_workflow_event(
-            TriggerType.FILE_RENAME,
+            "file_rename",
             {
                 "old_path": old_path,
                 "new_path": new_path,
@@ -3543,7 +3581,8 @@ class NexusFSCoreMixin:
 
                     size_context = replace(context, backend_path=route.backend_path)
                 size = route.backend.get_content_size(meta.etag, context=size_context).unwrap()
-            except Exception:
+            except Exception as exc:
+                logger.debug("Failed to get content size for %s: %s", path, exc)
                 size = None
 
         # Convert datetime to ISO string for wire compatibility with Rust FUSE client
@@ -3604,7 +3643,8 @@ class NexusFSCoreMixin:
             try:
                 validated_path = self._validate_path(path)
                 validated_paths.append(validated_path)
-            except Exception:
+            except Exception as exc:
+                logger.debug("Path validation failed in metadata_bulk for %s: %s", path, exc)
                 if skip_errors:
                     results[path] = None
                     continue
@@ -3785,8 +3825,9 @@ class NexusFSCoreMixin:
         for path in paths:
             try:
                 results[path] = self.exists(path, context=context)
-            except Exception:
+            except Exception as exc:
                 # Any error means file doesn't exist or isn't accessible
+                logger.debug("Exists check failed for %s: %s", path, exc)
                 results[path] = False
         return results
 
@@ -3829,7 +3870,8 @@ class NexusFSCoreMixin:
             try:
                 validated = self._validate_path(path)
                 valid_paths.append(validated)
-            except Exception:
+            except Exception as exc:
+                logger.debug("Path validation failed in metadata_batch for %s: %s", path, exc)
                 results[path] = None
 
         # Batch fetch metadata from database
@@ -3871,7 +3913,8 @@ class NexusFSCoreMixin:
                     "zone_id": meta.zone_id,
                     "is_directory": is_dir,
                 }
-            except Exception:
+            except Exception as exc:
+                logger.debug("Failed to build metadata result for %s: %s", path, exc)
                 results[path] = None
 
         return results
@@ -3903,8 +3946,8 @@ class NexusFSCoreMixin:
         Raises:
             NexusFileNotFoundError: If memory doesn't exist.
         """
+        from nexus.rebac.entity_registry import EntityRegistry
         from nexus.services.memory.memory_router import MemoryViewRouter
-        from nexus.services.permissions.entity_registry import EntityRegistry
 
         # Get memory via router
         session = self.SessionLocal()
@@ -3988,8 +4031,8 @@ class NexusFSCoreMixin:
         Raises:
             NexusFileNotFoundError: If memory doesn't exist.
         """
+        from nexus.rebac.entity_registry import EntityRegistry
         from nexus.services.memory.memory_router import MemoryViewRouter
-        from nexus.services.permissions.entity_registry import EntityRegistry
 
         # Get memory via router
         session = self.SessionLocal()

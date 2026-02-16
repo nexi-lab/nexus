@@ -521,7 +521,7 @@ class SyncPipelineService:
                     files.extend(self._list_files_recursive(full_path, context))
                 else:
                     files.append(full_path)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to list files recursively in %s: %s", path, e)
 
         return files

@@ -24,11 +24,17 @@ logger = logging.getLogger(__name__)
 
 
 class AgentCardCache:
-    """Encapsulates the mutable cache state for a single Agent Card.
+    """Write-once cache for a single Agent Card.
 
     Each ``AgentCardCache`` instance is independent — no shared globals.
-    The class is intentionally simple: GIL + write-once semantics make
-    a ``threading.Lock`` unnecessary.
+    The cache is **write-once**: the first call to ``get_card_bytes()``
+    builds and caches the card; all subsequent calls return the cached
+    value.  To rebuild, create a new ``AgentCardCache`` instance.
+
+    Thread-safety: the write-once contract means no lock is required.
+    After the first ``get_card_bytes()`` call completes, the cached
+    values are effectively immutable.  Concurrent initial calls may
+    redundantly build the card, but the result is identical and harmless.
     """
 
     __slots__ = ("_card_bytes", "_card")
@@ -44,14 +50,13 @@ class AgentCardCache:
         skills: list[Any] | None = None,
         base_url: str = DEFAULT_NEXUS_URL,
         auth_provider: Any = None,
-        force_rebuild: bool = False,
     ) -> bytes:
         """Return the Agent Card as pre-serialised JSON bytes.
 
-        Builds on first call and caches the result.  Pass
-        ``force_rebuild=True`` to invalidate and rebuild.
+        Builds on first call and caches the result.  The cache is
+        write-once — to rebuild, create a new ``AgentCardCache``.
         """
-        if self._card_bytes is not None and not force_rebuild:
+        if self._card_bytes is not None:
             return self._card_bytes
 
         card = build_agent_card(
@@ -77,46 +82,6 @@ class AgentCardCache:
     def get_card(self) -> AgentCard | None:
         """Return the cached ``AgentCard`` instance, or *None* if not yet built."""
         return self._card
-
-    def invalidate(self) -> None:
-        """Clear the cache so the card will be rebuilt on next access."""
-        self._card_bytes = None
-        self._card = None
-
-
-# Module-level default instance (backward-compatible with existing callers)
-_default_cache = AgentCardCache()
-
-
-def get_cached_card_bytes(
-    *,
-    config: Any = None,
-    skills: list[Any] | None = None,
-    base_url: str = DEFAULT_NEXUS_URL,
-    auth_provider: Any = None,
-    force_rebuild: bool = False,
-) -> bytes:
-    """Get the Agent Card as pre-serialized JSON bytes.
-
-    Thin wrapper around the default ``AgentCardCache`` instance.
-    """
-    return _default_cache.get_card_bytes(
-        config=config,
-        skills=skills,
-        base_url=base_url,
-        auth_provider=auth_provider,
-        force_rebuild=force_rebuild,
-    )
-
-
-def get_cached_card() -> AgentCard | None:
-    """Return the cached ``AgentCard`` instance, or *None* if not yet built."""
-    return _default_cache.get_card()
-
-
-def invalidate_cache() -> None:
-    """Clear the cached Agent Card so it will be rebuilt on next access."""
-    _default_cache.invalidate()
 
 
 def build_agent_card(

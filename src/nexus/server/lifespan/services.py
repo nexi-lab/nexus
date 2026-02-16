@@ -49,6 +49,8 @@ async def startup_services(app: FastAPI) -> list[asyncio.Task]:
     if task_runner_task:
         bg_tasks.append(task_runner_task)
 
+    await _startup_workflow_engine(app)
+
     return bg_tasks
 
 
@@ -63,7 +65,7 @@ async def shutdown_services(app: FastAPI) -> None:
             await task_runner.shutdown()
             logger.info("Task Queue runner stopped")
         except Exception as e:
-            logger.warning(f"Error shutting down Task Queue runner: {e}")
+            logger.warning("Error shutting down Task Queue runner: %s", e, exc_info=True)
 
     # Shutdown scheduler pool (Issue #1212)
     if _scheduler_pool:
@@ -71,7 +73,7 @@ async def shutdown_services(app: FastAPI) -> None:
             await _scheduler_pool.close()
             logger.info("Scheduler pool closed")
         except Exception as e:
-            logger.warning(f"Error closing scheduler pool: {e}")
+            logger.warning("Error closing scheduler pool: %s", e, exc_info=True)
         _scheduler_pool = None
 
     # Cancel agent background tasks and final flush (Issue #1240)
@@ -102,7 +104,7 @@ async def shutdown_services(app: FastAPI) -> None:
             await app.state.async_nexus_fs.close()
             logger.info("AsyncNexusFS stopped")
         except Exception as e:
-            logger.warning(f"Error shutting down AsyncNexusFS: {e}")
+            logger.warning("Error shutting down AsyncNexusFS: %s", e, exc_info=True)
 
     # Shutdown Search Daemon (Issue #951)
     if app.state.search_daemon:
@@ -110,7 +112,7 @@ async def shutdown_services(app: FastAPI) -> None:
             await app.state.search_daemon.shutdown()
             logger.info("Search Daemon stopped")
         except Exception as e:
-            logger.warning(f"Error shutting down Search Daemon: {e}")
+            logger.warning("Error shutting down Search Daemon: %s", e, exc_info=True)
 
     # Stop DirectoryGrantExpander worker
     if hasattr(app.state, "directory_grant_expander") and app.state.directory_grant_expander:
@@ -162,7 +164,7 @@ def _startup_agent_registry(app: FastAPI) -> None:
 
             logger.info("[AGENT-REG] AgentRegistry initialized and wired")
         except Exception as e:
-            logger.warning(f"[AGENT-REG] Failed to initialize AgentRegistry: {e}")
+            logger.warning("[AGENT-REG] Failed to initialize AgentRegistry: %s", e, exc_info=True)
             app.state.agent_registry = None
             app.state.async_agent_registry = None
     else:
@@ -198,7 +200,7 @@ def _startup_key_service(app: FastAPI) -> None:
 
             logger.info("[KYA] KeyService initialized and wired")
         except Exception as e:
-            logger.warning(f"[KYA] Failed to initialize KeyService: {e}")
+            logger.warning("[KYA] Failed to initialize KeyService: %s", e, exc_info=True)
             app.state.key_service = None
     else:
         app.state.key_service = None
@@ -273,7 +275,9 @@ def _startup_sandbox_auth(app: FastAPI) -> None:
         )
         logger.info("[SANDBOX-AUTH] SandboxAuthService initialized")
     except Exception as e:
-        logger.warning(f"[SANDBOX-AUTH] Failed to initialize SandboxAuthService: {e}")
+        logger.warning(
+            "[SANDBOX-AUTH] Failed to initialize SandboxAuthService: %s", e, exc_info=True
+        )
 
 
 def _startup_agent_tasks(app: FastAPI) -> list[asyncio.Task]:
@@ -310,6 +314,8 @@ async def _startup_scheduler(app: FastAPI) -> None:
         import asyncpg
 
         from nexus.pay.credits import CreditsService
+        from nexus.scheduler.events import AgentStateEmitter
+        from nexus.scheduler.policies.fair_share import FairShareCounter
         from nexus.scheduler.queue import TaskQueue
         from nexus.scheduler.service import SchedulerService
 
@@ -347,17 +353,48 @@ async def _startup_scheduler(app: FastAPI) -> None:
                 WHERE status = 'queued'
             """)
 
+            # Astraea columns (Issue #1274) — idempotent ALTER TABLE
+            for col_sql in (
+                "ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS request_state TEXT NOT NULL DEFAULT 'pending'",
+                "ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS priority_class TEXT NOT NULL DEFAULT 'batch'",
+                "ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS executor_state TEXT NOT NULL DEFAULT 'UNKNOWN'",
+                "ALTER TABLE scheduled_tasks ADD COLUMN IF NOT EXISTS estimated_service_time REAL NOT NULL DEFAULT 30.0",
+            ):
+                await conn.execute(col_sql)
+
+            await conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_sched_astraea_dequeue
+                ON scheduled_tasks (priority_class, enqueued_at)
+                WHERE status = 'queued'
+            """)
+
+        # Astraea: state emitter + fair-share (Issue #1274)
+        state_emitter = AgentStateEmitter()
+        fair_share = FairShareCounter()
+
         scheduler_service = SchedulerService(
             queue=TaskQueue(),
             db_pool=_scheduler_pool,
             credits_service=CreditsService(enabled=False),
+            state_emitter=state_emitter,
+            fair_share=fair_share,
+            use_hrrn=True,
         )
         app.state.scheduler_service = scheduler_service
-        logger.info("Scheduler service initialized (PostgreSQL)")
+
+        # Wire emitter into AsyncAgentRegistry if available
+        async_reg = getattr(app.state, "async_agent_registry", None)
+        if async_reg is not None:
+            async_reg._state_emitter = state_emitter
+
+        # Initialize fair-share counters from DB
+        await scheduler_service.sync_fair_share()
+
+        logger.info("Scheduler service initialized with Astraea (PostgreSQL)")
     except ImportError as e:
         logger.debug(f"Scheduler service not available: {e}")
     except Exception as e:
-        logger.warning(f"Failed to initialize Scheduler service: {e}")
+        logger.warning("Failed to initialize Scheduler service: %s", e, exc_info=True)
 
 
 def _startup_task_queue(app: FastAPI) -> asyncio.Task | None:
@@ -383,6 +420,20 @@ def _startup_task_queue(app: FastAPI) -> asyncio.Task | None:
         else:
             logger.debug("Task Queue: nexus_tasks Rust extension not available")
     except Exception as e:
-        logger.warning(f"Task Queue runner not started: {e}")
+        logger.warning("Task Queue runner not started: %s", e, exc_info=True)
 
     return None
+
+
+async def _startup_workflow_engine(app: FastAPI) -> None:
+    """Load workflows from persistent storage (Issue #1522)."""
+    if not app.state.nexus_fs:
+        return
+
+    engine = getattr(app.state.nexus_fs, "workflow_engine", None)
+    if engine and hasattr(engine, "startup"):
+        try:
+            await engine.startup()
+            logger.info("Workflow engine started — loaded workflows from storage")
+        except Exception as e:
+            logger.warning(f"Workflow engine startup failed (non-fatal): {e}")

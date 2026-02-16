@@ -313,10 +313,7 @@ class SkillService:
                 )
             return results
 
-        # TODO: Implement "zone" filter - skills shared with the zone
-        # if filter == "zone":
-        #     zone_skill_paths = self._find_zone_shared_skills(context)
-        #     ...
+        # TODO(#1443): implement "zone" filter for skills shared with the zone
 
         # "all" filter: batch-collect paths and pre-compute permission sets
         # to avoid per-skill ReBAC calls (O(1) set lookups instead of O(n) queries)
@@ -978,8 +975,8 @@ class SkillService:
                         if self._gw.exists(skill_md, context=context):
                             skill_paths.append(skill_path)
                             seen_skills.add(skill_name)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug("Failed to check skill existence at %s: %s", skill_md, e)
         except Exception as e:
             logger.warning(f"Failed to find skills in {base_dir}: {e}")
 

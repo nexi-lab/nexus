@@ -513,7 +513,7 @@ class NamespaceManager:
             Integer revision bucket. Returns 0 on error (fail-safe: cache miss).
         """
         try:
-            revision = self._rebac_manager._get_zone_revision(zone_id)
+            revision = self._rebac_manager.get_zone_revision(zone_id)
         except Exception:
             # Broad catch is intentional: fail-safe for thread-isolated SQLite
             # (sqlite3.OperationalError) and any other DB errors. Returns 0
@@ -554,7 +554,7 @@ class NamespaceManager:
                 if view is not None:
                     # Read actual revision (not synthetic) — avoids TOCTOU race
                     try:
-                        current_revision = self._rebac_manager._get_zone_revision(zone_id)
+                        current_revision = self._rebac_manager.get_zone_revision(zone_id)
                     except Exception:
                         # Broad catch: fail-safe for thread-isolated SQLite
                         current_revision = 0
@@ -663,7 +663,7 @@ class NamespaceManager:
 
         # Get current zone revision for cache freshness tracking
         try:
-            current_revision = self._rebac_manager._get_zone_revision(zone_id)
+            current_revision = self._rebac_manager.get_zone_revision(zone_id)
         except Exception:
             # Broad catch: fail-safe for thread-isolated SQLite
             logger.warning(f"[NAMESPACE] Failed to get zone revision for {zone_id}, using 0")
@@ -721,7 +721,7 @@ class NamespaceManager:
             True if cache is fresh (same revision bucket), False if stale.
         """
         try:
-            current_revision = self._rebac_manager._get_zone_revision(zone_id)
+            current_revision = self._rebac_manager.get_zone_revision(zone_id)
         except Exception:
             # Broad catch: fail-safe for thread-isolated SQLite
             logger.warning(

@@ -1,14 +1,14 @@
 """Path unscoping utilities for the RPC server.
 
-Strips internal zone/user prefixes from paths before returning
+Strips internal zone/tenant/user prefixes from paths before returning
 them to API clients. This ensures users see clean, user-friendly paths
 instead of internal storage paths.
 
 Internal path formats handled:
-    /tenant:{zone_id}/...                   -> /...
-    /tenant:{zone_id}/user:{user_id}/...    -> /...
-    /zone/{zone_id}/...                      -> /...
-    /zone/{zone_id}/user:{user_id}/...       -> /...
+    /tenant:{zone_id}/...                   → /...
+    /tenant:{zone_id}/user:{user_id}/...    → /...
+    /zone/{zone_id}/...                      → /...
+    /zone/{zone_id}/user:{user_id}/...       → /...
 
 Related: Issue #1202 - list('/') returns paths with /tenant: prefix
 """
@@ -36,26 +36,21 @@ def unscope_result(r: object) -> dict | str | object:
 
 
 def unscope_internal_path(path: str) -> str:
-    """Strip internal zone/user prefix from a storage path.
+    """Strip internal zone/tenant/user prefix from a storage path.
 
     Converts internal storage paths to user-friendly paths by removing
     the zone/tenant and user prefix segments.
 
     Args:
-        path: Internal storage path (e.g., "/zone/default/workspace/file.txt"
-              or "/tenant:default/workspace/file.txt")
+        path: Internal storage path (e.g., "/tenant:default/workspace/file.txt")
 
     Returns:
         User-friendly path (e.g., "/workspace/file.txt")
 
     Examples:
-        >>> unscope_internal_path("/zone/acme/connector/gcs/file.txt")
-        '/connector/gcs/file.txt'
-        >>> unscope_internal_path("/zone/acme/user:alice/workspace/file.txt")
-        '/workspace/file.txt'
         >>> unscope_internal_path("/tenant:default/connector/gcs/file.txt")
         '/connector/gcs/file.txt'
-        >>> unscope_internal_path("/tenant:default/user:admin/workspace/file.txt")
+        >>> unscope_internal_path("/zone/acme/user:alice/workspace/file.txt")
         '/workspace/file.txt'
         >>> unscope_internal_path("/workspace/file.txt")
         '/workspace/file.txt'
@@ -84,24 +79,33 @@ def unscope_internal_path(path: str) -> str:
     return f"/{remaining}" if remaining else "/"
 
 
-def unscope_internal_dict(
-    d: dict,
-    path_keys: list[str],
-) -> dict:
-    """Unscope path-valued keys inside a metadata/result dict.
-
-    Creates a shallow copy and replaces any ``path_keys`` values with
-    their unscoped equivalents.
+def unscope_internal_paths(paths: list[str]) -> list[str]:
+    """Strip internal prefixes from a list of paths.
 
     Args:
-        d: Dictionary that may contain internal storage paths.
-        path_keys: List of keys whose values should be unscoped.
+        paths: List of internal storage paths
 
     Returns:
-        Copy of the dict with paths unscoped.
+        List of user-friendly paths
     """
-    out = dict(d)
+    return [unscope_internal_path(p) for p in paths]
+
+
+def unscope_internal_dict(d: dict, path_keys: list[str]) -> dict:
+    """Strip internal prefixes from path values in a dict.
+
+    Creates a new dict (does not mutate the original) with specified
+    keys' string values unscoped.
+
+    Args:
+        d: Dictionary potentially containing internal paths
+        path_keys: Keys whose string values should be unscoped
+
+    Returns:
+        New dict with path values unscoped
+    """
+    result = d.copy()
     for key in path_keys:
-        if key in out and isinstance(out[key], str):
-            out[key] = unscope_internal_path(out[key])
-    return out
+        if key in result and isinstance(result[key], str):
+            result[key] = unscope_internal_path(result[key])
+    return result

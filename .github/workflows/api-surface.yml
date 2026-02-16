@@ -2,7 +2,7 @@ name: API Surface Check
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, develop]
     paths:
       - 'src/nexus/**/*.py'
 

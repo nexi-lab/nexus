@@ -88,7 +88,7 @@ def _create_wallet_provisioner() -> Any:
     # Shared state for the closure (lazy client)
     _state: dict[str, Any] = {"client": None}
 
-    def _provision_wallet(agent_id: str, zone_id: str = "root") -> None:
+    def _provision_wallet(agent_id: str, zone_id: str = "default") -> None:
         """Create TigerBeetle account for agent. Idempotent."""
         import tigerbeetle as tb
 
@@ -146,7 +146,7 @@ def _parse_resiliency_config(raw: dict[str, Any] | None) -> Any:
     _logger = _log.getLogger(__name__)
 
     try:
-        timeouts: dict[str, TimeoutPolicy] = {"root": TimeoutPolicy()}
+        timeouts: dict[str, TimeoutPolicy] = {"default": TimeoutPolicy()}
         for name, val in raw.get("timeouts", {}).items():
             if isinstance(val, dict):
                 timeouts[name] = TimeoutPolicy(
@@ -155,7 +155,7 @@ def _parse_resiliency_config(raw: dict[str, Any] | None) -> Any:
             else:
                 timeouts[name] = TimeoutPolicy(seconds=parse_duration(val))
 
-        retries: dict[str, RetryPolicy] = {"root": RetryPolicy()}
+        retries: dict[str, RetryPolicy] = {"default": RetryPolicy()}
         for name, val in raw.get("retries", {}).items():
             if isinstance(val, dict):
                 retries[name] = RetryPolicy(
@@ -165,7 +165,7 @@ def _parse_resiliency_config(raw: dict[str, Any] | None) -> Any:
                     min_wait=float(val.get("min_wait", 1.0)),
                 )
 
-        circuit_breakers: dict[str, CircuitBreakerPolicy] = {"root": CircuitBreakerPolicy()}
+        circuit_breakers: dict[str, CircuitBreakerPolicy] = {"default": CircuitBreakerPolicy()}
         for name, val in raw.get("circuit_breakers", {}).items():
             if isinstance(val, dict):
                 circuit_breakers[name] = CircuitBreakerPolicy(
@@ -178,9 +178,9 @@ def _parse_resiliency_config(raw: dict[str, Any] | None) -> Any:
         for name, val in raw.get("targets", {}).items():
             if isinstance(val, dict):
                 targets[name] = TargetBinding(
-                    timeout=str(val.get("timeout", "root")),
-                    retry=str(val.get("retry", "root")),
-                    circuit_breaker=str(val.get("circuit_breaker", "root")),
+                    timeout=str(val.get("timeout", "default")),
+                    retry=str(val.get("retry", "default")),
+                    circuit_breaker=str(val.get("circuit_breaker", "default")),
                 )
 
         return ResiliencyConfig(
@@ -346,7 +346,7 @@ def create_nexus_services(
 
     permission_enforcer = PermissionEnforcer(
         metadata_store=metadata_store,
-        rebac_manager=rebac_manager,  # EnhancedReBACManager from rebac brick
+        rebac_manager=rebac_manager,
         allow_admin_bypass=perm.allow_admin_bypass,
         allow_system_bypass=True,
         audit_store=audit_store,
@@ -387,7 +387,7 @@ def create_nexus_services(
     # --- Mount Manager ---
     from nexus.services.mount_manager import MountManager
 
-    mount_manager = MountManager(record_store)
+    mount_manager = MountManager(session_factory)
 
     # --- Workspace Manager ---
     from nexus.services.workspace_manager import WorkspaceManager
@@ -665,7 +665,15 @@ def create_nexus_services(
     # --- Workflow engine (moved from NexusFS.__init__) ---
     workflow_engine: Any = None
     if dist.enable_workflows:
-        workflow_engine = _create_workflow_engine(record_store, metadata_store)
+        # Try to get Rust glob_match for performance (falls back to fnmatch)
+        _glob_match_fn: Any = None
+        try:
+            from nexus.core import glob_fast
+
+            _glob_match_fn = glob_fast.glob_match
+        except ImportError:
+            pass
+        workflow_engine = _create_workflow_engine(record_store, _glob_match_fn)
 
     return _KernelServices(
         router=router,
@@ -777,8 +785,12 @@ def _create_distributed_infra(
     return event_bus, lock_manager
 
 
-def _create_workflow_engine(record_store: Any, metadata_store: Any) -> Any:
-    """Create workflow engine (was NexusFS.__init__ lines 529-555).
+def _create_workflow_engine(record_store: Any, glob_match_fn: Any = None) -> Any:
+    """Create workflow engine with async store and DI.
+
+    Args:
+        record_store: RecordStoreABC instance (has async_session_factory property).
+        glob_match_fn: Optional glob match function (Rust glob_fast in production).
 
     Returns workflow engine or None if unavailable.
     """
@@ -789,19 +801,21 @@ def _create_workflow_engine(record_store: Any, metadata_store: Any) -> Any:
         logger.warning("Workflows require record_store, skipping")
         return None
     try:
-        from nexus.workflows.engine import init_engine
+        from nexus.storage.models import WorkflowExecutionModel, WorkflowModel
+        from nexus.workflows.engine import WorkflowEngine
+        from nexus.workflows.protocol import WorkflowServices
         from nexus.workflows.storage import WorkflowStore
 
         workflow_store = WorkflowStore(
-            record_store=record_store,
-            zone_id="root",
+            session_factory=record_store.async_session_factory,
+            workflow_model=WorkflowModel,
+            execution_model=WorkflowExecutionModel,
+            zone_id="default",
         )
-        return init_engine(
-            metadata_store=metadata_store,
-            plugin_registry=None,
-            workflow_store=workflow_store,
-        )
-    except Exception:
+        services = WorkflowServices(glob_match=glob_match_fn)
+        return WorkflowEngine(workflow_store=workflow_store, services=services)
+    except Exception as e:
+        logger.warning("Failed to create workflow engine: %s", e)
         return None
 
 

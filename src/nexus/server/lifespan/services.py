@@ -49,6 +49,8 @@ async def startup_services(app: FastAPI) -> list[asyncio.Task]:
     if task_runner_task:
         bg_tasks.append(task_runner_task)
 
+    await _startup_workflow_engine(app)
+
     return bg_tasks
 
 
@@ -386,3 +388,17 @@ def _startup_task_queue(app: FastAPI) -> asyncio.Task | None:
         logger.warning(f"Task Queue runner not started: {e}")
 
     return None
+
+
+async def _startup_workflow_engine(app: FastAPI) -> None:
+    """Load workflows from persistent storage (Issue #1522)."""
+    if not app.state.nexus_fs:
+        return
+
+    engine = getattr(app.state.nexus_fs, "workflow_engine", None)
+    if engine and hasattr(engine, "startup"):
+        try:
+            await engine.startup()
+            logger.info("Workflow engine started — loaded workflows from storage")
+        except Exception as e:
+            logger.warning(f"Workflow engine startup failed (non-fatal): {e}")

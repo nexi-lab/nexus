@@ -665,7 +665,15 @@ def create_nexus_services(
     # --- Workflow engine (moved from NexusFS.__init__) ---
     workflow_engine: Any = None
     if dist.enable_workflows:
-        workflow_engine = _create_workflow_engine(session_factory, metadata_store)
+        # Try to get Rust glob_match for performance (falls back to fnmatch)
+        _glob_match_fn: Any = None
+        try:
+            from nexus.core import glob_fast
+
+            _glob_match_fn = glob_fast.glob_match
+        except ImportError:
+            pass
+        workflow_engine = _create_workflow_engine(record_store, _glob_match_fn)
 
     return _KernelServices(
         router=router,
@@ -777,31 +785,37 @@ def _create_distributed_infra(
     return event_bus, lock_manager
 
 
-def _create_workflow_engine(session_factory: Any, metadata_store: Any) -> Any:
-    """Create workflow engine (was NexusFS.__init__ lines 529-555).
+def _create_workflow_engine(record_store: Any, glob_match_fn: Any = None) -> Any:
+    """Create workflow engine with async store and DI.
+
+    Args:
+        record_store: RecordStoreABC instance (has async_session_factory property).
+        glob_match_fn: Optional glob match function (Rust glob_fast in production).
 
     Returns workflow engine or None if unavailable.
     """
     import logging
 
     logger = logging.getLogger(__name__)
-    if session_factory is None:
-        logger.warning("Workflows require record_store (session_factory), skipping")
+    if record_store is None:
+        logger.warning("Workflows require record_store, skipping")
         return None
     try:
-        from nexus.workflows.engine import init_engine
+        from nexus.storage.models import WorkflowExecutionModel, WorkflowModel
+        from nexus.workflows.engine import WorkflowEngine
+        from nexus.workflows.protocol import WorkflowServices
         from nexus.workflows.storage import WorkflowStore
 
         workflow_store = WorkflowStore(
-            session_factory=session_factory,
+            session_factory=record_store.async_session_factory,
+            workflow_model=WorkflowModel,
+            execution_model=WorkflowExecutionModel,
             zone_id="default",
         )
-        return init_engine(
-            metadata_store=metadata_store,
-            plugin_registry=None,
-            workflow_store=workflow_store,
-        )
-    except Exception:
+        services = WorkflowServices(glob_match=glob_match_fn)
+        return WorkflowEngine(workflow_store=workflow_store, services=services)
+    except Exception as e:
+        logger.warning("Failed to create workflow engine: %s", e)
         return None
 
 

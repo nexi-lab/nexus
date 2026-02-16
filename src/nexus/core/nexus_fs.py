@@ -271,6 +271,12 @@ class NexusFS(  # type: ignore[misc]
         self.enable_workflows = distributed.enable_workflows
         self.workflow_engine = svc.workflow_engine
 
+        # Bounded workflow event queue (#1522)
+        self._workflow_queue: asyncio.Queue[tuple[str, dict]] | None = None
+        self._workflow_consumer_task: asyncio.Task[None] | None = None  # type: ignore[assignment]  # allowed
+        if self.enable_workflows and self.workflow_engine:
+            self._workflow_queue = asyncio.Queue(maxsize=1000)
+
         # Initialize OAuth token manager (lazy initialization in mixin)
         self._token_manager = None
 

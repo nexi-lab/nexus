@@ -1695,10 +1695,10 @@ jobs:
           echo ""
 
           # Install Python dependencies and nexus package
-          python3 -m pip install pytest pytest-xdist sqlalchemy psycopg2-binary structlog --quiet || true
+          python3 -m pip install pytest pytest-xdist pytest-timeout sqlalchemy psycopg2-binary structlog --quiet || true
 
           # Run the PostgreSQL integration tests
-          pytest tests/integration/test_auth_postgres.py -v
+          pytest tests/e2e/postgres/test_auth_postgres.py -v
 
           if [ $? -eq 0 ]; then
             echo "✅ PostgreSQL auth integration tests completed successfully!"

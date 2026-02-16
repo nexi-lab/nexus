@@ -145,7 +145,7 @@ jobs:
 
       - name: Run migration tests (SQLite)
         run: |
-          uv run pytest tests/integration/migrations/ -v -o "addopts="
+          uv run pytest tests/e2e/postgres/migrations/ -v -o "addopts="
 
   migration-test-pg:
     name: Migration Tests (PostgreSQL)
@@ -189,4 +189,4 @@ jobs:
 
       - name: Run migration tests (PostgreSQL)
         run: |
-          uv run pytest tests/integration/migrations/ -v -o "addopts="
+          uv run pytest tests/e2e/postgres/migrations/ -v -o "addopts="

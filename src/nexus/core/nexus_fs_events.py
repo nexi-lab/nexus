@@ -24,12 +24,13 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import AsyncIterator
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from nexus.core.rpc_decorator import rpc_expose
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
+    from nexus.backends.passthrough import PassthroughBackend
     from nexus.core.distributed_lock import LockManagerBase
     from nexus.core.event_bus import EventBusBase
     from nexus.core.file_watcher import FileWatcher
@@ -251,6 +252,7 @@ class NexusFSEventsMixin:
         if self._is_same_box():
             logger.debug(f"Using same-box file watcher for {path}")
             assert self.backend.is_passthrough, "Backend must be passthrough for this operation"
+            pt_backend = cast("PassthroughBackend", self.backend)
 
             # Import FileEvent for unified response format
             from nexus.core.event_bus import FileEvent
@@ -267,7 +269,7 @@ class NexusFSEventsMixin:
                 if not watch_path:
                     watch_path = "/"
 
-            physical_path = self.backend.get_physical_path(watch_path)
+            physical_path = pt_backend.get_physical_path(watch_path)
             watcher = self._get_file_watcher()
 
             # For glob patterns, we need to filter events
@@ -408,9 +410,10 @@ class NexusFSEventsMixin:
             mode = "mutex" if max_holders == 1 else f"semaphore({max_holders})"
             logger.debug(f"Using same-box lock for {path} ({mode})")
             assert self.backend.is_passthrough, "Backend must be passthrough for this operation"
+            pt_backend = cast("PassthroughBackend", self.backend)
 
             # Note: Same-box locks don't support TTL - they're in-memory only
-            lock_id = self.backend.lock(path, timeout=timeout, max_holders=max_holders)
+            lock_id = pt_backend.lock(path, timeout=timeout, max_holders=max_holders)
 
             if lock_id:
                 logger.debug(f"Same-box lock acquired on {path}: {lock_id}")
@@ -534,8 +537,9 @@ class NexusFSEventsMixin:
         # Layer 1: Same-box in-memory locking
         if self._is_same_box():
             assert self.backend.is_passthrough, "Backend must be passthrough for this operation"
+            pt_backend = cast("PassthroughBackend", self.backend)
 
-            released = self.backend.unlock(lock_id)
+            released = pt_backend.unlock(lock_id)
             if released:
                 logger.debug(f"Same-box lock released: {lock_id}")
             else:
@@ -641,8 +645,9 @@ class NexusFSEventsMixin:
         virtual_path = path
         if self._is_same_box():
             assert self.backend.is_passthrough, "Backend must be passthrough for this operation"
+            pt_backend = cast("PassthroughBackend", self.backend)
             # Strip base path to get virtual path
-            base_path = str(self.backend.base_path)
+            base_path = str(pt_backend.base_path)
             if path.startswith(base_path):
                 virtual_path = path[len(base_path) :]
                 if not virtual_path.startswith("/"):
@@ -795,6 +800,7 @@ class NexusFSEventsMixin:
         # Layer 1: Same-box file watching (OS-native callbacks)
         if self._is_same_box():
             assert self.backend.is_passthrough, "Backend must be passthrough for this operation"
+            pt_backend = cast("PassthroughBackend", self.backend)
             try:
                 watcher = self._get_file_watcher()
 
@@ -807,7 +813,7 @@ class NexusFSEventsMixin:
                         watcher.start()
 
                 # Watch the root directory
-                root_path = self.backend.base_path
+                root_path = pt_backend.base_path
                 watcher.add_watch(root_path, self._on_file_change, recursive=True)
 
                 logger.info(f"Started same-box cache invalidation: {root_path}")

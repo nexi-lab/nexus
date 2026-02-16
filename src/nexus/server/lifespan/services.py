@@ -257,7 +257,7 @@ def _startup_sandbox_auth(app: FastAPI) -> None:
         app.state.agent_event_log = AgentEventLog(session_factory=session_factory)
 
         # Create SandboxManager
-        sandbox_config = getattr(app.state.nexus_fs, "_config", None)
+        sandbox_config = getattr(app.state.nexus_fs, "config", None)
         sandbox_mgr = SandboxManager(
             session_factory=session_factory,
             e2b_api_key=os.getenv("E2B_API_KEY"),

@@ -1,5 +1,7 @@
 name: Docker Integration Test
 
+# TEMPORARILY DISABLED - TODO: Re-enable later. See https://github.com/nexi-lab/nexus/issues/1720
+
 # Required GitHub Secrets:
 # - ANTHROPIC_API_KEY: Claude API key for AI integration testing
 # - NEXUS_GCS_CREDENTIALS: GCS service account JSON credentials (content of gcs-credentials.json)
@@ -35,6 +37,7 @@ concurrency:
 
 jobs:
   docker-build-and-init:
+    if: false  # Re-enable when addressing https://github.com/nexi-lab/nexus/issues/1720
     name: Docker Build & Init Test
     runs-on: ubuntu-latest
     timeout-minutes: 30

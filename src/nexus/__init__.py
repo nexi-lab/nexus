@@ -346,6 +346,39 @@ def connect(
     # RecordStore (Four Pillars)
     record_store = SQLAlchemyRecordStore(db_path=cfg.db_path)
 
+    # Build config objects from NexusConfig fields (Issue #1391)
+    from nexus.core.config import (
+        CacheConfig,
+        DistributedConfig,
+        ParseConfig,
+        PermissionConfig,
+    )
+
+    cache_cfg = CacheConfig(
+        enable_metadata_cache=cfg.enable_metadata_cache,
+        path_size=cfg.cache_path_size,
+        list_size=cfg.cache_list_size,
+        kv_size=cfg.cache_kv_size,
+        exists_size=cfg.cache_exists_size,
+        ttl_seconds=cfg.cache_ttl_seconds,
+    )
+
+    perm_cfg = PermissionConfig(
+        enforce=enforce_permissions,
+        allow_admin_bypass=cfg.allow_admin_bypass,
+        enforce_zone_isolation=enforce_zone_isolation,
+        enable_tiger_cache=enable_tiger_cache,
+    )
+
+    dist_cfg = DistributedConfig(
+        enable_workflows=cfg.enable_workflows,
+    )
+
+    parse_cfg = ParseConfig(
+        auto_parse=cfg.auto_parse,
+        providers=tuple(cfg.parse_providers) if cfg.parse_providers else None,
+    )
+
     # Create NexusFS via factory
     from nexus.factory import create_nexus_fs
 
@@ -355,20 +388,10 @@ def connect(
         record_store=record_store,
         is_admin=cfg.is_admin,
         custom_namespaces=custom_namespaces,
-        enable_metadata_cache=cfg.enable_metadata_cache,
-        cache_path_size=cfg.cache_path_size,
-        cache_list_size=cfg.cache_list_size,
-        cache_kv_size=cfg.cache_kv_size,
-        cache_exists_size=cfg.cache_exists_size,
-        cache_ttl_seconds=cfg.cache_ttl_seconds,
-        auto_parse=cfg.auto_parse,
-        custom_parsers=cfg.parsers,
-        parse_providers=cfg.parse_providers,
-        enforce_permissions=enforce_permissions,
-        allow_admin_bypass=cfg.allow_admin_bypass,
-        enforce_zone_isolation=enforce_zone_isolation,
-        enable_workflows=cfg.enable_workflows,
-        enable_tiger_cache=enable_tiger_cache,
+        cache=cache_cfg,
+        permissions=perm_cfg,
+        distributed=dist_cfg,
+        parsing=parse_cfg,
     )
 
     # Set memory config for Memory API

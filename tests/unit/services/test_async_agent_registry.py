@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core.agent_record import AgentRecord, AgentState
+from nexus.services.agents.agent_record import AgentRecord, AgentState
 from nexus.services.agents.async_agent_registry import AsyncAgentRegistry, _to_agent_info
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from tests.unit.core.protocols.test_conformance import assert_protocol_conformance
@@ -155,7 +155,7 @@ class TestTransition:
     async def test_propagates_exception(
         self, wrapper: AsyncAgentRegistry, mock_inner: MagicMock
     ) -> None:
-        from nexus.core.agent_registry import InvalidTransitionError
+        from nexus.services.agents.agent_registry import InvalidTransitionError
 
         mock_inner.transition.side_effect = InvalidTransitionError(
             "agent-1", AgentState.UNKNOWN, AgentState.IDLE

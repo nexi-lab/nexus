@@ -428,6 +428,94 @@ class TestGlobalRegistry:
         assert new_registry is not None
 
 
+class TestRWLockConcurrency:
+    """Tests for ReadSetRegistry RWLock under concurrent access (Issue #1169)."""
+
+    def test_concurrent_reads_and_writes(self):
+        """Multiple readers and writers operate without deadlock or corruption."""
+        import threading
+
+        registry = ReadSetRegistry()
+        n_writers = 5
+        n_readers = 20
+        n_ops_per_thread = 50
+        barrier = threading.Barrier(n_writers + n_readers)
+        errors: list[str] = []
+
+        def writer(thread_id: int) -> None:
+            barrier.wait()
+            for i in range(n_ops_per_thread):
+                try:
+                    rs = ReadSet(query_id=f"w{thread_id}_{i}", zone_id="z1")
+                    rs.record_read("file", f"/file_{thread_id}_{i}.txt", revision=i)
+                    registry.register(rs)
+                except Exception as e:
+                    errors.append(f"writer {thread_id}: {e}")
+
+        def reader(thread_id: int) -> None:
+            barrier.wait()
+            for i in range(n_ops_per_thread):
+                try:
+                    registry.get_affected_queries(f"/file_{thread_id % n_writers}_{i}.txt", i + 1)
+                    registry.get_stats()
+                    len(registry)
+                except Exception as e:
+                    errors.append(f"reader {thread_id}: {e}")
+
+        threads = []
+        for i in range(n_writers):
+            threads.append(threading.Thread(target=writer, args=(i,)))
+        for i in range(n_readers):
+            threads.append(threading.Thread(target=reader, args=(i,)))
+
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+
+        assert not errors, f"Errors during concurrent access: {errors}"
+        # All writer operations should have completed
+        assert len(registry) > 0
+
+    def test_concurrent_register_and_cleanup(self):
+        """Concurrent register + cleanup_expired doesn't corrupt state."""
+        import threading
+
+        registry = ReadSetRegistry()
+        barrier = threading.Barrier(3)
+
+        def register_thread() -> None:
+            barrier.wait()
+            for i in range(100):
+                rs = ReadSet(query_id=f"reg_{i}", zone_id="z1")
+                rs.record_read("file", f"/file_{i}.txt", revision=i)
+                registry.register(rs)
+
+        def cleanup_thread() -> None:
+            barrier.wait()
+            for _ in range(100):
+                registry.cleanup_expired()
+
+        def read_thread() -> None:
+            barrier.wait()
+            for i in range(100):
+                registry.get_affected_queries(f"/file_{i}.txt", i + 1)
+
+        threads = [
+            threading.Thread(target=register_thread),
+            threading.Thread(target=cleanup_thread),
+            threading.Thread(target=read_thread),
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=10)
+
+        # Should not crash — state may vary but should be consistent
+        stats = registry.get_stats()
+        assert stats["read_sets_count"] >= 0
+
+
 class TestAccessTypeEnum:
     """Tests for AccessType enum."""
 

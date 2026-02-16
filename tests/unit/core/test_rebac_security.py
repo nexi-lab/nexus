@@ -54,6 +54,15 @@ def _make_mock_rebac(allowed_map: dict[tuple, bool] | None = None):
         return allowed_map.get(key, False)
 
     rebac.rebac_check.side_effect = _check
+
+    def _check_bulk(checks, zone_id=None):
+        results = {}
+        for check in checks:
+            subject, permission, obj = check
+            results[check] = _check(subject, permission, obj, zone_id)
+        return results
+
+    rebac.rebac_check_bulk.side_effect = _check_bulk
     return rebac
 
 

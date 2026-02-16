@@ -56,13 +56,25 @@ class MountCoreService:
     - No async wrappers
     """
 
-    def __init__(self, gateway: NexusFSGateway):
+    def __init__(
+        self,
+        gateway: NexusFSGateway,
+        persist_service: Any = None,
+        rmdir_fn: Any = None,
+        token_manager_fn: Any = None,
+    ):
         """Initialize mount core service.
 
         Args:
             gateway: NexusFSGateway for NexusFS access
+            persist_service: MountPersistService for saved config ops
+            rmdir_fn: Callback to delete directories (NexusFS.rmdir)
+            token_manager_fn: Callback to get token manager for OAuth revocation
         """
         self._gw = gateway
+        self._persist_service = persist_service
+        self._rmdir_fn = rmdir_fn
+        self._token_manager_fn = token_manager_fn
 
     # =========================================================================
     # Core Mount Operations
@@ -333,6 +345,8 @@ class MountCoreService:
     def _create_backend(self, backend_type: str, config: dict[str, Any]) -> Any:
         """Create backend instance from type and config.
 
+        Uses BackendFactory with ConnectorRegistry for all registered backends.
+
         Args:
             backend_type: Backend type identifier
             config: Backend configuration
@@ -341,106 +355,11 @@ class MountCoreService:
             Backend instance
 
         Raises:
-            RuntimeError: If backend type is not supported
+            KeyError: If backend type is not registered
         """
-        from nexus.backends.backend import Backend
+        from nexus.backends.factory import BackendFactory
 
-        backend: Backend
-
-        if backend_type == "local":
-            from nexus.backends.local import LocalBackend
-
-            backend = LocalBackend(root_path=config["data_dir"])
-
-        elif backend_type == "gcs":
-            from nexus.backends.gcs import GCSBackend
-
-            backend = GCSBackend(
-                bucket_name=config["bucket"],
-                project_id=config.get("project_id"),
-                credentials_path=config.get("credentials_path"),
-            )
-
-        elif backend_type == "gcs_connector":
-            from nexus.backends.gcs_connector import GCSConnectorBackend
-
-            backend = GCSConnectorBackend(
-                bucket_name=config["bucket"],
-                project_id=config.get("project_id"),
-                prefix=config.get("prefix", ""),
-                credentials_path=config.get("credentials_path"),
-                access_token=config.get("access_token"),
-                session_factory=self._gw.session_factory,
-            )
-
-        elif backend_type == "s3_connector":
-            from nexus.backends.s3_connector import S3ConnectorBackend
-
-            backend = S3ConnectorBackend(
-                bucket_name=config["bucket"],
-                region_name=config.get("region_name"),
-                prefix=config.get("prefix", ""),
-                credentials_path=config.get("credentials_path"),
-                access_key_id=config.get("access_key_id"),
-                secret_access_key=config.get("secret_access_key"),
-                session_token=config.get("session_token"),
-                session_factory=self._gw.session_factory,
-            )
-
-        elif backend_type == "gdrive_connector":
-            from nexus.backends.gdrive_connector import GoogleDriveConnectorBackend
-
-            backend = GoogleDriveConnectorBackend(
-                token_manager_db=config["token_manager_db"],
-                root_folder=config.get("root_folder", "nexus-data"),
-                user_email=config.get("user_email"),
-            )
-
-        elif backend_type == "x_connector":
-            from nexus.backends.x_connector import XConnectorBackend
-
-            backend = XConnectorBackend(
-                token_manager_db=config["token_manager_db"],
-                user_email=config.get("user_email"),
-                cache_ttl=config.get("cache_ttl"),
-                cache_dir=config.get("cache_dir"),
-            )
-
-        elif backend_type == "hn_connector":
-            from nexus.backends.hn_connector import HNConnectorBackend
-
-            backend = HNConnectorBackend(
-                cache_ttl=config.get("cache_ttl", 300),
-                stories_per_feed=config.get("stories_per_feed", 10),
-                include_comments=config.get("include_comments", True),
-                session_factory=self._gw.session_factory,
-            )
-
-        elif backend_type == "gmail_connector":
-            from nexus.backends.gmail_connector import GmailConnectorBackend
-
-            backend = GmailConnectorBackend(
-                token_manager_db=config["token_manager_db"],
-                user_email=config.get("user_email"),
-                provider=config.get("provider", "gmail"),
-                session_factory=self._gw.session_factory,
-                max_message_per_label=config.get("max_message_per_label", 2000),
-            )
-
-        elif backend_type == "slack_connector":
-            from nexus.backends.slack_connector import SlackConnectorBackend
-
-            backend = SlackConnectorBackend(
-                token_manager_db=config["token_manager_db"],
-                user_email=config.get("user_email"),
-                provider=config.get("provider", "slack"),
-                session_factory=self._gw.session_factory,
-            )
-
-        else:
-            raise RuntimeError(f"Unsupported backend type: {backend_type}")
-
-        return backend
+        return BackendFactory.create(backend_type, config, session_factory=self._gw.session_factory)
 
     def _setup_mount_point(
         self,
@@ -592,3 +511,91 @@ class MountCoreService:
             True if user has permission
         """
         return self._check_permission(mount_point, "read", context)
+
+    # =========================================================================
+    # Connector Lifecycle
+    # =========================================================================
+
+    def delete_connector(
+        self,
+        mount_point: str,
+        revoke_oauth: bool = False,
+        provider: str | None = None,
+        user_email: str | None = None,
+        context: OperationContext | None = None,
+    ) -> dict[str, Any]:
+        """Delete a connector completely with bundled operations.
+
+        Combines: deactivate, delete config, optional OAuth revocation, directory cleanup.
+        """
+        result: dict[str, Any] = {
+            "removed": False,
+            "directory_deleted": False,
+            "config_deleted": False,
+            "oauth_revoked": False,
+            "errors": [],
+            "warnings": [],
+        }
+
+        # Step 1: Try to deactivate connector if active (non-fatal)
+        try:
+            remove_result = self.remove_mount(mount_point, context)
+            result["removed"] = remove_result.get("removed", False)
+            result["directory_deleted"] = remove_result.get("removed", False)
+            if remove_result.get("errors"):
+                result["warnings"].extend(remove_result["errors"])
+        except PermissionError:
+            raise
+        except Exception as e:
+            result["warnings"].append(f"Failed to deactivate connector (continuing): {e}")
+
+        # Step 2: Delete saved configuration (FATAL - must succeed)
+        if self._persist_service is None:
+            raise RuntimeError("MountPersistService not available for delete_connector")
+        try:
+            config_deleted = self._persist_service.delete_saved_mount(mount_point)
+            result["config_deleted"] = config_deleted
+        except Exception as e:
+            error_msg = f"Failed to delete connector configuration: {e}"
+            result["errors"].append(error_msg)
+            raise RuntimeError(error_msg) from e
+
+        # Step 3: Optionally revoke OAuth credentials
+        if revoke_oauth:
+            if not provider or not user_email:
+                result["warnings"].append(
+                    "OAuth revocation requested but provider or user_email not provided"
+                )
+            elif self._token_manager_fn is not None:
+                try:
+                    from nexus.core.context_utils import get_zone_id
+                    from nexus.core.sync_bridge import run_sync
+
+                    zone_id = get_zone_id(context)
+                    token_manager = self._token_manager_fn()
+                    revoked = run_sync(
+                        token_manager.revoke_credential(
+                            provider=provider,
+                            user_email=user_email,
+                            zone_id=zone_id,
+                        )
+                    )
+                    result["oauth_revoked"] = revoked
+                except Exception as e:
+                    result["warnings"].append(
+                        f"Failed to revoke OAuth credentials (non-fatal): {e}"
+                    )
+
+        # Step 4: Delete mount point directory
+        if self._rmdir_fn is not None:
+            try:
+                self._rmdir_fn(mount_point, recursive=True, context=context)
+                result["directory_deleted"] = True
+                logger.info(f"Deleted mount point directory: {mount_point}")
+            except Exception as e:
+                result["warnings"].append(
+                    f"Failed to delete mount point directory (non-fatal): {e}"
+                )
+                logger.warning(f"Failed to delete mount point directory {mount_point}: {e}")
+
+        return result

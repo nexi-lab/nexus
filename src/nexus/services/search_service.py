@@ -15,11 +15,14 @@ import asyncio
 import builtins
 import fnmatch
 import logging
+import os
 import re
+import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import TYPE_CHECKING, Any, cast
 
-from nexus.core import glob_fast, grep_fast
+from nexus.core import glob_fast, grep_fast, trigram_fast
 from nexus.core.exceptions import PermissionDeniedError
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
@@ -29,6 +32,7 @@ from nexus.search.strategies import (
     GREP_PARALLEL_THRESHOLD,
     GREP_PARALLEL_WORKERS,
     GREP_SEQUENTIAL_THRESHOLD,
+    GREP_TRIGRAM_THRESHOLD,
     GREP_ZOEKT_THRESHOLD,
     GlobStrategy,
     SearchStrategy,
@@ -39,6 +43,9 @@ from nexus.services.search_semantic import SemanticSearchMixin
 # List directory traversal thresholds (Issue #901)
 LIST_PARALLEL_WORKERS = 10  # Thread pool size for parallel directory listing (I/O-bound)
 LIST_PARALLEL_MAX_DEPTH = 100  # Safety limit to prevent infinite traversal (e.g., symlink loops)
+
+# Zone-aware path prefixes for cross-zone filtering (Issue #899)
+ZONE_AWARE_PREFIXES: tuple[str, ...] = ("/zones/", "/shared/", "/archives/")
 
 # =============================================================================
 # Issue #538: Gitignore-style default exclusion patterns
@@ -106,9 +113,10 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nexus.core._metadata_generated import FileMetadataProtocol
-    from nexus.core.permissions import OperationContext, PermissionEnforcer
+    from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter
-    from nexus.rebac.manager import EnhancedReBACManager
+    from nexus.services.permissions.enforcer import PermissionEnforcer
+    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
 
 class SearchService(SemanticSearchMixin):
@@ -164,25 +172,47 @@ class SearchService(SemanticSearchMixin):
         # Shared thread pool for parallel grep (Issue #929, fix #14)
         self._thread_pool: ThreadPoolExecutor | None = None
 
+        # Shared thread pool for parallel directory listing (Issue #899)
+        self._list_thread_pool: ThreadPoolExecutor | None = None
+
+        # Lock for lazy thread pool initialization (prevents TOCTOU race)
+        self._pool_lock = threading.Lock()
+
         # TTL cache for cross-zone sharing queries (Issue #904)
         self._cross_zone_cache: dict[tuple[str, ...], tuple[float, builtins.list[str]]] = {}
 
         logger.info("[SearchService] Initialized")
 
     def _get_thread_pool(self) -> ThreadPoolExecutor:
-        """Get or create the shared thread pool for parallel operations."""
+        """Get or create the shared thread pool for parallel grep operations."""
         if self._thread_pool is None:
-            self._thread_pool = ThreadPoolExecutor(
-                max_workers=GREP_PARALLEL_WORKERS,
-                thread_name_prefix="nexus-search",
-            )
+            with self._pool_lock:
+                if self._thread_pool is None:
+                    self._thread_pool = ThreadPoolExecutor(
+                        max_workers=GREP_PARALLEL_WORKERS,
+                        thread_name_prefix="nexus-search",
+                    )
         return self._thread_pool
+
+    def _get_list_thread_pool(self) -> ThreadPoolExecutor:
+        """Get or create the shared thread pool for parallel directory listing."""
+        if self._list_thread_pool is None:
+            with self._pool_lock:
+                if self._list_thread_pool is None:
+                    self._list_thread_pool = ThreadPoolExecutor(
+                        max_workers=LIST_PARALLEL_WORKERS,
+                        thread_name_prefix="nexus-list",
+                    )
+        return self._list_thread_pool
 
     def close(self) -> None:
         """Release resources held by the search service."""
         if self._thread_pool is not None:
             self._thread_pool.shutdown(wait=False)
             self._thread_pool = None
+        if self._list_thread_pool is not None:
+            self._list_thread_pool.shutdown(wait=False)
+            self._list_thread_pool = None
 
     @property
     def _gw_session_factory(self) -> Any:
@@ -301,7 +331,7 @@ class SearchService(SemanticSearchMixin):
                 context=context,
             )
         # Phase 2 Integration (v0.4.0): Intercept memory paths
-        from nexus.core.memory_router import MemoryViewRouter
+        from nexus.services.memory.memory_router import MemoryViewRouter
 
         if path and MemoryViewRouter.is_memory_path(path):
             return self._list_memory_path(path, details)
@@ -559,46 +589,44 @@ class SearchService(SemanticSearchMixin):
         if not pending_dirs:
             return results
 
-        # BFS with parallel I/O for subdirectories
-        import time as _time_mod
-
-        start_time = _time_mod.time()
+        # BFS with parallel I/O using shared thread pool (Issue #899)
+        start_time = time.time()
         depth = 0
+        executor = self._get_list_thread_pool()
 
-        with ThreadPoolExecutor(max_workers=LIST_PARALLEL_WORKERS) as executor:
-            while pending_dirs and depth < LIST_PARALLEL_MAX_DEPTH:
-                depth += 1
-                futures = {
-                    executor.submit(backend.list_dir, bp, context=context): (vp, bp)
-                    for vp, bp in pending_dirs
-                }
-                pending_dirs = []
+        while pending_dirs and depth < LIST_PARALLEL_MAX_DEPTH:
+            depth += 1
+            futures = {
+                executor.submit(backend.list_dir, bp, context=context): (vp, bp)
+                for vp, bp in pending_dirs
+            }
+            pending_dirs = []
 
-                for future in as_completed(futures):
-                    virtual_path, b_path = futures[future]
-                    try:
-                        dir_entries = future.result(timeout=30)
-                        for entry in dir_entries:
-                            full_path = f"{virtual_path.rstrip('/')}/{entry}"
-                            if entry.endswith("/"):
-                                results.append(full_path.rstrip("/"))
-                                subdir_bp = (
-                                    f"{b_path.rstrip('/')}/{entry.rstrip('/')}"
-                                    if b_path
-                                    else entry.rstrip("/")
-                                )
-                                pending_dirs.append((full_path.rstrip("/"), subdir_bp))
-                            else:
-                                results.append(full_path)
-                    except Exception as e:
-                        logger.warning(f"[LIST-PARALLEL] Failed to list '{virtual_path}': {e}")
+            for future in as_completed(futures):
+                virtual_path, b_path = futures[future]
+                try:
+                    dir_entries = future.result(timeout=30)
+                    for entry in dir_entries:
+                        full_path = f"{virtual_path.rstrip('/')}/{entry}"
+                        if entry.endswith("/"):
+                            results.append(full_path.rstrip("/"))
+                            subdir_bp = (
+                                f"{b_path.rstrip('/')}/{entry.rstrip('/')}"
+                                if b_path
+                                else entry.rstrip("/")
+                            )
+                            pending_dirs.append((full_path.rstrip("/"), subdir_bp))
+                        else:
+                            results.append(full_path)
+                except Exception as e:
+                    logger.warning(f"[LIST-PARALLEL] Failed to list '{virtual_path}': {e}")
 
         if depth >= LIST_PARALLEL_MAX_DEPTH:
             logger.warning(
                 f"[LIST-PARALLEL] Hit max depth {LIST_PARALLEL_MAX_DEPTH}, truncating traversal"
             )
 
-        elapsed = _time_mod.time() - start_time
+        elapsed = time.time() - start_time
         logger.debug(f"[LIST-PARALLEL] Completed: {len(results)} entries in {elapsed:.3f}s")
 
         return results
@@ -1063,7 +1091,7 @@ class SearchService(SemanticSearchMixin):
         # Two-phase TRAVERSE optimization (Fix #1147)
         user_zone = zone_id
         _skipped_cross_zone = 0
-        _ZONE_PREFIXES = ("/zones/", "/shared/", "/archives/")
+        _ZONE_PREFIXES = ZONE_AWARE_PREFIXES
         dirs_to_check: list[str] = []
 
         for dir_path in dirs_needing_traverse:
@@ -1282,8 +1310,8 @@ class SearchService(SemanticSearchMixin):
             logger.warning("session_factory not provided, cannot list memory paths")
             return []
 
-        from nexus.core.memory_router import MemoryViewRouter
-        from nexus.rebac.entity_registry import EntityRegistry
+        from nexus.services.memory.memory_router import MemoryViewRouter
+        from nexus.services.permissions.entity_registry import EntityRegistry
 
         parts = [p for p in path.split("/") if p]
         session = self._gw_session_factory()
@@ -1335,11 +1363,7 @@ class SearchService(SemanticSearchMixin):
         prefix: str = "",
     ) -> builtins.list[str]:
         """Fetch file paths shared with a user from other zones (Issue #904)."""
-        import sqlite3
         import time as _time
-        from datetime import UTC, datetime
-
-        from nexus.core.rebac import CROSS_ZONE_ALLOWED_RELATIONS
 
         if not self._rebac_manager:
             return []
@@ -1353,48 +1377,26 @@ class SearchService(SemanticSearchMixin):
                 return cached_paths
 
         try:
-            with self._rebac_manager._connection() as conn:
-                cursor = self._rebac_manager._create_cursor(conn)
-                cross_zone_relations = list(CROSS_ZONE_ALLOWED_RELATIONS)
-                placeholders = ", ".join("?" * len(cross_zone_relations))
-                query = f"""
-                    SELECT DISTINCT object_id
-                    FROM rebac_tuples
-                    WHERE relation IN ({placeholders})
-                      AND subject_type = ? AND subject_id = ?
-                      AND object_type = 'file'
-                      AND zone_id != ?
-                      AND (expires_at IS NULL OR expires_at > ?)
-                """
-                base_params: tuple[Any, ...] = (
-                    *cross_zone_relations,
-                    subject_type,
-                    subject_id,
-                    zone_id,
-                    datetime.now(UTC).isoformat(),
+            paths = self._rebac_manager.get_cross_zone_shared_paths(
+                subject_type=subject_type,
+                subject_id=subject_id,
+                zone_id=zone_id,
+                prefix=prefix,
+            )
+            if paths:
+                logger.debug(
+                    f"[CROSS-ZONE] Found {len(paths)} shared paths for {subject_type}:{subject_id}"
                 )
-                if prefix:
-                    query += " AND object_id LIKE ?"
-                    params = (*base_params, f"{prefix}%")
-                else:
-                    params = base_params
-                cursor.execute(self._rebac_manager._fix_sql_placeholders(query), params)
-                paths = []
-                for row in cursor.fetchall():
-                    path = row["object_id"] if isinstance(row, dict) else row[0]
-                    paths.append(path)
-                if paths:
-                    logger.debug(
-                        f"[CROSS-ZONE] Found {len(paths)} shared paths "
-                        f"for {subject_type}:{subject_id}"
-                    )
-                self._cross_zone_cache[cache_key] = (now, paths)
-                return paths
-        except (sqlite3.OperationalError, sqlite3.InterfaceError) as e:
-            logger.error("Cross-zone sharing DB error for %s/%s: %s", subject_type, subject_id, e)
-            return []
+            self._cross_zone_cache[cache_key] = (now, paths)
+            return paths
         except Exception as e:
-            logger.error("Unexpected cross-zone sharing error: %s", e, exc_info=True)
+            logger.error(
+                "Cross-zone sharing error for %s/%s: %s",
+                subject_type,
+                subject_id,
+                e,
+                exc_info=True,
+            )
             return []
 
     # =========================================================================
@@ -1461,7 +1463,10 @@ class SearchService(SemanticSearchMixin):
             full_pattern = pattern
             if (
                 "**" not in full_pattern
-                and not full_pattern.startswith(("workspace/", "shared/", "external/"))
+                and not full_pattern.startswith("/")
+                and not full_pattern.startswith(
+                    ("workspace/", "shared/", "external/")
+                )  # Issue #1572
                 and "/" in full_pattern
             ):
                 full_pattern = "**/" + full_pattern
@@ -1566,7 +1571,10 @@ class SearchService(SemanticSearchMixin):
                     full_pattern = pattern
                     if (
                         "**" not in full_pattern
-                        and not full_pattern.startswith(("workspace/", "shared/", "external/"))
+                        and not full_pattern.startswith("/")
+                        and not full_pattern.startswith(
+                            ("workspace/", "shared/", "external/")
+                        )  # Issue #1572
                         and "/" in full_pattern
                     ):
                         full_pattern = "**/" + full_pattern
@@ -1649,14 +1657,29 @@ class SearchService(SemanticSearchMixin):
         cached_text_ratio = len(searchable_texts) / len(files) if files else 0.0
         files_needing_raw = [f for f in files if f not in searchable_texts]
 
-        # Phase 3: Select strategy (Issue #929)
+        # Phase 3: Select strategy (Issue #929, #954)
+        zone_id, _, _ = self._get_routing_params(context)
         strategy = self._select_grep_strategy(
             file_count=len(files),
             cached_text_ratio=cached_text_ratio,
+            zone_id=zone_id,
         )
 
         # Phase 4: Execute strategy-specific search
         results: list[dict[str, Any]] = []
+
+        # Strategy: TRIGRAM_INDEX (Issue #954)
+        if strategy == SearchStrategy.TRIGRAM_INDEX and zone_id:
+            trigram_results = self._try_grep_with_trigram(
+                pattern=pattern,
+                ignore_case=ignore_case,
+                max_results=max_results,
+                zone_id=zone_id,
+                context=context,
+            )
+            if trigram_results is not None:
+                return trigram_results
+            strategy = SearchStrategy.RUST_BULK  # Fallback
 
         # Strategy: ZOEKT_INDEX
         if strategy == SearchStrategy.ZOEKT_INDEX:
@@ -1899,6 +1922,158 @@ class SearchService(SemanticSearchMixin):
             logger.warning(f"[GREP] Zoekt search failed: {e}")
             return None
 
+    def _try_grep_with_trigram(
+        self,
+        pattern: str,
+        ignore_case: bool,
+        max_results: int,
+        zone_id: str,
+        context: Any = None,
+    ) -> builtins.list[dict[str, Any]] | None:
+        """Try trigram index for accelerated grep (Issue #954).
+
+        Uses trigram index for O(1) candidate lookup, then verifies candidates
+        by reading content through NexusFS (supporting CAS backends).
+
+        Returns None if trigram index is not available or on error,
+        allowing fallback to other strategies.
+        """
+        if not trigram_fast.is_available():
+            return None
+
+        index_path = trigram_fast.get_index_path(zone_id)
+        if not os.path.isfile(index_path):
+            return None
+
+        # Phase 1: Get candidate file paths from trigram index (sub-ms).
+        candidates = trigram_fast.search_candidates(
+            index_path=index_path,
+            pattern=pattern,
+            ignore_case=ignore_case,
+        )
+
+        if candidates is None:
+            logger.warning("[GREP] Trigram candidate search failed, falling back")
+            return None
+
+        if not candidates:
+            logger.debug("[GREP] Issue #954: Trigram index found 0 candidates for zone=%s", zone_id)
+            return []
+
+        logger.debug(
+            "[GREP] Issue #954: Trigram index found %d candidates for zone=%s",
+            len(candidates),
+            zone_id,
+        )
+
+        # Phase 2: Verify candidates by reading content through NexusFS.
+        flags = re.IGNORECASE if ignore_case else 0
+        try:
+            regex = re.compile(pattern, flags)
+        except re.error:
+            return None
+
+        results: builtins.list[dict[str, Any]] = []
+        for file_path in candidates:
+            if len(results) >= max_results:
+                break
+            try:
+                content = self._read(file_path, context=context)
+                if not isinstance(content, bytes):
+                    continue
+                try:
+                    text = content.decode("utf-8")
+                except UnicodeDecodeError:
+                    continue
+                for line_num, line in enumerate(text.splitlines(), start=1):
+                    if len(results) >= max_results:
+                        break
+                    match_obj = regex.search(line)
+                    if match_obj:
+                        results.append(
+                            {
+                                "file": file_path,
+                                "line": line_num,
+                                "content": line,
+                                "match": match_obj.group(0),
+                            }
+                        )
+            except Exception:
+                continue
+
+        return results
+
+    def build_trigram_index_for_zone(
+        self,
+        zone_id: str,
+        context: Any = None,
+    ) -> dict[str, Any]:
+        """Build trigram index for all files in a zone (Issue #954).
+
+        Reads file content through NexusFS (supporting CAS backends) and
+        builds the index using (virtual_path, content) pairs.
+
+        Args:
+            zone_id: Zone identifier.
+            context: Operation context for permission filtering.
+
+        Returns:
+            Dict with status, file_count, trigram_count, index_size_bytes.
+        """
+        if not trigram_fast.is_available():
+            return {"status": "unavailable", "reason": "Rust extension not available"}
+
+        # List all files in the zone.
+        files = cast(list[str], self.list("/", recursive=True, context=context))
+
+        index_path = trigram_fast.get_index_path(zone_id)
+        os.makedirs(os.path.dirname(index_path), exist_ok=True)
+
+        # Read content through NexusFS and build index from (path, content) pairs.
+        # This works with any backend (CAS, S3, etc.) since we read through the
+        # NexusFS abstraction rather than directly from disk.
+        entries: builtins.list[tuple[str, bytes]] = []
+        for file_path in files:
+            try:
+                content = self._read(file_path, context=context)
+                if isinstance(content, bytes):
+                    entries.append((file_path, content))
+            except Exception:
+                continue  # Skip unreadable files.
+
+        success = trigram_fast.build_index_from_entries(entries, index_path)
+        if not success:
+            return {"status": "error", "reason": "Index build failed"}
+
+        stats = trigram_fast.get_stats(index_path)
+        return {
+            "status": "ok",
+            "index_path": index_path,
+            **(stats or {}),
+        }
+
+    def get_trigram_index_status(self, zone_id: str) -> dict[str, Any]:
+        """Get trigram index status for a zone (Issue #954)."""
+        if not trigram_fast.is_available():
+            return {"status": "unavailable"}
+
+        index_path = trigram_fast.get_index_path(zone_id)
+        if not os.path.isfile(index_path):
+            return {"status": "not_built", "index_path": index_path}
+
+        stats = trigram_fast.get_stats(index_path)
+        if stats is None:
+            return {"status": "error", "index_path": index_path}
+
+        return {"status": "ok", "index_path": index_path, **stats}
+
+    def invalidate_trigram_index(self, zone_id: str) -> None:
+        """Delete trigram index for a zone and clear cache (Issue #954)."""
+        index_path = trigram_fast.get_index_path(zone_id)
+        trigram_fast.invalidate_cache(index_path)
+        if os.path.isfile(index_path):
+            os.remove(index_path)
+
     def _grep_parallel(
         self,
         regex: re.Pattern[str],
@@ -1991,12 +2166,21 @@ class SearchService(SemanticSearchMixin):
         file_count: int,
         cached_text_ratio: float,
         zoekt_available: bool | None = None,
+        zone_id: str | None = None,
     ) -> SearchStrategy:
-        """Select optimal grep strategy (Issue #929)."""
+        """Select optimal grep strategy (Issue #929, #954)."""
         if cached_text_ratio >= GREP_CACHED_TEXT_RATIO:
             return SearchStrategy.CACHED_TEXT
         if file_count < GREP_SEQUENTIAL_THRESHOLD:
             return SearchStrategy.SEQUENTIAL
+        # Issue #954: Trigram index — prefer for large file sets with built index.
+        if (
+            file_count > GREP_TRIGRAM_THRESHOLD
+            and zone_id
+            and trigram_fast.is_available()
+            and trigram_fast.index_exists(zone_id)
+        ):
+            return SearchStrategy.TRIGRAM_INDEX
         if file_count > GREP_ZOEKT_THRESHOLD:
             if zoekt_available is None:
                 zoekt_available = self._is_zoekt_available()

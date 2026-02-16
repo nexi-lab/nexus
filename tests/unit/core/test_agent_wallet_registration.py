@@ -21,8 +21,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from nexus.core.agent_record import AgentRecord, AgentState
-from nexus.core.agent_registry import AgentRegistry
+from nexus.services.agents.agent_record import AgentRecord, AgentState
+from nexus.services.agents.agent_registry import AgentRegistry
 from nexus.storage.models import Base
 
 # ---------------------------------------------------------------------------

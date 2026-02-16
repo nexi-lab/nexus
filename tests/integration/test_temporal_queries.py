@@ -25,8 +25,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from nexus.backends.local import LocalBackend
-from nexus.core.memory_api import Memory
-from nexus.rebac.entity_registry import EntityRegistry
+from nexus.services.memory.memory_api import Memory
+from nexus.services.permissions.entity_registry import EntityRegistry
 from nexus.storage.models import Base, MemoryModel
 
 # Configure logging
@@ -362,7 +362,7 @@ class TestPostgreSQLTimestampPrecision:
     )
     def test_microsecond_precision(self, session):
         """Test that PostgreSQL handles microsecond precision correctly."""
-        from nexus.core.memory_router import MemoryViewRouter
+        from nexus.services.memory.memory_router import MemoryViewRouter
 
         now = datetime.now(UTC)
 

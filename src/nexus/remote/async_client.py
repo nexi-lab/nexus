@@ -4,12 +4,23 @@ Implements NexusFilesystem asynchronously by proxying RPC calls to a Nexus
 server over HTTP using httpx.AsyncClient. Uses __getattr__-based dispatch
 for trivial methods, with explicit async overrides for complex methods.
 
+Domain-specific methods (skills, sandbox, OAuth, MCP, share links, memory,
+admin, ACE, LLM) are extracted into domain clients under nexus.remote.domain/
+and exposed via @cached_property facade accessors (Issue #1603).
+
 Issue #1289: Protocol + RPC Proxy pattern.
 
 Example:
     async with AsyncRemoteNexusFS("http://localhost:2026", api_key="sk-xxx") as nx:
         content = await nx.read("/workspace/file.txt")
         contents = await asyncio.gather(*[nx.read(p) for p in paths])
+
+        # Domain client access (new):
+        await nx.skills.create("my-skill", "A skill", template="basic")
+        await nx.sandbox.run("sb_123", "python", "print('hello')")
+
+        # Backwards-compatible flat access (still works):
+        await nx.skills_create("my-skill", "A skill", template="basic")
 """
 
 from __future__ import annotations
@@ -19,8 +30,20 @@ import logging
 import time
 import uuid
 from collections.abc import AsyncIterator
-from typing import Any, cast
+from functools import cached_property
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin
+
+if TYPE_CHECKING:
+    from nexus.remote.domain.ace import AsyncACEClient
+    from nexus.remote.domain.admin import AsyncAdminClient
+    from nexus.remote.domain.llm import AsyncLLMClient
+    from nexus.remote.domain.mcp import AsyncMCPClient
+    from nexus.remote.domain.memory import AsyncMemoryClient
+    from nexus.remote.domain.oauth import AsyncOAuthClient
+    from nexus.remote.domain.sandbox import AsyncSandboxClient
+    from nexus.remote.domain.share_links import AsyncShareLinksClient
+    from nexus.remote.domain.skills import AsyncSkillsClient
 
 import httpx
 from tenacity import (
@@ -44,6 +67,7 @@ from nexus.server.protocol import (
 )
 
 from .client import (
+    _DOMAIN_METHOD_MAP,
     RemoteConnectionError,
     RemoteFilesystemError,
     RemoteTimeoutError,
@@ -52,11 +76,52 @@ from .client import (
 logger = logging.getLogger(__name__)
 
 
+# ============================================================
+# Async domain method map — includes async-only domains
+# ============================================================
+
+_ASYNC_DOMAIN_METHOD_MAP: dict[str, tuple[str, str]] = {
+    **_DOMAIN_METHOD_MAP,
+    # Admin (5 methods, async-only)
+    "admin_create_key": ("admin", "create_key"),
+    "admin_list_keys": ("admin", "list_keys"),
+    "admin_get_key": ("admin", "get_key"),
+    "admin_revoke_key": ("admin", "revoke_key"),
+    "admin_update_key": ("admin", "update_key"),
+    # ACE (11 methods, async-only)
+    "ace_start_trajectory": ("ace", "start_trajectory"),
+    "ace_log_step": ("ace", "log_step"),
+    "ace_complete_trajectory": ("ace", "complete_trajectory"),
+    "ace_add_feedback": ("ace", "add_feedback"),
+    "ace_get_trajectory_feedback": ("ace", "get_trajectory_feedback"),
+    "ace_get_effective_score": ("ace", "get_effective_score"),
+    "ace_mark_for_relearning": ("ace", "mark_for_relearning"),
+    "ace_query_trajectories": ("ace", "query_trajectories"),
+    "ace_create_playbook": ("ace", "create_playbook"),
+    "ace_get_playbook": ("ace", "get_playbook"),
+    "ace_query_playbooks": ("ace", "query_playbooks"),
+}
+
+
 class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
     """Async remote Nexus filesystem client.
 
     Uses httpx.AsyncClient for non-blocking HTTP calls. Trivial methods
     are auto-dispatched via __getattr__; complex methods are async overrides.
+
+    Domain-specific operations are exposed via cached_property accessors:
+    - self.skills — AsyncSkillsClient (22 methods)
+    - self.sandbox — AsyncSandboxClient (10 methods)
+    - self.oauth — AsyncOAuthClient (6 methods)
+    - self.mcp — AsyncMCPClient (8+1 methods)
+    - self.share_links — AsyncShareLinksClient (6 methods)
+    - self.memory — AsyncMemoryClient (21 methods)
+    - self.admin — AsyncAdminClient (5 methods)
+    - self.ace — AsyncACEClient (11 methods)
+    - self.llm — AsyncLLMClient (4 methods)
+
+    Backwards compatibility: flat names like `skills_create(...)` still work
+    via __getattr__ delegation to domain clients.
     """
 
     def __init__(
@@ -140,6 +205,74 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         except Exception as e:
             logger.debug(f"Could not fetch auth info: {e}")
             raise
+
+    # ============================================================
+    # Domain Client Facade (cached_property accessors)
+    # ============================================================
+
+    @cached_property
+    def skills(self) -> AsyncSkillsClient:
+        from nexus.remote.domain.skills import AsyncSkillsClient as _AsyncSkillsClient
+
+        return _AsyncSkillsClient(self._call_rpc)
+
+    @cached_property
+    def sandbox(self) -> AsyncSandboxClient:
+        from nexus.remote.domain.sandbox import AsyncSandboxClient as _AsyncSandboxClient
+
+        return _AsyncSandboxClient(
+            self._call_rpc,
+            lambda: self.server_url,
+            lambda: self.api_key,
+        )
+
+    @cached_property
+    def oauth(self) -> AsyncOAuthClient:
+        from nexus.remote.domain.oauth import AsyncOAuthClient as _AsyncOAuthClient
+
+        return _AsyncOAuthClient(self._call_rpc)
+
+    @cached_property
+    def mcp(self) -> AsyncMCPClient:
+        from nexus.remote.domain.mcp import AsyncMCPClient as _AsyncMCPClient
+
+        return _AsyncMCPClient(self._call_rpc)
+
+    @cached_property
+    def share_links(self) -> AsyncShareLinksClient:
+        from nexus.remote.domain.share_links import (
+            AsyncShareLinksClient as _AsyncShareLinksClient,
+        )
+
+        return _AsyncShareLinksClient(self._call_rpc)
+
+    @cached_property
+    def memory(self) -> AsyncMemoryClient:
+        from nexus.remote.domain.memory import AsyncMemoryClient as _AsyncMemoryClient
+
+        return _AsyncMemoryClient(self._call_rpc)
+
+    @cached_property
+    def admin(self) -> AsyncAdminClient:
+        from nexus.remote.domain.admin import AsyncAdminClient as _AsyncAdminClient
+
+        return _AsyncAdminClient(self._call_rpc)
+
+    @cached_property
+    def ace(self) -> AsyncACEClient:
+        from nexus.remote.domain.ace import AsyncACEClient as _AsyncACEClient
+
+        return _AsyncACEClient(self._call_rpc)
+
+    @cached_property
+    def llm(self) -> AsyncLLMClient:
+        from nexus.remote.domain.llm import AsyncLLMClient as _AsyncLLMClient
+
+        return _AsyncLLMClient(self._get_llm_service)
+
+    def _get_llm_service(self) -> Any:
+        """Lazy accessor for LLMService — set by application code."""
+        return getattr(self, "_llm_service", None)
 
     # ============================================================
     # RPC Transport (async)
@@ -261,16 +394,23 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
             ) from e
 
     # ============================================================
-    # __getattr__ override for async dispatch
+    # __getattr__ override — domain delegation + async dispatch
     # ============================================================
 
     def __getattr__(self, name: str) -> Any:
-        """Dynamic dispatch — wraps sync proxy methods as async coroutines."""
+        """Dynamic dispatch — domain delegation + async proxy for RPC methods."""
         from nexus.remote.method_registry import METHOD_REGISTRY
         from nexus.remote.rpc_proxy import _INTERNAL_ATTRS
 
         if name.startswith("_") or name in _INTERNAL_ATTRS:
             raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+        # Check domain method map first (backwards-compat delegation)
+        mapping = _ASYNC_DOMAIN_METHOD_MAP.get(name)
+        if mapping is not None:
+            domain_name, method_name = mapping
+            domain = getattr(self, domain_name)
+            return getattr(domain, method_name)
 
         spec = METHOD_REGISTRY.get(name)
 
@@ -362,6 +502,21 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         if not file_exists:
             self._negative_cache_add(path)
         return file_exists  # type: ignore[no-any-return]
+
+    async def get_etag(self, path: str) -> str | None:
+        if self._negative_cache_check(path):
+            return None
+        try:
+            result = await self._call_rpc("get_etag", {"path": path})
+        except NexusFileNotFoundError:
+            self._negative_cache_add(path)
+            return None
+        if isinstance(result, str):
+            return result
+        if isinstance(result, dict):
+            etag = result.get("etag")
+            return str(etag) if etag is not None else None
+        return None
 
     async def write(
         self,
@@ -561,6 +716,23 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
             yield chunk
             offset += len(chunk)
 
+    async def stream_range(
+        self,
+        path: str,
+        start: int,
+        end: int,
+        chunk_size: int = 8192,
+        context: Any = None,  # noqa: ARG002
+    ) -> AsyncIterator[bytes]:
+        offset = start
+        while offset <= end:
+            read_end = min(offset + chunk_size, end + 1)
+            chunk = await self.read_range(path, offset, read_end)
+            if not chunk:
+                break
+            yield chunk
+            offset += len(chunk)
+
     # ============================================================
     # Operations with custom response extraction
     # ============================================================
@@ -648,59 +820,6 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
     # Operations with dynamic timeouts
     # ============================================================
 
-    async def sandbox_connect(
-        self,
-        sandbox_id: str,
-        provider: str = "e2b",
-        sandbox_api_key: str | None = None,
-        mount_path: str = "/mnt/nexus",
-        nexus_url: str | None = None,
-        nexus_api_key: str | None = None,
-        agent_id: str | None = None,
-        context: dict | None = None,
-    ) -> dict:
-        params: dict[str, Any] = {
-            "sandbox_id": sandbox_id,
-            "provider": provider,
-            "mount_path": mount_path,
-        }
-        if sandbox_api_key is not None:
-            params["sandbox_api_key"] = sandbox_api_key
-        params["nexus_url"] = nexus_url or self.server_url
-        params["nexus_api_key"] = nexus_api_key or self.api_key
-        if agent_id is not None:
-            params["agent_id"] = agent_id
-        if context is not None:
-            params["context"] = context
-        return cast(dict, await self._call_rpc("sandbox_connect", params, read_timeout=60))
-
-    async def sandbox_run(
-        self,
-        sandbox_id: str,
-        language: str,
-        code: str,
-        timeout: int = 300,
-        nexus_url: str | None = None,
-        nexus_api_key: str | None = None,
-        context: dict | None = None,
-        as_script: bool = False,
-    ) -> dict:
-        params: dict[str, Any] = {
-            "sandbox_id": sandbox_id,
-            "language": language,
-            "code": code,
-            "timeout": timeout,
-        }
-        if nexus_url is not None:
-            params["nexus_url"] = nexus_url
-        if nexus_api_key is not None:
-            params["nexus_api_key"] = nexus_api_key
-        if context is not None:
-            params["context"] = context
-        if as_script:
-            params["as_script"] = as_script
-        return cast(dict, await self._call_rpc("sandbox_run", params, read_timeout=timeout + 10))
-
     async def wait_for_changes(
         self,
         path: str,
@@ -746,338 +865,63 @@ NexusFilesystem.register(AsyncRemoteNexusFS)
 
 
 # ============================================================
-# Helper Classes (AsyncRemoteMemory, AsyncAdminAPI, AsyncACE)
+# Backwards-compat wrappers (delegate to domain clients)
 # ============================================================
 
 
 class AsyncRemoteMemory:
-    """Async Remote Memory API client."""
+    """Async Remote Memory API client (backwards-compatible wrapper).
+
+    Delegates to AsyncMemoryClient domain client.
+    """
 
     def __init__(self, remote_fs: AsyncRemoteNexusFS):
+        from nexus.remote.domain.memory import AsyncMemoryClient as _AsyncMemoryClient
+
         self.remote_fs = remote_fs
+        # Use lambda to ensure dynamic resolution of _call_rpc (supports test mocking)
+        self._client = _AsyncMemoryClient(lambda *a, **kw: remote_fs._call_rpc(*a, **kw))
 
-    async def store(
-        self,
-        content: str,
-        memory_type: str = "fact",
-        scope: str = "agent",
-        importance: float = 0.5,
-        namespace: str | None = None,
-        path_key: str | None = None,
-        state: str = "active",
-        tags: builtins.list[str] | None = None,
-    ) -> str:
-        params: dict[str, Any] = {
-            "content": content,
-            "memory_type": memory_type,
-            "scope": scope,
-            "importance": importance,
-        }
-        if namespace is not None:
-            params["namespace"] = namespace
-        if path_key is not None:
-            params["path_key"] = path_key
-        if state != "active":
-            params["state"] = state
-        if tags is not None:
-            params["tags"] = tags
-        result = await self.remote_fs._call_rpc("store_memory", params)
-        return result["memory_id"]  # type: ignore[no-any-return]
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._client, name)
 
-    async def list(
-        self,
-        scope: str | None = None,
-        memory_type: str | None = None,
-        namespace: str | None = None,
-        namespace_prefix: str | None = None,
-        state: str | None = "active",
-        limit: int = 50,
-    ) -> builtins.list[dict[str, Any]]:
-        params: dict[str, Any] = {"limit": limit}
-        if scope is not None:
-            params["scope"] = scope
-        if namespace is not None:
-            params["namespace"] = namespace
-        if namespace_prefix is not None:
-            params["namespace_prefix"] = namespace_prefix
-        if memory_type is not None:
-            params["memory_type"] = memory_type
-        if state is not None:
-            params["state"] = state
-        result = await self.remote_fs._call_rpc("list_memories", params)
-        return result["memories"]  # type: ignore[no-any-return]
-
-    async def retrieve(
-        self,
-        namespace: str | None = None,
-        path_key: str | None = None,
-        path: str | None = None,
-    ) -> dict[str, Any] | None:
-        params: dict[str, Any] = {}
-        if path is not None:
-            params["path"] = path
-        else:
-            if namespace is not None:
-                params["namespace"] = namespace
-            if path_key is not None:
-                params["path_key"] = path_key
-        result = await self.remote_fs._call_rpc("retrieve_memory", params)
-        return result.get("memory")  # type: ignore[no-any-return]
-
-    async def query(
-        self,
-        memory_type: str | None = None,
-        scope: str | None = None,
-        state: str | None = "active",
-        limit: int = 50,
-    ) -> builtins.list[dict[str, Any]]:
-        params: dict[str, Any] = {"limit": limit}
-        if memory_type is not None:
-            params["memory_type"] = memory_type
-        if scope is not None:
-            params["scope"] = scope
-        if state is not None:
-            params["state"] = state
-        result = await self.remote_fs._call_rpc("query_memories", params)
-        return result["memories"]  # type: ignore[no-any-return]
-
-    async def search(
-        self,
-        query: str,
-        scope: str | None = None,
-        memory_type: str | None = None,
-        limit: int = 10,
-        search_mode: str = "hybrid",
-        embedding_provider: Any = None,
-    ) -> builtins.list[dict[str, Any]]:
-        params: dict[str, Any] = {"query": query, "limit": limit}
-        if memory_type is not None:
-            params["memory_type"] = memory_type
-        if scope is not None:
-            params["scope"] = scope
-        if search_mode != "hybrid":
-            params["search_mode"] = search_mode
-        if embedding_provider is not None:
-            if hasattr(embedding_provider, "__class__"):
-                provider_name = embedding_provider.__class__.__name__.lower()
-                if "openrouter" in provider_name:
-                    params["embedding_provider"] = "openrouter"
-                elif "openai" in provider_name:
-                    params["embedding_provider"] = "openai"
-                elif "voyage" in provider_name:
-                    params["embedding_provider"] = "voyage"
-            elif isinstance(embedding_provider, str):
-                params["embedding_provider"] = embedding_provider
-        result = await self.remote_fs._call_rpc("query_memories", params)
-        return result["memories"]  # type: ignore[no-any-return]
-
-    async def delete(self, memory_id: str) -> bool:
-        result = await self.remote_fs._call_rpc("delete_memory", {"memory_id": memory_id})
-        return result["deleted"]  # type: ignore[no-any-return]
+    def __dir__(self) -> list[str]:
+        return list(set(super().__dir__()) | set(dir(self._client)))
 
 
 class AsyncAdminAPI:
-    """Async Admin API client for managing API keys."""
+    """Async Admin API client (backwards-compatible wrapper).
+
+    Delegates to AsyncAdminClient domain client.
+    """
 
     def __init__(self, remote_fs: AsyncRemoteNexusFS):
+        from nexus.remote.domain.admin import AsyncAdminClient as _AsyncAdminClient
+
         self.remote_fs = remote_fs
+        self._client = _AsyncAdminClient(lambda *a, **kw: remote_fs._call_rpc(*a, **kw))
 
-    async def create_key(
-        self,
-        user_id: str,
-        name: str,
-        zone_id: str = "default",
-        is_admin: bool = False,
-        expires_days: int | None = None,
-        subject_type: str | None = None,
-        subject_id: str | None = None,
-    ) -> dict[str, Any]:
-        params: dict[str, Any] = {
-            "user_id": user_id,
-            "name": name,
-            "zone_id": zone_id,
-            "is_admin": is_admin,
-        }
-        if expires_days is not None:
-            params["expires_days"] = expires_days
-        if subject_type is not None:
-            params["subject_type"] = subject_type
-        if subject_id is not None:
-            params["subject_id"] = subject_id
-        return await self.remote_fs._call_rpc("admin_create_key", params)  # type: ignore[no-any-return]
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._client, name)
 
-    async def list_keys(
-        self,
-        user_id: str | None = None,
-        zone_id: str | None = None,
-        is_admin: bool | None = None,
-        include_expired: bool = False,
-    ) -> builtins.list[dict[str, Any]]:
-        params: dict[str, Any] = {"include_expired": include_expired}
-        if user_id is not None:
-            params["user_id"] = user_id
-        if zone_id is not None:
-            params["zone_id"] = zone_id
-        if is_admin is not None:
-            params["is_admin"] = is_admin
-        result = await self.remote_fs._call_rpc("admin_list_keys", params)
-        return result["keys"]  # type: ignore[no-any-return]
-
-    async def get_key(self, key_id: str) -> dict[str, Any] | None:
-        result = await self.remote_fs._call_rpc("admin_get_key", {"key_id": key_id})
-        return result.get("key")  # type: ignore[no-any-return]
-
-    async def revoke_key(self, key_id: str) -> bool:
-        result = await self.remote_fs._call_rpc("admin_revoke_key", {"key_id": key_id})
-        return result.get("success", False)  # type: ignore[no-any-return]
-
-    async def update_key(
-        self,
-        key_id: str,
-        name: str | None = None,
-        expires_days: int | None = None,
-    ) -> dict[str, Any]:
-        params: dict[str, Any] = {"key_id": key_id}
-        if name is not None:
-            params["name"] = name
-        if expires_days is not None:
-            params["expires_days"] = expires_days
-        return await self.remote_fs._call_rpc("admin_update_key", params)  # type: ignore[no-any-return]
+    def __dir__(self) -> list[str]:
+        return list(set(super().__dir__()) | set(dir(self._client)))
 
 
 class AsyncACE:
-    """Async ACE (Adaptive Concurrency Engine) API client."""
+    """Async ACE client (backwards-compatible wrapper).
+
+    Delegates to AsyncACEClient domain client.
+    """
 
     def __init__(self, remote_fs: AsyncRemoteNexusFS):
+        from nexus.remote.domain.ace import AsyncACEClient as _AsyncACEClient
+
         self.remote_fs = remote_fs
+        self._client = _AsyncACEClient(lambda *a, **kw: remote_fs._call_rpc(*a, **kw))
 
-    async def start_trajectory(
-        self,
-        task_description: str,
-        task_type: str | None = None,
-    ) -> dict[str, Any]:
-        params: dict[str, Any] = {"task_description": task_description}
-        if task_type is not None:
-            params["task_type"] = task_type
-        return await self.remote_fs._call_rpc("ace_start_trajectory", params)  # type: ignore[no-any-return]
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._client, name)
 
-    async def log_step(
-        self,
-        trajectory_id: str,
-        step_type: str,
-        description: str,
-        result: Any = None,
-    ) -> dict[str, Any]:
-        params: dict[str, Any] = {
-            "trajectory_id": trajectory_id,
-            "step_type": step_type,
-            "description": description,
-        }
-        if result is not None:
-            params["result"] = result
-        return await self.remote_fs._call_rpc("ace_log_trajectory_step", params)  # type: ignore[no-any-return]
-
-    async def complete_trajectory(
-        self,
-        trajectory_id: str,
-        status: str,
-        success_score: float | None = None,
-        error_message: str | None = None,
-    ) -> dict[str, Any]:
-        params: dict[str, Any] = {"trajectory_id": trajectory_id, "status": status}
-        if success_score is not None:
-            params["success_score"] = success_score
-        if error_message is not None:
-            params["error_message"] = error_message
-        return await self.remote_fs._call_rpc("ace_complete_trajectory", params)  # type: ignore[no-any-return]
-
-    async def add_feedback(
-        self,
-        trajectory_id: str,
-        feedback_type: str,
-        score: float | None = None,
-        source: str | None = None,
-        message: str | None = None,
-        metrics: dict | None = None,
-    ) -> dict[str, Any]:
-        params: dict[str, Any] = {
-            "trajectory_id": trajectory_id,
-            "feedback_type": feedback_type,
-        }
-        if score is not None:
-            params["score"] = score
-        if source is not None:
-            params["source"] = source
-        if message is not None:
-            params["message"] = message
-        if metrics is not None:
-            params["metrics"] = metrics
-        return await self.remote_fs._call_rpc("ace_add_feedback", params)  # type: ignore[no-any-return]
-
-    async def get_trajectory_feedback(
-        self,
-        trajectory_id: str,
-    ) -> builtins.list[dict[str, Any]]:
-        return await self.remote_fs._call_rpc(  # type: ignore[no-any-return]
-            "ace_get_trajectory_feedback", {"trajectory_id": trajectory_id}
-        )
-
-    async def get_effective_score(
-        self,
-        trajectory_id: str,
-        strategy: str = "latest",
-    ) -> dict[str, Any]:
-        return await self.remote_fs._call_rpc(  # type: ignore[no-any-return]
-            "ace_get_effective_score",
-            {"trajectory_id": trajectory_id, "strategy": strategy},
-        )
-
-    async def mark_for_relearning(
-        self,
-        trajectory_id: str,
-        reason: str,
-        priority: int = 5,
-    ) -> dict[str, Any]:
-        return await self.remote_fs._call_rpc(  # type: ignore[no-any-return]
-            "ace_mark_for_relearning",
-            {"trajectory_id": trajectory_id, "reason": reason, "priority": priority},
-        )
-
-    async def query_trajectories(
-        self,
-        task_type: str | None = None,
-        status: str | None = None,
-        limit: int = 50,
-    ) -> builtins.list[dict[str, Any]]:
-        params: dict[str, Any] = {"limit": limit}
-        if task_type is not None:
-            params["task_type"] = task_type
-        if status is not None:
-            params["status"] = status
-        return await self.remote_fs._call_rpc("ace_query_trajectories", params)  # type: ignore[no-any-return]
-
-    async def create_playbook(
-        self,
-        name: str,
-        description: str | None = None,
-        scope: str = "agent",
-    ) -> dict[str, Any]:
-        params: dict[str, Any] = {"name": name, "scope": scope}
-        if description is not None:
-            params["description"] = description
-        return await self.remote_fs._call_rpc("ace_create_playbook", params)  # type: ignore[no-any-return]
-
-    async def get_playbook(self, playbook_id: str) -> dict[str, Any] | None:
-        return await self.remote_fs._call_rpc(  # type: ignore[no-any-return]
-            "ace_get_playbook", {"playbook_id": playbook_id}
-        )
-
-    async def query_playbooks(
-        self,
-        scope: str | None = None,
-        limit: int = 50,
-    ) -> builtins.list[dict[str, Any]]:
-        params: dict[str, Any] = {"limit": limit}
-        if scope is not None:
-            params["scope"] = scope
-        return await self.remote_fs._call_rpc("ace_query_playbooks", params)  # type: ignore[no-any-return]
+    def __dir__(self) -> list[str]:
+        return list(set(super().__dir__()) | set(dir(self._client)))

@@ -43,6 +43,8 @@ from typing import TYPE_CHECKING, Any
 from nexus.backends.backend import Backend
 from nexus.backends.cache_mixin import IMMUTABLE_VERSION, CacheConnectorMixin
 from nexus.backends.gmail_connector_utils import fetch_emails_batch, list_emails_by_folder
+from nexus.backends.oauth_mixin import OAuthConnectorMixin
+from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.connectors.base import (
     CheckpointMixin,
     ConfirmLevel,
@@ -72,9 +74,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@register_connector(
+    "gmail_connector",
+    description="Gmail with OAuth 2.0 authentication (read-only)",
+    category="oauth",
+    requires=["google-api-python-client", "google-auth-oauthlib"],
+    service_name="gmail",
+)
 class GmailConnectorBackend(
     Backend,
     CacheConnectorMixin,
+    OAuthConnectorMixin,
     SkillDocMixin,
     ValidatedMixin,
     TraitBasedMixin,
@@ -158,6 +168,32 @@ class GmailConnectorBackend(
     # Error registry for self-correcting messages
     ERROR_REGISTRY = ERROR_REGISTRY
 
+    # Connection arguments for registry-based instantiation
+    CONNECTION_ARGS: dict[str, ConnectionArg] = {
+        "token_manager_db": ConnectionArg(
+            type=ArgType.PATH,
+            description="Path to TokenManager database or database URL",
+            required=True,
+        ),
+        "user_email": ConnectionArg(
+            type=ArgType.STRING,
+            description="User email for OAuth lookup (None for multi-user from context)",
+            required=False,
+        ),
+        "provider": ConnectionArg(
+            type=ArgType.STRING,
+            description="OAuth provider name from config",
+            required=False,
+            default="gmail",
+        ),
+        "max_message_per_label": ConnectionArg(
+            type=ArgType.INTEGER,
+            description="Maximum number of messages to fetch per label folder",
+            required=False,
+            default=200,
+        ),
+    }
+
     def __init__(
         self,
         token_manager_db: str,
@@ -187,22 +223,7 @@ class GmailConnectorBackend(
             For multi-user production, leave user_email=None to auto-detect from context.
             This ensures each user accesses their own Gmail.
         """
-        # Import TokenManager here to avoid circular imports
-        from nexus.server.auth.token_manager import TokenManager
-
-        # Store original token_manager_db for config updates
-        self.token_manager_db = token_manager_db
-
-        # Resolve database URL using base class method (checks TOKEN_MANAGER_DB env var)
-        resolved_db = self.resolve_database_url(token_manager_db)
-
-        # Support both file paths and database URLs
-        if resolved_db.startswith(("postgresql://", "sqlite://", "mysql://")):
-            self.token_manager = TokenManager(db_url=resolved_db)
-        else:
-            self.token_manager = TokenManager(db_path=resolved_db)
-        self.user_email = user_email  # None means use context.user_id
-        self.provider = provider
+        self._init_oauth(token_manager_db, user_email=user_email, provider=provider)
 
         # Store session factory for caching (CacheConnectorMixin)
         self.session_factory = session_factory

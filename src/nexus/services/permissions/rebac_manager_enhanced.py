@@ -31,6 +31,7 @@ import logging
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
@@ -1362,6 +1363,37 @@ class EnhancedReBACManager(ReBACManager):
                 return True
         return False
 
+    # =========================================================================
+    # Issue #1244: Namespace Cache Invalidation
+    # =========================================================================
+
+    def register_namespace_invalidator(
+        self,
+        callback_id: str,
+        callback: Callable[[str, str, str], None],
+    ) -> None:
+        """Register a callback to invalidate namespace cache on permission changes.
+
+        This allows NamespaceManager's dcache + mount table to be immediately
+        invalidated when permission tuples are written or deleted, rather than
+        waiting for revision bucket rollover or TTL expiry.
+
+        Args:
+            callback_id: Unique identifier for this callback (for deregistration)
+            callback: Function(subject_type, subject_id, zone_id) that invalidates
+                the subject's dcache and mount table entries
+
+        Example:
+            >>> def invalidator(subject_type, subject_id, zone_id):
+            ...     namespace_manager.invalidate((subject_type, subject_id))
+            >>> manager.register_namespace_invalidator("namespace", invalidator)
+        """
+        self._cache_coordinator.register_namespace_invalidator(callback_id, callback)
+
+    def unregister_namespace_invalidator(self, callback_id: str) -> bool:
+        """Unregister a namespace cache invalidation callback."""
+        return self._cache_coordinator.unregister_namespace_invalidator(callback_id)
+
     def _notify_dir_visibility_invalidators(
         self,
         zone_id: str,
@@ -1559,6 +1591,11 @@ class EnhancedReBACManager(ReBACManager):
         # Issue #919: Notify directory visibility cache invalidators
         self._notify_dir_visibility_invalidators(effective_zone, object)
 
+        # Issue #1244: Notify namespace cache invalidators (dcache + mount table)
+        self._cache_coordinator.notify_namespace_invalidators(
+            effective_zone, subject[0], subject[1]
+        )
+
         # Invalidate L1 permission cache for affected subject and object
         # This ensures subsequent rebac_check_bulk calls see the new permission
         if self._l1_cache is not None:
@@ -1708,6 +1745,14 @@ class EnhancedReBACManager(ReBACManager):
                     zone_id = normalize_zone_id(t.get("zone_id"))
                     self._l1_cache.invalidate_subject(subject[0], subject[1], zone_id)
                     self._l1_cache.invalidate_object(obj[0], obj[1], zone_id)
+
+            # Issue #1244: Notify namespace cache invalidators (dcache + mount table)
+            for t in tuples:
+                subject = t["subject"]
+                zone_id = normalize_zone_id(t.get("zone_id"))
+                self._cache_coordinator.notify_namespace_invalidators(
+                    zone_id, subject[0], subject[1]
+                )
 
         return created_count
 
@@ -2240,6 +2285,13 @@ class EnhancedReBACManager(ReBACManager):
             # Issue #919: Notify directory visibility cache invalidators
             object_tuple = (tuple_info["object_type"], tuple_info["object_id"])
             self._notify_dir_visibility_invalidators(normalize_zone_id(zone_id), object_tuple)
+
+            # Issue #1244: Notify namespace cache invalidators (dcache + mount table)
+            self._cache_coordinator.notify_namespace_invalidators(
+                normalize_zone_id(zone_id),
+                tuple_info["subject_type"],
+                tuple_info["subject_id"],
+            )
 
             # Invalidate L1 permission cache for affected subject and object
             if self._l1_cache is not None:
@@ -3187,3 +3239,94 @@ class EnhancedReBACManager(ReBACManager):
     ) -> list[Entity]:
         """Find all subjects that have a relation to obj in the graph."""
         return _find_subjects_in_graph(obj, tupleset_relation, tuples_graph)
+
+    # =========================================================================
+    # Public Batch Delete API
+    # =========================================================================
+
+    def rebac_delete_by_subject(
+        self,
+        subject_type: str,
+        subject_id: str,
+        zone_id: str | None = None,
+    ) -> int:
+        """Delete all ReBAC tuples for a given subject.
+
+        Uses batch DELETE + changelog INSERT in a single transaction.
+        This is the proper public API for bulk subject removal (e.g., revoking
+        all permissions for a delegated agent).
+
+        Args:
+            subject_type: Subject type (e.g., "agent", "user")
+            subject_id: Subject identifier
+            zone_id: Optional zone scope (normalized internally)
+
+        Returns:
+            Number of tuples deleted
+        """
+        from datetime import UTC, datetime
+
+        from nexus.services.permissions.utils.zone import normalize_zone_id
+
+        normalized_zone = normalize_zone_id(zone_id)
+        now = datetime.now(UTC).isoformat()
+        fix = self._fix_sql_placeholders
+
+        with self._connection() as conn:
+            cursor = self._create_cursor(conn)
+
+            # 1. SELECT all tuples to capture for changelog
+            select_q = (
+                "SELECT tuple_id, subject_type, subject_id, relation, "
+                "object_type, object_id, zone_id "
+                "FROM rebac_tuples "
+                "WHERE subject_type = ? AND subject_id = ?"
+            )
+            params: list = [subject_type, subject_id]
+            if normalized_zone:
+                select_q += " AND zone_id = ?"
+                params.append(normalized_zone)
+            cursor.execute(fix(select_q), params)
+            rows = cursor.fetchall()
+
+            if not rows:
+                return 0
+
+            # 2. Batch DELETE
+            delete_q = "DELETE FROM rebac_tuples WHERE subject_type = ? AND subject_id = ?"
+            delete_params: list = [subject_type, subject_id]
+            if normalized_zone:
+                delete_q += " AND zone_id = ?"
+                delete_params.append(normalized_zone)
+            cursor.execute(fix(delete_q), delete_params)
+
+            # 3. Batch INSERT changelog entries
+            for row in rows:
+                cursor.execute(
+                    fix(
+                        "INSERT INTO rebac_changelog ("
+                        "  change_type, tuple_id, subject_type, subject_id,"
+                        "  relation, object_type, object_id, zone_id, created_at"
+                        ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+                    ),
+                    (
+                        "DELETE",
+                        row["tuple_id"],
+                        row["subject_type"],
+                        row["subject_id"],
+                        row["relation"],
+                        row["object_type"],
+                        row["object_id"],
+                        row["zone_id"] or "default",
+                        now,
+                    ),
+                )
+
+            # 4. Increment zone revision + commit
+            self._increment_zone_revision(zone_id, conn)
+            conn.commit()
+
+            # 5. Invalidate graph cache
+            self._tuple_version += 1
+
+        return len(rows)

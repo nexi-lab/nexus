@@ -19,7 +19,7 @@ from nexus.core.exceptions import InvalidPathError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 
 if TYPE_CHECKING:
-    from nexus.core.memory_api import Memory
+    from nexus.services.memory.memory_api import Memory
     from nexus.core.mount_manager import MountManager
     from nexus.core.permissions import PermissionEnforcer
     from nexus.core.workspace_manager import WorkspaceManager
@@ -993,7 +993,7 @@ class NexusFS(  # type: ignore[misc]
                     session_factory=self.SessionLocal,
                 )
             else:
-                from nexus.core.memory_api import Memory
+                from nexus.services.memory.memory_api import Memory
 
                 self._memory_api = Memory(
                     session=session,
@@ -1108,7 +1108,7 @@ class NexusFS(  # type: ignore[misc]
         Returns:
             Memory API instance
         """
-        from nexus.core.memory_api import Memory
+        from nexus.services.memory.memory_api import Memory
         from nexus.rebac.entity_registry import EntityRegistry
 
         # Get or create entity registry

@@ -120,7 +120,7 @@ class ArchivalStore:
         # Fallback to Python-based similarity search (capped to prevent O(n) full scan)
         session = self._session_factory()
         try:
-            from nexus.core.memory_router import MemoryViewRouter
+            from nexus.services.memory.memory_router import MemoryViewRouter
 
             router = MemoryViewRouter(session)
             archival_memories = router.query_memories(
@@ -254,7 +254,7 @@ class ArchivalStore:
 
             # For SQLite, embeddings are stored as JSON text, not sqlite-vec blobs.
             # Fall back to Python-based search (capped).
-            from nexus.core.memory_router import MemoryViewRouter
+            from nexus.services.memory.memory_router import MemoryViewRouter
 
             router = MemoryViewRouter(session)
             archival_memories = router.query_memories(
@@ -300,7 +300,7 @@ class ArchivalStore:
         """
         session = self._session_factory()
         try:
-            from nexus.core.memory_router import MemoryViewRouter
+            from nexus.services.memory.memory_router import MemoryViewRouter
 
             full_namespace = f"{self.namespace}/{sub_namespace}"
             router = MemoryViewRouter(session)
@@ -322,7 +322,7 @@ class ArchivalStore:
         """
         session = self._session_factory()
         try:
-            from nexus.core.memory_router import MemoryViewRouter
+            from nexus.services.memory.memory_router import MemoryViewRouter
 
             router = MemoryViewRouter(session)
             return router.delete_memory(memory_id)

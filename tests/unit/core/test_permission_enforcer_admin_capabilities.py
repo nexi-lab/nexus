@@ -17,7 +17,8 @@ Admin bypass flow:
 5. Grant or deny based on above checks
 """
 
-from nexus.core.permissions import OperationContext, Permission, PermissionEnforcer
+from nexus.core.permissions import OperationContext, Permission
+from nexus.services.permissions.enforcer import PermissionEnforcer
 
 
 class MockReBACManager:
@@ -45,6 +46,14 @@ class MockReBACManager:
             }
         )
         return self.granted_permissions.get(key, False)
+
+    def rebac_check_bulk(self, checks, zone_id=None):
+        """Bulk check: delegate each check to rebac_check and return results dict."""
+        results = {}
+        for check in checks:
+            subject, permission, obj = check
+            results[check] = self.rebac_check(subject, permission, obj, zone_id)
+        return results
 
 
 class MockAuditStore:

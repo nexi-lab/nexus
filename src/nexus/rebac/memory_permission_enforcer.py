@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from nexus.core.memory_router import MemoryViewRouter
+from nexus.services.memory.memory_router import MemoryViewRouter
 from nexus.core.permissions import (
     OperationContext,
     Permission,

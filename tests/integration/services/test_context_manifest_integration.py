@@ -19,7 +19,7 @@ from typing import Any
 
 import pytest
 
-from nexus.core.agent_record import AgentRecord, AgentState
+from nexus.services.agents.agent_record import AgentRecord, AgentState
 from nexus.services.context_manifest.models import (
     FileGlobSource,
     ManifestResult,

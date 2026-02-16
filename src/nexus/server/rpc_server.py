@@ -349,18 +349,15 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
                     user_id = result.subject_id
 
                     # If agent_id provided and subject is user, validate agent ownership
-                    if (
-                        agent_id
-                        and result.subject_type == "user"
-                        and hasattr(self.nexus_fs, "entity_registry")
-                        and self.nexus_fs.entity_registry
-                    ):
+                    if agent_id and result.subject_type == "user":
                         # Validate agent belongs to user
-                        from nexus.core.agents import validate_agent_ownership
-
-                        if not validate_agent_ownership(
-                            agent_id, result.subject_id, self.nexus_fs.entity_registry
-                        ):
+                        _agent_reg = getattr(self.nexus_fs, "_agent_registry", None)
+                        ownership_valid = True
+                        if _agent_reg is not None:
+                            ownership_valid = _agent_reg.validate_ownership(
+                                agent_id, result.subject_id
+                            )
+                        if not ownership_valid:
                             logger.warning(
                                 f"Agent {agent_id} not owned by user {result.subject_id}, ignoring X-Agent-ID"
                             )

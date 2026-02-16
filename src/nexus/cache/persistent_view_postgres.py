@@ -60,6 +60,10 @@ _DELETE_SUBJECT = text("""
       AND subject_id = :subject_id
 """)
 
+_DELETE_ALL = text("""
+    DELETE FROM persistent_namespace_views
+""")
+
 
 class PostgresPersistentViewStore:
     """PostgreSQL-backed persistent namespace view store.
@@ -164,4 +168,10 @@ class PostgresPersistentViewStore:
                     "subject_id": subject_id,
                 },
             )
+            return result.rowcount or 0
+
+    def delete_all_views(self) -> int:
+        """Delete all persisted views across all subjects and zones."""
+        with self._engine.begin() as conn:
+            result = conn.execute(_DELETE_ALL)
             return result.rowcount or 0

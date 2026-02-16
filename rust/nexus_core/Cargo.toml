@@ -18,8 +18,11 @@ roaring = { workspace = true }
 globset = { workspace = true }
 blake3 = { workspace = true }
 string-interner = { workspace = true }
+regex-syntax = { workspace = true }
+crc32fast = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "0.3", features = ["wasm_js"] }
 
 [dev-dependencies]
+proptest = "1.5"

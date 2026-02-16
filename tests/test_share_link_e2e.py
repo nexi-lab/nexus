@@ -51,6 +51,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy import create_engine
 
 from nexus.backends.local import LocalBackend
+from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
 from nexus.server.auth.auth_routes import set_auth_provider
 from nexus.server.auth.database_local import DatabaseLocalAuth
@@ -66,7 +67,7 @@ print(f"Database: {database_url.split('@')[1] if '@' in database_url else databa
 
 backend = LocalBackend(root_path=files_dir)
 metadata_store = RaftMetadataStore.embedded(str(database_url).replace(".db", ""))
-nx = NexusFS(backend=backend, metadata_store=metadata_store, enforce_permissions=False)
+nx = NexusFS(backend=backend, metadata_store=metadata_store, permissions=PermissionConfig(enforce=False))
 
 session_factory = sessionmaker(bind=nx.metadata.engine)
 auth_provider = DatabaseLocalAuth(

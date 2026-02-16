@@ -24,6 +24,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol, PaginatedResult
+from nexus.core.config import MemoryConfig, PermissionConfig
 from nexus.server.auth.database_key import DatabaseAPIKeyAuth
 from nexus.server.auth.factory import DiscriminatingAuthProvider
 from nexus.storage.models import Base
@@ -177,9 +178,8 @@ def app_with_db_auth(tmp_path, db_session_factory, api_keys):
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
-        enforce_permissions=False,
-        enable_memory_paging=True,
-        memory_main_capacity=10,
+        permissions=PermissionConfig(enforce=False),
+        memory=MemoryConfig(enable_paging=True, main_capacity=10),
     )
 
     # Match production wiring: DiscriminatingAuthProvider routes sk-* tokens

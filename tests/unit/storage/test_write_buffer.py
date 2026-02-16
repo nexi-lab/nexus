@@ -302,3 +302,61 @@ class TestRetryBehavior:
 
         # Events should be counted as failed
         assert buf.metrics["total_failed"] > 0
+
+
+# ---------------------------------------------------------------------------
+# Enhanced metrics tests (Issue #1370)
+# ---------------------------------------------------------------------------
+
+
+class TestEnhancedMetrics:
+    """Tests for the new timing, retry, and per-type metrics."""
+
+    def test_metrics_includes_timing_fields(self, session_factory) -> None:
+        """Metrics dict should include all new timing/batch fields."""
+        buf = WriteBuffer(session_factory, flush_interval_ms=10000)
+        buf.start()
+
+        buf.enqueue_write(_make_metadata(), is_new=True, path="/test/file.txt")
+        buf.stop(timeout=5.0)
+
+        metrics = buf.metrics
+        assert "total_retries" in metrics
+        assert "flush_count" in metrics
+        assert "flush_duration_sum" in metrics
+        assert "flush_batch_size_sum" in metrics
+        assert "enqueued_by_type" in metrics
+        assert metrics["flush_count"] >= 1
+        assert metrics["flush_duration_sum"] > 0
+        assert metrics["flush_batch_size_sum"] == 1
+
+    def test_enqueued_by_type_tracking(self, session_factory) -> None:
+        """Per-type counters should track write, delete, and rename separately."""
+        buf = WriteBuffer(session_factory, flush_interval_ms=10000)
+
+        buf.enqueue_write(_make_metadata(path="/a.txt"), is_new=True, path="/a.txt")
+        buf.enqueue_write(_make_metadata(path="/b.txt"), is_new=True, path="/b.txt")
+        buf.enqueue_delete(path="/c.txt", zone_id="default")
+        buf.enqueue_rename(old_path="/d.txt", new_path="/e.txt")
+
+        by_type = buf.metrics["enqueued_by_type"]
+        assert by_type == {"write": 2, "delete": 1, "rename": 1}
+
+    def test_retry_counter_increments(self, session_factory) -> None:
+        """Total retries should increment on transient flush failure."""
+        call_count = 0
+        real_factory = session_factory
+
+        def flaky_factory():
+            nonlocal call_count
+            call_count += 1
+            if call_count <= 1:
+                raise RuntimeError("Transient failure")
+            return real_factory()
+
+        buf = WriteBuffer(flaky_factory, flush_interval_ms=10000, max_retries=3)
+        buf.enqueue_write(_make_metadata(), is_new=True, path="/retry.txt")
+        buf._flush_buffer()
+
+        assert buf.metrics["total_retries"] >= 1
+        assert buf.metrics["total_flushed"] == 1

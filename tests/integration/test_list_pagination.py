@@ -12,6 +12,7 @@ import pytest
 from nexus import NexusFS
 from nexus.backends import LocalBackend
 from nexus.core._metadata_generated import PaginatedResult
+from nexus.core.config import PermissionConfig
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 
@@ -20,7 +21,9 @@ def nexus_fs(tmp_path, isolated_db):
     """Create a NexusFS instance for testing."""
     backend = LocalBackend(str(tmp_path / "data"))
     metadata_store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", ""))
-    nx = NexusFS(backend=backend, metadata_store=metadata_store, enforce_permissions=False)
+    nx = NexusFS(
+        backend=backend, metadata_store=metadata_store, permissions=PermissionConfig(enforce=False)
+    )
     yield nx
     nx.close()
 
@@ -38,7 +41,9 @@ def nexus_fs_large(tmp_path, isolated_db):
     """Create NexusFS with 1000 test files for scale testing."""
     backend = LocalBackend(str(tmp_path / "data"))
     metadata_store = RaftMetadataStore.embedded(str(isolated_db).replace(".db", ""))
-    nx = NexusFS(backend=backend, metadata_store=metadata_store, enforce_permissions=False)
+    nx = NexusFS(
+        backend=backend, metadata_store=metadata_store, permissions=PermissionConfig(enforce=False)
+    )
 
     # Create 1000 files in batches
     for i in range(1000):

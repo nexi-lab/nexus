@@ -22,6 +22,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from nexus.backends.local import LocalBackend
+from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
@@ -40,7 +41,7 @@ def nexus_fs_local(tmp_path: Path):
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
-        enforce_permissions=False,
+        permissions=PermissionConfig(enforce=False),
     )
     yield nx
     nx.close()

@@ -28,3 +28,4 @@ parking_lot = "0.12"
 lru = "0.16"
 simdutf8 = "0.1"
 simsimd = "6"
+crc32fast = { workspace = true }

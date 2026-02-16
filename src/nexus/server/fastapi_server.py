@@ -331,9 +331,14 @@ async def lifespan(_app: FastAPI) -> Any:
                             rebac_manager=sync_rebac,
                             record_store=ns_record_store,
                         )
+                        # Wire event-driven invalidation: rebac_write → namespace cache (Issue #1244)
+                        sync_rebac.register_namespace_invalidator(
+                            "namespace_dcache",
+                            lambda st, sid, _zid: namespace_manager.invalidate((st, sid)),
+                        )
                         logger.info(
                             "[NAMESPACE] NamespaceManager initialized for AsyncPermissionEnforcer "
-                            "(using sync rebac_manager, L3=%s)",
+                            "(using sync rebac_manager, L3=%s, event-driven invalidation=enabled)",
                             "enabled" if ns_record_store else "disabled",
                         )
 
@@ -724,7 +729,7 @@ async def lifespan(_app: FastAPI) -> Any:
     # Issue #1240: Initialize AgentRegistry for agent lifecycle tracking
     if _app.state.nexus_fs and getattr(_app.state.nexus_fs, "SessionLocal", None):
         try:
-            from nexus.core.agent_registry import AgentRegistry
+            from nexus.services.agents.agent_registry import AgentRegistry
 
             _app.state.agent_registry = AgentRegistry(
                 session_factory=_app.state.nexus_fs.SessionLocal,
@@ -791,7 +796,7 @@ async def lifespan(_app: FastAPI) -> Any:
     # Fall back to creating one here if the factory didn't provide it.
     _upload_cleanup_task = None
     _factory_upload_svc = (
-        _app.state.nexus_fs._service_extras.get("chunked_upload_service")
+        getattr(_app.state.nexus_fs, "_service_extras", {}).get("chunked_upload_service")
         if _app.state.nexus_fs
         else None
     )
@@ -845,7 +850,7 @@ async def lifespan(_app: FastAPI) -> Any:
 
     # Issue #726: Wire circuit breaker from factory for health endpoint access
     if _app.state.nexus_fs:
-        _app.state.rebac_circuit_breaker = _app.state.nexus_fs._service_extras.get(
+        _app.state.rebac_circuit_breaker = getattr(_app.state.nexus_fs, "_service_extras", {}).get(
             "rebac_circuit_breaker"
         )
 
@@ -910,6 +915,11 @@ async def lifespan(_app: FastAPI) -> Any:
                         namespace_manager = create_namespace_manager(
                             rebac_manager=sync_rebac,
                             record_store=ns_record_store,
+                        )
+                        # Wire event-driven invalidation for sandbox namespace (Issue #1244)
+                        sync_rebac.register_namespace_invalidator(
+                            "sandbox_namespace_dcache",
+                            lambda st, sid, _zid: namespace_manager.invalidate((st, sid)),  # type: ignore[union-attr]
                         )
                     except Exception as e:
                         logger.info(
@@ -1160,6 +1170,16 @@ async def lifespan(_app: FastAPI) -> Any:
         from nexus.server.subscriptions import set_subscription_manager
 
         set_subscription_manager(None)
+    # Stop WriteBuffer to drain pending events before closing kernel (Issue #1370)
+    if _app.state.nexus_fs:
+        _wo = getattr(_app.state.nexus_fs, "_write_observer", None)
+        if _wo is not None and hasattr(_wo, "stop"):
+            try:
+                _wo.stop()
+                logger.info("WriteBuffer stopped")
+            except Exception as e:
+                logger.warning(f"Error stopping WriteBuffer: {e}")
+
     if _app.state.nexus_fs and hasattr(_app.state.nexus_fs, "close"):
         _app.state.nexus_fs.close()
 
@@ -1255,6 +1275,16 @@ def create_app(
             app.state.async_session_factory = None
     else:
         app.state.async_session_factory = None
+
+    # Expose sync session_factory from RecordStoreABC (Issue #1519).
+    # This is the canonical way for sync endpoints to get database sessions
+    # without reaching into NexusFS.SessionLocal internals.
+    if _record_store is not None:
+        app.state.session_factory = _record_store.session_factory
+    elif hasattr(nexus_fs, "SessionLocal") and nexus_fs.SessionLocal is not None:
+        app.state.session_factory = nexus_fs.SessionLocal
+    else:
+        app.state.session_factory = None
 
     # Thread pool and timeout settings (Issue #932)
     app.state.thread_pool_size = thread_pool_size or int(
@@ -1430,11 +1460,23 @@ def create_app(
 
         from nexus.server.pg_metrics_collector import QueryObserverCollector
 
-        obs_sub = nexus_fs._service_extras.get("observability_subsystem")
+        obs_sub = getattr(nexus_fs, "_service_extras", {}).get("observability_subsystem")
         if obs_sub is not None:
             REGISTRY.register(QueryObserverCollector(obs_sub.observer))
     except Exception:
         pass
+
+    # Register WriteBuffer → Prometheus collector bridge (Issue #1370)
+    try:
+        from prometheus_client import REGISTRY
+
+        from nexus.server.wb_metrics_collector import WriteBufferCollector
+
+        _wo = nexus_fs._write_observer
+        if _wo is not None and hasattr(_wo, "metrics"):
+            REGISTRY.register(WriteBufferCollector(_wo))
+    except Exception as e:
+        logger.debug("WriteBuffer metrics collector not registered: %s", e)
 
     # Instrument FastAPI with OpenTelemetry (Issue #764)
     try:
@@ -1715,9 +1757,8 @@ def _register_routes(app: FastAPI) -> None:
 
         # Circuit breaker health (Issue #1366)
         _resiliency_mgr = (
-            _fastapi_app.state.nexus_fs._service_extras.get("resiliency_manager")
+            getattr(_fastapi_app.state.nexus_fs, "_service_extras", {}).get("resiliency_manager")
             if _fastapi_app.state.nexus_fs
-            and hasattr(_fastapi_app.state.nexus_fs, "_service_extras")
             else None
         )
         if _resiliency_mgr is not None:
@@ -1868,6 +1909,49 @@ def _register_routes(app: FastAPI) -> None:
         logger.info("A2A protocol endpoint registered (/.well-known/agent.json + /a2a)")
     except ImportError as e:
         logger.warning(f"Failed to import A2A router: {e}. A2A endpoint will not be available.")
+
+    # Secrets audit log endpoints (Issue #997)
+    try:
+        from nexus.server.api.v2.routers.secrets_audit import (
+            get_secrets_audit_logger as _secrets_audit_dep,
+        )
+        from nexus.server.api.v2.routers.secrets_audit import (
+            router as secrets_audit_router,
+        )
+        from nexus.storage.secrets_audit_logger import SecretsAuditLogger
+
+        # Wire up dependency: create audit logger from app session_factory + auth zone_id
+        _secrets_audit_logger_instance: SecretsAuditLogger | None = None
+
+        def _get_secrets_audit_logger_override(
+            auth_result: dict[str, Any] = Depends(require_auth),
+        ) -> tuple:
+            nonlocal _secrets_audit_logger_instance
+            # Admin-only: secrets audit log is sensitive
+            if not auth_result.get("is_admin", False):
+                raise HTTPException(
+                    status_code=403,
+                    detail="Secrets audit log access requires admin privileges",
+                )
+            if _secrets_audit_logger_instance is None:
+                session_factory = getattr(_fastapi_app.state.nexus_fs, "SessionLocal", None)
+                if session_factory is None:
+                    raise HTTPException(status_code=500, detail="Secrets audit not configured")
+                # Ensure audit tables exist on the session_factory's engine
+                engine = session_factory.kw.get("bind") if hasattr(session_factory, "kw") else None
+                if engine is not None:
+                    from nexus.storage.models.secrets_audit_log import SecretsAuditLogModel
+
+                    SecretsAuditLogModel.__table__.create(engine, checkfirst=True)
+                _secrets_audit_logger_instance = SecretsAuditLogger(session_factory=session_factory)
+            zone_id = auth_result.get("zone_id", "default")
+            return _secrets_audit_logger_instance, zone_id
+
+        app.dependency_overrides[_secrets_audit_dep] = _get_secrets_audit_logger_override
+        app.include_router(secrets_audit_router)
+        logger.info("Secrets audit routes registered")
+    except ImportError as e:
+        logger.warning(f"Failed to import secrets audit router: {e}")
 
     # Asyncio debug endpoint (Python 3.14+)
     @app.get("/debug/asyncio", tags=["debug"])
@@ -2688,9 +2772,7 @@ def _generate_download_url(
             }
 
         # Local backend - use streaming endpoint with signed token
-        from nexus.backends.local import LocalBackend
-
-        if isinstance(backend, LocalBackend) and hasattr(backend, "stream_content"):
+        if backend.has_root_path:
             # Get zone_id from context
             zone_id = "default"
             if context and hasattr(context, "zone_id"):

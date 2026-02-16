@@ -387,7 +387,7 @@ class TestPermissionBoundaryCacheIntegration:
 
     def test_enforcer_creates_boundary_cache_by_default(self):
         """Test that PermissionEnforcer creates boundary cache by default."""
-        from nexus.core.permissions import PermissionEnforcer
+        from nexus.services.permissions.enforcer import PermissionEnforcer
 
         enforcer = PermissionEnforcer()
 
@@ -396,7 +396,7 @@ class TestPermissionBoundaryCacheIntegration:
 
     def test_enforcer_boundary_cache_disabled(self):
         """Test disabling boundary cache in PermissionEnforcer."""
-        from nexus.core.permissions import PermissionEnforcer
+        from nexus.services.permissions.enforcer import PermissionEnforcer
 
         enforcer = PermissionEnforcer(enable_boundary_cache=False)
 
@@ -404,7 +404,7 @@ class TestPermissionBoundaryCacheIntegration:
 
     def test_enforcer_custom_boundary_cache(self):
         """Test providing custom boundary cache to PermissionEnforcer."""
-        from nexus.core.permissions import PermissionEnforcer
+        from nexus.services.permissions.enforcer import PermissionEnforcer
 
         custom_cache = PermissionBoundaryCache(max_size=100, ttl_seconds=10)
         enforcer = PermissionEnforcer(boundary_cache=custom_cache)
@@ -417,7 +417,7 @@ class TestPermissionBoundaryCacheIntegration:
 
     def test_enforcer_get_boundary_cache_stats(self):
         """Test getting boundary cache stats from enforcer."""
-        from nexus.core.permissions import PermissionEnforcer
+        from nexus.services.permissions.enforcer import PermissionEnforcer
 
         enforcer = PermissionEnforcer()
         stats = enforcer.get_boundary_cache_stats()
@@ -429,7 +429,7 @@ class TestPermissionBoundaryCacheIntegration:
 
     def test_enforcer_get_boundary_cache_stats_when_disabled(self):
         """Test getting stats when boundary cache is disabled returns None."""
-        from nexus.core.permissions import PermissionEnforcer
+        from nexus.services.permissions.enforcer import PermissionEnforcer
 
         enforcer = PermissionEnforcer(enable_boundary_cache=False)
         stats = enforcer.get_boundary_cache_stats()
@@ -438,7 +438,7 @@ class TestPermissionBoundaryCacheIntegration:
 
     def test_enforcer_reset_boundary_cache_stats(self):
         """Test resetting boundary cache stats through enforcer."""
-        from nexus.core.permissions import PermissionEnforcer
+        from nexus.services.permissions.enforcer import PermissionEnforcer
 
         enforcer = PermissionEnforcer()
 
@@ -456,7 +456,7 @@ class TestPermissionBoundaryCacheIntegration:
 
     def test_enforcer_clear_boundary_cache(self):
         """Test clearing boundary cache through enforcer."""
-        from nexus.core.permissions import PermissionEnforcer
+        from nexus.services.permissions.enforcer import PermissionEnforcer
 
         enforcer = PermissionEnforcer()
 

@@ -13,6 +13,7 @@ from enum import StrEnum
 # Grep strategy thresholds
 GREP_SEQUENTIAL_THRESHOLD = 10  # Below this file count, use sequential (no overhead)
 GREP_PARALLEL_THRESHOLD = 100  # Above this, consider parallel processing
+GREP_TRIGRAM_THRESHOLD = 500  # Above this, prefer trigram index if available
 GREP_ZOEKT_THRESHOLD = 1000  # Above this, prefer Zoekt if available
 GREP_PARALLEL_WORKERS = 4  # Thread pool size for parallel grep
 GREP_CACHED_TEXT_RATIO = 0.8  # Use cached text path if > 80% files have cached text
@@ -31,6 +32,7 @@ class SearchStrategy(StrEnum):
     CACHED_TEXT = "cached_text"  # > 80% files have pre-parsed text
     RUST_BULK = "rust_bulk"  # 10-1000 files with Rust available
     PARALLEL_POOL = "parallel_pool"  # 100-10000 files, parallel processing
+    TRIGRAM_INDEX = "trigram_index"  # > 500 files with trigram index
     ZOEKT_INDEX = "zoekt_index"  # > 1000 files with Zoekt index
 
 

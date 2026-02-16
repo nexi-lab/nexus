@@ -22,6 +22,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol, PaginatedResult
+from nexus.core.config import PermissionConfig
 from nexus.server.auth.database_key import DatabaseAPIKeyAuth
 from nexus.server.auth.factory import DiscriminatingAuthProvider
 from nexus.storage.models import Base
@@ -155,7 +156,7 @@ def app_with_auth(tmp_path, db_session_factory, api_keys):
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
-        enforce_permissions=False,
+        permissions=PermissionConfig(enforce=False),
     )
 
     db_key_provider = DatabaseAPIKeyAuth(session_factory=db_session_factory)

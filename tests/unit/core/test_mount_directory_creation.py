@@ -15,6 +15,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from nexus.core.config import PermissionConfig
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 
@@ -33,7 +34,11 @@ def nx_with_mount():
 
         # Create NexusFS with metadata store
         metadata_store = RaftMetadataStore.embedded(str(db_file).replace(".db", ""))
-        nx = NexusFS(backend=root_backend, metadata_store=metadata_store, enforce_permissions=False)
+        nx = NexusFS(
+            backend=root_backend,
+            metadata_store=metadata_store,
+            permissions=PermissionConfig(enforce=False),
+        )
 
         yield nx, tmpdir
 

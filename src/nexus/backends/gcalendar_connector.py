@@ -39,6 +39,8 @@ import yaml
 
 from nexus.backends.backend import Backend
 from nexus.backends.cache_mixin import IMMUTABLE_VERSION, CacheConnectorMixin
+from nexus.backends.oauth_mixin import OAuthConnectorMixin
+from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.connectors.base import (
     CheckpointMixin,
     ConfirmLevel,
@@ -69,9 +71,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@register_connector(
+    "gcalendar_connector",
+    description="Google Calendar with OAuth 2.0 authentication (full CRUD)",
+    category="oauth",
+    requires=["google-api-python-client", "google-auth-oauthlib"],
+    service_name="google-calendar",
+)
 class GoogleCalendarConnectorBackend(
     Backend,
     CacheConnectorMixin,
+    OAuthConnectorMixin,
     SkillDocMixin,
     ValidatedMixin,
     TraitBasedMixin,
@@ -181,6 +191,32 @@ send_notifications: true
     # Enable metadata-based listing for fast database queries
     use_metadata_listing = True
 
+    # Connection arguments for registry-based instantiation
+    CONNECTION_ARGS: dict[str, ConnectionArg] = {
+        "token_manager_db": ConnectionArg(
+            type=ArgType.PATH,
+            description="Path to TokenManager database or database URL",
+            required=True,
+        ),
+        "user_email": ConnectionArg(
+            type=ArgType.STRING,
+            description="User email for OAuth lookup (None for multi-user from context)",
+            required=False,
+        ),
+        "provider": ConnectionArg(
+            type=ArgType.STRING,
+            description="OAuth provider name from config",
+            required=False,
+            default="gcalendar",
+        ),
+        "max_events_per_calendar": ConnectionArg(
+            type=ArgType.INTEGER,
+            description="Maximum number of events to fetch per calendar",
+            required=False,
+            default=250,
+        ),
+    }
+
     def __init__(
         self,
         token_manager_db: str,
@@ -206,22 +242,7 @@ send_notifications: true
             For single-user scenarios (demos), set user_email explicitly.
             For multi-user production, leave user_email=None to auto-detect from context.
         """
-        from nexus.server.auth.token_manager import TokenManager
-
-        # Store original token_manager_db for config updates
-        self.token_manager_db = token_manager_db
-
-        # Resolve database URL using base class method
-        resolved_db = self.resolve_database_url(token_manager_db)
-
-        # Support both file paths and database URLs
-        if resolved_db.startswith(("postgresql://", "sqlite://", "mysql://")):
-            self.token_manager = TokenManager(db_url=resolved_db)
-        else:
-            self.token_manager = TokenManager(db_path=resolved_db)
-
-        self.user_email = user_email
-        self.provider = provider
+        self._init_oauth(token_manager_db, user_email=user_email, provider=provider)
         self.session_factory = session_factory
         self.max_events_per_calendar = max_events_per_calendar
         self.metadata_store = metadata_store

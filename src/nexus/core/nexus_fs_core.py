@@ -44,10 +44,16 @@ class NexusFSCoreMixin:
 
     _revision_notifier: ClassVar[Any] = None
 
+    # Issue #1169: Defaults for per-instance zone revision state.
+    # Actual instances override these in _init_zone_revision().
+    _zone_revision: int = 0
+    _zone_revision_lock: threading.Lock | None = None
+    _read_tracking_enabled: bool = False
+
     # Type hints for attributes/methods that will be provided by NexusFS parent class
     if TYPE_CHECKING:
         from nexus.core._metadata_generated import FileMetadataProtocol
-        from nexus.core.permissions import PermissionEnforcer
+        from nexus.services.permissions.enforcer import PermissionEnforcer
 
         metadata: FileMetadataProtocol
         backend: Backend
@@ -416,7 +422,50 @@ class NexusFSCoreMixin:
         return notifier.wait_for_revision(zone_id, min_revision, timeout_ms)
 
     # =========================================================================
-    # Read Set Tracking - Issue #1166
+    # Zone Revision Counter - Issue #1169
+    # =========================================================================
+
+    def _init_zone_revision(self) -> None:
+        """Initialize per-instance zone revision state.
+
+        Must be called during NexusFS.__init__ to ensure each instance
+        has its own lock and counter (not shared via class-level defaults).
+        """
+        self._zone_revision = 0
+        self._zone_revision_lock = threading.Lock()
+
+    def _increment_zone_revision(self) -> int:
+        """Atomically increment and return the new zone revision.
+
+        Called after every write/delete to advance the monotonic counter.
+        Thread-safe via per-instance lock.
+
+        Returns:
+            The new revision number (always > previous).
+        """
+        lock = self._zone_revision_lock
+        if lock is None:
+            # Fallback: not yet initialized (shouldn't happen in production)
+            self._zone_revision += 1
+            return self._zone_revision
+        with lock:
+            self._zone_revision += 1
+            return self._zone_revision
+
+    def _get_zone_revision(self) -> int:
+        """Return the current zone revision (read-only, thread-safe).
+
+        Returns:
+            Current monotonic revision counter value.
+        """
+        lock = self._zone_revision_lock
+        if lock is None:
+            return self._zone_revision
+        with lock:
+            return self._zone_revision
+
+    # =========================================================================
+    # Read Set Tracking - Issue #1166 / #1169
     # =========================================================================
 
     def _record_read_if_tracking(
@@ -431,21 +480,26 @@ class NexusFSCoreMixin:
         This is called automatically by read(), stat(), and list() operations
         when the context has read tracking enabled.
 
+        Issue #1169: Uses per-zone monotonic counter instead of hardcoded 0.
+                     Gated by instance-level _read_tracking_enabled flag.
+
         Args:
             context: Operation context (may have track_reads=True)
             resource_type: Type of resource (file, directory, metadata)
             resource_id: Path or identifier of the resource
             access_type: Type of access (content, metadata, list, exists)
         """
+        if not self._read_tracking_enabled:
+            return
+
         if context is None or not getattr(context, "track_reads", False):
             return
 
         if context.read_set is None:
             return
 
-        # Get current revision for this zone
-        _zone_id = context.zone_id or "default"  # noqa: F841 — will be used with Raft read-index
-        revision = 0  # TODO: Replace with proper Raft read-index
+        # Issue #1169: Use per-zone monotonic counter for meaningful revisions
+        revision = self._get_zone_revision()
 
         # Record the read
         context.record_read(
@@ -457,6 +511,33 @@ class NexusFSCoreMixin:
         logger.debug(
             f"[READ-SET] Recorded {access_type} read: {resource_type}:{resource_id}@{revision}"
         )
+
+    def _register_cache_read_set(
+        self,
+        path: str,
+        metadata: FileMetadata | None,
+        resource_type: str = "file",
+    ) -> None:
+        """Register a read set for a cached metadata entry (Issue #1169).
+
+        Creates a minimal ReadSet tracking that this cache entry depends on
+        the given path, enabling precise invalidation when the path is written.
+
+        Called after metadata reads (get/stat) to associate read sets with
+        cache entries. This is a no-op when cache observer is not configured.
+
+        Args:
+            path: Virtual path of the cached entry
+            metadata: File metadata (None means not found — skip)
+            resource_type: Type of resource (file, directory)
+        """
+        cache_observer = getattr(self, "_cache_observer", None)
+        if cache_observer is None or metadata is None:
+            return
+
+        zone_id = getattr(self, "zone_id", None) or "default"
+        revision = self._get_zone_revision()
+        cache_observer.on_read(path, metadata, revision, zone_id, resource_type)
 
     # =========================================================================
     # Sync Lock Helpers for write(lock=True) - Issue #1106 Block 3
@@ -809,7 +890,7 @@ class NexusFSCoreMixin:
         path = self._validate_path(path)
 
         # Phase 2 Integration: Intercept memory paths
-        from nexus.core.memory_router import MemoryViewRouter
+        from nexus.services.memory.memory_router import MemoryViewRouter
 
         if MemoryViewRouter.is_memory_path(path):
             return self._read_memory_path(path, return_metadata, context=context)
@@ -958,6 +1039,9 @@ class NexusFSCoreMixin:
 
         # Issue #1166: Record read for dependency tracking
         self._record_read_if_tracking(context, "file", path, "content")
+
+        # Issue #1169: Register read set for precise cache invalidation
+        self._register_cache_read_set(path, meta, "file")
 
         # Return content with metadata if requested
         if return_metadata:
@@ -1732,7 +1816,7 @@ class NexusFSCoreMixin:
         path = self._validate_path(path)
 
         # Phase 2 Integration: Intercept memory paths
-        from nexus.core.memory_router import MemoryViewRouter
+        from nexus.services.memory.memory_router import MemoryViewRouter
 
         if MemoryViewRouter.is_memory_path(path):
             return self._write_memory_path(path, content)
@@ -1882,6 +1966,14 @@ class NexusFSCoreMixin:
         )
 
         self.metadata.put(metadata)
+
+        # Issue #1169: Advance zone revision counter after mutation
+        new_revision = self._increment_zone_revision()
+
+        # Issue #1169: Precise cache invalidation via cache observer
+        cache_observer = getattr(self, "_cache_observer", None)
+        if cache_observer is not None:
+            cache_observer.on_write(path, new_revision, zone_id or "default")
 
         # Leopard-style: Add new file to ancestor directory grants
         # When a file is created in a directory that has been granted to users,
@@ -2843,7 +2935,7 @@ class NexusFSCoreMixin:
         path = self._validate_path(path)
 
         # Phase 2 Integration: Intercept memory paths
-        from nexus.core.memory_router import MemoryViewRouter
+        from nexus.services.memory.memory_router import MemoryViewRouter
 
         if MemoryViewRouter.is_memory_path(path):
             self._delete_memory_path(path, context=context)
@@ -2914,6 +3006,14 @@ class NexusFSCoreMixin:
 
         # Remove from metadata
         self.metadata.delete(path)
+
+        # Issue #1169: Advance zone revision counter after delete
+        new_revision = self._increment_zone_revision()
+
+        # Issue #1169: Precise cache invalidation via cache observer
+        cache_observer = getattr(self, "_cache_observer", None)
+        if cache_observer is not None:
+            cache_observer.on_delete(path, new_revision, zone_id or "default")
 
         # v0.7.0: Fire workflow event for automatic trigger execution
         from nexus.workflows.types import TriggerType
@@ -3087,6 +3187,12 @@ class NexusFSCoreMixin:
         # For CAS backends: metadata-only (content stays at same hash location)
         # For connector backends: metadata follows the file we just moved
         self.metadata.rename_path(old_path, new_path)
+
+        # Issue #1169: Advance zone revision + invalidate both old and new paths
+        new_revision = self._increment_zone_revision()
+        cache_observer = getattr(self, "_cache_observer", None)
+        if cache_observer is not None:
+            cache_observer.on_rename(old_path, new_path, new_revision, zone_id or "default")
 
         # Update ReBAC permissions to follow the renamed file/directory
         # This ensures permissions are preserved when files are moved
@@ -3455,6 +3561,9 @@ class NexusFSCoreMixin:
         # Issue #1166: Record metadata read for dependency tracking
         self._record_read_if_tracking(context, "file", path, "metadata")
 
+        # Issue #1169: Register read set for precise cache invalidation
+        self._register_cache_read_set(path, meta, "file")
+
         return {
             "size": size,
             "etag": meta.etag,
@@ -3802,7 +3911,7 @@ class NexusFSCoreMixin:
         Raises:
             NexusFileNotFoundError: If memory doesn't exist.
         """
-        from nexus.core.memory_router import MemoryViewRouter
+        from nexus.services.memory.memory_router import MemoryViewRouter
         from nexus.rebac.entity_registry import EntityRegistry
 
         # Get memory via router
@@ -3887,7 +3996,7 @@ class NexusFSCoreMixin:
         Raises:
             NexusFileNotFoundError: If memory doesn't exist.
         """
-        from nexus.core.memory_router import MemoryViewRouter
+        from nexus.services.memory.memory_router import MemoryViewRouter
         from nexus.rebac.entity_registry import EntityRegistry
 
         # Get memory via router

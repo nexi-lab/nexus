@@ -32,7 +32,6 @@ logger = logging.getLogger(__name__)
 ProgressCallback = Callable[[int, str], None]
 
 if TYPE_CHECKING:
-    from nexus.backends.backend import Backend
     from nexus.core.mount_manager import MountManager
     from nexus.core.nexus_fs import NexusFilesystem
     from nexus.core.permissions import OperationContext
@@ -180,105 +179,15 @@ class MountService:
                         f"Cannot create {backend_type} mount: nexus_fs not configured"
                     )
 
-            # Import backend classes dynamically
-            backend: Backend
-            if backend_type == "local":
-                from nexus.backends.local import LocalBackend
+            # Create backend via centralized factory
+            from nexus.backends.factory import BackendFactory
 
-                backend = LocalBackend(root_path=config["data_dir"])
-            elif backend_type == "gcs":
-                from nexus.backends.gcs import GCSBackend
+            # Get session factory for caching support if available
+            session_factory = None
+            if self.nexus_fs and hasattr(self.nexus_fs, "SessionLocal"):
+                session_factory = self.nexus_fs.SessionLocal
 
-                backend = GCSBackend(
-                    bucket_name=config["bucket"],
-                    project_id=config.get("project_id"),
-                    credentials_path=config.get("credentials_path"),
-                )
-            elif backend_type == "gcs_connector":
-                from nexus.backends.gcs_connector import GCSConnectorBackend
-
-                # Get session factory for caching support if available
-                session_factory = None
-                if self.nexus_fs and hasattr(self.nexus_fs, "SessionLocal"):
-                    session_factory = self.nexus_fs.SessionLocal
-
-                backend = GCSConnectorBackend(
-                    bucket_name=config["bucket"],
-                    project_id=config.get("project_id"),
-                    prefix=config.get("prefix", ""),
-                    credentials_path=config.get("credentials_path"),
-                    # OAuth access token (alternative to credentials_path)
-                    access_token=config.get("access_token"),
-                    # Session factory for caching support
-                    session_factory=session_factory,
-                )
-            elif backend_type == "s3_connector":
-                from nexus.backends.s3_connector import S3ConnectorBackend
-
-                # Get session factory for caching support if available
-                session_factory = None
-                if self.nexus_fs and hasattr(self.nexus_fs, "SessionLocal"):
-                    session_factory = self.nexus_fs.SessionLocal
-
-                backend = S3ConnectorBackend(
-                    bucket_name=config["bucket"],
-                    region_name=config.get("region_name"),
-                    prefix=config.get("prefix", ""),
-                    credentials_path=config.get("credentials_path"),
-                    access_key_id=config.get("access_key_id"),
-                    secret_access_key=config.get("secret_access_key"),
-                    session_token=config.get("session_token"),
-                    # Session factory for caching support
-                    session_factory=session_factory,
-                )
-            elif backend_type == "gdrive_connector":
-                from nexus.backends.gdrive_connector import GoogleDriveConnectorBackend
-
-                backend = GoogleDriveConnectorBackend(
-                    token_manager_db=config["token_manager_db"],
-                    root_folder=config.get("root_folder", "nexus-data"),
-                    user_email=config.get("user_email"),  # Optional - uses context.user_id if None
-                )
-            elif backend_type == "x_connector":
-                from nexus.backends.x_connector import XConnectorBackend
-
-                backend = XConnectorBackend(
-                    token_manager_db=config["token_manager_db"],
-                    user_email=config.get("user_email"),
-                    cache_ttl=config.get("cache_ttl"),
-                    cache_dir=config.get("cache_dir"),
-                )
-            elif backend_type == "hn_connector":
-                from nexus.backends.hn_connector import HNConnectorBackend
-
-                # Get session factory for caching support if available
-                hn_session_factory = None
-                if self.nexus_fs and hasattr(self.nexus_fs, "SessionLocal"):
-                    hn_session_factory = self.nexus_fs.SessionLocal
-
-                backend = HNConnectorBackend(
-                    cache_ttl=config.get("cache_ttl", 300),
-                    stories_per_feed=config.get("stories_per_feed", 10),
-                    include_comments=config.get("include_comments", True),
-                    session_factory=hn_session_factory,
-                )
-            elif backend_type == "gmail_connector":
-                from nexus.backends.gmail_connector import GmailConnectorBackend
-
-                # Get session factory for caching support if available
-                gmail_session_factory = None
-                if self.nexus_fs and hasattr(self.nexus_fs, "SessionLocal"):
-                    gmail_session_factory = self.nexus_fs.SessionLocal
-
-                backend = GmailConnectorBackend(
-                    token_manager_db=config["token_manager_db"],
-                    user_email=config.get("user_email"),
-                    provider=config.get("provider", "gmail"),
-                    session_factory=gmail_session_factory,
-                    max_message_per_label=config.get("max_message_per_label", 2000),
-                )
-            else:
-                raise RuntimeError(f"Unsupported backend type: {backend_type}")
+            backend = BackendFactory.create(backend_type, config, session_factory=session_factory)
 
             # Add mount to router
             self.router.add_mount(

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from nexus.backends.local import LocalBackend
+from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
@@ -19,8 +20,7 @@ def test_mkdir_parents_true_succeeds_if_exists():
         nx = NexusFS(
             backend=backend,
             metadata_store=metadata_store,
-            enforce_permissions=False,
-            audit_strict_mode=False,
+            permissions=PermissionConfig(enforce=False, audit_strict_mode=False),
         )
 
         # Create directory
@@ -47,8 +47,7 @@ def test_mkdir_parents_false_fails_if_exists():
         nx = NexusFS(
             backend=backend,
             metadata_store=metadata_store,
-            enforce_permissions=False,
-            audit_strict_mode=False,
+            permissions=PermissionConfig(enforce=False, audit_strict_mode=False),
         )
 
         # Create directory
@@ -71,8 +70,7 @@ def test_mkdir_exist_ok_succeeds_if_exists():
         nx = NexusFS(
             backend=backend,
             metadata_store=metadata_store,
-            enforce_permissions=False,
-            audit_strict_mode=False,
+            permissions=PermissionConfig(enforce=False, audit_strict_mode=False),
         )
 
         # Create directory
@@ -95,8 +93,7 @@ def test_mkdir_parents_creates_intermediate_dirs():
         nx = NexusFS(
             backend=backend,
             metadata_store=metadata_store,
-            enforce_permissions=False,
-            audit_strict_mode=False,
+            permissions=PermissionConfig(enforce=False, audit_strict_mode=False),
         )
 
         # Create deep directory structure
@@ -123,8 +120,7 @@ def test_mkdir_no_duplicate_entries_in_list():
         nx = NexusFS(
             backend=backend,
             metadata_store=metadata_store,
-            enforce_permissions=False,
-            audit_strict_mode=False,
+            permissions=PermissionConfig(enforce=False, audit_strict_mode=False),
         )
 
         # Create multiple directories

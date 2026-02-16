@@ -111,6 +111,7 @@ def api_keys(pg_session_factory):
 def app(tmp_path, pg_engine, pg_session_factory, api_keys):
     """FastAPI app with PostgreSQL, permissions enabled, database auth."""
     from nexus.backends.local import LocalBackend
+    from nexus.core.config import MemoryConfig, PermissionConfig
     from nexus.core.nexus_fs import NexusFS
     from nexus.server.auth.database_key import DatabaseAPIKeyAuth
     from nexus.server.auth.factory import DiscriminatingAuthProvider
@@ -178,9 +179,8 @@ def app(tmp_path, pg_engine, pg_session_factory, api_keys):
         backend=backend,
         metadata_store=metadata_store,
         record_store=record_store,
-        enforce_permissions=True,  # Production: permissions ON
-        enable_memory_paging=True,
-        memory_main_capacity=10,
+        permissions=PermissionConfig(enforce=True),  # Production: permissions ON
+        memory=MemoryConfig(enable_paging=True, main_capacity=10),
     )
 
     # Production wiring: DiscriminatingAuthProvider wrapping DatabaseAPIKeyAuth

@@ -109,7 +109,7 @@ class TestAgentRegistryConformance:
     """Verify existing AgentRegistry has the methods the protocol expects."""
 
     def test_has_required_methods(self) -> None:
-        from nexus.core.agent_registry import AgentRegistry
+        from nexus.services.agents.agent_registry import AgentRegistry
 
         expected = ["register", "get", "transition", "heartbeat", "list_by_zone", "unregister"]
         for method_name in expected:
@@ -120,7 +120,7 @@ class TestAgentRegistryConformance:
 
     def test_parameter_names_compatible(self) -> None:
         """Check parameter names match (ignoring async/sync difference)."""
-        from nexus.core.agent_registry import AgentRegistry
+        from nexus.services.agents.agent_registry import AgentRegistry
         from tests.unit.core.protocols.test_conformance import assert_protocol_conformance
 
         assert_protocol_conformance(AgentRegistry, AgentRegistryProtocol)

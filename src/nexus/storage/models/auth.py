@@ -141,7 +141,7 @@ class APIKeyModel(Base):
     user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     subject_type: Mapped[str | None] = mapped_column(String(50), nullable=True, default="user")
     subject_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default", index=True)
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root", index=True)
     is_admin: Mapped[int] = mapped_column(Integer, default=0)
 
     inherit_permissions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
@@ -198,7 +198,7 @@ class OAuthCredentialModel(Base):
 
     user_email: Mapped[str] = mapped_column(String(255), nullable=False)
     user_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
-    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="default")
+    zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
 
     encrypted_access_token: Mapped[str] = mapped_column(Text, nullable=False)
     encrypted_refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)

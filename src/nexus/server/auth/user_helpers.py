@@ -17,9 +17,12 @@ from sqlalchemy.orm import Session
 # ReBAC Group Naming Helpers — canonical source: services/permissions/utils/zone.py
 # Re-exported here for backward compatibility with server-layer callers.
 # ==============================================================================
-from nexus.services.permissions.utils.zone import (
+from nexus.services.permissions.utils.zone import (  # noqa: F401 — re-exported
     can_invite_to_zone,
+    is_zone_admin,
+    is_zone_group,
     is_zone_owner,
+    parse_zone_from_group,
     zone_group_id,
 )
 from nexus.storage.models import (

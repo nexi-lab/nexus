@@ -14,7 +14,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-
 # =============================================================================
 # VectorDatabase error paths
 # =============================================================================
@@ -61,9 +60,9 @@ class TestVectorDatabaseErrors:
         with (
             patch.object(vdb, "_try_keyword_search_with_zoekt", return_value=None),
             patch.object(vdb, "_try_keyword_search_with_bm25s", return_value=None),
+            pytest.raises(ValueError, match="Unsupported database type"),
         ):
-            with pytest.raises(ValueError, match="Unsupported database type"):
-                vdb.keyword_search(session, "test", limit=5)
+            vdb.keyword_search(session, "test", limit=5)
 
 
 # =============================================================================

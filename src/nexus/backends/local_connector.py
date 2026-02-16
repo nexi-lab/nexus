@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import contextlib
 import logging
-import time
 from datetime import UTC
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -37,7 +36,7 @@ from nexus.backends.registry import (
 )
 from nexus.core.exceptions import BackendError
 from nexus.core.hash_fast import hash_content
-from nexus.core.response import HandlerResponse
+from nexus.core.response import HandlerResponse, timed_response
 
 if TYPE_CHECKING:
     from nexus.core.context import OperationContext
@@ -92,8 +91,9 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         >>> content = backend.read_content("", context)  # Uses context.backend_path
     """
 
-    # NexusFS integration: use path-based read (not content_hash based)
-    has_virtual_filesystem = True
+    @property
+    def has_virtual_filesystem(self) -> bool:  # noqa: D102
+        return True
 
     # Cache configuration: L1 only, no L2 (PostgreSQL)
     # Local disk is already fast, no need for persistent cache layer
@@ -228,6 +228,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         """
         return self.local_path
 
+    @timed_response
     def get_file_info(
         self,
         path: str,
@@ -295,6 +296,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
     # Content Operations (with L1 Caching)
     # =========================================================================
 
+    @timed_response
     def read_content(
         self,
         content_hash: str,
@@ -316,8 +318,6 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         Returns:
             HandlerResponse with file bytes on success, error message on failure
         """
-        start_time = time.perf_counter()
-
         if context is None or not context.backend_path:
             return cast(
                 _BytesResponse,
@@ -335,7 +335,6 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
                     logger.info(f"[LocalConnectorBackend] L1 cache hit: {cache_path}")
                     return HandlerResponse.ok(
                         data=cached.content_binary,
-                        execution_time_ms=(time.perf_counter() - start_time) * 1000,
                         backend_name=self.name,
                         path=path,
                     )
@@ -350,7 +349,6 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
                 HandlerResponse.not_found(
                     path=path,
                     message=f"File not found: {path}",
-                    execution_time_ms=(time.perf_counter() - start_time) * 1000,
                 ),
             )
         if not physical.is_file():
@@ -375,11 +373,11 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
 
         return HandlerResponse.ok(
             data=content,
-            execution_time_ms=(time.perf_counter() - start_time) * 1000,
             backend_name=self.name,
             path=path,
         )
 
+    @timed_response
     def write_content(
         self,
         content: bytes,
@@ -465,6 +463,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         except (PermissionError, OSError):
             return []
 
+    @timed_response
     def list_dir_detailed(
         self,
         path: str = "",
@@ -553,6 +552,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         except BackendError:
             return False
 
+    @timed_response
     def delete(
         self,
         path: str,
@@ -589,6 +589,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
     # Backend Interface Methods (for Backend abstract base class)
     # =========================================================================
 
+    @timed_response
     def delete_content(
         self,
         content_hash: str,
@@ -603,6 +604,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
             "delete_content by hash not supported for local_connector. Use delete(path) instead."
         )
 
+    @timed_response
     def content_exists(
         self,
         content_hash: str,
@@ -611,6 +613,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         """Check if content exists by hash - not supported for local_connector."""
         return HandlerResponse.ok(data=False)
 
+    @timed_response
     def get_content_size(
         self,
         content_hash: str,
@@ -622,6 +625,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
             HandlerResponse.error("get_content_size by hash not supported for local_connector"),
         )
 
+    @timed_response
     def get_ref_count(
         self,
         content_hash: str,
@@ -630,6 +634,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         """Get reference count by hash - not supported for local_connector."""
         return HandlerResponse.ok(data=0)
 
+    @timed_response
     def mkdir(
         self,
         path: str,
@@ -662,6 +667,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         except OSError as e:
             return HandlerResponse.error(f"Mkdir error: {e}")
 
+    @timed_response
     def rmdir(
         self,
         path: str,
@@ -682,6 +688,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
             return HandlerResponse.error("Recursive rmdir not supported for safety")
         return self.delete(path, context)
 
+    @timed_response
     def is_directory(
         self,
         path: str,
@@ -690,6 +697,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         """Check if path is a directory."""
         return HandlerResponse.ok(data=self.is_dir(path, context))
 
+    @timed_response
     def rename(
         self,
         old_path: str,
@@ -725,6 +733,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         except OSError as e:
             return HandlerResponse.error(f"Rename error: {e}")
 
+    @timed_response
     def stat(
         self,
         path: str,
@@ -766,6 +775,7 @@ class LocalConnectorBackend(Backend, CacheConnectorMixin):
         except OSError as e:
             return cast(_DictResponse, HandlerResponse.error(f"Stat error: {e}"))
 
+    @timed_response
     def glob(
         self,
         pattern: str,

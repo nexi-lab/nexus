@@ -549,26 +549,14 @@ class PermissionEnforcer:
                     is_admin=context.is_admin,
                     check_write=False,
                 )
-                # Ask backend for its object type
-                object_type = route.backend.get_object_type(route.backend_path)
+                # Use ObjectTypeMapper for ReBAC object type resolution
+                from nexus.services.permissions.object_type_mapper import ObjectTypeMapper
 
-                # CRITICAL FIX: For file objects, use the VIRTUAL path for permission checks,
-                # not the backend-relative path. ReBAC tuples are created with virtual paths
-                # (e.g., /mnt/gcs/file.csv), but backend.get_object_id() returns backend-relative
-                # paths (e.g., file.csv) which breaks permission inheritance for mounted backends.
-                # Non-file backends (DB tables, Redis keys, etc.) can still override object_id.
-                if object_type == "file":
-                    # Use virtual path for file permission checks (mount-aware)
-                    object_id = path
-                    logger.debug(
-                        f"[PermissionEnforcer] Using virtual path for file permission check: '{path}'"
-                    )
-                else:
-                    # For non-file backends, use backend-provided object_id
-                    object_id = route.backend.get_object_id(route.backend_path)
-                    logger.debug(
-                        f"[PermissionEnforcer] Using backend object_id for {object_type}: '{object_id}'"
-                    )
+                mapper = ObjectTypeMapper()
+                object_type = mapper.get_object_type(route.backend, route.backend_path)
+                object_id = mapper.get_object_id(
+                    route.backend, route.backend_path, virtual_path=path
+                )
             except Exception as e:
                 # If routing fails, fall back to default "file" type with virtual path
                 logger.warning(

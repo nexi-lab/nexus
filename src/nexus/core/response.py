@@ -23,6 +23,7 @@ Usage:
 
 from __future__ import annotations
 
+import functools
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -372,6 +373,7 @@ def timed_response(func: Callable[P, HandlerResponse[R]]) -> Callable[P, Handler
     The decorator will automatically set execution_time_ms on the returned response.
     """
 
+    @functools.wraps(func)
     def wrapper(*args: P.args, **kwargs: P.kwargs) -> HandlerResponse[R]:
         start = time.perf_counter()
         try:

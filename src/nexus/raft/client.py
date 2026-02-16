@@ -169,6 +169,13 @@ class RaftClient:
             )
             self._channel = grpc_aio.secure_channel(self.address, creds, options=options)
         else:
+            logger.warning(
+                "SECURITY: Connecting to Raft peer %s WITHOUT mTLS. "
+                "Federation transport should use gRPC with mutual TLS "
+                "(see federation-memo.md §6.2). Set tls_cert_path, "
+                "tls_key_path, and tls_ca_path to enable mTLS.",
+                self.address,
+            )
             self._channel = grpc_aio.insecure_channel(self.address, options=options)
         # Use ZoneApiService (client-facing API), NOT ZoneTransportService (internal)
         self._stub = transport_pb2_grpc.ZoneApiServiceStub(self._channel)

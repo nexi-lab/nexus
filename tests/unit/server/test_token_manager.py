@@ -426,3 +426,76 @@ class TestTokenManager:
 
         # Should be different credentials
         assert retrieved_acme.access_token != retrieved_other.access_token
+
+
+class TestTokenManagerSessionFactory:
+    """Tests for session_factory dependency injection (Issue #1597)."""
+
+    def test_session_factory_injection_uses_provided_factory(self, tmp_path):
+        """Test that injected session_factory is used instead of creating own engine."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+
+        from nexus.storage.models import Base
+
+        db_path = tmp_path / "test_sf.db"
+        engine = create_engine(f"sqlite:///{db_path}")
+        Base.metadata.create_all(engine)
+        sf = sessionmaker(bind=engine)
+
+        manager = TokenManager(session_factory=sf)
+
+        # Engine is derived from the factory's bind, not created by TokenManager
+        assert manager.engine is engine
+        assert manager._owns_engine is False
+        # SessionLocal should be the injected factory
+        assert manager.SessionLocal is sf
+
+        # Verify it works: can create sessions from the injected factory
+        with manager.SessionLocal() as session:
+            assert session is not None
+
+    def test_session_factory_fallback_to_db_url(self, tmp_path):
+        """Test that db_url fallback still works when session_factory is None."""
+        db_path = tmp_path / "test_fallback.db"
+        manager = TokenManager(db_path=str(db_path))
+
+        # Engine should be created
+        assert manager.engine is not None
+        # SessionLocal should be created
+        assert manager.SessionLocal is not None
+
+        manager.close()
+
+    def test_session_factory_passthrough_to_oauth_crypto(self, tmp_path):
+        """Test that session_factory is passed through to OAuthCrypto."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+
+        from nexus.storage.models import Base
+
+        db_path = tmp_path / "test_passthrough.db"
+        engine = create_engine(f"sqlite:///{db_path}")
+        Base.metadata.create_all(engine)
+        sf = sessionmaker(bind=engine)
+
+        manager = TokenManager(session_factory=sf)
+
+        # OAuthCrypto should have received the session_factory
+        assert manager.crypto._session_factory is sf
+
+    def test_close_is_noop_with_injected_session_factory(self, tmp_path):
+        """Test that close() is safe when engine is None (session_factory path)."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+
+        from nexus.storage.models import Base
+
+        db_path = tmp_path / "test_close.db"
+        engine = create_engine(f"sqlite:///{db_path}")
+        Base.metadata.create_all(engine)
+        sf = sessionmaker(bind=engine)
+
+        manager = TokenManager(session_factory=sf)
+        # Should not raise — early return when _owns_engine is False
+        manager.close()

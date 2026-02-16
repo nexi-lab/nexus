@@ -62,7 +62,7 @@ __all__ = [
     # Configuration
     "Config",
     "load_config",
-    # Core interfaces (ABCs / protocols only)
+    # Core interfaces (ABCs / protocols — no concrete implementations)
     "Filesystem",
     "Backend",
     # Exceptions
@@ -87,7 +87,7 @@ __all__ = [
     "SkillExportError",
     # Permissions
     "OperationContext",
-    # ReBAC data types
+    # ReBAC types (data classes only — no service internals)
     "ReBACTuple",
     "Entity",
     "WILDCARD_SUBJECT",
@@ -95,7 +95,10 @@ __all__ = [
     "NamespaceConfig",
 ]
 
-# Re-export from core modules with cleaner names
+# Re-export ABCs, interfaces, and data types only — no concrete implementations.
+# Per KERNEL-ARCHITECTURE: "Drivers are config-time DI" — SDK consumers must not
+# depend on specific driver classes (LocalBackend, GCSBackend) or service internals
+# (PermissionEnforcer, EnhancedReBACManager).  Use connect() to get a Filesystem.
 from pathlib import Path
 
 from nexus.backends.backend import Backend

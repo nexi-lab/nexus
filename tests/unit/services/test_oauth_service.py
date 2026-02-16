@@ -255,16 +255,17 @@ class TestOAuthGetAuthUrl:
             },
         )
 
-        # _pkce_cache is in nexus.services.oauth_service (moved from mixin, Issue #1387)
-        with patch("nexus.services.oauth_service._pkce_cache", {}):
-            result = await service.oauth_get_auth_url(
-                provider="x",
-                redirect_uri="http://localhost:3000/oauth/callback",
-            )
+        # Instance-level PKCE store (Issue #1597 — no more module-level _pkce_cache)
+        result = await service.oauth_get_auth_url(
+            provider="x",
+            redirect_uri="http://localhost:3000/oauth/callback",
+        )
 
         assert "url" in result
         assert "pkce_data" in result
         assert result["pkce_data"]["code_verifier"] == "verifier123"
+        # Verify data was stored in instance PKCE store
+        assert service._pkce_store.size > 0
 
     @pytest.mark.asyncio
     async def test_get_auth_url_maps_provider_name(self, service, mock_oauth_factory):
@@ -800,52 +801,50 @@ class TestOAuthHelperMethods:
 
 
 class TestPKCEHelper:
-    """Test PKCE verifier retrieval logic."""
+    """Test PKCE verifier retrieval logic (async, instance-level store)."""
 
-    def test_get_pkce_verifier_from_parameter(self, service):
+    @pytest.mark.asyncio
+    async def test_get_pkce_verifier_from_parameter(self, service):
         """Test that directly provided verifier is used."""
-        result = service._get_pkce_verifier(
+        result = await service._get_pkce_verifier(
             provider="x",
             code_verifier="direct-verifier",
             state=None,
         )
         assert result == "direct-verifier"
 
-    def test_get_pkce_verifier_from_cache(self, service):
-        """Test that verifier is retrieved from cache via state."""
-        with patch(
-            "nexus.services.oauth_service._pkce_cache",
-            {"state-123": {"code_verifier": "cached-verifier"}},
-        ):
-            result = service._get_pkce_verifier(
-                provider="x",
-                code_verifier=None,
-                state="state-123",
-            )
-            assert result == "cached-verifier"
+    @pytest.mark.asyncio
+    async def test_get_pkce_verifier_from_cache(self, service):
+        """Test that verifier is retrieved from instance PKCE store via state."""
+        await service._pkce_store.save("state-123", {"code_verifier": "cached-verifier"})
+        result = await service._get_pkce_verifier(
+            provider="x",
+            code_verifier=None,
+            state="state-123",
+        )
+        assert result == "cached-verifier"
 
-    def test_get_pkce_verifier_raises_when_missing(self, service):
+    @pytest.mark.asyncio
+    async def test_get_pkce_verifier_raises_when_missing(self, service):
         """Test that missing PKCE verifier raises ValueError."""
-        with (
-            patch("nexus.services.oauth_service._pkce_cache", {}),
-            pytest.raises(ValueError, match="requires PKCE"),
-        ):
-            service._get_pkce_verifier(
+        with pytest.raises(ValueError, match="requires PKCE"):
+            await service._get_pkce_verifier(
                 provider="x",
                 code_verifier=None,
                 state=None,
             )
 
-    def test_get_pkce_verifier_cleans_cache(self, service):
-        """Test that cache entry is cleaned up after retrieval."""
-        cache = {"state-123": {"code_verifier": "verifier"}}
-        with patch("nexus.services.oauth_service._pkce_cache", cache):
-            service._get_pkce_verifier(
-                provider="x",
-                code_verifier=None,
-                state="state-123",
-            )
-            assert "state-123" not in cache
+    @pytest.mark.asyncio
+    async def test_get_pkce_verifier_cleans_cache(self, service):
+        """Test that store entry is consumed (single-use) after retrieval."""
+        await service._pkce_store.save("state-123", {"code_verifier": "verifier"})
+        await service._get_pkce_verifier(
+            provider="x",
+            code_verifier=None,
+            state="state-123",
+        )
+        # Entry should be consumed (popped)
+        assert service._pkce_store.size == 0
 
 
 # =========================================================================
@@ -967,3 +966,108 @@ class TestUserIsolation:
 
         assert len(result) == 1
         assert result[0]["user_email"] == "alice@example.com"
+
+
+# =========================================================================
+# PKCEStateStore Tests (Issue #1597)
+# =========================================================================
+
+
+class TestPKCEStateStore:
+    """Test the instance-level PKCE state store with async lock, TTL, and maxsize."""
+
+    @pytest.mark.asyncio
+    async def test_concurrent_save_and_pop(self):
+        """Test that concurrent tasks can safely save/pop without data corruption."""
+        import asyncio
+
+        from nexus.services.oauth_service import PKCEStateStore
+
+        store = PKCEStateStore(ttl=60.0, max_size=1000)
+        results: list[str | None] = []
+
+        async def flow(state: str, verifier: str) -> None:
+            await store.save(state, {"code_verifier": verifier})
+            # Simulate delay between save and pop
+            await asyncio.sleep(0.001)
+            data = await store.pop(state)
+            results.append(data.get("code_verifier") if data else None)
+
+        # Run 50 concurrent PKCE flows
+        tasks = [flow(f"state-{i}", f"verifier-{i}") for i in range(50)]
+        await asyncio.gather(*tasks)
+
+        assert len(results) == 50
+        # Every flow should retrieve its own verifier (no cross-contamination)
+        for i, result in enumerate(results):
+            assert result == f"verifier-{i}", f"Flow {i} got wrong verifier: {result}"
+
+    @pytest.mark.asyncio
+    async def test_double_pop_returns_none(self):
+        """Test that pop is single-use — second pop returns None."""
+        from nexus.services.oauth_service import PKCEStateStore
+
+        store = PKCEStateStore()
+        await store.save("state-1", {"code_verifier": "v1"})
+        first = await store.pop("state-1")
+        second = await store.pop("state-1")
+        assert first is not None
+        assert first["code_verifier"] == "v1"
+        assert second is None
+
+    @pytest.mark.asyncio
+    async def test_ttl_expiration(self):
+        """Test that expired entries are not returned."""
+        import time
+        from unittest.mock import patch as mock_patch
+
+        from nexus.services.oauth_service import PKCEStateStore
+
+        store = PKCEStateStore(ttl=0.1)  # 100ms TTL
+        await store.save("state-1", {"code_verifier": "v1"})
+
+        # Advance monotonic time past TTL using mock
+        original_monotonic = time.monotonic
+        with mock_patch(
+            "nexus.services.oauth_service.time.monotonic",
+            side_effect=lambda: original_monotonic() + 1.0,
+        ):
+            result = await store.pop("state-1")
+
+        assert result is None  # Expired
+
+    @pytest.mark.asyncio
+    async def test_eviction_removes_expired_entries(self):
+        """Test that expired entries are evicted during save()."""
+        import time
+        from unittest.mock import patch as mock_patch
+
+        from nexus.services.oauth_service import PKCEStateStore
+
+        store = PKCEStateStore(ttl=0.1)  # 100ms TTL
+        await store.save("state-1", {"code_verifier": "v1"})
+        assert store.size == 1
+
+        # Advance time past TTL, then save a new entry to trigger eviction
+        original_monotonic = time.monotonic
+        with mock_patch(
+            "nexus.services.oauth_service.time.monotonic",
+            side_effect=lambda: original_monotonic() + 1.0,
+        ):
+            await store.save("state-2", {"code_verifier": "v2"})
+
+        # state-1 was expired and evicted, only state-2 remains
+        assert store.size == 1
+
+    @pytest.mark.asyncio
+    async def test_max_size_raises_on_overflow(self):
+        """Test that store raises RuntimeError when max_size is exceeded."""
+        from nexus.services.oauth_service import PKCEStateStore
+
+        store = PKCEStateStore(ttl=60.0, max_size=3)
+        await store.save("state-1", {"code_verifier": "v1"})
+        await store.save("state-2", {"code_verifier": "v2"})
+        await store.save("state-3", {"code_verifier": "v3"})
+
+        with pytest.raises(RuntimeError, match="capacity exceeded"):
+            await store.save("state-4", {"code_verifier": "v4"})

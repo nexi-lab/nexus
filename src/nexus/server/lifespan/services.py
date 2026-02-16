@@ -255,7 +255,7 @@ def _startup_sandbox_auth(app: FastAPI) -> None:
                 # Wire event-driven invalidation for sandbox namespace (Issue #1244)
                 sync_rebac.register_namespace_invalidator(
                     "sandbox_namespace_dcache",
-                    lambda st, sid, _zid: namespace_manager.invalidate((st, sid)),  # type: ignore[union-attr]
+                    lambda st, sid, _zid: namespace_manager.invalidate((st, sid)),
                 )
             except Exception as e:
                 logger.info(

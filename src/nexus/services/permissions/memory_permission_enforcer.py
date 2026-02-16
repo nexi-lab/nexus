@@ -16,9 +16,9 @@ from typing import TYPE_CHECKING, Any
 from nexus.core.permissions import (
     OperationContext,
     Permission,
-    PermissionEnforcer,
 )
 from nexus.services.memory.memory_router import MemoryViewRouter
+from nexus.services.permissions.enforcer import PermissionEnforcer
 from nexus.services.permissions.entity_registry import EntityRegistry
 from nexus.services.permissions.utils.zone import normalize_zone_id
 from nexus.storage.models import MemoryModel
@@ -233,7 +233,7 @@ class MemoryPermissionEnforcer(PermissionEnforcer):
         """
         if not self.memory_router:
             # Fall back to base file permission check
-            return self.check(virtual_path, permission, context)
+            return bool(self.check(virtual_path, permission, context))
 
         # Resolve virtual path to memory
         memory = self.memory_router.resolve(virtual_path)

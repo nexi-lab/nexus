@@ -2033,8 +2033,8 @@ class NexusFS(  # type: ignore[misc]
             # Route with access control (read permission needed to check)
             route = self.router.route(
                 path,
-                zone_id=ctx.zone_id,  # v0.6.0: from context
-                is_admin=ctx.is_admin,  # v0.6.0: from context
+                zone_id=ctx.zone_id,
+                is_admin=ctx.is_admin,
                 check_write=False,
             )
             # Check if it's an explicit directory in the backend
@@ -2225,7 +2225,7 @@ class NexusFS(  # type: ignore[misc]
                     pass
             else:
                 # Non-root path - use router with context
-                zone_id, agent_id, is_admin = self._get_routing_params(context)
+                zone_id, _agent_id, is_admin = self._get_routing_params(context)
                 route = self.router.route(
                     path.rstrip("/"),
                     zone_id=zone_id,
@@ -9071,8 +9071,7 @@ class NexusFS(  # type: ignore[misc]
             and hasattr(self, "router")
             and hasattr(self, "_get_routing_params")
         ):
-            # NexusFS instance - read directly from backend to bypass filtering
-            zone_id, agent_id, is_admin = self._get_routing_params(context)
+            zone_id, _agent_id, is_admin = self._get_routing_params(context)
             route = self.router.route(
                 file_path,
                 zone_id=zone_id,

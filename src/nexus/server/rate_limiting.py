@@ -49,7 +49,7 @@ def _get_rate_limit_key(request: Request) -> str:
         token = auth_header[7:]
         parsed = parse_sk_token(token)
         if parsed is not None:
-            zone = parsed.zone or "default"
+            zone = parsed.zone or "root"
             user = parsed.user or "unknown"
             return f"user:{zone}:{user}"
         # For other tokens, use hash as key

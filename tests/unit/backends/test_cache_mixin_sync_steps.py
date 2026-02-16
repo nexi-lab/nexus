@@ -238,11 +238,14 @@ class TestStep1DiscoverFiles:
 class TestStep2LoadCache:
     """Test Step 2: Bulk cache loading."""
 
-    def test_load_empty_cache(self, connector, pipeline):
+    def test_load_empty_cache(self, connector, pipeline, tmp_path):
         """Test loading cache when nothing is cached."""
         virtual_paths = ["/test/file1.txt", "/test/file2.txt"]
 
-        cached = pipeline._step2_load_cache(virtual_paths)
+        # Patch get_file_cache to use a fresh empty disk cache (no stale data)
+        file_cache = FileContentCache(tmp_path / "empty_cache")
+        with patch("nexus.backends.cache_mixin.get_file_cache", return_value=file_cache):
+            cached = pipeline._step2_load_cache(virtual_paths)
 
         assert len(cached) == 0
 

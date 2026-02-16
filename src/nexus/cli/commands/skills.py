@@ -1611,7 +1611,7 @@ def skills_mcp_mount(
 
                 # First check if credential exists
                 async def check_credential() -> bool:
-                    cred = await token_manager.get_credential(oauth_provider, oauth_user, "default")
+                    cred = await token_manager.get_credential(oauth_provider, oauth_user, "root")
                     return cred is not None
 
                 credential_exists = asyncio.run(check_credential())
@@ -1720,7 +1720,7 @@ def skills_mcp_mount(
                             provider=oauth_provider if oauth_provider != "x" else "twitter",
                             user_email=oauth_user,
                             credential=credential,
-                            zone_id="default",
+                            zone_id="root",
                             created_by=oauth_user,
                         )
 
@@ -1734,9 +1734,7 @@ def skills_mcp_mount(
                         return
 
                 async def get_oauth_token() -> str:
-                    return await token_manager.get_valid_token(
-                        oauth_provider, oauth_user, "default"
-                    )
+                    return await token_manager.get_valid_token(oauth_provider, oauth_user, "root")
 
                 # Get the token
                 access_token = asyncio.run(get_oauth_token())

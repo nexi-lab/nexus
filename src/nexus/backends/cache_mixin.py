@@ -447,7 +447,7 @@ class CacheConnectorMixin:
             for path_id, cache_model in cache_models.items():
                 vpath = path_id_to_path.get(path_id)
                 if vpath:
-                    cache_zone = cache_model.zone_id or "default"
+                    cache_zone = cache_model.zone_id or "root"
                     zone_paths.setdefault(cache_zone, []).append(vpath)
 
             # Bulk read from disk for each zone
@@ -500,7 +500,7 @@ class CacheConnectorMixin:
             if l1_cache is not None:
                 with contextlib.suppress(Exception):
                     file_cache = get_file_cache()
-                    cache_zone = cache_model.zone_id or "default"
+                    cache_zone = cache_model.zone_id or "root"
                     disk_path = str(file_cache._get_cache_path(cache_zone, vpath))
                     is_text = cache_model.content_type in ("full", "parsed", "summary")
                     l1_cache.put(
@@ -677,7 +677,7 @@ class CacheConnectorMixin:
         if original:
             # Try disk cache first (new storage)
             file_cache = get_file_cache()
-            cache_zone = cache_model.zone_id or "default"
+            cache_zone = cache_model.zone_id or "root"
             content_binary_raw = file_cache.read(cache_zone, path)
             if content_binary_raw:
                 logger.debug(f"[CACHE] L2 content from DISK: {path}")
@@ -717,7 +717,7 @@ class CacheConnectorMixin:
         if l1_cache is not None:
             with contextlib.suppress(Exception):
                 file_cache = get_file_cache()
-                cache_zone = cache_model.zone_id or "default"
+                cache_zone = cache_model.zone_id or "root"
                 disk_path = str(file_cache._get_cache_path(cache_zone, path))
                 is_text = cache_model.content_type in ("full", "parsed", "summary")
                 # Use connector-specific TTL if defined
@@ -770,7 +770,7 @@ class CacheConnectorMixin:
         content_hash = hash_content(content)
         original_size = len(content)
         now = datetime.now(UTC)
-        cache_zone = zone_id or "default"
+        cache_zone = zone_id or "root"
 
         # Determine text content
         if content_text is None:
@@ -1169,7 +1169,7 @@ class CacheConnectorMixin:
                 cached_size = len(content_text) if content_text else 0
 
                 # Write binary content to disk via FileContentCache
-                cache_zone = zone_id or "default"
+                cache_zone = zone_id or "root"
                 if original_size <= self.MAX_CACHE_FILE_SIZE:
                     try:
                         file_cache.write(cache_zone, path, content, text_content=content_text)
@@ -1354,7 +1354,7 @@ class CacheConnectorMixin:
 
             if delete:
                 # Delete from disk cache
-                cache_zone = entry.zone_id or "default"
+                cache_zone = entry.zone_id or "root"
                 file_cache.delete(cache_zone, path)
                 session.delete(entry)
             else:
@@ -1378,7 +1378,7 @@ class CacheConnectorMixin:
             for cache_entry, vpath in rows:
                 if delete:
                     # Delete from disk cache
-                    cache_zone = cache_entry.zone_id or "default"
+                    cache_zone = cache_entry.zone_id or "root"
                     file_cache.delete(cache_zone, vpath)
                     session.delete(cache_entry)
                 else:

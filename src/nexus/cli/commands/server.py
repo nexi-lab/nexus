@@ -1247,7 +1247,7 @@ def serve(
 
             # Register user in entity registry (for agent permission inheritance)
             entity_registry = EntityRegistry(Session)
-            zone_id = "default"
+            zone_id = "root"
 
             # User might already exist, ignore errors
             with contextlib.suppress(Exception):
@@ -1311,7 +1311,7 @@ def serve(
                         subject=("user", admin_user),
                         relation="direct_owner",
                         object=("file", "/workspace"),
-                        zone_id="default",
+                        zone_id="root",
                     )
                     console.print(
                         f"[green]✓[/green] Granted '{admin_user}' ownership of /workspace"

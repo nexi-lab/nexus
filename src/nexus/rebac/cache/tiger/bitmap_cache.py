@@ -40,7 +40,7 @@ class CacheKey:
 
     Note: zone_id is intentionally excluded from the cache key.
     Zone isolation is enforced during permission computation, not caching.
-    This allows shared resources (e.g., /skills in 'default' zone) to be
+    This allows shared resources (e.g., /skills in 'root' zone) to be
     accessible across zones without cache misses.
 
     See: Issue #979 - Tiger Cache persistence and cross-zone optimization

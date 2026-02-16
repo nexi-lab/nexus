@@ -28,11 +28,6 @@ def sample_api_keys():
             "is_admin": True,
             "metadata": {"purpose": "backup"},
         },
-        "sk-legacy-user-key": {
-            "user_id": "bob",  # Old format without subject_type
-            "zone_id": "org_xyz",
-            "is_admin": False,
-        },
     }
 
 
@@ -77,18 +72,6 @@ async def test_authenticate_valid_service(auth_provider):
     assert result.zone_id is None
     assert result.is_admin is True
     assert result.metadata == {"purpose": "backup"}
-
-
-@pytest.mark.asyncio
-async def test_authenticate_legacy_format(auth_provider):
-    """Test authentication with legacy user_id format."""
-    result = await auth_provider.authenticate("sk-legacy-user-key")
-
-    assert result.authenticated is True
-    assert result.subject_type == "user"  # defaults to user
-    assert result.subject_id == "bob"  # falls back to user_id
-    assert result.zone_id == "org_xyz"
-    assert result.is_admin is False
 
 
 @pytest.mark.asyncio

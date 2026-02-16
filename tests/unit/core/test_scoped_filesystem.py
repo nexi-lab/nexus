@@ -393,7 +393,7 @@ class TestWorkspaceOperations:
         }
         result = scoped_fs.workspace_snapshot(workspace_path="/workspace")
         mock_fs.workspace_snapshot.assert_called_once_with(
-            "/zones/team_12/users/user_1/workspace", None, None, None
+            "/zones/team_12/users/user_1/workspace", None, None
         )
         assert result["workspace_path"] == "/workspace"
 

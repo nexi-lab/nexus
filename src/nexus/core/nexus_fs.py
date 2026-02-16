@@ -2828,7 +2828,6 @@ class NexusFS(  # type: ignore[misc]
     def workspace_snapshot(
         self,
         workspace_path: str | None = None,
-        agent_id: str | None = None,  # DEPRECATED: For backward compatibility
         description: str | None = None,
         tags: list[str] | None = None,
         created_by: str | None = None,
@@ -2838,7 +2837,6 @@ class NexusFS(  # type: ignore[misc]
 
         Args:
             workspace_path: Path to registered workspace (e.g., "/my-workspace")
-            agent_id: DEPRECATED - Use workspace_path instead
             description: Human-readable description of snapshot
             tags: List of tags for categorization
             created_by: User/agent who created the snapshot
@@ -2857,27 +2855,6 @@ class NexusFS(  # type: ignore[misc]
             >>> snapshot = nx.workspace_snapshot("/my-workspace", description="Initial state")
             >>> print(f"Created snapshot #{snapshot['snapshot_number']}")
         """
-        # Backward compatibility: support old agent_id parameter
-        if workspace_path is None and agent_id:
-            import warnings
-
-            warnings.warn(
-                "agent_id parameter is deprecated. Use workspace_path parameter instead. "
-                "Auto-registering workspace for backward compatibility.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            # Auto-construct path from agent_id (simple format, no zone in path)
-            workspace_path = f"/workspace/{agent_id}"
-
-            # Auto-register if not exists
-            if not self._workspace_registry.get_workspace(workspace_path):
-                self._workspace_registry.register_workspace(
-                    workspace_path,
-                    name=f"auto-{agent_id}",
-                    description=f"Auto-registered workspace for agent {agent_id}",
-                )
-
         if not workspace_path:
             raise ValueError("workspace_path must be provided")
 
@@ -2906,7 +2883,6 @@ class NexusFS(  # type: ignore[misc]
         self,
         snapshot_number: int,
         workspace_path: str | None = None,
-        agent_id: str | None = None,  # DEPRECATED: For backward compatibility
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Restore workspace to a previous snapshot.
@@ -2914,7 +2890,6 @@ class NexusFS(  # type: ignore[misc]
         Args:
             snapshot_number: Snapshot version number to restore
             workspace_path: Path to registered workspace
-            agent_id: DEPRECATED - Use workspace_path instead
             context: Operation context with user, permissions, zone info (uses default if None)
 
         Returns:
@@ -2931,17 +2906,6 @@ class NexusFS(  # type: ignore[misc]
         """
         # Use provided context or default
         ctx = context if context is not None else self._default_context
-
-        # Backward compatibility: support old agent_id parameter
-        if workspace_path is None and agent_id:
-            import warnings
-
-            warnings.warn(
-                "agent_id parameter is deprecated. Use workspace_path parameter instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            workspace_path = f"/workspace/{agent_id}"
 
         if workspace_path is None:
             # Fallback to context agent_id, then default context
@@ -2968,7 +2932,6 @@ class NexusFS(  # type: ignore[misc]
     def workspace_log(
         self,
         workspace_path: str | None = None,
-        agent_id: str | None = None,  # DEPRECATED: For backward compatibility
         limit: int = 100,
         context: OperationContext | None = None,
     ) -> list[dict[str, Any]]:
@@ -2976,7 +2939,6 @@ class NexusFS(  # type: ignore[misc]
 
         Args:
             workspace_path: Path to registered workspace
-            agent_id: DEPRECATED - Use workspace_path instead
             limit: Maximum number of snapshots to return
             context: Operation context with user, permissions, zone info (uses default if None)
 
@@ -2994,17 +2956,6 @@ class NexusFS(  # type: ignore[misc]
         """
         # Parse context properly
         ctx = self._parse_context(context)
-
-        # Backward compatibility: support old agent_id parameter
-        if workspace_path is None and agent_id:
-            import warnings
-
-            warnings.warn(
-                "agent_id parameter is deprecated. Use workspace_path parameter instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            workspace_path = f"/workspace/{agent_id}"
 
         if workspace_path is None:
             # Fallback to context agent_id, then default context
@@ -3033,7 +2984,6 @@ class NexusFS(  # type: ignore[misc]
         snapshot_1: int,
         snapshot_2: int,
         workspace_path: str | None = None,
-        agent_id: str | None = None,  # DEPRECATED: For backward compatibility
         context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """Compare two workspace snapshots.
@@ -3042,7 +2992,6 @@ class NexusFS(  # type: ignore[misc]
             snapshot_1: First snapshot number
             snapshot_2: Second snapshot number
             workspace_path: Path to registered workspace
-            agent_id: DEPRECATED - Use workspace_path instead
             context: Operation context with user, permissions, zone info (uses default if None)
 
         Returns:
@@ -3059,17 +3008,6 @@ class NexusFS(  # type: ignore[misc]
         """
         # Parse context properly
         ctx = self._parse_context(context)
-
-        # Backward compatibility: support old agent_id parameter
-        if workspace_path is None and agent_id:
-            import warnings
-
-            warnings.warn(
-                "agent_id parameter is deprecated. Use workspace_path parameter instead.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            workspace_path = f"/workspace/{agent_id}"
 
         if workspace_path is None:
             # Fallback to context agent_id, then default context
@@ -4939,7 +4877,7 @@ class NexusFS(  # type: ignore[misc]
         agent_paths = []
         if create_agents:
             try:
-                from nexus.core.agent_provisioning import create_standard_agents
+                from nexus.services.agents.agent_provisioning import create_standard_agents
 
                 agent_results = create_standard_agents(self, user_id, admin_context)
 
@@ -4969,7 +4907,7 @@ class NexusFS(  # type: ignore[misc]
                     # Grant SkillBuilder permissions after skills are imported
                     if create_agents:
                         try:
-                            from nexus.core.agent_provisioning import (
+                            from nexus.services.agents.agent_provisioning import (
                                 grant_skill_builder_permissions,
                             )
 
@@ -5301,8 +5239,8 @@ class NexusFS(  # type: ignore[misc]
         """Recursively delete a directory and all its contents.
 
         Strategy:
-        1. Try physical deletion first (for LocalBackend) - fastest and most reliable
-        2. Fall back to virtual filesystem deletion if physical deletion fails
+        1. Delegate to backend's rmdir(recursive=True) - backend handles physical deletion
+        2. Fall back to virtual filesystem deletion if backend deletion fails
 
         Args:
             dir_path: Directory path to delete
@@ -5312,46 +5250,22 @@ class NexusFS(  # type: ignore[misc]
             True if directory was deleted (or had content deleted), False otherwise
         """
         import logging
-        import os
-        import shutil
 
         logger = logging.getLogger(__name__)
 
         directory_removed = False
         had_content = False  # Track if directory had any content
 
-        # Approach 1: Physical deletion (for LocalBackend) - Try first for efficiency
-        if hasattr(self, "backend") and self.backend.has_root_path is True:
+        # Approach 1: Delegate to backend's rmdir (handles physical deletion internally)
+        if hasattr(self, "backend"):
             try:
-                # Convert virtual path to physical path
-                # LocalBackend stores directories under "dirs" subdirectory
-                physical_path = self.backend.root_path / "dirs" / dir_path.lstrip("/")
-                if physical_path.exists() and physical_path.is_dir():
-                    # Check if directory actually has content (not just an empty stub)
-                    from contextlib import suppress
-
-                    with suppress(OSError):
-                        # Use os.listdir to check if directory has any files/subdirs
-                        dir_contents = os.listdir(physical_path)
-                        if dir_contents:
-                            had_content = True  # Directory has actual content
-
-                    try:
-                        # shutil.rmtree() removes entire directory tree in one go
-                        shutil.rmtree(physical_path)
-                        directory_removed = True
-                        logger.info(f"Deleted physical directory: {dir_path}")
-                    except OSError as e:
-                        logger.debug(f"shutil.rmtree failed for {physical_path}: {e}")
-                        # Try os.rmdir() for empty directories
-                        try:
-                            os.rmdir(physical_path)
-                            directory_removed = True
-                            logger.info(f"Deleted empty physical directory: {dir_path}")
-                        except OSError as e2:
-                            logger.debug(f"os.rmdir failed for {physical_path}: {e2}")
+                response = self.backend.rmdir(dir_path, recursive=True, context=context)
+                if response.success:
+                    directory_removed = True
+                    had_content = True
+                    logger.info(f"Deleted directory via backend: {dir_path}")
             except Exception as e:
-                logger.debug(f"Physical deletion failed for {dir_path}: {e}")
+                logger.debug(f"Backend rmdir failed for {dir_path}: {e}")
 
         # If physical deletion worked, still need to clean up metadata and permissions
         if directory_removed:
@@ -9443,9 +9357,6 @@ class NexusFS(  # type: ignore[misc]
             context=_context,
         )
 
-    # Backward-compat alias
-    amcp_list_mounts = mcp_list_mounts
-
     @rpc_expose(description="List tools from MCP mount")
     async def mcp_list_tools(
         self,
@@ -9457,9 +9368,6 @@ class NexusFS(  # type: ignore[misc]
             name=name,
             context=_context,
         )
-
-    # Backward-compat alias
-    amcp_list_tools = mcp_list_tools
 
     @rpc_expose(description="Mount MCP server")
     async def mcp_mount(
@@ -9489,9 +9397,6 @@ class NexusFS(  # type: ignore[misc]
             context=_context,
         )
 
-    # Backward-compat alias
-    amcp_mount = mcp_mount
-
     @rpc_expose(description="Unmount MCP server")
     async def mcp_unmount(
         self,
@@ -9500,9 +9405,6 @@ class NexusFS(  # type: ignore[misc]
     ) -> dict[str, Any]:
         """Unmount an MCP server - delegates to MCPService."""
         return await self.mcp_service.mcp_unmount(name=name, _context=_context)
-
-    # Backward-compat alias
-    amcp_unmount = mcp_unmount
 
     @rpc_expose(description="Sync tools from MCP server")
     async def mcp_sync(
@@ -9515,9 +9417,6 @@ class NexusFS(  # type: ignore[misc]
             name=name,
             context=_context,
         )
-
-    # Backward-compat alias
-    amcp_sync = mcp_sync
 
     # -------------------------------------------------------------------------
     # SkillService Delegation Methods (10 methods)
@@ -9703,9 +9602,6 @@ class NexusFS(  # type: ignore[misc]
             provider=provider,
         )
 
-    # Backward-compat alias
-    allm_read = llm_read
-
     @rpc_expose(description="Read document with LLM and return detailed result")
     async def llm_read_detailed(
         self,
@@ -9729,9 +9625,6 @@ class NexusFS(  # type: ignore[misc]
             search_mode=search_mode,
             provider=provider,
         )
-
-    # Backward-compat alias
-    allm_read_detailed = llm_read_detailed
 
     @rpc_expose(description="Stream document reading response")
     async def llm_read_stream(
@@ -9757,9 +9650,6 @@ class NexusFS(  # type: ignore[misc]
             provider=provider,
         )
 
-    # Backward-compat alias
-    allm_read_stream = llm_read_stream
-
     @rpc_expose(description="Create an LLM document reader for advanced usage")
     def create_llm_reader(
         self,
@@ -9778,9 +9668,6 @@ class NexusFS(  # type: ignore[misc]
             max_context_tokens=max_context_tokens,
         )
 
-    # Backward-compat alias
-    acreate_llm_reader = create_llm_reader
-
     # -------------------------------------------------------------------------
     # OAuthService Delegation Methods (7 methods)
     # Issue #1287 Phase 1.3: NexusFSOAuthMixin removed, replaced by OAuthService delegation
@@ -9793,9 +9680,6 @@ class NexusFS(  # type: ignore[misc]
     ) -> list[dict[str, Any]]:
         """List available OAuth providers - delegates to OAuthService."""
         return await self.oauth_service.oauth_list_providers(context=_context)
-
-    # Backward-compat alias
-    aoauth_list_providers = oauth_list_providers
 
     @rpc_expose(description="Get OAuth authorization URL")
     async def oauth_get_auth_url(
@@ -9810,9 +9694,6 @@ class NexusFS(  # type: ignore[misc]
             redirect_uri=redirect_uri,
             scopes=scopes,
         )
-
-    # Backward-compat alias
-    aoauth_get_auth_url = oauth_get_auth_url
 
     @rpc_expose(description="Exchange OAuth authorization code for tokens")
     async def oauth_exchange_code(
@@ -9836,9 +9717,6 @@ class NexusFS(  # type: ignore[misc]
             context=context,
         )
 
-    # Backward-compat alias
-    aoauth_exchange_code = oauth_exchange_code
-
     @rpc_expose(description="List OAuth credentials")
     async def oauth_list_credentials(
         self,
@@ -9852,9 +9730,6 @@ class NexusFS(  # type: ignore[misc]
             include_revoked=include_revoked,
             context=context,
         )
-
-    # Backward-compat alias
-    aoauth_list_credentials = oauth_list_credentials
 
     @rpc_expose(description="Revoke OAuth credential")
     async def oauth_revoke_credential(
@@ -9870,9 +9745,6 @@ class NexusFS(  # type: ignore[misc]
             context=context,
         )
 
-    # Backward-compat alias
-    aoauth_revoke_credential = oauth_revoke_credential
-
     @rpc_expose(description="Test OAuth credential validity")
     async def oauth_test_credential(
         self,
@@ -9887,9 +9759,6 @@ class NexusFS(  # type: ignore[misc]
             context=context,
         )
 
-    # Backward-compat alias
-    aoauth_test_credential = oauth_test_credential
-
     @rpc_expose(description="Connect to MCP provider via Klavis OAuth")
     async def mcp_connect(
         self,
@@ -9903,9 +9772,6 @@ class NexusFS(  # type: ignore[misc]
             redirect_url=redirect_url,
             context=context,
         )
-
-    # Backward-compat alias
-    amcp_connect = mcp_connect
 
     # =========================================================================
     # MountService Delegation Methods

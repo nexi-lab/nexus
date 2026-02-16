@@ -9443,9 +9443,6 @@ class NexusFS(  # type: ignore[misc]
             context=_context,
         )
 
-    # Backward-compat alias
-    amcp_list_mounts = mcp_list_mounts
-
     @rpc_expose(description="List tools from MCP mount")
     async def mcp_list_tools(
         self,
@@ -9457,9 +9454,6 @@ class NexusFS(  # type: ignore[misc]
             name=name,
             context=_context,
         )
-
-    # Backward-compat alias
-    amcp_list_tools = mcp_list_tools
 
     @rpc_expose(description="Mount MCP server")
     async def mcp_mount(
@@ -9489,9 +9483,6 @@ class NexusFS(  # type: ignore[misc]
             context=_context,
         )
 
-    # Backward-compat alias
-    amcp_mount = mcp_mount
-
     @rpc_expose(description="Unmount MCP server")
     async def mcp_unmount(
         self,
@@ -9500,9 +9491,6 @@ class NexusFS(  # type: ignore[misc]
     ) -> dict[str, Any]:
         """Unmount an MCP server - delegates to MCPService."""
         return await self.mcp_service.mcp_unmount(name=name, _context=_context)
-
-    # Backward-compat alias
-    amcp_unmount = mcp_unmount
 
     @rpc_expose(description="Sync tools from MCP server")
     async def mcp_sync(
@@ -9515,9 +9503,6 @@ class NexusFS(  # type: ignore[misc]
             name=name,
             context=_context,
         )
-
-    # Backward-compat alias
-    amcp_sync = mcp_sync
 
     # -------------------------------------------------------------------------
     # SkillService Delegation Methods (10 methods)
@@ -9703,9 +9688,6 @@ class NexusFS(  # type: ignore[misc]
             provider=provider,
         )
 
-    # Backward-compat alias
-    allm_read = llm_read
-
     @rpc_expose(description="Read document with LLM and return detailed result")
     async def llm_read_detailed(
         self,
@@ -9729,9 +9711,6 @@ class NexusFS(  # type: ignore[misc]
             search_mode=search_mode,
             provider=provider,
         )
-
-    # Backward-compat alias
-    allm_read_detailed = llm_read_detailed
 
     @rpc_expose(description="Stream document reading response")
     async def llm_read_stream(
@@ -9757,9 +9736,6 @@ class NexusFS(  # type: ignore[misc]
             provider=provider,
         )
 
-    # Backward-compat alias
-    allm_read_stream = llm_read_stream
-
     @rpc_expose(description="Create an LLM document reader for advanced usage")
     def create_llm_reader(
         self,
@@ -9778,9 +9754,6 @@ class NexusFS(  # type: ignore[misc]
             max_context_tokens=max_context_tokens,
         )
 
-    # Backward-compat alias
-    acreate_llm_reader = create_llm_reader
-
     # -------------------------------------------------------------------------
     # OAuthService Delegation Methods (7 methods)
     # Issue #1287 Phase 1.3: NexusFSOAuthMixin removed, replaced by OAuthService delegation
@@ -9793,9 +9766,6 @@ class NexusFS(  # type: ignore[misc]
     ) -> list[dict[str, Any]]:
         """List available OAuth providers - delegates to OAuthService."""
         return await self.oauth_service.oauth_list_providers(context=_context)
-
-    # Backward-compat alias
-    aoauth_list_providers = oauth_list_providers
 
     @rpc_expose(description="Get OAuth authorization URL")
     async def oauth_get_auth_url(
@@ -9810,9 +9780,6 @@ class NexusFS(  # type: ignore[misc]
             redirect_uri=redirect_uri,
             scopes=scopes,
         )
-
-    # Backward-compat alias
-    aoauth_get_auth_url = oauth_get_auth_url
 
     @rpc_expose(description="Exchange OAuth authorization code for tokens")
     async def oauth_exchange_code(
@@ -9836,9 +9803,6 @@ class NexusFS(  # type: ignore[misc]
             context=context,
         )
 
-    # Backward-compat alias
-    aoauth_exchange_code = oauth_exchange_code
-
     @rpc_expose(description="List OAuth credentials")
     async def oauth_list_credentials(
         self,
@@ -9852,9 +9816,6 @@ class NexusFS(  # type: ignore[misc]
             include_revoked=include_revoked,
             context=context,
         )
-
-    # Backward-compat alias
-    aoauth_list_credentials = oauth_list_credentials
 
     @rpc_expose(description="Revoke OAuth credential")
     async def oauth_revoke_credential(
@@ -9870,9 +9831,6 @@ class NexusFS(  # type: ignore[misc]
             context=context,
         )
 
-    # Backward-compat alias
-    aoauth_revoke_credential = oauth_revoke_credential
-
     @rpc_expose(description="Test OAuth credential validity")
     async def oauth_test_credential(
         self,
@@ -9887,9 +9845,6 @@ class NexusFS(  # type: ignore[misc]
             context=context,
         )
 
-    # Backward-compat alias
-    aoauth_test_credential = oauth_test_credential
-
     @rpc_expose(description="Connect to MCP provider via Klavis OAuth")
     async def mcp_connect(
         self,
@@ -9903,9 +9858,6 @@ class NexusFS(  # type: ignore[misc]
             redirect_url=redirect_url,
             context=context,
         )
-
-    # Backward-compat alias
-    amcp_connect = mcp_connect
 
     # =========================================================================
     # MountService Delegation Methods

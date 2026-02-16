@@ -122,26 +122,21 @@ def _build_startup_script(port: int, data_dir: str) -> str:
             return _orig(auth_type, auth_config_arg, **kwargs)
         factory.create_auth_provider = _patched
 
-        # Monkey-patch NamespaceManager to disable caching for testing.
-        # Best practice (OpenFGA default, SpiceDB fully_consistent): bypass cache
-        # in tests to get deterministic results without sleep(). This tests the
-        # actual permission logic, not cache behavior. See: Zanzibar paper,
-        # SpiceDB consistency docs, OpenFGA HIGHER_CONSISTENCY mode.
+        # Use revision_window=1 so every rebac_write() triggers cache
+        # invalidation immediately (bounded staleness ≤ 1 revision).
+        # All 3 cache layers (L1 dcache, L2 mount table, L3 persistent view)
+        # remain ENABLED — we're testing the real production cache path.
         import nexus.rebac.namespace_manager as ns_mod
         _OrigNS = ns_mod.NamespaceManager
-        class _NoCacheNS(_OrigNS):
+        class _TightRevisionNS(_OrigNS):
             def __init__(self, **kwargs):
-                kwargs["cache_ttl"] = 0  # Disable mount table cache
-                kwargs["dcache_positive_ttl"] = 0  # Disable dcache positive
-                kwargs["dcache_negative_ttl"] = 0  # Disable dcache negative
-                kwargs["revision_window"] = 1  # Immediate invalidation
-                kwargs["persistent_store"] = None  # Disable L3 persistent view store
+                kwargs["revision_window"] = 1  # Every write invalidates
                 super().__init__(**kwargs)
-        ns_mod.NamespaceManager = _NoCacheNS
+        ns_mod.NamespaceManager = _TightRevisionNS
         # Also patch the factory module which imports NamespaceManager at module
         # load time (its own binding won't see the ns_mod patch above).
         import nexus.rebac.namespace_factory as nf_mod
-        nf_mod.NamespaceManager = _NoCacheNS
+        nf_mod.NamespaceManager = _TightRevisionNS
 
         cli_main([
             'serve', '--host', '127.0.0.1', '--port', '{port}',
@@ -194,9 +189,9 @@ def server():
         # Disable non-essential services
         "NEXUS_SEARCH_DAEMON": "false",
         "NEXUS_RATE_LIMIT_ENABLED": "false",
-        # Disable namespace caching for deterministic permission tests.
-        # Best practice: Zanzibar fully_consistent / OpenFGA HIGHER_CONSISTENCY.
-        "NEXUS_NAMESPACE_CACHE_TTL": "0",
+        # Tight revision window for deterministic permission tests.
+        # Caches remain enabled; every rebac_write() advances the revision
+        # bucket so stale entries are evicted immediately.
         "NEXUS_NAMESPACE_REVISION_WINDOW": "1",
     }
 

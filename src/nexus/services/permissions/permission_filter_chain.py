@@ -271,8 +271,8 @@ class BulkReBACStrategy:
                     )
                     if hasattr(route, "namespace") and route.namespace:
                         obj_type = route.namespace
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Route resolution failed for path %s: %s", path, e)
             checks.append((subject, "read", (obj_type, path)))
 
         # Retry-once on transient I/O failures only

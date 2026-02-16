@@ -20,14 +20,14 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.backends.backend import Backend
     from nexus.connectors.base import SkillDocMixin
+    from nexus.core.protocols.connector import ConnectorProtocol
 
 logger = logging.getLogger(__name__)
 
 
 def on_mount(
-    backend: Backend,
+    backend: ConnectorProtocol,
     mount_path: str,
     filesystem: Any = None,
     skill_registry: Any = None,

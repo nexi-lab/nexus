@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from nexus.core.exceptions import DatabaseError
 from nexus.storage.sync_store_base import SyncStoreBase
 
 if TYPE_CHECKING:
@@ -67,37 +68,32 @@ class ChangeLogStore(SyncStoreBase):
         """
         from nexus.storage.models import BackendChangeLogModel
 
-        session = self._get_session()
-        if session is None:
-            return None
-
         try:
-            entry = (
-                session.query(BackendChangeLogModel)
-                .filter(
-                    BackendChangeLogModel.path == path,
-                    BackendChangeLogModel.backend_name == backend_name,
-                    BackendChangeLogModel.zone_id == zone_id,
+            with self._with_session() as session:
+                entry = (
+                    session.query(BackendChangeLogModel)
+                    .filter(
+                        BackendChangeLogModel.path == path,
+                        BackendChangeLogModel.backend_name == backend_name,
+                        BackendChangeLogModel.zone_id == zone_id,
+                    )
+                    .first()
                 )
-                .first()
-            )
 
-            if entry:
-                return ChangeLogEntry(
-                    path=entry.path,
-                    backend_name=entry.backend_name,
-                    size_bytes=entry.size_bytes,
-                    mtime=entry.mtime,
-                    backend_version=entry.backend_version,
-                    content_hash=entry.content_hash,
-                    synced_at=entry.synced_at,
-                )
+                if entry:
+                    return ChangeLogEntry(
+                        path=entry.path,
+                        backend_name=entry.backend_name,
+                        size_bytes=entry.size_bytes,
+                        mtime=entry.mtime,
+                        backend_version=entry.backend_version,
+                        content_hash=entry.content_hash,
+                        synced_at=entry.synced_at,
+                    )
+                return None
+        except (RuntimeError, DatabaseError) as e:
+            logger.warning("Failed to get change log for %s: %s", path, e)
             return None
-        except Exception as e:
-            logger.warning(f"Failed to get change log for {path}: {e}")
-            return None
-        finally:
-            session.close()
 
     def upsert_change_log(
         self,
@@ -125,46 +121,39 @@ class ChangeLogStore(SyncStoreBase):
         """
         from nexus.storage.models import BackendChangeLogModel
 
-        session = self._get_session()
-        if session is None:
-            return False
-
         try:
-            now = datetime.now(UTC)
-            values = {
-                "path": path,
-                "backend_name": backend_name,
-                "zone_id": zone_id,
-                "size_bytes": size_bytes,
-                "mtime": mtime,
-                "backend_version": backend_version,
-                "content_hash": content_hash,
-                "synced_at": now,
-            }
-            update_set = {
-                "size_bytes": size_bytes,
-                "mtime": mtime,
-                "backend_version": backend_version,
-                "content_hash": content_hash,
-                "synced_at": now,
-            }
+            with self._with_session() as session:
+                now = datetime.now(UTC)
+                values = {
+                    "path": path,
+                    "backend_name": backend_name,
+                    "zone_id": zone_id,
+                    "size_bytes": size_bytes,
+                    "mtime": mtime,
+                    "backend_version": backend_version,
+                    "content_hash": content_hash,
+                    "synced_at": now,
+                }
+                update_set = {
+                    "size_bytes": size_bytes,
+                    "mtime": mtime,
+                    "backend_version": backend_version,
+                    "content_hash": content_hash,
+                    "synced_at": now,
+                }
 
-            self._dialect_upsert(
-                session,
-                BackendChangeLogModel,
-                values,
-                pg_constraint="uq_backend_change_log",
-                sqlite_index_elements=["path", "backend_name", "zone_id"],
-                update_set=update_set,
-            )
-            session.commit()
+                self._dialect_upsert(
+                    session,
+                    BackendChangeLogModel,
+                    values,
+                    pg_constraint="uq_backend_change_log",
+                    sqlite_index_elements=["path", "backend_name", "zone_id"],
+                    update_set=update_set,
+                )
             return True
-        except Exception as e:
-            logger.warning(f"Failed to upsert change log for {path}: {e}")
-            session.rollback()
+        except (RuntimeError, DatabaseError) as e:
+            logger.warning("Failed to upsert change log for %s: %s", path, e)
             return False
-        finally:
-            session.close()
 
     def get_last_sync_time(self, backend_name: str, zone_id: str = "default") -> datetime | None:
         """Get the most recent sync time for a backend.
@@ -180,25 +169,20 @@ class ChangeLogStore(SyncStoreBase):
 
         from nexus.storage.models import BackendChangeLogModel
 
-        session = self._get_session()
-        if session is None:
-            return None
-
         try:
-            result = (
-                session.query(func.max(BackendChangeLogModel.synced_at))
-                .filter(
-                    BackendChangeLogModel.backend_name == backend_name,
-                    BackendChangeLogModel.zone_id == zone_id,
+            with self._with_session() as session:
+                result = (
+                    session.query(func.max(BackendChangeLogModel.synced_at))
+                    .filter(
+                        BackendChangeLogModel.backend_name == backend_name,
+                        BackendChangeLogModel.zone_id == zone_id,
+                    )
+                    .scalar()
                 )
-                .scalar()
-            )
-            return result  # type: ignore[no-any-return]
-        except Exception as e:
-            logger.warning(f"Failed to get last sync time for {backend_name}: {e}")
+                return result  # type: ignore[no-any-return]
+        except (RuntimeError, DatabaseError) as e:
+            logger.warning("Failed to get last sync time for %s: %s", backend_name, e)
             return None
-        finally:
-            session.close()
 
     def get_change_logs_batch(
         self, backend_name: str, zone_id: str, path_prefix: str
@@ -218,40 +202,35 @@ class ChangeLogStore(SyncStoreBase):
         """
         from nexus.storage.models import BackendChangeLogModel
 
-        session = self._get_session()
-        if session is None:
-            return {}
-
         try:
-            # Escape SQL LIKE wildcards in prefix to prevent unintended matching
-            escaped = path_prefix.replace("%", r"\%").replace("_", r"\_")
-            entries = (
-                session.query(BackendChangeLogModel)
-                .filter(
-                    BackendChangeLogModel.backend_name == backend_name,
-                    BackendChangeLogModel.zone_id == zone_id,
-                    BackendChangeLogModel.path.like(f"{escaped}%", escape="\\"),
+            with self._with_session() as session:
+                # Escape SQL LIKE wildcards in prefix to prevent unintended matching
+                escaped = path_prefix.replace("%", r"\%").replace("_", r"\_")
+                entries = (
+                    session.query(BackendChangeLogModel)
+                    .filter(
+                        BackendChangeLogModel.backend_name == backend_name,
+                        BackendChangeLogModel.zone_id == zone_id,
+                        BackendChangeLogModel.path.like(f"{escaped}%", escape="\\"),
+                    )
+                    .all()
                 )
-                .all()
-            )
 
-            return {
-                entry.path: ChangeLogEntry(
-                    path=entry.path,
-                    backend_name=entry.backend_name,
-                    size_bytes=entry.size_bytes,
-                    mtime=entry.mtime,
-                    backend_version=entry.backend_version,
-                    content_hash=entry.content_hash,
-                    synced_at=entry.synced_at,
-                )
-                for entry in entries
-            }
-        except Exception as e:
-            logger.warning(f"Failed to batch-fetch change logs for {path_prefix}: {e}")
+                return {
+                    entry.path: ChangeLogEntry(
+                        path=entry.path,
+                        backend_name=entry.backend_name,
+                        size_bytes=entry.size_bytes,
+                        mtime=entry.mtime,
+                        backend_version=entry.backend_version,
+                        content_hash=entry.content_hash,
+                        synced_at=entry.synced_at,
+                    )
+                    for entry in entries
+                }
+        except (RuntimeError, DatabaseError) as e:
+            logger.warning("Failed to batch-fetch change logs for %s: %s", path_prefix, e)
             return {}
-        finally:
-            session.close()
 
     def upsert_change_logs_batch(self, entries: list[ChangeLogEntry]) -> bool:
         """Bulk upsert change log entries in a single transaction.
@@ -270,77 +249,70 @@ class ChangeLogStore(SyncStoreBase):
 
         from nexus.storage.models import BackendChangeLogModel
 
-        session = self._get_session()
-        if session is None:
-            return False
-
         try:
-            now = datetime.now(UTC)
-            is_pg = self._detect_dialect()
+            with self._with_session() as session:
+                now = datetime.now(UTC)
+                is_pg = self._detect_dialect()
 
-            # Build all value dicts upfront
-            all_values = [
-                {
-                    "path": entry.path,
-                    "backend_name": entry.backend_name,
-                    "zone_id": getattr(entry, "zone_id", "default") or "default",
-                    "size_bytes": entry.size_bytes,
-                    "mtime": entry.mtime,
-                    "backend_version": entry.backend_version,
-                    "content_hash": entry.content_hash,
-                    "synced_at": now,
-                }
-                for entry in entries
-            ]
+                # Build all value dicts upfront
+                all_values = [
+                    {
+                        "path": entry.path,
+                        "backend_name": entry.backend_name,
+                        "zone_id": getattr(entry, "zone_id", "default") or "default",
+                        "size_bytes": entry.size_bytes,
+                        "mtime": entry.mtime,
+                        "backend_version": entry.backend_version,
+                        "content_hash": entry.content_hash,
+                        "synced_at": now,
+                    }
+                    for entry in entries
+                ]
 
-            # Use multi-row insert for true batch performance
-            # SQLite has a variable limit (~999), so chunk to be safe
-            chunk_size = 500
-            for i in range(0, len(all_values), chunk_size):
-                chunk = all_values[i : i + chunk_size]
+                # Use multi-row insert for true batch performance
+                # SQLite has a variable limit (~999), so chunk to be safe
+                chunk_size = 500
+                for i in range(0, len(all_values), chunk_size):
+                    chunk = all_values[i : i + chunk_size]
 
-                if is_pg:
-                    # PG supports multi-row insert with stmt.excluded references
-                    stmt = self._dialect_insert(BackendChangeLogModel).values(chunk)
-                    stmt = stmt.on_conflict_do_update(
-                        constraint="uq_backend_change_log",
-                        set_={
-                            "size_bytes": stmt.excluded.size_bytes,
-                            "mtime": stmt.excluded.mtime,
-                            "backend_version": stmt.excluded.backend_version,
-                            "content_hash": stmt.excluded.content_hash,
-                            "synced_at": stmt.excluded.synced_at,
-                        },
-                    )
-                    session.execute(stmt)
-                else:
-                    # SQLite doesn't support multi-row on_conflict_do_update
-                    # with excluded references, so use per-row upserts
-                    for row in chunk:
-                        self._dialect_upsert(
-                            session,
-                            BackendChangeLogModel,
-                            row,
-                            pg_constraint="uq_backend_change_log",
-                            sqlite_index_elements=["path", "backend_name", "zone_id"],
-                            update_set={
-                                "size_bytes": row["size_bytes"],
-                                "mtime": row["mtime"],
-                                "backend_version": row["backend_version"],
-                                "content_hash": row["content_hash"],
-                                "synced_at": now,
+                    if is_pg:
+                        # PG supports multi-row insert with stmt.excluded references
+                        stmt = self._dialect_insert(BackendChangeLogModel).values(chunk)
+                        stmt = stmt.on_conflict_do_update(
+                            constraint="uq_backend_change_log",
+                            set_={
+                                "size_bytes": stmt.excluded.size_bytes,
+                                "mtime": stmt.excluded.mtime,
+                                "backend_version": stmt.excluded.backend_version,
+                                "content_hash": stmt.excluded.content_hash,
+                                "synced_at": stmt.excluded.synced_at,
                             },
                         )
+                        session.execute(stmt)
+                    else:
+                        # SQLite doesn't support multi-row on_conflict_do_update
+                        # with excluded references, so use per-row upserts
+                        for row in chunk:
+                            self._dialect_upsert(
+                                session,
+                                BackendChangeLogModel,
+                                row,
+                                pg_constraint="uq_backend_change_log",
+                                sqlite_index_elements=["path", "backend_name", "zone_id"],
+                                update_set={
+                                    "size_bytes": row["size_bytes"],
+                                    "mtime": row["mtime"],
+                                    "backend_version": row["backend_version"],
+                                    "content_hash": row["content_hash"],
+                                    "synced_at": now,
+                                },
+                            )
 
-            session.commit()
-            logger.debug(f"[DELTA_SYNC] Batch upserted {len(entries)} change log entries")
+                logger.debug("[DELTA_SYNC] Batch upserted %d change log entries", len(entries))
             return True
-        except Exception as e:
-            logger.warning(f"Failed to batch-upsert {len(entries)} change logs: {e}")
-            session.rollback()
+        except (RuntimeError, DatabaseError) as e:
+            logger.warning("Failed to batch-upsert %d change logs: %s", len(entries), e)
             return False
-        finally:
-            session.close()
 
     def delete_change_log(self, path: str, backend_name: str, zone_id: str = "default") -> bool:
         """Delete change log entry for a path.
@@ -358,24 +330,17 @@ class ChangeLogStore(SyncStoreBase):
         """
         from nexus.storage.models import BackendChangeLogModel
 
-        session = self._get_session()
-        if session is None:
-            return False
-
         try:
-            session.query(BackendChangeLogModel).filter(
-                BackendChangeLogModel.path == path,
-                BackendChangeLogModel.backend_name == backend_name,
-                BackendChangeLogModel.zone_id == zone_id,
-            ).delete()
-            session.commit()
+            with self._with_session() as session:
+                session.query(BackendChangeLogModel).filter(
+                    BackendChangeLogModel.path == path,
+                    BackendChangeLogModel.backend_name == backend_name,
+                    BackendChangeLogModel.zone_id == zone_id,
+                ).delete()
             return True
-        except Exception as e:
-            logger.warning(f"Failed to delete change log for {path}: {e}")
-            session.rollback()
+        except (RuntimeError, DatabaseError) as e:
+            logger.warning("Failed to delete change log for %s: %s", path, e)
             return False
-        finally:
-            session.close()
 
     def delete_change_logs_batch(
         self, paths: list[str], backend_name: str, zone_id: str = "default"
@@ -399,37 +364,31 @@ class ChangeLogStore(SyncStoreBase):
 
         from nexus.storage.models import BackendChangeLogModel
 
-        session = self._get_session()
-        if session is None:
-            return False
-
         try:
-            # SQLite has a variable limit (~999), so chunk to be safe
-            chunk_size = 500
-            total_deleted = 0
+            with self._with_session() as session:
+                # SQLite has a variable limit (~999), so chunk to be safe
+                chunk_size = 500
+                total_deleted = 0
 
-            for i in range(0, len(paths), chunk_size):
-                chunk = paths[i : i + chunk_size]
-                deleted = (
-                    session.query(BackendChangeLogModel)
-                    .filter(
-                        BackendChangeLogModel.path.in_(chunk),
-                        BackendChangeLogModel.backend_name == backend_name,
-                        BackendChangeLogModel.zone_id == zone_id,
+                for i in range(0, len(paths), chunk_size):
+                    chunk = paths[i : i + chunk_size]
+                    deleted = (
+                        session.query(BackendChangeLogModel)
+                        .filter(
+                            BackendChangeLogModel.path.in_(chunk),
+                            BackendChangeLogModel.backend_name == backend_name,
+                            BackendChangeLogModel.zone_id == zone_id,
+                        )
+                        .delete(synchronize_session="fetch")
                     )
-                    .delete(synchronize_session="fetch")
-                )
-                total_deleted += deleted
+                    total_deleted += deleted
 
-            session.commit()
-            logger.debug(
-                f"[DELTA_SYNC] Batch deleted {total_deleted} change log entries "
-                f"for {len(paths)} paths"
-            )
+                logger.debug(
+                    "[DELTA_SYNC] Batch deleted %d change log entries for %d paths",
+                    total_deleted,
+                    len(paths),
+                )
             return True
-        except Exception as e:
-            logger.warning(f"Failed to batch-delete {len(paths)} change logs: {e}")
-            session.rollback()
+        except (RuntimeError, DatabaseError) as e:
+            logger.warning("Failed to batch-delete %d change logs: %s", len(paths), e)
             return False
-        finally:
-            session.close()

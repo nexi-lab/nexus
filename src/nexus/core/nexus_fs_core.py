@@ -1116,7 +1116,8 @@ class NexusFSCoreMixin:
             try:
                 validated_path = self._validate_path(path)
                 validated_paths.append(validated_path)
-            except Exception:
+            except Exception as exc:
+                logger.debug("Path validation failed in read_bulk for %s: %s", path, exc)
                 if skip_errors:
                     results[path] = None
                     continue
@@ -1391,7 +1392,10 @@ class NexusFSCoreMixin:
                                         "size": len(content),
                                     }
                                 )
-                            except Exception:
+                            except Exception as exc:
+                                logger.debug(
+                                    "Failed to read content for %s during batch read: %s", path, exc
+                                )
                                 if skip_errors:
                                     results[path] = None
                                 else:
@@ -2005,8 +2009,8 @@ class NexusFSCoreMixin:
                 self.metadata.set_file_metadata(path, "parsed_text", None)
                 self.metadata.set_file_metadata(path, "parsed_at", None)
                 self.metadata.set_file_metadata(path, "parser_name", None)
-            except Exception:
-                pass  # Ignore errors - cache invalidation is best-effort
+            except Exception as e:
+                logger.debug("Failed to invalidate parsed_text cache for %s: %s", path, e)
 
         # P0-3: Create parent relationship tuples for file inheritance
         # This enables permission inheritance from parent directories
@@ -3543,7 +3547,8 @@ class NexusFSCoreMixin:
 
                     size_context = replace(context, backend_path=route.backend_path)
                 size = route.backend.get_content_size(meta.etag, context=size_context).unwrap()
-            except Exception:
+            except Exception as exc:
+                logger.debug("Failed to get content size for %s: %s", path, exc)
                 size = None
 
         # Convert datetime to ISO string for wire compatibility with Rust FUSE client
@@ -3604,7 +3609,8 @@ class NexusFSCoreMixin:
             try:
                 validated_path = self._validate_path(path)
                 validated_paths.append(validated_path)
-            except Exception:
+            except Exception as exc:
+                logger.debug("Path validation failed in metadata_bulk for %s: %s", path, exc)
                 if skip_errors:
                     results[path] = None
                     continue
@@ -3785,8 +3791,9 @@ class NexusFSCoreMixin:
         for path in paths:
             try:
                 results[path] = self.exists(path, context=context)
-            except Exception:
+            except Exception as exc:
                 # Any error means file doesn't exist or isn't accessible
+                logger.debug("Exists check failed for %s: %s", path, exc)
                 results[path] = False
         return results
 
@@ -3829,7 +3836,8 @@ class NexusFSCoreMixin:
             try:
                 validated = self._validate_path(path)
                 valid_paths.append(validated)
-            except Exception:
+            except Exception as exc:
+                logger.debug("Path validation failed in metadata_batch for %s: %s", path, exc)
                 results[path] = None
 
         # Batch fetch metadata from database
@@ -3871,7 +3879,8 @@ class NexusFSCoreMixin:
                     "zone_id": meta.zone_id,
                     "is_directory": is_dir,
                 }
-            except Exception:
+            except Exception as exc:
+                logger.debug("Failed to build metadata result for %s: %s", path, exc)
                 results[path] = None
 
         return results

@@ -405,7 +405,9 @@ async def login(
                                 break
                     except Exception as e:
                         # Decryption failed or key invalid, continue to next one
-                        logger.warning(f"Failed to decrypt API key {oauth_key.key_id}: {e}")
+                        logger.warning(
+                            "Failed to decrypt API key %s: %s", oauth_key.key_id, e, exc_info=True
+                        )
                         continue
 
         return LoginResponse(
@@ -551,7 +553,7 @@ async def setup_zone(
                 raise ValueError("Failed to create API key during provisioning")
 
         except Exception as e:
-            logger.error(f"Failed to provision password user resources: {e}")
+            logger.error("Failed to provision password user resources: %s", e, exc_info=True)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to provision user resources: {e}",
@@ -605,7 +607,7 @@ async def setup_zone(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Zone setup failed: {e}")
+        logger.error("Zone setup failed: %s", e, exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Zone setup failed: {e}",
@@ -1021,7 +1023,9 @@ async def oauth_check(
                                 break
                     except Exception as e:
                         # Decryption failed or key invalid, continue to next one
-                        logger.warning(f"Failed to decrypt API key {oauth_key.key_id}: {e}")
+                        logger.warning(
+                            "Failed to decrypt API key %s: %s", oauth_key.key_id, e, exc_info=True
+                        )
                         continue
 
                 # Only create a NEW API key if user has NO oauth_api_keys entries at all

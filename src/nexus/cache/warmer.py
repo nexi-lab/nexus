@@ -802,8 +802,8 @@ class CacheWarmer:
                 metadata = self._nexus.metadata.get(path)
                 if metadata and metadata.size and metadata.size < threshold:
                     small_files.append(path)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Failed to check metadata for path %s: %s", path, e)
 
         return small_files
 
@@ -845,8 +845,8 @@ class CacheWarmer:
                         common.append(entry)
                     elif isinstance(entry, dict) and "path" in entry:
                         common.append(entry["path"])
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Failed to list root directory for common paths: %s", e)
 
         # Add known common paths
         common.extend(["/workspace", "/config", "/data"])

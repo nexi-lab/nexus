@@ -136,6 +136,71 @@ class BackendError(NexusError):
         super().__init__(message, path)
 
 
+class DatabaseError(BackendError):
+    """Database operation failed. Wraps SQLAlchemy errors at storage boundary.
+
+    This is an unexpected error — indicates database infrastructure failure.
+    """
+
+    is_expected = False
+
+    def __init__(self, message: str, path: str | None = None):
+        super().__init__(message, path=path)
+
+
+class DatabaseConnectionError(DatabaseError):
+    """Database connection failed (transient, should retry)."""
+
+
+class DatabaseTimeoutError(DatabaseError):
+    """Database query timed out."""
+
+
+class DatabaseIntegrityError(DatabaseError):
+    """Database integrity constraint violated (permanent, should not retry).
+
+    This is an expected error — caused by user actions (e.g., duplicate key).
+    """
+
+    is_expected = True
+
+
+class ConnectorError(BackendError):
+    """External connector/API operation failed."""
+
+    is_expected = False
+
+    def __init__(self, message: str, path: str | None = None):
+        super().__init__(message, path=path)
+
+
+class ConnectorAuthError(ConnectorError):
+    """Connector authentication/token refresh failed.
+
+    This is an expected error — user needs to re-authenticate.
+    """
+
+    is_expected = True
+
+
+class ConnectorRateLimitError(ConnectorError):
+    """Connector hit rate limit (transient, should retry with backoff).
+
+    This is an expected error — external API rate limiting.
+    """
+
+    is_expected = True
+
+
+class ConnectorQuotaError(ConnectorError):
+    """Connector quota exceeded.
+
+    This is an expected error — user/org quota limit reached.
+    """
+
+    is_expected = True
+
+
 class ServiceUnavailableError(NexusError):
     """Service temporarily unavailable (e.g., circuit breaker open).
 

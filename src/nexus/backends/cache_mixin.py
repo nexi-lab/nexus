@@ -1418,8 +1418,8 @@ class CacheConnectorMixin:
                 blob_path = self._get_blob_path(path)
                 content: bytes = self._download_blob(blob_path)
                 return content
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Direct blob download failed for %s: %s", path, e)
 
         # Fall back to read_content (may use cache)
         if hasattr(self, "read_content"):
@@ -1427,7 +1427,8 @@ class CacheConnectorMixin:
                 # read_content expects (content_hash, context) for GCS connector
                 # Pass empty content_hash and let it use context.backend_path
                 return self.read_content("", context)  # type: ignore
-            except Exception:
+            except Exception as e:
+                logger.debug("Fallback read_content failed for %s: %s", path, e)
                 return None
         return None
 
@@ -1475,8 +1476,8 @@ class CacheConnectorMixin:
             if result and result.text:
                 return result.text, ext.lstrip("."), {"chunks": len(result.chunks)}
 
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Content parsing failed for %s: %s", path, e)
 
         return None, None, None
 

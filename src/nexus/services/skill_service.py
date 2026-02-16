@@ -978,8 +978,8 @@ class SkillService:
                         if self._gw.exists(skill_md, context=context):
                             skill_paths.append(skill_path)
                             seen_skills.add(skill_name)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug("Failed to check skill existence at %s: %s", skill_md, e)
         except Exception as e:
             logger.warning(f"Failed to find skills in {base_dir}: {e}")
 

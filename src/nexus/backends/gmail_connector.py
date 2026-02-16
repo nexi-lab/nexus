@@ -437,8 +437,10 @@ class GmailConnectorBackend(
                     elif mime_type == "text/html" and not body_html:
                         # Only set if not already set (prefer first occurrence)
                         body_html = decoded
-                except Exception:
-                    # Skip parts that fail to decode
+                except Exception as e:
+                    logger.debug(
+                        "Failed to decode email body part (mime_type=%s): %s", mime_type, e
+                    )
                     continue
 
         return body_text, body_html
@@ -716,8 +718,8 @@ class GmailConnectorBackend(
                     backend_version=IMMUTABLE_VERSION,  # Emails are immutable, use fixed version
                     zone_id=zone_id,
                 )
-            except Exception:
-                pass  # Don't fail on cache write errors
+            except Exception as e:
+                logger.debug("Gmail cache write failed for %s: %s", cache_path, e)
 
         return HandlerResponse.ok(
             data=content,
@@ -769,8 +771,9 @@ class GmailConnectorBackend(
 
                 message_id = filename_parts[1]  # Get msg_id from "thread_id-msg_id"
                 path_to_message_id[path] = message_id
-            except Exception:
-                continue  # Skip paths that fail to parse
+            except Exception as e:
+                logger.debug("Failed to parse Gmail path %s: %s", path, e)
+                continue
 
         if not path_to_message_id:
             return {}
@@ -792,9 +795,10 @@ class GmailConnectorBackend(
                 parse_message_func=self._parse_gmail_message,
                 email_cache=email_cache,
             )
-        except Exception:
+        except Exception as e:
             # If batch fetch fails, fall back to empty results
             # The cache mixin will retry with sequential reads
+            logger.debug("Gmail batch fetch failed, falling back to sequential reads: %s", e)
             return {}
 
         # Format results as YAML
@@ -805,8 +809,9 @@ class GmailConnectorBackend(
                     email_data = email_cache[message_id]
                     content = self._format_email_as_yaml(email_data)
                     results[path] = content
-                except Exception:
-                    continue  # Skip emails that fail to format
+                except Exception as e:
+                    logger.debug("Failed to format email %s as YAML: %s", message_id, e)
+                    continue
 
         return results
 
@@ -868,10 +873,12 @@ class GmailConnectorBackend(
                 service = self._get_gmail_service(context)
                 service.users().messages().get(userId="me", id=message_id, format="full").execute()
                 return True
-            except Exception:
+            except Exception as e:
+                logger.debug("Gmail API check for message %s failed: %s", message_id, e)
                 return False
 
-        except Exception:
+        except Exception as e:
+            logger.debug("Gmail content existence check failed: %s", e)
             return False
 
     def get_content_size(self, content_hash: str, context: "OperationContext | None" = None) -> int:
@@ -970,7 +977,8 @@ class GmailConnectorBackend(
             # Return fixed version for immutable Gmail emails
             return IMMUTABLE_VERSION
 
-        except Exception:
+        except Exception as e:
+            logger.debug("Gmail version check failed: %s", e)
             return None
 
     def batch_get_versions(

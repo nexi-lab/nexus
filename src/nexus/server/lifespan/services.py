@@ -9,12 +9,17 @@ import asyncio
 import logging
 import os
 from contextlib import suppress
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
+
+# Module-level references for shutdown — set during startup
+_scheduler_pool: Any = None
+_heartbeat_task: asyncio.Task | None = None
+_stale_detection_task: asyncio.Task | None = None
 
 
 async def startup_services(app: FastAPI) -> list[asyncio.Task]:
@@ -27,6 +32,8 @@ async def startup_services(app: FastAPI) -> list[asyncio.Task]:
     - SchedulerService (Issue #1212)
     - Task Queue Engine (Issue #574)
     """
+    global _scheduler_pool, _heartbeat_task, _stale_detection_task
+
     bg_tasks: list[asyncio.Task] = []
 
     _startup_agent_registry(app)
@@ -47,6 +54,8 @@ async def startup_services(app: FastAPI) -> list[asyncio.Task]:
 
 async def shutdown_services(app: FastAPI) -> None:
     """Shutdown services in reverse order."""
+    global _scheduler_pool, _heartbeat_task, _stale_detection_task
+
     # Stop Task Queue runner (Issue #574)
     task_runner = getattr(app.state, "task_runner", None)
     if task_runner:
@@ -54,28 +63,25 @@ async def shutdown_services(app: FastAPI) -> None:
             await task_runner.shutdown()
             logger.info("Task Queue runner stopped")
         except Exception as e:
-            logger.warning(f"Error shutting down Task Queue runner: {e}")
+            logger.warning("Error shutting down Task Queue runner: %s", e, exc_info=True)
 
     # Shutdown scheduler pool (Issue #1212)
-    scheduler_pool = getattr(app.state, "_scheduler_pool", None)
-    if scheduler_pool:
+    if _scheduler_pool:
         try:
-            await scheduler_pool.close()
+            await _scheduler_pool.close()
             logger.info("Scheduler pool closed")
         except Exception as e:
-            logger.warning(f"Error closing scheduler pool: {e}")
-        app.state._scheduler_pool = None
+            logger.warning("Error closing scheduler pool: %s", e, exc_info=True)
+        _scheduler_pool = None
 
     # Cancel agent background tasks and final flush (Issue #1240)
-    heartbeat_task = getattr(app.state, "_heartbeat_task", None)
-    stale_detection_task = getattr(app.state, "_stale_detection_task", None)
-    for task_ref in (heartbeat_task, stale_detection_task):
+    for task_ref in (_heartbeat_task, _stale_detection_task):
         if task_ref and not task_ref.done():
             task_ref.cancel()
             with suppress(asyncio.CancelledError):
                 await task_ref
-    app.state._heartbeat_task = None
-    app.state._stale_detection_task = None
+    _heartbeat_task = None
+    _stale_detection_task = None
 
     if app.state.agent_registry:
         try:
@@ -96,7 +102,7 @@ async def shutdown_services(app: FastAPI) -> None:
             await app.state.async_nexus_fs.close()
             logger.info("AsyncNexusFS stopped")
         except Exception as e:
-            logger.warning(f"Error shutting down AsyncNexusFS: {e}")
+            logger.warning("Error shutting down AsyncNexusFS: %s", e, exc_info=True)
 
     # Shutdown Search Daemon (Issue #951)
     if app.state.search_daemon:
@@ -104,7 +110,7 @@ async def shutdown_services(app: FastAPI) -> None:
             await app.state.search_daemon.shutdown()
             logger.info("Search Daemon stopped")
         except Exception as e:
-            logger.warning(f"Error shutting down Search Daemon: {e}")
+            logger.warning("Error shutting down Search Daemon: %s", e, exc_info=True)
 
     # Stop DirectoryGrantExpander worker
     if hasattr(app.state, "directory_grant_expander") and app.state.directory_grant_expander:
@@ -156,7 +162,7 @@ def _startup_agent_registry(app: FastAPI) -> None:
 
             logger.info("[AGENT-REG] AgentRegistry initialized and wired")
         except Exception as e:
-            logger.warning(f"[AGENT-REG] Failed to initialize AgentRegistry: {e}")
+            logger.warning("[AGENT-REG] Failed to initialize AgentRegistry: %s", e, exc_info=True)
             app.state.agent_registry = None
             app.state.async_agent_registry = None
     else:
@@ -179,8 +185,6 @@ def _startup_key_service(app: FastAPI) -> None:
                 AgentKeyModel.__table__.create(_nx_engine, checkfirst=True)  # type: ignore[attr-defined]
 
             # Reuse OAuthCrypto for Fernet encryption of private keys
-            import os
-
             _enc_key = os.environ.get("NEXUS_OAUTH_ENCRYPTION_KEY", "").strip() or None
             _session_factory = getattr(app.state.nexus_fs, "SessionLocal", None)
             _identity_oauth_crypto = OAuthCrypto(
@@ -197,7 +201,7 @@ def _startup_key_service(app: FastAPI) -> None:
 
             logger.info("[KYA] KeyService initialized and wired")
         except Exception as e:
-            logger.warning(f"[KYA] Failed to initialize KeyService: {e}")
+            logger.warning("[KYA] Failed to initialize KeyService: %s", e, exc_info=True)
             app.state.key_service = None
     else:
         app.state.key_service = None
@@ -225,7 +229,7 @@ def _startup_sandbox_auth(app: FastAPI) -> None:
         app.state.agent_event_log = AgentEventLog(session_factory=session_factory)
 
         # Create SandboxManager
-        sandbox_config = getattr(app.state.nexus_fs, "config", None)
+        sandbox_config = getattr(app.state.nexus_fs, "_config", None)
         sandbox_mgr = SandboxManager(
             session_factory=session_factory,
             e2b_api_key=os.getenv("E2B_API_KEY"),
@@ -272,11 +276,15 @@ def _startup_sandbox_auth(app: FastAPI) -> None:
         )
         logger.info("[SANDBOX-AUTH] SandboxAuthService initialized")
     except Exception as e:
-        logger.warning(f"[SANDBOX-AUTH] Failed to initialize SandboxAuthService: {e}")
+        logger.warning(
+            "[SANDBOX-AUTH] Failed to initialize SandboxAuthService: %s", e, exc_info=True
+        )
 
 
 def _startup_agent_tasks(app: FastAPI) -> list[asyncio.Task]:
     """Start agent heartbeat and stale detection background tasks (Issue #1240)."""
+    global _heartbeat_task, _stale_detection_task
+
     if not app.state.agent_registry:
         return []
 
@@ -285,19 +293,21 @@ def _startup_agent_tasks(app: FastAPI) -> list[asyncio.Task]:
         stale_agent_detection_task,
     )
 
-    app.state._heartbeat_task = asyncio.create_task(
+    _heartbeat_task = asyncio.create_task(
         heartbeat_flush_task(app.state.agent_registry, interval_seconds=60)
     )
-    app.state._stale_detection_task = asyncio.create_task(
+    _stale_detection_task = asyncio.create_task(
         stale_agent_detection_task(app.state.agent_registry, interval_seconds=300)
     )
     logger.info("[AGENT-REG] Background heartbeat flush and stale detection tasks started")
 
-    return [app.state._heartbeat_task, app.state._stale_detection_task]
+    return [_heartbeat_task, _stale_detection_task]
 
 
 async def _startup_scheduler(app: FastAPI) -> None:
     """Initialize SchedulerService if PostgreSQL database is available (Issue #1212)."""
+    global _scheduler_pool
+
     if not (app.state.database_url and "postgresql" in app.state.database_url):
         return
 
@@ -312,11 +322,10 @@ async def _startup_scheduler(app: FastAPI) -> None:
 
         # Convert SQLAlchemy URL to asyncpg DSN
         pg_dsn = app.state.database_url.replace("+asyncpg", "").replace("+psycopg2", "")
-        pool = await asyncpg.create_pool(pg_dsn, min_size=2, max_size=5)
-        app.state._scheduler_pool = pool
+        _scheduler_pool = await asyncpg.create_pool(pg_dsn, min_size=2, max_size=5)
 
         # Create scheduled_tasks table if it doesn't exist
-        async with pool.acquire() as conn:
+        async with _scheduler_pool.acquire() as conn:
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS scheduled_tasks (
                     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -366,7 +375,7 @@ async def _startup_scheduler(app: FastAPI) -> None:
 
         scheduler_service = SchedulerService(
             queue=TaskQueue(),
-            db_pool=pool,
+            db_pool=_scheduler_pool,
             credits_service=CreditsService(enabled=False),
             state_emitter=state_emitter,
             fair_share=fair_share,
@@ -386,7 +395,7 @@ async def _startup_scheduler(app: FastAPI) -> None:
     except ImportError as e:
         logger.debug(f"Scheduler service not available: {e}")
     except Exception as e:
-        logger.warning(f"Failed to initialize Scheduler service: {e}")
+        logger.warning("Failed to initialize Scheduler service: %s", e, exc_info=True)
 
 
 def _startup_task_queue(app: FastAPI) -> asyncio.Task | None:
@@ -412,6 +421,6 @@ def _startup_task_queue(app: FastAPI) -> asyncio.Task | None:
         else:
             logger.debug("Task Queue: nexus_tasks Rust extension not available")
     except Exception as e:
-        logger.warning(f"Task Queue runner not started: {e}")
+        logger.warning("Task Queue runner not started: %s", e, exc_info=True)
 
     return None

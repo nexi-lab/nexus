@@ -19,6 +19,8 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel
 from pydantic import ValidationError as PydanticValidationError
 
+from nexus.core.exceptions import ValidationError as CoreValidationError
+
 if TYPE_CHECKING:
     from nexus.skills.registry import SkillRegistry
 
@@ -134,8 +136,11 @@ class ErrorDef:
     details: dict[str, Any] = field(default_factory=dict)
 
 
-class ValidationError(Exception):
+class ValidationError(CoreValidationError):
     """Validation error with self-correcting information.
+
+    Inherits from core.exceptions.ValidationError so centralized error handlers
+    can catch both connector and core validation errors uniformly.
 
     Contains error code, message, skill reference, and fix example
     so agents can self-correct their requests.

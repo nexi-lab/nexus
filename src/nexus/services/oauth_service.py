@@ -1384,8 +1384,8 @@ class OAuthService:
                         if "email" in token_info:
                             email = token_info.get("email")
                             return str(email) if email else None
-                    except Exception:
-                        pass
+                    except httpx.HTTPError as e:
+                        logger.debug("Google tokeninfo lookup failed: %s", e)
 
                     # If tokeninfo doesn't have email, try userinfo endpoint
                     try:
@@ -1398,8 +1398,8 @@ class OAuthService:
                         if "email" in user_info:
                             email = user_info.get("email")
                             return str(email) if email else None
-                    except Exception:
-                        pass
+                    except httpx.HTTPError as e:
+                        logger.debug("Google userinfo lookup failed: %s", e)
 
             # Microsoft: Use Microsoft Graph API
             elif provider_name == "microsoft-onedrive":
@@ -1417,8 +1417,8 @@ class OAuthService:
                         elif "userPrincipalName" in user_info:
                             email = user_info.get("userPrincipalName")
                             return str(email) if email else None
-                    except Exception:
-                        pass
+                    except httpx.HTTPError as e:
+                        logger.debug("Microsoft Graph user lookup failed: %s", e)
 
             # X/Twitter: Use X API v2
             elif provider_name == "x":
@@ -1434,8 +1434,8 @@ class OAuthService:
                         if "data" in user_info and "email" in user_info["data"]:
                             email = user_info["data"].get("email")
                             return str(email) if email else None
-                    except Exception:
-                        pass
+                    except httpx.HTTPError as e:
+                        logger.debug("X/Twitter user lookup failed: %s", e)
 
         except Exception as e:
             logger.warning(f"Failed to fetch user email from provider {provider_name}: {e}")

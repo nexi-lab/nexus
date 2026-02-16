@@ -250,10 +250,7 @@ class NexusFSEventsMixin:
         # Layer 1: Same-box local watching (fallback)
         if self._is_same_box():
             logger.debug(f"Using same-box file watcher for {path}")
-            from nexus.backends.passthrough import PassthroughBackend
-
-            # Type narrowing for PassthroughBackend-specific attributes below
-            assert isinstance(self.backend, PassthroughBackend), "Backend mismatch"
+            assert self.backend.is_passthrough, "Backend must be passthrough for this operation"
 
             # Import FileEvent for unified response format
             from nexus.core.event_bus import FileEvent
@@ -410,10 +407,7 @@ class NexusFSEventsMixin:
         if self._is_same_box():
             mode = "mutex" if max_holders == 1 else f"semaphore({max_holders})"
             logger.debug(f"Using same-box lock for {path} ({mode})")
-            from nexus.backends.passthrough import PassthroughBackend
-
-            # Type narrowing for PassthroughBackend-specific attributes below
-            assert isinstance(self.backend, PassthroughBackend), "Backend mismatch"
+            assert self.backend.is_passthrough, "Backend must be passthrough for this operation"
 
             # Note: Same-box locks don't support TTL - they're in-memory only
             lock_id = self.backend.lock(path, timeout=timeout, max_holders=max_holders)
@@ -539,10 +533,7 @@ class NexusFSEventsMixin:
 
         # Layer 1: Same-box in-memory locking
         if self._is_same_box():
-            from nexus.backends.passthrough import PassthroughBackend
-
-            # Type narrowing for PassthroughBackend-specific attributes below
-            assert isinstance(self.backend, PassthroughBackend), "Backend mismatch"
+            assert self.backend.is_passthrough, "Backend must be passthrough for this operation"
 
             released = self.backend.unlock(lock_id)
             if released:
@@ -649,10 +640,7 @@ class NexusFSEventsMixin:
         # Convert physical path to virtual if needed
         virtual_path = path
         if self._is_same_box():
-            from nexus.backends.passthrough import PassthroughBackend
-
-            # Type narrowing: is_passthrough guarantees PassthroughBackend
-            assert isinstance(self.backend, PassthroughBackend)
+            assert self.backend.is_passthrough, "Backend must be passthrough for this operation"
             # Strip base path to get virtual path
             base_path = str(self.backend.base_path)
             if path.startswith(base_path):
@@ -806,10 +794,7 @@ class NexusFSEventsMixin:
 
         # Layer 1: Same-box file watching (OS-native callbacks)
         if self._is_same_box():
-            from nexus.backends.passthrough import PassthroughBackend
-
-            # Type narrowing: is_passthrough guarantees PassthroughBackend
-            assert isinstance(self.backend, PassthroughBackend)
+            assert self.backend.is_passthrough, "Backend must be passthrough for this operation"
             try:
                 watcher = self._get_file_watcher()
 

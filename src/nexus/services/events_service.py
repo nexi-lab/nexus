@@ -187,10 +187,9 @@ class EventsService:
         # Layer 1: Same-box local watching (fallback)
         if self._is_same_box():
             logger.debug(f"Using same-box file watcher for {path}")
-            from nexus.backends.passthrough import PassthroughBackend
             from nexus.core.event_bus import FileEvent
 
-            assert isinstance(self._backend, PassthroughBackend), "Backend mismatch"
+            assert self._backend.is_passthrough, "Backend must be passthrough for this operation"
 
             watch_path = path.rstrip("/")
             if "*" in path or "?" in path:
@@ -291,9 +290,7 @@ class EventsService:
         if self._is_same_box():
             mode = "mutex" if max_holders == 1 else f"semaphore({max_holders})"
             logger.debug(f"Using same-box lock for {path} ({mode})")
-            from nexus.backends.passthrough import PassthroughBackend
-
-            assert isinstance(self._backend, PassthroughBackend), "Backend mismatch"
+            assert self._backend.is_passthrough, "Backend must be passthrough for this operation"
             lock_id = self._backend.lock(path, timeout=timeout, max_holders=max_holders)
 
             if lock_id:
@@ -390,9 +387,7 @@ class EventsService:
 
         # Layer 1: Same-box in-memory locking
         if self._is_same_box():
-            from nexus.backends.passthrough import PassthroughBackend
-
-            assert isinstance(self._backend, PassthroughBackend), "Backend mismatch"
+            assert self._backend.is_passthrough, "Backend must be passthrough for this operation"
             released = self._backend.unlock(lock_id)
             if released:
                 logger.debug(f"Same-box lock released: {lock_id}")
@@ -451,9 +446,7 @@ class EventsService:
         if self._metadata_cache is not None:
             virtual_path = path
             if self._is_same_box():
-                from nexus.backends.passthrough import PassthroughBackend
-
-                assert isinstance(self._backend, PassthroughBackend)
+                assert self._backend.is_passthrough, "Backend must be passthrough for this operation"
                 base_path = str(self._backend.base_path)
                 if path.startswith(base_path):
                     virtual_path = path[len(base_path) :]
@@ -547,9 +540,7 @@ class EventsService:
 
         # Layer 1: Same-box file watching (OS-native callbacks)
         if self._is_same_box():
-            from nexus.backends.passthrough import PassthroughBackend
-
-            assert isinstance(self._backend, PassthroughBackend)
+            assert self._backend.is_passthrough, "Backend must be passthrough for this operation"
             try:
                 watcher = self._get_file_watcher()
 

@@ -1,0 +1,76 @@
+"""Centralized backend factory (Issue #1601).
+
+Replaces duplicated if/elif chains in mount_core_service, mount_service,
+and cli/utils with a single factory that uses ConnectorRegistry.
+
+All registered connectors (including ``local``, ``passthrough``, and
+all OAuth/cloud connectors) are created through the registry's config
+mapping, which translates external config keys to constructor params.
+
+Usage:
+    >>> from nexus.backends.factory import BackendFactory
+    >>> backend = BackendFactory.create("local", {"data_dir": "/path"})
+    >>> backend = BackendFactory.create("gcs_connector", config, session_factory=sf)
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from nexus.backends.backend import Backend
+
+logger = logging.getLogger(__name__)
+
+
+class BackendFactory:
+    """Centralized factory for creating backend instances by type name.
+
+    Uses ConnectorRegistry for all registered backends, mapping config
+    dict keys to constructor params via each connector's CONNECTION_ARGS.
+    """
+
+    @staticmethod
+    def create(backend_type: str, config: dict[str, Any], **extra_kwargs: Any) -> Backend:
+        """Create a backend instance by type name and config dict.
+
+        Uses ConnectorRegistry for all registered connectors. Extra kwargs
+        (e.g., ``session_factory``) are passed directly to the constructor.
+
+        Args:
+            backend_type: Backend type identifier (e.g., "local", "gcs_connector")
+            config: Backend configuration dict with external config keys
+            **extra_kwargs: Additional constructor kwargs not in config
+                (e.g., session_factory, metadata_store)
+
+        Returns:
+            Instantiated Backend
+
+        Raises:
+            KeyError: If backend_type is not registered
+            TypeError: If required constructor args are missing
+        """
+        from nexus.backends.registry import ConnectorRegistry, _ensure_optional_backends_registered
+
+        _ensure_optional_backends_registered()
+
+        info = ConnectorRegistry.get_info(backend_type)
+        connector_cls = info.connector_class
+        mapping = info.config_mapping
+
+        # Build constructor kwargs by mapping config keys to param names
+        kwargs: dict[str, Any] = {}
+        for config_key, param_name in mapping.items():
+            if config_key in config:
+                kwargs[param_name] = config[config_key]
+
+        # Pass through any config keys that match param names directly
+        for key, value in config.items():
+            if key not in mapping and key not in kwargs:
+                kwargs[key] = value
+
+        # Merge extra kwargs (session_factory, metadata_store, etc.)
+        kwargs.update(extra_kwargs)
+
+        return connector_cls(**kwargs)

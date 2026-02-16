@@ -345,6 +345,8 @@ class MountCoreService:
     def _create_backend(self, backend_type: str, config: dict[str, Any]) -> Any:
         """Create backend instance from type and config.
 
+        Uses BackendFactory with ConnectorRegistry for all registered backends.
+
         Args:
             backend_type: Backend type identifier
             config: Backend configuration
@@ -353,106 +355,13 @@ class MountCoreService:
             Backend instance
 
         Raises:
-            RuntimeError: If backend type is not supported
+            KeyError: If backend type is not registered
         """
-        from nexus.backends.backend import Backend
+        from nexus.backends.factory import BackendFactory
 
-        backend: Backend
-
-        if backend_type == "local":
-            from nexus.backends.local import LocalBackend
-
-            backend = LocalBackend(root_path=config["data_dir"])
-
-        elif backend_type == "gcs":
-            from nexus.backends.gcs import GCSBackend
-
-            backend = GCSBackend(
-                bucket_name=config["bucket"],
-                project_id=config.get("project_id"),
-                credentials_path=config.get("credentials_path"),
-            )
-
-        elif backend_type == "gcs_connector":
-            from nexus.backends.gcs_connector import GCSConnectorBackend
-
-            backend = GCSConnectorBackend(
-                bucket_name=config["bucket"],
-                project_id=config.get("project_id"),
-                prefix=config.get("prefix", ""),
-                credentials_path=config.get("credentials_path"),
-                access_token=config.get("access_token"),
-                session_factory=self._gw.session_factory,
-            )
-
-        elif backend_type == "s3_connector":
-            from nexus.backends.s3_connector import S3ConnectorBackend
-
-            backend = S3ConnectorBackend(
-                bucket_name=config["bucket"],
-                region_name=config.get("region_name"),
-                prefix=config.get("prefix", ""),
-                credentials_path=config.get("credentials_path"),
-                access_key_id=config.get("access_key_id"),
-                secret_access_key=config.get("secret_access_key"),
-                session_token=config.get("session_token"),
-                session_factory=self._gw.session_factory,
-            )
-
-        elif backend_type == "gdrive_connector":
-            from nexus.backends.gdrive_connector import GoogleDriveConnectorBackend
-
-            backend = GoogleDriveConnectorBackend(
-                token_manager_db=config["token_manager_db"],
-                root_folder=config.get("root_folder", "nexus-data"),
-                user_email=config.get("user_email"),
-            )
-
-        elif backend_type == "x_connector":
-            from nexus.backends.x_connector import XConnectorBackend
-
-            backend = XConnectorBackend(
-                token_manager_db=config["token_manager_db"],
-                user_email=config.get("user_email"),
-                cache_ttl=config.get("cache_ttl"),
-                cache_dir=config.get("cache_dir"),
-            )
-
-        elif backend_type == "hn_connector":
-            from nexus.backends.hn_connector import HNConnectorBackend
-
-            backend = HNConnectorBackend(
-                cache_ttl=config.get("cache_ttl", 300),
-                stories_per_feed=config.get("stories_per_feed", 10),
-                include_comments=config.get("include_comments", True),
-                session_factory=self._gw.session_factory,
-            )
-
-        elif backend_type == "gmail_connector":
-            from nexus.backends.gmail_connector import GmailConnectorBackend
-
-            backend = GmailConnectorBackend(
-                token_manager_db=config["token_manager_db"],
-                user_email=config.get("user_email"),
-                provider=config.get("provider", "gmail"),
-                session_factory=self._gw.session_factory,
-                max_message_per_label=config.get("max_message_per_label", 2000),
-            )
-
-        elif backend_type == "slack_connector":
-            from nexus.backends.slack_connector import SlackConnectorBackend
-
-            backend = SlackConnectorBackend(
-                token_manager_db=config["token_manager_db"],
-                user_email=config.get("user_email"),
-                provider=config.get("provider", "slack"),
-                session_factory=self._gw.session_factory,
-            )
-
-        else:
-            raise RuntimeError(f"Unsupported backend type: {backend_type}")
-
-        return backend
+        return BackendFactory.create(
+            backend_type, config, session_factory=self._gw.session_factory
+        )
 
     def _setup_mount_point(
         self,

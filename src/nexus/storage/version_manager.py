@@ -51,7 +51,7 @@ class VersionManager:
 
         Example:
             >>> # Get version 2 of a file
-            >>> with store.SessionLocal() as session:
+            >>> with store.session_factory() as session:
             ...     metadata = VersionManager.get_version(session, "/workspace/data.txt", version=2)
             ...     if metadata:
             ...         content_hash = metadata.etag
@@ -129,7 +129,7 @@ class VersionManager:
             MetadataError: If query fails
 
         Example:
-            >>> with store.SessionLocal() as session:
+            >>> with store.session_factory() as session:
             ...     versions = VersionManager.list_versions(session, "/workspace/SKILL.md")
             ...     for v in versions:
             ...         print(f"v{v['version']}: {v['size']} bytes, {v['created_at']}")
@@ -193,7 +193,7 @@ class VersionManager:
 
         Example:
             >>> # Rollback to version 2
-            >>> with store.SessionLocal() as session:
+            >>> with store.session_factory() as session:
             ...     VersionManager.rollback(session, "/workspace/data.txt", version=2, created_by="alice")
             ...     session.commit()
         """
@@ -338,7 +338,7 @@ class VersionManager:
             MetadataError: If file or versions not found
 
         Example:
-            >>> with store.SessionLocal() as session:
+            >>> with store.session_factory() as session:
             ...     diff = VersionManager.get_version_diff(session, "/workspace/file.txt", v1=1, v2=3)
             ...     print(f"Size changed: {diff['size_v1']} -> {diff['size_v2']}")
             ...     print(f"Content changed: {diff['content_changed']}")

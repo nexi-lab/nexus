@@ -601,10 +601,6 @@ class RaftLockManager(LockManagerBase):
             return False
 
 
-# Backward compatibility alias (points to Raft now)
-DistributedLockManager = RaftLockManager
-
-
 # =============================================================================
 # Factory and Singleton Management
 # =============================================================================

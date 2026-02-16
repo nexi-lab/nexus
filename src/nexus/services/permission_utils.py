@@ -49,7 +49,7 @@ def check_permission(
             separately from a permission denial (False return).
     """
     if not context:
-        # No context = allow (backward compatibility)
+        # No context = allow
         return True
 
     # Admin users bypass permission checks

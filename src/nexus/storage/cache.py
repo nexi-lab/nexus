@@ -428,6 +428,16 @@ class MetadataCache(AdaptiveTTLMixin):
             else:
                 self._kv_cache.pop((path, key), None)
 
+    def register_eviction_callback(self, callback: Callable[[str], None]) -> None:
+        """Register a callback invoked when a path-cache entry is evicted.
+
+        If the internal path cache is an AdaptiveTTLCache, the callback is wired
+        to its ``on_evict`` hook.  Otherwise this is a no-op (LRUCache does not
+        support eviction callbacks).
+        """
+        if isinstance(self._path_cache, AdaptiveTTLCache):
+            self._path_cache._on_evict = callback
+
     def clear(self) -> None:
         """Clear all cache entries."""
         with self._lock:

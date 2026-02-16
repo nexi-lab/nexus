@@ -210,8 +210,8 @@ def test_list_with_prefix(embedded: NexusFS) -> None:
     embedded.write("/dir/subdir/file3.txt", b"Content 3")
     embedded.write("/other/file4.txt", b"Content 4")
 
-    # List with prefix
-    files = embedded.list(prefix="/dir")
+    # List with path filter
+    files = embedded.list(path="/dir")
 
     assert len(files) == 2
     assert "/dir/file2.txt" in files

@@ -111,7 +111,6 @@ def test_minimal_mock_satisfies_protocol() -> None:
             path="/",
             recursive=True,
             details=False,
-            prefix=None,
             show_parsed=True,
             context=None,
         ):

@@ -830,64 +830,13 @@ class ReBACService:
 
         def _list_tuples_sync() -> list[dict[str, Any]]:
             """Synchronous implementation for thread pool execution."""
-            # Manager guaranteed by _run_in_thread
             assert self._rebac_manager is not None
-
-            # Build query dynamically with filters
-            conn = self._rebac_manager._get_connection()
-            try:
-                query = "SELECT * FROM rebac_tuples WHERE 1=1"
-                params: list = []
-
-                if subject:
-                    query += " AND subject_type = ? AND subject_id = ?"
-                    params.extend([subject[0], subject[1]])
-
-                if relation:
-                    query += " AND relation = ?"
-                    params.append(relation)
-                elif relation_in:
-                    # Support multiple relations in a single query (N+1 fix)
-                    placeholders = ", ".join("?" * len(relation_in))
-                    query += f" AND relation IN ({placeholders})"
-                    params.extend(relation_in)
-
-                if object:
-                    query += " AND object_type = ? AND object_id = ?"
-                    params.extend([object[0], object[1]])
-
-                # Fix SQL placeholders for PostgreSQL if needed
-                query = self._rebac_manager._fix_sql_placeholders(query)
-
-                cursor = self._rebac_manager._create_cursor(conn)
-                cursor.execute(query, params)
-
-                results = []
-                for row in cursor.fetchall():
-                    # Both SQLite and PostgreSQL return dict-like rows
-                    # Note: sqlite3.Row doesn't have .get() method, use try/except
-                    try:
-                        zone_id_val = row["zone_id"]
-                    except (KeyError, IndexError):
-                        zone_id_val = None
-
-                    results.append(
-                        {
-                            "tuple_id": row["tuple_id"],
-                            "subject_type": row["subject_type"],
-                            "subject_id": row["subject_id"],
-                            "relation": row["relation"],
-                            "object_type": row["object_type"],
-                            "object_id": row["object_id"],
-                            "created_at": row["created_at"],
-                            "expires_at": row["expires_at"],
-                            "zone_id": zone_id_val,
-                        }
-                    )
-
-                return results
-            finally:
-                self._rebac_manager._close_connection(conn)
+            return self._rebac_manager.list_tuples(
+                subject=subject,
+                relation=relation,
+                relation_in=relation_in,
+                object=object,
+            )
 
         return await self._run_in_thread(_list_tuples_sync)
 

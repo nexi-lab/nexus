@@ -156,7 +156,7 @@ class OAuthUserAuth:
                 code, redirect_uri=redirect_uri
             )
         except Exception as e:
-            logger.error(f"Failed to exchange OAuth code: {e}")
+            logger.error("Failed to exchange OAuth code: %s", e, exc_info=True)
             raise ValueError(f"OAuth token exchange failed: {e}") from e
 
         # Extract user info from ID token
@@ -234,7 +234,7 @@ class OAuthUserAuth:
                 result: dict[str, Any] = response.json()
                 return result
         except Exception as e:
-            logger.error(f"Failed to fetch Google userinfo: {e}")
+            logger.error("Failed to fetch Google userinfo: %s", e, exc_info=True)
             raise ValueError(f"Failed to fetch user info: {e}") from e
 
     async def _get_or_create_oauth_user(

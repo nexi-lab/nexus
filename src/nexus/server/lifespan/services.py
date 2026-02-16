@@ -63,7 +63,7 @@ async def shutdown_services(app: FastAPI) -> None:
             await task_runner.shutdown()
             logger.info("Task Queue runner stopped")
         except Exception as e:
-            logger.warning(f"Error shutting down Task Queue runner: {e}")
+            logger.warning("Error shutting down Task Queue runner: %s", e, exc_info=True)
 
     # Shutdown scheduler pool (Issue #1212)
     if _scheduler_pool:
@@ -71,7 +71,7 @@ async def shutdown_services(app: FastAPI) -> None:
             await _scheduler_pool.close()
             logger.info("Scheduler pool closed")
         except Exception as e:
-            logger.warning(f"Error closing scheduler pool: {e}")
+            logger.warning("Error closing scheduler pool: %s", e, exc_info=True)
         _scheduler_pool = None
 
     # Cancel agent background tasks and final flush (Issue #1240)
@@ -102,7 +102,7 @@ async def shutdown_services(app: FastAPI) -> None:
             await app.state.async_nexus_fs.close()
             logger.info("AsyncNexusFS stopped")
         except Exception as e:
-            logger.warning(f"Error shutting down AsyncNexusFS: {e}")
+            logger.warning("Error shutting down AsyncNexusFS: %s", e, exc_info=True)
 
     # Shutdown Search Daemon (Issue #951)
     if app.state.search_daemon:
@@ -110,7 +110,7 @@ async def shutdown_services(app: FastAPI) -> None:
             await app.state.search_daemon.shutdown()
             logger.info("Search Daemon stopped")
         except Exception as e:
-            logger.warning(f"Error shutting down Search Daemon: {e}")
+            logger.warning("Error shutting down Search Daemon: %s", e, exc_info=True)
 
     # Stop DirectoryGrantExpander worker
     if hasattr(app.state, "directory_grant_expander") and app.state.directory_grant_expander:
@@ -162,7 +162,7 @@ def _startup_agent_registry(app: FastAPI) -> None:
 
             logger.info("[AGENT-REG] AgentRegistry initialized and wired")
         except Exception as e:
-            logger.warning(f"[AGENT-REG] Failed to initialize AgentRegistry: {e}")
+            logger.warning("[AGENT-REG] Failed to initialize AgentRegistry: %s", e, exc_info=True)
             app.state.agent_registry = None
             app.state.async_agent_registry = None
     else:
@@ -198,7 +198,7 @@ def _startup_key_service(app: FastAPI) -> None:
 
             logger.info("[KYA] KeyService initialized and wired")
         except Exception as e:
-            logger.warning(f"[KYA] Failed to initialize KeyService: {e}")
+            logger.warning("[KYA] Failed to initialize KeyService: %s", e, exc_info=True)
             app.state.key_service = None
     else:
         app.state.key_service = None
@@ -273,7 +273,9 @@ def _startup_sandbox_auth(app: FastAPI) -> None:
         )
         logger.info("[SANDBOX-AUTH] SandboxAuthService initialized")
     except Exception as e:
-        logger.warning(f"[SANDBOX-AUTH] Failed to initialize SandboxAuthService: {e}")
+        logger.warning(
+            "[SANDBOX-AUTH] Failed to initialize SandboxAuthService: %s", e, exc_info=True
+        )
 
 
 def _startup_agent_tasks(app: FastAPI) -> list[asyncio.Task]:
@@ -390,7 +392,7 @@ async def _startup_scheduler(app: FastAPI) -> None:
     except ImportError as e:
         logger.debug(f"Scheduler service not available: {e}")
     except Exception as e:
-        logger.warning(f"Failed to initialize Scheduler service: {e}")
+        logger.warning("Failed to initialize Scheduler service: %s", e, exc_info=True)
 
 
 def _startup_task_queue(app: FastAPI) -> asyncio.Task | None:
@@ -416,6 +418,6 @@ def _startup_task_queue(app: FastAPI) -> asyncio.Task | None:
         else:
             logger.debug("Task Queue: nexus_tasks Rust extension not available")
     except Exception as e:
-        logger.warning(f"Task Queue runner not started: {e}")
+        logger.warning("Task Queue runner not started: %s", e, exc_info=True)
 
     return None

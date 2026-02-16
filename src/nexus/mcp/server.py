@@ -234,8 +234,8 @@ def create_mcp_server(
                             ) or http_request.headers.get("Authorization", "").replace(
                                 "Bearer ", ""
                             )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Failed to extract API key from request: %s", e)
 
             # Store in FastMCP's context state so tools can access it via Context.get_state()
             if api_key and context.fastmcp_context:
@@ -516,8 +516,8 @@ def create_mcp_server(
                 content = nx_instance.read(path)
                 if isinstance(content, bytes):
                     info_dict["size"] = len(content)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("Failed to read file size for %s: %s", path, e)
 
         return json.dumps(info_dict, indent=2)
 

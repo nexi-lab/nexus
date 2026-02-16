@@ -6,12 +6,15 @@ to answer questions about documents.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, TypedDict, cast
 
 from nexus.llm.citation import Citation, CitationExtractor, DocumentReadResult
 from nexus.llm.context_builder import ContextBuilder
 from nexus.llm.message import Message, MessageRole, TextContent
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from nexus.core.filesystem import NexusFilesystem
@@ -326,8 +329,8 @@ class LLMDocumentReader:
                             "end_offset": None,
                         }
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Failed to parse chunk for %s: %s", path, e)
 
         if not chunks:
             raise ValueError(f"No content found for path: {path}")

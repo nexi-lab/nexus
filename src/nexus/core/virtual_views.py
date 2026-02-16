@@ -239,8 +239,8 @@ def add_virtual_views_to_listing(
             elif is_dir:
                 # Already know it's a directory from the dict
                 continue
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Error checking directory status for %s: %s", file_path, e)
 
         # Check if we should add virtual views
         if should_add_virtual_views(file_path):

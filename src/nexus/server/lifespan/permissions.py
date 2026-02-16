@@ -120,10 +120,10 @@ async def _startup_async_rebac(app: FastAPI) -> None:
                 f"tenant={tenant_id}, enforce_permissions={enforce_permissions})"
             )
         except Exception as e:
-            logger.warning(f"Failed to initialize AsyncNexusFS: {e}")
+            logger.warning("Failed to initialize AsyncNexusFS: %s", e, exc_info=True)
 
     except Exception as e:
-        logger.warning(f"Failed to initialize async ReBAC manager: {e}")
+        logger.warning("Failed to initialize async ReBAC manager: %s", e, exc_info=True)
 
 
 async def _startup_cache_factory(app: FastAPI) -> None:
@@ -159,7 +159,7 @@ async def _startup_cache_factory(app: FastAPI) -> None:
                     "L1 (memory) -> L2 (Dragonfly) -> L3 (PostgreSQL)"
                 )
     except Exception as e:
-        logger.warning(f"Failed to initialize cache factory: {e}")
+        logger.warning("Failed to initialize cache factory: %s", e, exc_info=True)
 
 
 def _startup_tiger_cache(app: FastAPI) -> list[asyncio.Task]:
@@ -181,7 +181,7 @@ def _startup_tiger_cache(app: FastAPI) -> list[asyncio.Task]:
             bg_tasks.append(task)
             logger.info("Tiger Cache queue processor started (explicit enable)")
         except Exception as e:
-            logger.warning(f"Failed to start Tiger Cache queue processor: {e}")
+            logger.warning("Failed to start Tiger Cache queue processor: %s", e, exc_info=True)
     else:
         logger.debug("Tiger Cache queue processor disabled (write-through handles grants)")
 

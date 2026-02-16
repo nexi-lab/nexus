@@ -493,6 +493,7 @@ class NexusFS(  # type: ignore[misc]
         return self._semantic_search
 
 
+
     def _init_performance_optimizations(self) -> None:
         """Initialize performance optimizations for permission checks.
 

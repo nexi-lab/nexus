@@ -249,7 +249,7 @@ async def get_nexuspay(
     from nexus.pay.sdk import NexusPay
 
     agent_id = _extract_agent_id(auth_result)
-    zone_id = auth_result.get("zone_id", "default")
+    zone_id = auth_result.get("zone_id", "root")
 
     return NexusPay(
         api_key=f"nx_live_{agent_id}",
@@ -591,7 +591,7 @@ async def get_budget(
     per period (daily, weekly, monthly).
     """
     agent_id = _extract_agent_id(auth_result)
-    zone_id = auth_result.get("zone_id", "default")
+    zone_id = auth_result.get("zone_id", "root")
     policy_service = _get_policy_service(request)
 
     summary = await policy_service.get_budget_summary(agent_id, zone_id)
@@ -611,7 +611,7 @@ async def create_policy(
     if not auth_result.get("is_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
 
-    zone_id = auth_result.get("zone_id", "default")
+    zone_id = auth_result.get("zone_id", "root")
     policy_service = _get_policy_service(request)
 
     policy = await policy_service.create_policy(
@@ -646,7 +646,7 @@ async def list_policies(
     if not auth_result.get("is_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
 
-    zone_id = auth_result.get("zone_id", "default")
+    zone_id = auth_result.get("zone_id", "root")
     policy_service = _get_policy_service(request)
 
     policies = await policy_service.list_policies(zone_id)
@@ -701,7 +701,7 @@ async def request_approval(
     Any authenticated agent can request approval for their own transfers.
     """
     agent_id = _extract_agent_id(auth_result)
-    zone_id = auth_result.get("zone_id", "default")
+    zone_id = auth_result.get("zone_id", "root")
     policy_service = _get_policy_service(request)
 
     # Resolve the effective policy to get policy_id
@@ -734,7 +734,7 @@ async def list_approvals(
     if not auth_result.get("is_admin"):
         raise HTTPException(status_code=403, detail="Admin access required")
 
-    zone_id = auth_result.get("zone_id", "default")
+    zone_id = auth_result.get("zone_id", "root")
     policy_service = _get_policy_service(request)
     approvals = await policy_service.list_pending_approvals(zone_id)
     return [_approval_to_response(a) for a in approvals]

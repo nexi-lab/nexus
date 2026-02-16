@@ -440,8 +440,7 @@ def create_operation_context(
     """Create operation context from CLI parameters.
 
     This creates a context dict that can be passed to NexusFS operations.
-    The dict format is compatible with both old OperationContext and new
-    EnhancedOperationContext.
+    The dict format is compatible with OperationContext.
 
     Args:
         subject: Subject string in format 'type:id'

@@ -197,6 +197,11 @@ class NexusFS(  # type: ignore[misc]
         self.parser_registry = ParserRegistry()
         self.parser_registry.register(MarkItDownParser())
 
+        # Provide parse callback for virtual views (core/ must not import parsers directly)
+        from nexus.parsers import create_default_parse_fn
+
+        self._virtual_view_parse_fn = create_default_parse_fn()
+
         # Initialize new provider registry for read(parsed=True) support
         from nexus.parsers.providers import ProviderRegistry
         from nexus.parsers.providers.base import ProviderConfig
@@ -253,9 +258,12 @@ class NexusFS(  # type: ignore[misc]
         self._overlay_resolver = svc.overlay_resolver
         self._wallet_provisioner = svc.wallet_provisioner
 
-        # Agent registry — injected externally (e.g. by FastAPI lifespan) or
-        # lazily created via _ensure_agent_registry() when first needed.
-        self._agent_registry: Any | None = None
+        # Kernel protocol services + async wrappers (Issue #1502)
+        self._agent_registry = svc.agent_registry
+        self._namespace_manager = svc.namespace_manager
+        self._async_agent_registry = svc.async_agent_registry
+        self._async_namespace_manager = svc.async_namespace_manager
+        self._async_vfs_router = svc.async_vfs_router
 
         # Infrastructure services (previously created inline, now injected)
         self._event_bus = svc.event_bus
@@ -5239,8 +5247,8 @@ class NexusFS(  # type: ignore[misc]
         """Recursively delete a directory and all its contents.
 
         Strategy:
-        1. Try physical deletion first (for LocalBackend) - fastest and most reliable
-        2. Fall back to virtual filesystem deletion if physical deletion fails
+        1. Delegate to backend's rmdir(recursive=True) - backend handles physical deletion
+        2. Fall back to virtual filesystem deletion if backend deletion fails
 
         Args:
             dir_path: Directory path to delete
@@ -5250,46 +5258,22 @@ class NexusFS(  # type: ignore[misc]
             True if directory was deleted (or had content deleted), False otherwise
         """
         import logging
-        import os
-        import shutil
 
         logger = logging.getLogger(__name__)
 
         directory_removed = False
         had_content = False  # Track if directory had any content
 
-        # Approach 1: Physical deletion (for LocalBackend) - Try first for efficiency
-        if hasattr(self, "backend") and self.backend.has_root_path is True:
+        # Approach 1: Delegate to backend's rmdir (handles physical deletion internally)
+        if hasattr(self, "backend"):
             try:
-                # Convert virtual path to physical path
-                # LocalBackend stores directories under "dirs" subdirectory
-                physical_path = self.backend.root_path / "dirs" / dir_path.lstrip("/")
-                if physical_path.exists() and physical_path.is_dir():
-                    # Check if directory actually has content (not just an empty stub)
-                    from contextlib import suppress
-
-                    with suppress(OSError):
-                        # Use os.listdir to check if directory has any files/subdirs
-                        dir_contents = os.listdir(physical_path)
-                        if dir_contents:
-                            had_content = True  # Directory has actual content
-
-                    try:
-                        # shutil.rmtree() removes entire directory tree in one go
-                        shutil.rmtree(physical_path)
-                        directory_removed = True
-                        logger.info(f"Deleted physical directory: {dir_path}")
-                    except OSError as e:
-                        logger.debug(f"shutil.rmtree failed for {physical_path}: {e}")
-                        # Try os.rmdir() for empty directories
-                        try:
-                            os.rmdir(physical_path)
-                            directory_removed = True
-                            logger.info(f"Deleted empty physical directory: {dir_path}")
-                        except OSError as e2:
-                            logger.debug(f"os.rmdir failed for {physical_path}: {e2}")
+                response = self.backend.rmdir(dir_path, recursive=True, context=context)
+                if response.success:
+                    directory_removed = True
+                    had_content = True
+                    logger.info(f"Deleted directory via backend: {dir_path}")
             except Exception as e:
-                logger.debug(f"Physical deletion failed for {dir_path}: {e}")
+                logger.debug(f"Backend rmdir failed for {dir_path}: {e}")
 
         # If physical deletion worked, still need to clean up metadata and permissions
         if directory_removed:
@@ -6813,7 +6797,7 @@ class NexusFS(  # type: ignore[misc]
         """Extract subject from operation context.
 
         Args:
-            context: Operation context (OperationContext, EnhancedOperationContext, or dict)
+            context: Operation context (OperationContext or dict)
 
         Returns:
             Subject tuple (type, id) or None if not found
@@ -6877,7 +6861,7 @@ class NexusFS(  # type: ignore[misc]
 
         Args:
             resource: Resource tuple (object_type, object_id)
-            context: Operation context (OperationContext, EnhancedOperationContext, or dict)
+            context: Operation context (OperationContext or dict)
             required_permission: Permission level required (default: "execute" for ownership)
 
         Raises:
@@ -6984,7 +6968,7 @@ class NexusFS(  # type: ignore[misc]
         object: tuple[str, str],
         expires_at: datetime | None = None,
         zone_id: str | None = None,
-        context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
+        context: Any = None,  # Accept OperationContext or dict
         column_config: dict[str, Any] | None = None,  # Column-level permissions for dynamic_viewer
     ) -> dict[str, Any]:
         """Create a relationship tuple in ReBAC system.
@@ -7079,7 +7063,7 @@ class NexusFS(  # type: ignore[misc]
         # Use zone_id from context if not explicitly provided
         effective_zone_id = zone_id
         if effective_zone_id is None and context:
-            # Handle both dict and OperationContext/EnhancedOperationContext
+            # Handle both dict and OperationContext
             if isinstance(context, dict):
                 effective_zone_id = context.get("zone")
             elif hasattr(context, "zone_id"):
@@ -7325,7 +7309,7 @@ class NexusFS(  # type: ignore[misc]
         subject: tuple[str, str],
         permission: str,
         object: tuple[str, str],
-        context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
+        context: Any = None,  # Accept OperationContext or dict
         zone_id: str | None = None,
     ) -> bool:
         """Check if subject has permission on object via ReBAC.
@@ -7394,7 +7378,7 @@ class NexusFS(  # type: ignore[misc]
         # Use zone_id from operation context if not explicitly provided
         effective_zone_id = zone_id
         if effective_zone_id is None and context:
-            # Handle both dict and OperationContext/EnhancedOperationContext
+            # Handle both dict and OperationContext
             if isinstance(context, dict):
                 effective_zone_id = context.get("zone")
             elif hasattr(context, "zone_id"):
@@ -7479,7 +7463,7 @@ class NexusFS(  # type: ignore[misc]
         permission: str,
         object: tuple[str, str],
         zone_id: str | None = None,
-        context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
+        context: Any = None,  # Accept OperationContext or dict
     ) -> dict:
         """Explain why a subject has or doesn't have permission on an object.
 
@@ -7540,7 +7524,7 @@ class NexusFS(  # type: ignore[misc]
         # Use zone_id from context if not explicitly provided
         effective_zone_id = zone_id
         if effective_zone_id is None and context:
-            # Handle both dict and OperationContext/EnhancedOperationContext
+            # Handle both dict and OperationContext
             if isinstance(context, dict):
                 effective_zone_id = context.get("zone")
             elif hasattr(context, "zone_id"):
@@ -8311,7 +8295,7 @@ class NexusFS(  # type: ignore[misc]
         zone_id: str | None = None,
         user_zone_id: str | None = None,
         expires_at: datetime | None = None,
-        context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
+        context: Any = None,  # Accept OperationContext or dict
     ) -> dict[str, Any]:
         """Share a resource with a specific user, regardless of zone.
 
@@ -8410,7 +8394,7 @@ class NexusFS(  # type: ignore[misc]
         zone_id: str | None = None,
         group_zone_id: str | None = None,
         expires_at: datetime | None = None,
-        context: Any = None,  # Accept OperationContext, EnhancedOperationContext, or dict
+        context: Any = None,  # Accept OperationContext or dict
     ) -> dict[str, Any]:
         """Share a resource with a group (all members get access).
 

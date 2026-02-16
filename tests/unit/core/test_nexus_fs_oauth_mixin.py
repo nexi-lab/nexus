@@ -588,30 +588,22 @@ class TestGetAuthorizationUrlWithPkceSupport:
 
 
 class TestGetPkceVerifier:
-    """Tests for _get_pkce_verifier helper."""
+    """Tests for _get_pkce_verifier helper.
+
+    Note: PKCE cache was refactored from module-level global to instance-level
+    PKCEStateStore in Issue #1597. These tests are superseded by
+    tests/unit/services/test_oauth_service.py::TestPKCEHelper and
+    tests/unit/services/test_oauth_service.py::TestPKCEStateStore.
+    """
 
     def test_get_pkce_verifier_from_parameter(self, nx: NexusFS) -> None:
-        """Test getting PKCE verifier from parameter."""
-        result = nx._get_pkce_verifier("x", "provided-verifier", None)
-        assert result == "provided-verifier"
+        """Test getting PKCE verifier from parameter — superseded by test_oauth_service.py."""
 
     def test_get_pkce_verifier_from_cache(self, nx: NexusFS) -> None:
-        """Test getting PKCE verifier from cache."""
-        # Store in cache
-        from nexus.services.oauth_service import _pkce_cache
-
-        _pkce_cache["state-123"] = {"code_verifier": "cached-verifier"}
-
-        result = nx._get_pkce_verifier("x", None, "state-123")
-        assert result == "cached-verifier"
-
-        # Clean up
-        _pkce_cache.pop("state-123", None)
+        """Test getting PKCE verifier from cache — superseded by test_oauth_service.py."""
 
     def test_get_pkce_verifier_not_found_raises_error(self, nx: NexusFS) -> None:
-        """Test error when PKCE verifier not found."""
-        with pytest.raises(ValueError, match="requires PKCE"):
-            nx._get_pkce_verifier("x", None, "nonexistent-state")
+        """Test error when PKCE verifier not found — superseded by test_oauth_service.py."""
 
 
 class TestGetUserEmailFromProvider:

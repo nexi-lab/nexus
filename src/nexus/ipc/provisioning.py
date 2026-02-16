@@ -34,7 +34,7 @@ class AgentProvisioner:
         zone_id: Zone ID for multi-zone isolation.
     """
 
-    def __init__(self, vfs: VFSOperations, zone_id: str = "default") -> None:
+    def __init__(self, vfs: VFSOperations, zone_id: str = "root") -> None:
         self._vfs = vfs
         self._zone_id = zone_id
 

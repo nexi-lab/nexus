@@ -10,8 +10,6 @@ Uses create_nexus_fs with CachingBackendWrapper-wrapped backend and
 in-process NexusFS for deterministic, fast e2e testing.
 """
 
-from __future__ import annotations
-
 import time
 import uuid
 from pathlib import Path
@@ -19,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from nexus.backends.local import LocalBackend
-from nexus.cache.backend_wrapper import (
+from nexus.backends.caching_wrapper import (
     CacheStrategy,
     CacheWrapperConfig,
     CachingBackendWrapper,
@@ -33,14 +31,12 @@ from tests.helpers.in_memory_metadata_store import InMemoryFileMetadataStore
 # Fixtures
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture
 def local_backend(tmp_path: Path) -> LocalBackend:
     """Create a real LocalBackend with temp directory."""
     root = tmp_path / "storage"
     root.mkdir()
     return LocalBackend(root_path=str(root))
-
 
 @pytest.fixture
 def cached_backend(local_backend: LocalBackend) -> CachingBackendWrapper:
@@ -53,7 +49,6 @@ def cached_backend(local_backend: LocalBackend) -> CachingBackendWrapper:
     )
     return CachingBackendWrapper(inner=local_backend, config=config)
 
-
 @pytest.fixture
 def write_through_backend(local_backend: LocalBackend) -> CachingBackendWrapper:
     """LocalBackend wrapped with write-through strategy."""
@@ -65,11 +60,9 @@ def write_through_backend(local_backend: LocalBackend) -> CachingBackendWrapper:
     )
     return CachingBackendWrapper(inner=local_backend, config=config)
 
-
 # ===========================================================================
 # Correctness Tests
 # ===========================================================================
-
 
 class TestCachingCorrectness:
     """Verify cached operations produce identical results to direct backend."""
@@ -147,11 +140,9 @@ class TestCachingCorrectness:
         assert read_resp.success
         assert read_resp.data == large_content
 
-
 # ===========================================================================
 # Performance Tests
 # ===========================================================================
-
 
 class TestCachingPerformance:
     """Verify cache hits are measurably faster than cache misses."""
@@ -220,11 +211,9 @@ class TestCachingPerformance:
         # Should be fast (generous 10ms for CI stability)
         assert read_time < 0.01, f"Write-through read took {read_time:.4f}s"
 
-
 # ===========================================================================
 # Invalidation Tests
 # ===========================================================================
-
 
 class TestCachingInvalidation:
     """Verify cache invalidation works correctly."""
@@ -292,11 +281,9 @@ class TestCachingInvalidation:
         assert stats["l1_misses"] == 1
         assert stats["strategy"] == "write_around"
 
-
 # ===========================================================================
 # Permission Tests — NexusFS + CachingBackendWrapper + enforce_permissions
 # ===========================================================================
-
 
 class TestCachingPermissions:
     """Verify caching does NOT bypass ReBAC permission enforcement.
@@ -495,11 +482,9 @@ class TestCachingPermissions:
         finally:
             nx.close()
 
-
 # ===========================================================================
 # FastAPI HTTP Server Tests — CachingBackendWrapper + Permissions via HTTP
 # ===========================================================================
-
 
 class TestCachingWithFastAPIServer:
     """E2E tests for CachingBackendWrapper through the full FastAPI HTTP stack.

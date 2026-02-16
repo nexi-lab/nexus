@@ -13,11 +13,9 @@ flow works end-to-end:
 This is the same code path used by fastapi_server.py when permissions are enabled.
 """
 
-from __future__ import annotations
-
 import pytest
 
-from nexus.cache.persistent_view_postgres import PostgresPersistentViewStore
+from nexus.storage.persistent_view_postgres import PostgresPersistentViewStore
 from nexus.rebac.manager import EnhancedReBACManager
 from nexus.rebac.namespace_factory import create_namespace_manager
 from nexus.rebac.namespace_manager import MountEntry
@@ -27,14 +25,12 @@ from nexus.storage.record_store import SQLAlchemyRecordStore
 # Fixtures
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture
 def record_store():
     """Create an in-memory SQLite RecordStore with all tables."""
     rs = SQLAlchemyRecordStore(db_url="sqlite:///:memory:")
     yield rs
     rs.close()
-
 
 @pytest.fixture
 def rebac_manager(record_store):
@@ -47,7 +43,6 @@ def rebac_manager(record_store):
     yield manager
     manager.close()
 
-
 def _grant(rebac, subject_type, subject_id, path, zone_id=None):
     """Helper: grant read access to a file path via ReBAC."""
     rebac.rebac_write(
@@ -57,11 +52,9 @@ def _grant(rebac, subject_type, subject_id, path, zone_id=None):
         zone_id=zone_id,
     )
 
-
 # ---------------------------------------------------------------------------
 # Factory Wiring Tests
 # ---------------------------------------------------------------------------
-
 
 class TestFactoryWiring:
     """Tests for create_namespace_manager() factory function."""
@@ -89,11 +82,9 @@ class TestFactoryWiring:
         # Verify the config was read (check internal state)
         assert ns._revision_window == 20
 
-
 # ---------------------------------------------------------------------------
 # Agent Reconnection E2E Flow
 # ---------------------------------------------------------------------------
-
 
 class TestAgentReconnectionFlow:
     """Tests for the full agent reconnection flow via factory."""
@@ -192,11 +183,9 @@ class TestAgentReconnectionFlow:
         visible = ns2.filter_visible(("user", "alice"), paths)
         assert visible == ["/workspace/proj/a.txt", "/workspace/proj/c.txt"]
 
-
 # ---------------------------------------------------------------------------
 # L3 Metrics Visibility
 # ---------------------------------------------------------------------------
-
 
 class TestL3Metrics:
     """Tests for L3 metrics in the factory-created NamespaceManager."""
@@ -217,11 +206,9 @@ class TestL3Metrics:
         assert metrics["l3_hits"] == 1
         assert metrics["mount_table_rebuilds"] == 0
 
-
 # ---------------------------------------------------------------------------
 # Zero-Grant Safety
 # ---------------------------------------------------------------------------
-
 
 class TestZeroGrantSafety:
     """Tests for fail-closed behavior with L3."""

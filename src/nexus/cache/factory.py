@@ -32,8 +32,6 @@ Usage:
     await factory.shutdown()
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING
 
@@ -54,12 +52,11 @@ from nexus.core.cache_store import CacheStoreABC, NullCacheStore
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
-    from nexus.cache.backend_wrapper import CacheWrapperConfig, CachingBackendWrapper
+    from nexus.backends.caching_wrapper import CacheWrapperConfig, CachingBackendWrapper
     from nexus.cache.dragonfly import DragonflyClient
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
-
 
 class CacheFactory:
     """Factory for creating cache instances based on configuration.
@@ -302,7 +299,7 @@ class CacheFactory:
         if not self._initialized:
             raise RuntimeError("CacheFactory not initialized. Call initialize() first.")
 
-        from nexus.cache.backend_wrapper import CacheWrapperConfig, CachingBackendWrapper
+        from nexus.backends.caching_wrapper import CacheWrapperConfig, CachingBackendWrapper
 
         effective_config = config or CacheWrapperConfig()
 
@@ -324,10 +321,8 @@ class CacheFactory:
         """Async context manager exit."""
         await self.shutdown()
 
-
 # Global factory instance for dependency injection
 _cache_factory: CacheFactory | None = None
-
 
 async def init_cache_factory(
     settings: CacheSettings,
@@ -346,14 +341,12 @@ async def init_cache_factory(
     await _cache_factory.initialize()
     return _cache_factory
 
-
 async def shutdown_cache_factory() -> None:
     """Shutdown the global cache factory."""
     global _cache_factory
     if _cache_factory:
         await _cache_factory.shutdown()
         _cache_factory = None
-
 
 def get_cache_factory() -> CacheFactory:
     """Get the global cache factory instance."""

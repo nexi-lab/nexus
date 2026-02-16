@@ -4,8 +4,6 @@ DRY: replaces duplicated NamespaceManager construction in fastapi_server.py.
 Configures L3 persistent view store when a RecordStoreABC is provided.
 """
 
-from __future__ import annotations
-
 import logging
 import os
 from typing import TYPE_CHECKING
@@ -17,7 +15,6 @@ if TYPE_CHECKING:
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
-
 
 def create_namespace_manager(
     rebac_manager: EnhancedReBACManager,
@@ -39,7 +36,7 @@ def create_namespace_manager(
     persistent_store = None
     if record_store is not None:
         try:
-            from nexus.cache.persistent_view_postgres import PostgresPersistentViewStore
+            from nexus.storage.persistent_view_postgres import PostgresPersistentViewStore
 
             persistent_store = PostgresPersistentViewStore(record_store)
             logger.info("[NAMESPACE] L3 persistent view store enabled (RecordStore)")

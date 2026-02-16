@@ -8,6 +8,11 @@ from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.backends.cache_mixin import CacheConnectorMixin, CacheEntry, SyncResult
 from nexus.backends.cache_models import IMMUTABLE_VERSION, CachedReadResult
 from nexus.backends.cache_service import CacheService
+from nexus.backends.caching_wrapper import (
+    CacheStrategy,
+    CacheWrapperConfig,
+    CachingBackendWrapper,
+)
 from nexus.backends.factory import BackendFactory
 
 # Core backends (always available)
@@ -158,6 +163,10 @@ __all__ = [
     "register_connector",
     "create_connector",
     "create_connector_from_config",
+    # CachingBackendWrapper — transparent caching decorator (#1392, moved from cache/)
+    "CachingBackendWrapper",
+    "CacheStrategy",
+    "CacheWrapperConfig",
     # Concrete backends
     "LocalBackend",
     "PassthroughBackend",

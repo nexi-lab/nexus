@@ -20,7 +20,7 @@ Usage:
     embeddings = await embedding_cache.get_or_embed_batch(texts, model, embed_fn)
 """
 
-from nexus.cache.backend_wrapper import (
+from nexus.backends.caching_wrapper import (
     CacheStrategy,
     CacheWrapperConfig,
     CachingBackendWrapper,

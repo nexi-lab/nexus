@@ -1200,7 +1200,7 @@ class ReBACService:
 
                 # Check if user is zone admin for this resource's zone
                 if zone_id and op_context.user:
-                    from nexus.server.auth.user_helpers import is_zone_admin
+                    from nexus.services.permissions.utils.zone import is_zone_admin
 
                     if is_zone_admin(self._rebac_manager, op_context.user, zone_id):
                         # Zone admin can share resources in their zone

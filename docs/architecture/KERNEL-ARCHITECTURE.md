@@ -36,9 +36,9 @@ implementations via DI at startup.
 
 | Tier | Swap time | Nexus | Linux analogue |
 |------|-----------|-------|----------------|
-| Static kernel | Never | MetastoreABC, VFS, FileMetadataProtocol, syscall dispatch | vmlinuz core (scheduler, mm, VFS) |
-| Drivers | Config-time (DI at startup) | redb, S3, PostgreSQL, Dragonfly | compiled-in drivers (`=y`) |
-| Services | Runtime (load/unload) | ReBAC, Auth, Agents, EventBus, Skills | user-space daemons (systemd units) |
+| Static kernel | Never | MetastoreABC, VFS `route()`, FileMetadataProtocol, syscall dispatch | vmlinuz core (scheduler, mm, VFS) |
+| Drivers | Config-time (DI at startup) | redb, S3, PostgreSQL, Dragonfly, SearchBrick | compiled-in drivers (`=y`) |
+| Services | Runtime (load/unload) | 22 protocols (ReBAC, Mount, Auth, Agents, Search, Skills, ...) | user-space daemons (systemd units) |
 
 **Services** depend on kernel interfaces, never the reverse. The kernel operates
 without any services loaded.
@@ -82,6 +82,17 @@ Kernel does NOT need: JOINs, FK, vector search, TTL, pub/sub (all service-layer)
 No CacheStore → EventBus disabled, PermissionCache falls back to RecordStore,
 TigerCache O(n), UserSession stays in RecordStore. `NullCacheStore` provides no-op impl.
 
+### Dual-Axis ABC Architecture
+
+Two independent ABC axes, composed via DI:
+
+- **Data ABCs** (this section): WHERE is data stored? → 4 pillars by storage capability
+- **Ops ABCs** (§3): WHAT can users/agents DO? → 28 scenario domains by ops affinity
+
+A concrete class sits at the intersection: e.g. `ReBACManager` implements `PermissionProtocol`
+(Ops) and internally uses `RecordStoreABC` (Data). The Protocol itself has no storage opinion.
+See `ops-scenario-matrix.md` for full Ops-Scenario affinity proof.
+
 ---
 
 ## 3. Kernel vs Services Boundary
@@ -92,7 +103,7 @@ TigerCache O(n), UserSession stays in RecordStore. `NullCacheStore` provides no-
 |-----------|---------------|---------|
 | `MetastoreABC` | block device | Ordered KV primitive |
 | `FileMetadataProtocol` | `struct inode_operations` | Typed FileMetadata CRUD over MetastoreABC |
-| `VFSRouterProtocol` | VFS mount table | Path resolution + mount routing |
+| `VFSRouterProtocol` | VFS `lookup_slow()` | Path resolution only — mount CRUD lives in Service `MountProtocol` |
 | `ObjectStoreABC` (= `Backend`) | `struct file_operations` | Blob I/O interface (read/write/delete/list) |
 | `CacheStoreABC` | (no direct analogue) | Ephemeral KV + Pub/Sub primitives |
 
@@ -121,16 +132,20 @@ standalone service classes (Step 1), then a ServiceRegistry replaces inheritance
 
 ### Service Protocols (`nexus.services.protocols`)
 
-| Protocol | Storage Affinity | Purpose |
-|----------|-----------------|---------|
-| `AgentRegistryProtocol` | RecordStore | Agent identity management |
-| `NamespaceManagerProtocol` | RecordStore + CacheStore | ReBAC namespace views |
-| `EventLogProtocol` | RecordStore | Append-only audit log |
-| `HookEngineProtocol` | CacheStore | Pre/post operation hooks |
-| `SchedulerProtocol` | CacheStore or RecordStore | Work queue |
-| `ContextManifestProtocol` | (service models) | Deterministic context pre-execution |
+28 scenario domains mapped to Ops ABCs. 22 Protocols exist, 9 gaps remain.
+
+| Category | Protocols | Count |
+|----------|-----------|-------|
+| **Permission & Visibility** | PermissionProtocol, NamespaceManagerProtocol | 2 |
+| **Search & Content** | SearchProtocol, SearchBrickProtocol (driver), LLMProtocol | 3 |
+| **Mount & Storage** | MountProtocol, ShareLinkProtocol, OAuthProtocol | 3 |
+| **Agent Infra** | AgentRegistryProtocol, SchedulerProtocol | 2 |
+| **Events & Hooks** | EventLogProtocol, HookEngineProtocol, EventsProtocol (needs split → Watch + Lock) | 3 |
+| **Domain Services** | SkillsProtocol, PaymentProtocol | 2 |
+| **Missing (9 gaps)** | Version, Memory, Trajectory, Delegation, Governance, Reputation, OperationLog, Plugin, Workflow | 9 |
 
 All use `typing.Protocol` with `@runtime_checkable`.
+See `ops-scenario-matrix.md` §2–§3 for full enumeration and affinity matching.
 
 ---
 
@@ -196,6 +211,8 @@ This ensures driver interchangeability (PostgreSQL ↔ SQLite) without code chan
 |-------|----------|
 | Data type → pillar mapping (50+ types) | `data-storage-matrix.md` |
 | Storage orthogonality proof | `data-storage-matrix.md` §ORTHOGONALITY |
+| Ops ABC × scenario affinity (28 domains, 22 protocols) | `ops-scenario-matrix.md` |
+| Ops ABC orthogonality + gap analysis | `ops-scenario-matrix.md` §2–§3 |
 | Raft, gRPC, write flows | `federation-memo.md` §2–§5 |
 | Zone model, DT_MOUNT | `federation-memo.md` §5–§6 |
 | SC vs EC consistency | `federation-memo.md` §4.1 |

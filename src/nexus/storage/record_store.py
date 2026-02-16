@@ -248,7 +248,12 @@ class SQLAlchemyRecordStore(RecordStoreABC):
             self._async_session_factory_instance = async_sessionmaker(
                 self._async_engine, class_=AsyncSession, expire_on_commit=False
             )
-            logger.info("Async session factory initialized: %s", async_url.split("@")[-1])
+            pool_info = {k: v for k, v in engine_kwargs.items() if k.startswith("pool_")}
+            logger.info(
+                "Async session factory initialized: %s (pool=%s)",
+                async_url.split("@")[-1],
+                pool_info or "default",
+            )
 
         return self._async_session_factory_instance
 

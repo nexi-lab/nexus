@@ -45,6 +45,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from nexus.backends.backend import Backend
+from nexus.backends.oauth_mixin import OAuthConnectorMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.core import glob_fast
 from nexus.core.exceptions import BackendError
@@ -80,7 +81,7 @@ CACHE_TTL = {
     requires=["requests-oauthlib"],
     service_name="x",
 )
-class XConnectorBackend(Backend):
+class XConnectorBackend(Backend, OAuthConnectorMixin):
     """
     X (Twitter) connector backend with OAuth 2.0 PKCE authentication.
 
@@ -155,21 +156,9 @@ class XConnectorBackend(Backend):
             cache_dir: Cache directory (default: /tmp/nexus-x-cache)
             provider: OAuth provider name (default: "twitter")
         """
-        # Initialize TokenManager
-        from nexus.server.auth.token_manager import TokenManager
-
-        # Resolve database URL using base class method (checks TOKEN_MANAGER_DB env var)
-        resolved_db = self.resolve_database_url(token_manager_db)
-
-        if resolved_db.startswith(("postgresql://", "sqlite://", "mysql://")):
-            self.token_manager = TokenManager(db_url=resolved_db)
-        else:
-            self.token_manager = TokenManager(db_path=resolved_db)
-
-        self.user_email = user_email
+        self._init_oauth(token_manager_db, user_email=user_email, provider=provider)
         self.cache_ttl = cache_ttl or CACHE_TTL
         self.cache_dir = cache_dir or "/tmp/nexus-x-cache"
-        self.provider = provider
 
         # Create cache directory
         os.makedirs(self.cache_dir, exist_ok=True)

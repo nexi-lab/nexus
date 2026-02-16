@@ -39,6 +39,7 @@ import yaml
 
 from nexus.backends.backend import Backend
 from nexus.backends.cache_mixin import IMMUTABLE_VERSION, CacheConnectorMixin
+from nexus.backends.oauth_mixin import OAuthConnectorMixin
 from nexus.backends.registry import ArgType, ConnectionArg, register_connector
 from nexus.connectors.base import (
     CheckpointMixin,
@@ -80,6 +81,7 @@ logger = logging.getLogger(__name__)
 class GoogleCalendarConnectorBackend(
     Backend,
     CacheConnectorMixin,
+    OAuthConnectorMixin,
     SkillDocMixin,
     ValidatedMixin,
     TraitBasedMixin,
@@ -240,22 +242,7 @@ send_notifications: true
             For single-user scenarios (demos), set user_email explicitly.
             For multi-user production, leave user_email=None to auto-detect from context.
         """
-        from nexus.server.auth.token_manager import TokenManager
-
-        # Store original token_manager_db for config updates
-        self.token_manager_db = token_manager_db
-
-        # Resolve database URL using base class method
-        resolved_db = self.resolve_database_url(token_manager_db)
-
-        # Support both file paths and database URLs
-        if resolved_db.startswith(("postgresql://", "sqlite://", "mysql://")):
-            self.token_manager = TokenManager(db_url=resolved_db)
-        else:
-            self.token_manager = TokenManager(db_path=resolved_db)
-
-        self.user_email = user_email
-        self.provider = provider
+        self._init_oauth(token_manager_db, user_email=user_email, provider=provider)
         self.session_factory = session_factory
         self.max_events_per_calendar = max_events_per_calendar
         self.metadata_store = metadata_store

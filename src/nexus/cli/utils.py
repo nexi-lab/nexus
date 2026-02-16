@@ -297,6 +297,8 @@ def create_backend_from_config(
 ) -> Any:
     """Create backend instance from type and config dict.
 
+    Delegates to BackendFactory which uses ConnectorRegistry for all backends.
+
     Args:
         backend_type: Backend type (local, gcs, s3, gdrive, etc.)
         config: Backend-specific configuration dictionary
@@ -308,96 +310,15 @@ def create_backend_from_config(
         Backend instance
 
     Raises:
-        ValueError: If backend type is unknown or not implemented
+        KeyError: If backend type is unknown or not registered
 
     Example:
         >>> backend = create_backend_from_config("local", {"root_path": "./data"})
         >>> backend = create_backend_from_config("gcs", {"bucket": "my-bucket"})
     """
-    if backend_type == "local":
-        from nexus.backends.local import LocalBackend
+    from nexus.backends.factory import BackendFactory
 
-        root_path = config.get("root_path", "./nexus-data/files")
-        return LocalBackend(root_path=root_path)
-
-    elif backend_type == "gcs":
-        from nexus.backends.gcs import GCSBackend
-
-        bucket = config.get("bucket")
-        if not bucket:
-            raise ValueError("GCS backend requires 'bucket' in config")
-
-        return GCSBackend(
-            bucket_name=bucket,
-            project_id=config.get("project_id"),
-            credentials_path=config.get("credentials_path"),
-        )
-
-    elif backend_type == "gcs_connector":
-        from nexus.backends.gcs_connector import GCSConnectorBackend
-
-        bucket = config.get("bucket")
-        if not bucket:
-            raise ValueError("GCS connector backend requires 'bucket' in config")
-
-        return GCSConnectorBackend(
-            bucket_name=bucket,
-            project_id=config.get("project_id"),
-            prefix=config.get("prefix", ""),
-            credentials_path=config.get("credentials_path"),
-            # OAuth access token (alternative to credentials_path)
-            access_token=config.get("access_token"),
-            # Session factory for content caching
-            session_factory=session_factory,
-        )
-
-    elif backend_type == "s3_connector":
-        from nexus.backends.s3_connector import S3ConnectorBackend
-
-        bucket = config.get("bucket")
-        if not bucket:
-            raise ValueError("S3 connector backend requires 'bucket' in config")
-
-        return S3ConnectorBackend(
-            bucket_name=bucket,
-            region_name=config.get("region_name"),
-            prefix=config.get("prefix", ""),
-            credentials_path=config.get("credentials_path"),
-            access_key_id=config.get("access_key_id"),
-            secret_access_key=config.get("secret_access_key"),
-            session_token=config.get("session_token"),
-            # Session factory for content caching
-            session_factory=session_factory,
-        )
-
-    elif backend_type == "s3":
-        # TODO: Implement S3Backend (CAS-based)
-        raise NotImplementedError(f"S3 backend not yet implemented (backend type: {backend_type})")
-
-    elif backend_type == "gdrive":
-        # TODO: Implement GDriveBackend
-        raise NotImplementedError(
-            f"Google Drive backend not yet implemented (backend type: {backend_type})"
-        )
-
-    elif backend_type == "gdrive_connector":
-        from nexus.backends.gdrive_connector import GoogleDriveConnectorBackend
-
-        token_manager_db = config.get("token_manager_db")
-        if not token_manager_db:
-            raise ValueError("gdrive_connector backend requires 'token_manager_db' in config")
-
-        return GoogleDriveConnectorBackend(
-            token_manager_db=token_manager_db,
-            root_folder=config.get("root_folder", "nexus-data"),
-            user_email=config.get("user_email"),
-            use_shared_drives=config.get("use_shared_drives", False),
-            shared_drive_id=config.get("shared_drive_id"),
-            provider=config.get("provider", "google-drive"),
-        )
-
-    else:
-        raise ValueError(f"Unknown backend type: {backend_type}")
+    return BackendFactory.create(backend_type, config, session_factory=session_factory)
 
 
 def get_default_filesystem() -> NexusFilesystem:

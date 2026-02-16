@@ -2761,9 +2761,7 @@ def _generate_download_url(
             }
 
         # Local backend - use streaming endpoint with signed token
-        from nexus.backends.local import LocalBackend
-
-        if isinstance(backend, LocalBackend) and hasattr(backend, "stream_content"):
+        if backend.has_root_path:
             # Get zone_id from context
             zone_id = "default"
             if context and hasattr(context, "zone_id"):

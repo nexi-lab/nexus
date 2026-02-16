@@ -9,9 +9,17 @@ References:
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
+from nexus.core.protocols.connector import (
+    ConnectorProtocol,
+    ContentStoreProtocol,
+    DirectoryOpsProtocol,
+)
 from nexus.core.protocols.vfs_router import MountInfo, ResolvedPath, VFSRouterProtocol
 
 __all__ = [
+    "ConnectorProtocol",
+    "ContentStoreProtocol",
+    "DirectoryOpsProtocol",
     "MountInfo",
     "ResolvedPath",
     "VFSRouterProtocol",

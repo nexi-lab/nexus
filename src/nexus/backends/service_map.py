@@ -138,7 +138,7 @@ SERVICE_REGISTRY: dict[str, ServiceInfo] = {
     "slack": ServiceInfo(
         name="slack",
         display_name="Slack",
-        connector="slack_connector",  # TODO: add @register_connector to slack_connector.py
+        connector="slack_connector",
         klavis_mcp="slack",
         oauth_provider="slack",
         capabilities=["read", "write", "list", "tools"],

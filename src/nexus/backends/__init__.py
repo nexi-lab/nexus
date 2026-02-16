@@ -3,6 +3,7 @@
 from nexus.backends.backend import Backend, HandlerStatusResponse
 from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.backends.cache_mixin import CacheConnectorMixin, CacheEntry, SyncResult
+from nexus.backends.factory import BackendFactory
 
 # Core backends (always available)
 from nexus.backends.local import LocalBackend
@@ -129,6 +130,8 @@ __all__ = [
     "CacheConnectorMixin",
     "CacheEntry",
     "SyncResult",
+    # Factory
+    "BackendFactory",
     # Registry
     "ConnectorRegistry",
     "ConnectorInfo",

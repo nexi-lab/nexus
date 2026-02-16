@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import click
 from rich.console import Console
 from rich.table import Table
@@ -9,6 +11,12 @@ from rich.table import Table
 from nexus.cli.utils import BackendConfig, add_backend_options, get_filesystem, handle_error
 
 console = Console()
+
+
+def _get_branch_service(nx: Any) -> Any:
+    """Extract ContextBranchService from NexusFS (type-safe for mypy)."""
+    services = getattr(nx, "_services", None)
+    return getattr(services, "context_branch_service", None) if services else None
 
 
 @click.group(name="context")
@@ -50,7 +58,7 @@ def commit_cmd(
     """
     try:
         nx = get_filesystem(backend_config)
-        svc = nx._services.context_branch_service
+        svc = _get_branch_service(nx)
         if not svc:
             console.print("[red]Context branching not available (service not configured)[/red]")
             return
@@ -85,7 +93,7 @@ def branch_cmd(
     """
     try:
         nx = get_filesystem(backend_config)
-        svc = nx._services.context_branch_service
+        svc = _get_branch_service(nx)
         if not svc:
             console.print("[red]Context branching not available[/red]")
             return
@@ -118,7 +126,7 @@ def checkout_cmd(
     """
     try:
         nx = get_filesystem(backend_config)
-        svc = nx._services.context_branch_service
+        svc = _get_branch_service(nx)
         if not svc:
             console.print("[red]Context branching not available[/red]")
             return
@@ -161,7 +169,7 @@ def merge_cmd(
     """
     try:
         nx = get_filesystem(backend_config)
-        svc = nx._services.context_branch_service
+        svc = _get_branch_service(nx)
         if not svc:
             console.print("[red]Context branching not available[/red]")
             return
@@ -197,7 +205,7 @@ def log_cmd(
     """
     try:
         nx = get_filesystem(backend_config)
-        svc = nx._services.context_branch_service
+        svc = _get_branch_service(nx)
         if not svc:
             console.print("[red]Context branching not available[/red]")
             return
@@ -243,7 +251,7 @@ def branches_cmd(
     """
     try:
         nx = get_filesystem(backend_config)
-        svc = nx._services.context_branch_service
+        svc = _get_branch_service(nx)
         if not svc:
             console.print("[red]Context branching not available[/red]")
             return
@@ -297,7 +305,7 @@ def diff_cmd(
     """
     try:
         nx = get_filesystem(backend_config)
-        svc = nx._services.context_branch_service
+        svc = _get_branch_service(nx)
         if not svc:
             console.print("[red]Context branching not available[/red]")
             return
@@ -335,7 +343,7 @@ def explore_cmd(
     """
     try:
         nx = get_filesystem(backend_config)
-        svc = nx._services.context_branch_service
+        svc = _get_branch_service(nx)
         if not svc:
             console.print("[red]Context branching not available[/red]")
             return
@@ -381,7 +389,7 @@ def finish_cmd(
     """
     try:
         nx = get_filesystem(backend_config)
-        svc = nx._services.context_branch_service
+        svc = _get_branch_service(nx)
         if not svc:
             console.print("[red]Context branching not available[/red]")
             return

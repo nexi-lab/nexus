@@ -42,7 +42,7 @@ from nexus.storage.models import ContextBranchModel, WorkspaceSnapshotModel
 _VALID_STRATEGIES = frozenset({"fail", "source-wins"})
 
 if TYPE_CHECKING:
-    from nexus.services.permissions.rebac_manager import ReBACManager
+    from nexus.rebac.manager import ReBACManager
     from nexus.services.workspace_manager import WorkspaceManager
 
 logger = logging.getLogger(__name__)
@@ -304,6 +304,7 @@ class ContextBranchService:
                 raise BranchExistsError(branch_name, workspace_path)
 
             # Resolve fork point
+            fork_snapshot_id: str | None = None
             if from_snapshot_id:
                 # Explicit snapshot — verify it exists
                 snap = session.get(WorkspaceSnapshotModel, from_snapshot_id)
@@ -896,13 +897,14 @@ class ContextBranchService:
         branch_name: str,
     ) -> ContextBranchModel | None:
         """Fetch a branch model by name (within an open session)."""
-        return session.execute(
+        result: ContextBranchModel | None = session.execute(
             select(ContextBranchModel).where(
                 ContextBranchModel.zone_id == zone_id,
                 ContextBranchModel.workspace_path == workspace_path,
                 ContextBranchModel.branch_name == branch_name,
             )
         ).scalar_one_or_none()
+        return result
 
     def _get_current_branch_name(self, session: Any, zone_id: str, workspace_path: str) -> str:
         """Get the name of the currently checked-out branch, defaulting to 'main'."""
@@ -992,7 +994,7 @@ class ContextBranchService:
                 snap = session.get(WorkspaceSnapshotModel, snapshot_id)
                 if not snap:
                     return False
-                existing_hash = snap.manifest_hash
+                existing_hash: str = snap.manifest_hash
 
             # Build current workspace manifest
             workspace_prefix = (

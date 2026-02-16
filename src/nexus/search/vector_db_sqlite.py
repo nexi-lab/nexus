@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import event, text
 
-from nexus.search.result_builders import build_result_from_row, build_semantic_result
+from nexus.search.result_builders import build_result_from_row
 
 logger = logging.getLogger(__name__)
 

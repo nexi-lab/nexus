@@ -17,7 +17,6 @@ from nexus.search.result_builders import build_result_from_row
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.search.hnsw_config import HNSWConfig
     from sqlalchemy.orm import Session
 
 

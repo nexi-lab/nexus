@@ -20,8 +20,8 @@ Backend-specific logic is delegated to:
 
 from __future__ import annotations
 
-import atexit
 import asyncio
+import atexit
 import concurrent.futures
 import logging
 from typing import TYPE_CHECKING, Any
@@ -194,9 +194,7 @@ class VectorDatabase:
         elif self.db_type == "postgresql":
             from nexus.search.vector_db_postgres import postgres_keyword_search
 
-            return postgres_keyword_search(
-                session, query, limit, path_filter, self.bm25_available
-            )
+            return postgres_keyword_search(session, query, limit, path_filter, self.bm25_available)
         else:
             raise ValueError(f"Unsupported database type: {self.db_type}")
 

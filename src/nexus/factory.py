@@ -86,11 +86,13 @@ class _NexusFSFileReader:
         return str(content_raw)
 
     def get_searchable_text(self, path: str) -> str | None:
-        return self._nx.metadata.get_searchable_text(path)
+        result: str | None = self._nx.metadata.get_searchable_text(path)
+        return result
 
     def list_files(self, path: str, recursive: bool = True) -> list[Any]:
         result = self._nx.list(path, recursive=recursive)
-        return result.items if hasattr(result, "items") else result
+        items: list[Any] = result.items if hasattr(result, "items") else result
+        return items
 
     def get_session(self) -> Any:
         return self._nx.SessionLocal()
@@ -105,7 +107,8 @@ class _NexusFSFileReader:
                 FilePathModel.virtual_path == path,
                 FilePathModel.deleted_at.is_(None),
             )
-            return session.execute(stmt).scalar_one_or_none()
+            path_id: str | None = session.execute(stmt).scalar_one_or_none()
+            return path_id
 
     def get_content_hash(self, path: str) -> str | None:
         from sqlalchemy import select
@@ -117,7 +120,8 @@ class _NexusFSFileReader:
                 FilePathModel.virtual_path == path,
                 FilePathModel.deleted_at.is_(None),
             )
-            return session.execute(stmt).scalar_one_or_none()
+            content_hash: str | None = session.execute(stmt).scalar_one_or_none()
+            return content_hash
 
 
 def _create_wallet_provisioner() -> Any:

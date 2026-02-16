@@ -955,9 +955,6 @@ class VectorDatabase:
         rrf_k: int = 60,
         normalize_scores: bool = True,
         path_filter: str | None = None,
-        # Backward compatibility (deprecated)
-        keyword_weight: float | None = None,
-        semantic_weight: float | None = None,
     ) -> list[dict[str, Any]]:
         """Hybrid search combining keyword and semantic search.
 
@@ -975,8 +972,6 @@ class VectorDatabase:
             rrf_k: RRF constant (default: 60, per original paper)
             normalize_scores: Apply min-max normalization for weighted fusion
             path_filter: Optional path prefix filter
-            keyword_weight: DEPRECATED - use alpha instead
-            semantic_weight: DEPRECATED - use alpha instead
 
         Returns:
             List of search results ranked by combined score
@@ -989,21 +984,6 @@ class VectorDatabase:
             ... )
         """
         from nexus.search.fusion import FusionConfig, FusionMethod, fuse_results
-
-        # Handle backward compatibility for deprecated parameters
-        if keyword_weight is not None or semantic_weight is not None:
-            import warnings
-
-            warnings.warn(
-                "keyword_weight and semantic_weight are deprecated. "
-                "Use alpha parameter instead (0.0 = all BM25, 1.0 = all vector). "
-                "For equivalent behavior, set fusion_method='weighted' and alpha=semantic_weight.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            if semantic_weight is not None:
-                alpha = semantic_weight
-                fusion_method = "weighted"
 
         # Get keyword results (retrieve more for better fusion)
         keyword_results = self.keyword_search(session, query, limit * 3, path_filter)

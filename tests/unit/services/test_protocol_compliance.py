@@ -239,3 +239,75 @@ def test_service_protocol_compliance(
         return
 
     assert_protocol_compliance(impl_cls, protocol_cls)
+
+
+# =========================================================================
+# Protocol file import cleanliness (Issue #1291)
+# =========================================================================
+
+_PROTOCOL_FILES: list[tuple[str, str]] = [
+    ("agent_registry", "nexus/services/protocols/agent_registry.py"),
+    ("context_manifest", "nexus/services/protocols/context_manifest.py"),
+    ("event_log", "nexus/services/protocols/event_log.py"),
+    ("events", "nexus/services/protocols/events.py"),
+    ("hook_engine", "nexus/services/protocols/hook_engine.py"),
+    ("llm", "nexus/services/protocols/llm.py"),
+    ("mount", "nexus/services/protocols/mount.py"),
+    ("namespace_manager", "nexus/services/protocols/namespace_manager.py"),
+    ("oauth", "nexus/services/protocols/oauth.py"),
+    ("permission", "nexus/services/protocols/permission.py"),
+    ("scheduler", "nexus/services/protocols/scheduler.py"),
+    ("search", "nexus/services/protocols/search.py"),
+    ("share_link", "nexus/services/protocols/share_link.py"),
+    ("skills", "nexus/services/protocols/skills.py"),
+    ("vfs_router", "nexus/core/protocols/vfs_router.py"),
+]
+
+# Leaf modules that are safe to import at module level in protocol files
+_ALLOWED_LEAF_MODULES = {"nexus.constants"}
+
+
+@pytest.mark.parametrize(
+    "name,rel_path",
+    _PROTOCOL_FILES,
+    ids=[p[0] for p in _PROTOCOL_FILES],
+)
+def test_protocol_file_no_heavy_runtime_imports(name: str, rel_path: str) -> None:
+    """Protocol files should not have runtime imports from non-leaf nexus modules.
+
+    All nexus.* imports (except leaf modules like constants) should be
+    inside TYPE_CHECKING blocks to prevent circular import chains.
+    """
+    import ast
+    from pathlib import Path
+
+    filepath = Path("src") / rel_path
+    if not filepath.exists():
+        pytest.skip(f"Protocol file not found: {filepath}")
+
+    source = filepath.read_text(encoding="utf-8")
+    tree = ast.parse(source, filename=str(filepath))
+
+    violations: list[str] = []
+    for node in ast.iter_child_nodes(tree):
+        # Skip TYPE_CHECKING blocks
+        if isinstance(node, ast.If):
+            test = node.test
+            if (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
+                isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
+            ):
+                continue
+
+        if isinstance(node, ast.ImportFrom):
+            if node.module and node.module.startswith("nexus") and node.module not in _ALLOWED_LEAF_MODULES:
+                names = ", ".join(a.name for a in node.names)
+                violations.append(f"from {node.module} import {names}")
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.startswith("nexus") and alias.name not in _ALLOWED_LEAF_MODULES:
+                    violations.append(f"import {alias.name}")
+
+    assert violations == [], (
+        f"Protocol file {rel_path} has runtime nexus imports "
+        f"(should use TYPE_CHECKING): {violations}"
+    )

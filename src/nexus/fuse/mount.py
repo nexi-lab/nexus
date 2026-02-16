@@ -178,6 +178,7 @@ class NexusFUSE:
 
         # Create FUSE operations
         event_bus = getattr(self.nexus_fs, "_event_bus", None)
+        subscription_manager = getattr(self.nexus_fs, "subscription_manager", None)
         operations = NexusFUSEOperations(
             self.nexus_fs,
             self.mode,
@@ -185,6 +186,7 @@ class NexusFUSE:
             context=context,
             namespace_manager=namespace_manager,
             event_bus=event_bus,
+            subscription_manager=subscription_manager,
         )
 
         # Issue #1115: Set up event loop for async event dispatch

@@ -316,7 +316,9 @@ class ContextBranchService:
                 parent = from_branch or DEFAULT_BRANCH
             else:
                 # Fork from branch HEAD
-                source_name = from_branch or self._get_current_branch_name(session, z, workspace_path)
+                source_name = from_branch or self._get_current_branch_name(
+                    session, z, workspace_path
+                )
                 source = self._get_branch_model(session, z, workspace_path, source_name)
                 if not source:
                     raise BranchNotFoundError(source_name, workspace_path)
@@ -437,7 +439,8 @@ class ContextBranchService:
                 raise BranchNotFoundError(branch_name, workspace_path)
             if model.status != "active":
                 raise BranchStateError(
-                    branch_name, f"Cannot delete branch '{branch_name}' with status '{model.status}'"
+                    branch_name,
+                    f"Cannot delete branch '{branch_name}' with status '{model.status}'",
                 )
 
             model.status = "discarded"
@@ -481,15 +484,14 @@ class ContextBranchService:
         self.ensure_main_branch(workspace_path, zone_id=z, created_by=created_by)
 
         with self._session_factory() as session:
-            target_name = branch_name or self._get_current_branch_name(
-                session, z, workspace_path
-            )
+            target_name = branch_name or self._get_current_branch_name(session, z, workspace_path)
             target = self._get_branch_model(session, z, workspace_path, target_name)
             if not target:
                 raise BranchNotFoundError(target_name, workspace_path)
             if target.status != "active":
                 raise BranchStateError(
-                    target_name, f"Cannot commit to branch '{target_name}' with status '{target.status}'"
+                    target_name,
+                    f"Cannot commit to branch '{target_name}' with status '{target.status}'",
                 )
 
         # Create snapshot via WorkspaceManager (handles permission check)
@@ -661,9 +663,7 @@ class ContextBranchService:
 
             # Validate source state
             if source.status == "merged":
-                raise BranchStateError(
-                    source_branch, f"Branch '{source_branch}' is already merged"
-                )
+                raise BranchStateError(source_branch, f"Branch '{source_branch}' is already merged")
             if source.status != "active":
                 raise BranchStateError(
                     source_branch,
@@ -671,15 +671,11 @@ class ContextBranchService:
                 )
 
             # Resolve target
-            target_name = target_branch or self._get_current_branch_name(
-                session, z, workspace_path
-            )
+            target_name = target_branch or self._get_current_branch_name(session, z, workspace_path)
 
             # Prevent self-merge
             if source_branch == target_name:
-                raise BranchStateError(
-                    source_branch, "Cannot merge a branch into itself"
-                )
+                raise BranchStateError(source_branch, "Cannot merge a branch into itself")
 
             target = self._get_branch_model(session, z, workspace_path, target_name)
             if not target:
@@ -691,12 +687,22 @@ class ContextBranchService:
             # Fast-forward: if target hasn't moved since fork
             if target_head == fork_point:
                 return self._fast_forward_merge(
-                    session, source, target, workspace_path, z,
+                    session,
+                    source,
+                    target,
+                    workspace_path,
+                    z,
                 )
 
             # Three-way merge required
             return self._three_way_merge(
-                session, source, target, workspace_path, z, strategy, created_by,
+                session,
+                source,
+                target,
+                workspace_path,
+                z,
+                strategy,
+                created_by,
             )
 
     # ------------------------------------------------------------------
@@ -741,9 +747,7 @@ class ContextBranchService:
 
         if fork_snapshot_id and self._workspace_unchanged(workspace_path, fork_snapshot_id):
             skipped_commit = True
-            logger.info(
-                "explore(): workspace %s unchanged, skipping auto-commit", workspace_path
-            )
+            logger.info("explore(): workspace %s unchanged, skipping auto-commit", workspace_path)
         else:
             # Auto-commit current state
             commit_result = self.commit(
@@ -900,9 +904,7 @@ class ContextBranchService:
             )
         ).scalar_one_or_none()
 
-    def _get_current_branch_name(
-        self, session: Any, zone_id: str, workspace_path: str
-    ) -> str:
+    def _get_current_branch_name(self, session: Any, zone_id: str, workspace_path: str) -> str:
         """Get the name of the currently checked-out branch, defaulting to 'main'."""
         result = session.execute(
             select(ContextBranchModel.branch_name).where(
@@ -979,15 +981,11 @@ class ContextBranchService:
                 # Re-read to get current version for error message
                 session.expire(branch)
                 session.refresh(branch)
-                raise StalePointerError(
-                    branch_name, expected_version, branch.pointer_version
-                )
+                raise StalePointerError(branch_name, expected_version, branch.pointer_version)
 
             session.commit()
 
-    def _workspace_unchanged(
-        self, workspace_path: str, snapshot_id: str
-    ) -> bool:
+    def _workspace_unchanged(self, workspace_path: str, snapshot_id: str) -> bool:
         """Check if workspace manifest matches a snapshot (P4-B optimization)."""
         try:
             with self._session_factory() as session:
@@ -1005,10 +1003,8 @@ class ContextBranchService:
             for file_meta in files:
                 if file_meta.mime_type == "directory" or not file_meta.etag:
                     continue
-                rel_path = file_meta.path[len(workspace_prefix):]
-                file_entries.append(
-                    (rel_path, file_meta.etag, file_meta.size, file_meta.mime_type)
-                )
+                rel_path = file_meta.path[len(workspace_prefix) :]
+                file_entries.append((rel_path, file_meta.etag, file_meta.size, file_meta.mime_type))
 
             manifest = WorkspaceManifest.from_file_list(file_entries)
             import hashlib
@@ -1017,9 +1013,7 @@ class ContextBranchService:
             return current_hash == existing_hash
         except (NexusFileNotFoundError, OSError, KeyError, ValueError) as exc:
             # H3: Narrow exceptions — only catch expected failures
-            logger.debug(
-                "Could not check workspace unchanged (reason: %s), assuming changed", exc
-            )
+            logger.debug("Could not check workspace unchanged (reason: %s), assuming changed", exc)
             return False
 
     def _fast_forward_merge(
@@ -1049,9 +1043,7 @@ class ContextBranchService:
         target_name = target.branch_name
 
         # Advance target HEAD to source HEAD
-        self._advance_head_with_retry(
-            zone_id, workspace_path, target_name, source_head
-        )
+        self._advance_head_with_retry(zone_id, workspace_path, target_name, source_head)
 
         # C1: Mark source as merged in a FRESH session (avoid stale session mutation)
         with self._session_factory() as s2:
@@ -1118,9 +1110,7 @@ class ContextBranchService:
             conflicts.append(path)
 
         if conflicts and strategy == "fail":
-            raise BranchConflictError(
-                source.branch_name, target.branch_name, sorted(conflicts)
-            )
+            raise BranchConflictError(source.branch_name, target.branch_name, sorted(conflicts))
 
         # Apply merge: start from target manifest, apply source changes
         merged_entries = dict(target_manifest.entries)
@@ -1150,9 +1140,7 @@ class ContextBranchService:
         )
 
         # Advance target HEAD
-        self._advance_head_with_retry(
-            zone_id, workspace_path, target.branch_name, merge_snap_id
-        )
+        self._advance_head_with_retry(zone_id, workspace_path, target.branch_name, merge_snap_id)
 
         # Mark source as merged
         with self._session_factory() as s2:

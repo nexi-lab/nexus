@@ -94,7 +94,8 @@ class FakeWorkspaceManagerE2E:
             from sqlalchemy import desc
 
             last = session.execute(
-                __import__("sqlalchemy").select(WorkspaceSnapshotModel.snapshot_number)
+                __import__("sqlalchemy")
+                .select(WorkspaceSnapshotModel.snapshot_number)
                 .where(WorkspaceSnapshotModel.workspace_path == workspace_path)
                 .order_by(desc(WorkspaceSnapshotModel.snapshot_number))
                 .limit(1)
@@ -444,8 +445,12 @@ class TestE2EThreeWayMerge:
         # Create initial commit with known manifest
         initial_manifest = WorkspaceManifest(
             entries={
-                "shared.txt": ManifestEntry(content_hash="hash-shared", size=100, mime_type="text/plain"),
-                "common.txt": ManifestEntry(content_hash="hash-common", size=50, mime_type="text/plain"),
+                "shared.txt": ManifestEntry(
+                    content_hash="hash-shared", size=100, mime_type="text/plain"
+                ),
+                "common.txt": ManifestEntry(
+                    content_hash="hash-common", size=50, mime_type="text/plain"
+                ),
             }
         )
         initial_bytes = initial_manifest.to_json()
@@ -454,7 +459,6 @@ class TestE2EThreeWayMerge:
 
         # Manually create snapshot with this manifest
         with session_factory() as s:
-
             snap = WorkspaceSnapshotModel(
                 snapshot_id="snap-initial",
                 workspace_path=ws,
@@ -476,14 +480,22 @@ class TestE2EThreeWayMerge:
         # Create divergent manifests for source and target
         source_manifest = WorkspaceManifest(
             entries={
-                "shared.txt": ManifestEntry(content_hash="hash-source-edit", size=200, mime_type="text/plain"),
-                "common.txt": ManifestEntry(content_hash="hash-common", size=50, mime_type="text/plain"),
+                "shared.txt": ManifestEntry(
+                    content_hash="hash-source-edit", size=200, mime_type="text/plain"
+                ),
+                "common.txt": ManifestEntry(
+                    content_hash="hash-common", size=50, mime_type="text/plain"
+                ),
             }
         )
         target_manifest = WorkspaceManifest(
             entries={
-                "shared.txt": ManifestEntry(content_hash="hash-target-edit", size=300, mime_type="text/plain"),
-                "common.txt": ManifestEntry(content_hash="hash-common", size=50, mime_type="text/plain"),
+                "shared.txt": ManifestEntry(
+                    content_hash="hash-target-edit", size=300, mime_type="text/plain"
+                ),
+                "common.txt": ManifestEntry(
+                    content_hash="hash-common", size=50, mime_type="text/plain"
+                ),
             }
         )
 

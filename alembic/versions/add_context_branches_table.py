@@ -40,16 +40,14 @@ def upgrade() -> None:
         sa.Column("parent_branch", sa.String(255), nullable=True),
         sa.Column("fork_point_id", sa.String(36), nullable=True),
         sa.Column("status", sa.String(20), nullable=False, server_default="active"),
-        sa.Column("is_current", sa.Boolean(), nullable=False, server_default=sa.text("0")),
+        sa.Column("is_current", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("pointer_version", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("merged_into_branch", sa.String(255), nullable=True),
         sa.Column("merge_snapshot_id", sa.String(36), nullable=True),
         sa.Column("created_by", sa.String(255), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
         sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
-        sa.UniqueConstraint(
-            "zone_id", "workspace_path", "branch_name", name="uq_context_branch"
-        ),
+        sa.UniqueConstraint("zone_id", "workspace_path", "branch_name", name="uq_context_branch"),
     )
     op.create_index("ix_ctx_branch_zone_ws", "context_branches", ["zone_id", "workspace_path"])
     op.create_index("ix_ctx_branch_status", "context_branches", ["status"])

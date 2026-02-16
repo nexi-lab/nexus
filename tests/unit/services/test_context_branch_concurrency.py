@@ -74,9 +74,7 @@ class TestPointerVersionIncrement:
 
         with session_factory() as session:
             branch = session.execute(
-                select(ContextBranchModel).where(
-                    ContextBranchModel.branch_name == "main"
-                )
+                select(ContextBranchModel).where(ContextBranchModel.branch_name == "main")
             ).scalar_one()
             assert branch.pointer_version == 1
             assert branch.head_snapshot_id == "snap-new"
@@ -89,9 +87,7 @@ class TestPointerVersionIncrement:
 
         with session_factory() as session:
             branch = session.execute(
-                select(ContextBranchModel).where(
-                    ContextBranchModel.branch_name == "main"
-                )
+                select(ContextBranchModel).where(ContextBranchModel.branch_name == "main")
             ).scalar_one()
             assert branch.pointer_version == 3
             assert branch.head_snapshot_id == "snap-3"
@@ -108,7 +104,6 @@ class TestStalePointerDetection:
 
         # Monkey-patch: intercept the update to simulate concurrent modification
         call_count = 0
-
 
         original_session_factory = service._session_factory
 
@@ -177,11 +172,14 @@ class TestRetryWithBackoff:
     def test_retry_exhaustion_raises(self, mock_sleep, service, session_factory):
         _setup_branch(session_factory, pointer_version=0)
 
-        with patch.object(
-            service,
-            "_advance_head",
-            side_effect=StalePointerError("main", 0, 1),
-        ), pytest.raises(StalePointerError):
+        with (
+            patch.object(
+                service,
+                "_advance_head",
+                side_effect=StalePointerError("main", 0, 1),
+            ),
+            pytest.raises(StalePointerError),
+        ):
             service._advance_head_with_retry("z1", "/ws", "main", "snap-new")
 
         # Should have retried MAX_RETRIES - 1 times (last attempt doesn't sleep)
@@ -191,11 +189,14 @@ class TestRetryWithBackoff:
     def test_exponential_backoff_timing(self, mock_sleep, service, session_factory):
         _setup_branch(session_factory, pointer_version=0)
 
-        with patch.object(
-            service,
-            "_advance_head",
-            side_effect=StalePointerError("main", 0, 1),
-        ), pytest.raises(StalePointerError):
+        with (
+            patch.object(
+                service,
+                "_advance_head",
+                side_effect=StalePointerError("main", 0, 1),
+            ),
+            pytest.raises(StalePointerError),
+        ):
             service._advance_head_with_retry("z1", "/ws", "main", "snap-new")
 
         # Verify exponential backoff: 10ms, 20ms

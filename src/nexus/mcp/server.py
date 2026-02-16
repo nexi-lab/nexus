@@ -1407,8 +1407,12 @@ def create_mcp_server(
             return tool_error("unavailable", "Context branching not available.")
         result = svc.create_branch(workspace, name, from_branch=from_branch)
         return json.dumps(
-            {"branch_name": result.branch_name, "parent_branch": result.parent_branch,
-             "fork_point_id": result.fork_point_id, "id": result.id},
+            {
+                "branch_name": result.branch_name,
+                "parent_branch": result.parent_branch,
+                "fork_point_id": result.fork_point_id,
+                "id": result.id,
+            },
             indent=2,
         )
 
@@ -1421,9 +1425,7 @@ def create_mcp_server(
         }
     )
     @handle_tool_errors("checking out context branch")
-    def nexus_context_checkout(
-        workspace: str, target: str, ctx: Context | None = None
-    ) -> str:
+    def nexus_context_checkout(workspace: str, target: str, ctx: Context | None = None) -> str:
         """Switch to a different branch and restore its workspace state.
 
         Args:
@@ -1473,9 +1475,14 @@ def create_mcp_server(
             return tool_error("unavailable", "Context branching not available.")
         result = svc.merge(workspace, source, target_branch=target, strategy=strategy)
         return json.dumps(
-            {"merged": result.merged, "fast_forward": result.fast_forward,
-             "files_added": result.files_added, "files_removed": result.files_removed,
-             "files_modified": result.files_modified, "strategy": result.strategy},
+            {
+                "merged": result.merged,
+                "fast_forward": result.fast_forward,
+                "files_added": result.files_added,
+                "files_removed": result.files_removed,
+                "files_modified": result.files_modified,
+                "strategy": result.strategy,
+            },
             indent=2,
         )
 
@@ -1506,9 +1513,16 @@ def create_mcp_server(
             return tool_error("unavailable", "Context branching not available.")
         branches = svc.list_branches(workspace, include_inactive=include_inactive)
         return json.dumps(
-            [{"branch_name": b.branch_name, "status": b.status,
-              "is_current": b.is_current, "head_snapshot_id": b.head_snapshot_id,
-              "parent_branch": b.parent_branch} for b in branches],
+            [
+                {
+                    "branch_name": b.branch_name,
+                    "status": b.status,
+                    "is_current": b.is_current,
+                    "head_snapshot_id": b.head_snapshot_id,
+                    "parent_branch": b.parent_branch,
+                }
+                for b in branches
+            ],
             indent=2,
         )
 
@@ -1521,9 +1535,7 @@ def create_mcp_server(
         }
     )
     @handle_tool_errors("viewing context log")
-    def nexus_context_log(
-        workspace: str, limit: int = 20, ctx: Context | None = None
-    ) -> str:
+    def nexus_context_log(workspace: str, limit: int = 20, ctx: Context | None = None) -> str:
         """Show snapshot history for a workspace.
 
         Args:
@@ -1549,9 +1561,7 @@ def create_mcp_server(
         }
     )
     @handle_tool_errors("starting context exploration")
-    def nexus_context_explore(
-        workspace: str, description: str, ctx: Context | None = None
-    ) -> str:
+    def nexus_context_explore(workspace: str, description: str, ctx: Context | None = None) -> str:
         """Start an exploration: auto-commit + create branch + checkout.
 
         Args:
@@ -1567,9 +1577,13 @@ def create_mcp_server(
             return tool_error("unavailable", "Context branching not available.")
         result = svc.explore(workspace, description)
         return json.dumps(
-            {"branch_name": result.branch_name, "branch_id": result.branch_id,
-             "fork_point_snapshot_id": result.fork_point_snapshot_id,
-             "skipped_commit": result.skipped_commit, "message": result.message},
+            {
+                "branch_name": result.branch_name,
+                "branch_id": result.branch_id,
+                "fork_point_snapshot_id": result.fork_point_snapshot_id,
+                "skipped_commit": result.skipped_commit,
+                "message": result.message,
+            },
             indent=2,
         )
 

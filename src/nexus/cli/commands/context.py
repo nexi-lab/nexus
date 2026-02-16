@@ -167,7 +167,9 @@ def merge_cmd(
             return
         result = svc.merge(workspace, source, target_branch=target, strategy=strategy)
         if result.fast_forward:
-            console.print(f"[green]✓[/green] Fast-forward merge: '{source}' → '{target or 'current'}'")
+            console.print(
+                f"[green]✓[/green] Fast-forward merge: '{source}' → '{target or 'current'}'"
+            )
         else:
             console.print(
                 f"[green]✓[/green] Merged '{source}' → '{target or 'current'}' "
@@ -303,7 +305,9 @@ def diff_cmd(
         added = result.get("added", [])
         removed = result.get("removed", [])
         modified = result.get("modified", [])
-        console.print(f"[green]+{len(added)}[/green] added, [red]-{len(removed)}[/red] removed, [yellow]~{len(modified)}[/yellow] modified")
+        console.print(
+            f"[green]+{len(added)}[/green] added, [red]-{len(removed)}[/red] removed, [yellow]~{len(modified)}[/yellow] modified"
+        )
         for f in added:
             console.print(f"  [green]+[/green] {f['path']}")
         for f in removed:
@@ -385,7 +389,9 @@ def finish_cmd(
         if result["outcome"] == "merged":
             console.print(f"[green]✓[/green] Merged '{branch}' into '{result['merged_into']}'")
         else:
-            console.print(f"[yellow]✓[/yellow] Discarded branch '{branch}', returned to '{result['returned_to']}'")
+            console.print(
+                f"[yellow]✓[/yellow] Discarded branch '{branch}', returned to '{result['returned_to']}'"
+            )
         nx.close()
     except Exception as e:
         handle_error(e)

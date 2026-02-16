@@ -266,9 +266,7 @@ class TestDeleteBranch:
         # Manually mark as merged
         with session_factory() as session:
             branch = session.execute(
-                select(ContextBranchModel).where(
-                    ContextBranchModel.branch_name == "feature"
-                )
+                select(ContextBranchModel).where(ContextBranchModel.branch_name == "feature")
             ).scalar_one()
             branch.status = "merged"
             session.commit()
@@ -291,9 +289,7 @@ class TestCommit:
         assert result["pointer_advanced"] is True
         mock_workspace_manager.create_snapshot.assert_called_once()
 
-    def test_commit_to_named_branch(
-        self, service, session_factory, mock_workspace_manager
-    ):
+    def test_commit_to_named_branch(self, service, session_factory, mock_workspace_manager):
         service.ensure_main_branch("/ws")
         service.create_branch("/ws", "dev")
         result = service.commit("/ws", message="Dev work", branch_name="dev")
@@ -309,9 +305,7 @@ class TestCommit:
         service.create_branch("/ws", "done")
         with session_factory() as session:
             branch = session.execute(
-                select(ContextBranchModel).where(
-                    ContextBranchModel.branch_name == "done"
-                )
+                select(ContextBranchModel).where(ContextBranchModel.branch_name == "done")
             ).scalar_one()
             branch.status = "merged"
             session.commit()
@@ -336,9 +330,7 @@ class TestCheckout:
         current = service.get_current_branch("/ws")
         assert current.branch_name == "dev"
 
-    def test_checkout_restores_workspace(
-        self, service, session_factory, mock_workspace_manager
-    ):
+    def test_checkout_restores_workspace(self, service, session_factory, mock_workspace_manager):
         snap_id = _add_snapshot(session_factory, "/ws", "snap-1", 1)
         service.ensure_main_branch("/ws")
         service.create_branch("/ws", "dev", from_snapshot_id=snap_id)
@@ -364,9 +356,7 @@ class TestCheckout:
 
 
 class TestLogDiff:
-    def test_log_delegates_to_workspace_manager(
-        self, service, mock_workspace_manager
-    ):
+    def test_log_delegates_to_workspace_manager(self, service, mock_workspace_manager):
         service.log("/ws", limit=10)
         mock_workspace_manager.list_snapshots.assert_called_once_with(
             workspace_path="/ws",
@@ -376,9 +366,7 @@ class TestLogDiff:
             zone_id=None,
         )
 
-    def test_diff_delegates_to_workspace_manager(
-        self, service, mock_workspace_manager
-    ):
+    def test_diff_delegates_to_workspace_manager(self, service, mock_workspace_manager):
         service.diff("/ws", "snap-1", "snap-2")
         mock_workspace_manager.diff_snapshots.assert_called_once_with(
             snapshot_id_1="snap-1",

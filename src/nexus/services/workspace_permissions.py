@@ -17,24 +17,28 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Permission mapping: workspace operations → file-level ReBAC permissions
-_WRITE_PERMISSIONS = frozenset({
-    "snapshot:create",
-    "snapshot:restore",
-    "branch:create",
-    "branch:delete",
-    "branch:merge",
-    "branch:checkout",
-    "branch:explore",
-})
+_WRITE_PERMISSIONS = frozenset(
+    {
+        "snapshot:create",
+        "snapshot:restore",
+        "branch:create",
+        "branch:delete",
+        "branch:merge",
+        "branch:checkout",
+        "branch:explore",
+    }
+)
 
-_READ_PERMISSIONS = frozenset({
-    "snapshot:list",
-    "snapshot:diff",
-    "branch:list",
-    "branch:read",
-    "branch:log",
-    "branch:diff",
-})
+_READ_PERMISSIONS = frozenset(
+    {
+        "snapshot:list",
+        "snapshot:diff",
+        "branch:list",
+        "branch:read",
+        "branch:log",
+        "branch:diff",
+    }
+)
 
 
 def check_workspace_permission(
@@ -115,6 +119,4 @@ def check_workspace_permission(
             workspace_path,
             check_zone_id,
         )
-        raise NexusPermissionError(
-            f"Permission denied: {permission} on workspace {workspace_path}"
-        )
+        raise NexusPermissionError(f"Permission denied: {permission} on workspace {workspace_path}")

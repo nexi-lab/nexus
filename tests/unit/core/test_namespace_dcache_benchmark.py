@@ -191,9 +191,7 @@ class TestDCacheBenchmark:
         subject = ("user", "bench-user")
         zone_id = None
 
-        paths = [
-            f"/workspace/project-{i % 20:03d}/file-{i % 10:02d}.csv" for i in range(1000)
-        ]
+        paths = [f"/workspace/project-{i % 20:03d}/file-{i % 10:02d}.csv" for i in range(1000)]
 
         # Cold run
         start = time.perf_counter()
@@ -211,5 +209,7 @@ class TestDCacheBenchmark:
         print(f"Speedup: {cold_ms / max(warm_ms, 0.001):.1f}x")
 
         assert len(result_cold) == len(result_warm), "Cold and warm should return same results"
-        assert cold_ms < 500, f"Cold filter_visible should complete under 500ms, got {cold_ms:.1f}ms"
+        assert cold_ms < 500, (
+            f"Cold filter_visible should complete under 500ms, got {cold_ms:.1f}ms"
+        )
         assert warm_ms < cold_ms, "Warm should be faster than cold"

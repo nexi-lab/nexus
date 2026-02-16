@@ -119,18 +119,26 @@ class FakeWorkspaceManager:
         }
 
     def restore_snapshot(self, snapshot_id=None, **kwargs):
-        return {"files_restored": 1, "files_deleted": 0, "snapshot_info": {"snapshot_id": snapshot_id}}
+        return {
+            "files_restored": 1,
+            "files_deleted": 0,
+            "snapshot_info": {"snapshot_id": snapshot_id},
+        }
 
     def list_snapshots(self, workspace_path, limit=100, **kwargs):
         with self._session_factory() as session:
             from sqlalchemy import desc
 
-            snaps = session.execute(
-                select(WorkspaceSnapshotModel)
-                .where(WorkspaceSnapshotModel.workspace_path == workspace_path)
-                .order_by(desc(WorkspaceSnapshotModel.created_at))
-                .limit(limit)
-            ).scalars().all()
+            snaps = (
+                session.execute(
+                    select(WorkspaceSnapshotModel)
+                    .where(WorkspaceSnapshotModel.workspace_path == workspace_path)
+                    .order_by(desc(WorkspaceSnapshotModel.created_at))
+                    .limit(limit)
+                )
+                .scalars()
+                .all()
+            )
             return [
                 {
                     "snapshot_id": s.snapshot_id,
@@ -244,9 +252,7 @@ class TestExploreAndDiscard:
         explore_result = service.explore(ws, "Bad idea")
 
         # 3. Finish exploration (discard)
-        finish_result = service.finish_explore(
-            ws, explore_result.branch_name, outcome="discard"
-        )
+        finish_result = service.finish_explore(ws, explore_result.branch_name, outcome="discard")
         assert finish_result["outcome"] == "discarded"
         assert finish_result["returned_to"] == "main"
 

@@ -69,9 +69,7 @@ class ContextBranchModel(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint(
-            "zone_id", "workspace_path", "branch_name", name="uq_context_branch"
-        ),
+        UniqueConstraint("zone_id", "workspace_path", "branch_name", name="uq_context_branch"),
         Index("ix_ctx_branch_zone_ws", "zone_id", "workspace_path"),
         Index("ix_ctx_branch_status", "status"),
     )

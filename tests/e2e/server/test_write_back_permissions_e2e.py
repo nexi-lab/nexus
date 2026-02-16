@@ -131,9 +131,17 @@ def _build_startup_script(port: int, data_dir: str) -> str:
         _OrigNS = ns_mod.NamespaceManager
         class _NoCacheNS(_OrigNS):
             def __init__(self, **kwargs):
-                kwargs["cache_ttl"] = 0  # Disable caching: every check hits DB
+                kwargs["cache_ttl"] = 0  # Disable mount table cache
+                kwargs["dcache_positive_ttl"] = 0  # Disable dcache positive
+                kwargs["dcache_negative_ttl"] = 0  # Disable dcache negative
+                kwargs["revision_window"] = 1  # Immediate invalidation
+                kwargs["persistent_store"] = None  # Disable L3 persistent view store
                 super().__init__(**kwargs)
         ns_mod.NamespaceManager = _NoCacheNS
+        # Also patch the factory module which imports NamespaceManager at module
+        # load time (its own binding won't see the ns_mod patch above).
+        import nexus.rebac.namespace_factory as nf_mod
+        nf_mod.NamespaceManager = _NoCacheNS
 
         cli_main([
             'serve', '--host', '127.0.0.1', '--port', '{port}',
@@ -186,6 +194,10 @@ def server():
         # Disable non-essential services
         "NEXUS_SEARCH_DAEMON": "false",
         "NEXUS_RATE_LIMIT_ENABLED": "false",
+        # Disable namespace caching for deterministic permission tests.
+        # Best practice: Zanzibar fully_consistent / OpenFGA HIGHER_CONSISTENCY.
+        "NEXUS_NAMESPACE_CACHE_TTL": "0",
+        "NEXUS_NAMESPACE_REVISION_WINDOW": "1",
     }
 
     startup_script = _build_startup_script(port, data_dir)
@@ -302,6 +314,8 @@ def _grant_permission(
     )
     assert resp.status_code == 200, f"Grant failed: {resp.text}"
     result = resp.json()
+    # Small delay for permission propagation (namespace cache invalidation)
+    time.sleep(0.1)
     # RPC response wraps result in "result" key
     if "result" in result:
         return result["result"].get("tuple_id", "")

@@ -283,14 +283,25 @@ async def lifespan(_app: FastAPI) -> Any:
     # Initialize async ReBAC manager if database URL provided
     if _app.state.database_url:
         try:
-            from nexus.rebac.async_manager import (
-                AsyncReBACManager,
-                create_async_engine_from_url,
-            )
+            from nexus.rebac.async_manager import AsyncReBACManager
 
-            engine = create_async_engine_from_url(_app.state.database_url)
-            _app.state.async_rebac_manager = AsyncReBACManager(engine)
-            logger.info("Async ReBAC manager initialized")
+            # Issue #1385: AsyncReBACManager is a thin asyncio.to_thread() wrapper
+            # around the sync ReBACManager. Use the existing sync manager from NexusFS.
+            sync_rebac = getattr(_app.state, "nexus_fs", None)
+            sync_rebac = getattr(sync_rebac, "_rebac_manager", None) if sync_rebac else None
+            if sync_rebac:
+                _app.state.async_rebac_manager = AsyncReBACManager(sync_rebac)
+                logger.info("Async ReBAC manager initialized (wrapping sync manager)")
+            else:
+                # Fallback: create a fresh sync manager for async wrapper
+                from nexus.rebac.manager import ReBACManager
+
+                from sqlalchemy import create_engine as _create_engine
+
+                _sync_engine = _create_engine(_app.state.database_url)
+                _sync_mgr = ReBACManager(engine=_sync_engine)
+                _app.state.async_rebac_manager = AsyncReBACManager(_sync_mgr)
+                logger.info("Async ReBAC manager initialized (fresh sync manager)")
 
             # Issue #940: Initialize AsyncNexusFS with permission enforcement
             try:

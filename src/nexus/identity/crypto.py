@@ -2,7 +2,7 @@
 
 Cohesive crypto module handling:
 - Ed25519 keypair generation and serialization
-- Private key Fernet encryption/decryption (reuses OAuthCrypto)
+- Private key Fernet encryption/decryption (reuses TokenEncryptor)
 - Ed25519 signing and verification
 - Public key raw bytes extraction
 
@@ -13,7 +13,7 @@ No additional crypto dependencies required.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import Protocol
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -27,8 +27,16 @@ from cryptography.hazmat.primitives.serialization import (
     PublicFormat,
 )
 
-if TYPE_CHECKING:
-    from nexus.server.auth.oauth_crypto import OAuthCrypto
+
+class TokenEncryptor(Protocol):
+    """Protocol for Fernet token encryption/decryption.
+
+    Satisfied by OAuthCrypto and any compatible implementation.
+    """
+
+    def encrypt_token(self, token: str) -> str: ...
+    def decrypt_token(self, encrypted: str) -> str: ...
+
 
 logger = logging.getLogger(__name__)
 
@@ -36,17 +44,17 @@ logger = logging.getLogger(__name__)
 class IdentityCrypto:
     """Ed25519 + Fernet crypto for agent identity.
 
-    Delegates Fernet encryption to OAuthCrypto (reuse, not reinvent).
+    Delegates Fernet encryption to TokenEncryptor (reuse, not reinvent).
     All methods are deterministic and side-effect free except generate_keypair
     (which uses OS CSPRNG).
 
     Args:
-        oauth_crypto: Optional OAuthCrypto instance for Fernet encryption of
+        oauth_crypto: Optional TokenEncryptor instance for Fernet encryption of
             private keys at rest. If None, private key encryption/decryption
             will raise ValueError.
     """
 
-    def __init__(self, oauth_crypto: OAuthCrypto | None = None) -> None:
+    def __init__(self, oauth_crypto: TokenEncryptor | None = None) -> None:
         self._oauth_crypto = oauth_crypto
 
     def generate_keypair(self) -> tuple[Ed25519PrivateKey, Ed25519PublicKey]:
@@ -63,7 +71,7 @@ class IdentityCrypto:
         """Encrypt an Ed25519 private key for at-rest storage using Fernet.
 
         Serializes the private key to raw 32-byte format, then hex-encodes it
-        before Fernet encryption (OAuthCrypto operates on strings).
+        before Fernet encryption (TokenEncryptor operates on strings).
 
         Args:
             private_key: Ed25519 private key to encrypt.
@@ -72,11 +80,11 @@ class IdentityCrypto:
             Fernet-encrypted string (base64).
 
         Raises:
-            ValueError: If OAuthCrypto is not configured.
+            ValueError: If TokenEncryptor is not configured.
         """
         if self._oauth_crypto is None:
             raise ValueError(
-                "OAuthCrypto is required for private key encryption. "
+                "TokenEncryptor is required for private key encryption. "
                 "Pass oauth_crypto to IdentityCrypto constructor."
             )
         raw_bytes = private_key.private_bytes(
@@ -97,11 +105,11 @@ class IdentityCrypto:
             Ed25519PrivateKey instance.
 
         Raises:
-            ValueError: If OAuthCrypto is not configured or decryption fails.
+            ValueError: If TokenEncryptor is not configured or decryption fails.
         """
         if self._oauth_crypto is None:
             raise ValueError(
-                "OAuthCrypto is required for private key decryption. "
+                "TokenEncryptor is required for private key decryption. "
                 "Pass oauth_crypto to IdentityCrypto constructor."
             )
         hex_string = self._oauth_crypto.decrypt_token(encrypted)

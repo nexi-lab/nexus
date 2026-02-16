@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nexus.a2a.models import (
     Artifact,
@@ -20,6 +20,9 @@ from nexus.a2a.models import (
     TaskStatus,
 )
 
+if TYPE_CHECKING:
+    from nexus.storage.record_store import RecordStoreABC
+
 logger = logging.getLogger(__name__)
 
 
@@ -28,12 +31,12 @@ class DatabaseTaskStore:
 
     Parameters
     ----------
-    session_factory:
-        A callable that returns a SQLAlchemy ``Session`` (sync).
+    record_store:
+        A ``RecordStoreABC`` providing ``session_factory`` for database access.
     """
 
-    def __init__(self, session_factory: Any) -> None:
-        self._session_factory = session_factory
+    def __init__(self, record_store: RecordStoreABC) -> None:
+        self._session_factory = record_store.session_factory
 
     async def save(
         self,

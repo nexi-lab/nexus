@@ -8,7 +8,7 @@ import fnmatch
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Protocol
 
 from nexus.workflows.protocol import GlobMatchFn
 from nexus.workflows.types import TriggerType, WorkflowContext
@@ -144,8 +144,16 @@ class ManualTrigger(BaseTrigger):
         return True
 
 
+class TriggerFactory(Protocol):
+    """Callable protocol for trigger constructors (config, *, glob_match)."""
+
+    def __call__(
+        self, config: dict[str, Any], *, glob_match: GlobMatchFn | None = None
+    ) -> BaseTrigger: ...
+
+
 # Built-in trigger registry
-BUILTIN_TRIGGERS = {
+BUILTIN_TRIGGERS: dict[TriggerType, TriggerFactory] = {
     TriggerType.FILE_WRITE: FileWriteTrigger,
     TriggerType.FILE_DELETE: FileDeleteTrigger,
     TriggerType.FILE_RENAME: FileRenameTrigger,

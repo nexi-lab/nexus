@@ -20,9 +20,9 @@ from tenacity import (
     wait_exponential_jitter,
 )
 
-from nexus.core.rpc_codec import decode_rpc_message
 from nexus.proxy.config import ProxyBrickConfig
 from nexus.proxy.errors import RemoteCallError
+from nexus.rpc_codec import decode_rpc_message
 
 logger = logging.getLogger(__name__)
 

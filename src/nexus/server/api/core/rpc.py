@@ -22,7 +22,7 @@ from nexus.core.exceptions import (
     NexusPermissionError,
     ValidationError,
 )
-from nexus.core.rpc_codec import decode_rpc_message, encode_rpc_message
+from nexus.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.server.dependencies import require_auth
 from nexus.server.protocol import (
     RPCErrorCode,

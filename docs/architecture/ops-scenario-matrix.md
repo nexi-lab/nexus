@@ -7,6 +7,13 @@
 **Companion document:** `data-storage-matrix.md` (Data × Storage affinity)
 **This document:** Ops ABC × Scenario affinity (the second axis of the dual-axis architecture)
 
+> **Contributing Rule — State-of-the-Art Only**
+>
+> This document is a **living SSOT**, not a changelog. All edits must be **in-place**:
+> update the existing row/section, don't append a new one. If a decision changes,
+> overwrite the old decision — the git history is the audit trail.
+> Goal: the document always reads as if written today, from scratch.
+
 ---
 
 ## Dual-Axis Architecture

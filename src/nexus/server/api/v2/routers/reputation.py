@@ -247,7 +247,7 @@ def get_agent_reputation(
 
 @router.get("/api/v2/reputation/leaderboard")
 def get_leaderboard(
-    zone_id: str = "default",
+    zone_id: str = "root",
     context: str = "general",
     limit: int = 50,
     deps: tuple[Any, Any, dict[str, Any]] = Depends(get_reputation_context),
@@ -269,7 +269,7 @@ def submit_feedback(
     from nexus.services.reputation.reputation_service import DuplicateFeedbackError
 
     reputation_service, _dispute_service, auth_ctx = deps
-    zone_id = auth_ctx.get("zone_id", "default") or "default"
+    zone_id = auth_ctx.get("zone_id", "root") or "root"
 
     try:
         event = reputation_service.submit_feedback(
@@ -315,7 +315,7 @@ def file_dispute(
     from nexus.services.reputation.dispute_service import DuplicateDisputeError
 
     _reputation_service, dispute_service, auth_ctx = deps
-    zone_id = auth_ctx.get("zone_id", "default") or "default"
+    zone_id = auth_ctx.get("zone_id", "root") or "root"
 
     try:
         dispute = dispute_service.file_dispute(

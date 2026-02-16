@@ -89,17 +89,6 @@ class Backend(ABC):
     - Compatible with path router and mounting
     """
 
-    @staticmethod
-    def resolve_database_url(db_param: str) -> str:
-        """Resolve database URL with TOKEN_MANAGER_DB env var priority.
-
-        .. deprecated::
-            Use ``nexus.backends.connector_utils.resolve_database_url`` instead.
-        """
-        from nexus.backends.connector_utils import resolve_database_url
-
-        return resolve_database_url(db_param)
-
     @property
     @abstractmethod
     def name(self) -> str:
@@ -379,7 +368,11 @@ class Backend(ABC):
         pass
 
     def batch_read_content(
-        self, content_hashes: list[str], context: "OperationContext | None" = None
+        self,
+        content_hashes: list[str],
+        context: "OperationContext | None" = None,
+        *,
+        contexts: "dict[str, OperationContext] | None" = None,
     ) -> dict[str, bytes | None]:
         """
         Read multiple content items by their hashes (batch operation).
@@ -390,7 +383,10 @@ class Backend(ABC):
 
         Args:
             content_hashes: List of SHA-256 hashes as hex strings
-            context: Operation context with user/zone info (optional, for user-scoped backends)
+            context: Shared operation context (used when per-hash context is not available)
+            contexts: Per-hash operation contexts mapping content_hash -> OperationContext.
+                     Used by path-based backends (S3, etc.) that need per-file backend_path.
+                     Falls back to ``context`` for hashes not in this dict.
 
         Returns:
             Dictionary mapping content_hash -> content bytes
@@ -402,7 +398,8 @@ class Backend(ABC):
         """
         result: dict[str, bytes | None] = {}
         for content_hash in content_hashes:
-            response = self.read_content(content_hash, context=context)
+            ctx = contexts.get(content_hash, context) if contexts else context
+            response = self.read_content(content_hash, context=ctx)
             if response.success:
                 result[content_hash] = response.data
             else:
@@ -735,9 +732,8 @@ class Backend(ABC):
     def get_object_type(self, _backend_path: str) -> str:
         """Map backend path to ReBAC object type.
 
-        .. deprecated::
-            Use ``ObjectTypeMapper.get_object_type()`` instead. Kept on Backend
-            so IPCVFSDriver and other subclass overrides still work.
+        Override in subclasses (e.g. IPCVFSDriver) for custom object type mapping.
+        Called by ObjectTypeMapper as the virtual dispatch target.
 
         Returns:
             ReBAC object type string. Default: 'file'.
@@ -747,9 +743,8 @@ class Backend(ABC):
     def get_object_id(self, backend_path: str) -> str:
         """Map backend path to ReBAC object identifier.
 
-        .. deprecated::
-            Use ``ObjectTypeMapper.get_object_id()`` instead. Kept on Backend
-            so IPCVFSDriver and other subclass overrides still work.
+        Override in subclasses for custom object ID mapping.
+        Called by ObjectTypeMapper as the virtual dispatch target.
 
         Returns:
             Object identifier for ReBAC. Default: backend_path as-is.

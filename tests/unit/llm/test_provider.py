@@ -285,7 +285,10 @@ class TestCountTokens:
 
             config = _make_config()
             p = LiteLLMProvider(config)
-            p._token_count_cache_max_size = 2
+            # Replace cache with a small one to test eviction
+            from cachetools import LRUCache
+
+            p._token_count_cache = LRUCache(maxsize=2)
 
         with patch("nexus.llm.provider.litellm") as mock_litellm:
             mock_litellm.token_counter.return_value = 10

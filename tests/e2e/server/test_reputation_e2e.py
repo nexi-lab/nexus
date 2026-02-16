@@ -366,7 +366,7 @@ class TestLeaderboard:
         response = httpx.get(
             f"{base_url}/api/v2/reputation/leaderboard",
             headers=_headers(api_key),
-            params={"zone_id": "default"},
+            params={"zone_id": "root"},
             timeout=10.0,
             trust_env=False,
         )

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import collections
 import contextlib
 import copy
 import hashlib
@@ -16,6 +15,7 @@ from functools import partial
 from typing import Any, cast
 
 import litellm
+from cachetools import LRUCache
 from litellm import PromptTokensDetails
 from litellm import acompletion as litellm_acompletion
 from litellm import completion as litellm_completion
@@ -212,20 +212,26 @@ class LiteLLMResponse(LLMResponse):
 class LLMProvider(ABC):
     """Abstract base class for LLM providers."""
 
-    def __init__(self, config: LLMConfig, metrics: LLMMetrics | None = None):
+    def __init__(
+        self,
+        config: LLMConfig,
+        metrics: LLMMetrics | None = None,
+        *,
+        token_count_cache_maxsize: int = 1000,
+    ):
         """Initialize the provider.
 
         Args:
             config: LLM configuration
             metrics: Optional metrics tracker
+            token_count_cache_maxsize: Max entries in the token count LRU cache
         """
         self.config = copy.deepcopy(config)
         self.metrics = metrics if metrics is not None else LLMMetrics(model_name=config.model)
         self.model_info: ModelInfo | None = None
         self._vision_supported: bool = False
         self._function_calling_active: bool = False
-        self._token_count_cache: collections.OrderedDict[str, int] = collections.OrderedDict()
-        self._token_count_cache_max_size = 1000
+        self._token_count_cache: LRUCache[str, int] = LRUCache(maxsize=token_count_cache_maxsize)
         self.cost_metric_supported = True
 
     @abstractmethod
@@ -696,7 +702,6 @@ class LiteLLMProvider(LLMProvider):
                 (self.config.model + str(formatted_messages)).encode()
             ).hexdigest()
             if cache_key in self._token_count_cache:
-                self._token_count_cache.move_to_end(cache_key)
                 return self._token_count_cache[cache_key]
         except (TypeError, AttributeError, ValueError):
             cache_key = None
@@ -711,11 +716,9 @@ class LiteLLMProvider(LLMProvider):
                 )
             )
 
+            # Cache result (LRU evicts automatically)
             if cache_key:
                 self._token_count_cache[cache_key] = token_count
-                # Evict LRU entries if over capacity
-                while len(self._token_count_cache) > self._token_count_cache_max_size:
-                    self._token_count_cache.popitem(last=False)
 
             return token_count
         except (ValueError, TypeError, AttributeError) as e:

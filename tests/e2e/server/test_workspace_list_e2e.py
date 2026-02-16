@@ -336,7 +336,7 @@ class TestWorkspaceListE2E:
         """list_workspaces without identity headers returns empty list.
 
         In open-access mode, requests without X-Nexus-Subject default to
-        user_id="anonymous", zone_id="default" — which won't match any
+        user_id="anonymous", zone_id="root" — which won't match any
         workspaces created by alice or bob.
         """
         resp = _rpc_call(client, base_url, "list_workspaces", {})

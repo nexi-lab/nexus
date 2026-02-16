@@ -107,7 +107,7 @@ def operation_context():
         user="test@example.com",
         groups=[],
         user_id="test@example.com",
-        zone_id="default",
+        zone_id="root",
     )
 
 

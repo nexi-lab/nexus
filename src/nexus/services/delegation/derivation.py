@@ -21,11 +21,33 @@ from dataclasses import dataclass
 from nexus.services.delegation.errors import (
     EscalationError,
     InvalidDelegationModeError,
+    InvalidPrefixError,
     TooManyGrantsError,
 )
 from nexus.services.delegation.models import DelegationMode
 
 MAX_DELEGATABLE_GRANTS = 1000
+
+
+def validate_scope_prefix(prefix: str | None) -> None:
+    """Validate scope_prefix at system boundary.
+
+    Rejects malformed prefixes that could cause path-traversal or
+    matching bugs in _matches_prefix().
+
+    Raises:
+        InvalidPrefixError: If prefix is empty, relative, or malformed.
+    """
+    if prefix is None:
+        return
+    if not prefix:
+        raise InvalidPrefixError("scope_prefix must not be empty string")
+    if not prefix.startswith("/"):
+        raise InvalidPrefixError(f"scope_prefix must be absolute (start with /): {prefix!r}")
+    if "//" in prefix:
+        raise InvalidPrefixError(f"scope_prefix must not contain '//': {prefix!r}")
+    if "/.." in prefix or "/../" in prefix or prefix.endswith("/.."):
+        raise InvalidPrefixError(f"scope_prefix must not contain '..': {prefix!r}")
 
 
 @dataclass(frozen=True)
@@ -74,6 +96,9 @@ def derive_grants(
         TooManyGrantsError: If derived grants exceed MAX_DELEGATABLE_GRANTS.
         InvalidDelegationModeError: If mode is not a valid DelegationMode.
     """
+    # Validate prefix at system boundary (Issue #1618, Issue 16A)
+    validate_scope_prefix(scope_prefix)
+
     remove_set = frozenset(remove_grants) if remove_grants else frozenset()
     add_set = frozenset(add_grants) if add_grants else frozenset()
     readonly_set = frozenset(readonly_paths) if readonly_paths else frozenset()

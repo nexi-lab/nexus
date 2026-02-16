@@ -25,10 +25,8 @@ from pathlib import Path
 import httpx
 import pytest
 
-from nexus.remote.client import (
-    RemoteFilesystemError,
-    RemoteNexusFS,
-)
+from nexus.core.exceptions import RemoteFilesystemError
+from nexus.remote.client import RemoteNexusFS
 
 # Clear proxy env vars so localhost connections work
 for _key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
@@ -193,7 +191,7 @@ def e2e_server(tmp_path_factory):
                                 "user_id": "admin",
                                 "name": "admin-bootstrap",
                                 "is_admin": True,
-                                "zone_id": "default",
+                                "zone_id": "root",
                             },
                             "id": 1,
                         },
@@ -253,7 +251,7 @@ def non_admin_key(e2e_server) -> str:
                 "user_id": "carol",
                 "name": "Carol (no permissions)",
                 "is_admin": False,
-                "zone_id": "default",
+                "zone_id": "root",
                 "expires_days": 1,
             },
             api_key=e2e_server["admin_api_key"],
@@ -374,7 +372,7 @@ class TestAutoDispatchedMethods:
             subject=("user", "admin"),
             permission="read",
             object=("file", "/workspace"),
-            zone_id="default",
+            zone_id="root",
         )
         assert result is True
 

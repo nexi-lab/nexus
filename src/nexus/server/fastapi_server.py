@@ -665,13 +665,8 @@ def _register_routes(app: FastAPI) -> None:
                 session_factory = getattr(_fastapi_app.state.nexus_fs, "SessionLocal", None)
                 if session_factory is None:
                     raise HTTPException(status_code=500, detail="Secrets audit not configured")
-                engine = session_factory.kw.get("bind") if hasattr(session_factory, "kw") else None
-                if engine is not None:
-                    from nexus.storage.models.secrets_audit_log import SecretsAuditLogModel
-
-                    SecretsAuditLogModel.__table__.create(engine, checkfirst=True)
                 _secrets_audit_logger_instance = SecretsAuditLogger(session_factory=session_factory)
-            zone_id = auth_result.get("zone_id", "default")
+            zone_id = auth_result.get("zone_id", "root")
             return _secrets_audit_logger_instance, zone_id
 
         app.dependency_overrides[_secrets_audit_dep] = _get_secrets_audit_logger_override

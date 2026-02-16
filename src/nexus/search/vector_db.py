@@ -347,9 +347,6 @@ class VectorDatabase:
         rrf_k: int = 60,
         normalize_scores: bool = True,
         path_filter: str | None = None,
-        # Backward compatibility (deprecated)
-        keyword_weight: float | None = None,
-        semantic_weight: float | None = None,
     ) -> list[dict[str, Any]]:
         """Hybrid search combining keyword and semantic search.
 
@@ -367,28 +364,11 @@ class VectorDatabase:
             rrf_k: RRF constant (default: 60, per original paper)
             normalize_scores: Apply min-max normalization for weighted fusion
             path_filter: Optional path prefix filter
-            keyword_weight: DEPRECATED - use alpha instead
-            semantic_weight: DEPRECATED - use alpha instead
 
         Returns:
             List of search results ranked by combined score
         """
         from nexus.search.fusion import FusionConfig, FusionMethod, fuse_results
-
-        # Handle backward compatibility for deprecated parameters
-        if keyword_weight is not None or semantic_weight is not None:
-            import warnings
-
-            warnings.warn(
-                "keyword_weight and semantic_weight are deprecated. "
-                "Use alpha parameter instead (0.0 = all BM25, 1.0 = all vector). "
-                "For equivalent behavior, set fusion_method='weighted' and alpha=semantic_weight.",
-                DeprecationWarning,
-                stacklevel=2,
-            )
-            if semantic_weight is not None:
-                alpha = semantic_weight
-                fusion_method = "weighted"
 
         # Get keyword results (retrieve more for better fusion)
         keyword_results = self.keyword_search(session, query, limit * 3, path_filter)
@@ -412,40 +392,3 @@ class VectorDatabase:
             limit=limit,
             id_key="chunk_id",
         )
-
-    def get_stats(self) -> dict[str, Any]:
-        """Get vector database statistics.
-
-        Note: This method exists for backward compatibility with tests.
-        New code should use SemanticSearch.get_index_stats() instead.
-        """
-        return {
-            "vec_enabled": self.vec_available,
-            "db_type": self.db_type,
-        }
-
-    def clear_index(self, session: Session) -> None:
-        """Clear all search indexes.
-
-        Note: This method exists for backward compatibility with tests.
-        New code should use SemanticSearch.clear_index() instead.
-        """
-        from nexus.search.models import DocumentChunkModel
-
-        session.query(DocumentChunkModel).delete()
-        session.commit()
-
-    def delete_document(self, session: Session, path_id: str) -> None:
-        """Delete document from index.
-
-        Note: This method exists for backward compatibility with tests.
-        New code should use SemanticSearch.delete_document_index() instead.
-
-        Args:
-            session: Database session
-            path_id: Path ID of document to delete
-        """
-        from nexus.search.models import DocumentChunkModel
-
-        session.query(DocumentChunkModel).filter(DocumentChunkModel.path_id == path_id).delete()
-        session.commit()

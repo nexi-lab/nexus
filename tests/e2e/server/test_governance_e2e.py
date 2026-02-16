@@ -70,10 +70,10 @@ def detector():
     d = StatisticalAnomalyDetector()
     d.set_baseline(
         "agent-a",
-        "default",
+        "root",
         AgentBaseline(
             agent_id="agent-a",
-            zone_id="default",
+            zone_id="root",
             mean_amount=100.0,
             std_amount=10.0,
             mean_frequency=5.0,
@@ -82,7 +82,7 @@ def detector():
             observation_count=50,
         ),
     )
-    d.set_counterparties("agent-a", "default", {"agent-b", "agent-c"})
+    d.set_counterparties("agent-a", "root", {"agent-b", "agent-c"})
     return d
 
 
@@ -155,7 +155,7 @@ class TestConstraintCRUD:
             json={
                 "from_agent": "agent-a",
                 "to_agent": "agent-b",
-                "zone_id": "default",
+                "zone_id": "root",
                 "constraint_type": "block",
                 "reason": "Suspicious activity",
             },
@@ -182,7 +182,7 @@ class TestConstraintCRUD:
             json={
                 "from_agent": "agent-x",
                 "to_agent": "agent-y",
-                "zone_id": "default",
+                "zone_id": "root",
                 "constraint_type": "block",
             },
         )
@@ -212,7 +212,7 @@ class TestConstraintCRUD:
             json={
                 "from_agent": "agent-p",
                 "to_agent": "agent-q",
-                "zone_id": "default",
+                "zone_id": "root",
                 "constraint_type": "block",
                 "reason": "Fraud detected",
             },
@@ -235,7 +235,7 @@ class TestConstraintCRUD:
             json={
                 "from_agent": "agent-del1",
                 "to_agent": "agent-del2",
-                "zone_id": "default",
+                "zone_id": "root",
                 "constraint_type": "block",
             },
         )
@@ -300,7 +300,7 @@ class TestAlerts:
         # Trigger anomaly (200.0 is 10 std devs above mean of 100)
         alerts = await service.analyze_transaction(
             agent_id="agent-a",
-            zone_id="default",
+            zone_id="root",
             amount=200.0,
             to="agent-b",
         )
@@ -325,7 +325,7 @@ class TestAlerts:
         service = governance_app.state.governance_anomaly_service
         alerts = await service.analyze_transaction(
             agent_id="agent-a",
-            zone_id="default",
+            zone_id="root",
             amount=200.0,
             to="agent-b",
         )
@@ -356,7 +356,7 @@ class TestSuspensionLifecycle:
             "/api/v2/governance/suspensions",
             json={
                 "agent_id": "bad-agent",
-                "zone_id": "default",
+                "zone_id": "root",
                 "reason": "Detected fraud ring",
                 "duration_hours": 48.0,
                 "severity": "critical",
@@ -377,7 +377,7 @@ class TestSuspensionLifecycle:
             "/api/v2/governance/suspensions",
             json={
                 "agent_id": "test-agent",
-                "zone_id": "default",
+                "zone_id": "root",
                 "reason": "Testing",
             },
         )
@@ -395,7 +395,7 @@ class TestSuspensionLifecycle:
             "/api/v2/governance/suspensions",
             json={
                 "agent_id": "appeal-agent",
-                "zone_id": "default",
+                "zone_id": "root",
                 "reason": "Under review",
             },
         )
@@ -427,7 +427,7 @@ class TestSuspensionLifecycle:
             "/api/v2/governance/suspensions",
             json={
                 "agent_id": "reject-agent",
-                "zone_id": "default",
+                "zone_id": "root",
                 "reason": "Bad behavior",
             },
         )
@@ -467,7 +467,7 @@ class TestSuspensionLifecycle:
             "/api/v2/governance/suspensions",
             json={
                 "agent_id": "double-appeal",
-                "zone_id": "default",
+                "zone_id": "root",
                 "reason": "Test",
             },
         )
@@ -596,7 +596,7 @@ class TestPerformance:
             json={
                 "from_agent": "cache-a",
                 "to_agent": "cache-b",
-                "zone_id": "default",
+                "zone_id": "root",
                 "constraint_type": "block",
             },
         )
@@ -625,7 +625,7 @@ class TestCrossServiceIntegration:
             "/api/v2/governance/suspensions",
             json={
                 "agent_id": "blocked-agent",
-                "zone_id": "default",
+                "zone_id": "root",
                 "reason": "Fraud detected",
             },
         )
@@ -653,7 +653,7 @@ class TestCrossServiceIntegration:
             "/api/v2/governance/suspensions",
             json={
                 "agent_id": "unblock-agent",
-                "zone_id": "default",
+                "zone_id": "root",
                 "reason": "Under review",
             },
         )
@@ -695,13 +695,13 @@ class TestCrossServiceIntegration:
 
         # Normal transaction (no alerts)
         alerts_normal = await service.analyze_transaction(
-            agent_id="agent-a", zone_id="default", amount=105.0, to="agent-b"
+            agent_id="agent-a", zone_id="root", amount=105.0, to="agent-b"
         )
         assert len(alerts_normal) == 0
 
         # Anomalous transaction (high amount + unknown counterparty)
         alerts_anomalous = await service.analyze_transaction(
-            agent_id="agent-a", zone_id="default", amount=200.0, to="unknown-x"
+            agent_id="agent-a", zone_id="root", amount=200.0, to="unknown-x"
         )
         assert len(alerts_anomalous) >= 1
 

@@ -1679,7 +1679,7 @@ class ReBACService:
 
                 # Check if user is zone admin for this resource's zone
                 if zone_id and op_context.user:
-                    from nexus.server.auth.user_helpers import is_zone_admin
+                    from nexus.core.zone_helpers import is_zone_admin
 
                     if is_zone_admin(self._rebac_manager, op_context.user, zone_id):
                         # Zone admin can share resources in their zone
@@ -2048,55 +2048,44 @@ class ReBACService:
         object: tuple[str, str] | None = None,
         relation_in: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Synchronous rebac_list_tuples — raw SQL query."""
+        """Synchronous rebac_list_tuples — ORM query."""
+        from sqlalchemy import select
+
+        from nexus.storage.models.permissions import ReBACTupleModel as RT
+
         mgr = self._require_manager()
-        conn = mgr._get_connection()
-        try:
-            query = "SELECT * FROM rebac_tuples WHERE 1=1"
-            params: list = []
 
-            if subject:
-                query += " AND subject_type = ? AND subject_id = ?"
-                params.extend([subject[0], subject[1]])
+        stmt = select(RT)
 
-            if relation:
-                query += " AND relation = ?"
-                params.append(relation)
-            elif relation_in:
-                placeholders = ", ".join("?" * len(relation_in))
-                query += f" AND relation IN ({placeholders})"
-                params.extend(relation_in)
+        if subject:
+            stmt = stmt.where(RT.subject_type == subject[0], RT.subject_id == subject[1])
 
-            if object:
-                query += " AND object_type = ? AND object_id = ?"
-                params.extend([object[0], object[1]])
+        if relation:
+            stmt = stmt.where(RT.relation == relation)
+        elif relation_in:
+            stmt = stmt.where(RT.relation.in_(relation_in))
 
-            query = mgr._fix_sql_placeholders(query)
-            cursor = mgr._create_cursor(conn)
-            cursor.execute(query, params)
+        if object:
+            stmt = stmt.where(RT.object_type == object[0], RT.object_id == object[1])
 
+        with mgr.engine.connect() as conn:
+            result = conn.execute(stmt)
             results = []
-            for row in cursor.fetchall():
-                try:
-                    zone_id_val = row["zone_id"]
-                except (KeyError, IndexError):
-                    zone_id_val = None
+            for row in result:
                 results.append(
                     {
-                        "tuple_id": row["tuple_id"],
-                        "subject_type": row["subject_type"],
-                        "subject_id": row["subject_id"],
-                        "relation": row["relation"],
-                        "object_type": row["object_type"],
-                        "object_id": row["object_id"],
-                        "created_at": row["created_at"],
-                        "expires_at": row["expires_at"],
-                        "zone_id": zone_id_val,
+                        "tuple_id": row.tuple_id,
+                        "subject_type": row.subject_type,
+                        "subject_id": row.subject_id,
+                        "relation": row.relation,
+                        "object_type": row.object_type,
+                        "object_id": row.object_id,
+                        "created_at": row.created_at,
+                        "expires_at": row.expires_at,
+                        "zone_id": row.zone_id,
                     }
                 )
             return results
-        finally:
-            mgr._close_connection(conn)
 
     # =========================================================================
     # Sync: Namespace Management
@@ -2139,56 +2128,51 @@ class ReBACService:
         """List all registered namespace configurations (sync)."""
         import json as _json
 
+        from sqlalchemy import select
+
+        from nexus.storage.models.permissions import ReBACNamespaceModel as RN
+
         mgr = self._require_manager()
-        conn = mgr._get_connection()
-        try:
-            cursor = mgr._create_cursor(conn)
-            cursor.execute(
-                mgr._fix_sql_placeholders(
-                    "SELECT namespace_id, object_type, config, created_at, updated_at "
-                    "FROM rebac_namespaces ORDER BY object_type"
-                )
-            )
+
+        stmt = select(RN).order_by(RN.object_type)
+
+        with mgr.engine.connect() as conn:
+            result = conn.execute(stmt)
             namespaces = []
-            for row in cursor.fetchall():
+            for row in result:
                 namespaces.append(
                     {
-                        "namespace_id": row["namespace_id"],
-                        "object_type": row["object_type"],
-                        "config": _json.loads(row["config"]),
-                        "created_at": row["created_at"],
-                        "updated_at": row["updated_at"],
+                        "namespace_id": row.namespace_id,
+                        "object_type": row.object_type,
+                        "config": _json.loads(row.config),
+                        "created_at": row.created_at,
+                        "updated_at": row.updated_at,
                     }
                 )
             return namespaces
-        finally:
-            mgr._close_connection(conn)
 
     def namespace_delete_sync(self, object_type: str) -> bool:
         """Delete a namespace configuration (sync)."""
+        from sqlalchemy import delete, select
+
+        from nexus.storage.models.permissions import ReBACNamespaceModel as RN
+
         mgr = self._require_manager()
-        conn = mgr._get_connection()
-        try:
-            cursor = mgr._create_cursor(conn)
-            cursor.execute(
-                mgr._fix_sql_placeholders(
-                    "SELECT namespace_id FROM rebac_namespaces WHERE object_type = ?"
-                ),
-                (object_type,),
-            )
-            if cursor.fetchone() is None:
+
+        with mgr.engine.begin() as conn:
+            # Check if namespace exists
+            exists = conn.execute(
+                select(RN.namespace_id).where(RN.object_type == object_type)
+            ).fetchone()
+            if exists is None:
                 return False
-            cursor.execute(
-                mgr._fix_sql_placeholders("DELETE FROM rebac_namespaces WHERE object_type = ?"),
-                (object_type,),
-            )
-            conn.commit()
-            cache = getattr(mgr, "_cache", None)
-            if cache is not None:
-                cache.clear()
-            return True
-        finally:
-            mgr._close_connection(conn)
+
+            conn.execute(delete(RN).where(RN.object_type == object_type))
+
+        cache = getattr(mgr, "_cache", None)
+        if cache is not None:
+            cache.clear()
+        return True
 
     # =========================================================================
     # Sync: Privacy & Consent
@@ -2385,7 +2369,7 @@ class ReBACService:
         limit: int = 100,
         offset: int = 0,
         cursor: str | None = None,
-        current_zone: str = "default",
+        current_zone: str = "root",
     ) -> dict[str, Any]:
         """List outgoing shares with iterator caching (sync)."""
         mgr = self._require_manager()
@@ -2463,7 +2447,7 @@ class ReBACService:
         limit: int = 100,
         offset: int = 0,
         cursor: str | None = None,
-        current_zone: str = "default",
+        current_zone: str = "root",
     ) -> dict[str, Any]:
         """List incoming shares with iterator caching (sync)."""
         mgr = self._require_manager()
@@ -2553,21 +2537,20 @@ class ReBACService:
             return None
 
         tuple_data = tuples[0]
-        conn = mgr._get_connection()
-        try:
-            cursor = mgr._create_cursor(conn)
-            cursor.execute(
-                mgr._fix_sql_placeholders("SELECT conditions FROM rebac_tuples WHERE tuple_id = ?"),
-                (tuple_data["tuple_id"],),
-            )
-            row = cursor.fetchone()
-            if row and row["conditions"]:
-                conditions = _json.loads(row["conditions"])
+
+        from sqlalchemy import select
+
+        from nexus.storage.models.permissions import ReBACTupleModel as RT
+
+        with mgr.engine.connect() as conn:
+            row = conn.execute(
+                select(RT.conditions).where(RT.tuple_id == tuple_data["tuple_id"])
+            ).fetchone()
+            if row and row.conditions:
+                conditions = _json.loads(row.conditions)
                 if conditions.get("type") == "dynamic_viewer":
                     col_cfg: dict[str, Any] | None = conditions.get("column_config")
                     return col_cfg
-        finally:
-            mgr._close_connection(conn)
         return None
 
     def apply_dynamic_viewer_filter_sync(

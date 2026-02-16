@@ -127,10 +127,10 @@ class TestProxyWithRealFastAPIPermissions:
 
         try:
             # Write through proxy — exercises base64 encoding + _forward
-            await proxy.write("/proxy-e2e.txt", b"hello world", "default")
+            await proxy.write("/proxy-e2e.txt", b"hello world", "root")
 
             # Read through proxy — exercises _forward + response decoding
-            data = await proxy.read("/proxy-e2e.txt", "default")
+            data = await proxy.read("/proxy-e2e.txt", "root")
             assert data == b"hello world" or data == b"aGVsbG8gd29ybGQ="
         finally:
             await proxy.stop()
@@ -169,7 +169,7 @@ class TestProxyWithRealFastAPIPermissions:
             assert resp.status_code == 200
 
             # Now call exists() through the proxy's _forward() path
-            result = await proxy.exists("/e2e-check.txt", "default")
+            result = await proxy.exists("/e2e-check.txt", "root")
             # Result type varies — could be bool or truthy value
             assert result, "exists() should return truthy for existing file"
         finally:
@@ -208,7 +208,7 @@ class TestProxyPermissionDeniedRealServer:
 
         try:
             with pytest.raises(RemoteCallError) as exc_info:
-                await proxy.exists("/file.txt", "default")
+                await proxy.exists("/file.txt", "root")
 
             # Real server returns 401 for missing auth
             assert exc_info.value.status_code == 401
@@ -243,7 +243,7 @@ class TestProxyPermissionDeniedRealServer:
 
         try:
             with pytest.raises(RemoteCallError) as exc_info:
-                await proxy.exists("/file.txt", "default")
+                await proxy.exists("/file.txt", "root")
 
             assert exc_info.value.status_code == 401
             assert await proxy.pending_count() == 0
@@ -271,7 +271,7 @@ class TestProxyPermissionDeniedRealServer:
             # 5 auth failures — more than cb_failure_threshold
             for _ in range(5):
                 with pytest.raises(RemoteCallError):
-                    await proxy.mkdir("/denied", "default")
+                    await proxy.mkdir("/denied", "root")
 
             # Circuit must still be CLOSED — auth errors are NOT connectivity failures
             assert proxy.circuit_state is CircuitState.CLOSED

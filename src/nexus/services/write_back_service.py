@@ -168,7 +168,7 @@ class WriteBackService:
         self._backlog_store.enqueue(
             path=event.path,
             backend_name=mount_info["backend_name"],
-            zone_id=event.zone_id or "default",
+            zone_id=event.zone_id or "root",
             operation_type=op_type,
             content_hash=event.etag,
             new_path=event.old_path if event_type == FileEventType.FILE_RENAME else None,

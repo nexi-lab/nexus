@@ -25,8 +25,11 @@ References:
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
+from nexus.services.event_log.protocol import EventLogConfig, EventLogProtocol
+from nexus.services.governance.protocols import AnomalyDetectorProtocol
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from nexus.services.protocols.context_manifest import ContextManifestProtocol
+from nexus.services.protocols.events import EventsProtocol
 from nexus.services.protocols.hook_engine import (
     POST_COPY,
     POST_DELETE,
@@ -45,17 +48,34 @@ from nexus.services.protocols.hook_engine import (
     HookSpec,
 )
 from nexus.services.protocols.llm import LLMProtocol, LLMServiceProtocol
-from nexus.services.protocols.llm_provider import LLMProviderProtocol
+from nexus.services.protocols.mcp import MCPProtocol
+from nexus.services.protocols.mount import MountProtocol, ProgressCallback
 from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol, NamespaceMount
+from nexus.services.protocols.oauth import OAuthProtocol
+from nexus.services.protocols.parse import ParseProtocol
+from nexus.services.protocols.payment import PaymentProtocol
+from nexus.services.protocols.permission import PermissionProtocol
 from nexus.services.protocols.rebac import ReBACBrickProtocol
 from nexus.services.protocols.scheduler import AgentRequest, SchedulerProtocol
 from nexus.services.protocols.search import SearchBrickProtocol
+from nexus.services.protocols.share_link import ShareLinkProtocol
+from nexus.services.protocols.skills import SkillsProtocol
+from nexus.workflows.protocol import (
+    LLMProviderProtocol,
+    MetadataStoreProtocol,
+    NexusOperationsProtocol,
+    WorkflowProtocol,
+)
 
 __all__ = [
     "AgentInfo",
     "AgentRegistryProtocol",
     "AgentRequest",
+    "AnomalyDetectorProtocol",
     "ContextManifestProtocol",
+    "EventLogConfig",
+    "EventLogProtocol",
+    "EventsProtocol",
     "HookContext",
     "HookEngineProtocol",
     "HookId",
@@ -64,8 +84,13 @@ __all__ = [
     "LLMProtocol",
     "LLMProviderProtocol",
     "LLMServiceProtocol",
+    "MCPProtocol",
+    "MetadataStoreProtocol",
+    "MountProtocol",
     "NamespaceManagerProtocol",
     "NamespaceMount",
+    "NexusOperationsProtocol",
+    "OAuthProtocol",
     "POST_COPY",
     "POST_DELETE",
     "POST_MKDIR",
@@ -76,7 +101,14 @@ __all__ = [
     "PRE_MKDIR",
     "PRE_READ",
     "PRE_WRITE",
+    "ParseProtocol",
+    "PaymentProtocol",
+    "PermissionProtocol",
+    "ProgressCallback",
     "ReBACBrickProtocol",
     "SchedulerProtocol",
     "SearchBrickProtocol",
+    "ShareLinkProtocol",
+    "SkillsProtocol",
+    "WorkflowProtocol",
 ]

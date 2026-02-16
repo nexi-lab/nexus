@@ -3,8 +3,9 @@
 These tests start `nexus serve` with --api-key to verify:
 1. A2A endpoints enforce auth when server has auth configured
 2. Agent Card remains public (no auth required)
-3. Tasks are persisted to disk via VFSTaskStore
+3. Tasks are persisted to disk via VFSTaskStore under agent-scoped paths
 4. Full lifecycle works with Bearer token auth
+5. On-disk format uses MessageEnvelope (§17.6 convergence)
 
 Separate from test_a2a_e2e.py which tests in open-access mode.
 """
@@ -16,6 +17,7 @@ import os
 import signal
 import subprocess
 import sys
+import threading
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
@@ -23,12 +25,25 @@ from typing import Any
 import httpx
 import pytest
 
-# Reuse port finder from conftest
-from tests.e2e.conftest import find_free_port, wait_for_server
+from tests.e2e.conftest import find_free_port
 
 _src_path = str(Path(__file__).resolve().parent.parent.parent / "src")
 
 API_KEY = "test-a2a-auth-e2e-key-42"
+
+
+def _drain_pipe(pipe, lines: list[str], ready: threading.Event | None = None):
+    """Read lines from a subprocess pipe (daemon thread)."""
+    try:
+        for raw in iter(pipe.readline, b""):
+            decoded = raw.decode(errors="replace")
+            lines.append(decoded)
+            if ready and "Application startup complete" in decoded:
+                ready.set()
+    except ValueError:
+        pass
+    finally:
+        pipe.close()
 
 
 @pytest.fixture(scope="function")
@@ -62,13 +77,27 @@ def auth_server(isolated_db, tmp_path):
         preexec_fn=os.setsid if sys.platform != "win32" else None,
     )
 
-    if not wait_for_server(base_url, timeout=30.0):
+    # Event-driven readiness (same pattern as conftest.nexus_server)
+    stderr_lines: list[str] = []
+    stdout_lines: list[str] = []
+    ready = threading.Event()
+
+    t_err = threading.Thread(
+        target=_drain_pipe, args=(process.stderr, stderr_lines, ready), daemon=True
+    )
+    t_out = threading.Thread(target=_drain_pipe, args=(process.stdout, stdout_lines), daemon=True)
+    t_err.start()
+    t_out.start()
+
+    if not ready.wait(timeout=120.0):
         process.terminate()
-        stdout, stderr = process.communicate(timeout=5)
+        t_err.join(timeout=2)
+        t_out.join(timeout=2)
         pytest.fail(
-            f"Auth server failed to start on port {port}.\n"
-            f"stdout: {stdout.decode()}\n"
-            f"stderr: {stderr.decode()}"
+            f"Auth server failed to start on port {port} "
+            f"(never saw 'Application startup complete').\n"
+            f"stdout: {''.join(stdout_lines)}\n"
+            f"stderr: {''.join(stderr_lines)}"
         )
 
     yield {
@@ -155,15 +184,22 @@ class TestA2AAuthEnforcement:
 
 
 # ======================================================================
-# Persistence (data_dir wiring)
+# Persistence — agent-scoped paths + MessageEnvelope (§17.6)
 # ======================================================================
 
 
 class TestA2APersistenceE2E:
-    """Verify tasks are persisted to disk via VFSTaskStore."""
+    """Verify tasks are persisted to disk via VFSTaskStore.
+
+    After §17.6 convergence, tasks are stored under agent-scoped paths:
+        {data_dir}/agents/{agent_id}/tasks/{ts}_{task_id}.json
+
+    When no agent_id is extracted from auth, the fallback is "_unassigned".
+    Files are wrapped in MessageEnvelope format for IPC interoperability.
+    """
 
     def test_task_creates_json_file_on_disk(self, auth_server):
-        """Creating a task via A2A produces a .json file in data_dir."""
+        """Creating a task via A2A produces a .json file under agents/ directory."""
         body = _rpc(
             "a2a.tasks.send",
             {"message": {"role": "user", "parts": [{"type": "text", "text": "persist check"}]}},
@@ -180,19 +216,33 @@ class TestA2APersistenceE2E:
             assert resp.status_code == 200
             task_id = resp.json()["result"]["id"]
 
-        # Check disk for the task file
+        # Check disk — tasks now live under /agents/{agent_id}/tasks/
         data_dir = auth_server["data_dir"]
-        a2a_tasks_dir = data_dir / "a2a" / "tasks"
-        assert a2a_tasks_dir.exists(), f"A2A tasks directory not found: {a2a_tasks_dir}"
+        agents_dir = data_dir / "agents"
+        assert agents_dir.exists(), f"Agents directory not found: {agents_dir}"
 
-        # Find the task JSON file
-        all_json = list(a2a_tasks_dir.rglob(f"*_{task_id}.json"))
+        # Find the task JSON file under any agent's tasks/ directory
+        all_json = list(agents_dir.rglob(f"*_{task_id}.json"))
         assert len(all_json) == 1, f"Expected 1 file for task {task_id}, found {len(all_json)}"
 
-        # Verify file content
-        content = json.loads(all_json[0].read_bytes())
-        assert content["task"]["id"] == task_id
-        assert content["task"]["status"]["state"] == "submitted"
+        # Verify the file is inside a tasks/ directory
+        task_file = all_json[0]
+        assert task_file.parent.name == "tasks", (
+            f"Task file should be in a tasks/ directory, got: {task_file.parent}"
+        )
+
+        # Verify on-disk format is MessageEnvelope (§17.6 convergence)
+        content = json.loads(task_file.read_bytes())
+        assert content["type"] == "task", (
+            f"Expected MessageEnvelope type='task', got: {content.get('type')}"
+        )
+        assert "payload" in content, "MessageEnvelope should have 'payload' field"
+        assert content["payload"]["id"] == task_id
+        assert content["payload"]["status"]["state"] == "submitted"
+
+        # Verify envelope metadata
+        assert content["from"] == "a2a_gateway"
+        assert content["correlation_id"] == task_id
 
     def test_full_lifecycle_with_persistence(self, auth_server):
         """Create -> Get -> Cancel with all state changes persisted."""
@@ -229,9 +279,14 @@ class TestA2APersistenceE2E:
             )
             assert cancel_resp.json()["result"]["status"]["state"] == "canceled"
 
-        # Verify canceled state is persisted on disk
+        # Verify canceled state is persisted on disk under agent-scoped path
         data_dir = auth_server["data_dir"]
-        task_files = list((data_dir / "a2a" / "tasks").rglob(f"*_{task_id}.json"))
+        agents_dir = data_dir / "agents"
+        task_files = list(agents_dir.rglob(f"*_{task_id}.json"))
         assert len(task_files) == 1
         content = json.loads(task_files[0].read_bytes())
-        assert content["task"]["status"]["state"] == "canceled"
+
+        # Verify MessageEnvelope wraps the canceled task
+        assert content["type"] == "task"
+        assert content["payload"]["status"]["state"] == "canceled"
+        assert content["payload"]["id"] == task_id

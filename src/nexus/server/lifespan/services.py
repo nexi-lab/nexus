@@ -9,17 +9,12 @@ import asyncio
 import logging
 import os
 from contextlib import suppress
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
-
-# Module-level references for shutdown — set during startup
-_scheduler_pool: Any = None
-_heartbeat_task: asyncio.Task | None = None
-_stale_detection_task: asyncio.Task | None = None
 
 
 async def startup_services(app: FastAPI) -> list[asyncio.Task]:
@@ -32,12 +27,11 @@ async def startup_services(app: FastAPI) -> list[asyncio.Task]:
     - SchedulerService (Issue #1212)
     - Task Queue Engine (Issue #574)
     """
-    global _scheduler_pool, _heartbeat_task, _stale_detection_task
-
     bg_tasks: list[asyncio.Task] = []
 
     _startup_agent_registry(app)
     _startup_key_service(app)
+    _startup_delegation_service(app)
     _startup_sandbox_auth(app)
 
     # Agent background tasks depend on agent_registry
@@ -56,8 +50,6 @@ async def startup_services(app: FastAPI) -> list[asyncio.Task]:
 
 async def shutdown_services(app: FastAPI) -> None:
     """Shutdown services in reverse order."""
-    global _scheduler_pool, _heartbeat_task, _stale_detection_task
-
     # Stop Task Queue runner (Issue #574)
     task_runner = getattr(app.state, "task_runner", None)
     if task_runner:
@@ -68,22 +60,25 @@ async def shutdown_services(app: FastAPI) -> None:
             logger.warning("Error shutting down Task Queue runner: %s", e, exc_info=True)
 
     # Shutdown scheduler pool (Issue #1212)
-    if _scheduler_pool:
+    scheduler_pool = getattr(app.state, "_scheduler_pool", None)
+    if scheduler_pool:
         try:
-            await _scheduler_pool.close()
+            await scheduler_pool.close()
             logger.info("Scheduler pool closed")
         except Exception as e:
             logger.warning("Error closing scheduler pool: %s", e, exc_info=True)
-        _scheduler_pool = None
+        app.state._scheduler_pool = None
 
     # Cancel agent background tasks and final flush (Issue #1240)
-    for task_ref in (_heartbeat_task, _stale_detection_task):
+    heartbeat_task = getattr(app.state, "_heartbeat_task", None)
+    stale_detection_task = getattr(app.state, "_stale_detection_task", None)
+    for task_ref in (heartbeat_task, stale_detection_task):
         if task_ref and not task_ref.done():
             task_ref.cancel()
             with suppress(asyncio.CancelledError):
                 await task_ref
-    _heartbeat_task = None
-    _stale_detection_task = None
+    app.state._heartbeat_task = None
+    app.state._stale_detection_task = None
 
     if app.state.agent_registry:
         try:
@@ -178,13 +173,15 @@ def _startup_key_service(app: FastAPI) -> None:
         try:
             from nexus.identity.crypto import IdentityCrypto
             from nexus.identity.key_service import KeyService
-            from nexus.identity.models import AgentKeyModel  # noqa: F401 — register with Base
             from nexus.server.auth.oauth_crypto import OAuthCrypto
+            from nexus.storage.models.identity import AgentKeyModel
 
             # Ensure agent_keys table exists
             _nx_engine = getattr(app.state.nexus_fs, "_sql_engine", None)
             if _nx_engine is not None:
-                AgentKeyModel.__table__.create(_nx_engine, checkfirst=True)  # type: ignore[attr-defined]
+                from sqlalchemy import Table
+
+                cast(Table, AgentKeyModel.__table__).create(_nx_engine, checkfirst=True)
 
             # Reuse OAuthCrypto for Fernet encryption of private keys
             _enc_key = os.environ.get("NEXUS_OAUTH_ENCRYPTION_KEY", "").strip() or None
@@ -195,7 +192,7 @@ def _startup_key_service(app: FastAPI) -> None:
             _identity_crypto = IdentityCrypto(oauth_crypto=_identity_oauth_crypto)
 
             app.state.key_service = KeyService(
-                session_factory=app.state.nexus_fs.SessionLocal,
+                record_store=app.state.nexus_fs._record_store,
                 crypto=_identity_crypto,
             )
             # Inject into NexusFS for register_agent integration
@@ -207,6 +204,37 @@ def _startup_key_service(app: FastAPI) -> None:
             app.state.key_service = None
     else:
         app.state.key_service = None
+
+
+def _startup_delegation_service(app: FastAPI) -> None:
+    """Initialize DelegationService for agent delegation (Issue #1618)."""
+    if not (app.state.nexus_fs and getattr(app.state.nexus_fs, "SessionLocal", None)):
+        app.state.delegation_service = None
+        return
+
+    rebac_manager = getattr(app.state.nexus_fs, "_rebac_manager", None)
+    if rebac_manager is None:
+        app.state.delegation_service = None
+        return
+
+    try:
+        from nexus.services.delegation.service import DelegationService
+
+        namespace_manager = getattr(app.state.nexus_fs, "_namespace_manager", None)
+        entity_registry = getattr(app.state.nexus_fs, "_entity_registry", None)
+        agent_registry = getattr(app.state, "agent_registry", None)
+
+        app.state.delegation_service = DelegationService(
+            session_factory=app.state.nexus_fs.SessionLocal,
+            rebac_manager=rebac_manager,
+            namespace_manager=namespace_manager,
+            entity_registry=entity_registry,
+            agent_registry=agent_registry,
+        )
+        logger.info("[DELEGATION] DelegationService initialized and wired")
+    except Exception as e:
+        logger.warning("[DELEGATION] Failed to initialize DelegationService: %s", e, exc_info=True)
+        app.state.delegation_service = None
 
 
 def _startup_sandbox_auth(app: FastAPI) -> None:
@@ -231,7 +259,7 @@ def _startup_sandbox_auth(app: FastAPI) -> None:
         app.state.agent_event_log = AgentEventLog(session_factory=session_factory)
 
         # Create SandboxManager
-        sandbox_config = getattr(app.state.nexus_fs, "_config", None)
+        sandbox_config = getattr(app.state.nexus_fs, "config", None)
         sandbox_mgr = SandboxManager(
             session_factory=session_factory,
             e2b_api_key=os.getenv("E2B_API_KEY"),
@@ -285,8 +313,6 @@ def _startup_sandbox_auth(app: FastAPI) -> None:
 
 def _startup_agent_tasks(app: FastAPI) -> list[asyncio.Task]:
     """Start agent heartbeat and stale detection background tasks (Issue #1240)."""
-    global _heartbeat_task, _stale_detection_task
-
     if not app.state.agent_registry:
         return []
 
@@ -295,21 +321,19 @@ def _startup_agent_tasks(app: FastAPI) -> list[asyncio.Task]:
         stale_agent_detection_task,
     )
 
-    _heartbeat_task = asyncio.create_task(
+    app.state._heartbeat_task = asyncio.create_task(
         heartbeat_flush_task(app.state.agent_registry, interval_seconds=60)
     )
-    _stale_detection_task = asyncio.create_task(
+    app.state._stale_detection_task = asyncio.create_task(
         stale_agent_detection_task(app.state.agent_registry, interval_seconds=300)
     )
     logger.info("[AGENT-REG] Background heartbeat flush and stale detection tasks started")
 
-    return [_heartbeat_task, _stale_detection_task]
+    return [app.state._heartbeat_task, app.state._stale_detection_task]
 
 
 async def _startup_scheduler(app: FastAPI) -> None:
     """Initialize SchedulerService if PostgreSQL database is available (Issue #1212)."""
-    global _scheduler_pool
-
     if not (app.state.database_url and "postgresql" in app.state.database_url):
         return
 
@@ -324,10 +348,11 @@ async def _startup_scheduler(app: FastAPI) -> None:
 
         # Convert SQLAlchemy URL to asyncpg DSN
         pg_dsn = app.state.database_url.replace("+asyncpg", "").replace("+psycopg2", "")
-        _scheduler_pool = await asyncpg.create_pool(pg_dsn, min_size=2, max_size=5)
+        pool = await asyncpg.create_pool(pg_dsn, min_size=2, max_size=5)
+        app.state._scheduler_pool = pool
 
         # Create scheduled_tasks table if it doesn't exist
-        async with _scheduler_pool.acquire() as conn:
+        async with pool.acquire() as conn:
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS scheduled_tasks (
                     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -377,7 +402,7 @@ async def _startup_scheduler(app: FastAPI) -> None:
 
         scheduler_service = SchedulerService(
             queue=TaskQueue(),
-            db_pool=_scheduler_pool,
+            db_pool=pool,
             credits_service=CreditsService(enabled=False),
             state_emitter=state_emitter,
             fair_share=fair_share,
@@ -440,3 +465,6 @@ async def _startup_workflow_engine(app: FastAPI) -> None:
             logger.info("Workflow engine started — loaded workflows from storage")
         except Exception as e:
             logger.warning(f"Workflow engine startup failed (non-fatal): {e}")
+
+    # Expose on app.state so routers can access without reaching into NexusFS
+    app.state.workflow_engine = engine

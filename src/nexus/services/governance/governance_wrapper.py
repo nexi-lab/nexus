@@ -14,11 +14,12 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.core.sync_bridge import fire_and_forget
 from nexus.pay.audit_types import TransactionProtocol
-from nexus.pay.protocol import PaymentProtocol, ProtocolTransferRequest, ProtocolTransferResult
+from nexus.pay.protocol import ProtocolTransferRequest, ProtocolTransferResult
 
 if TYPE_CHECKING:
     from nexus.services.governance.anomaly_service import AnomalyService
     from nexus.services.governance.governance_graph_service import GovernanceGraphService
+    from nexus.services.protocols.payment import PaymentProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +40,10 @@ class GovernanceApprovalRequired(Exception):
         self.edge_id = edge_id
 
 
-class GovernanceEnforcedPayment(PaymentProtocol):
+class GovernanceEnforcedPayment:
     """Wraps a PaymentProtocol with governance constraint checks.
+
+    Structurally satisfies ``PaymentProtocol``.
 
     Flow:
         1. Pre-check: check_constraint (sync, <1ms cached)
@@ -75,7 +78,7 @@ class GovernanceEnforcedPayment(PaymentProtocol):
         Pre-check: governance constraint check (~1ms).
         Post-analysis: fire-and-forget anomaly detection.
         """
-        zone_id = request.metadata.get("zone_id", "default") if request.metadata else "default"
+        zone_id = request.metadata.get("zone_id", "root") if request.metadata else "root"
 
         # 1. Pre-check: governance constraints
         from nexus.services.governance.models import ConstraintType

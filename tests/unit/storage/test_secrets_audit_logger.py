@@ -46,7 +46,7 @@ class TestSecretsAuditLoggerWrite:
             actor_id="alice@example.com",
             provider="google",
             credential_id="cred-123",
-            zone_id="default",
+            zone_id="root",
         )
         assert record_id is not None
 
@@ -94,7 +94,7 @@ class TestSecretsAuditLoggerIntegrity:
             event_type="credential_created",
             actor_id="alice@example.com",
             provider="google",
-            zone_id="default",
+            zone_id="root",
         )
         assert audit_logger.verify_integrity(record_id) is True
 
@@ -109,7 +109,7 @@ class TestSecretsAuditLoggerIntegrity:
             provider="google",
             credential_id=None,
             token_family_id=None,
-            zone_id="default",
+            zone_id="root",
             ip_address=None,
             created_at=now,
         )
@@ -119,7 +119,7 @@ class TestSecretsAuditLoggerIntegrity:
             provider="google",
             credential_id=None,
             token_family_id=None,
-            zone_id="default",
+            zone_id="root",
             ip_address=None,
             created_at=now,
         )
@@ -142,7 +142,7 @@ class TestSecretsAuditLoggerImmutability:
         record_id = audit_logger.log_event(
             event_type="credential_created",
             actor_id="alice@example.com",
-            zone_id="default",
+            zone_id="root",
         )
 
         session = session_factory()
@@ -166,7 +166,7 @@ class TestSecretsAuditLoggerImmutability:
         record_id = audit_logger.log_event(
             event_type="credential_created",
             actor_id="alice@example.com",
-            zone_id="default",
+            zone_id="root",
         )
 
         session = session_factory()
@@ -195,7 +195,7 @@ class TestSecretsAuditLoggerQuery:
             audit_logger.log_event(
                 event_type="credential_created",
                 actor_id=f"user{i}@example.com",
-                zone_id="default",
+                zone_id="root",
             )
 
         rows, cursor = audit_logger.list_events_cursor(limit=10)
@@ -207,7 +207,7 @@ class TestSecretsAuditLoggerQuery:
             audit_logger.log_event(
                 event_type="credential_created",
                 actor_id=f"user{i}@example.com",
-                zone_id="default",
+                zone_id="root",
             )
 
         rows1, cursor1 = audit_logger.list_events_cursor(limit=3)
@@ -231,16 +231,16 @@ class TestSecretsAuditLoggerQuery:
             audit_logger.log_event(
                 event_type="credential_created",
                 actor_id="alice",
-                zone_id="default",
+                zone_id="root",
             )
-        assert audit_logger.count_events(zone_id="default") == 3
+        assert audit_logger.count_events(zone_id="root") == 3
 
     def test_iter_events(self, audit_logger):
         for i in range(3):
             audit_logger.log_event(
                 event_type="credential_created",
                 actor_id=f"user{i}",
-                zone_id="default",
+                zone_id="root",
             )
-        rows = audit_logger.iter_events(filters={"zone_id": "default"})
+        rows = audit_logger.iter_events(filters={"zone_id": "root"})
         assert len(rows) == 3

@@ -137,14 +137,14 @@ def api_keys(db_session_factory):
             session,
             user_id="admin-user",
             name="Admin Key",
-            zone_id="default",
+            zone_id="root",
             is_admin=True,
         )
         normal_key_id, normal_raw = DatabaseAPIKeyAuth.create_key(
             session,
             user_id="normal-user",
             name="Normal User Key",
-            zone_id="default",
+            zone_id="root",
             is_admin=False,
         )
         session.commit()

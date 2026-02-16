@@ -258,7 +258,7 @@ class TestWalletProvisioningE2E:
         assert result["result"]["agent_id"] == agent_id
 
         # Verify the wallet was created in TigerBeetle
-        tb_id = make_tb_account_id("default", agent_id)
+        tb_id = make_tb_account_id("root", agent_id)
         accounts = tb_client.lookup_accounts([tb_id])
         assert len(accounts) == 1, (
             f"Expected 1 TigerBeetle account for {agent_id}, found {len(accounts)}"
@@ -333,7 +333,7 @@ class TestWalletProvisioningE2E:
             ).lower() or "Agent already exists" in str(result2["error"])
 
         # Wallet should still exist in TigerBeetle
-        tb_id = make_tb_account_id("default", agent_id)
+        tb_id = make_tb_account_id("root", agent_id)
         accounts = tb_client.lookup_accounts([tb_id])
         assert len(accounts) == 1
 
@@ -358,7 +358,7 @@ class TestWalletProvisioningE2E:
         assert result.get("error") is None
 
         # Verify wallet exists
-        tb_id = make_tb_account_id("default", agent_id)
+        tb_id = make_tb_account_id("root", agent_id)
         accounts = tb_client.lookup_accounts([tb_id])
         assert len(accounts) == 1
 
@@ -395,7 +395,7 @@ class TestWalletProvisioningE2E:
         )
         assert result.get("error") is None
 
-        tb_id = make_tb_account_id("default", agent_id)
+        tb_id = make_tb_account_id("root", agent_id)
         accounts = tb_client.lookup_accounts([tb_id])
         assert len(accounts) == 1
 
@@ -429,13 +429,13 @@ def _build_permissions_startup_script(port: int, data_dir: str) -> str:
                 "{ADMIN_KEY}": {{
                     "subject_type": "user",
                     "subject_id": "admin",
-                    "zone_id": "default",
+                    "zone_id": "root",
                     "is_admin": True,
                 }},
                 "{ALICE_KEY}": {{
                     "subject_type": "user",
                     "subject_id": "alice",
-                    "zone_id": "default",
+                    "zone_id": "root",
                     "is_admin": False,
                 }},
             }}
@@ -542,7 +542,7 @@ class TestWalletProvisioningWithPermissions:
         assert result["result"]["agent_id"] == agent_id
 
         # Verify wallet in TigerBeetle
-        tb_id = make_tb_account_id("default", agent_id)
+        tb_id = make_tb_account_id("root", agent_id)
         accounts = tb_client.lookup_accounts([tb_id])
         assert len(accounts) == 1
         assert accounts[0].ledger == LEDGER_CREDITS
@@ -592,6 +592,6 @@ class TestWalletProvisioningWithPermissions:
         assert del_result.get("error") is None
 
         # TB account still exists (immutable)
-        tb_id = make_tb_account_id("default", agent_id)
+        tb_id = make_tb_account_id("root", agent_id)
         accounts = tb_client.lookup_accounts([tb_id])
         assert len(accounts) == 1

@@ -59,7 +59,7 @@ async def push_mount(
         )
 
     backend_name = mount_info["backend_name"]
-    zone_id = mount_info.get("zone_id", "default")
+    zone_id = mount_info.get("zone_id", "root")
 
     # Snapshot metrics before push
     before = service.get_metrics_snapshot()

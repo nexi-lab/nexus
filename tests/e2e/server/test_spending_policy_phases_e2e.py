@@ -35,7 +35,7 @@ def _create_app(
     mock_credits_service: AsyncMock,
     is_admin: bool = False,
     agent_id: str = "test-agent",
-    zone_id: str = "default",
+    zone_id: str = "root",
 ) -> FastAPI:
     """Create FastAPI app with real policy service + mocked credits."""
     app = FastAPI()
@@ -141,7 +141,7 @@ class TestApprovalWorkflow:
                 "authenticated": True,
                 "subject_type": "agent",
                 "subject_id": "test-agent",
-                "zone_id": "default",
+                "zone_id": "root",
                 "is_admin": False,
                 "x_agent_id": None,
                 "metadata": {},
@@ -184,7 +184,7 @@ class TestApprovalWorkflow:
                 "authenticated": True,
                 "subject_type": "agent",
                 "subject_id": "test-agent",
-                "zone_id": "default",
+                "zone_id": "root",
                 "is_admin": False,
                 "x_agent_id": None,
                 "metadata": {},

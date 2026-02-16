@@ -18,7 +18,7 @@ from nexus.storage.raft_metadata_store import RaftMetadataStore
 # ---------------------------------------------------------------------------
 
 
-def _make_store(zone_id: str = "default") -> RaftMetadataStore:
+def _make_store(zone_id: str = "root") -> RaftMetadataStore:
     """Create a RaftMetadataStore with a temp directory."""
     tmpdir = tempfile.mkdtemp()
     return RaftMetadataStore.embedded(str(Path(tmpdir) / "meta"), zone_id=zone_id)

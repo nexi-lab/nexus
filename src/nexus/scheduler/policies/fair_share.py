@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from cachetools import LRUCache
+
 
 @dataclass(frozen=True, slots=True)
 class FairShareSnapshot:
@@ -39,9 +41,14 @@ class FairShareCounter:
     For multi-process deployments, use DB-backed counters.
     """
 
-    def __init__(self, *, default_max_concurrent: int = _DEFAULT_MAX_CONCURRENT) -> None:
-        self._running: dict[str, int] = {}
-        self._limits: dict[str, int] = {}
+    def __init__(
+        self,
+        *,
+        default_max_concurrent: int = _DEFAULT_MAX_CONCURRENT,
+        max_agents: int = 4096,
+    ) -> None:
+        self._running: LRUCache[str, int] = LRUCache(maxsize=max_agents)
+        self._limits: LRUCache[str, int] = LRUCache(maxsize=max_agents)
         self._default_max = default_max_concurrent
 
     def _get_limit(self, agent_id: str) -> int:
@@ -90,7 +97,8 @@ class FairShareCounter:
         Args:
             running_counts: Mapping of agent_id → running task count.
         """
-        self._running = dict(running_counts)
+        self._running.clear()
+        self._running.update(running_counts)
 
     def snapshot(self, agent_id: str) -> FairShareSnapshot:
         """Get a snapshot of an agent's fair-share state."""

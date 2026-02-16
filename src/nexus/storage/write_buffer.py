@@ -286,7 +286,7 @@ class WriteBuffer:
                 recorder = VersionRecorder(session)
 
                 for event in events:
-                    zone = event.zone_id or "default"
+                    zone = event.zone_id or "root"
 
                     if event.event_type == EventType.WRITE:
                         op_logger.log_operation(

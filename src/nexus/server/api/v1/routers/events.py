@@ -75,7 +75,7 @@ async def websocket_events(
         )
         return
 
-    zone_id = (auth_result or {}).get("zone_id") or "default"
+    zone_id = (auth_result or {}).get("zone_id") or "root"
     user_id = (auth_result or {}).get("subject_id")
 
     # Resolve subscription filters

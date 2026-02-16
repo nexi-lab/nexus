@@ -210,7 +210,7 @@ def grant_agent_resource_access(
 
     Examples:
         >>> granted = grant_agent_resource_access(
-        ...     nx, "alice", "default", ["resource", "workspace"]
+        ...     nx, "alice", "root", ["resource", "workspace"]
         ... )
         >>> print(f"Granted {granted} permissions")
         Granted 2 permissions
@@ -257,7 +257,7 @@ def grant_skill_builder_permissions(
         Number of successful permission grants
 
     Examples:
-        >>> granted = grant_skill_builder_permissions(nx, "alice", "default")
+        >>> granted = grant_skill_builder_permissions(nx, "alice", "root")
         >>> print(f"Granted {granted} permissions to SkillBuilder")
         Granted 3 permissions to SkillBuilder
     """

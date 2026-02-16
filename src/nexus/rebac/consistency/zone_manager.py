@@ -70,7 +70,7 @@ class ZoneManager:
             Tuple of (zone_id, subject_zone_id, object_zone_id)
         """
         if not zone_id:
-            zone_id = "default"
+            zone_id = "root"
         subject_zone_id = subject_zone_id or zone_id
         object_zone_id = object_zone_id or zone_id
         return zone_id, subject_zone_id, object_zone_id
@@ -105,7 +105,7 @@ class ZoneManager:
         are still resolved but isolation checks are skipped.
 
         Args:
-            zone_id: Primary zone ID (defaults to "default" if falsy)
+            zone_id: Primary zone ID (defaults to "root" if falsy)
             subject_zone_id: Subject's zone (defaults to zone_id)
             object_zone_id: Object's zone (defaults to zone_id)
             relation: The relation being written

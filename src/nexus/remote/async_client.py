@@ -55,6 +55,9 @@ from tenacity import (
 
 from nexus.core.exceptions import (
     NexusFileNotFoundError,
+    RemoteConnectionError,
+    RemoteFilesystemError,
+    RemoteTimeoutError,
 )
 from nexus.core.filesystem import NexusFilesystem
 from nexus.core.rpc_codec import decode_rpc_message, encode_rpc_message
@@ -64,9 +67,6 @@ from nexus.server.protocol import RPCRequest, RPCResponse
 
 from .client import (
     _DOMAIN_METHOD_MAP,
-    RemoteConnectionError,
-    RemoteFilesystemError,
-    RemoteTimeoutError,
 )
 
 logger = logging.getLogger(__name__)
@@ -409,13 +409,6 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
             return getattr(domain, method_name)
 
         spec = METHOD_REGISTRY.get(name)
-
-        if spec is not None and spec.deprecated_message is not None:
-
-            async def _deprecated(*_args: Any, **_kwargs: Any) -> None:
-                raise NotImplementedError(spec.deprecated_message)
-
-            return _deprecated
 
         async def _async_proxy(*args: Any, **kwargs: Any) -> Any:
             return await self._dispatch_rpc(name, spec, args, kwargs)

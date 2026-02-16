@@ -8,10 +8,20 @@ import fnmatch
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from nexus.workflows.protocol import GlobMatchFn
 from nexus.workflows.types import TriggerType, WorkflowContext
+
+
+@runtime_checkable
+class TriggerFactory(Protocol):
+    """Callable that creates a concrete BaseTrigger (used for registry typing)."""
+
+    def __call__(
+        self, config: dict[str, Any], *, glob_match: GlobMatchFn | None = None
+    ) -> "BaseTrigger": ...
+
 
 logger = logging.getLogger(__name__)
 
@@ -145,7 +155,7 @@ class ManualTrigger(BaseTrigger):
 
 
 # Built-in trigger registry
-BUILTIN_TRIGGERS = {
+BUILTIN_TRIGGERS: dict[TriggerType, TriggerFactory] = {
     TriggerType.FILE_WRITE: FileWriteTrigger,
     TriggerType.FILE_DELETE: FileDeleteTrigger,
     TriggerType.FILE_RENAME: FileRenameTrigger,

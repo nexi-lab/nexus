@@ -39,7 +39,8 @@ def create_a2a_router(
         auth_fn: Optional async callback ``(Request) -> dict | None``
             for authentication.  Injected by the server layer.
         data_dir: Server data directory.  When provided, A2A tasks
-            are persisted as JSON files under ``{data_dir}/a2a/tasks/``.
+            are persisted as MessageEnvelope JSON files under
+            ``{data_dir}/agents/{agent_id}/tasks/`` (§17.6 convergence).
             When None, tasks are stored in-memory only.
 
     Returns:

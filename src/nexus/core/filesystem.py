@@ -812,6 +812,15 @@ class NexusFilesystem(ABC):
 
     # === Sandbox Operations ===
 
+    @property
+    def sandbox_available(self) -> bool:
+        """Whether sandbox execution is available.
+
+        Returns True if at least one sandbox provider is configured.
+        Subclasses should override this to check their sandbox manager.
+        """
+        return False
+
     @abstractmethod
     def sandbox_create(
         self,

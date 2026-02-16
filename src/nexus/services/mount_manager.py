@@ -23,7 +23,7 @@ from nexus.core.router import MountConfig
 from nexus.storage.models import MountConfigModel
 
 if TYPE_CHECKING:
-    pass
+    from nexus.storage.record_store import RecordStoreABC
 
 
 class MountManager:
@@ -38,7 +38,7 @@ class MountManager:
         >>> from nexus.services.mount_manager import MountManager
         >>>
         >>> nx = NexusFS(...)
-        >>> manager = MountManager(nx.SessionLocal)
+        >>> manager = MountManager(nx._record_store)
         >>>
         >>> # Save a mount to database
         >>> manager.save_mount(
@@ -56,13 +56,13 @@ class MountManager:
         >>> manager.remove_mount("/personal/alice")
     """
 
-    def __init__(self, session_factory: Any) -> None:
+    def __init__(self, record_store: RecordStoreABC) -> None:
         """Initialize mount manager.
 
         Args:
-            session_factory: SQLAlchemy sessionmaker instance
+            record_store: A RecordStoreABC providing session_factory for database access.
         """
-        self.SessionLocal = session_factory
+        self._session_factory = record_store.session_factory
 
     def save_mount(
         self,
@@ -108,7 +108,7 @@ class MountManager:
             ...     description="Alice's personal Google Drive"
             ... )
         """
-        with self.SessionLocal() as session:
+        with self._session_factory() as session:
             # Check if mount already exists
             stmt = select(MountConfigModel).where(MountConfigModel.mount_point == mount_point)
             existing = session.execute(stmt).scalar_one_or_none()
@@ -167,7 +167,7 @@ class MountManager:
             ...     backend_config={"access_token": "new_token", "user_email": "alice@acme.com"}
             ... )
         """
-        with self.SessionLocal() as session:
+        with self._session_factory() as session:
             stmt = select(MountConfigModel).where(MountConfigModel.mount_point == mount_point)
             mount_model = session.execute(stmt).scalar_one_or_none()
 
@@ -209,7 +209,7 @@ class MountManager:
             ...     print(f"Backend: {config['backend_type']}")
             ...     print(f"Priority: {config['priority']}")
         """
-        with self.SessionLocal() as session:
+        with self._session_factory() as session:
             stmt = select(MountConfigModel).where(MountConfigModel.mount_point == mount_point)
             mount_model = session.execute(stmt).scalar_one_or_none()
 
@@ -252,7 +252,7 @@ class MountManager:
             >>> # List mounts for specific zone
             >>> zone_mounts = manager.list_mounts(zone_id="acme")
         """
-        with self.SessionLocal() as session:
+        with self._session_factory() as session:
             stmt = select(MountConfigModel)
 
             # Apply filters
@@ -296,7 +296,7 @@ class MountManager:
             >>> manager.remove_mount("/personal/alice")
             True
         """
-        with self.SessionLocal() as session:
+        with self._session_factory() as session:
             stmt = select(MountConfigModel).where(MountConfigModel.mount_point == mount_point)
             mount_model = session.execute(stmt).scalar_one_or_none()
 

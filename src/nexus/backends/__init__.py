@@ -1,5 +1,8 @@
 """Storage backends for Nexus."""
 
+import logging
+import threading
+
 from nexus.backends.backend import Backend, HandlerStatusResponse
 from nexus.backends.base_blob_connector import BaseBlobStorageConnector
 from nexus.backends.cache_mixin import CacheConnectorMixin, CacheEntry, SyncResult
@@ -34,6 +37,8 @@ GoogleCalendarConnectorBackend = None
 
 
 _optional_backends_registered = False
+_registration_lock = threading.Lock()
+_logger = logging.getLogger(__name__)
 
 
 def _register_optional_backends() -> None:
@@ -43,83 +48,88 @@ def _register_optional_backends() -> None:
     global S3ConnectorBackend, XConnectorBackend, HNConnectorBackend, SlackConnectorBackend
     global LocalConnectorBackend, GmailConnectorBackend, GoogleCalendarConnectorBackend
 
-    # Only register once
+    # Only register once (fast path without lock)
     if _optional_backends_registered:
         return
-    _optional_backends_registered = True
+    with _registration_lock:
+        if _optional_backends_registered:
+            return
+        _optional_backends_registered = True
 
-    try:
-        from nexus.backends.gcs import GCSBackend as _GCSBackend
+        try:
+            from nexus.backends.gcs import GCSBackend as _GCSBackend
 
-        GCSBackend = _GCSBackend
-    except ImportError:
-        pass
+            GCSBackend = _GCSBackend
+        except ImportError as e:
+            _logger.debug("Optional backend %s not available: %s", "GCSBackend", e)
 
-    try:
-        from nexus.backends.gdrive_connector import GoogleDriveConnectorBackend as _GDrive
+        try:
+            from nexus.backends.gdrive_connector import GoogleDriveConnectorBackend as _GDrive
 
-        GoogleDriveConnectorBackend = _GDrive
-    except ImportError:
-        pass
+            GoogleDriveConnectorBackend = _GDrive
+        except ImportError as e:
+            _logger.debug("Optional backend %s not available: %s", "GoogleDriveConnectorBackend", e)
 
-    try:
-        from nexus.backends.gcs_connector import GCSConnectorBackend as _GCSConn
+        try:
+            from nexus.backends.gcs_connector import GCSConnectorBackend as _GCSConn
 
-        GCSConnectorBackend = _GCSConn
-    except ImportError:
-        pass
+            GCSConnectorBackend = _GCSConn
+        except ImportError as e:
+            _logger.debug("Optional backend %s not available: %s", "GCSConnectorBackend", e)
 
-    try:
-        from nexus.backends.s3_connector import S3ConnectorBackend as _S3Conn
+        try:
+            from nexus.backends.s3_connector import S3ConnectorBackend as _S3Conn
 
-        S3ConnectorBackend = _S3Conn
-    except ImportError:
-        pass
+            S3ConnectorBackend = _S3Conn
+        except ImportError as e:
+            _logger.debug("Optional backend %s not available: %s", "S3ConnectorBackend", e)
 
-    try:
-        from nexus.backends.x_connector import XConnectorBackend as _XConn
+        try:
+            from nexus.backends.x_connector import XConnectorBackend as _XConn
 
-        XConnectorBackend = _XConn
-    except ImportError:
-        pass
+            XConnectorBackend = _XConn
+        except ImportError as e:
+            _logger.debug("Optional backend %s not available: %s", "XConnectorBackend", e)
 
-    try:
-        from nexus.backends.hn_connector import HNConnectorBackend as _HNConn
+        try:
+            from nexus.backends.hn_connector import HNConnectorBackend as _HNConn
 
-        HNConnectorBackend = _HNConn
-    except ImportError:
-        pass
+            HNConnectorBackend = _HNConn
+        except ImportError as e:
+            _logger.debug("Optional backend %s not available: %s", "HNConnectorBackend", e)
 
-    try:
-        from nexus.backends.slack_connector import SlackConnectorBackend as _SlackConn
+        try:
+            from nexus.backends.slack_connector import SlackConnectorBackend as _SlackConn
 
-        SlackConnectorBackend = _SlackConn
-    except ImportError:
-        pass
+            SlackConnectorBackend = _SlackConn
+        except ImportError as e:
+            _logger.debug("Optional backend %s not available: %s", "SlackConnectorBackend", e)
 
-    # LocalConnectorBackend - no external deps, but kept here for consistency with other connectors
-    try:
-        from nexus.backends.local_connector import LocalConnectorBackend as _LocalConn
+        # LocalConnectorBackend - no external deps, but kept here for consistency with other connectors
+        try:
+            from nexus.backends.local_connector import LocalConnectorBackend as _LocalConn
 
-        LocalConnectorBackend = _LocalConn
-    except ImportError:
-        pass
+            LocalConnectorBackend = _LocalConn
+        except ImportError as e:
+            _logger.debug("Optional backend %s not available: %s", "LocalConnectorBackend", e)
 
-    try:
-        from nexus.backends.gmail_connector import GmailConnectorBackend as _GmailConn
+        try:
+            from nexus.backends.gmail_connector import GmailConnectorBackend as _GmailConn
 
-        GmailConnectorBackend = _GmailConn
-    except ImportError:
-        pass
+            GmailConnectorBackend = _GmailConn
+        except ImportError as e:
+            _logger.debug("Optional backend %s not available: %s", "GmailConnectorBackend", e)
 
-    try:
-        from nexus.backends.gcalendar_connector import (
-            GoogleCalendarConnectorBackend as _GCalConn,
-        )
+        try:
+            from nexus.backends.gcalendar_connector import (
+                GoogleCalendarConnectorBackend as _GCalConn,
+            )
 
-        GoogleCalendarConnectorBackend = _GCalConn
-    except ImportError:
-        pass
+            GoogleCalendarConnectorBackend = _GCalConn
+        except ImportError as e:
+            _logger.debug(
+                "Optional backend %s not available: %s", "GoogleCalendarConnectorBackend", e
+            )
 
 
 __all__ = [

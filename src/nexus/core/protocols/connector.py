@@ -5,6 +5,8 @@ Defines the Storage Brick boundary as composable protocols:
 - ``ContentStoreProtocol`` — Minimal CAS interface (most consumers need only this)
 - ``DirectoryOpsProtocol`` — Directory operations (VFS Router, mount services)
 - ``ConnectorProtocol`` — Full connector interface (Storage Brick boundary)
+- ``PassthroughProtocol`` — Same-box operations (locking, physical paths)
+- ``OAuthCapableProtocol`` — OAuth token management capability
 
 Design decisions:
     - Protocol for brick interfaces, ABC for internal implementations (§11.3)
@@ -18,7 +20,8 @@ References:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from nexus.backends.backend import HandlerStatusResponse
@@ -123,3 +126,36 @@ class ConnectorProtocol(ContentStoreProtocol, DirectoryOpsProtocol, Protocol):
 
     @property
     def has_token_manager(self) -> bool: ...
+
+
+@runtime_checkable
+class PassthroughProtocol(Protocol):
+    """Same-box operations — locking, physical path access.
+
+    Only PassthroughBackend implements this. Used by events/locking code
+    to safely narrow the backend type instead of using ``cast()``.
+    """
+
+    @property
+    def base_path(self) -> Path: ...
+
+    def get_physical_path(self, virtual_path: str) -> Path: ...
+
+    def lock(self, path: str, timeout: float = 30.0, max_holders: int = 1) -> str | None: ...
+
+    def unlock(self, lock_id: str) -> bool: ...
+
+
+@runtime_checkable
+class OAuthCapableProtocol(Protocol):
+    """OAuth token management capability.
+
+    Implemented by connectors that use OAuth credentials (Gmail, GDrive,
+    Slack, X, Google Calendar). Used to detect OAuth backends dynamically
+    instead of hardcoding backend type lists.
+    """
+
+    token_manager: Any
+    token_manager_db: str
+    user_email: str | None
+    provider: str

@@ -23,7 +23,15 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
+from sqlalchemy import delete, select
+
 from nexus.core.path_utils import get_ancestors, get_parent, get_parent_chain
+from nexus.storage.models.permissions import (
+    ReBACCheckCacheModel as RCC,
+)
+from nexus.storage.models.permissions import (
+    ReBACTupleModel as RT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -205,43 +213,27 @@ class HierarchyManager:
         Args:
             path: File or directory path
         """
-        # Get connection to cache database
-        conn = self.rebac_manager._get_connection()
-        try:
-            cursor = self.rebac_manager._create_cursor(conn)
+        ancestor_paths = list(get_ancestors(path))
 
-            # Build list of all paths to invalidate (ancestors + exact + descendants via LIKE)
-            # Ancestors: /a/b/c -> [/a/b/c, /a/b, /a]
-            ancestor_paths = list(get_ancestors(path))
-
+        with self.rebac_manager.engine.begin() as conn:
             # Invalidate cache for all ancestor paths (exact matches)
             for ancestor_path in ancestor_paths:
-                cursor.execute(
-                    self.rebac_manager._fix_sql_placeholders(
-                        """
-                        DELETE FROM rebac_check_cache
-                        WHERE object_type = 'file' AND object_id = ?
-                        """
-                    ),
-                    (ancestor_path,),
+                conn.execute(
+                    delete(RCC).where(
+                        RCC.object_type == "file",
+                        RCC.object_id == ancestor_path,
+                    )
                 )
 
             # CRITICAL FIX: Also invalidate cache for all DESCENDANT paths
             # When parent tuples are created for /a/b, all cached checks for /a/b/c, /a/b/c/d, etc.
             # must be invalidated because they can now inherit permissions from /a/b
-            cursor.execute(
-                self.rebac_manager._fix_sql_placeholders(
-                    """
-                    DELETE FROM rebac_check_cache
-                    WHERE object_type = 'file' AND object_id LIKE ?
-                    """
-                ),
-                (path + "/%",),
+            conn.execute(
+                delete(RCC).where(
+                    RCC.object_type == "file",
+                    RCC.object_id.like(path + "/%"),
+                )
             )
-
-            conn.commit()
-        finally:
-            self.rebac_manager._close_connection(conn)
 
     def _invalidate_cache_for_path_hierarchy_bulk(self, paths: list[str]) -> None:
         """Invalidate cache for multiple paths in bulk (optimized).
@@ -255,51 +247,31 @@ class HierarchyManager:
         if not paths:
             return
 
-        # Get connection to cache database
-        conn = self.rebac_manager._get_connection()
-        try:
-            cursor = self.rebac_manager._create_cursor(conn)
+        # Collect all paths to invalidate (ancestors + exact + descendants)
+        all_invalidate_paths: set[str] = set()
+        for path in paths:
+            all_invalidate_paths.update(get_ancestors(path))
 
-            # Collect all paths to invalidate (ancestors + exact + descendants)
-            all_invalidate_paths: set[str] = set()
+        paths_list = list(all_invalidate_paths)
 
-            for path in paths:
-                # Add ancestors: /a/b/c -> [/a/b/c, /a/b, /a]
-                all_invalidate_paths.update(get_ancestors(path))
-
-            # Convert to list for SQL query
-            paths_list = list(all_invalidate_paths)
-
+        with self.rebac_manager.engine.begin() as conn:
             # Bulk DELETE for exact path matches using IN clause
             if paths_list:
-                placeholders = ", ".join("?" * len(paths_list))
-                cursor.execute(
-                    self.rebac_manager._fix_sql_placeholders(
-                        f"""
-                        DELETE FROM rebac_check_cache
-                        WHERE object_type = 'file' AND object_id IN ({placeholders})
-                        """
-                    ),
-                    paths_list,
+                conn.execute(
+                    delete(RCC).where(
+                        RCC.object_type == "file",
+                        RCC.object_id.in_(paths_list),
+                    )
                 )
 
             # Also invalidate descendants using LIKE (one query per original path)
-            # Note: Can't easily combine LIKE queries, but this is still much better
-            # than the previous approach which did multiple queries per path
             for path in paths:
-                cursor.execute(
-                    self.rebac_manager._fix_sql_placeholders(
-                        """
-                        DELETE FROM rebac_check_cache
-                        WHERE object_type = 'file' AND object_id LIKE ?
-                        """
-                    ),
-                    (path + "/%",),
+                conn.execute(
+                    delete(RCC).where(
+                        RCC.object_type == "file",
+                        RCC.object_id.like(path + "/%"),
+                    )
                 )
-
-            conn.commit()
-        finally:
-            self.rebac_manager._close_connection(conn)
 
     def remove_parent_tuples(
         self,
@@ -320,51 +292,22 @@ class HierarchyManager:
         if not self.enable_inheritance:
             return 0
 
-        removed_count = 0
-
         # Find all tuples where this path is the subject (child)
         # and relation is "parent"
-        # This requires querying the database directly
+        stmt = select(RT.tuple_id).where(
+            RT.subject_type == "file",
+            RT.subject_id == path,
+            RT.relation == "parent",
+        )
+        if zone_id:
+            stmt = stmt.where(RT.zone_id == zone_id)
 
-        conn = self.rebac_manager._get_connection()
-        try:
-            cursor = self.rebac_manager._create_cursor(conn)
-
-            if zone_id:
-                # Zone-aware query
-                cursor.execute(
-                    self.rebac_manager._fix_sql_placeholders(
-                        """
-                        SELECT tuple_id
-                        FROM rebac_tuples
-                        WHERE subject_type = ? AND subject_id = ?
-                          AND relation = ?
-                          AND zone_id = ?
-                        """
-                    ),
-                    ("file", path, "parent", zone_id),
-                )
-            else:
-                # Non-zone query
-                cursor.execute(
-                    self.rebac_manager._fix_sql_placeholders(
-                        """
-                        SELECT tuple_id
-                        FROM rebac_tuples
-                        WHERE subject_type = ? AND subject_id = ?
-                          AND relation = ?
-                        """
-                    ),
-                    ("file", path, "parent"),
-                )
-
-            tuple_ids = []
-            for row in cursor.fetchall():
-                tuple_ids.append(row["tuple_id"])
-        finally:
-            self.rebac_manager._close_connection(conn)
+        with self.rebac_manager.engine.connect() as conn:
+            result = conn.execute(stmt)
+            tuple_ids = [row[0] for row in result.fetchall()]
 
         # Delete each tuple (outside connection context to avoid nested connections)
+        removed_count = 0
         for tuple_id in tuple_ids:
             self.rebac_manager.rebac_delete(tuple_id)
             removed_count += 1

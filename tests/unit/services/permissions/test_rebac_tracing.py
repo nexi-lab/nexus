@@ -375,10 +375,10 @@ class TestZeroOverhead:
     """Verify zero overhead when OTel is disabled."""
 
     def test_get_tracer_returns_none_when_disabled(self):
-        with patch("nexus.server.telemetry.get_tracer", return_value=None):
-            rebac_tracing.reset_tracer()
-            tracer = rebac_tracing._get_tracer()
-            assert tracer is None
+        """When OTEL_ENABLED is not set, _resolve_tracer returns None."""
+        rebac_tracing.reset_tracer()
+        tracer = rebac_tracing._get_tracer()
+        assert tracer is None
 
     def test_check_span_no_allocations_when_disabled(self):
         """When disabled, start_check_span should yield None immediately."""
@@ -565,34 +565,24 @@ class TestTracerCaching:
 
     def test_tracer_resolved_once(self):
         mock_tracer = MagicMock()
-        call_count = 0
+        resolve_tracer = MagicMock(return_value=mock_tracer)
 
-        def mock_get_tracer(name):
-            nonlocal call_count
-            call_count += 1
-            return mock_tracer
-
-        with patch("nexus.server.telemetry.get_tracer", mock_get_tracer):
+        with patch.object(rebac_tracing, "_resolve_tracer", resolve_tracer):
             rebac_tracing.reset_tracer()
             t1 = rebac_tracing._get_tracer()
             t2 = rebac_tracing._get_tracer()
 
         assert t1 is mock_tracer
         assert t2 is mock_tracer
-        assert call_count == 1  # Only resolved once
+        assert resolve_tracer.call_count == 1  # Only resolved once
 
     def test_reset_allows_re_resolution(self):
-        call_count = 0
+        resolve_tracer = MagicMock(side_effect=[MagicMock(), MagicMock()])
 
-        def mock_get_tracer(name):
-            nonlocal call_count
-            call_count += 1
-            return MagicMock()
-
-        with patch("nexus.server.telemetry.get_tracer", mock_get_tracer):
+        with patch.object(rebac_tracing, "_resolve_tracer", resolve_tracer):
             rebac_tracing.reset_tracer()
             rebac_tracing._get_tracer()
             rebac_tracing.reset_tracer()
             rebac_tracing._get_tracer()
 
-        assert call_count == 2
+        assert resolve_tracer.call_count == 2

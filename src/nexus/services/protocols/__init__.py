@@ -27,6 +27,7 @@ References:
 
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from nexus.services.protocols.context_manifest import ContextManifestProtocol
+from nexus.services.protocols.events import EventsProtocol
 from nexus.services.protocols.hook_engine import (
     POST_COPY,
     POST_DELETE,
@@ -44,6 +45,7 @@ from nexus.services.protocols.hook_engine import (
     HookResult,
     HookSpec,
 )
+from nexus.services.protocols.mcp import MCPProtocol
 from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol, NamespaceMount
 from nexus.services.protocols.payment import PaymentProtocol
 from nexus.services.protocols.rebac import ReBACBrickProtocol
@@ -54,13 +56,14 @@ __all__ = [
     "AgentInfo",
     "AgentRegistryProtocol",
     "AgentRequest",
-    "PaymentProtocol",
     "ContextManifestProtocol",
+    "EventsProtocol",
     "HookContext",
     "HookEngineProtocol",
     "HookId",
     "HookResult",
     "HookSpec",
+    "MCPProtocol",
     "NamespaceManagerProtocol",
     "NamespaceMount",
     "POST_COPY",
@@ -73,6 +76,7 @@ __all__ = [
     "PRE_MKDIR",
     "PRE_READ",
     "PRE_WRITE",
+    "PaymentProtocol",
     "ReBACBrickProtocol",
     "SchedulerProtocol",
     "SearchBrickProtocol",

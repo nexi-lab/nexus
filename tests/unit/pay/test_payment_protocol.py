@@ -7,7 +7,7 @@ Test categories:
 1. ABC & data classes (cannot instantiate, frozen dataclasses)
 2. Exception hierarchy
 3. ProtocolDetector (detect, ordering, no-match error)
-4. ProtocolRegistry (register, get, unregister, resolve, legacy mapping)
+4. ProtocolRegistry (register, get, unregister, resolve)
 5. X402PaymentProtocol (can_handle, transfer delegation)
 6. CreditsPaymentProtocol (can_handle, transfer delegation)
 7. Error propagation
@@ -375,17 +375,6 @@ class TestProtocolRegistry:
         resolved = registry.resolve(method="auto", to="agent-bob")
         assert resolved.protocol_name == TransactionProtocol.INTERNAL
 
-    def test_resolve_legacy_credits_maps_to_internal(self):
-        """method='credits' should resolve to the INTERNAL protocol."""
-        from nexus.pay.protocol import ProtocolRegistry
-
-        registry = ProtocolRegistry()
-        proto = self._make_stub_protocol(TransactionProtocol.INTERNAL, handles=True)
-        registry.register(proto)
-
-        resolved = registry.resolve(method="credits", to="agent-bob")
-        assert resolved.protocol_name == TransactionProtocol.INTERNAL
-
     def test_resolve_unknown_method_raises(self):
         from nexus.pay.protocol import ProtocolNotFoundError, ProtocolRegistry
 
@@ -403,7 +392,7 @@ class TestProtocolRegistry:
         registry.register(p2)
 
         names = registry.list_protocols()
-        assert set(names) == {"x402", "internal"}
+        assert set(names) == {"x402", "credits"}
 
 
 # =============================================================================

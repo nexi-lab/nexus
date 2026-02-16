@@ -74,6 +74,8 @@ jobs:
         run: |
           if ! git ls-remote --heads origin gh-pages | grep -q gh-pages; then
             echo "Creating gh-pages branch..."
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
             git checkout --orphan gh-pages
             git reset --hard
             git commit --allow-empty -m "Initialize gh-pages for benchmark data"
@@ -152,6 +154,8 @@ jobs:
         run: |
           if ! git ls-remote --heads origin gh-pages | grep -q gh-pages; then
             echo "Creating gh-pages branch..."
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
             git checkout --orphan gh-pages
             git reset --hard
             git commit --allow-empty -m "Initialize gh-pages for benchmark data"

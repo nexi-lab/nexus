@@ -749,11 +749,6 @@ class TestEventBusFactory:
             create_event_bus(backend="unknown", redis_client=mock_redis_client)
 
 
-# =============================================================================
-# Protocol Compliance Tests
-# =============================================================================
-
-
 class TestEventBusProtocol:
     """Tests for EventBusProtocol compliance."""
 

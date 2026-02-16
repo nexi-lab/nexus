@@ -2,8 +2,8 @@
 
 Provides utility functions for:
 - User lookup by various identifiers (email, username, OAuth, external ID)
-- ReBAC group-based zone membership management
-- Zone group naming conventions
+- ReBAC group-based zone membership management (re-exported from core)
+- Zone group naming conventions (re-exported from core)
 - User creation with uniqueness checks
 """
 
@@ -14,6 +14,20 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+# Issue #1519, 3A: Zone helper functions moved to core/zone_helpers.py
+# (no server dependencies). Re-exported here for backward compatibility.
+from nexus.core.zone_helpers import (  # noqa: F401
+    add_user_to_zone,
+    can_invite_to_zone,
+    get_user_zones,
+    is_zone_admin,
+    is_zone_group,
+    is_zone_owner,
+    parse_zone_from_group,
+    remove_user_from_zone,
+    user_belongs_to_zone,
+    zone_group_id,
+)
 from nexus.storage.models import (
     UserModel,
     UserOAuthAccountModel,

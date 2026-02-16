@@ -675,6 +675,15 @@ def create_nexus_services(
             pass
         workflow_engine = _create_workflow_engine(record_store, _glob_match_fn)
 
+    # --- API key creator (Issue #1519, 3A: inject server auth into kernel) ---
+    api_key_creator: Any = None
+    try:
+        from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+
+        api_key_creator = DatabaseAPIKeyAuth
+    except ImportError:
+        pass  # Server auth not available (e.g. embedded mode)
+
     return _KernelServices(
         router=router,
         rebac_manager=rebac_manager,
@@ -706,6 +715,7 @@ def create_nexus_services(
         },
         agent_registry=agent_registry,
         namespace_manager=namespace_manager,
+        api_key_creator=api_key_creator,
         async_agent_registry=async_agent_registry,
         async_namespace_manager=async_namespace_manager,
         async_vfs_router=async_vfs_router,

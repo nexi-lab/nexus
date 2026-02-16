@@ -37,9 +37,15 @@ class NexusError(Exception):
         is_expected: Whether this is an expected user error (True) or
                      unexpected system error (False). Subclasses set
                      appropriate defaults.
+        status_code: HTTP status code for this error type. Subclasses
+                     override with the appropriate code (e.g. 404, 403).
+                     Used by error_handlers.py to avoid cascading isinstance.
+        error_type: Short HTTP error label (e.g. "Not Found", "Forbidden").
     """
 
     is_expected: bool = False  # Default: unexpected (system error)
+    status_code: int = 500
+    error_type: str = "Internal Server Error"
 
     def __init__(self, message: str, path: str | None = None, is_expected: bool | None = None):
         self.message = message
@@ -63,6 +69,8 @@ class NexusFileNotFoundError(NexusError, FileNotFoundError):
     """
 
     is_expected = True  # User asked for non-existent resource
+    status_code = 404
+    error_type = "Not Found"
 
     def __init__(self, path: str, message: str | None = None):
         msg = message or "File not found"
@@ -77,6 +85,8 @@ class NexusPermissionError(NexusError):
     """
 
     is_expected = True  # User lacks required permissions
+    status_code = 403
+    error_type = "Forbidden"
 
     def __init__(self, path: str, message: str | None = None):
         msg = message or "Permission denied"
@@ -98,6 +108,8 @@ class PermissionDeniedError(NexusPermissionError):
     """
 
     is_expected = True  # User lacks ReBAC permissions
+    status_code = 403
+    error_type = "Forbidden"
 
     def __init__(self, message: str, path: str | None = None):
         super().__init__(path=path or "", message=message)
@@ -113,6 +125,8 @@ class StaleSessionError(NexusError):
     """
 
     is_expected = True  # Agent session was superseded by a newer one
+    status_code = 409
+    error_type = "Conflict"
 
     def __init__(self, agent_id: str, message: str | None = None):
         self.agent_id = agent_id
@@ -128,6 +142,8 @@ class BackendError(NexusError):
     """
 
     is_expected = False  # System/infrastructure failure
+    status_code = 502
+    error_type = "Bad Gateway"
 
     def __init__(self, message: str, backend: str | None = None, path: str | None = None):
         self.backend = backend
@@ -209,6 +225,8 @@ class ServiceUnavailableError(NexusError):
     """
 
     is_expected = False  # Infrastructure failure
+    status_code = 503
+    error_type = "Service Unavailable"
 
     def __init__(self, message: str, path: str | None = None):
         super().__init__(message, path)
@@ -224,6 +242,8 @@ class CircuitOpenError(ServiceUnavailableError):
     """
 
     is_expected = False  # Infrastructure failure (circuit open)
+    status_code = 503
+    error_type = "Service Unavailable"
 
     def __init__(self, service_name: str, message: str | None = None):
         self.service_name = service_name
@@ -238,6 +258,8 @@ class InvalidPathError(NexusError):
     """
 
     is_expected = True  # User provided invalid input
+    status_code = 400
+    error_type = "Bad Request"
 
     def __init__(self, path: str, message: str | None = None):
         msg = message or "Invalid path"
@@ -269,6 +291,8 @@ class ValidationError(NexusError):
     """
 
     is_expected = True  # User input validation failure
+    status_code = 400
+    error_type = "Bad Request"
 
     def __init__(self, message: str, path: str | None = None, is_expected: bool | None = None):
         super().__init__(message, path, is_expected)
@@ -282,6 +306,8 @@ class ParserError(NexusError):
     """
 
     is_expected = True  # User provided unparseable document
+    status_code = 422
+    error_type = "Unprocessable Entity"
 
     def __init__(self, message: str, path: str | None = None, parser: str | None = None):
         self.parser = parser
@@ -313,6 +339,8 @@ class ConflictError(NexusError):
     """
 
     is_expected = True  # Normal condition in concurrent systems
+    status_code = 409
+    error_type = "Conflict"
 
     def __init__(self, path: str, expected_etag: str, current_etag: str):
         """Initialize conflict error.
@@ -346,6 +374,8 @@ class LockTimeout(NexusError):
     """
 
     is_expected = True  # Normal condition in concurrent systems
+    status_code = 423
+    error_type = "Locked"
 
     def __init__(self, path: str, timeout: float, message: str | None = None):
         """Initialize lock timeout error.
@@ -401,6 +431,8 @@ class AuthenticationError(NexusError):
     """
 
     is_expected = True  # User auth issue (invalid/expired credentials)
+    status_code = 401
+    error_type = "Unauthorized"
 
     def __init__(self, message: str, path: str | None = None):
         super().__init__(message, path)
@@ -417,6 +449,8 @@ class PathNotMountedError(NexusError):
     """
 
     is_expected = True  # User referenced unmounted path
+    status_code = 404
+    error_type = "Not Found"
 
     def __init__(self, path: str, message: str | None = None):
         msg = message or "No mount found for path"
@@ -434,6 +468,8 @@ class AccessDeniedError(NexusError):
     """
 
     is_expected = True  # User lacks zone/namespace-level access
+    status_code = 403
+    error_type = "Forbidden"
 
     def __init__(self, message: str, path: str | None = None):
         super().__init__(message, path)
@@ -450,6 +486,8 @@ class UploadNotFoundError(NexusError):
     """
 
     is_expected = True
+    status_code = 404
+    error_type = "Not Found"
 
     def __init__(self, upload_id: str, message: str | None = None):
         self.upload_id = upload_id
@@ -465,6 +503,8 @@ class UploadExpiredError(NexusError):
     """
 
     is_expected = True
+    status_code = 410
+    error_type = "Gone"
 
     def __init__(self, upload_id: str, message: str | None = None):
         self.upload_id = upload_id
@@ -480,6 +520,8 @@ class UploadOffsetMismatchError(NexusError):
     """
 
     is_expected = True
+    status_code = 409
+    error_type = "Conflict"
 
     def __init__(self, upload_id: str, expected: int, received: int):
         self.upload_id = upload_id
@@ -497,6 +539,8 @@ class UploadChecksumMismatchError(NexusError):
     """
 
     is_expected = True
+    status_code = 460
+    error_type = "Checksum Mismatch"
 
     def __init__(self, upload_id: str, algorithm: str, message: str | None = None):
         self.upload_id = upload_id

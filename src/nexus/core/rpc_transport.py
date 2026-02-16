@@ -122,9 +122,9 @@ class NexusRPCTransport:
             TransportError: Connection or timeout error
             RPCError: Server returned an error response
         """
-        # Import codec from shared core module; protocol types from server
+        # Import codec and protocol types from core/ (Issue #1519, 1A)
         from nexus.core.rpc_codec import decode_rpc_message, encode_rpc_message
-        from nexus.server.protocol import RPCErrorCode, RPCRequest, RPCResponse
+        from nexus.core.rpc_types import RPCErrorCode, RPCRequest, RPCResponse
 
         request = RPCRequest(
             method=method,

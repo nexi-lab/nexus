@@ -19,6 +19,8 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from nexus.raft.zone_manager import ROOT_ZONE_ID
+
 if TYPE_CHECKING:
     from nexus.raft.zone_manager import ZoneManager
     from nexus.storage.raft_metadata_store import RaftMetadataStore
@@ -55,7 +57,7 @@ class ZonePathResolver:
         metadata = resolved.store.get(resolved.path)
     """
 
-    def __init__(self, zone_manager: ZoneManager, root_zone_id: str = "default"):
+    def __init__(self, zone_manager: ZoneManager, root_zone_id: str = ROOT_ZONE_ID):
         self._zone_manager = zone_manager
         self._root_zone_id = root_zone_id
 

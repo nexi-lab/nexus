@@ -522,11 +522,11 @@ class AsyncLocalBackend(AsyncBackend):
     async def stream_content(
         self,
         content_hash: str,
-        chunk_size: int = 8192,
+        chunk_size: int = 65536,
         context: "OperationContext | None" = None,
     ) -> AsyncIterator[bytes]:
         """
-        Stream content from disk in chunks without loading entire file.
+        Stream content from disk in chunks using aiofiles (truly async).
 
         Args:
             content_hash: BLAKE3 hash as hex string
@@ -536,51 +536,41 @@ class AsyncLocalBackend(AsyncBackend):
         Yields:
             Byte chunks of the content
         """
+        import aiofiles
+
         content_path = self._hash_to_path(content_hash)
 
-        def _check_exists() -> bool:
-            return content_path.exists()
-
-        if not await asyncio.to_thread(_check_exists):
+        if not await asyncio.to_thread(content_path.exists):
             raise NexusFileNotFoundError(
                 path=content_hash,
                 message=f"CAS content not found: {content_hash}",
             )
 
-        def _read_all_chunks() -> list[bytes]:
-            """Read all chunks from file in a thread."""
-            chunks: list[bytes] = []
-            try:
-                with open(content_path, "rb") as f:
-                    while True:
-                        chunk = f.read(chunk_size)
-                        if not chunk:
-                            break
-                        chunks.append(chunk)
-            except OSError as e:
-                raise BackendError(
-                    f"Failed to stream content: {e}",
-                    backend="local",
-                    path=content_hash,
-                ) from e
-            return chunks
-
-        # Read all chunks in a thread, then yield them
-        chunks = await asyncio.to_thread(_read_all_chunks)
-        for chunk in chunks:
-            yield chunk
+        try:
+            async with aiofiles.open(content_path, "rb") as f:
+                while True:
+                    chunk = await f.read(chunk_size)
+                    if not chunk:
+                        break
+                    yield chunk
+        except OSError as e:
+            raise BackendError(
+                f"Failed to stream content: {e}",
+                backend="local",
+                path=content_hash,
+            ) from e
 
     async def stream_range(
         self,
         content_hash: str,
         start: int,
         end: int,
-        chunk_size: int = 8192,
+        chunk_size: int = 65536,
         context: "OperationContext | None" = None,
     ) -> AsyncIterator[bytes]:
         """Stream a byte range [start, end] inclusive from local CAS (async).
 
-        Uses seek-based I/O in a thread for efficiency.
+        Uses aiofiles with seek for truly async, bounded-memory I/O.
 
         Args:
             content_hash: Content hash (BLAKE3 hex)
@@ -592,41 +582,32 @@ class AsyncLocalBackend(AsyncBackend):
         Yields:
             Byte chunks covering the requested range
         """
+        import aiofiles
+
         content_path = self._hash_to_path(content_hash)
 
-        def _check_exists() -> bool:
-            return content_path.exists()
-
-        if not await asyncio.to_thread(_check_exists):
+        if not await asyncio.to_thread(content_path.exists):
             raise NexusFileNotFoundError(
                 path=content_hash,
                 message=f"CAS content not found: {content_hash}",
             )
 
-        def _read_range_chunks() -> list[bytes]:
-            """Read range chunks from file in a thread."""
-            result: list[bytes] = []
-            bytes_remaining = end - start + 1
-            try:
-                with open(content_path, "rb") as f:
-                    f.seek(start)
-                    while bytes_remaining > 0:
-                        chunk = f.read(min(chunk_size, bytes_remaining))
-                        if not chunk:
-                            break
-                        bytes_remaining -= len(chunk)
-                        result.append(chunk)
-            except OSError as e:
-                raise BackendError(
-                    f"Failed to stream range: {e}",
-                    backend="local",
-                    path=content_hash,
-                ) from e
-            return result
-
-        chunks = await asyncio.to_thread(_read_range_chunks)
-        for chunk in chunks:
-            yield chunk
+        try:
+            async with aiofiles.open(content_path, "rb") as f:
+                await f.seek(start)
+                bytes_remaining = end - start + 1
+                while bytes_remaining > 0:
+                    chunk = await f.read(min(chunk_size, bytes_remaining))
+                    if not chunk:
+                        break
+                    bytes_remaining -= len(chunk)
+                    yield chunk
+        except OSError as e:
+            raise BackendError(
+                f"Failed to stream range: {e}",
+                backend="local",
+                path=content_hash,
+            ) from e
 
     async def write_stream(
         self,
@@ -636,7 +617,8 @@ class AsyncLocalBackend(AsyncBackend):
         """
         Write content from an async iterator of chunks.
 
-        Collects all chunks, computes hash, and stores atomically.
+        Collects async chunks, then delegates to CASBlobStore.store_streaming()
+        in a thread for the actual streaming-to-disk + incremental hashing.
 
         Args:
             chunks: Async iterator yielding byte chunks
@@ -645,15 +627,29 @@ class AsyncLocalBackend(AsyncBackend):
         Returns:
             HandlerResponse with content hash in data field
         """
-        # Collect all chunks
-        collected_chunks: list[bytes] = []
+        # Collect async chunks (async-to-sync boundary)
+        collected: list[bytes] = []
         async for chunk in chunks:
-            collected_chunks.append(chunk)
+            collected.append(chunk)
 
-        content = b"".join(collected_chunks)
+        assert self._cas is not None  # noqa: S101
+        cas = self._cas
 
-        # Use write_content for the actual storage
-        return await self.write_content(content, context=context)
+        # Run blocking CAS write in thread — store_streaming handles
+        # temp file + incremental hash internally
+        result = await asyncio.to_thread(lambda: cas.store_streaming(iter(collected)))
+
+        # Add to cache if we have the content
+        if self.content_cache is not None and collected:
+            content = b"".join(collected)
+            self.content_cache.put(result.content_hash, content)
+
+        return HandlerResponse.ok(
+            data=result.content_hash,
+            backend_name=self.name,
+            path=result.content_hash,
+            affected_rows=result.size,
+        )
 
     # === Directory Operations ===
 

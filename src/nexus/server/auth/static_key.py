@@ -85,9 +85,8 @@ class StaticAPIKeyAuth(AuthProvider):
         # Get user info from config
         user_info = self.api_keys[token]
 
-        # Determine subject type (default to "user" for backward compatibility)
         subject_type = user_info.get("subject_type", "user")
-        subject_id = user_info.get("subject_id") or user_info.get("user_id")  # Fallback to user_id
+        subject_id = user_info.get("subject_id")
 
         return AuthResult(
             authenticated=True,

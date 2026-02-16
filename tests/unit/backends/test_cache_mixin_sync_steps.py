@@ -652,7 +652,7 @@ class TestStep7GenerateEmbeddings:
         """Test embedding generation for files."""
         files = ["/test/file1.txt", "/test/file2.txt"]
 
-        with patch.object(connector, "_generate_embeddings") as mock_gen:
+        with patch.object(connector, "generate_embeddings_for_path") as mock_gen:
             result = SyncResult()
             pipeline._step7_generate_embeddings(files, result)
 
@@ -665,7 +665,7 @@ class TestStep7GenerateEmbeddings:
         files = ["/test/file1.txt"]
 
         with patch.object(
-            connector, "_generate_embeddings", side_effect=Exception("Embedding error")
+            connector, "generate_embeddings_for_path", side_effect=Exception("Embedding error")
         ):
             result = SyncResult()
             pipeline._step7_generate_embeddings(files, result)

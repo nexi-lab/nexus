@@ -316,7 +316,7 @@ class TestDCacheNegativeEntries:
         zone = "test_zone"
 
         with patch.object(
-            enhanced_rebac_manager, "_get_zone_revision", side_effect=RuntimeError("DB down")
+            enhanced_rebac_manager, "get_zone_revision", side_effect=RuntimeError("DB down")
         ):
             # Should not crash — returns bucket 0 as fallback
             result = namespace_manager.is_visible(alice, "/workspace/proj/a.txt", zone)
@@ -387,7 +387,7 @@ class TestDCacheRevisionQuantization:
     ):
         """On revision fetch error, _get_current_revision_bucket returns 0."""
         with patch.object(
-            enhanced_rebac_manager, "_get_zone_revision", side_effect=RuntimeError("DB down")
+            enhanced_rebac_manager, "get_zone_revision", side_effect=RuntimeError("DB down")
         ):
             bucket = namespace_manager._get_current_revision_bucket("test_zone")
             assert bucket == 0

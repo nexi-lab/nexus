@@ -122,8 +122,7 @@ class NexusRPCTransport:
             TransportError: Connection or timeout error
             RPCError: Server returned an error response
         """
-        # Lazy import to avoid circular dependency
-        from nexus.server.protocol import (
+        from nexus.core.rpc_protocol import (
             RPCErrorCode,
             RPCRequest,
             RPCResponse,

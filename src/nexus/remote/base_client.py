@@ -24,7 +24,7 @@ from nexus.core.exceptions import (
     NexusPermissionError,
     ValidationError,
 )
-from nexus.server.protocol import RPCErrorCode
+from nexus.core.rpc_protocol import RPCErrorCode
 
 logger = logging.getLogger(__name__)
 

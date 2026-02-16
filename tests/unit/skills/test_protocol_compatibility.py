@@ -1,12 +1,12 @@
 """Test that the narrow Skills Protocol is satisfied by core implementations.
 
 The skills module defines a narrow NexusFilesystem Protocol with only the
-6 methods it actually uses (read, write, list, exists, mkdir, is_directory).
+7 methods it actually uses (read, write, list, exists, mkdir, delete, is_directory).
 This test verifies that:
 
 1. All narrow Protocol methods exist on the core ABC (subset check)
 2. NexusFS concrete implementation satisfies the narrow Protocol
-3. A minimal mock with just the 6 methods passes isinstance()
+3. A minimal mock with just the 7 methods passes isinstance()
 """
 
 import inspect
@@ -24,8 +24,8 @@ try:
 except Exception:
     _raft_available = False
 
-# The 6 methods the skills module uses
-REQUIRED_METHODS = {"read", "write", "list", "exists", "mkdir", "is_directory"}
+# The 7 methods the skills module uses
+REQUIRED_METHODS = {"read", "write", "list", "exists", "mkdir", "delete", "is_directory"}
 
 
 def test_protocol_is_subset_of_abc() -> None:
@@ -95,7 +95,7 @@ def test_nexus_fs_satisfies_narrow_protocol() -> None:
 
 
 def test_minimal_mock_satisfies_protocol() -> None:
-    """Verify a minimal mock with just the 6 methods passes isinstance()."""
+    """Verify a minimal mock with just the 7 methods passes isinstance()."""
 
     class MinimalFilesystem:
         def read(self, path, context=None, return_metadata=False):
@@ -121,6 +121,9 @@ def test_minimal_mock_satisfies_protocol() -> None:
             return False
 
         def mkdir(self, path, parents=False, exist_ok=False):
+            pass
+
+        def delete(self, path):
             pass
 
         def is_directory(self, path, context=None):

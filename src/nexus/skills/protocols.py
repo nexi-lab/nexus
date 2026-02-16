@@ -3,8 +3,8 @@
 This defines only the filesystem methods that the skills module actually uses,
 rather than mirroring the full NexusFilesystem ABC (1,000+ LOC).
 
-Any object implementing these 6 methods can serve as a filesystem for skills:
-read, write, list, exists, mkdir, is_directory.
+Any object implementing these 7 methods can serve as a filesystem for skills:
+read, write, list, exists, mkdir, delete, is_directory.
 
 Verification:
 - Run: pytest tests/unit/skills/test_protocol_compatibility.py
@@ -20,12 +20,13 @@ from typing import Any, Protocol, runtime_checkable
 class NexusFilesystem(Protocol):
     """Narrow filesystem protocol for the skills module.
 
-    Contains only the methods used by skills code:
+    Contains only the methods used by skills and MCP code:
     - read: Read file content
     - write: Write file content
     - list: List files in a directory
     - exists: Check if a path exists
     - mkdir: Create a directory
+    - delete: Delete a file
     - is_directory: Check if path is a directory
     """
 
@@ -110,6 +111,14 @@ class NexusFilesystem(Protocol):
             path: Virtual path to directory
             parents: Create parent directories if needed
             exist_ok: Don't raise if directory exists
+        """
+        ...
+
+    def delete(self, path: str) -> None:
+        """Delete a file.
+
+        Args:
+            path: Virtual path to delete
         """
         ...
 

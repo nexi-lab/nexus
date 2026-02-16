@@ -146,7 +146,7 @@ Leader and Follower run the same binary. Role is determined by Raft election.
 ## 4. Kernel Architecture
 
 For the full OS-inspired layered architecture (design philosophy, Four Storage Pillars,
-kernel vs services boundary, deployment modes), see **`docs/design/KERNEL-ARCHITECTURE.md`** (SSOT).
+kernel vs services boundary, deployment modes), see **`docs/architecture/KERNEL-ARCHITECTURE.md`** (SSOT).
 
 This section covers federation-specific consistency semantics not in that document.
 

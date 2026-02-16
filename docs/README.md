@@ -42,7 +42,7 @@ The index includes:
 
 ### Development
 - [Development Guide](development/development.md)
-- [Architecture](architecture/ARCHITECTURE.md)
+- [Architecture](ARCHITECTURE.md)
 - [Core Tenets](CORE_TENETS.md)
 
 ### Examples

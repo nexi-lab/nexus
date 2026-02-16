@@ -118,8 +118,11 @@ class TestDispatchAdminEnforcement:
         exposed_methods = {"admin_op": _fake_admin_method}
 
         result = await _dispatch_method(
-            "admin_op", params, admin_context,
-            nexus_fs=MagicMock(), exposed_methods=exposed_methods,
+            "admin_op",
+            params,
+            admin_context,
+            nexus_fs=MagicMock(),
+            exposed_methods=exposed_methods,
         )
         assert result == {"result": "admin_ok"}
 
@@ -135,8 +138,11 @@ class TestDispatchAdminEnforcement:
 
         with pytest.raises(NexusPermissionError, match="Admin privileges required"):
             await _dispatch_method(
-                "admin_op", params, non_admin_context,
-                nexus_fs=MagicMock(), exposed_methods=exposed_methods,
+                "admin_op",
+                params,
+                non_admin_context,
+                nexus_fs=MagicMock(),
+                exposed_methods=exposed_methods,
             )
 
     @pytest.mark.asyncio
@@ -150,8 +156,11 @@ class TestDispatchAdminEnforcement:
 
         with pytest.raises(NexusPermissionError, match="Admin privileges required"):
             await _dispatch_method(
-                "admin_op", params, None,
-                nexus_fs=MagicMock(), exposed_methods=exposed_methods,
+                "admin_op",
+                params,
+                None,
+                nexus_fs=MagicMock(),
+                exposed_methods=exposed_methods,
             )
 
     @pytest.mark.asyncio
@@ -164,8 +173,11 @@ class TestDispatchAdminEnforcement:
         exposed_methods = {"normal_op": _fake_normal_method}
 
         result = await _dispatch_method(
-            "normal_op", params, non_admin_context,
-            nexus_fs=MagicMock(), exposed_methods=exposed_methods,
+            "normal_op",
+            params,
+            non_admin_context,
+            nexus_fs=MagicMock(),
+            exposed_methods=exposed_methods,
         )
         assert result == {"result": "normal_ok"}
 

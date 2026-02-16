@@ -497,10 +497,13 @@ class MemoryVersioning:
         import json
 
         try:
-            content_bytes = self._backend.read_content(content_hash, context=self._context).unwrap()
+            content_bytes: bytes = self._backend.read_content(
+                content_hash, context=self._context
+            ).unwrap()
             if parse_json:
                 try:
-                    return json.loads(content_bytes.decode("utf-8"))
+                    parsed: dict[str, Any] = json.loads(content_bytes.decode("utf-8"))
+                    return parsed
                 except (json.JSONDecodeError, UnicodeDecodeError):
                     pass
             try:

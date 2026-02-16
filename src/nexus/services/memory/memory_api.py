@@ -202,10 +202,13 @@ class Memory:
         import json as _json
 
         try:
-            content_bytes = self.backend.read_content(content_hash, context=self.context).unwrap()
+            content_bytes: bytes = self.backend.read_content(
+                content_hash, context=self.context
+            ).unwrap()
             if parse_json:
                 try:
-                    return _json.loads(content_bytes.decode("utf-8"))
+                    parsed: dict[str, Any] = _json.loads(content_bytes.decode("utf-8"))
+                    return parsed
                 except (_json.JSONDecodeError, UnicodeDecodeError):
                     pass
             try:

@@ -16,9 +16,18 @@ Usage:
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy.orm import Session
+
+if TYPE_CHECKING:
+    from nexus.services.ace.consolidation import ConsolidationEngine
+    from nexus.services.ace.curation import Curator
+    from nexus.services.ace.feedback import FeedbackManager
+    from nexus.services.ace.learning_loop import LearningLoop
+    from nexus.services.ace.playbook import PlaybookManager
+    from nexus.services.ace.reflection import Reflector
+    from nexus.services.ace.trajectory import TrajectoryManager
 
 logger = logging.getLogger(__name__)
 
@@ -47,16 +56,16 @@ class AceFacade:
         self._zone_id = zone_id
 
         # Lazy-cached service instances
-        self._trajectory: Any = None
-        self._feedback: Any = None
-        self._playbook: Any = None
-        self._reflector: Any = None
-        self._curator: Any = None
-        self._consolidation: Any = None
-        self._learning_loop: Any = None
+        self._trajectory: TrajectoryManager | None = None
+        self._feedback: FeedbackManager | None = None
+        self._playbook: PlaybookManager | None = None
+        self._reflector: Reflector | None = None
+        self._curator: Curator | None = None
+        self._consolidation: ConsolidationEngine | None = None
+        self._learning_loop: LearningLoop | None = None
 
     @property
-    def trajectory(self) -> Any:
+    def trajectory(self) -> TrajectoryManager:
         """TrajectoryManager instance (lazy-loaded)."""
         if self._trajectory is None:
             from nexus.services.ace.trajectory import TrajectoryManager
@@ -71,7 +80,7 @@ class AceFacade:
         return self._trajectory
 
     @property
-    def feedback(self) -> Any:
+    def feedback(self) -> FeedbackManager:
         """FeedbackManager instance (lazy-loaded)."""
         if self._feedback is None:
             from nexus.services.ace.feedback import FeedbackManager
@@ -80,7 +89,7 @@ class AceFacade:
         return self._feedback
 
     @property
-    def playbook(self) -> Any:
+    def playbook(self) -> PlaybookManager:
         """PlaybookManager instance (lazy-loaded)."""
         if self._playbook is None:
             from nexus.services.ace.playbook import PlaybookManager
@@ -95,7 +104,7 @@ class AceFacade:
         return self._playbook
 
     @property
-    def reflector(self) -> Any:
+    def reflector(self) -> Reflector:
         """Reflector instance (lazy-loaded)."""
         if self._reflector is None:
             from nexus.services.ace.reflection import Reflector
@@ -112,7 +121,7 @@ class AceFacade:
         return self._reflector
 
     @property
-    def curator(self) -> Any:
+    def curator(self) -> Curator:
         """Curator instance (lazy-loaded)."""
         if self._curator is None:
             from nexus.services.ace.curation import Curator
@@ -121,7 +130,7 @@ class AceFacade:
         return self._curator
 
     @property
-    def consolidation(self) -> Any:
+    def consolidation(self) -> ConsolidationEngine:
         """ConsolidationEngine instance (lazy-loaded)."""
         if self._consolidation is None:
             from nexus.services.ace.consolidation import ConsolidationEngine
@@ -137,7 +146,7 @@ class AceFacade:
         return self._consolidation
 
     @property
-    def learning_loop(self) -> Any:
+    def learning_loop(self) -> LearningLoop:
         """LearningLoop instance (lazy-loaded)."""
         if self._learning_loop is None:
             from nexus.services.ace.learning_loop import LearningLoop

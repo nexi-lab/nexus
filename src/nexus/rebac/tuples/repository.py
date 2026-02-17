@@ -12,6 +12,7 @@ Provides:
 - ABAC condition evaluation
 """
 
+
 import json
 import logging
 from contextlib import contextmanager
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 class TupleRepository:
     """Data access layer for ReBAC relationship tuples.
 
@@ -35,12 +37,20 @@ class TupleRepository:
     manager layer which handles cache invalidation and other cross-cutting
     concerns.
 
+    Supports read/write separation (Issue #725):
+    - ``read_engine`` is used for read-only queries (permission checks, lookups)
+    - ``engine`` is used for writes (INSERT/DELETE/UPDATE + increment_zone_revision)
+    - When no ``read_engine`` is provided, falls back to ``engine`` for all operations
+
     Args:
-        engine: SQLAlchemy database engine (SQLite or PostgreSQL)
+        engine: SQLAlchemy database engine for write operations (SQLite or PostgreSQL)
+        read_engine: Optional separate engine for read-only operations (Issue #725).
+                    Defaults to ``engine`` when not provided.
     """
 
-    def __init__(self, engine: "Engine") -> None:
+    def __init__(self, engine: Engine, read_engine: Engine | None = None) -> None:
         self.engine = engine
+        self.read_engine = read_engine or engine
 
         # Track DBAPI to SQLAlchemy connection mapping for proper cleanup
         # (sqlite3.Connection in Python 3.13+ doesn't allow setting arbitrary attributes)
@@ -90,29 +100,33 @@ class TupleRepository:
                 logger.debug("Failed to close connection: %s", e)
 
     @contextmanager
-    def connection(self) -> "Generator[Any, None, None]":
+    def connection(self, *, readonly: bool = False) -> Generator[Any, None, None]:
         """Context manager for database connections.
 
         Uses engine.connect() which properly goes through the connection pool
         and respects pool_pre_ping for automatic stale connection detection.
 
+        Args:
+            readonly: If True, uses ``read_engine`` and skips commit (Issue #725).
+                     If False (default), uses ``engine`` and commits on success.
+
         Usage:
-            with repo.connection() as conn:
+            with repo.connection() as conn:       # write path
                 cursor = repo.create_cursor(conn)
                 cursor.execute(...)
-                conn.commit()
+
+            with repo.connection(readonly=True) as conn:  # read path
+                cursor = repo.create_cursor(conn)
+                cursor.execute(...)
         """
-        from sqlalchemy import text
+        target_engine = self.read_engine if readonly else self.engine
 
-        with self.engine.connect() as sa_conn:
-            # Fix PostgreSQL prepared statement performance issue (#683)
-            if self.engine.dialect.name == "postgresql":
-                sa_conn.execute(text("SET plan_cache_mode = 'force_custom_plan'"))
-
+        with target_engine.connect() as sa_conn:
             dbapi_conn = sa_conn.connection.dbapi_connection
             try:
                 yield dbapi_conn
-                sa_conn.commit()
+                if not readonly:
+                    sa_conn.commit()
             except Exception:
                 sa_conn.rollback()
                 raise
@@ -201,6 +215,7 @@ class TupleRepository:
         """Get current revision for a zone (read-only, no increment).
 
         Used for revision-based cache key generation (Issue #909).
+        Uses read_engine for read replica support (Issue #725).
 
         Args:
             zone_id: Zone ID (defaults to "root")
@@ -210,10 +225,8 @@ class TupleRepository:
             Current revision number (0 if zone has no writes yet)
         """
         effective_zone = zone_id or "root"
-        should_close = conn is None
-        if conn is None:
-            conn = self.get_connection()
-        try:
+        if conn is not None:
+            # Reuse provided connection
             cursor = self.create_cursor(conn)
             cursor.execute(
                 self.fix_sql_placeholders(
@@ -223,9 +236,18 @@ class TupleRepository:
             )
             row = cursor.fetchone()
             return int(row["current_version"]) if row else 0
-        finally:
-            if should_close:
-                self.close_connection(conn)
+
+        # Use read_engine for standalone reads (Issue #725)
+        with self.connection(readonly=True) as rconn:
+            cursor = self.create_cursor(rconn)
+            cursor.execute(
+                self.fix_sql_placeholders(
+                    "SELECT current_version FROM rebac_version_sequences WHERE zone_id = ?"
+                ),
+                (effective_zone,),
+            )
+            row = cursor.fetchone()
+            return int(row["current_version"]) if row else 0
 
     def increment_zone_revision(self, zone_id: str | None, conn: Any) -> int:
         """Increment and return the new revision for a zone.
@@ -474,7 +496,7 @@ class TupleRepository:
         Returns:
             List of (subject_type, subject_id, subject_relation) tuples
         """
-        with self.connection() as conn:
+        with self.connection(readonly=True) as conn:
             cursor = self.create_cursor(conn)
 
             if zone_id is None:
@@ -519,20 +541,15 @@ class TupleRepository:
                 for row in cursor.fetchall()
             ]
 
-    def find_related_objects(
-        self, obj: Entity, relation: str, zone_id: str | None = None
-    ) -> list[Entity]:
+    def find_related_objects(self, obj: Entity, relation: str) -> list[Entity]:
         """Find all objects related to obj via relation.
 
         For tupleToUserset traversal: finds tuples where (obj, relation, object).
         Example: parent of file X = tuples where subject=X, relation='parent'.
 
-        SECURITY FIX (P0): Enforces zone_id filtering to prevent cross-zone leaks.
-
         Args:
             obj: Object entity (the subject of the tuple)
             relation: Relation type (e.g., "parent")
-            zone_id: Optional zone ID for multi-zone isolation
 
         Returns:
             List of related object entities
@@ -544,43 +561,21 @@ class TupleRepository:
                 relation,
             )
 
-        with self.connection() as conn:
+        with self.connection(readonly=True) as conn:
             cursor = self.create_cursor(conn)
 
-            if zone_id is None:
-                cursor.execute(
-                    self.fix_sql_placeholders(
-                        """
-                        SELECT object_type, object_id
-                        FROM rebac_tuples
-                        WHERE zone_id IS NULL
-                          AND subject_type = ? AND subject_id = ?
-                          AND relation = ?
-                          AND (expires_at IS NULL OR expires_at >= ?)
-                        """
-                    ),
-                    (obj.entity_type, obj.entity_id, relation, datetime.now(UTC).isoformat()),
-                )
-            else:
-                cursor.execute(
-                    self.fix_sql_placeholders(
-                        """
-                        SELECT object_type, object_id
-                        FROM rebac_tuples
-                        WHERE zone_id = ?
-                          AND subject_type = ? AND subject_id = ?
-                          AND relation = ?
-                          AND (expires_at IS NULL OR expires_at >= ?)
-                        """
-                    ),
-                    (
-                        zone_id,
-                        obj.entity_type,
-                        obj.entity_id,
-                        relation,
-                        datetime.now(UTC).isoformat(),
-                    ),
-                )
+            cursor.execute(
+                self.fix_sql_placeholders(
+                    """
+                    SELECT object_type, object_id
+                    FROM rebac_tuples
+                    WHERE subject_type = ? AND subject_id = ?
+                      AND relation = ?
+                      AND (expires_at IS NULL OR expires_at >= ?)
+                    """
+                ),
+                (obj.entity_type, obj.entity_id, relation, datetime.now(UTC).isoformat()),
+            )
 
             results = []
             for row in cursor.fetchall():
@@ -592,20 +587,15 @@ class TupleRepository:
 
             return results
 
-    def find_subjects_with_relation(
-        self, obj: Entity, relation: str, zone_id: str | None = None
-    ) -> list[Entity]:
+    def find_subjects_with_relation(self, obj: Entity, relation: str) -> list[Entity]:
         """Find all subjects that have a relation to obj.
 
         Reverse of find_related_objects: finds tuples where (subject, relation, obj).
         Used for group permission inheritance patterns.
 
-        SECURITY FIX (P0): Enforces zone_id filtering to prevent cross-zone leaks.
-
         Args:
             obj: Object entity
             relation: Relation type (e.g., "direct_viewer")
-            zone_id: Optional zone ID for multi-zone isolation
 
         Returns:
             List of subject entities
@@ -617,43 +607,21 @@ class TupleRepository:
                 obj,
             )
 
-        with self.connection() as conn:
+        with self.connection(readonly=True) as conn:
             cursor = self.create_cursor(conn)
 
-            if zone_id is None:
-                cursor.execute(
-                    self.fix_sql_placeholders(
-                        """
-                        SELECT subject_type, subject_id
-                        FROM rebac_tuples
-                        WHERE zone_id IS NULL
-                          AND object_type = ? AND object_id = ?
-                          AND relation = ?
-                          AND (expires_at IS NULL OR expires_at >= ?)
-                        """
-                    ),
-                    (obj.entity_type, obj.entity_id, relation, datetime.now(UTC).isoformat()),
-                )
-            else:
-                cursor.execute(
-                    self.fix_sql_placeholders(
-                        """
-                        SELECT subject_type, subject_id
-                        FROM rebac_tuples
-                        WHERE zone_id = ?
-                          AND object_type = ? AND object_id = ?
-                          AND relation = ?
-                          AND (expires_at IS NULL OR expires_at >= ?)
-                        """
-                    ),
-                    (
-                        zone_id,
-                        obj.entity_type,
-                        obj.entity_id,
-                        relation,
-                        datetime.now(UTC).isoformat(),
-                    ),
-                )
+            cursor.execute(
+                self.fix_sql_placeholders(
+                    """
+                    SELECT subject_type, subject_id
+                    FROM rebac_tuples
+                    WHERE object_type = ? AND object_id = ?
+                      AND relation = ?
+                      AND (expires_at IS NULL OR expires_at >= ?)
+                    """
+                ),
+                (obj.entity_type, obj.entity_id, relation, datetime.now(UTC).isoformat()),
+            )
 
             results = []
             for row in cursor.fetchall():
@@ -665,58 +633,31 @@ class TupleRepository:
 
             return results
 
-    def get_direct_subjects(
-        self, relation: str, obj: Entity, zone_id: str | None = None
-    ) -> list[tuple[str, str]]:
+    def get_direct_subjects(self, relation: str, obj: Entity) -> list[tuple[str, str]]:
         """Get all subjects with direct relation to object.
-
-        SECURITY FIX (P0): Enforces zone_id filtering to prevent cross-zone leaks.
 
         Args:
             relation: Relation type
             obj: Object entity
-            zone_id: Optional zone ID for multi-zone isolation
 
         Returns:
             List of (subject_type, subject_id) tuples
         """
-        with self.connection() as conn:
+        with self.connection(readonly=True) as conn:
             cursor = self.create_cursor(conn)
 
-            if zone_id is None:
-                cursor.execute(
-                    self.fix_sql_placeholders(
-                        """
-                        SELECT subject_type, subject_id
-                        FROM rebac_tuples
-                        WHERE zone_id IS NULL
-                          AND relation = ?
-                          AND object_type = ? AND object_id = ?
-                          AND (expires_at IS NULL OR expires_at >= ?)
-                        """
-                    ),
-                    (relation, obj.entity_type, obj.entity_id, datetime.now(UTC).isoformat()),
-                )
-            else:
-                cursor.execute(
-                    self.fix_sql_placeholders(
-                        """
-                        SELECT subject_type, subject_id
-                        FROM rebac_tuples
-                        WHERE zone_id = ?
-                          AND relation = ?
-                          AND object_type = ? AND object_id = ?
-                          AND (expires_at IS NULL OR expires_at >= ?)
-                        """
-                    ),
-                    (
-                        zone_id,
-                        relation,
-                        obj.entity_type,
-                        obj.entity_id,
-                        datetime.now(UTC).isoformat(),
-                    ),
-                )
+            cursor.execute(
+                self.fix_sql_placeholders(
+                    """
+                    SELECT subject_type, subject_id
+                    FROM rebac_tuples
+                    WHERE relation = ?
+                      AND object_type = ? AND object_id = ?
+                      AND (expires_at IS NULL OR expires_at >= ?)
+                    """
+                ),
+                (relation, obj.entity_type, obj.entity_id, datetime.now(UTC).isoformat()),
+            )
 
             return [(row["subject_type"], row["subject_id"]) for row in cursor.fetchall()]
 

@@ -8,6 +8,7 @@ This module contains the fundamental file operations:
 - exists: Check file existence
 """
 
+
 import asyncio
 import contextlib
 import hashlib
@@ -18,9 +19,9 @@ from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, ClassVar
 
-from nexus.core._metadata_generated import FileMetadata
 from nexus.core.exceptions import BackendError, ConflictError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
+from nexus.core.metadata import FileMetadata
 from nexus.core.permissions import Permission
 from nexus.core.rpc_decorator import rpc_expose
 
@@ -36,6 +37,7 @@ if TYPE_CHECKING:
     from nexus.core.router import PathRouter
     from nexus.parsers.registry import ParserRegistry
 
+
 class NexusFSCoreMixin:
     """Mixin providing core file operations for NexusFS."""
 
@@ -49,10 +51,10 @@ class NexusFSCoreMixin:
 
     # Type hints for attributes/methods that will be provided by NexusFS parent class
     if TYPE_CHECKING:
-        from nexus.core._metadata_generated import FileMetadataProtocol
+        from nexus.core.metastore import MetastoreABC
         from nexus.services.permissions.enforcer import PermissionEnforcer
 
-        metadata: FileMetadataProtocol
+        metadata: MetastoreABC
         backend: Backend
         router: PathRouter
         is_admin: bool
@@ -172,7 +174,7 @@ class NexusFSCoreMixin:
         Args:
             event_type: Event type string (e.g., "file_write", "file_delete", "file_rename")
             path: Path of the affected file
-            zone_id: Zone ID (defaults to "default" if None)
+            zone_id: Zone ID (defaults to "root" if None)
             size: File size in bytes (optional)
             etag: Content hash (optional)
             agent_id: Agent that performed the operation (optional)
@@ -198,7 +200,7 @@ class NexusFSCoreMixin:
             event = FileEvent(
                 type=file_event_type,
                 path=path,
-                zone_id=zone_id or "default",
+                zone_id=zone_id or "root",
                 size=size,
                 etag=etag,
                 agent_id=agent_id,
@@ -265,7 +267,7 @@ class NexusFSCoreMixin:
                 self.subscription_manager.broadcast(  # type: ignore[attr-defined]
                     event_type,
                     event_context,
-                    event_context.get("zone_id", "default"),
+                    event_context.get("zone_id", "root"),
                 )
             )
 
@@ -366,7 +368,7 @@ class NexusFSCoreMixin:
                 return int(time.time() * 1000)
 
         # Legacy fallback: FileMetadata-based counter (requires lock)
-        from nexus.core._metadata_generated import FileMetadata
+        from nexus.core.metadata import FileMetadata
 
         rev_path = f"{SYSTEM_PATH_PREFIX}zone_rev/{zone_id}"
         # Issue #1180: Per-zone lock ensures atomic read-modify-write without
@@ -507,7 +509,7 @@ class NexusFSCoreMixin:
 
     def _record_read_if_tracking(
         self,
-        context: "OperationContext | None",
+        context: OperationContext | None,
         resource_type: str,
         resource_id: str,
         access_type: str = "content",
@@ -572,7 +574,7 @@ class NexusFSCoreMixin:
         if cache_observer is None or metadata is None:
             return
 
-        zone_id = getattr(self, "zone_id", None) or "default"
+        zone_id = getattr(self, "zone_id", None) or "root"
         revision = self._get_zone_revision()
         cache_observer.on_read(path, metadata, revision, zone_id, resource_type)
 
@@ -584,7 +586,7 @@ class NexusFSCoreMixin:
         self,
         path: str,
         timeout: float,
-        context: "OperationContext | None",
+        context: OperationContext | None,
     ) -> str | None:
         """Acquire distributed lock synchronously (for use in sync write()).
 
@@ -618,7 +620,7 @@ class NexusFSCoreMixin:
             # There's a running event loop - write(lock=True) won't work properly
             raise RuntimeError(
                 "write(lock=True) cannot be used from async context (event loop detected). "
-                "Use `async with nx.locked(path):` and `write(lock=False)` instead."
+                "Use `async with nx.events_service.locked(path):` and `write(lock=False)` instead."
             )
         except RuntimeError as e:
             if "event loop detected" in str(e):
@@ -648,7 +650,7 @@ class NexusFSCoreMixin:
         self,
         lock_id: str,
         path: str,
-        context: "OperationContext | None",
+        context: OperationContext | None,
     ) -> None:
         """Release distributed lock synchronously.
 
@@ -676,7 +678,7 @@ class NexusFSCoreMixin:
             logger.error(f"Failed to release lock {lock_id} for {path}: {e}")
 
     def _apply_dynamic_viewer_filter_if_needed(
-        self, path: str, content: bytes, context: "OperationContext | None"
+        self, path: str, content: bytes, context: OperationContext | None
     ) -> bytes:
         """Apply dynamic_viewer column-level filtering for CSV files if needed.
 
@@ -865,7 +867,7 @@ class NexusFSCoreMixin:
     def read(
         self,
         path: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
         return_metadata: bool = False,
         parsed: bool = False,
     ) -> bytes | dict[str, Any]:
@@ -1103,7 +1105,7 @@ class NexusFSCoreMixin:
     def read_bulk(
         self,
         paths: list[str],
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
         return_metadata: bool = False,
         skip_errors: bool = True,
     ) -> dict[str, bytes | dict[str, Any] | None]:
@@ -1489,7 +1491,7 @@ class NexusFSCoreMixin:
         path: str,
         start: int,
         end: int,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> bytes:
         """
         Read a specific byte range from a file.
@@ -1569,7 +1571,7 @@ class NexusFSCoreMixin:
 
     @rpc_expose(description="Stream file content in chunks")
     def stream(
-        self, path: str, chunk_size: int = 65536, context: "OperationContext | None" = None
+        self, path: str, chunk_size: int = 65536, context: OperationContext | None = None
     ) -> Any:
         """
         Stream file content in chunks without loading entire file into memory.
@@ -1631,7 +1633,7 @@ class NexusFSCoreMixin:
         start: int,
         end: int,
         chunk_size: int = 65536,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> Any:
         """Stream a byte range [start, end] of file content.
 
@@ -1673,7 +1675,7 @@ class NexusFSCoreMixin:
         self,
         path: str,
         chunks: Iterator[bytes],
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> dict[str, Any]:
         """
         Write file content from an iterator of chunks.
@@ -1754,7 +1756,7 @@ class NexusFSCoreMixin:
             created_at=meta.created_at if meta else now,
             modified_at=now,
             created_by=self._get_created_by(context),
-            zone_id=zone_id or "default",  # Issue #904, #773: Store zone_id for PREWHERE filtering
+            zone_id=zone_id or "root",  # Issue #904, #773: Store zone_id for PREWHERE filtering
         )
 
         self.metadata.put(new_meta)
@@ -1782,7 +1784,7 @@ class NexusFSCoreMixin:
         self,
         path: str,
         content: bytes | str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
         if_match: str | None = None,
         if_none_match: bool = False,
         force: bool = False,
@@ -1884,7 +1886,7 @@ class NexusFSCoreMixin:
         self,
         path: str,
         content: bytes,
-        context: "OperationContext | None",
+        context: OperationContext | None,
         if_match: str | None,
         if_none_match: bool,
         force: bool,
@@ -2001,7 +2003,7 @@ class NexusFSCoreMixin:
             modified_at=now,
             version=new_version,
             created_by=self._get_created_by(context),  # Track who created/modified this version
-            zone_id=zone_id or "default",  # Issue #904, #773: Store zone_id for PREWHERE filtering
+            zone_id=zone_id or "root",  # Issue #904, #773: Store zone_id for PREWHERE filtering
             owner_id=owner_id,  # Issue #920: O(1) owner permission checks
         )
 
@@ -2013,7 +2015,7 @@ class NexusFSCoreMixin:
         # Issue #1169: Precise cache invalidation via cache observer
         cache_observer = getattr(self, "_cache_observer", None)
         if cache_observer is not None:
-            cache_observer.on_write(path, new_revision, zone_id or "default")
+            cache_observer.on_write(path, new_revision, zone_id or "root")
 
         # Leopard-style: Add new file to ancestor directory grants
         # When a file is created in a directory that has been granted to users,
@@ -2025,7 +2027,7 @@ class NexusFSCoreMixin:
                 if tiger_cache:
                     added_count = tiger_cache.add_file_to_ancestor_grants(
                         file_path=path,
-                        zone_id=zone_id or "default",
+                        zone_id=zone_id or "root",
                     )
                     if added_count > 0:
                         import logging
@@ -2068,9 +2070,9 @@ class NexusFSCoreMixin:
             # DEFERRED PATH: Queue permission operations for background batch processing
             # Owner can still access file immediately via owner_id fast-path
             try:
-                deferred_buffer.queue_hierarchy(path, ctx.zone_id or "default")
+                deferred_buffer.queue_hierarchy(path, ctx.zone_id or "root")
                 if meta is None and ctx.user and not ctx.is_system:
-                    deferred_buffer.queue_owner_grant(ctx.user, path, ctx.zone_id or "default")
+                    deferred_buffer.queue_owner_grant(ctx.user, path, ctx.zone_id or "root")
             except Exception as e:
                 logger.warning(f"write: Failed to queue deferred permissions for {path}: {e}")
         else:
@@ -2081,7 +2083,7 @@ class NexusFSCoreMixin:
                         f"write: Calling ensure_parent_tuples for {path}, zone_id={ctx.zone_id or 'default'}"
                     )
                     created_count = self._hierarchy_manager.ensure_parent_tuples(
-                        path, zone_id=ctx.zone_id or "default"
+                        path, zone_id=ctx.zone_id or "root"
                     )
                     logger.info(f"write: Created {created_count} parent tuples for {path}")
                 except Exception as e:
@@ -2100,7 +2102,7 @@ class NexusFSCoreMixin:
                             subject=("user", ctx.user),
                             relation="direct_owner",
                             object=("file", path),
-                            zone_id=ctx.zone_id or "default",
+                            zone_id=ctx.zone_id or "root",
                         )
                         logger.debug(
                             f"write: Granted direct_owner permission to {ctx.user} for {path}"
@@ -2147,7 +2149,7 @@ class NexusFSCoreMixin:
                 "size": len(content),
                 "etag": content_hash,
                 "version": new_version,
-                "zone_id": zone_id or "default",
+                "zone_id": zone_id or "root",
                 "agent_id": agent_id,
                 "user_id": context.user_id if context and hasattr(context, "user_id") else None,
                 "created": is_new_file,
@@ -2178,7 +2180,7 @@ class NexusFSCoreMixin:
         self,
         path: str,
         update_fn: Callable[[bytes], bytes],
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
         timeout: float = 30.0,
         ttl: float = 30.0,
     ) -> dict[str, Any]:
@@ -2245,8 +2247,7 @@ class NexusFSCoreMixin:
                 "or pass coordination_url to NexusFS constructor."
             )
 
-        # self.locked() is from NexusFSEventsMixin
-        async with self.locked(path, timeout=timeout, ttl=ttl, _context=context):  # type: ignore[attr-defined]  # allowed
+        async with self.events_service.locked(path, timeout=timeout, ttl=ttl, _context=context):
             # Read current content (return_metadata=False ensures bytes return)
             content = self.read(path, context=context, return_metadata=False)
             assert isinstance(content, bytes), "Expected bytes from read()"
@@ -2262,7 +2263,7 @@ class NexusFSCoreMixin:
         self,
         path: str,
         content: bytes | str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
         if_match: str | None = None,
         force: bool = False,
     ) -> dict[str, Any]:
@@ -2383,7 +2384,7 @@ class NexusFSCoreMixin:
         self,
         path: str,
         edits: list[tuple[str, str]] | list[dict[str, Any]] | list[Any],
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
         if_match: str | None = None,
         fuzzy_threshold: float = 0.85,
         preview: bool = False,
@@ -2583,7 +2584,7 @@ class NexusFSCoreMixin:
 
     @rpc_expose(description="Write multiple files in a single transaction")
     def write_batch(
-        self, files: list[tuple[str, bytes]], context: "OperationContext | None" = None
+        self, files: list[tuple[str, bytes]], context: OperationContext | None = None
     ) -> list[dict[str, Any]]:
         """
         Write multiple files in a single transaction for improved performance.
@@ -2689,8 +2690,7 @@ class NexusFSCoreMixin:
                 version=new_version,
                 created_by=getattr(self, "agent_id", None)
                 or getattr(self, "user_id", None),  # Track who created/modified this version
-                zone_id=zone_id
-                or "default",  # Issue #904, #773: Store zone_id for PREWHERE filtering
+                zone_id=zone_id or "root",  # Issue #904, #773: Store zone_id for PREWHERE filtering
             )
             metadata_list.append(metadata)
 
@@ -2728,7 +2728,7 @@ class NexusFSCoreMixin:
 
         logger = logging.getLogger(__name__)
         ctx = context if context is not None else self._default_context
-        zone_id_for_perms = ctx.zone_id or "default"
+        zone_id_for_perms = ctx.zone_id or "root"
 
         # PERF: Batch hierarchy tuple creation (single transaction instead of N)
         _hierarchy_start = _time.perf_counter()
@@ -2955,7 +2955,7 @@ class NexusFSCoreMixin:
                 )
 
     @rpc_expose(description="Delete file")
-    def delete(self, path: str, context: "OperationContext | None" = None) -> dict[str, Any]:
+    def delete(self, path: str, context: OperationContext | None = None) -> dict[str, Any]:
         """
         Delete a file or memory.
 
@@ -3065,7 +3065,7 @@ class NexusFSCoreMixin:
         # Issue #1169: Precise cache invalidation via cache observer
         cache_observer = getattr(self, "_cache_observer", None)
         if cache_observer is not None:
-            cache_observer.on_delete(path, new_revision, zone_id or "default")
+            cache_observer.on_delete(path, new_revision, zone_id or "root")
 
         # v0.7.0: Fire workflow event for automatic trigger execution
         self._fire_workflow_event(
@@ -3074,7 +3074,7 @@ class NexusFSCoreMixin:
                 "file_path": path,
                 "size": meta.size,
                 "etag": meta.etag,
-                "zone_id": zone_id or "default",
+                "zone_id": zone_id or "root",
                 "agent_id": agent_id,
                 "user_id": context.user_id if context and hasattr(context, "user_id") else None,
                 "timestamp": datetime.now(UTC).isoformat(),
@@ -3096,7 +3096,7 @@ class NexusFSCoreMixin:
 
     @rpc_expose(description="Rename/move file")
     def rename(
-        self, old_path: str, new_path: str, context: "OperationContext | None" = None
+        self, old_path: str, new_path: str, context: OperationContext | None = None
     ) -> dict[str, Any]:
         """
         Rename/move a file by updating its path in metadata.
@@ -3240,7 +3240,7 @@ class NexusFSCoreMixin:
         new_revision = self._increment_zone_revision()
         cache_observer = getattr(self, "_cache_observer", None)
         if cache_observer is not None:
-            cache_observer.on_rename(old_path, new_path, new_revision, zone_id or "default")
+            cache_observer.on_rename(old_path, new_path, new_revision, zone_id or "root")
 
         # Update ReBAC permissions to follow the renamed file/directory
         # This ensures permissions are preserved when files are moved
@@ -3293,7 +3293,7 @@ class NexusFSCoreMixin:
                         old_path=old_path,
                         new_path=new_path,
                         is_directory=bool(is_directory),
-                        zone_id=zone_id or "default",
+                        zone_id=zone_id or "root",
                     )
             except Exception as e:
                 # Log but don't fail the rename operation
@@ -3320,7 +3320,7 @@ class NexusFSCoreMixin:
                 "new_path": new_path,
                 "size": meta.size if meta else 0,
                 "etag": meta.etag if meta else None,
-                "zone_id": zone_id or "default",
+                "zone_id": zone_id or "root",
                 "agent_id": agent_id,
                 "user_id": context.user_id if context and hasattr(context, "user_id") else None,
                 "timestamp": datetime.now(UTC).isoformat(),
@@ -3507,7 +3507,7 @@ class NexusFSCoreMixin:
             return []
 
     @rpc_expose(description="Get file metadata without reading content")
-    def stat(self, path: str, context: "OperationContext | None" = None) -> dict[str, Any]:
+    def stat(self, path: str, context: OperationContext | None = None) -> dict[str, Any]:
         """
         Get file metadata without reading the file content.
 
@@ -3622,7 +3622,7 @@ class NexusFSCoreMixin:
     def stat_bulk(
         self,
         paths: list[str],
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
         skip_errors: bool = True,
     ) -> dict[str, dict[str, Any] | None]:
         """
@@ -3748,7 +3748,7 @@ class NexusFSCoreMixin:
         return results
 
     @rpc_expose(description="Check if file exists")
-    def exists(self, path: str, context: "OperationContext | None" = None) -> bool:
+    def exists(self, path: str, context: OperationContext | None = None) -> bool:
         """
         Check if a file or directory exists.
 
@@ -3811,7 +3811,7 @@ class NexusFSCoreMixin:
 
     @rpc_expose(description="Check existence of multiple paths in single call")
     def exists_batch(
-        self, paths: list[str], context: "OperationContext | None" = None
+        self, paths: list[str], context: OperationContext | None = None
     ) -> dict[str, bool]:
         """
         Check existence of multiple paths in a single call (Issue #859).
@@ -3848,7 +3848,7 @@ class NexusFSCoreMixin:
 
     @rpc_expose(description="Get metadata for multiple paths in single call")
     def metadata_batch(
-        self, paths: list[str], context: "OperationContext | None" = None
+        self, paths: list[str], context: OperationContext | None = None
     ) -> dict[str, dict[str, Any] | None]:
         """
         Get metadata for multiple paths in a single call (Issue #859).
@@ -3947,7 +3947,7 @@ class NexusFSCoreMixin:
         return hashlib.md5(content).hexdigest()
 
     def _read_memory_path(
-        self, path: str, return_metadata: bool = False, context: "OperationContext | None" = None
+        self, path: str, return_metadata: bool = False, context: OperationContext | None = None
     ) -> bytes | dict[str, Any]:
         """Read memory via virtual path (Phase 2 Integration).
 
@@ -4037,7 +4037,7 @@ class NexusFSCoreMixin:
             "size": len(content),
         }
 
-    def _delete_memory_path(self, path: str, context: "OperationContext | None" = None) -> None:
+    def _delete_memory_path(self, path: str, context: OperationContext | None = None) -> None:
         """Delete memory via virtual path (Phase 2 Integration).
 
         Args:
@@ -4144,7 +4144,7 @@ class NexusFSCoreMixin:
         self,
         paths: list[str],
         recursive: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> dict[str, dict]:
         """
         Delete multiple files or directories in a single operation.
@@ -4204,7 +4204,7 @@ class NexusFSCoreMixin:
         self,
         path: str,
         recursive: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
         is_implicit: bool | None = None,
     ) -> None:
         """Internal rmdir implementation without RPC decoration.
@@ -4286,7 +4286,7 @@ class NexusFSCoreMixin:
     def rename_bulk(
         self,
         renames: list[tuple[str, str]],
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> dict[str, dict]:
         """
         Rename/move multiple files in a single operation.

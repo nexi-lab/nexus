@@ -5,8 +5,9 @@ using real LocalBackend, real SQLAlchemyRecordStore, and real WorkspaceRegistry.
 This verifies the overlay hooks in nexus_fs_core.py (read/delete) work
 correctly when wired through the full dependency injection pipeline.
 
-No Raft required — uses InMemoryMetadata implementing FileMetadataProtocol.
+No Raft required — uses InMemoryMetadata implementing MetastoreABC.
 """
+
 
 from collections.abc import Sequence
 from typing import Any
@@ -14,13 +15,15 @@ from typing import Any
 import pytest
 
 from nexus.backends.local import LocalBackend
-from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol
 from nexus.core.exceptions import NexusFileNotFoundError
+from nexus.core.metadata import FileMetadata
+from nexus.core.metastore import MetastoreABC
 from nexus.core.workspace_manifest import ManifestEntry, WorkspaceManifest
 from nexus.services.overlay_resolver import OverlayResolver
 
-class InMemoryFileMetadataStore(FileMetadataProtocol):
-    """Full FileMetadataProtocol implementation using an in-memory dict.
+
+class InMemoryMetastore(MetastoreABC):
+    """Full MetastoreABC implementation using an in-memory dict.
 
     Replaces RaftMetadataStore for tests that don't need the Rust extension.
     """
@@ -53,9 +56,11 @@ class InMemoryFileMetadataStore(FileMetadataProtocol):
     def close(self) -> None:
         self._store.clear()
 
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def storage_dir(tmp_path):
@@ -64,15 +69,18 @@ def storage_dir(tmp_path):
     d.mkdir()
     return d
 
+
 @pytest.fixture
 def local_backend(storage_dir) -> LocalBackend:
     """Real LocalBackend for CAS storage."""
     return LocalBackend(root_path=str(storage_dir))
 
+
 @pytest.fixture
-def metadata_store() -> InMemoryFileMetadataStore:
+def metadata_store() -> InMemoryMetastore:
     """In-memory metadata store (replaces Raft)."""
-    return InMemoryFileMetadataStore()
+    return InMemoryMetastore()
+
 
 @pytest.fixture
 def base_content() -> dict[str, bytes]:
@@ -83,6 +91,7 @@ def base_content() -> dict[str, bytes]:
         "config.yaml": b"debug: true\nport: 8080\n",
         "README.md": b"# My Project\nA sample project.\n",
     }
+
 
 @pytest.fixture
 def base_manifest(local_backend: LocalBackend, base_content: dict[str, bytes]) -> WorkspaceManifest:
@@ -98,6 +107,7 @@ def base_manifest(local_backend: LocalBackend, base_content: dict[str, bytes]) -
         )
     return WorkspaceManifest(entries=entries)
 
+
 @pytest.fixture
 def stored_manifest_hash(local_backend: LocalBackend, base_manifest: WorkspaceManifest) -> str:
     """Store base manifest in CAS and return its hash."""
@@ -105,18 +115,20 @@ def stored_manifest_hash(local_backend: LocalBackend, base_manifest: WorkspaceMa
     result = local_backend.write_content(manifest_json)
     return result.unwrap()
 
+
 @pytest.fixture
 def overlay_resolver(
-    metadata_store: InMemoryFileMetadataStore,
+    metadata_store: InMemoryMetastore,
     local_backend: LocalBackend,
 ) -> OverlayResolver:
     """Real OverlayResolver wired to real backend and metadata store."""
     return OverlayResolver(metadata=metadata_store, backend=local_backend)
 
+
 @pytest.fixture
 def nexus_fs(
     local_backend: LocalBackend,
-    metadata_store: InMemoryFileMetadataStore,
+    metadata_store: InMemoryMetastore,
     overlay_resolver: OverlayResolver,
     stored_manifest_hash: str,
 ):
@@ -157,9 +169,11 @@ def nexus_fs(
     yield nx
     nx.close()
 
+
 # ---------------------------------------------------------------------------
 # Tests: Full NexusFS read through overlay
 # ---------------------------------------------------------------------------
+
 
 class TestNexusFSOverlayRead:
     """Test NexusFS.read() with overlay resolution through the real kernel."""
@@ -206,9 +220,11 @@ class TestNexusFSOverlayRead:
         with pytest.raises(NexusFileNotFoundError):
             nexus_fs.read("/other/path/file.txt")
 
+
 # ---------------------------------------------------------------------------
 # Tests: Full NexusFS write through overlay
 # ---------------------------------------------------------------------------
+
 
 class TestNexusFSOverlayWrite:
     """Test NexusFS.write() — writes go to upper layer naturally."""
@@ -244,9 +260,11 @@ class TestNexusFSOverlayWrite:
         assert nexus_fs.read("/ws/agent-a/src/utils.py") == base_content["src/utils.py"]
         assert nexus_fs.read("/ws/agent-a/README.md") == base_content["README.md"]
 
+
 # ---------------------------------------------------------------------------
 # Tests: Full NexusFS delete through overlay
 # ---------------------------------------------------------------------------
+
 
 class TestNexusFSOverlayDelete:
     """Test NexusFS.delete() with overlay whiteout creation."""
@@ -280,9 +298,11 @@ class TestNexusFSOverlayDelete:
         with pytest.raises(NexusFileNotFoundError):
             nexus_fs.read("/ws/agent-a/temp.py")
 
+
 # ---------------------------------------------------------------------------
 # Tests: Non-overlay path unaffected
 # ---------------------------------------------------------------------------
+
 
 class TestNonOverlayPathUnaffected:
     """Verify that paths outside the overlay workspace work normally."""

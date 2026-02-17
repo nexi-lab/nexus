@@ -7,6 +7,7 @@ Tests:
 - Retry exhaustion raises
 """
 
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -22,15 +23,18 @@ from nexus.services.context_branch import (
 from nexus.storage.models._base import Base
 from nexus.storage.models.context_branch import ContextBranchModel
 
+
 @pytest.fixture
 def engine():
     eng = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(eng)
     return eng
 
+
 @pytest.fixture
 def session_factory(engine):
     return sessionmaker(bind=engine)
+
 
 @pytest.fixture
 def service(session_factory):
@@ -43,6 +47,7 @@ def service(session_factory):
         rebac_manager=None,
         default_zone_id="z1",
     )
+
 
 def _setup_branch(session_factory, workspace: str = "/ws", pointer_version: int = 0) -> str:
     """Create a main branch and return its ID."""
@@ -59,6 +64,7 @@ def _setup_branch(session_factory, workspace: str = "/ws", pointer_version: int 
         session.add(branch)
         session.commit()
         return branch.id
+
 
 class TestPointerVersionIncrement:
     def test_advance_increments_version(self, service, session_factory):
@@ -84,6 +90,7 @@ class TestPointerVersionIncrement:
             ).scalar_one()
             assert branch.pointer_version == 3
             assert branch.head_snapshot_id == "snap-3"
+
 
 class TestStalePointerDetection:
     def test_stale_pointer_raises(self, service, session_factory):
@@ -136,6 +143,7 @@ class TestStalePointerDetection:
     def test_advance_nonexistent_branch_raises(self, service, session_factory):
         with pytest.raises(BranchNotFoundError):
             service._advance_head("z1", "/ws", "ghost", "snap-new")
+
 
 class TestRetryWithBackoff:
     @patch("nexus.services.context_branch.time.sleep")

@@ -10,8 +10,8 @@ non-blocking I/O.
 Usage:
     from nexus.core.async_bridge import AsyncReBACBridge
 
-    # Initialize once at server startup
-    bridge = AsyncReBACBridge(database_url)
+    # Initialize once at server startup (prefer injecting engine via DI)
+    bridge = AsyncReBACBridge(database_url, engine=record_store.engine)
     bridge.start()
 
     # Use in sync request handlers
@@ -20,6 +20,7 @@ Usage:
     # Shutdown when done
     bridge.stop()
 """
+
 
 import asyncio
 import logging
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
     from nexus.rebac.async_manager import AsyncReBACManager
 
 logger = logging.getLogger(__name__)
+
 
 class AsyncReBACBridge:
     """Bridge sync code to async ReBAC operations.
@@ -53,6 +55,8 @@ class AsyncReBACBridge:
         enable_l1_cache: bool = True,
         l1_cache_size: int = 10000,
         l1_cache_ttl: int = 300,
+        *,
+        engine: Any | None = None,
     ):
         """Initialize the async bridge.
 
@@ -63,6 +67,8 @@ class AsyncReBACBridge:
             enable_l1_cache: Enable in-memory L1 cache
             l1_cache_size: L1 cache max entries
             l1_cache_ttl: L1 cache TTL in seconds
+            engine: Pre-built SQLAlchemy Engine from RecordStoreABC (Issue #621).
+                When provided, skips creating a private engine.
         """
         self.database_url = database_url
         self.cache_ttl_seconds = cache_ttl_seconds
@@ -70,10 +76,12 @@ class AsyncReBACBridge:
         self.enable_l1_cache = enable_l1_cache
         self.l1_cache_size = l1_cache_size
         self.l1_cache_ttl = l1_cache_ttl
+        self._injected_engine = engine
 
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._manager: AsyncReBACManager | None = None
+        self._record_store: Any | None = None  # SQLAlchemyRecordStore fallback
         self._started = False
         self._lock = threading.Lock()
 
@@ -113,6 +121,9 @@ class AsyncReBACBridge:
             self._loop = None
             self._thread = None
             self._manager = None
+            if self._record_store is not None:
+                self._record_store.close()
+                self._record_store = None
             self._started = False
             logger.info("AsyncReBACBridge stopped")
 
@@ -144,13 +155,21 @@ class AsyncReBACBridge:
 
         Issue #1385: AsyncReBACManager is now a thin asyncio.to_thread() wrapper
         around the sync ReBACManager. We create a sync manager and wrap it.
-        """
-        from sqlalchemy import create_engine
 
+        Issue #621: Engine creation delegates to RecordStoreABC instead of
+        calling create_engine() directly.
+        """
         from nexus.rebac.async_manager import AsyncReBACManager
         from nexus.rebac.manager import ReBACManager
 
-        sync_engine = create_engine(self.database_url)
+        if self._injected_engine is not None:
+            sync_engine = self._injected_engine
+        else:
+            from nexus.storage.record_store import SQLAlchemyRecordStore
+
+            self._record_store = SQLAlchemyRecordStore(db_url=self.database_url)
+            sync_engine = self._record_store.engine
+
         sync_manager = ReBACManager(
             engine=sync_engine,
             cache_ttl_seconds=self.cache_ttl_seconds,
@@ -276,14 +295,22 @@ class AsyncReBACBridge:
             return {}
         return self._manager.get_l1_cache_stats()
 
-# Global bridge instance (optional singleton pattern)
-_global_bridge: "AsyncReBACBridge | None" = None
 
-def get_async_rebac_bridge(database_url: str | None = None, **kwargs: Any) -> "AsyncReBACBridge":
+# Global bridge instance (optional singleton pattern)
+_global_bridge: AsyncReBACBridge | None = None
+
+
+def get_async_rebac_bridge(
+    database_url: str | None = None,
+    *,
+    engine: Any | None = None,
+    **kwargs: Any,
+) -> AsyncReBACBridge:
     """Get or create the global async ReBAC bridge.
 
     Args:
-        database_url: Database URL (required on first call)
+        database_url: Database URL (required on first call unless engine given)
+        engine: Pre-built SQLAlchemy Engine from RecordStoreABC (Issue #621).
         **kwargs: Additional arguments for AsyncReBACBridge
 
     Returns:
@@ -294,10 +321,11 @@ def get_async_rebac_bridge(database_url: str | None = None, **kwargs: Any) -> "A
     if _global_bridge is None:
         if database_url is None:
             raise ValueError("database_url required on first call")
-        _global_bridge = AsyncReBACBridge(database_url, **kwargs)
+        _global_bridge = AsyncReBACBridge(database_url, engine=engine, **kwargs)
         _global_bridge.start()
 
     return _global_bridge
+
 
 def shutdown_async_rebac_bridge() -> None:
     """Shutdown the global async ReBAC bridge."""

@@ -10,6 +10,7 @@ Tests cover:
 - Edge cases (None metadata, empty parts, all part types)
 """
 
+
 import base64
 from datetime import UTC, datetime
 
@@ -47,6 +48,7 @@ from nexus.a2a.proto_converter import (
 # TaskState mapping
 # ------------------------------------------------------------------
 
+
 class TestTaskStateMapping:
     """Tests for TaskState enum conversion."""
 
@@ -66,9 +68,11 @@ class TestTaskStateMapping:
         assert task_state_to_proto(pydantic_state) == proto_value
         assert task_state_from_proto(proto_value) == pydantic_state
 
+
 # ------------------------------------------------------------------
 # Part conversion
 # ------------------------------------------------------------------
+
 
 class TestPartConversion:
     """Tests for Part conversion in both directions."""
@@ -162,9 +166,11 @@ class TestPartConversion:
         assert isinstance(result, TextPart)
         assert result.metadata is None
 
+
 # ------------------------------------------------------------------
 # Message conversion
 # ------------------------------------------------------------------
+
 
 class TestMessageConversion:
     """Tests for Message conversion."""
@@ -205,9 +211,11 @@ class TestMessageConversion:
         assert isinstance(result.parts[0], TextPart)
         assert isinstance(result.parts[1], FilePart)
 
+
 # ------------------------------------------------------------------
 # Artifact conversion
 # ------------------------------------------------------------------
+
 
 class TestArtifactConversion:
     """Tests for Artifact conversion."""
@@ -241,9 +249,11 @@ class TestArtifactConversion:
         assert result.name is None
         assert result.description is None
 
+
 # ------------------------------------------------------------------
 # TaskStatus conversion
 # ------------------------------------------------------------------
+
 
 class TestTaskStatusConversion:
     """Tests for TaskStatus conversion."""
@@ -277,9 +287,11 @@ class TestTaskStatusConversion:
         assert result.message is None
         assert result.timestamp is None
 
+
 # ------------------------------------------------------------------
 # Task conversion
 # ------------------------------------------------------------------
+
 
 class TestTaskConversion:
     """Tests for full Task conversion."""
@@ -332,9 +344,11 @@ class TestTaskConversion:
         assert result.history == []
         assert result.metadata is None
 
+
 # ------------------------------------------------------------------
 # Request conversion
 # ------------------------------------------------------------------
+
 
 class TestSendRequestConversion:
     """Tests for SendMessageRequest conversion."""

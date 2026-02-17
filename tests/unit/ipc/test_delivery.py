@@ -241,7 +241,8 @@ class TestMessageProcessor:
         inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
         assert len(inbox_files) == 0
         dl_files = await vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
-        assert len(dl_files) == 1
+        dl_msgs = [f for f in dl_files if not f.endswith(".reason.json")]
+        assert len(dl_msgs) == 1
 
     @pytest.mark.asyncio
     async def test_process_expired_ttl_skips_handler(self, vfs: InMemoryVFS) -> None:
@@ -262,7 +263,8 @@ class TestMessageProcessor:
 
         assert not handler_called  # Expired message should NOT invoke handler
         dl_files = await vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
-        assert len(dl_files) == 1
+        dl_msgs = [f for f in dl_files if not f.endswith(".reason.json")]
+        assert len(dl_msgs) == 1
 
     @pytest.mark.asyncio
     async def test_process_dedup_skips_duplicate(self, vfs: InMemoryVFS) -> None:
@@ -312,7 +314,8 @@ class TestMessageProcessor:
         inbox_files = await vfs.list_dir(inbox_path("agent:bob"), ZONE)
         assert len(inbox_files) == 0
         dl_files = await vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
-        assert len(dl_files) == 1
+        dl_msgs = [f for f in dl_files if not f.endswith(".reason.json")]
+        assert len(dl_msgs) == 1
 
     @pytest.mark.asyncio
     async def test_process_empty_inbox(self, vfs: InMemoryVFS) -> None:

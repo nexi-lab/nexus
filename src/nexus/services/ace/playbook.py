@@ -1,5 +1,6 @@
 """Playbook management for ACE learning system."""
 
+
 import json
 import uuid
 from datetime import UTC, datetime
@@ -9,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from nexus.core.permissions import OperationContext, Permission
 from nexus.storage.models import PlaybookModel
+
 
 class PlaybookManager:
     """Manage agent playbooks (learned strategies and patterns).
@@ -171,10 +173,13 @@ class PlaybookManager:
 
         logger = logging.getLogger(__name__)
 
-        query = self.session.query(PlaybookModel).filter_by(playbook_id=playbook_id)
-        if self.zone_id is not None:
-            query = query.filter(PlaybookModel.zone_id == self.zone_id)
-        playbook = query.first()
+        from sqlalchemy import select
+
+        playbook = (
+            self.session.execute(select(PlaybookModel).filter_by(playbook_id=playbook_id))
+            .scalars()
+            .first()
+        )
         if not playbook:
             return None
 
@@ -250,10 +255,13 @@ class PlaybookManager:
             ...     ]
             ... )
         """
-        query = self.session.query(PlaybookModel).filter_by(playbook_id=playbook_id)
-        if self.zone_id is not None:
-            query = query.filter(PlaybookModel.zone_id == self.zone_id)
-        playbook = query.first()
+        from sqlalchemy import select
+
+        playbook = (
+            self.session.execute(select(PlaybookModel).filter_by(playbook_id=playbook_id))
+            .scalars()
+            .first()
+        )
         if not playbook:
             raise ValueError(f"Playbook {playbook_id} not found")
 
@@ -327,10 +335,13 @@ class PlaybookManager:
         Example:
             >>> playbook_mgr.record_usage(playbook_id, success=True, improvement_score=0.8)
         """
-        query = self.session.query(PlaybookModel).filter_by(playbook_id=playbook_id)
-        if self.zone_id is not None:
-            query = query.filter(PlaybookModel.zone_id == self.zone_id)
-        playbook = query.first()
+        from sqlalchemy import select
+
+        playbook = (
+            self.session.execute(select(PlaybookModel).filter_by(playbook_id=playbook_id))
+            .scalars()
+            .first()
+        )
         if not playbook:
             raise ValueError(f"Playbook {playbook_id} not found")
 
@@ -382,23 +393,23 @@ class PlaybookManager:
         Returns:
             List of playbook summaries (without full content), filtered by permissions
         """
-        query = self.session.query(PlaybookModel)
-        if self.zone_id is not None:
-            query = query.filter(PlaybookModel.zone_id == self.zone_id)
+        from sqlalchemy import select
+
+        stmt = select(PlaybookModel)
 
         if agent_id:
-            query = query.filter_by(agent_id=agent_id)
+            stmt = stmt.filter_by(agent_id=agent_id)
         if scope:
-            query = query.filter_by(scope=scope)
+            stmt = stmt.filter_by(scope=scope)
         if name_pattern:
-            query = query.filter(PlaybookModel.name.like(name_pattern))
+            stmt = stmt.filter(PlaybookModel.name.like(name_pattern))
         if path:
-            query = query.filter_by(path=path)
+            stmt = stmt.filter_by(path=path)
 
-        query = query.order_by(PlaybookModel.updated_at.desc()).limit(
+        stmt = stmt.order_by(PlaybookModel.updated_at.desc()).limit(
             limit * 2
         )  # Fetch extra for filtering
-        playbooks = query.all()
+        playbooks = self.session.execute(stmt).scalars().all()
 
         # Filter by permissions
         accessible_playbooks = [
@@ -431,10 +442,13 @@ class PlaybookManager:
         Returns:
             True if deleted, False if not found
         """
-        query = self.session.query(PlaybookModel).filter_by(playbook_id=playbook_id)
-        if self.zone_id is not None:
-            query = query.filter(PlaybookModel.zone_id == self.zone_id)
-        playbook = query.first()
+        from sqlalchemy import select
+
+        playbook = (
+            self.session.execute(select(PlaybookModel).filter_by(playbook_id=playbook_id))
+            .scalars()
+            .first()
+        )
         if not playbook:
             return False
 

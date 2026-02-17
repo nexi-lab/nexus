@@ -3,7 +3,7 @@
 import logging
 from typing import Any
 
-from nexus.core.exceptions import ParserError
+from nexus.contracts.exceptions import ParserError
 from nexus.parsers.providers.base import ParseProvider, ProviderConfig
 from nexus.parsers.types import ParseResult, TextChunk
 

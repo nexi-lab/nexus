@@ -4,6 +4,7 @@ Extracted from WorkspaceManager._check_workspace_permission() to enable reuse
 by both WorkspaceManager and ContextBranchService without DRY violation.
 """
 
+
 import logging
 from typing import TYPE_CHECKING
 
@@ -38,8 +39,9 @@ _READ_PERMISSIONS = frozenset(
     }
 )
 
+
 def check_workspace_permission(
-    rebac_manager: "ReBACManager | None",
+    rebac_manager: ReBACManager | None,
     workspace_path: str,
     permission: str,
     user_id: str | None = None,

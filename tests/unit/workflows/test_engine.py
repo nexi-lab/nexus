@@ -158,7 +158,7 @@ class TestWorkflowEngine:
         definition = WorkflowDefinition(
             name="test_workflow",
             version="1.0",
-            actions=[WorkflowAction(name="calc", type="python", config={"code": "result = 2 + 2"})],
+            actions=[WorkflowAction(name="calc", type="bash", config={"command": "echo done"})],
         )
 
         context = WorkflowContext(
@@ -184,9 +184,11 @@ class TestWorkflowEngine:
             version="1.0",
             actions=[
                 WorkflowAction(
-                    name="fail", type="python", config={"code": "raise ValueError('test error')"}
+                    name="fail",
+                    type="bash",
+                    config={"command": "echo 'test error' >&2; exit 1"},
                 ),
-                WorkflowAction(name="after_fail", type="python", config={"code": "pass"}),
+                WorkflowAction(name="after_fail", type="bash", config={"command": "echo after"}),
             ],
         )
 
@@ -232,7 +234,7 @@ class TestWorkflowEngine:
         definition = WorkflowDefinition(
             name="test_workflow",
             version="1.0",
-            actions=[WorkflowAction(name="action1", type="python", config={"code": "pass"})],
+            actions=[WorkflowAction(name="action1", type="bash", config={"command": "echo ok"})],
         )
 
         engine.load_workflow(definition, enabled=True)
@@ -298,7 +300,7 @@ class TestWorkflowEngine:
 
     @pytest.mark.asyncio
     async def test_workflow_context_variables(self):
-        """Test workflow context variables are passed to actions."""
+        """Test workflow context variables are passed to actions via interpolation."""
         engine = WorkflowEngine()
         definition = WorkflowDefinition(
             name="test_workflow",
@@ -306,8 +308,8 @@ class TestWorkflowEngine:
             actions=[
                 WorkflowAction(
                     name="calc",
-                    type="python",
-                    config={"code": "result = variables.get('x', 0) * 2"},
+                    type="bash",
+                    config={"command": "echo {x}"},
                 )
             ],
             variables={"x": 10},
@@ -323,7 +325,7 @@ class TestWorkflowEngine:
 
         execution = await engine.execute_workflow(definition, context)
         assert execution.status == WorkflowStatus.SUCCEEDED
-        assert execution.action_results[0].output == 20
+        assert "10" in execution.action_results[0].output["stdout"]
 
     @pytest.mark.asyncio
     async def test_action_output_stored_in_context(self):
@@ -333,13 +335,11 @@ class TestWorkflowEngine:
             name="test_workflow",
             version="1.0",
             actions=[
-                WorkflowAction(
-                    name="action1", type="python", config={"code": "result = {'value': 42}"}
-                ),
+                WorkflowAction(name="action1", type="bash", config={"command": "echo hello"}),
                 WorkflowAction(
                     name="action2",
-                    type="python",
-                    config={"code": "result = variables['action1_output']['value'] * 2"},
+                    type="bash",
+                    config={"command": "echo world"},
                 ),
             ],
         )
@@ -353,4 +353,7 @@ class TestWorkflowEngine:
 
         execution = await engine.execute_workflow(definition, context)
         assert execution.status == WorkflowStatus.SUCCEEDED
-        assert execution.action_results[1].output == 84
+        assert execution.actions_completed == 2
+        # Engine stores action1's output in context as action1_output
+        assert "action1_output" in context.variables
+        assert "hello" in context.variables["action1_output"]["stdout"]

@@ -8,6 +8,7 @@ Manages the lifecycle of chunked upload sessions:
 - Per-session locking for concurrent chunk uploads
 """
 
+
 import asyncio
 import base64
 import hashlib
@@ -34,7 +35,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from nexus.backends.multipart_upload_mixin import MultipartUploadMixin
-    from nexus.core._metadata_generated import FileMetadataProtocol
+    from nexus.core.metastore import MetastoreABC
     from nexus.core.protocols.connector import ConnectorProtocol
 
 logger = logging.getLogger(__name__)
@@ -51,6 +52,7 @@ DEFAULT_CLEANUP_INTERVAL_SECONDS = 3600
 DEFAULT_MIN_CHUNK_SIZE = 5 * 1024 * 1024  # 5 MB
 DEFAULT_MAX_CHUNK_SIZE = 64 * 1024 * 1024  # 64 MB
 DEFAULT_CHUNK_SIZE = 10 * 1024 * 1024  # 10 MB
+
 
 class ChunkedUploadConfig:
     """Configuration for the chunked upload service."""
@@ -73,6 +75,7 @@ class ChunkedUploadConfig:
         self.default_chunk_size = default_chunk_size
         self.max_upload_size = max_upload_size
 
+
 class ChunkedUploadService:
     """Core service for tus.io resumable chunked uploads.
 
@@ -90,9 +93,9 @@ class ChunkedUploadService:
 
     def __init__(
         self,
-        session_factory: "Callable[[], Session]",
-        backend: "ConnectorProtocol",
-        metadata_store: "FileMetadataProtocol | None" = None,
+        session_factory: Callable[[], Session],
+        backend: ConnectorProtocol,
+        metadata_store: MetastoreABC | None = None,
         config: ChunkedUploadConfig | None = None,
     ):
         self._session_factory = session_factory
@@ -406,12 +409,16 @@ class ChunkedUploadService:
         def _query_expired() -> list[dict[str, Any]]:
             db = self._session_factory()
             try:
+                from sqlalchemy import select
+
                 rows = (
-                    db.query(UploadSessionModel)
-                    .filter(
-                        UploadSessionModel.expires_at < now,
-                        UploadSessionModel.status.in_(["created", "in_progress"]),
+                    db.execute(
+                        select(UploadSessionModel).where(
+                            UploadSessionModel.expires_at < now,
+                            UploadSessionModel.status.in_(["created", "in_progress"]),
+                        )
                     )
+                    .scalars()
                     .all()
                 )
                 return [row.to_session_dict() for row in rows]
@@ -480,14 +487,8 @@ class ChunkedUploadService:
 
         await asyncio.to_thread(_write, session)
 
-    async def _load_session(
-        self, upload_id: str, zone_id: str | None = None
-    ) -> UploadSession:
+    async def _load_session(self, upload_id: str) -> UploadSession:
         """Load a session from the database.
-
-        Args:
-            upload_id: Upload session ID.
-            zone_id: Zone ID for federation isolation (recommended).
 
         Raises:
             UploadNotFoundError: If session doesn't exist.
@@ -496,10 +497,13 @@ class ChunkedUploadService:
         def _read(uid: str) -> dict[str, Any] | None:
             db = self._session_factory()
             try:
-                query = db.query(UploadSessionModel).filter_by(upload_id=uid)
-                if zone_id is not None:
-                    query = query.filter(UploadSessionModel.zone_id == zone_id)
-                model = query.first()
+                from sqlalchemy import select
+
+                model = (
+                    db.execute(select(UploadSessionModel).filter_by(upload_id=uid))
+                    .scalars()
+                    .first()
+                )
                 if model is None:
                     return None
                 return model.to_session_dict()
@@ -517,10 +521,13 @@ class ChunkedUploadService:
         def _write(s: UploadSession) -> None:
             db = self._session_factory()
             try:
-                query = db.query(UploadSessionModel).filter_by(upload_id=s.upload_id)
-                if s.zone_id is not None:
-                    query = query.filter(UploadSessionModel.zone_id == s.zone_id)
-                model = query.first()
+                from sqlalchemy import select
+
+                model = (
+                    db.execute(select(UploadSessionModel).filter_by(upload_id=s.upload_id))
+                    .scalars()
+                    .first()
+                )
                 if model is None:
                     raise UploadNotFoundError(s.upload_id)
                 model.upload_offset = s.upload_offset
@@ -537,23 +544,15 @@ class ChunkedUploadService:
 
         await asyncio.to_thread(_write, session)
 
-    async def _delete_session(
-        self, upload_id: str, zone_id: str | None = None
-    ) -> None:
-        """Delete a session from the database.
-
-        Args:
-            upload_id: Upload session ID.
-            zone_id: Zone ID for federation isolation (recommended).
-        """
+    async def _delete_session(self, upload_id: str) -> None:
+        """Delete a session from the database."""
 
         def _delete(uid: str) -> None:
             db = self._session_factory()
             try:
-                query = db.query(UploadSessionModel).filter_by(upload_id=uid)
-                if zone_id is not None:
-                    query = query.filter(UploadSessionModel.zone_id == zone_id)
-                query.delete()
+                from sqlalchemy import delete
+
+                db.execute(delete(UploadSessionModel).filter_by(upload_id=uid))
                 db.commit()
             except Exception:
                 db.rollback()

@@ -7,15 +7,17 @@ Central metadata mapping between FileMetadata and serialization formats.
 Proto/JSON methods are auto-generated. SQL methods are manual (different schema).
 """
 
+
 import logging
 from contextlib import suppress
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.core._metadata_generated import FileMetadata
+    from nexus.core.metadata import FileMetadata
 
 logger = logging.getLogger(__name__)
+
 
 def _to_naive(dt: datetime | None) -> datetime | None:
     """Strip timezone from datetime (SQLite stores naive UTC)."""
@@ -23,11 +25,13 @@ def _to_naive(dt: datetime | None) -> datetime | None:
         return None
     return dt.replace(tzinfo=None) if dt.tzinfo else dt
 
+
 def _utcnow_naive() -> datetime:
     """Return current UTC time as naive datetime (for SQLite compat)."""
     from datetime import UTC
 
     return datetime.now(UTC).replace(tzinfo=None)
+
 
 # ---------------------------------------------------------------------------
 # Field name mapping: proto field -> SQLAlchemy column (manual, not generated)
@@ -51,6 +55,7 @@ PROTO_TO_SQL: dict[str, str | None] = {
     "i_links_count": None,  # Metastore-only (mount ref count), not in SQL
 }
 
+
 class MetadataMapper:
     """Centralized mapping between FileMetadata and other representations.
 
@@ -61,7 +66,7 @@ class MetadataMapper:
     # -- Proto serialization (GENERATED) ------------------------------------
 
     @staticmethod
-    def to_proto(metadata: "FileMetadata") -> Any:
+    def to_proto(metadata: FileMetadata) -> Any:
         """Convert FileMetadata dataclass to protobuf message."""
         from nexus.core import metadata_pb2
 
@@ -84,9 +89,9 @@ class MetadataMapper:
         )
 
     @staticmethod
-    def from_proto(proto: Any) -> "FileMetadata":
+    def from_proto(proto: Any) -> FileMetadata:
         """Convert protobuf message to FileMetadata dataclass."""
-        from nexus.core._metadata_generated import FileMetadata
+        from nexus.core.metadata import FileMetadata
 
         created_at = None
         if proto.created_at:
@@ -118,7 +123,7 @@ class MetadataMapper:
     # -- JSON serialization (GENERATED) -------------------------------------
 
     @staticmethod
-    def to_json(metadata: "FileMetadata") -> dict[str, Any]:
+    def to_json(metadata: FileMetadata) -> dict[str, Any]:
         """Convert FileMetadata to JSON-serializable dict."""
         return {
             "path": metadata.path,
@@ -139,9 +144,9 @@ class MetadataMapper:
         }
 
     @staticmethod
-    def from_json(obj: dict[str, Any]) -> "FileMetadata":
+    def from_json(obj: dict[str, Any]) -> FileMetadata:
         """Convert JSON dict to FileMetadata dataclass."""
-        from nexus.core._metadata_generated import FileMetadata
+        from nexus.core.metadata import FileMetadata
 
         # Migration: convert legacy is_directory -> entry_type
         if "is_directory" in obj:
@@ -159,7 +164,7 @@ class MetadataMapper:
 
     @staticmethod
     def to_file_path_values(
-        metadata: "FileMetadata",
+        metadata: FileMetadata,
         *,
         include_version: bool = True,
     ) -> dict[str, Any]:
@@ -184,7 +189,7 @@ class MetadataMapper:
         return values
 
     @staticmethod
-    def to_file_path_update_values(metadata: "FileMetadata") -> dict[str, Any]:
+    def to_file_path_update_values(metadata: FileMetadata) -> dict[str, Any]:
         """Convert FileMetadata to dict for UPDATE operations."""
         return {
             "backend_id": metadata.backend_name,

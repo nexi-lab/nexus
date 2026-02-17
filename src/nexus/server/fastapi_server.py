@@ -1244,6 +1244,18 @@ def create_app(
     app.state.database_url = database_url
     app.state.data_dir = data_dir  # Issue #1412: A2A task persistence
 
+    # Deployment profile (Issue #1389): resolve enabled bricks from NEXUS_PROFILE env
+    from nexus.core.deployment_profile import DeploymentProfile, resolve_enabled_bricks
+
+    _profile_str = os.environ.get("NEXUS_PROFILE", "full")
+    try:
+        _profile = DeploymentProfile(_profile_str)
+    except ValueError:
+        logger.warning("Unknown NEXUS_PROFILE '%s', defaulting to 'full'", _profile_str)
+        _profile = DeploymentProfile.FULL
+    app.state.deployment_profile = _profile.value
+    app.state.enabled_bricks = resolve_enabled_bricks(_profile)
+
     # Expose async_session_factory from RecordStoreABC (if available).
     # This is the canonical way for async endpoints to get database sessions
     # without bypassing the RecordStore abstraction with raw URLs.
@@ -1255,6 +1267,34 @@ def create_app(
             app.state.async_session_factory = None
     else:
         app.state.async_session_factory = None
+
+    # Expose sync session_factory from RecordStoreABC (Issue #1519).
+    # This is the canonical way for sync endpoints to get database sessions
+    # without reaching into NexusFS.SessionLocal internals.
+    if _record_store is not None:
+        app.state.session_factory = _record_store.session_factory
+    elif hasattr(nexus_fs, "SessionLocal") and nexus_fs.SessionLocal is not None:
+        app.state.session_factory = nexus_fs.SessionLocal
+    else:
+        app.state.session_factory = None
+
+    # Expose read replica factories (Issue #725).
+    # Read-only routes (graph, search) use these for read replica routing.
+    if _record_store is not None:
+        app.state.read_session_factory = _record_store.read_session_factory
+        try:
+            app.state.async_read_session_factory = _record_store.async_read_session_factory
+        except NotImplementedError:
+            app.state.async_read_session_factory = None
+    else:
+        app.state.read_session_factory = None
+        app.state.async_read_session_factory = None
+
+    # Expose kernel services on app.state so routers never reach into
+    # NexusFS private attributes (Issue #701).
+    app.state.rebac_manager = getattr(nexus_fs, "_rebac_manager", None)
+    app.state.entity_registry = getattr(nexus_fs, "_entity_registry", None)
+    app.state.namespace_manager = getattr(nexus_fs, "_namespace_manager", None)
 
     # Thread pool and timeout settings (Issue #932)
     app.state.thread_pool_size = thread_pool_size or int(
@@ -1309,13 +1349,20 @@ def create_app(
     except Exception as e:
         logger.warning(f"Failed to initialize subscription manager: {e}")
 
-    # Add CORS middleware
+    # Add CORS middleware (Issue #1596: env-based allowlist, never wildcard + credentials)
+    _cors_origins_raw = os.environ.get("CORS_ORIGINS", "")
+    _cors_origins: list[str] = (
+        [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
+        if _cors_origins_raw
+        else ["http://localhost:3000", "http://localhost:5173"]
+    )
+    _cors_allow_credentials = bool(_cors_origins_raw)  # credentials only with explicit origins
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_origins=_cors_origins,
+        allow_credentials=_cors_allow_credentials,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-Zone-ID", "X-Request-ID"],
     )
 
     # Add Gzip compression middleware (60-80% response size reduction)
@@ -1538,6 +1585,11 @@ def _discover_exposed_methods(nexus_fs: "NexusFS") -> dict[str, Any]:
 
 def _register_routes(app: FastAPI) -> None:
     """Register all routes."""
+
+    # Features endpoint (Issue #1389) — public, rate-limit exempt
+    from nexus.server.api.core.features import router as features_router
+
+    app.include_router(features_router)
 
     # Health check (exempt from rate limiting - must always be accessible)
     @app.get("/health", response_model=HealthResponse)
@@ -1906,53 +1958,56 @@ def _register_routes(app: FastAPI) -> None:
     except ImportError as e:
         logger.warning(f"Failed to import secrets audit router: {e}")
 
-    # Asyncio debug endpoint (Python 3.14+)
-    @app.get("/debug/asyncio", tags=["debug"])
-    async def debug_asyncio() -> dict[str, Any]:
-        """Debug endpoint for asyncio task introspection.
+    # Asyncio debug endpoint (Python 3.14+) — gated behind env flag + admin auth (Issue #1596)
+    if os.environ.get("NEXUS_DEBUG_ENABLED", "").lower() in ("1", "true", "yes"):
+        from nexus.server.dependencies import require_admin as _require_admin_dep
 
-        Returns information about running async tasks, including:
-        - Total task count
-        - Current task info
-        - Call graph (Python 3.14+ only)
+        @app.get("/debug/asyncio", tags=["debug"], dependencies=[Depends(_require_admin_dep)])
+        async def debug_asyncio() -> dict[str, Any]:
+            """Debug endpoint for asyncio task introspection.
 
-        This is useful for debugging stuck or slow async operations.
-        """
-        result: dict[str, Any] = {
-            "python_version": f"{__import__('sys').version_info.major}.{__import__('sys').version_info.minor}",
-        }
+            Requires NEXUS_DEBUG_ENABLED=true and admin privileges.
 
-        # Get all running tasks
-        try:
-            all_tasks = asyncio.all_tasks()
-            current = asyncio.current_task()
-            result["task_count"] = len(all_tasks)
-            result["current_task"] = current.get_name() if current else None
-            result["tasks"] = [
-                {
-                    "name": task.get_name(),
-                    "done": task.done(),
-                    "cancelled": task.cancelled(),
-                }
-                for task in list(all_tasks)[:50]  # Limit to 50 tasks
-            ]
-        except Exception as e:
-            result["tasks_error"] = str(e)
+            Returns information about running async tasks, including:
+            - Total task count
+            - Current task info
+            - Call graph (Python 3.14+ only)
+            """
+            result: dict[str, Any] = {
+                "python_version": f"{__import__('sys').version_info.major}.{__import__('sys').version_info.minor}",
+            }
 
-        # Python 3.14+ call graph introspection
-        try:
-            from asyncio import format_call_graph  # type: ignore[attr-defined]
+            # Get all running tasks
+            try:
+                all_tasks = asyncio.all_tasks()
+                current = asyncio.current_task()
+                result["task_count"] = len(all_tasks)
+                result["current_task"] = current.get_name() if current else None
+                result["tasks"] = [
+                    {
+                        "name": task.get_name(),
+                        "done": task.done(),
+                        "cancelled": task.cancelled(),
+                    }
+                    for task in list(all_tasks)[:50]  # Limit to 50 tasks
+                ]
+            except Exception as e:
+                result["tasks_error"] = str(e)
 
-            # Format call graph for current task (no args needed)
-            result["call_graph_available"] = True
-            result["call_graph"] = format_call_graph()
-        except ImportError:
-            result["call_graph_available"] = False
-            result["call_graph_note"] = "Requires Python 3.14+"
-        except Exception as e:
-            result["call_graph_error"] = str(e)
+            # Python 3.14+ call graph introspection
+            try:
+                from asyncio import format_call_graph  # type: ignore[attr-defined]
 
-        return result
+                # Format call graph for current task (no args needed)
+                result["call_graph_available"] = True
+                result["call_graph"] = format_call_graph()
+            except ImportError:
+                result["call_graph_available"] = False
+                result["call_graph_note"] = "Requires Python 3.14+"
+            except Exception as e:
+                result["call_graph_error"] = str(e)
+
+            return result
 
     # Auth whoami
     @app.get("/api/auth/whoami", response_model=WhoamiResponse)

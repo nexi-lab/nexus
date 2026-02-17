@@ -287,14 +287,14 @@ class VectorDatabase:
             List of results if BM25S succeeded, None to fall back to FTS
         """
         try:
-            from nexus.search.bm25s_search import get_bm25s_index, is_bm25s_available
+            from nexus.search.bm25s_search import BM25SIndex, is_bm25s_available
         except ImportError:
             return None
 
         if not is_bm25s_available():
             return None
 
-        index = get_bm25s_index()
+        index = BM25SIndex.get_instance()
 
         # Check if index is initialized and has documents (Issue #1520)
         if not _run_sync(index.initialize()):

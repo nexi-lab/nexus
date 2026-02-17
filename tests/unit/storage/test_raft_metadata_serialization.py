@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core._metadata_generated import DT_DIR, FileMetadata, PaginatedResult
+from nexus.core.metadata import DT_DIR, FileMetadata, PaginatedResult
 
 if TYPE_CHECKING:
     from nexus.storage.raft_metadata_store import RaftMetadataStore

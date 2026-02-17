@@ -6,6 +6,7 @@ These tests enforce architectural constraints:
 3. Boundary contract enforcement (local exceptions, public API surface)
 """
 
+
 import ast
 from pathlib import Path
 
@@ -13,6 +14,7 @@ import pytest
 
 # Path to skills module source
 SKILLS_SRC = Path(__file__).resolve().parents[3] / "src" / "nexus" / "skills"
+
 
 def _collect_import_violations(module_prefix: str) -> list[str]:
     """Scan skills/*.py for module-level runtime imports from the given prefix.
@@ -34,6 +36,7 @@ def _collect_import_violations(module_prefix: str) -> list[str]:
             ):
                 violations.append(f"{py_file.name}:{node.lineno} — from {node.module} import ...")
     return violations
+
 
 class TestZeroCoreImports:
     """Verify that nexus.skills has zero module-level runtime imports from nexus.core.
@@ -66,6 +69,7 @@ class TestZeroCoreImports:
             f"in skills module:\n" + "\n".join(f"  {v}" for v in violations)
         )
 
+
 class TestProtocolSatisfaction:
     """Verify that the narrow Skills filesystem protocol is satisfied."""
 
@@ -94,6 +98,7 @@ class TestProtocolSatisfaction:
         assert missing == set(), (
             f"NexusFilesystem ABC is missing methods required by Skills Protocol: {sorted(missing)}"
         )
+
 
 class TestSkillsExceptionLocality:
     """Verify that skills module defines its own exception types."""
@@ -144,6 +149,7 @@ class TestSkillsExceptionLocality:
 
         assert SkillValidationError.is_expected is True
         assert SkillPermissionDeniedError.is_expected is True
+
 
 class TestModuleBoundary:
     """Verify the skills module's public API boundary."""
@@ -201,28 +207,11 @@ class TestModuleBoundary:
         pc_fields = {f.name for f in dataclasses.fields(PromptContext)}
         assert "xml" in pc_fields
 
-class TestMCPBackwardCompat:
-    """Verify MCP backward-compat re-exports from nexus.skills."""
-
-    def test_mcp_models_importable_from_skills(self):
-        """MCP models are still importable from nexus.skills (backward compat)."""
-        from nexus.skills import MCPMount, MCPToolConfig, MCPToolDefinition, MCPToolExample
-
-        assert MCPMount is not None
-        assert MCPToolConfig is not None
-        assert MCPToolDefinition is not None
-        assert MCPToolExample is not None
-
-    def test_mcp_classes_match_canonical_source(self):
-        """Backward-compat re-exports point to the same classes as nexus.mcp."""
-        from nexus.mcp.models import MCPMount as Canonical
-        from nexus.skills import MCPMount as Compat
-
-        assert Canonical is Compat
 
 # =============================================================================
 # AST Helpers: detect guarded / scoped imports
 # =============================================================================
+
 
 def _is_type_checking_guarded(tree: ast.Module, import_node: ast.ImportFrom) -> bool:
     """Check if an import node is inside an `if TYPE_CHECKING:` block."""
@@ -241,6 +230,7 @@ def _is_type_checking_guarded(tree: ast.Module, import_node: ast.ImportFrom) -> 
                 if child is import_node:
                     return True
     return False
+
 
 def _is_function_scoped(tree: ast.Module, import_node: ast.ImportFrom) -> bool:
     """Check if an import node is inside a function or method body."""

@@ -8,6 +8,7 @@ Tests full workflows with real DB + mocked CAS:
 - Cross-session continuity (branch persists across service instances)
 """
 
+
 import hashlib
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
@@ -22,15 +23,18 @@ from nexus.services.context_branch import ContextBranchService
 from nexus.storage.models._base import Base
 from nexus.storage.models.filesystem import WorkspaceSnapshotModel
 
+
 @pytest.fixture
 def engine():
     eng = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(eng)
     return eng
 
+
 @pytest.fixture
 def session_factory(engine):
     return sessionmaker(bind=engine)
+
 
 class FakeCAS:
     """In-memory CAS for integration tests."""
@@ -46,6 +50,7 @@ class FakeCAS:
         h = hashlib.sha256(data).hexdigest()
         self.store[h] = data
         return HandlerResponse.ok(h)
+
 
 class FakeWorkspaceManager:
     """Simplified WM for integration tests — uses real snapshots + CAS."""
@@ -145,13 +150,16 @@ class FakeWorkspaceManager:
     def diff_snapshots(self, snapshot_id_1, snapshot_id_2, **kwargs):
         return {"added": [], "removed": [], "modified": [], "unchanged": 0}
 
+
 @pytest.fixture
 def cas():
     return FakeCAS()
 
+
 @pytest.fixture
 def fake_wm(session_factory, cas):
     return FakeWorkspaceManager(session_factory, cas)
+
 
 @pytest.fixture
 def service(fake_wm, session_factory):
@@ -162,9 +170,11 @@ def service(fake_wm, session_factory):
         default_zone_id="z1",
     )
 
+
 # ==================================================================
 # Lifecycle 1: Branch → Commit → Merge
 # ==================================================================
+
 
 class TestBranchCommitMerge:
     def test_full_lifecycle(self, service, session_factory):
@@ -192,9 +202,11 @@ class TestBranchCommitMerge:
         assert branch.status == "merged"
         assert branch.merged_into_branch == "main"
 
+
 # ==================================================================
 # Lifecycle 2: explore() → commit → finish_explore(merge)
 # ==================================================================
+
 
 class TestExploreAndMerge:
     def test_explore_merge_lifecycle(self, service, session_factory):
@@ -221,9 +233,11 @@ class TestExploreAndMerge:
         current = service.get_current_branch(ws)
         assert current.branch_name == "main"
 
+
 # ==================================================================
 # Lifecycle 3: explore() → finish_explore(discard)
 # ==================================================================
+
 
 class TestExploreAndDiscard:
     def test_explore_discard_lifecycle(self, service, session_factory):
@@ -245,9 +259,11 @@ class TestExploreAndDiscard:
         branches = service.list_branches(ws)
         assert all(b.branch_name != explore_result.branch_name for b in branches)
 
+
 # ==================================================================
 # Lifecycle 4: Multiple parallel explorations
 # ==================================================================
+
 
 class TestMultipleExplorations:
     def test_multiple_explore_branches(self, service, session_factory):
@@ -283,9 +299,11 @@ class TestMultipleExplorations:
         active_names = {b.branch_name for b in active_branches}
         assert active_names == {"main"}
 
+
 # ==================================================================
 # Lifecycle 5: Cross-session continuity
 # ==================================================================
+
 
 class TestCrossSessionContinuity:
     def test_branches_persist_across_service_instances(self, fake_wm, session_factory):
@@ -319,9 +337,11 @@ class TestCrossSessionContinuity:
         current = svc2.get_current_branch(ws)
         assert current.branch_name == "wip"
 
+
 # ==================================================================
 # Lifecycle 6: explore() skip commit optimization (P4-B)
 # ==================================================================
+
 
 class TestExploreSkipCommit:
     def test_explore_skips_commit_when_unchanged(self, service, session_factory):
@@ -337,9 +357,11 @@ class TestExploreSkipCommit:
         result = service.explore(ws, "Test skip")
         assert result.branch_name == "test-skip"
 
+
 # ==================================================================
 # Lifecycle 7: finish_explore with invalid outcome
 # ==================================================================
+
 
 class TestFinishExploreValidation:
     def test_invalid_outcome_raises(self, service):

@@ -27,12 +27,12 @@ def detect_mime_type(content: bytes, file_path: str | None = None) -> str | None
 
         mime = magic.Magic(mime=True)
         mime_type = mime.from_buffer(content)
-        logger.debug(f"Detected MIME type using magic: {mime_type}")
+        logger.debug("Detected MIME type using magic: %s", mime_type)
         return str(mime_type)
     except ImportError:
         logger.debug("python-magic not available, using extension-based detection")
     except Exception as e:
-        logger.warning(f"Failed to detect MIME type with magic: {e}")
+        logger.warning("Failed to detect MIME type with magic: %s", e)
 
     # Fallback to extension-based detection
     if file_path:
@@ -53,7 +53,7 @@ def _detect_mime_from_extension(file_path: str) -> str | None:
 
     mime_type, _ = mimetypes.guess_type(file_path)
     if mime_type:
-        logger.debug(f"Detected MIME type from extension: {mime_type}")
+        logger.debug("Detected MIME type from extension: %s", mime_type)
     return mime_type
 
 def detect_encoding(content: bytes) -> str:
@@ -76,14 +76,14 @@ def detect_encoding(content: bytes) -> str:
         confidence = result.get("confidence", 0)
 
         if encoding and confidence > 0.7:
-            logger.debug(f"Detected encoding: {encoding} (confidence: {confidence:.2f})")
+            logger.debug("Detected encoding: %s (confidence: %.2f)", encoding, confidence)
             return str(encoding)
         else:
-            logger.debug(f"Low confidence encoding detection: {encoding} ({confidence:.2f})")
+            logger.debug("Low confidence encoding detection: %s (%.2f)", encoding, confidence)
     except ImportError:
         logger.debug("chardet not available, using UTF-8 default")
     except Exception as e:
-        logger.warning(f"Failed to detect encoding: {e}")
+        logger.warning("Failed to detect encoding: %s", e)
 
     # Default to UTF-8
     return "utf-8"
@@ -122,7 +122,7 @@ def decompress_content(content: bytes, file_path: str) -> tuple[bytes, str | Non
             decompressed = gzip.decompress(content)
             # Try to extract original filename (strip .gz extension)
             inner_name = Path(file_path).stem
-            logger.debug(f"Decompressed gzip file, original size: {len(decompressed)} bytes")
+            logger.debug("Decompressed gzip file, original size: %d bytes", len(decompressed))
             return decompressed, inner_name
         except Exception as e:
             raise ValueError(f"Failed to decompress gzip file: {e}") from e
@@ -142,7 +142,9 @@ def decompress_content(content: bytes, file_path: str) -> tuple[bytes, str | Non
                     inner_name = names[0]
                     decompressed = zf.read(inner_name)
                     logger.debug(
-                        f"Extracted single file from ZIP: {inner_name} ({len(decompressed)} bytes)"
+                        "Extracted single file from ZIP: %s (%d bytes)",
+                        inner_name,
+                        len(decompressed),
                     )
                     return decompressed, inner_name
                 else:
@@ -163,7 +165,7 @@ def decompress_content(content: bytes, file_path: str) -> tuple[bytes, str | Non
 
             decompressed = bz2.decompress(content)
             inner_name = Path(file_path).stem
-            logger.debug(f"Decompressed bz2 file, original size: {len(decompressed)} bytes")
+            logger.debug("Decompressed bz2 file, original size: %d bytes", len(decompressed))
             return decompressed, inner_name
         except Exception as e:
             raise ValueError(f"Failed to decompress bz2 file: {e}") from e
@@ -175,7 +177,7 @@ def decompress_content(content: bytes, file_path: str) -> tuple[bytes, str | Non
 
             decompressed = lzma.decompress(content)
             inner_name = Path(file_path).stem
-            logger.debug(f"Decompressed xz file, original size: {len(decompressed)} bytes")
+            logger.debug("Decompressed xz file, original size: %d bytes", len(decompressed))
             return decompressed, inner_name
         except Exception as e:
             raise ValueError(f"Failed to decompress xz file: {e}") from e
@@ -215,7 +217,7 @@ def prepare_content_for_parsing(
                 metadata["inner_filename"] = inner_name
 
         except ValueError as e:
-            logger.warning(f"Failed to decompress {file_path}: {e}")
+            logger.warning("Failed to decompress %s: %s", file_path, e)
             metadata["compression_error"] = str(e)
 
     # Detect MIME type

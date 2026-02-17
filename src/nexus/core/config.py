@@ -12,19 +12,21 @@ Note: ``CacheConfig`` configures the kernel's **in-memory LRU caches**
 (Dragonfly/ephemeral KV+PubSub) which is a separate storage medium.
 """
 
+
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from nexus.constants import DEFAULT_NATS_URL
-from nexus.core.cache_invalidation import CacheInvalidationObserver
 
 if TYPE_CHECKING:
+    from nexus.core.cache_invalidation import CacheInvalidationObserver
     from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
     from nexus.workflows.protocol import WorkflowProtocol
 
 # ---------------------------------------------------------------------------
 # Config dataclasses (frozen — immutable, use dataclasses.replace() to copy)
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class CacheConfig:
@@ -44,6 +46,7 @@ class CacheConfig:
     enable_content_cache: bool = True
     content_cache_size_mb: int = 256
 
+
 @dataclass(frozen=True)
 class PermissionConfig:
     """Permission enforcement configuration.
@@ -61,6 +64,7 @@ class PermissionConfig:
     enable_deferred: bool = True
     deferred_flush_interval: float = 0.05
 
+
 @dataclass(frozen=True)
 class DistributedConfig:
     """Distributed coordination configuration.
@@ -76,6 +80,7 @@ class DistributedConfig:
     event_bus_backend: str = "redis"
     nats_url: str = DEFAULT_NATS_URL
 
+
 @dataclass(frozen=True)
 class MemoryConfig:
     """MemGPT 3-tier memory paging configuration (Issue #1258)."""
@@ -83,6 +88,7 @@ class MemoryConfig:
     enable_paging: bool = True
     main_capacity: int = 100
     recall_max_age_hours: float = 24.0
+
 
 @dataclass(frozen=True)
 class ParseConfig:
@@ -95,9 +101,11 @@ class ParseConfig:
     auto_parse: bool = True
     providers: tuple[dict[str, Any], ...] | None = None
 
+
 # ---------------------------------------------------------------------------
 # KernelServices — frozen container for injected service dependencies
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class KernelServices:
@@ -135,10 +143,13 @@ class KernelServices:
     # Cache invalidation (Issue #1169 / #1519)
     cache_observer: CacheInvalidationObserver | None = None
 
+    # --- Tier 1.5: SYSTEM SERVICE — Brick Lifecycle Manager (Issue #1704) ---
+    brick_lifecycle_manager: Any = None
+
     # --- Tier 2: BRICK — infrastructure ---
     event_bus: Any = None
     lock_manager: Any = None
-    workflow_engine: "WorkflowProtocol | None" = None
+    workflow_engine: WorkflowProtocol | None = None
 
     # Auth services — injected from server layer (Issue #1519, 3A)
     api_key_creator: Any = None  # APIKeyCreatorProtocol
@@ -155,7 +166,7 @@ class KernelServices:
 
     # --- Tier 1: SYSTEM — kernel protocol services (Issue #1502) ---
     agent_registry: Any = None
-    namespace_manager: "NamespaceManagerProtocol | None" = None
+    namespace_manager: NamespaceManagerProtocol | None = None
     async_agent_registry: Any = None
     async_namespace_manager: Any = None
     async_vfs_router: Any = None
@@ -175,9 +186,11 @@ class KernelServices:
     mount_persist_service: Any = None
     task_queue_service: Any = None
 
+
 # ---------------------------------------------------------------------------
 # Observability (unchanged from before)
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class ObservabilityConfig:

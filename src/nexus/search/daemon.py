@@ -30,6 +30,7 @@ Performance targets:
 Issue: #951
 """
 
+
 import asyncio
 import contextlib
 import logging
@@ -49,6 +50,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class DaemonStats:
     """Runtime statistics for the search daemon."""
@@ -66,6 +68,7 @@ class DaemonStats:
     zoekt_available: bool = False
     embedding_cache_connected: bool = False
 
+
 @dataclass
 class SearchResult(BaseSearchResult):
     """Unified search result from daemon.
@@ -74,6 +77,7 @@ class SearchResult(BaseSearchResult):
     """
 
     search_type: str = "hybrid"
+
 
 @dataclass
 class DaemonConfig:
@@ -104,6 +108,7 @@ class DaemonConfig:
     entropy_filtering: bool = False
     entropy_threshold: float = 0.35  # SimpleMem's τ_redundant
     entropy_alpha: float = 0.5  # Balance entity vs semantic novelty
+
 
 class SearchDaemon:
     """Long-running search service with pre-warmed indexes.
@@ -358,7 +363,10 @@ class SearchDaemon:
             # Use a zero vector which won't match anything but loads the index
             async with self._async_engine.connect() as conn:
                 # Set HNSW search parameters for high recall
-                await conn.execute(text(f"SET hnsw.ef_search = {self.config.vector_ef_search}"))
+                await conn.execute(
+                    text("SELECT set_config('hnsw.ef_search', :val, true)"),
+                    {"val": str(self.config.vector_ef_search)},
+                )
 
                 # Dummy query to warm index (SELECT 1 with vector operation)
                 # Check if embedding column exists first
@@ -994,10 +1002,12 @@ class SearchDaemon:
             "zoekt_available": self.stats.zoekt_available,
         }
 
-# Global singleton for easy access
-_daemon_instance: "SearchDaemon | None" = None
 
-def get_search_daemon() -> "SearchDaemon | None":
+# Global singleton for easy access
+_daemon_instance: SearchDaemon | None = None
+
+
+def get_search_daemon() -> SearchDaemon | None:
     """Get the global search daemon instance.
 
     Returns:
@@ -1005,7 +1015,8 @@ def get_search_daemon() -> "SearchDaemon | None":
     """
     return _daemon_instance
 
-def set_search_daemon(daemon: "SearchDaemon") -> None:
+
+def set_search_daemon(daemon: SearchDaemon) -> None:
     """Set the global search daemon instance.
 
     Args:
@@ -1014,12 +1025,13 @@ def set_search_daemon(daemon: "SearchDaemon") -> None:
     global _daemon_instance
     _daemon_instance = daemon
 
+
 async def create_and_start_daemon(
     database_url: str | None = None,
     bm25s_index_dir: str | None = None,
     *,
     async_session_factory: Any | None = None,
-) -> "SearchDaemon":
+) -> SearchDaemon:
     """Create, configure and start a search daemon.
 
     Convenience function for creating a fully initialized daemon.

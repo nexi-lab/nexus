@@ -7,21 +7,23 @@ Provides admin endpoints for permission hotspot monitoring:
 Extracted from ``fastapi_server.py`` during monolith decomposition (#1288).
 """
 
+
 import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from nexus.server.api.v1.dependencies import get_nexus_fs
-from nexus.server.dependencies import require_auth
+from nexus.server.dependencies import require_admin
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["admin"])
 
+
 @router.get("/api/v1/admin/hotspot-stats")
 async def get_hotspot_stats(
-    _auth_result: dict[str, Any] = Depends(require_auth),
+    _auth_result: dict[str, Any] = Depends(require_admin),
     nexus_fs: Any = Depends(get_nexus_fs),
 ) -> dict[str, Any]:
     """Get hotspot detection statistics (Issue #921)."""
@@ -36,10 +38,11 @@ async def get_hotspot_stats(
     stats: dict[str, Any] = hotspot_detector.get_stats()
     return stats
 
+
 @router.get("/api/v1/admin/hot-entries")
 async def get_hot_entries(
     limit: int = Query(10, description="Maximum number of entries", ge=1, le=100),
-    _auth_result: dict[str, Any] = Depends(require_auth),
+    _auth_result: dict[str, Any] = Depends(require_admin),
     nexus_fs: Any = Depends(get_nexus_fs),
 ) -> list[dict[str, Any]]:
     """Get current hot permission entries (Issue #921)."""

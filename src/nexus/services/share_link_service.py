@@ -12,6 +12,7 @@ Phase 2: Core Refactoring (Issue #1287)
 Extracted from: nexus_fs_share_links.py (678 lines)
 """
 
+
 import asyncio
 import hashlib
 import logging
@@ -28,6 +29,7 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.services.gateway import NexusFSGateway
+
 
 class ShareLinkService:
     """Independent share link service extracted from NexusFS.
@@ -46,7 +48,7 @@ class ShareLinkService:
 
     def __init__(
         self,
-        gateway: "NexusFSGateway",
+        gateway: NexusFSGateway,
         enforce_permissions: bool = True,
     ):
         """Initialize share link service.
@@ -105,7 +107,7 @@ class ShareLinkService:
 
     @staticmethod
     def _extract_context_info(
-        context: "OperationContext | None",
+        context: OperationContext | None,
     ) -> tuple[str, str, bool]:
         """Extract zone_id, user_id, is_admin from context.
 
@@ -140,7 +142,7 @@ class ShareLinkService:
         expires_in_hours: int | None = None,
         max_access_count: int | None = None,
         password: str | None = None,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse:
         """Create a shareable link for a file or directory.
 
@@ -248,7 +250,7 @@ class ShareLinkService:
     async def get_share_link(
         self,
         link_id: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse:
         """Get details of a share link.
 
@@ -261,25 +263,27 @@ class ShareLinkService:
         """
 
         def _impl() -> HandlerResponse:
+            from sqlalchemy import select
+
             from nexus.storage.models import ShareLinkModel
 
             session_factory = self._gw.session_factory
             if session_factory is None:
                 return HandlerResponse.error("Database not configured", code=500)
 
-            zone_id, user_id, is_admin = self._extract_context_info(context)
-
             try:
                 with session_factory() as session:
-                    query = session.query(ShareLinkModel).filter_by(link_id=link_id)
-                    if zone_id is not None:
-                        query = query.filter(ShareLinkModel.zone_id == zone_id)
-                    link = query.first()
+                    link = (
+                        session.execute(select(ShareLinkModel).filter_by(link_id=link_id))
+                        .scalars()
+                        .first()
+                    )
                     if not link:
                         return HandlerResponse.error(
                             f"Share link not found: {link_id}", code=404, is_expected=True
                         )
 
+                    zone_id, user_id, is_admin = self._extract_context_info(context)
                     is_owner = link.created_by == user_id and link.zone_id == zone_id
 
                     if not is_owner and not is_admin:
@@ -325,7 +329,7 @@ class ShareLinkService:
         path: str | None = None,
         include_revoked: bool = False,
         include_expired: bool = False,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse:
         """List share links created by the current user.
 
@@ -340,6 +344,8 @@ class ShareLinkService:
         """
 
         def _impl() -> HandlerResponse:
+            from sqlalchemy import select
+
             from nexus.storage.models import ShareLinkModel
 
             session_factory = self._gw.session_factory
@@ -350,27 +356,27 @@ class ShareLinkService:
 
             try:
                 with session_factory() as session:
-                    query = session.query(ShareLinkModel).filter_by(zone_id=zone_id)
+                    stmt = select(ShareLinkModel).filter_by(zone_id=zone_id)
 
                     if not is_admin:
-                        query = query.filter_by(created_by=user_id)
+                        stmt = stmt.filter_by(created_by=user_id)
 
                     if path:
                         normalized_path = validate_path(path, allow_root=True)
-                        query = query.filter_by(resource_id=normalized_path)
+                        stmt = stmt.filter_by(resource_id=normalized_path)
 
                     if not include_revoked:
-                        query = query.filter(ShareLinkModel.revoked_at.is_(None))
+                        stmt = stmt.filter(ShareLinkModel.revoked_at.is_(None))
 
                     if not include_expired:
                         now = datetime.now(UTC)
-                        query = query.filter(
+                        stmt = stmt.filter(
                             (ShareLinkModel.expires_at.is_(None))
                             | (ShareLinkModel.expires_at >= now)
                         )
 
-                    query = query.order_by(ShareLinkModel.created_at.desc())
-                    links = query.all()
+                    stmt = stmt.order_by(ShareLinkModel.created_at.desc())
+                    links = session.execute(stmt).scalars().all()
 
                     result = [
                         {
@@ -399,7 +405,7 @@ class ShareLinkService:
     async def revoke_share_link(
         self,
         link_id: str,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse:
         """Revoke a share link, immediately disabling access.
 
@@ -412,6 +418,8 @@ class ShareLinkService:
         """
 
         def _impl() -> HandlerResponse:
+            from sqlalchemy import select
+
             from nexus.storage.models import ShareLinkModel
 
             session_factory = self._gw.session_factory
@@ -422,10 +430,11 @@ class ShareLinkService:
 
             try:
                 with session_factory() as session:
-                    query = session.query(ShareLinkModel).filter_by(link_id=link_id)
-                    if zone_id is not None:
-                        query = query.filter(ShareLinkModel.zone_id == zone_id)
-                    link = query.first()
+                    link = (
+                        session.execute(select(ShareLinkModel).filter_by(link_id=link_id))
+                        .scalars()
+                        .first()
+                    )
                     if not link:
                         return HandlerResponse.error(
                             f"Share link not found: {link_id}", code=404, is_expected=True
@@ -468,7 +477,7 @@ class ShareLinkService:
         password: str | None = None,
         ip_address: str | None = None,
         user_agent: str | None = None,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse:
         """Validate and access a shared resource via share link.
 
@@ -490,6 +499,8 @@ class ShareLinkService:
         """
 
         def _impl() -> HandlerResponse:
+            from sqlalchemy import select
+
             from nexus.storage.models import ShareLinkAccessLogModel, ShareLinkModel
 
             session_factory = self._gw.session_factory
@@ -506,7 +517,11 @@ class ShareLinkService:
 
             try:
                 with session_factory() as session:
-                    link = session.query(ShareLinkModel).filter_by(link_id=link_id).first()
+                    link = (
+                        session.execute(select(ShareLinkModel).filter_by(link_id=link_id))
+                        .scalars()
+                        .first()
+                    )
 
                     def log_access(success: bool, failure_reason: str | None = None) -> None:
                         log_entry = ShareLinkAccessLogModel(
@@ -597,7 +612,7 @@ class ShareLinkService:
         self,
         link_id: str,
         limit: int = 100,
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
     ) -> HandlerResponse:
         """Get access logs for a share link.
 
@@ -611,6 +626,8 @@ class ShareLinkService:
         """
 
         def _impl() -> HandlerResponse:
+            from sqlalchemy import select
+
             from nexus.storage.models import ShareLinkAccessLogModel, ShareLinkModel
 
             session_factory = self._gw.session_factory
@@ -621,10 +638,11 @@ class ShareLinkService:
 
             try:
                 with session_factory() as session:
-                    query = session.query(ShareLinkModel).filter_by(link_id=link_id)
-                    if zone_id is not None:
-                        query = query.filter(ShareLinkModel.zone_id == zone_id)
-                    link = query.first()
+                    link = (
+                        session.execute(select(ShareLinkModel).filter_by(link_id=link_id))
+                        .scalars()
+                        .first()
+                    )
                     if not link:
                         return HandlerResponse.error(
                             f"Share link not found: {link_id}", code=404, is_expected=True
@@ -639,10 +657,13 @@ class ShareLinkService:
                         )
 
                     logs = (
-                        session.query(ShareLinkAccessLogModel)
-                        .filter_by(link_id=link_id)
-                        .order_by(ShareLinkAccessLogModel.accessed_at.desc())
-                        .limit(limit)
+                        session.execute(
+                            select(ShareLinkAccessLogModel)
+                            .filter_by(link_id=link_id)
+                            .order_by(ShareLinkAccessLogModel.accessed_at.desc())
+                            .limit(limit)
+                        )
+                        .scalars()
                         .all()
                     )
 

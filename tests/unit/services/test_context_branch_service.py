@@ -4,6 +4,7 @@ Tests: ensure_main_branch, create_branch, list_branches, get_branch,
        get_current_branch, delete_branch, commit, checkout, log, diff.
 """
 
+
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
@@ -26,6 +27,7 @@ from nexus.storage.models import WorkspaceSnapshotModel
 from nexus.storage.models._base import Base
 from nexus.storage.models.context_branch import ContextBranchModel
 
+
 @pytest.fixture
 def engine():
     """In-memory SQLite engine."""
@@ -33,10 +35,12 @@ def engine():
     Base.metadata.create_all(eng)
     return eng
 
+
 @pytest.fixture
 def session_factory(engine):
     """Session factory for in-memory SQLite."""
     return sessionmaker(bind=engine)
+
 
 @pytest.fixture
 def mock_workspace_manager():
@@ -78,6 +82,7 @@ def mock_workspace_manager():
 
     return wm
 
+
 @pytest.fixture
 def service(mock_workspace_manager, session_factory):
     """ContextBranchService with mocked WM and real DB."""
@@ -88,6 +93,7 @@ def service(mock_workspace_manager, session_factory):
         default_zone_id="test-zone",
         default_agent_id="agent-1",
     )
+
 
 def _add_snapshot(session_factory, workspace_path: str, snapshot_id: str, number: int) -> str:
     """Helper: insert a WorkspaceSnapshotModel."""
@@ -106,9 +112,11 @@ def _add_snapshot(session_factory, workspace_path: str, snapshot_id: str, number
         session.commit()
     return snapshot_id
 
+
 # ==================================================================
 # ensure_main_branch
 # ==================================================================
+
 
 class TestEnsureMainBranch:
     def test_creates_main_on_first_call(self, service, session_factory):
@@ -132,9 +140,11 @@ class TestEnsureMainBranch:
         result = service.ensure_main_branch("/workspace/test")
         assert result.head_snapshot_id is None
 
+
 # ==================================================================
 # create_branch
 # ==================================================================
+
 
 class TestCreateBranch:
     def test_creates_branch_from_main(self, service, session_factory):
@@ -178,9 +188,11 @@ class TestCreateBranch:
         with pytest.raises(NexusFileNotFoundError):
             service.create_branch("/ws", "new", from_snapshot_id="nonexistent")
 
+
 # ==================================================================
 # list_branches / get_branch / get_current_branch
 # ==================================================================
+
 
 class TestBranchQueries:
     def test_list_returns_all_active(self, service, session_factory):
@@ -223,9 +235,11 @@ class TestBranchQueries:
         current = service.get_current_branch("/ws")
         assert current.branch_name == DEFAULT_BRANCH
 
+
 # ==================================================================
 # delete_branch
 # ==================================================================
+
 
 class TestDeleteBranch:
     def test_delete_marks_discarded(self, service, session_factory):
@@ -258,9 +272,11 @@ class TestDeleteBranch:
         with pytest.raises(BranchStateError):
             service.delete_branch("/ws", "feature")
 
+
 # ==================================================================
 # commit
 # ==================================================================
+
 
 class TestCommit:
     def test_commit_creates_snapshot_and_advances_head(
@@ -295,9 +311,11 @@ class TestCommit:
         with pytest.raises(BranchStateError):
             service.commit("/ws", message="Test", branch_name="done")
 
+
 # ==================================================================
 # checkout
 # ==================================================================
+
 
 class TestCheckout:
     def test_checkout_switches_current(self, service, session_factory):
@@ -330,9 +348,11 @@ class TestCheckout:
         with pytest.raises(BranchStateError):
             service.checkout("/ws", "temp")
 
+
 # ==================================================================
 # log / diff (delegation tests)
 # ==================================================================
+
 
 class TestLogDiff:
     def test_log_delegates_to_workspace_manager(self, service, mock_workspace_manager):
@@ -355,9 +375,11 @@ class TestLogDiff:
             zone_id=None,
         )
 
+
 # ==================================================================
 # _slugify helper
 # ==================================================================
+
 
 class TestSlugify:
     def test_basic_slugification(self):

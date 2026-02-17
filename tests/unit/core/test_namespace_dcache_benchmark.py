@@ -9,6 +9,7 @@ Measures:
 Run with: uv run pytest tests/unit/core/test_namespace_dcache_benchmark.py -v -s --tb=short
 """
 
+
 import statistics
 import time
 
@@ -22,12 +23,14 @@ from nexus.storage.models import Base
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def engine():
     """Create in-memory SQLite database for benchmarking."""
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     return engine
+
 
 @pytest.fixture
 def rebac_manager(engine):
@@ -54,6 +57,7 @@ def rebac_manager(engine):
     yield manager
     manager.close()
 
+
 @pytest.fixture
 def namespace_manager(rebac_manager):
     """Create a NamespaceManager for benchmarking."""
@@ -67,9 +71,11 @@ def namespace_manager(rebac_manager):
         dcache_negative_ttl=60,
     )
 
+
 # ---------------------------------------------------------------------------
 # Benchmark Tests
 # ---------------------------------------------------------------------------
+
 
 class TestDCacheBenchmark:
     """Micro-benchmark comparing dcache hit vs mount table bisect vs cold rebuild."""

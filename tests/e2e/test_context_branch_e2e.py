@@ -9,6 +9,7 @@ with real SQLite DB and CAS backend. Validates:
 - Code review fixes (C1, C2, C3, H1-H6)
 """
 
+
 import hashlib
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
@@ -33,6 +34,7 @@ from nexus.storage.models.filesystem import WorkspaceSnapshotModel
 # Fixtures — real DB + CAS
 # ---------------------------------------------------------------------------
 
+
 class InMemoryCAS:
     """Content-addressable store backed by a dict."""
 
@@ -50,6 +52,7 @@ class InMemoryCAS:
         self.blobs[h] = data
         return HandlerResponse.ok(h)
 
+
 class InMemoryMetadata:
     """Minimal metadata store that supports list_iter."""
 
@@ -58,6 +61,7 @@ class InMemoryMetadata:
 
     def list_iter(self, prefix="", **kwargs):
         return [v for k, v in self.files.items() if k.startswith(prefix)]
+
 
 class FakeWorkspaceManagerE2E:
     """Workspace manager with real snapshot creation and restore."""
@@ -153,23 +157,28 @@ class FakeWorkspaceManagerE2E:
     def diff_snapshots(self, snapshot_id_1, snapshot_id_2, **kwargs):
         return {"added": [], "removed": [], "modified": [], "unchanged": 0}
 
+
 @pytest.fixture
 def engine():
     eng = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(eng)
     return eng
 
+
 @pytest.fixture
 def session_factory(engine):
     return sessionmaker(bind=engine)
+
 
 @pytest.fixture
 def cas():
     return InMemoryCAS()
 
+
 @pytest.fixture
 def fake_wm(session_factory, cas):
     return FakeWorkspaceManagerE2E(session_factory, cas)
+
 
 @pytest.fixture
 def service(fake_wm, session_factory):
@@ -180,9 +189,11 @@ def service(fake_wm, session_factory):
         default_zone_id="z1",
     )
 
+
 # ---------------------------------------------------------------------------
 # E2E Lifecycle: explore → commit → merge → verify
 # ---------------------------------------------------------------------------
+
 
 class TestE2EExploreMergeLifecycle:
     """Full agent exploration workflow end-to-end."""
@@ -263,9 +274,11 @@ class TestE2EExploreMergeLifecycle:
         active = service.list_branches(ws)
         assert {b.branch_name for b in active} == {"main"}
 
+
 # ---------------------------------------------------------------------------
 # E2E: Permission enforcement
 # ---------------------------------------------------------------------------
+
 
 class TestE2EPermissionEnforcement:
     """Verify ReBAC permissions are checked for branch operations."""
@@ -308,9 +321,11 @@ class TestE2EPermissionEnforcement:
         with pytest.raises(NexusPermissionError):
             svc.merge("/ws/perm", "feature", "main")
 
+
 # ---------------------------------------------------------------------------
 # E2E: Code review fixes validation
 # ---------------------------------------------------------------------------
+
 
 class TestE2ECodeReviewFixes:
     """Validate all code review fixes work correctly in E2E scenarios."""
@@ -392,9 +407,11 @@ class TestE2ECodeReviewFixes:
         with pytest.raises(BranchStateError, match="status 'discarded'"):
             service._advance_head("z1", ws, "temp", "snap-new")
 
+
 # ---------------------------------------------------------------------------
 # E2E: Three-way merge with real CAS
 # ---------------------------------------------------------------------------
+
 
 class TestE2EThreeWayMerge:
     """Three-way merge with real manifest loading and CAS operations."""
@@ -526,9 +543,11 @@ class TestE2EThreeWayMerge:
         result = service.merge(ws, "feature", "main", strategy="source-wins")
         assert result.merged is True
 
+
 # ---------------------------------------------------------------------------
 # E2E: Cross-session continuity
 # ---------------------------------------------------------------------------
+
 
 class TestE2ECrossSessionContinuity:
     """Branches persist across independent service instances."""
@@ -572,9 +591,11 @@ class TestE2ECrossSessionContinuity:
         result = svc3.finish_explore(ws, explore.branch_name, outcome="merge")
         assert result["outcome"] == "merged"
 
+
 # ---------------------------------------------------------------------------
 # E2E: Protected branch safety
 # ---------------------------------------------------------------------------
+
 
 class TestE2EProtectedBranches:
     def test_cannot_delete_main(self, service):

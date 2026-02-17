@@ -13,6 +13,7 @@ Architecture decisions (from plan review):
     P4-B: Skip auto-commit if workspace unchanged
 """
 
+
 import logging
 import re
 import time
@@ -55,6 +56,7 @@ DEFAULT_BRANCH = "main"
 _MAX_RETRIES = 3
 _BASE_BACKOFF_MS = 10
 
+
 @dataclass(frozen=True)
 class BranchInfo:
     """Immutable branch metadata returned by service methods."""
@@ -75,6 +77,7 @@ class BranchInfo:
     created_at: datetime
     updated_at: datetime
 
+
 @dataclass(frozen=True)
 class MergeResult:
     """Immutable result of a merge operation."""
@@ -87,6 +90,7 @@ class MergeResult:
     fast_forward: bool
     strategy: str
 
+
 @dataclass(frozen=True)
 class ExploreResult:
     """Immutable result of an explore() operation."""
@@ -97,6 +101,7 @@ class ExploreResult:
     skipped_commit: bool
     message: str
 
+
 def _slugify(text: str) -> str:
     """Convert text to a valid branch name slug."""
     slug = text.lower().strip()
@@ -105,6 +110,7 @@ def _slugify(text: str) -> str:
     slug = re.sub(r"-+", "-", slug)
     slug = slug.strip("-")
     return slug[:64] or "unnamed-branch"
+
 
 def _branch_from_model(model: ContextBranchModel) -> BranchInfo:
     """Convert SQLAlchemy model to immutable BranchInfo."""
@@ -126,6 +132,7 @@ def _branch_from_model(model: ContextBranchModel) -> BranchInfo:
         updated_at=model.updated_at,
     )
 
+
 class ContextBranchService:
     """Manages git-like named branches for workspace context versioning.
 
@@ -136,9 +143,9 @@ class ContextBranchService:
 
     def __init__(
         self,
-        workspace_manager: "WorkspaceManager",
+        workspace_manager: WorkspaceManager,
         session_factory: Any,
-        rebac_manager: "ReBACManager | None" = None,
+        rebac_manager: ReBACManager | None = None,
         default_zone_id: str | None = None,
         default_agent_id: str | None = None,
     ):

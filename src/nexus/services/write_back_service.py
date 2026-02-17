@@ -210,11 +210,11 @@ class WriteBackService:
     async def _process_entry(self, entry: "SyncBacklogEntry", sem: asyncio.Semaphore) -> None:
         """Process a single backlog entry with semaphore rate limiting."""
         async with sem:
-            if not self._backlog_store.mark_in_progress(entry.id):
+            if not self._backlog_store.mark_in_progress(entry.id, zone_id=entry.zone_id):
                 return  # Another worker claimed it
             try:
                 await self._write_back_single(entry)
-                self._backlog_store.mark_completed(entry.id)
+                self._backlog_store.mark_completed(entry.id, zone_id=entry.zone_id)
                 self._metrics.record_push(entry.backend_name)
                 # Publish success event
                 await self._event_bus.publish(
@@ -226,7 +226,7 @@ class WriteBackService:
                 )
             except ConflictAbortError as e:
                 logger.warning(f"[WRITE_BACK] Conflict ABORT on {entry.path}: {e}")
-                self._backlog_store.mark_failed(entry.id, str(e))
+                self._backlog_store.mark_failed(entry.id, str(e), zone_id=entry.zone_id)
                 self._metrics.record_failure(entry.backend_name)
                 await self._event_bus.publish(
                     FileEvent(
@@ -237,7 +237,7 @@ class WriteBackService:
                 )
             except Exception as e:
                 logger.warning(f"[WRITE_BACK] Failed to write-back {entry.path}: {e}")
-                self._backlog_store.mark_failed(entry.id, str(e))
+                self._backlog_store.mark_failed(entry.id, str(e), zone_id=entry.zone_id)
                 self._metrics.record_failure(entry.backend_name)
                 await self._event_bus.publish(
                     FileEvent(

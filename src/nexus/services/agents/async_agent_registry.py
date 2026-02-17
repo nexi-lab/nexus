@@ -7,7 +7,7 @@ Thin adapter that wraps the sync ``AgentRegistry`` to satisfy
 Emits ``AgentStateEvent`` on successful state transitions when
 an ``AgentStateEmitter`` is provided (Issue #1274).
 
-Follows the established ``AsyncFileMetadataWrapper`` pattern.
+Follows the established ``AsyncMetastoreWrapper`` pattern.
 
 References:
     - Issue #1440: Async wrappers for 4 sync kernel protocols

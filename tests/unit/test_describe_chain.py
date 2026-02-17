@@ -7,6 +7,7 @@ Design reference:
     - NEXUS-LEGO-ARCHITECTURE.md PART 16, Recursive Wrapping Rule #3
 """
 
+
 from unittest.mock import MagicMock
 
 import pytest
@@ -27,12 +28,14 @@ from nexus.core.protocols.describable import Describable
 
 _TEST_KEY = AESGCMSIV.generate_key(bit_length=256)
 
+
 def _make_leaf(name: str = "local") -> Backend:
     """Create a mock leaf backend with the given name."""
     mock = MagicMock(spec=Backend)
     mock.name = name
     mock.describe.return_value = name
     return mock
+
 
 class TestLeafBackendDescribe:
     """Leaf backends should return their name from describe()."""
@@ -44,6 +47,7 @@ class TestLeafBackendDescribe:
     def test_leaf_returns_local(self) -> None:
         leaf = _make_leaf("local")
         assert leaf.describe() == "local"
+
 
 class TestSingleWrapperDescribe:
     """Single wrapper should prepend its layer name."""
@@ -71,6 +75,7 @@ class TestSingleWrapperDescribe:
         wrapper = CompressedStorage(inner=leaf, config=config)
         assert wrapper.describe() == "compress(zstd) → s3"
 
+
 class TestTwoDeepChainDescribe:
     """2-deep chain should show all layers in order."""
 
@@ -88,6 +93,7 @@ class TestTwoDeepChainDescribe:
         cached = CachingBackendWrapper(inner=leaf, config=config)
         logged = LoggingBackendWrapper(inner=cached)
         assert logged.describe() == "logging → cache → gcs"
+
 
 class TestDeepChainDescribe:
     """3+ deep chains should compose recursively."""
@@ -118,6 +124,7 @@ class TestDeepChainDescribe:
         cache_config = CacheWrapperConfig(l2_enabled=False, metrics_enabled=False)
         cached = CachingBackendWrapper(inner=compressed, config=cache_config)
         assert cached.describe() == "cache → compress(zstd) → encrypt(AES-256-GCM-SIV) → s3"
+
 
 class TestDescribableProtocol:
     """Verify structural subtyping with Describable protocol."""
@@ -153,6 +160,7 @@ class TestDescribableProtocol:
         config = CompressedStorageConfig(metrics_enabled=False)
         wrapper = CompressedStorage(inner=leaf, config=config)
         assert isinstance(wrapper, Describable)
+
 
 class TestDescribeUnicodeArrow:
     """Verify the unicode arrow separator convention."""

@@ -8,6 +8,7 @@ Auth caching uses CacheStoreABC (the CacheStore pillar) per
 KERNEL-ARCHITECTURE.md §2 — accessed via ``app_state.auth_cache_store``.
 """
 
+
 import hashlib
 import hmac
 import json
@@ -27,11 +28,13 @@ logger = logging.getLogger(__name__)
 # Auth cache TTL: 15 minutes (900 seconds) - balances performance vs permission freshness
 _AUTH_CACHE_TTL = 900
 
+
 def _auth_cache_key(token: str) -> str:
     """Compute the cache key for an auth token (SHA-256 prefix)."""
     return f"auth:cache:{hashlib.sha256(token.encode()).hexdigest()[:32]}"
 
-async def _get_cached_auth(cache_store: "CacheStoreABC | None", token: str) -> dict[str, Any] | None:
+
+async def _get_cached_auth(cache_store: CacheStoreABC | None, token: str) -> dict[str, Any] | None:
     """Get cached auth result if valid via CacheStoreABC."""
     if cache_store is None:
         return None
@@ -41,19 +44,22 @@ async def _get_cached_auth(cache_store: "CacheStoreABC | None", token: str) -> d
     result: dict[str, Any] = json.loads(raw)
     return result
 
+
 async def _set_cached_auth(
-    cache_store: "CacheStoreABC | None", token: str, result: dict[str, Any]
+    cache_store: CacheStoreABC | None, token: str, result: dict[str, Any]
 ) -> None:
     """Cache auth result with TTL via CacheStoreABC."""
     if cache_store is None:
         return
     await cache_store.set(_auth_cache_key(token), json.dumps(result).encode(), ttl=_AUTH_CACHE_TTL)
 
-async def _reset_auth_cache(cache_store: "CacheStoreABC | None") -> None:
+
+async def _reset_auth_cache(cache_store: CacheStoreABC | None) -> None:
     """Reset the auth cache. Used by tests for isolation."""
     if cache_store is None:
         return
     await cache_store.delete_by_pattern("auth:cache:*")
+
 
 # NEXUS_STATIC_ADMINS: comma-separated subject IDs that get admin privileges
 # in open access mode (no api_key, no auth_provider). Parsed once at import.
@@ -69,6 +75,7 @@ if _STATIC_ADMINS:
         "Grants admin privileges in open access mode. DO NOT use in production.",
         _STATIC_ADMINS,
     )
+
 
 async def resolve_auth(
     app_state: Any,
@@ -205,6 +212,7 @@ async def resolve_auth(
 
     return None
 
+
 async def get_auth_result(
     request: Request,
     authorization: str | None = Header(None, alias="Authorization"),
@@ -226,6 +234,7 @@ async def get_auth_result(
         x_nexus_zone_id=x_nexus_zone_id,
     )
 
+
 async def require_auth(
     auth_result: dict[str, Any] | None = Depends(get_auth_result),
 ) -> dict[str, Any]:
@@ -237,6 +246,23 @@ async def require_auth(
     if auth_result is None or not auth_result.get("authenticated"):
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
     return auth_result
+
+
+async def require_admin(
+    auth_result: dict[str, Any] = Depends(require_auth),
+) -> dict[str, Any]:
+    """Require admin privileges for endpoint (Issue #1596).
+
+    Chains on ``require_auth`` so unauthenticated requests get 401 first,
+    then non-admin users get 403.
+
+    Raises:
+        HTTPException: 401 if not authenticated, 403 if not admin.
+    """
+    if not auth_result.get("is_admin", False):
+        raise HTTPException(status_code=403, detail="Admin privileges required")
+    return auth_result
+
 
 def get_operation_context(auth_result: dict[str, Any]) -> Any:
     """Create OperationContext from auth result.

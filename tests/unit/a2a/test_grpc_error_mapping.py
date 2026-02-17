@@ -4,6 +4,7 @@ Verifies that each A2AError subclass has a consistent grpc_status
 attribute mapped to the expected gRPC status code.
 """
 
+
 import grpc
 import pytest
 
@@ -20,6 +21,7 @@ from nexus.a2a.exceptions import (
     TaskNotFoundError,
     UnsupportedOperationError,
 )
+
 
 class TestGrpcStatusMapping:
     """Verify each exception has the correct grpc_status attribute."""

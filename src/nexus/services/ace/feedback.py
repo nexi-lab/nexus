@@ -1,13 +1,16 @@
 """Dynamic feedback system for trajectories."""
 
+
 import json
 import uuid
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nexus.storage.models import TrajectoryFeedbackModel, TrajectoryModel
+
 
 class FeedbackManager:
     """Manage dynamic feedback for trajectories.
@@ -19,15 +22,13 @@ class FeedbackManager:
     - Long-term metrics
     """
 
-    def __init__(self, session: Session, zone_id: str | None = None):
+    def __init__(self, session: Session):
         """Initialize feedback manager.
 
         Args:
             session: Database session
-            zone_id: Optional zone ID for federation isolation
         """
         self.session = session
-        self.zone_id = zone_id
 
     def add_feedback(
         self,
@@ -102,9 +103,12 @@ class FeedbackManager:
             ...     print(f"{f['created_at']}: {f['message']} (score={f['revised_score']})")
         """
         feedbacks = (
-            self.session.query(TrajectoryFeedbackModel)
-            .filter_by(trajectory_id=trajectory_id)
-            .order_by(TrajectoryFeedbackModel.created_at.asc())
+            self.session.execute(
+                select(TrajectoryFeedbackModel)
+                .filter_by(trajectory_id=trajectory_id)
+                .order_by(TrajectoryFeedbackModel.created_at.asc())
+            )
+            .scalars()
             .all()
         )
 
@@ -142,10 +146,11 @@ class FeedbackManager:
             >>> score = feedback_mgr.get_effective_score(traj_id, strategy="weighted")
             >>> print(f"Effective score: {score:.2f}")
         """
-        query = self.session.query(TrajectoryModel).filter_by(trajectory_id=trajectory_id)
-        if self.zone_id is not None:
-            query = query.filter(TrajectoryModel.zone_id == self.zone_id)
-        trajectory = query.first()
+        trajectory = (
+            self.session.execute(select(TrajectoryModel).filter_by(trajectory_id=trajectory_id))
+            .scalars()
+            .first()
+        )
         if not trajectory:
             raise ValueError(f"Trajectory {trajectory_id} not found")
 
@@ -210,10 +215,11 @@ class FeedbackManager:
             ...     priority=9
             ... )
         """
-        query = self.session.query(TrajectoryModel).filter_by(trajectory_id=trajectory_id)
-        if self.zone_id is not None:
-            query = query.filter(TrajectoryModel.zone_id == self.zone_id)
-        trajectory = query.first()
+        trajectory = (
+            self.session.execute(select(TrajectoryModel).filter_by(trajectory_id=trajectory_id))
+            .scalars()
+            .first()
+        )
         if not trajectory:
             raise ValueError(f"Trajectory {trajectory_id} not found")
 
@@ -287,17 +293,17 @@ class FeedbackManager:
             >>> for item in queue:
             ...     print(f"Priority {item['priority']}: {item['task_description']}")
         """
-        query = self.session.query(TrajectoryModel).filter(
-            TrajectoryModel.needs_relearning == True  # noqa: E712
-        )
-        if self.zone_id is not None:
-            query = query.filter(TrajectoryModel.zone_id == self.zone_id)
         trajectories = (
-            query.order_by(
-                TrajectoryModel.relearning_priority.desc(),
-                TrajectoryModel.last_feedback_at.desc(),
+            self.session.execute(
+                select(TrajectoryModel)
+                .where(TrajectoryModel.needs_relearning == True)  # noqa: E712
+                .order_by(
+                    TrajectoryModel.relearning_priority.desc(),
+                    TrajectoryModel.last_feedback_at.desc(),
+                )
+                .limit(limit)
             )
-            .limit(limit)
+            .scalars()
             .all()
         )
 
@@ -323,10 +329,11 @@ class FeedbackManager:
             >>> # After re-reflecting
             >>> feedback_mgr.clear_relearning_flag(traj_id)
         """
-        query = self.session.query(TrajectoryModel).filter_by(trajectory_id=trajectory_id)
-        if self.zone_id is not None:
-            query = query.filter(TrajectoryModel.zone_id == self.zone_id)
-        trajectory = query.first()
+        trajectory = (
+            self.session.execute(select(TrajectoryModel).filter_by(trajectory_id=trajectory_id))
+            .scalars()
+            .first()
+        )
         if trajectory:
             trajectory.needs_relearning = False  # PostgreSQL boolean
             trajectory.relearning_priority = 0
@@ -343,10 +350,11 @@ class FeedbackManager:
             trajectory_id: Trajectory ID
             score: New score (or None)
         """
-        query = self.session.query(TrajectoryModel).filter_by(trajectory_id=trajectory_id)
-        if self.zone_id is not None:
-            query = query.filter(TrajectoryModel.zone_id == self.zone_id)
-        trajectory = query.first()
+        trajectory = (
+            self.session.execute(select(TrajectoryModel).filter_by(trajectory_id=trajectory_id))
+            .scalars()
+            .first()
+        )
         if not trajectory:
             return
 

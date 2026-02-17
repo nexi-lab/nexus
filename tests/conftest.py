@@ -61,6 +61,7 @@ try:
 except ImportError:
     _HAS_STRUCTLOG = False
 
+
 def pytest_addoption(parser):
     parser.addoption(
         "--run-quarantine",
@@ -69,6 +70,7 @@ def pytest_addoption(parser):
         help="Run quarantined flaky tests",
     )
 
+
 def pytest_collection_modifyitems(config, items):
     if not config.getoption("--run-quarantine"):
         skip_quarantine = pytest.mark.skip(reason="Quarantined: use --run-quarantine to run")
@@ -76,9 +78,11 @@ def pytest_collection_modifyitems(config, items):
             if "quarantine" in item.keywords:
                 item.add_marker(skip_quarantine)
 
+
 # ---------------------------------------------------------------------------
 # Autouse fixtures for test isolation (reset module-level singletons)
 # ---------------------------------------------------------------------------
+
 
 if _HAS_STRUCTLOG:
 
@@ -88,6 +92,7 @@ if _HAS_STRUCTLOG:
         structlog.contextvars.clear_contextvars()
         yield
         structlog.contextvars.clear_contextvars()
+
 
 def make_test_nexus(
     tmp_path,
@@ -157,9 +162,9 @@ def make_test_nexus(
 
             metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft"))
         else:
-            from tests.helpers.in_memory_metadata_store import InMemoryFileMetadataStore
+            from tests.helpers.in_memory_metadata_store import InMemoryMetastore
 
-            metadata_store = InMemoryFileMetadataStore()
+            metadata_store = InMemoryMetastore()
 
     return NexusFS(
         backend=backend,
@@ -174,6 +179,7 @@ def make_test_nexus(
         services=services,
     )
 
+
 @pytest.fixture(autouse=True)
 def _reset_auth_cache_fixture():
     """No-op: auth cache is now CacheStoreABC-based (instance-level, not module-level).
@@ -182,6 +188,7 @@ def _reset_auth_cache_fixture():
     so no global state needs resetting.
     """
     yield
+
 
 @pytest.fixture(autouse=True)
 def _reset_stream_secret_fixture():

@@ -9,6 +9,7 @@ Validates:
 - create_nexus_services: full integration, BootError propagation, log tags
 """
 
+
 import logging
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -20,6 +21,7 @@ from nexus.core.exceptions import BootError, NexusError
 # ---------------------------------------------------------------------------
 # TestBootError
 # ---------------------------------------------------------------------------
+
 
 class TestBootError:
     """Tests for BootError exception class."""
@@ -44,20 +46,24 @@ class TestBootError:
         err = BootError("fail")
         assert err.is_expected is False
 
+
 # ---------------------------------------------------------------------------
 # Helpers: minimal mock boot context
 # ---------------------------------------------------------------------------
+
 
 def _make_mock_ctx(**overrides: Any) -> Any:
     """Build a minimal _BootContext-like object for tier function tests."""
     from nexus.factory import _BootContext
 
+    mock_engine = MagicMock()
     defaults = {
         "record_store": MagicMock(),
         "metadata_store": MagicMock(),
         "backend": MagicMock(),
         "router": MagicMock(),
-        "engine": MagicMock(),
+        "engine": mock_engine,
+        "read_engine": mock_engine,
         "session_factory": MagicMock(),
         "perm": MagicMock(
             enforce_zone_isolation=True,
@@ -82,9 +88,11 @@ def _make_mock_ctx(**overrides: Any) -> Any:
     defaults.update(overrides)
     return _BootContext(**defaults)
 
+
 # ---------------------------------------------------------------------------
 # TestBootKernelServices
 # ---------------------------------------------------------------------------
+
 
 class TestBootKernelServices:
     """Tests for _boot_kernel_services."""
@@ -166,9 +174,11 @@ class TestBootKernelServices:
         result = _boot_kernel_services(ctx)
         assert result["deferred_permission_buffer"] is None
 
+
 # ---------------------------------------------------------------------------
 # TestBootSystemServices
 # ---------------------------------------------------------------------------
+
 
 class TestBootSystemServices:
     """Tests for _boot_system_services."""
@@ -190,6 +200,7 @@ class TestBootSystemServices:
             "observability_subsystem",
             "resiliency_manager",
             "context_branch_service",
+            "brick_lifecycle_manager",
         }
         assert expected_keys == set(result.keys())
 
@@ -214,9 +225,11 @@ class TestBootSystemServices:
         assert result["resiliency_manager"] is not None
         assert any("[BOOT:SYSTEM]" in r.message for r in caplog.records)
 
+
 # ---------------------------------------------------------------------------
 # TestBootBrickServices
 # ---------------------------------------------------------------------------
+
 
 class TestBootBrickServices:
     """Tests for _boot_brick_services."""
@@ -256,9 +269,11 @@ class TestBootBrickServices:
         assert "wallet_provisioner" in result
         assert any("[BOOT:BRICK]" in r.message for r in caplog.records)
 
+
 # ---------------------------------------------------------------------------
 # TestStartBackgroundServices
 # ---------------------------------------------------------------------------
+
 
 class TestStartBackgroundServices:
     """Tests for _start_background_services."""
@@ -299,9 +314,11 @@ class TestStartBackgroundServices:
         _start_background_services(kernel, system)
         wo.start.assert_called_once()
 
+
 # ---------------------------------------------------------------------------
 # TestCreateNexusServicesIntegration
 # ---------------------------------------------------------------------------
+
 
 class TestCreateNexusServicesIntegration:
     """Integration tests for create_nexus_services orchestrator."""

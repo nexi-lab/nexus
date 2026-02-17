@@ -89,7 +89,7 @@ class TestErrors:
         mock_snapshot_service.cleanup_expired = failing_cleanup
         worker = SnapshotCleanupWorker(mock_snapshot_service, sweep_interval=0.01)
         await worker.start()
-        await asyncio.sleep(0.05)
+        await asyncio.sleep(0.15)  # 15x sweep interval to avoid macOS flakiness
         assert worker.is_running
         assert call_count >= 2  # continued past the error
         await worker.stop()

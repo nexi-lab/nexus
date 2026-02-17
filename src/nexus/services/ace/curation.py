@@ -1,5 +1,6 @@
 """Curation system for updating playbooks with reflection learnings."""
 
+
 import json
 from datetime import UTC, datetime
 from typing import Any
@@ -8,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from nexus.services.ace.playbook import PlaybookManager
 from nexus.storage.models import MemoryModel
+
 
 class Curator:
     """Curate playbooks by integrating reflection learnings.
@@ -23,7 +25,6 @@ class Curator:
         session: Session,
         backend: Any,
         playbook_manager: PlaybookManager,
-        zone_id: str | None = None,
     ):
         """Initialize curator.
 
@@ -31,12 +32,10 @@ class Curator:
             session: Database session
             backend: Storage backend for CAS content
             playbook_manager: Playbook manager for updating playbooks
-            zone_id: Zone scope for federation isolation
         """
         self.session = session
         self.backend = backend
         self.playbook_manager = playbook_manager
-        self.zone_id = zone_id
 
     def curate_playbook(
         self,
@@ -119,14 +118,19 @@ class Curator:
         Returns:
             Curation results or None if no reflections found
         """
-        # Find reflection memories for this trajectory (zone-scoped)
-        query = self.session.query(MemoryModel).filter_by(
-            trajectory_id=trajectory_id,
-            memory_type="reflection",
+        # Find reflection memories for this trajectory
+        from sqlalchemy import select
+
+        reflection_memories = (
+            self.session.execute(
+                select(MemoryModel).filter_by(
+                    trajectory_id=trajectory_id,
+                    memory_type="reflection",
+                )
+            )
+            .scalars()
+            .all()
         )
-        if self.zone_id is not None:
-            query = query.filter(MemoryModel.zone_id == self.zone_id)
-        reflection_memories = query.all()
 
         if not reflection_memories:
             return None
@@ -143,10 +147,13 @@ class Curator:
         Returns:
             Reflection data or None if not found
         """
-        query = self.session.query(MemoryModel).filter_by(memory_id=memory_id)
-        if self.zone_id is not None:
-            query = query.filter(MemoryModel.zone_id == self.zone_id)
-        memory = query.first()
+        from sqlalchemy import select
+
+        memory = (
+            self.session.execute(select(MemoryModel).filter_by(memory_id=memory_id))
+            .scalars()
+            .first()
+        )
         if not memory:
             return None
 

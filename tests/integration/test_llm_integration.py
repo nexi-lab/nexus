@@ -46,38 +46,6 @@ class TestImportPaths:
         assert LLMDocumentReader is not None
         assert ReadChunk is not None
 
-    def test_backward_compat_stubs(self) -> None:
-        """Old import paths still work via backward-compat stubs."""
-        from nexus.llm.citation import (
-            Citation,
-            CitationExtractor,
-            DocumentReadResult,
-        )
-        from nexus.llm.context_builder import (
-            AdaptiveRetrievalConfig,
-            ChunkLike,
-            ContextBuilder,
-        )
-        from nexus.llm.document_reader import LLMDocumentReader
-
-        assert Citation is not None
-        assert CitationExtractor is not None
-        assert DocumentReadResult is not None
-        assert AdaptiveRetrievalConfig is not None
-        assert ChunkLike is not None
-        assert ContextBuilder is not None
-        assert LLMDocumentReader is not None
-
-    def test_stub_and_service_are_same_objects(self) -> None:
-        """Backward-compat stubs return the exact same class objects."""
-        from nexus.llm.citation import Citation as C1
-        from nexus.llm.context_builder import ContextBuilder as CB1
-        from nexus.services.llm_citation import Citation as C2
-        from nexus.services.llm_context_builder import ContextBuilder as CB2
-
-        assert C1 is C2
-        assert CB1 is CB2
-
     def test_brick_level_exports(self) -> None:
         """LLM brick __init__ exports core types (not orchestration)."""
         from nexus.llm import (

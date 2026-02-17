@@ -7,6 +7,7 @@ Includes temporal query operators (Issue #1023) for time-based filtering
 inspired by SimpleMem (arXiv:2601.02553).
 """
 
+
 import builtins
 import logging
 from collections.abc import Callable
@@ -26,6 +27,7 @@ logger = logging.getLogger(__name__)
 # Importance decay configuration (Issue #1030)
 DEFAULT_DECAY_FACTOR = 0.95  # 5% decay per day
 DEFAULT_MIN_IMPORTANCE = 0.1  # Minimum importance floor
+
 
 def get_effective_importance(
     importance_original: float | None,
@@ -78,6 +80,7 @@ def get_effective_importance(
 
     # Clamp to minimum importance
     return max(min_importance, decayed)
+
 
 class Memory:
     """High-level Memory API for AI agents.
@@ -1166,13 +1169,18 @@ class Memory:
 
         try:
             # Query memories that haven't hit minimum importance yet
-            memories = (
-                self.session.query(MemoryModel)
-                .filter(
-                    MemoryModel.zone_id == self.zone_id,
-                    MemoryModel.importance > min_importance,
+            from sqlalchemy import select
+
+            memories = list(
+                self.session.execute(
+                    select(MemoryModel)
+                    .where(
+                        MemoryModel.zone_id == self.zone_id,
+                        MemoryModel.importance > min_importance,
+                    )
+                    .limit(batch_size)
                 )
-                .limit(batch_size)
+                .scalars()
                 .all()
             )
 
@@ -1356,8 +1364,6 @@ class Memory:
         stmt = select(MemoryModel).where(
             MemoryModel.namespace == namespace, MemoryModel.path_key == path_key
         )
-        if self.zone_id is not None:
-            stmt = stmt.where(MemoryModel.zone_id == self.zone_id)
         memory = self.session.execute(stmt).scalar_one_or_none()
 
         if not memory:
@@ -1670,19 +1676,23 @@ class Memory:
 
         target_agent_id = agent_id or self.agent_id
 
-        # Query trajectories (zone-scoped for federation isolation)
-        query = self.session.query(TrajectoryModel).filter_by(agent_id=target_agent_id)
-        if self.zone_id is not None:
-            query = query.filter(TrajectoryModel.zone_id == self.zone_id)
+        # Query trajectories
+        from sqlalchemy import select
+
+        stmt = select(TrajectoryModel).filter_by(agent_id=target_agent_id)
 
         if since:
             since_dt = datetime.fromisoformat(since.replace("Z", "+00:00"))
-            query = query.filter(TrajectoryModel.started_at >= since_dt)
+            stmt = stmt.where(TrajectoryModel.started_at >= since_dt)
 
         if task_type:
-            query = query.filter_by(task_type=task_type)
+            stmt = stmt.filter_by(task_type=task_type)
 
-        trajectories = query.order_by(TrajectoryModel.started_at.desc()).limit(100).all()
+        trajectories = list(
+            self.session.execute(stmt.order_by(TrajectoryModel.started_at.desc()).limit(100))
+            .scalars()
+            .all()
+        )
 
         if len(trajectories) < min_trajectories:
             return {

@@ -122,6 +122,8 @@ class SyncBacklogStore(SyncStoreBase):
         Returns:
             List of (backend_name, zone_id) tuples that have pending work.
         """
+        from sqlalchemy import select
+
         from nexus.storage.models import SyncBacklogModel
 
         session = self._get_session()
@@ -129,15 +131,15 @@ class SyncBacklogStore(SyncStoreBase):
             return []
 
         try:
-            rows = (
-                session.query(
+            stmt = (
+                select(
                     SyncBacklogModel.backend_name,
                     SyncBacklogModel.zone_id,
                 )
-                .filter(SyncBacklogModel.status == "pending")
+                .where(SyncBacklogModel.status == "pending")
                 .distinct()
-                .all()
             )
+            rows = session.execute(stmt).all()
             return [(row[0], row[1]) for row in rows]
         except Exception as e:
             logger.warning(f"Failed to fetch distinct backend zones: {e}")
@@ -161,6 +163,8 @@ class SyncBacklogStore(SyncStoreBase):
         Returns:
             List of pending SyncBacklogEntry objects
         """
+        from sqlalchemy import select
+
         from nexus.storage.models import SyncBacklogModel
 
         session = self._get_session()
@@ -168,17 +172,17 @@ class SyncBacklogStore(SyncStoreBase):
             return []
 
         try:
-            rows = (
-                session.query(SyncBacklogModel)
-                .filter(
+            stmt = (
+                select(SyncBacklogModel)
+                .where(
                     SyncBacklogModel.backend_name == backend_name,
                     SyncBacklogModel.zone_id == zone_id,
                     SyncBacklogModel.status == "pending",
                 )
                 .order_by(SyncBacklogModel.created_at)
                 .limit(limit)
-                .all()
             )
+            rows = session.execute(stmt).scalars().all()
             return [self._to_entry(row) for row in rows]
         except Exception as e:
             logger.warning(f"Failed to fetch pending backlog for {backend_name}: {e}")
@@ -186,38 +190,43 @@ class SyncBacklogStore(SyncStoreBase):
         finally:
             session.close()
 
-    def mark_in_progress(self, entry_id: str) -> bool:
+    def mark_in_progress(self, entry_id: str, zone_id: str | None = None) -> bool:
         """Transition entry from pending to in_progress.
 
         Args:
             entry_id: Backlog entry ID
+            zone_id: Zone ID for isolation filtering
 
         Returns:
             True if transition succeeded
         """
-        return self._update_status(entry_id, "in_progress", from_status="pending")
+        return self._update_status(entry_id, "in_progress", from_status="pending", zone_id=zone_id)
 
-    def mark_completed(self, entry_id: str) -> bool:
+    def mark_completed(self, entry_id: str, zone_id: str | None = None) -> bool:
         """Transition entry from in_progress to completed.
 
         Args:
             entry_id: Backlog entry ID
+            zone_id: Zone ID for isolation filtering
 
         Returns:
             True if transition succeeded
         """
-        return self._update_status(entry_id, "completed", from_status="in_progress")
+        return self._update_status(entry_id, "completed", from_status="in_progress", zone_id=zone_id)
 
-    def mark_failed(self, entry_id: str, error_message: str) -> bool:
+    def mark_failed(self, entry_id: str, error_message: str, zone_id: str | None = None) -> bool:
         """Increment retry count and mark as failed if max retries exceeded.
 
         Args:
             entry_id: Backlog entry ID
             error_message: Error description
+            zone_id: Zone ID for isolation filtering
 
         Returns:
             True if update succeeded
         """
+        from sqlalchemy import select
+
         from nexus.storage.models import SyncBacklogModel
 
         session = self._get_session()
@@ -225,7 +234,10 @@ class SyncBacklogStore(SyncStoreBase):
             return False
 
         try:
-            row = session.query(SyncBacklogModel).filter_by(id=entry_id).first()
+            stmt = select(SyncBacklogModel).filter_by(id=entry_id)
+            if zone_id is not None:
+                stmt = stmt.where(SyncBacklogModel.zone_id == zone_id)
+            row = session.execute(stmt).scalars().first()
             if row is None:
                 return False
 
@@ -268,42 +280,47 @@ class SyncBacklogStore(SyncStoreBase):
             cutoff = datetime.fromtimestamp(now.timestamp() - ttl_seconds, tz=UTC)
 
             # Phase 1: TTL expiry
-            ttl_expired = (
-                session.query(SyncBacklogModel)
-                .filter(
+            from sqlalchemy import select, update
+
+            stmt = (
+                update(SyncBacklogModel)
+                .where(
                     SyncBacklogModel.status == "pending",
                     SyncBacklogModel.created_at < cutoff,
                 )
-                .update(
-                    {"status": "expired", "updated_at": now},
-                    synchronize_session="fetch",
-                )
+                .values(status="expired", updated_at=now)
             )
+            result: Any = session.execute(stmt)
+            ttl_expired = result.rowcount
 
             # Phase 2: Cap-based expiry (oldest first)
-            pending_count = (
-                session.query(SyncBacklogModel).filter(SyncBacklogModel.status == "pending").count()
+            from sqlalchemy import func
+
+            count_stmt = (
+                select(func.count())
+                .select_from(SyncBacklogModel)
+                .where(SyncBacklogModel.status == "pending")
             )
+            pending_count = session.execute(count_stmt).scalar() or 0
             cap_expired = 0
             if pending_count > max_entries:
                 overflow = pending_count - max_entries
-                oldest_ids = (
-                    session.query(SyncBacklogModel.id)
-                    .filter(SyncBacklogModel.status == "pending")
+                id_stmt = (
+                    select(SyncBacklogModel.id)
+                    .where(SyncBacklogModel.status == "pending")
                     .order_by(SyncBacklogModel.created_at)
                     .limit(overflow)
-                    .all()
                 )
+                oldest_ids = session.execute(id_stmt).all()
                 if oldest_ids:
                     ids = [row[0] for row in oldest_ids]
-                    cap_expired = (
-                        session.query(SyncBacklogModel)
-                        .filter(SyncBacklogModel.id.in_(ids))
-                        .update(
-                            {"status": "expired", "updated_at": now},
-                            synchronize_session="fetch",
-                        )
+                    cap_stmt = (
+                        update(SyncBacklogModel)
+                        .where(SyncBacklogModel.id.in_(ids))
+                        .values(status="expired", updated_at=now)
                     )
+                    cap_result: Any = session.execute(cap_stmt)
+                    cap_expired = cap_result.rowcount
 
             session.commit()
             total: int = ttl_expired + cap_expired
@@ -328,7 +345,7 @@ class SyncBacklogStore(SyncStoreBase):
         Returns:
             Dict mapping status -> count
         """
-        from sqlalchemy import func
+        from sqlalchemy import func, select
 
         from nexus.storage.models import SyncBacklogModel
 
@@ -337,32 +354,36 @@ class SyncBacklogStore(SyncStoreBase):
             return {}
 
         try:
-            query = session.query(
+            stmt = select(
                 SyncBacklogModel.status,
                 func.count(SyncBacklogModel.id),
             ).group_by(SyncBacklogModel.status)
 
             if backend_name:
-                query = query.filter(SyncBacklogModel.backend_name == backend_name)
+                stmt = stmt.where(SyncBacklogModel.backend_name == backend_name)
 
-            return dict(query.all())
+            rows = session.execute(stmt).all()
+            return dict(rows)
         except Exception as e:
             logger.warning(f"Failed to get backlog stats: {e}")
             return {}
         finally:
             session.close()
 
-    def _update_status(self, entry_id: str, new_status: str, from_status: str) -> bool:
+    def _update_status(self, entry_id: str, new_status: str, from_status: str, zone_id: str | None = None) -> bool:
         """Generic status transition with guard.
 
         Args:
             entry_id: Backlog entry ID
             new_status: Target status
             from_status: Expected current status
+            zone_id: Zone ID for isolation filtering
 
         Returns:
             True if transition succeeded
         """
+        from sqlalchemy import update
+
         from nexus.storage.models import SyncBacklogModel
 
         session = self._get_session()
@@ -371,23 +392,26 @@ class SyncBacklogStore(SyncStoreBase):
 
         try:
             now = datetime.now(UTC)
-            updated = {
+            values = {
                 "status": new_status,
                 "updated_at": now,
             }
             if new_status == "in_progress":
-                updated["last_attempted_at"] = now
+                values["last_attempted_at"] = now
 
-            count = (
-                session.query(SyncBacklogModel)
-                .filter(
+            stmt = (
+                update(SyncBacklogModel)
+                .where(
                     SyncBacklogModel.id == entry_id,
                     SyncBacklogModel.status == from_status,
                 )
-                .update(updated, synchronize_session="fetch")
+                .values(**values)
             )
+            if zone_id is not None:
+                stmt = stmt.where(SyncBacklogModel.zone_id == zone_id)
+            result: Any = session.execute(stmt)
             session.commit()
-            return int(count) > 0
+            return bool(result.rowcount > 0)
         except Exception as e:
             logger.warning(
                 f"Failed to transition backlog {entry_id} from {from_status} to {new_status}: {e}"

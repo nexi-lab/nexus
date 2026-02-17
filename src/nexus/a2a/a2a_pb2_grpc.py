@@ -24,6 +24,7 @@ if _version_not_supported:
         + f' or downgrade your generated code using grpcio-tools<={GRPC_VERSION}.'
     )
 
+
 class A2AServiceStub(object):
     """=== Service ===
 
@@ -64,6 +65,7 @@ class A2AServiceStub(object):
                 request_serializer=nexus_dot_a2a_dot_a2a__pb2.SubscribeToTaskRequest.SerializeToString,
                 response_deserializer=nexus_dot_a2a_dot_a2a__pb2.StreamResponse.FromString,
                 _registered_method=True)
+
 
 class A2AServiceServicer(object):
     """=== Service ===
@@ -115,6 +117,7 @@ class A2AServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+
 def add_A2AServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
             'SendMessage': grpc.unary_unary_rpc_method_handler(
@@ -147,6 +150,7 @@ def add_A2AServiceServicer_to_server(servicer, server):
             'nexus.a2a.A2AService', rpc_method_handlers)
     server.add_generic_rpc_handlers((generic_handler,))
     server.add_registered_method_handlers('nexus.a2a.A2AService', rpc_method_handlers)
+
 
  # This class is part of an EXPERIMENTAL API.
 class A2AService(object):

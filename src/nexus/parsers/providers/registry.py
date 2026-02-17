@@ -4,8 +4,8 @@ import logging
 import os
 from typing import Any
 
-from nexus.core.exceptions import ParserError
-from nexus.core.registry import BaseRegistry
+from nexus.contracts.exceptions import ParserError
+from nexus.contracts.registry import BaseRegistry
 from nexus.parsers.providers.base import ParseProvider, ProviderConfig
 from nexus.parsers.types import ParseResult
 
@@ -16,6 +16,9 @@ class ProviderRegistry(BaseRegistry[ParseProvider]):
 
     Inherits generic register/get/list/clear from ``BaseRegistry`` and adds
     priority-ordered selection and availability gating.
+
+    Uses immutable rebuild on ``register()`` — each mutation creates a new
+    sorted tuple rather than mutating in place.
 
     Example:
         >>> registry = ProviderRegistry()
@@ -31,7 +34,7 @@ class ProviderRegistry(BaseRegistry[ParseProvider]):
     def __init__(self) -> None:
         """Initialize the provider registry."""
         super().__init__(name="parse_providers")
-        self._ordered: list[ParseProvider] = []
+        self._ordered: tuple[ParseProvider, ...] = ()
 
     def register(self, provider: ParseProvider, **_kw: object) -> None:  # type: ignore[override]
         """Register a parse provider.
@@ -47,20 +50,22 @@ class ProviderRegistry(BaseRegistry[ParseProvider]):
 
         # Check if provider is available
         if not provider.is_available():
-            logger.debug(f"Provider '{provider.name}' is not available, skipping registration")
+            logger.debug("Provider %r is not available, skipping registration", provider.name)
             return
 
         # Store in BaseRegistry (keyed by name)
         super().register(provider.name, provider, allow_overwrite=True)
 
-        self._ordered.append(provider)
-
-        # Sort by priority (highest first)
-        self._ordered.sort(key=lambda p: p.priority, reverse=True)
+        # Immutable rebuild: create new sorted tuple
+        self._ordered = tuple(
+            sorted([*self._ordered, provider], key=lambda p: p.priority, reverse=True)
+        )
 
         logger.info(
-            f"Registered provider '{provider.name}' with priority {provider.priority}, "
-            f"formats: {provider.supported_formats}"
+            "Registered provider %r with priority %d, formats: %s",
+            provider.name,
+            provider.priority,
+            provider.supported_formats,
         )
 
     def get_provider(self, file_path: str) -> ParseProvider | None:
@@ -76,10 +81,10 @@ class ProviderRegistry(BaseRegistry[ParseProvider]):
         """
         for provider in self._ordered:
             if provider.can_parse(file_path):
-                logger.debug(f"Selected provider '{provider.name}' for '{file_path}'")
+                logger.debug("Selected provider %r for %r", provider.name, file_path)
                 return provider
 
-        logger.debug(f"No provider found for '{file_path}'")
+        logger.debug("No provider found for %r", file_path)
         return None
 
     def get_provider_by_name(self, name: str) -> ParseProvider | None:
@@ -139,7 +144,7 @@ class ProviderRegistry(BaseRegistry[ParseProvider]):
             result.metadata["provider"] = provider.name
             return result
         except Exception as e:
-            logger.error(f"Provider '{provider.name}' failed to parse '{file_path}': {e}")
+            logger.error("Provider %r failed to parse %r: %s", provider.name, file_path, e)
             raise ParserError(
                 f"Parsing failed: {e}",
                 path=file_path,
@@ -152,7 +157,7 @@ class ProviderRegistry(BaseRegistry[ParseProvider]):
         Returns:
             List of registered providers sorted by priority
         """
-        return self._ordered.copy()
+        return list(self._ordered)
 
     def get_supported_formats(self) -> list[str]:
         """Get all supported file formats across all providers.
@@ -160,7 +165,7 @@ class ProviderRegistry(BaseRegistry[ParseProvider]):
         Returns:
             Sorted list of unique file extensions
         """
-        formats = set()
+        formats: set[str] = set()
         for provider in self._ordered:
             formats.update(provider.supported_formats)
         return sorted(formats)
@@ -215,7 +220,7 @@ class ProviderRegistry(BaseRegistry[ParseProvider]):
                     self.register(unstructured_provider)
                     registered += 1
         except ImportError as e:
-            logger.debug(f"Unstructured provider not available: {e}")
+            logger.debug("Unstructured provider not available: %s", e)
 
         # Try to register LlamaParse provider
         try:
@@ -238,7 +243,7 @@ class ProviderRegistry(BaseRegistry[ParseProvider]):
                     self.register(llamaparse_provider)
                     registered += 1
         except ImportError as e:
-            logger.debug(f"LlamaParse provider not available: {e}")
+            logger.debug("LlamaParse provider not available: %s", e)
 
         # Always register MarkItDown as fallback
         try:
@@ -250,22 +255,22 @@ class ProviderRegistry(BaseRegistry[ParseProvider]):
                 self.register(markitdown_provider)
                 registered += 1
         except ImportError as e:
-            logger.warning(f"MarkItDown provider not available: {e}")
+            logger.warning("MarkItDown provider not available: %s", e)
 
-        logger.info(f"Auto-discovered {registered} parse providers")
+        logger.info("Auto-discovered %d parse providers", registered)
         return registered
 
     def unregister(self, key: str) -> ParseProvider | None:
-        """Remove a provider by name, cleaning up the ordered list."""
+        """Remove a provider by name, cleaning up the ordered tuple."""
         item = super().unregister(key)
         if item is not None:
-            self._ordered = [p for p in self._ordered if p.name != key]
+            self._ordered = tuple(p for p in self._ordered if p.name != key)
         return item
 
     def clear(self) -> None:
         """Clear all registered providers."""
         super().clear()
-        self._ordered.clear()
+        self._ordered = ()
         logger.debug("Cleared all providers from registry")
 
     def __repr__(self) -> str:

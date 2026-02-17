@@ -256,11 +256,6 @@ class TestPermissionEnforcer:
 
         assert rebac.permissions_checked == ["read", "write", "execute"]
 
-    def test_acl_store_deprecated_warning(self):
-        """Test that providing acl_store parameter shows deprecation warning."""
-        with pytest.warns(DeprecationWarning, match="acl_store parameter is deprecated"):
-            PermissionEnforcer(acl_store="dummy_acl_store")
-
     def test_subject_type_passed_to_rebac(self):
         """Test that subject type is correctly passed to ReBAC manager."""
 

@@ -8,8 +8,6 @@ The Skills System provides:
 - Vendor-neutral skill export to .zip packages
 - Skill lifecycle management (create, fork, publish)
 - Template system for common skill patterns
-- MCP tool integration for dynamic tool discovery
-
 Example:
     >>> from nexus import connect
     >>> from nexus.skills import SkillRegistry, SkillManager, SkillExporter
@@ -46,23 +44,6 @@ Example:
     >>> # Export skill
     >>> exporter = SkillExporter(registry)
     >>> await exporter.export_skill("analyze-code", "output.zip", format="claude")
-    >>>
-    >>> # MCP Tools Integration
-    >>> from nexus.skills import MCPToolExporter, MCPMountManager
-    >>>
-    >>> # Export Nexus MCP tools as skills
-    >>> mcp_exporter = MCPToolExporter(nx)
-    >>> await mcp_exporter.export_nexus_tools()
-    >>>
-    >>> # Mount external MCP servers
-    >>> mcp_manager = MCPMountManager(nx)
-    >>> await mcp_manager.mount(MCPMount(
-    ...     name="github",
-    ...     transport="stdio",
-    ...     command="npx",
-    ...     args=["-y", "@modelcontextprotocol/server-github"]
-    ... ))
-    >>> await mcp_manager.sync_tools("github")
 """
 
 import importlib
@@ -104,21 +85,10 @@ _LAZY_IMPORTS: dict[str, str] = {
     "list_templates": "nexus.skills.templates",
     "get_template_description": "nexus.skills.templates",
     "TemplateError": "nexus.skills.templates",
-    # MCP Integration (backward-compat re-exports, moved to nexus.mcp)
-    "MCPToolConfig": "nexus.mcp.models",
-    "MCPToolDefinition": "nexus.mcp.models",
-    "MCPToolExample": "nexus.mcp.models",
-    "MCPMount": "nexus.mcp.models",
-    "MCPMountManager": "nexus.mcp.mount",
-    "MCPMountError": "nexus.mcp.mount",
-    "MCPToolExporter": "nexus.mcp.exporter",
 }
 
 # TYPE_CHECKING imports — lets mypy resolve lazy types without runtime cost
 if TYPE_CHECKING:
-    from nexus.mcp.exporter import MCPToolExporter
-    from nexus.mcp.models import MCPMount, MCPToolConfig, MCPToolDefinition, MCPToolExample
-    from nexus.mcp.mount import MCPMountError, MCPMountManager
     from nexus.skills.analytics import (
         DashboardMetrics,
         SkillAnalytics,
@@ -185,12 +155,4 @@ __all__ = [
     "AuditAction",
     # Protocols
     "NexusFilesystem",
-    # MCP Integration
-    "MCPToolConfig",
-    "MCPToolDefinition",
-    "MCPToolExample",
-    "MCPMount",
-    "MCPMountManager",
-    "MCPMountError",
-    "MCPToolExporter",
 ]

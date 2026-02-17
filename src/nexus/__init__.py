@@ -62,7 +62,6 @@ if TYPE_CHECKING:
     from nexus.backends.gcs import GCSBackend
     from nexus.backends.local import LocalBackend
     from nexus.config import NexusConfig, load_config
-    from nexus.core._metadata_generated import FileMetadataProtocol
     from nexus.core.exceptions import (
         BackendError,
         InvalidPathError,
@@ -72,6 +71,7 @@ if TYPE_CHECKING:
         NexusPermissionError,
     )
     from nexus.core.filesystem import NexusFilesystem
+    from nexus.core.metastore import MetastoreABC
     from nexus.core.nexus_fs import NexusFS
     from nexus.core.router import NamespaceConfig
     from nexus.remote import RemoteNexusFS
@@ -234,14 +234,11 @@ def connect(
         api_key = cfg.api_key or os.getenv("NEXUS_API_KEY")
         timeout = int(cfg.timeout) if hasattr(cfg, "timeout") else 30
         connect_timeout = int(cfg.connect_timeout) if hasattr(cfg, "connect_timeout") else 5
-        return cast(
-            NexusFilesystem,
-            RemoteNexusFS(
-                server_url=server_url,
-                api_key=api_key,
-                timeout=timeout,
-                connect_timeout=connect_timeout,
-            ),
+        return RemoteNexusFS(  # type: ignore[return-value]
+            server_url=server_url,
+            api_key=api_key,
+            timeout=timeout,
+            connect_timeout=connect_timeout,
         )
 
     # ── Modes: standalone / federation ───────────────────────────────
@@ -285,7 +282,7 @@ def connect(
         metadata_path = cfg.db_path or str(Path(data_dir) / "metadata")
 
     # Create metadata store based on mode
-    metadata_store: FileMetadataProtocol
+    metadata_store: MetastoreABC
     if cfg.mode == "federation":
         try:
             from nexus.constants import DEFAULT_GRPC_BIND_ADDR

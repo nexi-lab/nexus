@@ -8,7 +8,9 @@ References:
     - docs/design/KERNEL-ARCHITECTURE.md §1 (service DI)
 """
 
+
 from typing import Any, Protocol, runtime_checkable
+
 
 @runtime_checkable
 class SyncJobProtocol(Protocol):

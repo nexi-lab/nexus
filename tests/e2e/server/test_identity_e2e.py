@@ -10,6 +10,7 @@ Tests the full server-level flow:
 Run: pytest tests/e2e/test_identity_e2e.py -v
 """
 
+
 import base64
 import shutil
 import tempfile
@@ -19,15 +20,17 @@ from typing import Any
 
 import pytest
 
-from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol, PaginatedResult
 from nexus.core.config import ParseConfig, PermissionConfig
+from nexus.core.metadata import FileMetadata, PaginatedResult
+from nexus.core.metastore import MetastoreABC
 from nexus.storage.models import Base
 
 # ---------------------------------------------------------------------------
 # In-memory metadata store (same pattern as test_memory_paging_postgres.py)
 # ---------------------------------------------------------------------------
 
-class InMemoryMetadataStore(FileMetadataProtocol):
+
+class InMemoryMetadataStore(MetastoreABC):
     def __init__(self) -> None:
         self._store: dict[str, FileMetadata] = {}
 
@@ -74,9 +77,11 @@ class InMemoryMetadataStore(FileMetadataProtocol):
     def close(self) -> None:
         self._store.clear()
 
+
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(autouse=True)
 def _set_env(monkeypatch: Any) -> None:
@@ -86,10 +91,12 @@ def _set_env(monkeypatch: Any) -> None:
     monkeypatch.delenv("POSTGRES_URL", raising=False)
     monkeypatch.delenv("DATABASE_URL", raising=False)
 
+
 @pytest.fixture
 def db_path(tmp_path: Any) -> Any:
     """SQLite database for the test."""
     return tmp_path / f"identity_e2e_{uuid.uuid4().hex[:8]}.db"
+
 
 @pytest.fixture
 def session_factory(db_path: Any) -> Any:
@@ -103,6 +110,7 @@ def session_factory(db_path: Any) -> Any:
     )
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine)
+
 
 @pytest.fixture
 def api_keys(session_factory: Any) -> dict[str, Any]:
@@ -132,6 +140,7 @@ def api_keys(session_factory: Any) -> dict[str, Any]:
         "normal_key": normal_raw,
         "normal_key_id": normal_key_id,
     }
+
 
 @pytest.fixture
 def app(tmp_path: Any, db_path: Any, session_factory: Any, api_keys: Any) -> Any:
@@ -179,6 +188,7 @@ def app(tmp_path: Any, db_path: Any, session_factory: Any, api_keys: Any) -> Any
     record_store.close()
     shutil.rmtree(tmpdir, ignore_errors=True)
 
+
 @pytest.fixture
 def client(app: Any) -> Any:
     """TestClient with lifespan context (triggers startup/shutdown)."""
@@ -187,17 +197,21 @@ def client(app: Any) -> Any:
     with TestClient(app) as c:
         yield c
 
+
 @pytest.fixture
 def admin_headers(api_keys: Any) -> dict[str, str]:
     return {"Authorization": f"Bearer {api_keys['admin_key']}"}
+
 
 @pytest.fixture
 def normal_headers(api_keys: Any) -> dict[str, str]:
     return {"Authorization": f"Bearer {api_keys['normal_key']}"}
 
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def rpc_call(
     client: Any, method: str, params: dict[str, Any], headers: dict[str, str]
@@ -220,9 +234,11 @@ def rpc_call(
     )
     return dict(body.get("result", {}))
 
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 class TestIdentityE2EServerLevel:
     """Full server-level identity tests with permissions and auth."""
@@ -442,6 +458,7 @@ class TestIdentityE2EServerLevel:
         assert resp.status_code == 200
         data = resp.json()
         assert data["did"].startswith("did:key:z")
+
 
 class TestNormalUserIdentityFlow:
     """Full identity flow for a normal (non-admin) user with permissions enabled."""

@@ -220,6 +220,17 @@ class AgentInterface(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+class AgentInterface(BaseModel):
+    """A supported transport interface advertised in the Agent Card (v1.0)."""
+
+    url: str
+    protocol_binding: str  # "JSONRPC", "GRPC", "HTTP+JSON"
+    protocol_version: str  # "1.0"
+    tenant: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class AgentCard(BaseModel):
     """A2A Agent Card served at /.well-known/agent.json."""
 

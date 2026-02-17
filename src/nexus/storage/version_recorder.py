@@ -12,6 +12,7 @@ Architecture:
     If sync fails, the write still succeeds (sled is authoritative).
 """
 
+
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -22,11 +23,13 @@ from sqlalchemy.orm import Session
 from nexus.storage.models import FilePathModel, VersionHistoryModel
 
 if TYPE_CHECKING:
-    from nexus.core._metadata_generated import FileMetadata
+    from nexus.core.metadata import FileMetadata
+
 
 def _utcnow_naive() -> datetime:
     """Return current UTC time as naive datetime (for SQLite compat)."""
     return datetime.now(UTC).replace(tzinfo=None)
+
 
 class VersionRecorder:
     """Records file version history to RecordStore (FilePathModel + VersionHistoryModel).
@@ -41,7 +44,7 @@ class VersionRecorder:
     def __init__(self, session: Session) -> None:
         self.session = session
 
-    def record_write(self, metadata: "FileMetadata", *, is_new: bool) -> None:
+    def record_write(self, metadata: FileMetadata, *, is_new: bool) -> None:
         """Record a file write (create or update).
 
         Args:
@@ -73,7 +76,7 @@ class VersionRecorder:
                 .values(deleted_at=_utcnow_naive())
             )
 
-    def _record_create(self, metadata: "FileMetadata") -> None:
+    def _record_create(self, metadata: FileMetadata) -> None:
         """Insert new FilePathModel + initial VersionHistoryModel."""
         # Remove any soft-deleted entries at this path (single statement, no SELECT)
         self.session.execute(
@@ -109,7 +112,7 @@ class VersionRecorder:
             )
             self.session.add(version_entry)
 
-    def _record_update(self, metadata: "FileMetadata") -> None:
+    def _record_update(self, metadata: FileMetadata) -> None:
         """Update existing FilePathModel + append VersionHistoryModel."""
         existing = self.session.execute(
             select(FilePathModel).where(

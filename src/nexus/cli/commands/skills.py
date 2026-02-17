@@ -9,9 +9,11 @@ The Skills System provides vendor-neutral skill management with:
 - Usage analytics and governance
 """
 
+
 import json
 import re
 import sys
+from typing import Any
 from urllib.parse import urlparse
 
 import click
@@ -26,6 +28,65 @@ from nexus.cli.utils import (
 )
 from nexus.raft.zone_manager import ROOT_ZONE_ID
 
+
+class SQLAlchemyDatabaseConnection:
+    """Wrapper for SQLAlchemy session to match DatabaseConnection protocol."""
+
+    def __init__(self, session: Any) -> None:
+        self._session = session
+
+    def execute(self, query: str, params: dict | None = None) -> Any:
+        """Execute a query."""
+        from sqlalchemy import text
+
+        return self._session.execute(text(query), params or {})
+
+    def fetchall(self, query: str, params: dict | None = None) -> list[dict]:
+        """Fetch all results from a query."""
+        from sqlalchemy import text
+
+        result = self._session.execute(text(query), params or {})
+        return [dict(row._mapping) for row in result]
+
+    def fetchone(self, query: str, params: dict | None = None) -> dict | None:
+        """Fetch one result from a query."""
+        from sqlalchemy import text
+
+        result = self._session.execute(text(query), params or {})
+        row = result.fetchone()
+        return dict(row._mapping) if row else None
+
+    def commit(self) -> None:
+        """Commit the transaction."""
+        self._session.commit()
+
+
+def _get_database_connection() -> SQLAlchemyDatabaseConnection | None:
+    """Get database connection for skill governance.
+
+    Returns wrapped SQLAlchemy session using NEXUS_DATABASE_URL environment variable.
+    Returns None if not configured (falls back to in-memory storage).
+
+    Delegates to SQLAlchemyRecordStore for engine/session creation (Issue #622).
+    """
+    import os
+
+    db_url = os.getenv("NEXUS_DATABASE_URL")
+    if not db_url:
+        return None
+
+    from nexus.storage.record_store import SQLAlchemyRecordStore
+
+    try:
+        record_store = SQLAlchemyRecordStore(db_url=db_url)
+        session = record_store.session_factory()
+        return SQLAlchemyDatabaseConnection(session)
+    except Exception as e:
+        console.print(f"[yellow]Warning:[/yellow] Could not connect to database: {e}")
+        console.print("[dim]Falling back to in-memory governance storage[/dim]")
+        return None
+
+
 def register_commands(cli: click.Group) -> None:
     """Register skills commands with the main CLI group.
 
@@ -33,6 +94,7 @@ def register_commands(cli: click.Group) -> None:
         cli: The main Click group to register commands with
     """
     cli.add_command(skills)
+
 
 @click.group(name="skills")
 def skills() -> None:
@@ -54,6 +116,7 @@ def skills() -> None:
         nexus skills export my-skill --output ./my-skill.zip --format claude
     """
     pass
+
 
 @skills.command(name="list")
 @click.option("--user", is_flag=True, help="Show user-level skills")
@@ -126,6 +189,7 @@ def skills_list(
     except Exception as e:
         handle_error(e)
 
+
 @skills.command(name="create")
 @click.argument("name", type=str)
 @click.option("--description", required=True, help="Skill description")
@@ -175,6 +239,7 @@ def skills_create(
 
     except Exception as e:
         handle_error(e)
+
 
 @skills.command(name="create-from-web")
 @click.option("--name", help="Skill name (auto-generated from URL/title if not provided)")
@@ -303,6 +368,7 @@ def skills_create_from_web(
 
     except Exception as e:
         handle_error(e)
+
 
 @skills.command(name="create-from-file")
 @click.argument("source", type=str)
@@ -436,6 +502,7 @@ def skills_create_from_file(
     except Exception as e:
         handle_error(e)
 
+
 def _generate_skill_name_from_url_or_title(url: str, title: str) -> str:
     """Generate a skill name from URL or title.
 
@@ -477,6 +544,7 @@ def _generate_skill_name_from_url_or_title(url: str, title: str) -> str:
         name = f"skill-{timestamp}"
 
     return name or "unnamed-skill"
+
 
 @skills.command(name="fork")
 @click.argument("source_skill", type=str)
@@ -524,6 +592,7 @@ def skills_fork(
     except Exception as e:
         handle_error(e)
 
+
 @skills.command(name="publish")
 @click.argument("skill_name", type=str)
 @click.option(
@@ -569,6 +638,7 @@ def skills_publish(
 
     except Exception as e:
         handle_error(e)
+
 
 @skills.command(name="search")
 @click.argument("query", type=str)
@@ -618,6 +688,7 @@ def skills_search(
 
     except Exception as e:
         handle_error(e)
+
 
 @skills.command(name="info")
 @click.argument("skill_name", type=str)
@@ -679,6 +750,7 @@ def skills_info(
     except Exception as e:
         handle_error(e)
 
+
 @skills.command(name="export")
 @click.argument("skill_name", type=str)
 @click.option("--output", "-o", type=click.Path(), required=True, help="Output .zip file path")
@@ -739,6 +811,7 @@ def skills_export(
 
     except Exception as e:
         handle_error(e)
+
 
 @skills.command(name="validate")
 @click.argument("skill_name", type=str)
@@ -806,6 +879,7 @@ def skills_validate(
     except Exception as e:
         handle_error(e)
 
+
 @skills.command(name="size")
 @click.argument("skill_name", type=str)
 @click.option("--human", "-h", is_flag=True, help="Human-readable output")
@@ -858,6 +932,7 @@ def skills_size(
 
     except Exception as e:
         handle_error(e)
+
 
 @skills.command(name="deps")
 @click.argument("skill_name", type=str)
@@ -978,6 +1053,7 @@ def skills_deps(
     except Exception as e:
         handle_error(e)
 
+
 @skills.command(name="submit-approval")
 @click.argument("skill_name", type=str)
 @click.option("--submitted-by", required=True, help="Submitter ID (user or agent)")
@@ -1025,6 +1101,7 @@ def skills_submit_approval(
     except Exception as e:
         handle_error(e)
 
+
 @skills.command(name="approve")
 @click.argument("approval_id", type=str)
 @click.option("--reviewed-by", required=True, help="Reviewer ID")
@@ -1071,6 +1148,7 @@ def skills_approve(
     except Exception as e:
         handle_error(e)
 
+
 @skills.command(name="reject")
 @click.argument("approval_id", type=str)
 @click.option("--reviewed-by", required=True, help="Reviewer ID")
@@ -1115,6 +1193,7 @@ def skills_reject(
 
     except Exception as e:
         handle_error(e)
+
 
 @skills.command(name="list-approvals")
 @click.option(
@@ -1187,6 +1266,7 @@ def skills_list_approvals(
 
     except Exception as e:
         handle_error(e)
+
 
 @skills.command(name="diff")
 @click.argument("skill1", type=str)
@@ -1278,9 +1358,11 @@ def skills_diff(
     except Exception as e:
         handle_error(e)
 
+
 # =============================================================================
 # MCP TOOLS COMMANDS
 # =============================================================================
+
 
 @skills.group(name="mcp")
 def skills_mcp() -> None:
@@ -1295,6 +1377,7 @@ def skills_mcp() -> None:
         nexus skills mcp list-mounts
     """
     pass
+
 
 @skills_mcp.command(name="export-tools")
 @click.option("--output", "-o", help="Output directory (default: /skills/system/mcp-tools/nexus/)")
@@ -1347,6 +1430,7 @@ def skills_mcp_export_tools(
     except Exception as e:
         handle_error(e)
 
+
 @skills_mcp.command(name="list-tools")
 @click.option("--category", "-c", help="Filter by category (file_operations, search, memory, etc.)")
 def skills_mcp_list_tools(
@@ -1391,6 +1475,7 @@ def skills_mcp_list_tools(
 
     except Exception as e:
         handle_error(e)
+
 
 @skills_mcp.command(name="mount")
 @click.argument("name", type=str)
@@ -1552,7 +1637,7 @@ def skills_mcp_mount(
             try:
                 import os
 
-                from nexus.auth.token_manager import TokenManager
+                from nexus.server.auth import TokenManager
 
                 # Get TokenManager (same logic as oauth CLI)
                 db_url = os.getenv("NEXUS_DATABASE_URL")
@@ -1565,8 +1650,8 @@ def skills_mcp_mount(
 
                 # Register OAuth provider for automatic token refresh
                 if oauth_provider == "google":
-                    from nexus.auth.google_oauth import GoogleOAuthProvider
-                    from nexus.auth.oauth_provider import OAuthProvider
+                    from nexus.server.auth import GoogleOAuthProvider
+                    from nexus.server.auth.oauth_provider import OAuthProvider
 
                     client_id = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID")
                     client_secret = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET")
@@ -1610,7 +1695,7 @@ def skills_mcp_mount(
 
                     # Get OAuth provider credentials from environment
                     if oauth_provider == "google":
-                        from nexus.auth.google_oauth import GoogleOAuthProvider
+                        from nexus.server.auth import GoogleOAuthProvider
 
                         client_id = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_ID")
                         client_secret = os.getenv("NEXUS_OAUTH_GOOGLE_CLIENT_SECRET")
@@ -1635,7 +1720,7 @@ def skills_mcp_mount(
                             provider_name="google",
                         )
                     elif oauth_provider in ("twitter", "x"):
-                        from nexus.auth.x_oauth import XOAuthProvider
+                        from nexus.server.auth.x_oauth import XOAuthProvider
 
                         client_id = os.getenv("NEXUS_OAUTH_X_CLIENT_ID")
                         client_secret = os.getenv("NEXUS_OAUTH_X_CLIENT_SECRET")
@@ -1794,6 +1879,7 @@ def skills_mcp_mount(
     except Exception as e:
         handle_error(e)
 
+
 @skills_mcp.command(name="unmount")
 @click.argument("name", type=str)
 @add_backend_options
@@ -1825,6 +1911,7 @@ def skills_mcp_unmount(
 
     except Exception as e:
         handle_error(e)
+
 
 @skills_mcp.command(name="list-mounts")
 @click.option("--all", "show_all", is_flag=True, help="Show all mounts including unmounted")
@@ -1880,6 +1967,7 @@ def skills_mcp_list_mounts(
 
     except Exception as e:
         handle_error(e)
+
 
 @skills_mcp.command(name="tools")
 @click.argument("name", type=str)
@@ -2001,6 +2089,7 @@ def skills_mcp_tools(
     except Exception as e:
         handle_error(e)
 
+
 @skills_mcp.command(name="remove")
 @click.argument("name", type=str)
 @click.option("--force", "-f", is_flag=True, help="Force remove even if mounted")
@@ -2049,9 +2138,11 @@ def skills_mcp_remove(
     except Exception as e:
         handle_error(e)
 
+
 # =============================================================================
 # UNIFIED MCP CONNECTION COMMANDS
 # =============================================================================
+
 
 @skills_mcp.command(name="connect")
 @click.argument("provider", type=str)
@@ -2124,6 +2215,7 @@ def skills_mcp_connect(
     except Exception as e:
         handle_error(e)
 
+
 @skills_mcp.command(name="disconnect")
 @click.argument("provider", type=str)
 @click.option("--user", "-u", required=True, help="User ID")
@@ -2159,6 +2251,7 @@ def skills_mcp_disconnect(
 
     except Exception as e:
         handle_error(e)
+
 
 @skills_mcp.command(name="connections")
 @click.option("--user", "-u", help="Filter by user")
@@ -2215,6 +2308,7 @@ def skills_mcp_connections(
 
     except Exception as e:
         handle_error(e)
+
 
 @skills_mcp.command(name="providers")
 @click.option(

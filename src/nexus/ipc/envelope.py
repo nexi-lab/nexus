@@ -8,13 +8,16 @@ doc), while Python code uses ``sender`` and ``recipient`` to avoid
 clashing with the ``from`` keyword.
 """
 
+
 import json
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
 
 class MessageType(StrEnum):
     """Types of inter-agent messages."""
@@ -23,6 +26,24 @@ class MessageType(StrEnum):
     RESPONSE = "response"
     EVENT = "event"
     CANCEL = "cancel"
+
+
+@dataclass(frozen=True)
+class RoutingMetadata:
+    """Cross-zone routing metadata attached to messages that traverse zones.
+
+    Attributes:
+        source_zone: Zone where the message originated.
+        target_zone: Zone where the recipient resides (None = local delivery).
+        hop_count: Number of zone boundaries crossed so far.
+        max_hops: Maximum allowed zone hops (prevents routing loops).
+    """
+
+    source_zone: str
+    target_zone: str | None = None
+    hop_count: int = 0
+    max_hops: int = 3
+
 
 class MessageEnvelope(BaseModel):
     """Immutable message envelope for agent-to-agent communication.
@@ -60,6 +81,7 @@ class MessageEnvelope(BaseModel):
     timestamp: datetime = Field(default_factory=lambda: datetime.now(UTC))
     ttl_seconds: int | None = None
     payload: dict[str, Any] = Field(default_factory=dict)
+    routing: RoutingMetadata | None = Field(default=None, exclude=True)
 
     @field_validator("sender", "recipient")
     @classmethod
@@ -99,7 +121,7 @@ class MessageEnvelope(BaseModel):
         return self.model_dump_json(by_alias=True).encode("utf-8")
 
     @classmethod
-    def from_bytes(cls, data: bytes) -> "MessageEnvelope":
+    def from_bytes(cls, data: bytes) -> MessageEnvelope:
         """Deserialize from JSON bytes read from VFS.
 
         Raises:

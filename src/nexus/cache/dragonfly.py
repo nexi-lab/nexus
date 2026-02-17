@@ -17,6 +17,7 @@ Connection Pool Optimizations (Issue #1075):
 - Retry on timeout: Automatic retry for transient network issues
 """
 
+
 import logging
 import socket
 from collections.abc import AsyncIterator
@@ -30,7 +31,7 @@ logger = logging.getLogger(__name__)
 # Redis client is optional - only imported if Dragonfly is configured
 try:
     import redis.asyncio as redis
-    from redis.asyncio import BlockingConnectionPool, ConnectionPool
+    from redis.asyncio import BlockingConnectionPool
     from redis.backoff import ExponentialBackoff
     from redis.retry import Retry
 
@@ -39,7 +40,7 @@ except ImportError:
     REDIS_AVAILABLE = False
     redis = None  # type: ignore
     BlockingConnectionPool = None  # type: ignore
-    ConnectionPool = None  # type: ignore
+
 
 class DragonflyClient:
     """Managed Dragonfly/Redis connection with health checks and reconnection.
@@ -265,7 +266,7 @@ class DragonflyClient:
         except Exception as e:
             return {"pool_status": "error", "error": str(e)}
 
-    async def __aenter__(self) -> "DragonflyClient":
+    async def __aenter__(self) -> DragonflyClient:
         """Async context manager entry."""
         await self.connect()
         return self
@@ -273,6 +274,7 @@ class DragonflyClient:
     async def __aexit__(self, *args: object) -> None:
         """Async context manager exit."""
         await self.disconnect()
+
 
 class DragonflyCacheStore(CacheStoreABC):
     """Dragonfly (Redis-compatible) driver for CacheStoreABC — the production backend.
@@ -352,6 +354,7 @@ class DragonflyCacheStore(CacheStoreABC):
 
     async def close(self) -> None:
         await self._client.disconnect()
+
 
 class DragonflyPermissionCache:
     """Dragonfly-backed permission cache.
@@ -486,6 +489,7 @@ class DragonflyPermissionCache:
             "ttl_denials": self._denial_ttl,
         }
 
+
 class DragonflyTigerCache:
     """Dragonfly-backed Tiger cache for pre-materialized permissions.
 
@@ -596,6 +600,7 @@ class DragonflyTigerCache:
         """Check if cache backend is healthy."""
         return await self._client.health_check()
 
+
 class DragonflyResourceMapCache:
     """Dragonfly-backed resource map cache.
 
@@ -693,6 +698,7 @@ class DragonflyResourceMapCache:
             key = self._make_key(resource_type, zone_id)
             pipe.hset(key, mapping=mapping)
         await pipe.execute()
+
 
 class DragonflyEmbeddingCache:
     """Dragonfly-backed embedding cache for semantic search.

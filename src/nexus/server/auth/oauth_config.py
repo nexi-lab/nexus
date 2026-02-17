@@ -1,8 +1,11 @@
-"""Backward-compat shim — canonical module is nexus.auth.oauth_config."""
+"""OAuth provider configuration (re-export shim).
 
-from nexus.auth.oauth_config import (  # noqa: F401
-    OAuthConfig,
-    OAuthProviderConfig,
-)
+Issue #1389: Models moved to ``nexus.auth_config`` so that ``nexus/config.py``
+can import them without reaching into the server layer.
+
+All public names are re-exported here for backward compatibility.
+"""
+
+from nexus.auth_config import OAuthConfig, OAuthProviderConfig
 
 __all__ = ["OAuthConfig", "OAuthProviderConfig"]

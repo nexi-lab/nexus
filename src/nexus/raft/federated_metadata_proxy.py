@@ -1,6 +1,6 @@
 """Federated metadata proxy for cross-zone DT_MOUNT traversal.
 
-Implements FileMetadataProtocol and routes each operation to the
+Implements MetastoreABC and routes each operation to the
 correct zone's RaftMetadataStore via ZonePathResolver.
 
 Usage:
@@ -15,12 +15,14 @@ Usage:
     fs.read("/local/file.txt")          # → stays in root zone
 """
 
+
 import logging
 from collections.abc import Iterator, Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
-from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol, PaginatedResult
+from nexus.core.metadata import FileMetadata, PaginatedResult
+from nexus.core.metastore import MetastoreABC
 from nexus.raft.zone_manager import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
@@ -29,7 +31,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-class FederatedMetadataProxy(FileMetadataProtocol):
+
+class FederatedMetadataProxy(MetastoreABC):
     """Proxy that routes metadata operations across zones via DT_MOUNT.
 
     Transparent to callers — all paths are in the global namespace.
@@ -39,8 +42,8 @@ class FederatedMetadataProxy(FileMetadataProtocol):
 
     def __init__(
         self,
-        resolver: "ZonePathResolver",
-        root_store: "RaftMetadataStore",
+        resolver: ZonePathResolver,
+        root_store: RaftMetadataStore,
         *,
         zone_manager: Any | None = None,
     ):
@@ -59,7 +62,7 @@ class FederatedMetadataProxy(FileMetadataProtocol):
         cls,
         zone_manager: Any,
         root_zone_id: str = ROOT_ZONE_ID,
-    ) -> "FederatedMetadataProxy":
+    ) -> FederatedMetadataProxy:
         """Create from a ZoneManager instance.
 
         Args:
@@ -81,7 +84,7 @@ class FederatedMetadataProxy(FileMetadataProtocol):
     # Path remapping helpers
     # =========================================================================
 
-    def _resolve(self, path: str) -> "ResolvedPath":
+    def _resolve(self, path: str) -> ResolvedPath:
         return self._resolver.resolve(path)
 
     @staticmethod
@@ -110,7 +113,7 @@ class FederatedMetadataProxy(FileMetadataProtocol):
     def _to_zone_metadata(
         self,
         metadata: FileMetadata,
-        resolved: "ResolvedPath",
+        resolved: ResolvedPath,
     ) -> FileMetadata:
         """Remap global metadata path to zone-relative path for storage."""
         if not resolved.mount_chain:
@@ -118,7 +121,7 @@ class FederatedMetadataProxy(FileMetadataProtocol):
         return replace(metadata, path=resolved.path)
 
     # =========================================================================
-    # FileMetadataProtocol — abstract methods
+    # MetastoreABC — abstract methods
     # =========================================================================
 
     def get(self, path: str) -> FileMetadata | None:
@@ -146,7 +149,7 @@ class FederatedMetadataProxy(FileMetadataProtocol):
 
     def _walk_mount_tree(
         self,
-        resolved: "ResolvedPath",
+        resolved: ResolvedPath,
         recursive: bool,
         **kwargs: Any,
     ) -> list[FileMetadata]:

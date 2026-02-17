@@ -18,6 +18,7 @@ Design reference:
     - Issue #1705: EncryptedStorage + CompressedStorage recursive wrappers
 """
 
+
 from unittest.mock import MagicMock, PropertyMock
 
 import pytest
@@ -29,6 +30,7 @@ from nexus.core.response import HandlerResponse
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_leaf(name: str = "local") -> MagicMock:
     """Create a mock leaf backend that stores content in-memory."""
@@ -47,11 +49,13 @@ def _make_leaf(name: str = "local") -> MagicMock:
     type(mock).supports_parallel_mmap_read = PropertyMock(return_value=False)
     return mock
 
+
 def _generate_key() -> bytes:
     """Generate a valid 32-byte AES-256 key."""
     from cryptography.hazmat.primitives.ciphers.aead import AESGCMSIV
 
     return AESGCMSIV.generate_key(bit_length=256)
+
 
 def _make_storage_mock() -> tuple[MagicMock, dict[str, bytes]]:
     """Create a mock leaf that actually stores/retrieves encrypted content.
@@ -87,9 +91,11 @@ def _make_storage_mock() -> tuple[MagicMock, dict[str, bytes]]:
     mock.delete_content = MagicMock(return_value=HandlerResponse.ok(data=None))
     return mock, storage
 
+
 # ---------------------------------------------------------------------------
 # describe() Tests
 # ---------------------------------------------------------------------------
+
 
 class TestEncryptedDescribe:
     """describe() should prepend encryption layer info."""
@@ -119,9 +125,11 @@ class TestEncryptedDescribe:
         wrapper = EncryptedStorage(inner=leaf, config=config)
         assert isinstance(wrapper, Describable)
 
+
 # ---------------------------------------------------------------------------
 # Roundtrip Tests
 # ---------------------------------------------------------------------------
+
 
 class TestEncryptedRoundtrip:
     """Write + read should return identical plaintext."""
@@ -172,9 +180,11 @@ class TestEncryptedRoundtrip:
         assert read_resp.success
         assert read_resp.data == plaintext
 
+
 # ---------------------------------------------------------------------------
 # CAS Dedup Tests (GCM-SIV determinism)
 # ---------------------------------------------------------------------------
+
 
 class TestEncryptedCASDedup:
     """Same plaintext + same key should produce same ciphertext → same hash."""
@@ -203,9 +213,11 @@ class TestEncryptedCASDedup:
         hash2 = wrapper.write_content(b"content B").data
         assert hash1 != hash2
 
+
 # ---------------------------------------------------------------------------
 # Error Handling Tests
 # ---------------------------------------------------------------------------
+
 
 class TestEncryptedErrors:
     """Decryption errors should fail loudly."""
@@ -270,9 +282,11 @@ class TestEncryptedErrors:
         assert read_resp.error_message is not None
         assert "disk I/O error" in read_resp.error_message
 
+
 # ---------------------------------------------------------------------------
 # Passthrough (unencrypted migration) Tests
 # ---------------------------------------------------------------------------
+
 
 class TestEncryptedPassthrough:
     """passthrough_unencrypted=True should handle pre-encryption content."""
@@ -318,9 +332,11 @@ class TestEncryptedPassthrough:
         read_resp = wrapper.read_content(h)
         assert not read_resp.success
 
+
 # ---------------------------------------------------------------------------
 # Empty Content Edge Case
 # ---------------------------------------------------------------------------
+
 
 class TestEncryptedEmptyContent:
     """Empty content should encrypt/decrypt correctly."""
@@ -339,9 +355,11 @@ class TestEncryptedEmptyContent:
         assert read_resp.success
         assert read_resp.data == b""
 
+
 # ---------------------------------------------------------------------------
 # Delegation Tests
 # ---------------------------------------------------------------------------
+
 
 class TestEncryptedDelegation:
     """Non-content ops should pass through to inner backend."""
@@ -370,9 +388,11 @@ class TestEncryptedDelegation:
         leaf.rmdir.assert_called_once()
         assert result.success
 
+
 # ---------------------------------------------------------------------------
 # Config Validation Tests
 # ---------------------------------------------------------------------------
+
 
 class TestEncryptedConfig:
     """Config validation at construction time."""
@@ -389,9 +409,11 @@ class TestEncryptedConfig:
         config = EncryptedStorageConfig(key=_generate_key())
         assert len(config.key) == 32
 
+
 # ---------------------------------------------------------------------------
 # Batch Operation Tests
 # ---------------------------------------------------------------------------
+
 
 class TestEncryptedBatch:
     """batch_read_content should decrypt each item individually."""

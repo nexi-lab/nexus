@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from sqlalchemy import delete, func, select
+
 from nexus.core.exceptions import DatabaseError
 from nexus.storage.sync_store_base import SyncStoreBase
 
@@ -64,15 +66,12 @@ class ChangeLogStore(SyncStoreBase):
 
         try:
             with self._with_session() as session:
-                entry = (
-                    session.query(BackendChangeLogModel)
-                    .filter(
-                        BackendChangeLogModel.path == path,
-                        BackendChangeLogModel.backend_name == backend_name,
-                        BackendChangeLogModel.zone_id == zone_id,
-                    )
-                    .first()
+                stmt = select(BackendChangeLogModel).where(
+                    BackendChangeLogModel.path == path,
+                    BackendChangeLogModel.backend_name == backend_name,
+                    BackendChangeLogModel.zone_id == zone_id,
                 )
+                entry = session.execute(stmt).scalars().first()
 
                 if entry:
                     return ChangeLogEntry(
@@ -159,20 +158,15 @@ class ChangeLogStore(SyncStoreBase):
         Returns:
             Most recent synced_at timestamp, or None if no entries
         """
-        from sqlalchemy import func
-
         from nexus.storage.models import BackendChangeLogModel
 
         try:
             with self._with_session() as session:
-                result = (
-                    session.query(func.max(BackendChangeLogModel.synced_at))
-                    .filter(
-                        BackendChangeLogModel.backend_name == backend_name,
-                        BackendChangeLogModel.zone_id == zone_id,
-                    )
-                    .scalar()
+                stmt = select(func.max(BackendChangeLogModel.synced_at)).where(
+                    BackendChangeLogModel.backend_name == backend_name,
+                    BackendChangeLogModel.zone_id == zone_id,
                 )
+                result = session.execute(stmt).scalar()
                 return result  # type: ignore[no-any-return]
         except (RuntimeError, DatabaseError) as e:
             logger.warning("Failed to get last sync time for %s: %s", backend_name, e)
@@ -200,15 +194,12 @@ class ChangeLogStore(SyncStoreBase):
             with self._with_session() as session:
                 # Escape SQL LIKE wildcards in prefix to prevent unintended matching
                 escaped = path_prefix.replace("%", r"\%").replace("_", r"\_")
-                entries = (
-                    session.query(BackendChangeLogModel)
-                    .filter(
-                        BackendChangeLogModel.backend_name == backend_name,
-                        BackendChangeLogModel.zone_id == zone_id,
-                        BackendChangeLogModel.path.like(f"{escaped}%", escape="\\"),
-                    )
-                    .all()
+                stmt = select(BackendChangeLogModel).where(
+                    BackendChangeLogModel.backend_name == backend_name,
+                    BackendChangeLogModel.zone_id == zone_id,
+                    BackendChangeLogModel.path.like(f"{escaped}%", escape="\\"),
                 )
+                entries = session.execute(stmt).scalars().all()
 
                 return {
                     entry.path: ChangeLogEntry(
@@ -326,11 +317,12 @@ class ChangeLogStore(SyncStoreBase):
 
         try:
             with self._with_session() as session:
-                session.query(BackendChangeLogModel).filter(
+                stmt = delete(BackendChangeLogModel).where(
                     BackendChangeLogModel.path == path,
                     BackendChangeLogModel.backend_name == backend_name,
                     BackendChangeLogModel.zone_id == zone_id,
-                ).delete()
+                )
+                session.execute(stmt)
             return True
         except (RuntimeError, DatabaseError) as e:
             logger.warning("Failed to delete change log for %s: %s", path, e)
@@ -366,15 +358,13 @@ class ChangeLogStore(SyncStoreBase):
 
                 for i in range(0, len(paths), chunk_size):
                     chunk = paths[i : i + chunk_size]
-                    deleted = (
-                        session.query(BackendChangeLogModel)
-                        .filter(
-                            BackendChangeLogModel.path.in_(chunk),
-                            BackendChangeLogModel.backend_name == backend_name,
-                            BackendChangeLogModel.zone_id == zone_id,
-                        )
-                        .delete(synchronize_session="fetch")
+                    del_stmt = delete(BackendChangeLogModel).where(
+                        BackendChangeLogModel.path.in_(chunk),
+                        BackendChangeLogModel.backend_name == backend_name,
+                        BackendChangeLogModel.zone_id == zone_id,
                     )
+                    result = session.execute(del_stmt)
+                    deleted = result.rowcount
                     total_deleted += deleted
 
                 logger.debug(

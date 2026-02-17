@@ -35,6 +35,7 @@ Design reference:
     - Issue #1705: EncryptedStorage + CompressedStorage recursive wrappers
 """
 
+
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -56,9 +57,11 @@ logger = logging.getLogger(__name__)
 _ENCRYPTED_HEADER = b"NEXE\x01"
 _HEADER_LEN = len(_ENCRYPTED_HEADER)
 
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class EncryptedStorageConfig:
@@ -82,9 +85,11 @@ class EncryptedStorageConfig:
                 f"EncryptedStorageConfig key must be 32 bytes (AES-256), got {len(self.key)} bytes"
             )
 
+
 # ---------------------------------------------------------------------------
 # EncryptedStorage
 # ---------------------------------------------------------------------------
+
 
 class EncryptedStorage(DelegatingBackend):
     """Transparent encryption decorator for any Backend implementation.
@@ -104,7 +109,7 @@ class EncryptedStorage(DelegatingBackend):
     Decryption errors return HandlerResponse.error() (fail loudly).
     """
 
-    def __init__(self, inner: "Backend", config: EncryptedStorageConfig) -> None:
+    def __init__(self, inner: Backend, config: EncryptedStorageConfig) -> None:
         super().__init__(inner)
         self._config = config
         self._cipher = AESGCMSIV(config.key)
@@ -132,7 +137,7 @@ class EncryptedStorage(DelegatingBackend):
     # === Encrypted Content Operations ===
 
     def write_content(
-        self, content: bytes, context: "OperationContext | None" = None
+        self, content: bytes, context: OperationContext | None = None
     ) -> HandlerResponse[str]:
         """Encrypt content and write to inner backend.
 
@@ -150,7 +155,7 @@ class EncryptedStorage(DelegatingBackend):
         return self._inner.write_content(ciphertext, context=context)
 
     def read_content(
-        self, content_hash: str, context: "OperationContext | None" = None
+        self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[bytes]:
         """Read from inner backend and decrypt content."""
         response = self._inner.read_content(content_hash, context=context)
@@ -162,9 +167,9 @@ class EncryptedStorage(DelegatingBackend):
     def batch_read_content(
         self,
         content_hashes: list[str],
-        context: "OperationContext | None" = None,
+        context: OperationContext | None = None,
         *,
-        contexts: dict[str, "OperationContext"] | None = None,
+        contexts: dict[str, OperationContext] | None = None,
     ) -> dict[str, bytes | None]:
         """Read batch from inner backend and decrypt each item."""
         raw_results = self._inner.batch_read_content(

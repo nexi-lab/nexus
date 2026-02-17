@@ -34,10 +34,10 @@ _rust_hash_content_smart: Any = None
 
 # Priority 1: Rust-accelerated BLAKE3
 try:
-    import nexus._nexus_fast as _nexus_fast_mod
+    from nexus_fast import hash_content_py, hash_content_smart_py
 
-    _rust_hash_content = _nexus_fast_mod.hash_content
-    _rust_hash_content_smart = _nexus_fast_mod.hash_content_smart
+    _rust_hash_content = hash_content_py
+    _rust_hash_content_smart = hash_content_smart_py
     _RUST_AVAILABLE = True
     logger.debug("Using Rust BLAKE3 acceleration")
 except (ImportError, AttributeError):

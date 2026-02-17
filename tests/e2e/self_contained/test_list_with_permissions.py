@@ -4,21 +4,24 @@ Wire up real SearchService + RaftMetadataStore + OperationContext
 to verify zone-scoped listing with permission filtering.
 """
 
+
 import tempfile
 from pathlib import Path
 from typing import Any
 
-from nexus.core._metadata_generated import FileMetadata
+from nexus.core.metadata import FileMetadata
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_store(zone_id: str = "root") -> RaftMetadataStore:
     """Create a RaftMetadataStore with a temp directory."""
     tmpdir = tempfile.mkdtemp()
     return RaftMetadataStore.embedded(str(Path(tmpdir) / "meta"), zone_id=zone_id)
+
 
 def _make_meta(path: str, size: int = 100) -> FileMetadata:
     return FileMetadata(
@@ -27,6 +30,7 @@ def _make_meta(path: str, size: int = 100) -> FileMetadata:
         physical_path=f"/data{path}",
         size=size,
     )
+
 
 def _make_search_service(
     store: RaftMetadataStore,
@@ -40,9 +44,11 @@ def _make_search_service(
         enforce_permissions=enforce_permissions,
     )
 
+
 # ===========================================================================
 # Tests
 # ===========================================================================
+
 
 class TestListWithZoneAndPermissions:
     """Integration tests for list with zone filtering and permissions."""

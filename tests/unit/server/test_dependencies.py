@@ -1,11 +1,13 @@
-"""Unit tests for server authentication dependencies.
+"""Unit tests for server authentication and API v1 dependencies.
 
 Tests cover:
 - CacheStoreABC-based auth cache hit/miss and isolation
 - get_auth_result: open access, auth provider, static API key, token formats
 - require_auth: authenticated vs. unauthenticated
 - get_operation_context: subject mapping, admin capabilities, agent handling
+- get_async_read_session_factory: read replica dependency (Issue #725)
 """
+
 
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -26,6 +28,7 @@ from nexus.server.dependencies import (
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_app_state(
     *,
     api_key: str | None = None,
@@ -38,6 +41,7 @@ def _make_app_state(
     state.auth_provider = auth_provider
     state.auth_cache_store = auth_cache_store
     return state
+
 
 def _make_mock_request(
     *,
@@ -55,11 +59,13 @@ def _make_mock_request(
     request.app.state = state
     return request
 
+
 def _make_mock_request_from_state(state: MagicMock) -> MagicMock:
     """Create a mock Request wrapping an existing state mock."""
     request = MagicMock()
     request.app.state = state
     return request
+
 
 async def _call_get_auth_result(
     *,
@@ -85,9 +91,11 @@ async def _call_get_auth_result(
         x_nexus_zone_id=x_nexus_zone_id,
     )
 
+
 # ===========================================================================
 # Cache layer
 # ===========================================================================
+
 
 class TestAuthCacheOperations:
     """Tests for _get_cached_auth / _set_cached_auth / _reset_auth_cache with CacheStoreABC."""
@@ -144,9 +152,11 @@ class TestAuthCacheOperations:
         assert await _get_cached_auth(None, "token-x") is None
         await _reset_auth_cache(None)  # Should not raise
 
+
 # ===========================================================================
 # get_auth_result
 # ===========================================================================
+
 
 class TestGetAuthResultOpenAccess:
     """Tests for open-access mode (no api_key, no auth_provider)."""
@@ -216,6 +226,7 @@ class TestGetAuthResultOpenAccess:
         assert result["subject_type"] is None
         assert result["subject_id"] is None
 
+
 class TestGetAuthResultStaticKey:
     """Tests for static API key authentication."""
 
@@ -267,6 +278,7 @@ class TestGetAuthResultStaticKey:
             authorization="Bearer secret-key-123",
         )
         assert result["inherit_permissions"] is True
+
 
 class TestGetAuthResultAuthProvider:
     """Tests for external auth provider authentication."""
@@ -369,9 +381,11 @@ class TestGetAuthResultAuthProvider:
         assert "_auth_time_ms" not in cached
         assert "_auth_cached" not in cached
 
+
 # ===========================================================================
 # require_auth
 # ===========================================================================
+
 
 class TestRequireAuth:
     """Tests for the require_auth dependency."""
@@ -401,9 +415,11 @@ class TestRequireAuth:
             await require_auth(auth_result={})
         assert exc_info.value.status_code == 401
 
+
 # ===========================================================================
 # get_operation_context
 # ===========================================================================
+
 
 class TestGetOperationContext:
     """Tests for get_operation_context."""
@@ -514,3 +530,63 @@ class TestGetOperationContext:
         # agent_generation is passed through regardless of subject_type;
         # the PermissionEnforcer only checks it for agent subjects.
         assert ctx.agent_generation == 5
+
+
+# ===========================================================================
+# get_async_read_session_factory (Issue #725)
+# ===========================================================================
+
+
+class TestGetAsyncReadSessionFactory:
+    """Tests for the async read session factory dependency (Issue #725)."""
+
+    def test_returns_read_factory_when_available(self):
+        """Returns async_read_session_factory when configured on app.state."""
+        from nexus.server.api.v1.dependencies import get_async_read_session_factory
+
+        mock_read_factory = MagicMock()
+        request = MagicMock()
+        request.app.state.async_read_session_factory = mock_read_factory
+        request.app.state.async_session_factory = MagicMock()
+
+        result = get_async_read_session_factory(request)
+        assert result is mock_read_factory
+
+    def test_falls_back_to_primary_when_read_not_available(self):
+        """Falls back to primary async_session_factory when read factory is None."""
+        from nexus.server.api.v1.dependencies import get_async_read_session_factory
+
+        mock_primary_factory = MagicMock()
+        request = MagicMock()
+        request.app.state.async_read_session_factory = None
+        request.app.state.async_session_factory = mock_primary_factory
+
+        result = get_async_read_session_factory(request)
+        assert result is mock_primary_factory
+
+    def test_falls_back_when_attr_missing(self):
+        """Falls back to primary when async_read_session_factory attr is not set."""
+        from nexus.server.api.v1.dependencies import get_async_read_session_factory
+
+        mock_primary_factory = MagicMock()
+        request = MagicMock()
+        # Simulate missing attr by using spec
+        request.app.state = MagicMock(spec=[])
+        request.app.state.async_session_factory = mock_primary_factory
+
+        # getattr with default returns None for missing attrs
+        result = get_async_read_session_factory(request)
+        assert result is mock_primary_factory
+
+    def test_raises_503_when_neither_available(self):
+        """Raises 503 when neither read nor primary factory is available."""
+        from fastapi import HTTPException
+
+        from nexus.server.api.v1.dependencies import get_async_read_session_factory
+
+        request = MagicMock()
+        request.app.state = MagicMock(spec=[])
+
+        with pytest.raises(HTTPException) as exc_info:
+            get_async_read_session_factory(request)
+        assert exc_info.value.status_code == 503

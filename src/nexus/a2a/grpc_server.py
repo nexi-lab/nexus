@@ -5,6 +5,7 @@ logic to the existing ``TaskManager``.  The gRPC transport runs on a
 separate port and is config-gated (``NEXUS_A2A_GRPC_PORT``).
 """
 
+
 import logging
 from collections.abc import AsyncIterator
 from typing import Any
@@ -21,6 +22,7 @@ from nexus.a2a.proto_converter import (
 )
 
 logger = logging.getLogger(__name__)
+
 
 class A2AServicer(a2a_pb2_grpc.A2AServiceServicer):
     """gRPC servicer for the A2A protocol.
@@ -200,9 +202,11 @@ class A2AServicer(a2a_pb2_grpc.A2AServiceServicer):
                     )
                 )
 
+
 # ============================================================================
 # Server lifecycle
 # ============================================================================
+
 
 async def create_grpc_server(
     task_manager: Any,
@@ -259,10 +263,12 @@ async def create_grpc_server(
 
     return server
 
+
 async def start_grpc_server(server: grpc.aio.Server) -> None:
     """Start the gRPC server."""
     await server.start()
     logger.info("A2A gRPC server started")
+
 
 async def stop_grpc_server(server: grpc.aio.Server, grace: float = 5.0) -> None:
     """Gracefully stop the gRPC server."""

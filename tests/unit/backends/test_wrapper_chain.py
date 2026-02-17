@@ -8,6 +8,7 @@ Design reference:
     - Issue #1705: EncryptedStorage + CompressedStorage recursive wrappers
 """
 
+
 import hashlib
 from unittest.mock import MagicMock, PropertyMock
 
@@ -17,6 +18,7 @@ from nexus.core.response import HandlerResponse
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_leaf(name: str = "local") -> MagicMock:
     mock = MagicMock(spec=Backend)
@@ -33,6 +35,7 @@ def _make_leaf(name: str = "local") -> MagicMock:
     type(mock).is_passthrough = PropertyMock(return_value=False)
     type(mock).supports_parallel_mmap_read = PropertyMock(return_value=False)
     return mock
+
 
 def _make_storage_mock() -> tuple[MagicMock, dict[str, bytes]]:
     """Create a mock leaf with real storage semantics."""
@@ -62,9 +65,11 @@ def _make_storage_mock() -> tuple[MagicMock, dict[str, bytes]]:
     mock.batch_read_content = MagicMock(side_effect=batch_read_content)
     return mock, storage
 
+
 # ---------------------------------------------------------------------------
 # Chain Composition Tests
 # ---------------------------------------------------------------------------
+
 
 class TestCompressEncryptChain:
     """Full chain: compress → encrypt → leaf (correct ordering)."""
@@ -171,6 +176,7 @@ class TestCompressEncryptChain:
         results = compressed.batch_read_content(hashes)
         for h, expected in zip(hashes, items):
             assert results[h] == expected
+
 
 class TestEncryptCompressChain:
     """Reversed chain: encrypt → compress → leaf (suboptimal but valid)."""

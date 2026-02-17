@@ -11,13 +11,12 @@ Usage:
     result = await async_manager.rebac_check(subject, permission, obj)
 """
 
+
 import asyncio
-import logging
 from typing import Any
 
 from nexus.rebac.types import WriteResult
 
-logger = logging.getLogger(__name__)
 
 class AsyncReBACManager:
     """Async facade over the synchronous ReBACManager.
@@ -244,71 +243,25 @@ class AsyncReBACManager:
         """Delegate to sync manager's zone isolation setting."""
         return self._sync.enforce_zone_isolation  # type: ignore[no-any-return]
 
+
 # ── Utility ─────────────────────────────────────────────────────────
 
-def create_async_engine_from_url(
-    database_url: str,
-    pool_size: int | None = None,
-    max_overflow: int | None = None,
-    pool_recycle: int | None = None,
-    prepared_statement_cache_size: int = 1024,
-) -> Any:
-    """Create async SQLAlchemy engine from database URL.
 
-    Automatically selects the correct async driver:
-    - postgresql:// -> postgresql+asyncpg://
-    - sqlite:// -> sqlite+aiosqlite://
+def create_async_engine_from_url(database_url: str) -> Any:
+    """Create async SQLAlchemy engine from database URL via RecordStoreABC.
+
+    Delegates to SQLAlchemyRecordStore which handles URL conversion and pool
+    settings internally (Issue #592).
 
     Args:
         database_url: Standard database URL
-        pool_size: Connection pool size (default: from env or 20)
-        max_overflow: Max overflow connections (default: from env or 30)
-        pool_recycle: Seconds before connection recycling (default: from env or 1800)
-        prepared_statement_cache_size: Asyncpg statement cache size (default: 1024)
 
     Returns:
         AsyncEngine instance
     """
-    import os
+    from nexus.storage.record_store import SQLAlchemyRecordStore
 
-    from sqlalchemy.ext.asyncio import create_async_engine
-
-    # Convert to async driver URL
-    if database_url.startswith("postgresql://"):
-        async_url = database_url.replace("postgresql://", "postgresql+asyncpg://")
-    elif database_url.startswith("sqlite://"):
-        async_url = database_url.replace("sqlite://", "sqlite+aiosqlite://")
-    else:
-        async_url = database_url
-
-    engine_kwargs: dict[str, Any] = {
-        "echo": False,
-        "pool_recycle": pool_recycle or int(os.getenv("NEXUS_DB_POOL_RECYCLE", "1800")),
-    }
-
-    if "postgresql" in async_url:
-        engine_kwargs["pool_size"] = pool_size or int(os.getenv("NEXUS_DB_POOL_SIZE", "20"))
-        engine_kwargs["max_overflow"] = max_overflow or int(
-            os.getenv("NEXUS_DB_MAX_OVERFLOW", "30")
-        )
-        engine_kwargs["pool_timeout"] = int(os.getenv("NEXUS_DB_POOL_TIMEOUT", "30"))
-        engine_kwargs["pool_pre_ping"] = True
-        engine_kwargs["pool_use_lifo"] = True
-
-        statement_timeout = os.getenv("NEXUS_DB_STATEMENT_TIMEOUT", "60000")
-        engine_kwargs["connect_args"] = {
-            "prepared_statement_cache_size": prepared_statement_cache_size,
-            "server_settings": {
-                "plan_cache_mode": "force_custom_plan",
-                "statement_timeout": statement_timeout,
-            },
-        }
-
-        if logger.isEnabledFor(logging.DEBUG):
-            logger.debug(
-                "Async PostgreSQL engine: pool_size=%d, max_overflow=%d",
-                engine_kwargs["pool_size"],
-                engine_kwargs["max_overflow"],
-            )
-
-    return create_async_engine(async_url, **engine_kwargs)
+    store = SQLAlchemyRecordStore(db_url=database_url)
+    # Trigger lazy async engine creation and return it
+    _ = store.async_session_factory
+    return store._async_engine

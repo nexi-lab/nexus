@@ -21,11 +21,13 @@ Design reference:
     - Issue #1705: EncryptedStorage + CompressedStorage recursive wrappers
 """
 
+
 import logging
 import threading
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
 
 class WrapperMetrics:
     """Thread-safe OTel metrics helper for Backend wrappers.
@@ -110,7 +112,7 @@ class WrapperMetrics:
             self._otel_initialized = True
 
         try:
-            from nexus.utils.telemetry import is_telemetry_enabled
+            from nexus.server.telemetry import is_telemetry_enabled
 
             if not is_telemetry_enabled():
                 return None

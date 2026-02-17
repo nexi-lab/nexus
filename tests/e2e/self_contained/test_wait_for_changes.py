@@ -14,7 +14,7 @@ import sys
 import pytest
 
 from nexus.backends.passthrough import PassthroughBackend
-from nexus.core.file_watcher import ChangeType, FileChange, FileWatcher
+from nexus.services.watch.file_watcher import ChangeType, FileChange, FileWatcher
 
 pytestmark = pytest.mark.quarantine
 

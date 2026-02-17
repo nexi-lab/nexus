@@ -9,6 +9,7 @@ This service handles all search operations:
 Extracted from: nexus_fs_search.py (2,817 lines)
 """
 
+
 import asyncio
 import builtins
 import fnmatch
@@ -87,6 +88,7 @@ DEFAULT_IGNORE_PATTERNS: frozenset[str] = frozenset(
     }
 )
 
+
 def _should_ignore_path(
     path: str, ignore_patterns: frozenset[str] = DEFAULT_IGNORE_PATTERNS
 ) -> bool:
@@ -100,20 +102,23 @@ def _should_ignore_path(
                 return True
     return False
 
+
 def _filter_ignored_paths(
     paths: list[str], ignore_patterns: frozenset[str] = DEFAULT_IGNORE_PATTERNS
 ) -> list[str]:
     """Filter out paths matching gitignore-style patterns (Issue #538)."""
     return [p for p in paths if not _should_ignore_path(p, ignore_patterns)]
 
+
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.core._metadata_generated import FileMetadataProtocol
+    from nexus.core.metastore import MetastoreABC
     from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter
     from nexus.services.permissions.enforcer import PermissionEnforcer
     from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+
 
 class SearchService(SemanticSearchMixin):
     """Independent search service extracted from NexusFS.
@@ -128,12 +133,12 @@ class SearchService(SemanticSearchMixin):
 
     def __init__(
         self,
-        metadata_store: "FileMetadataProtocol",
-        permission_enforcer: "PermissionEnforcer | None" = None,
-        router: "PathRouter | None" = None,
-        rebac_manager: "EnhancedReBACManager | None" = None,
+        metadata_store: MetastoreABC,
+        permission_enforcer: PermissionEnforcer | None = None,
+        router: PathRouter | None = None,
+        rebac_manager: EnhancedReBACManager | None = None,
         enforce_permissions: bool = True,
-        default_context: "OperationContext | None" = None,
+        default_context: OperationContext | None = None,
         record_store: Any | None = None,
         # Gateway for NexusFS operations (Issue #1287, replaces 8 Callable params)
         gateway: NexusFSGateway | None = None,
@@ -752,7 +757,7 @@ class SearchService(SemanticSearchMixin):
         _rebac_manager: Any,
     ) -> tuple[builtins.list[Any], set[str], bool, int | None]:
         """Non-recursive list using sparse directory index + Tiger bitmap."""
-        from nexus.core._metadata_generated import FileMetadata
+        from nexus.core.metadata import FileMetadata
 
         _preapproved_dirs: set[str] = set()
         _revision_before: int | None = None
@@ -1201,7 +1206,7 @@ class SearchService(SemanticSearchMixin):
         context: Any,
     ) -> Any:
         """Paginated list with over-fetch strategy for permission filtering (Issue #937)."""
-        from nexus.core._metadata_generated import PaginatedResult
+        from nexus.core.metadata import PaginatedResult
         from nexus.core.pagination import encode_cursor
 
         context = context or self._default_context

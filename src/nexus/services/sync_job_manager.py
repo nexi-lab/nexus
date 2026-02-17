@@ -86,11 +86,6 @@ class SyncJobManager:
         the database status.
     """
 
-    # Class-level tracking for active jobs and cancellation flags
-    # These are shared across all instances in the same process
-    _active_jobs: dict[str, asyncio.Task] = {}
-    _cancellation_flags: dict[str, bool] = {}
-
     def __init__(self, session_factory: Any) -> None:
         """Initialize sync job manager.
 
@@ -98,6 +93,8 @@ class SyncJobManager:
             session_factory: SQLAlchemy sessionmaker instance
         """
         self.SessionLocal = session_factory
+        self._active_jobs: dict[str, asyncio.Task[Any]] = {}
+        self._cancellation_flags: dict[str, bool] = {}
 
     def create_job(
         self,
@@ -158,11 +155,11 @@ class SyncJobManager:
             raise ValueError(f"Job {job_id} is not pending (status: {job['status']})")
 
         # Initialize cancellation flag
-        SyncJobManager._cancellation_flags[job_id] = False
+        self._cancellation_flags[job_id] = False
 
         # Create and store the background task
         task = asyncio.create_task(self._run_sync(job_id, nexus_fs))
-        SyncJobManager._active_jobs[job_id] = task
+        self._active_jobs[job_id] = task
 
         logger.info(f"Started sync job {job_id}")
 
@@ -184,7 +181,7 @@ class SyncJobManager:
             return False
 
         # Set cancellation flag
-        SyncJobManager._cancellation_flags[job_id] = True
+        self._cancellation_flags[job_id] = True
         logger.info(f"Requested cancellation for sync job {job_id}")
 
         return True
@@ -283,7 +280,7 @@ class SyncJobManager:
         Raises:
             SyncCancelled: If cancellation was requested
         """
-        if SyncJobManager._cancellation_flags.get(job_id, False):
+        if self._cancellation_flags.get(job_id, False):
             raise SyncCancelled(f"Job {job_id} was cancelled")
 
     def _create_progress_callback(
@@ -399,5 +396,5 @@ class SyncJobManager:
 
         finally:
             # Cleanup
-            SyncJobManager._active_jobs.pop(job_id, None)
-            SyncJobManager._cancellation_flags.pop(job_id, None)
+            self._active_jobs.pop(job_id, None)
+            self._cancellation_flags.pop(job_id, None)

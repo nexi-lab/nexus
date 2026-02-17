@@ -5,6 +5,7 @@ All business logic goes through the real TaskManager with an
 InMemoryTaskStore, exercising the full gRPC transport path.
 """
 
+
 import grpc
 import grpc.aio
 import pytest
@@ -13,6 +14,7 @@ from nexus.a2a import a2a_pb2, a2a_pb2_grpc
 from nexus.a2a.grpc_server import create_grpc_server, stop_grpc_server
 from nexus.a2a.models import TaskState
 from nexus.a2a.task_manager import TaskManager
+
 
 @pytest.fixture
 async def grpc_channel():
@@ -29,11 +31,13 @@ async def grpc_channel():
     await channel.close()
     await stop_grpc_server(server, grace=0.5)
 
+
 @pytest.fixture
 def stub(grpc_channel):
     """Return the A2A gRPC stub."""
     channel, _ = grpc_channel
     return a2a_pb2_grpc.A2AServiceStub(channel)
+
 
 @pytest.fixture
 def task_manager(grpc_channel):
@@ -41,9 +45,11 @@ def task_manager(grpc_channel):
     _, tm = grpc_channel
     return tm
 
+
 # ------------------------------------------------------------------
 # SendMessage
 # ------------------------------------------------------------------
+
 
 class TestSendMessage:
     """Tests for the SendMessage RPC."""
@@ -80,9 +86,11 @@ class TestSendMessage:
 
         assert response.task.id
 
+
 # ------------------------------------------------------------------
 # GetTask
 # ------------------------------------------------------------------
+
 
 class TestGetTask:
     """Tests for the GetTask RPC."""
@@ -113,9 +121,11 @@ class TestGetTask:
 
         assert exc_info.value.code() == grpc.StatusCode.NOT_FOUND
 
+
 # ------------------------------------------------------------------
 # CancelTask
 # ------------------------------------------------------------------
+
 
 class TestCancelTask:
     """Tests for the CancelTask RPC."""
@@ -166,9 +176,11 @@ class TestCancelTask:
 
         assert exc_info.value.code() == grpc.StatusCode.FAILED_PRECONDITION
 
+
 # ------------------------------------------------------------------
 # SubscribeToTask
 # ------------------------------------------------------------------
+
 
 class TestSubscribeToTask:
     """Tests for the SubscribeToTask server-streaming RPC."""
@@ -240,9 +252,11 @@ class TestSubscribeToTask:
 
         assert exc_info.value.code() == grpc.StatusCode.NOT_FOUND
 
+
 # ------------------------------------------------------------------
 # SendStreamingMessage
 # ------------------------------------------------------------------
+
 
 class TestSendStreamingMessage:
     """Tests for the SendStreamingMessage server-streaming RPC."""

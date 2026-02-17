@@ -11,6 +11,7 @@
 8. One deletes, other modifies (conflict)
 """
 
+
 import hashlib
 from unittest.mock import MagicMock
 
@@ -26,20 +27,24 @@ from nexus.storage.models._base import Base
 from nexus.storage.models.context_branch import ContextBranchModel
 from nexus.storage.models.filesystem import WorkspaceSnapshotModel
 
+
 @pytest.fixture
 def engine():
     eng = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(eng)
     return eng
 
+
 @pytest.fixture
 def session_factory(engine):
     return sessionmaker(bind=engine)
+
 
 def _make_manifest(*files: tuple[str, str, int]) -> WorkspaceManifest:
     """Create a manifest from (path, hash, size) tuples."""
     entries = {path: ManifestEntry(content_hash=h, size=s, mime_type=None) for path, h, s in files}
     return WorkspaceManifest(entries=entries)
+
 
 def _store_snapshot(
     session_factory, workspace: str, snap_id: str, number: int, manifest: WorkspaceManifest
@@ -59,6 +64,7 @@ def _store_snapshot(
         session.add(snap)
         session.commit()
     return manifest_hash
+
 
 def _make_service(session_factory, manifest_store: dict[str, bytes]) -> ContextBranchService:
     """Create service with mocked backend that serves manifests from a dict."""
@@ -82,6 +88,7 @@ def _make_service(session_factory, manifest_store: dict[str, bytes]) -> ContextB
         rebac_manager=None,
         default_zone_id="z1",
     )
+
 
 def _setup_branches(
     session_factory,
@@ -124,9 +131,11 @@ def _setup_branches(
         session.add_all([main, feature])
         session.commit()
 
+
 # ==================================================================
 # Scenario 1: Fast-forward merge
 # ==================================================================
+
 
 class TestFastForwardMerge:
     """Target hasn't moved since fork → just advance pointer."""
@@ -172,9 +181,11 @@ class TestFastForwardMerge:
         assert result.merged is True
         assert result.strategy == "fast-forward"
 
+
 # ==================================================================
 # Scenario 2: Clean merge (different files changed)
 # ==================================================================
+
 
 class TestCleanMerge:
     """Both branches changed different files → auto-merge."""
@@ -196,9 +207,11 @@ class TestCleanMerge:
         assert result.files_added == 1  # b.txt added by source
         assert result.files_removed == 0
 
+
 # ==================================================================
 # Scenario 3: Conflict detected (fail strategy)
 # ==================================================================
+
 
 class TestConflictFail:
     """Same file changed in both branches → fail with conflict error."""
@@ -221,9 +234,11 @@ class TestConflictFail:
         assert exc_info.value.source_branch == "feature"
         assert exc_info.value.target_branch == "main"
 
+
 # ==================================================================
 # Scenario 4: Conflict with source-wins strategy
 # ==================================================================
+
 
 class TestConflictSourceWins:
     """Same file changed in both branches → source version wins."""
@@ -243,9 +258,11 @@ class TestConflictSourceWins:
         assert result.merged is True
         assert result.strategy == "source-wins"
 
+
 # ==================================================================
 # Scenario 5: Empty branch merge (no changes)
 # ==================================================================
+
 
 class TestEmptyBranchMerge:
     """Branch was created but no changes were made → fast-forward (same HEAD)."""
@@ -285,9 +302,11 @@ class TestEmptyBranchMerge:
         result = service.merge(workspace, "feature", "main")
         assert result.fast_forward is True
 
+
 # ==================================================================
 # Scenario 6: Branch with deletions
 # ==================================================================
+
 
 class TestBranchWithDeletions:
     """Source branch deleted files → deletions applied to target."""
@@ -316,9 +335,11 @@ class TestBranchWithDeletions:
         assert result.merged is True
         assert result.files_removed == 2  # b.txt and c.txt
 
+
 # ==================================================================
 # Scenario 7: Both branches delete same file
 # ==================================================================
+
 
 class TestBothDeleteSameFile:
     """Both branches deleted the same file → no conflict (same outcome)."""
@@ -341,9 +362,11 @@ class TestBothDeleteSameFile:
         # Both made same change → no conflict
         assert result.merged is True
 
+
 # ==================================================================
 # Scenario 8: One deletes, other modifies (conflict)
 # ==================================================================
+
 
 class TestDeleteVsModifyConflict:
     """One branch deleted a file, the other modified it → conflict."""
@@ -364,9 +387,11 @@ class TestDeleteVsModifyConflict:
 
         assert "shared.txt" in exc_info.value.conflicting_paths
 
+
 # ==================================================================
 # Merge validation edge cases
 # ==================================================================
+
 
 class TestMergeValidation:
     def test_self_merge_raises(self, session_factory):

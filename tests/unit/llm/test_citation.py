@@ -1,6 +1,8 @@
-"""Tests for citation extraction (src/nexus/llm/citation.py)."""
+"""Tests for citation extraction (src/nexus/services/llm_citation.py)."""
 
-from nexus.llm.citation import Citation, CitationExtractor, DocumentReadResult
+
+from nexus.services.llm_citation import Citation, CitationExtractor, DocumentReadResult
+
 
 class TestCitation:
     """Test Citation dataclass."""
@@ -28,6 +30,7 @@ class TestCitation:
         assert citation.score is None
         assert citation.start_offset is None
         assert citation.end_offset is None
+
 
 class TestDocumentReadResult:
     """Test DocumentReadResult dataclass."""
@@ -88,6 +91,7 @@ class TestDocumentReadResult:
         result = DocumentReadResult.from_cached("answer", chunks=chunks)
         assert result.sources == ["/a.txt"]
         assert len(result.citations) == 2
+
 
 class TestCitationExtractor:
     """Test CitationExtractor."""

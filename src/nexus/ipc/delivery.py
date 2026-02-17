@@ -12,6 +12,7 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Callable, Coroutine
+from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
@@ -26,6 +27,7 @@ from nexus.ipc.conventions import (
 )
 from nexus.ipc.envelope import MessageEnvelope, MessageType
 from nexus.ipc.exceptions import (
+    DLQReason,
     EnvelopeValidationError,
     InboxFullError,
     InboxNotFoundError,
@@ -492,7 +494,7 @@ class MessageProcessor:
                 exc,
             )
             # Move malformed message to dead letter
-            await self._move_to_dead_letter_raw(msg_path, reason=str(exc))
+            await self._dead_letter(msg_path, DLQReason.PARSE_ERROR, detail=str(exc))
             return
 
         # Dedup check via CacheStoreABC
@@ -522,7 +524,13 @@ class MessageProcessor:
                 envelope.ttl_seconds,
                 self._agent_id,
             )
-            await self._move_to_dead_letter(msg_path, envelope, reason="ttl_expired")
+            await self._dead_letter(
+                msg_path,
+                DLQReason.TTL_EXPIRED,
+                msg_id=envelope.id,
+                timestamp=envelope.timestamp,
+                detail=f"TTL {envelope.ttl_seconds}s expired",
+            )
             return
 
         # Invoke handler
@@ -535,7 +543,13 @@ class MessageProcessor:
                 exc,
                 exc_info=True,
             )
-            await self._move_to_dead_letter(msg_path, envelope, reason=f"handler_error: {exc}")
+            await self._dead_letter(
+                msg_path,
+                DLQReason.HANDLER_ERROR,
+                msg_id=envelope.id,
+                timestamp=envelope.timestamp,
+                detail=str(exc),
+            )
             return
 
         # Success: move to processed
@@ -552,44 +566,66 @@ class MessageProcessor:
         # Track in dedup cache (TTL-based eviction via CacheStoreABC)
         await self._track_processed(envelope.id)
 
-    async def _move_to_dead_letter(
+    async def _dead_letter(
         self,
         msg_path: str,
-        envelope: MessageEnvelope,
-        reason: str,
+        reason: DLQReason,
+        *,
+        msg_id: str | None = None,
+        timestamp: datetime | None = None,
+        detail: str = "",
     ) -> None:
-        """Move a message to the dead letter directory."""
+        """Move a message to the dead-letter directory with a structured reason.
+
+        If *msg_id* and *timestamp* are provided (parsed envelope), the
+        destination is built from envelope fields.  Otherwise falls back
+        to extracting the filename from *msg_path* (raw/unparseable messages).
+
+        A ``.reason.json`` sidecar is written alongside the dead-lettered
+        message for programmatic triage.
+        """
         try:
-            dest = message_path_in_dead_letter(self._agent_id, envelope.id, envelope.timestamp)
+            if msg_id is not None and timestamp is not None:
+                dest = message_path_in_dead_letter(self._agent_id, msg_id, timestamp)
+            else:
+                filename = msg_path.rsplit("/", 1)[-1]
+                dest = f"{dead_letter_path(self._agent_id)}/{filename}"
+
             await self._storage.rename(msg_path, dest, self._zone_id)
+
+            # Write structured .reason.json sidecar (best-effort)
+            try:
+                import json
+
+                reason_data = json.dumps(
+                    {
+                        "reason": reason.value,
+                        "detail": detail,
+                        "agent_id": self._agent_id,
+                        "zone_id": self._zone_id,
+                        "msg_id": msg_id,
+                    },
+                    indent=2,
+                ).encode("utf-8")
+                reason_path = dest + ".reason.json"
+                await self._storage.write(reason_path, reason_data, self._zone_id)
+            except Exception:
+                logger.debug(
+                    "Failed to write .reason.json for dead-lettered message at %s",
+                    dest,
+                    exc_info=True,
+                )
+
             logger.info(
-                "Message %s moved to dead_letter for agent %s (reason: %s)",
-                envelope.id,
+                "Message %s moved to dead_letter for agent %s (reason: %s, detail: %s)",
+                msg_id or msg_path,
                 self._agent_id,
-                reason,
+                reason.value,
+                detail,
             )
         except Exception:
             logger.error(
                 "Failed to move message %s to dead_letter",
-                envelope.id,
-                exc_info=True,
-            )
-
-    async def _move_to_dead_letter_raw(self, msg_path: str, reason: str) -> None:
-        """Move an unparseable message to dead letter using raw filename."""
-        try:
-            filename = msg_path.rsplit("/", 1)[-1]
-            dest = f"{dead_letter_path(self._agent_id)}/{filename}"
-            await self._storage.rename(msg_path, dest, self._zone_id)
-            logger.info(
-                "Malformed message moved to dead_letter for agent %s: %s (reason: %s)",
-                self._agent_id,
-                filename,
-                reason,
-            )
-        except Exception:
-            logger.error(
-                "Failed to move malformed message %s to dead_letter",
-                msg_path,
+                msg_id or msg_path,
                 exc_info=True,
             )

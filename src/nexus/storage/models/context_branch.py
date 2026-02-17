@@ -5,12 +5,14 @@ Branches are metadata-only pointers — no data duplication.
 Uses optimistic concurrency via pointer_version counter.
 """
 
+
 from datetime import UTC, datetime
 
 from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base, uuid_pk
+
 
 class ContextBranchModel(Base):
     """Named branch pointer for workspace context versioning.

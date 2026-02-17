@@ -602,8 +602,11 @@ class X402Client:
             True if signature is valid, False otherwise.
         """
         if not self._webhook_secret:
-            # If no secret configured, skip verification (not recommended for production)
-            return True
+            logger.critical(
+                "Webhook signature verification failed: no webhook_secret configured. "
+                "All webhooks will be rejected. Set webhook_secret to enable verification."
+            )
+            return False
 
         signature = payload.get("signature")
         if not signature:

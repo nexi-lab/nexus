@@ -1,5 +1,6 @@
 """Context versioning commands — workspace branching + explore() (Issue #1315)."""
 
+
 from typing import Any
 
 import click
@@ -10,10 +11,12 @@ from nexus.cli.utils import BackendConfig, add_backend_options, get_filesystem, 
 
 console = Console()
 
+
 def _get_branch_service(nx: Any) -> Any:
     """Extract ContextBranchService from NexusFS (type-safe for mypy)."""
     services = getattr(nx, "_services", None)
     return getattr(services, "context_branch_service", None) if services else None
+
 
 @click.group(name="context")
 def context_group() -> None:
@@ -33,6 +36,7 @@ def context_group() -> None:
         nexus context finish /workspace --branch try-new-approach --outcome merge
     """
     pass
+
 
 @context_group.command(name="commit")
 @click.argument("workspace", type=str)
@@ -68,6 +72,7 @@ def commit_cmd(
     except Exception as e:
         handle_error(e)
 
+
 @context_group.command(name="branch")
 @click.argument("workspace", type=str)
 @click.option("--name", "-n", required=True, help="Branch name")
@@ -102,6 +107,7 @@ def branch_cmd(
     except Exception as e:
         handle_error(e)
 
+
 @context_group.command(name="checkout")
 @click.argument("workspace", type=str)
 @click.option("--target", "-t", required=True, help="Branch name to switch to")
@@ -134,6 +140,7 @@ def checkout_cmd(
         nx.close()
     except Exception as e:
         handle_error(e)
+
 
 @context_group.command(name="merge")
 @click.argument("workspace", type=str)
@@ -179,6 +186,7 @@ def merge_cmd(
     except Exception as e:
         handle_error(e)
 
+
 @context_group.command(name="log")
 @click.argument("workspace", type=str)
 @click.option("--limit", "-l", default=20, help="Maximum entries to show")
@@ -223,6 +231,7 @@ def log_cmd(
         nx.close()
     except Exception as e:
         handle_error(e)
+
 
 @context_group.command(name="branches")
 @click.argument("workspace", type=str)
@@ -276,6 +285,7 @@ def branches_cmd(
     except Exception as e:
         handle_error(e)
 
+
 @context_group.command(name="diff")
 @click.argument("workspace", type=str)
 @click.option("--from", "from_ref", required=True, help="First snapshot ID")
@@ -315,6 +325,7 @@ def diff_cmd(
     except Exception as e:
         handle_error(e)
 
+
 @context_group.command(name="explore")
 @click.argument("workspace", type=str)
 @click.option("--description", "-d", required=True, help="Description of exploration")
@@ -344,6 +355,7 @@ def explore_cmd(
         nx.close()
     except Exception as e:
         handle_error(e)
+
 
 @context_group.command(name="finish")
 @click.argument("workspace", type=str)
@@ -390,6 +402,7 @@ def finish_cmd(
         nx.close()
     except Exception as e:
         handle_error(e)
+
 
 def register_commands(cli: click.Group) -> None:
     """Register context versioning commands."""

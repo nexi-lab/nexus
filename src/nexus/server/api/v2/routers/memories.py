@@ -130,27 +130,7 @@ async def get_memory(
 
         if include_history:
             try:
-                from nexus.storage.models import VersionHistoryModel
-
-                session = memory_api.session
-                versions = (
-                    session.query(VersionHistoryModel)
-                    .filter(
-                        VersionHistoryModel.resource_id == memory_id,
-                        VersionHistoryModel.resource_type == "memory",
-                    )
-                    .order_by(VersionHistoryModel.version_number.desc())
-                    .all()
-                )
-                response["versions"] = [
-                    {
-                        "version": v.version_number,
-                        "content_hash": v.content_hash,
-                        "created_at": v.created_at.isoformat() if v.created_at else None,
-                        "metadata": getattr(v, "metadata", None),
-                    }
-                    for v in versions
-                ]
+                response["versions"] = memory_api.list_versions(memory_id)
             except Exception as e:
                 logger.warning(f"Failed to fetch version history: {e}")
                 response["versions"] = []

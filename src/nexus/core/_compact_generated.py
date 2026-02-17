@@ -13,12 +13,13 @@ Timestamps are stored as ISO 8601 strings to preserve precision
 and timezone information across serialization boundaries.
 """
 
+
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nexus.core._metadata_generated import FileMetadata
+    from nexus.core.metadata import FileMetadata
 
 # --- String interning ---
 # Single global pool: string -> int ID, and reverse lookup.
@@ -27,6 +28,7 @@ if TYPE_CHECKING:
 _STRING_POOL: dict[str, int] = {}
 _STRING_POOL_REVERSE: dict[int, str] = {}
 _NEXT_ID: int = 0
+
 
 def _intern(s: str | None) -> int:
     """Intern a string and return its ID. Returns -1 for None."""
@@ -39,11 +41,13 @@ def _intern(s: str | None) -> int:
         _NEXT_ID += 1
     return _STRING_POOL[s]
 
+
 def _resolve(id: int) -> str | None:
     """Resolve a string ID back to its value. Returns None for -1."""
     if id == -1:
         return None
     return _STRING_POOL_REVERSE.get(id)
+
 
 def _resolve_required(id: int) -> str:
     """Resolve a required string field. Raises if not found."""
@@ -51,6 +55,7 @@ def _resolve_required(id: int) -> str:
     if result is None:
         raise ValueError(f"Interned string ID {id} not found in pool")
     return result
+
 
 @dataclass(frozen=True)
 class CompactFileMetadata:
@@ -79,7 +84,7 @@ class CompactFileMetadata:
     i_links_count: int
 
     @classmethod
-    def from_file_metadata(cls, m: "FileMetadata") -> "CompactFileMetadata":
+    def from_file_metadata(cls, m: FileMetadata) -> CompactFileMetadata:
         """Create CompactFileMetadata from FileMetadata."""
         return cls(
             path_id=_intern(m.path),
@@ -99,9 +104,9 @@ class CompactFileMetadata:
             i_links_count=m.i_links_count,
         )
 
-    def to_file_metadata(self) -> "FileMetadata":
+    def to_file_metadata(self) -> FileMetadata:
         """Convert back to FileMetadata."""
-        from nexus.core._metadata_generated import FileMetadata
+        from nexus.core.metadata import FileMetadata
 
         return FileMetadata(
             path=_resolve_required(self.path_id),
@@ -121,12 +126,14 @@ class CompactFileMetadata:
             i_links_count=self.i_links_count,
         )
 
+
 def get_intern_pool_stats() -> dict[str, int]:
     """Get string interning pool statistics."""
     return {
         "count": len(_STRING_POOL),
         "memory_estimate": sum(len(s) for s in _STRING_POOL) + len(_STRING_POOL) * 100,
     }
+
 
 def clear_intern_pool() -> None:
     """Clear the intern pool. Use only for testing."""

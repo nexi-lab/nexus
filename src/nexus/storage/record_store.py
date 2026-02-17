@@ -20,12 +20,20 @@ Usage:
     # Development (SQLite)
     record_store = SQLAlchemyRecordStore(db_url="sqlite:///dev.db")
 
+    # Production with read replica
+    record_store = SQLAlchemyRecordStore(
+        db_url="postgresql://user:pass@primary/db",
+        read_replica_url="postgresql://user:pass@replica/db",
+    )
+
     # Kernel init (optional — only needed when Services are used)
     nx = NexusFS(metastore=metastore, record_store=record_store)
 """
 
+
 import logging
 import os
+import threading
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -35,6 +43,7 @@ if TYPE_CHECKING:
     from sqlalchemy.pool import ConnectionPoolEntry
 
 logger = logging.getLogger(__name__)
+
 
 class RecordStoreABC(ABC):
     """Abstract base class for relational data storage (the "Truth" pillar).
@@ -50,18 +59,23 @@ class RecordStoreABC(ABC):
     Implementations must provide:
     - engine / session_factory: Synchronous SQLAlchemy access
     - async_session_factory: Asynchronous SQLAlchemy access (lazy default)
+
+    Read replica support (Issue #725):
+    - read_engine / read_session_factory: Default to primary engine
+    - async_read_session_factory: Default to primary async session factory
+    - has_read_replica: Whether a separate read replica is configured
     """
 
     @property
     @abstractmethod
     def engine(self) -> Any:
-        """SQLAlchemy engine for database operations."""
+        """SQLAlchemy engine for database operations (primary/write)."""
         ...
 
     @property
     @abstractmethod
     def session_factory(self) -> Any:
-        """Session factory (sessionmaker) for creating database sessions."""
+        """Session factory (sessionmaker) for creating database sessions (primary/write)."""
         ...
 
     @property
@@ -77,10 +91,33 @@ class RecordStoreABC(ABC):
             "Override this property to enable async database access."
         )
 
+    # -- Read replica properties (Issue #725) --
+
+    @property
+    def read_engine(self) -> Any:
+        """Engine for read-only operations. Defaults to primary."""
+        return self.engine
+
+    @property
+    def read_session_factory(self) -> Any:
+        """Session factory for read-only ops. Defaults to primary."""
+        return self.session_factory
+
+    @property
+    def async_read_session_factory(self) -> Any:
+        """Async session factory for read-only ops. Defaults to primary."""
+        return self.async_session_factory
+
+    @property
+    def has_read_replica(self) -> bool:
+        """Whether a separate read replica is configured."""
+        return False
+
     @abstractmethod
     def close(self) -> None:
         """Close the store and release resources."""
         ...
+
 
 class SQLAlchemyRecordStore(RecordStoreABC):
     """SQLAlchemy-based RecordStore for PostgreSQL and SQLite.
@@ -88,6 +125,12 @@ class SQLAlchemyRecordStore(RecordStoreABC):
     Extracts the engine/session creation logic. This achieves separation of concerns:
     - MetastoreABC handles file metadata (ordered KV via sled)
     - RecordStoreABC handles relational data (SQL via PostgreSQL/SQLite)
+
+    Supports optional read replica for PostgreSQL (Issue #725):
+    - ~88% of DB traffic is reads (ReBAC permission checks dominate at ~55%)
+    - When ``read_replica_url`` is provided, read-only operations use a
+      separate connection pool pointed at a PostgreSQL read replica
+    - SQLite ignores read_replica_url (single-file DB has no replicas)
     """
 
     def __init__(
@@ -98,6 +141,9 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         create_tables: bool = True,
         creator: Any | None = None,
         async_creator: Any | None = None,
+        read_replica_url: str | None = None,
+        read_replica_creator: Any | None = None,
+        async_read_replica_creator: Any | None = None,
     ):
         """Initialize SQLAlchemy record store.
 
@@ -113,6 +159,12 @@ class SQLAlchemyRecordStore(RecordStoreABC):
             async_creator: Optional callable for custom async connection creation
                           (e.g. Cloud SQL Python Connector async). Passed to
                           ``create_async_engine(async_creator=...)``.
+            read_replica_url: Optional read replica database URL (Issue #725).
+                            Only used for PostgreSQL. SQLite ignores this parameter.
+            read_replica_creator: Optional callable for custom read replica connection
+                                creation (e.g. Cloud SQL read instance).
+            async_read_replica_creator: Optional callable for custom async read replica
+                                      connection creation.
         """
         from sqlalchemy import create_engine, event
         from sqlalchemy.orm import sessionmaker
@@ -120,25 +172,29 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         # Resolve database URL
         self.database_url = self._resolve_db_url(db_url, db_path)
 
-        # Store async_creator for lazy async engine initialization
+        # Store creators for lazy async engine initialization
         self._async_creator = async_creator
+        self._async_read_replica_creator = async_read_replica_creator
 
-        # Create engine with appropriate pool configuration
+        # Determine if this is a PostgreSQL database
+        self._is_postgresql = not self.database_url.startswith("sqlite")
+
+        # Determine if read replica should be used (PostgreSQL only)
+        self._read_replica_url = read_replica_url if self._is_postgresql else None
+        self._has_read_replica = self._read_replica_url is not None
+
+        # Create primary engine with appropriate pool configuration
         engine_kwargs: dict[str, Any] = {}
-        if self.database_url.startswith("sqlite"):
+        if not self._is_postgresql:
             engine_kwargs["connect_args"] = {"check_same_thread": False}
         else:
-            # PostgreSQL pool configuration — env vars override defaults (Issue #1299)
-            pool_size = int(os.getenv("NEXUS_DB_POOL_SIZE", "20"))
-            max_overflow = int(os.getenv("NEXUS_DB_MAX_OVERFLOW", "30"))
-            pool_recycle = int(os.getenv("NEXUS_DB_POOL_RECYCLE", "1800"))
             engine_kwargs.update(
-                {
-                    "pool_size": pool_size,
-                    "max_overflow": max_overflow,
-                    "pool_pre_ping": True,
-                    "pool_recycle": pool_recycle,
-                }
+                self._build_pool_kwargs(
+                    prefix="NEXUS_DB",
+                    is_async=False,
+                    default_pool_size=10 if self._has_read_replica else 20,
+                    default_max_overflow=10 if self._has_read_replica else 30,
+                )
             )
 
         # Pass creator for custom connection factories (e.g. Cloud SQL Connector)
@@ -147,8 +203,12 @@ class SQLAlchemyRecordStore(RecordStoreABC):
 
         self._engine = create_engine(self.database_url, **engine_kwargs)
 
+        # Set plan_cache_mode at pool level for PostgreSQL (Issue #14, #683)
+        if self._is_postgresql:
+            self._attach_plan_cache_mode_listener(self._engine)
+
         # Enable WAL mode for SQLite (better concurrent read performance)
-        if self.database_url.startswith("sqlite"):
+        if not self._is_postgresql:
 
             @event.listens_for(self._engine, "connect")
             def set_sqlite_pragma(
@@ -158,12 +218,46 @@ class SQLAlchemyRecordStore(RecordStoreABC):
                 cursor.execute("PRAGMA journal_mode=WAL")
                 cursor.close()
 
-        # Create session factory
+        # Create primary session factory
         self._session_factory = sessionmaker(bind=self._engine, expire_on_commit=False)
 
         # Async engine/session are created lazily on first access
         self._async_engine: Any = None
         self._async_session_factory_instance: Any = None
+        self._async_init_lock = threading.Lock()
+
+        # Read replica engine/session (Issue #725)
+        self._read_engine: Any = None
+        self._read_session_factory_instance: Any = None
+        self._async_read_engine: Any = None
+        self._async_read_session_factory_instance: Any = None
+        self._async_read_init_lock = threading.Lock()
+
+        if self._has_read_replica:
+            read_engine_kwargs: dict[str, Any] = self._build_pool_kwargs(
+                prefix="NEXUS_READ_REPLICA",
+                is_async=False,
+                default_pool_size=20,
+                default_max_overflow=25,
+            )
+            if read_replica_creator is not None:
+                read_engine_kwargs["creator"] = read_replica_creator
+
+            assert self._read_replica_url is not None  # guarded by _has_read_replica
+            self._read_engine = create_engine(self._read_replica_url, **read_engine_kwargs)
+            self._attach_plan_cache_mode_listener(self._read_engine)
+            self._read_session_factory_instance = sessionmaker(
+                bind=self._read_engine, expire_on_commit=False
+            )
+            _replica_host = (
+                self._read_replica_url.split("@")[-1] if "@" in self._read_replica_url else "***"
+            )
+            logger.info(
+                "Read replica engine initialized: %s (pool_size=%s, max_overflow=%s)",
+                _replica_host,
+                read_engine_kwargs.get("pool_size"),
+                read_engine_kwargs.get("max_overflow"),
+            )
 
         # Create tables (skip in production when Alembic is SSOT)
         if create_tables:
@@ -171,7 +265,65 @@ class SQLAlchemyRecordStore(RecordStoreABC):
 
             Base.metadata.create_all(self._engine)
 
-        logger.info("SQLAlchemyRecordStore initialized: %s", self.database_url)
+        logger.info(
+            "SQLAlchemyRecordStore initialized: %s (read_replica=%s)",
+            self.database_url,
+            self._has_read_replica,
+        )
+
+    @staticmethod
+    def _build_pool_kwargs(
+        *,
+        prefix: str,
+        is_async: bool,
+        default_pool_size: int = 20,
+        default_max_overflow: int = 30,
+        default_pool_recycle: int = 1800,
+    ) -> dict[str, Any]:
+        """Build pool configuration kwargs from environment variables.
+
+        Args:
+            prefix: Env var prefix (e.g. 'NEXUS_DB' -> NEXUS_DB_POOL_SIZE).
+            is_async: If True, add pool_use_lifo=True for async engines.
+            default_pool_size: Default pool size if env var not set.
+            default_max_overflow: Default max overflow if env var not set.
+            default_pool_recycle: Default pool recycle seconds if env var not set.
+
+        Returns:
+            Dict of pool kwargs suitable for create_engine/create_async_engine.
+        """
+        pool_size = int(os.getenv(f"{prefix}_POOL_SIZE", str(default_pool_size)))
+        max_overflow = int(os.getenv(f"{prefix}_MAX_OVERFLOW", str(default_max_overflow)))
+        pool_recycle = int(os.getenv(f"{prefix}_POOL_RECYCLE", str(default_pool_recycle)))
+
+        kwargs: dict[str, Any] = {
+            "pool_size": pool_size,
+            "max_overflow": max_overflow,
+            "pool_pre_ping": True,
+            "pool_recycle": pool_recycle,
+        }
+        if is_async:
+            kwargs["pool_use_lifo"] = True
+        return kwargs
+
+    @staticmethod
+    def _attach_plan_cache_mode_listener(engine: Any) -> None:
+        """Attach a pool-level listener to SET plan_cache_mode on connect.
+
+        Moved from per-checkout to per-connect for efficiency (Issue #14).
+        This fixes PostgreSQL prepared statement performance issues (#683).
+        """
+        from sqlalchemy import event
+
+        @event.listens_for(engine, "connect")
+        def _set_plan_cache_mode(dbapi_connection: Any, _connection_record: Any) -> None:
+            cursor = dbapi_connection.cursor()
+            try:
+                cursor.execute("SET plan_cache_mode = 'force_custom_plan'")
+            except Exception:
+                logger.debug("plan_cache_mode not supported on this connection", exc_info=True)
+            finally:
+                cursor.close()
 
     @staticmethod
     def _resolve_db_url(db_url: str | None, db_path: str | Path | None) -> str:
@@ -196,12 +348,12 @@ class SQLAlchemyRecordStore(RecordStoreABC):
 
     @property
     def engine(self) -> Any:
-        """SQLAlchemy engine."""
+        """SQLAlchemy engine (primary/write)."""
         return self._engine
 
     @property
     def session_factory(self) -> Any:
-        """Session factory (sessionmaker)."""
+        """Session factory (sessionmaker) for primary/write operations."""
         return self._session_factory
 
     @property
@@ -217,50 +369,149 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         custom factory (e.g. Cloud SQL Python Connector).
         """
         if self._async_session_factory_instance is None:
-            from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+            with self._async_init_lock:
+                # Double-check after acquiring lock
+                if self._async_session_factory_instance is None:
+                    from sqlalchemy.ext.asyncio import (
+                        AsyncSession,
+                        async_sessionmaker,
+                        create_async_engine,
+                    )
 
-            async_url = self._to_async_url(self.database_url)
+                    async_url = self._to_async_url(self.database_url)
 
-            engine_kwargs: dict[str, Any] = {}
-            if "postgresql" in async_url:
-                pool_size = int(os.getenv("NEXUS_DB_POOL_SIZE", "20"))
-                max_overflow = int(os.getenv("NEXUS_DB_MAX_OVERFLOW", "30"))
-                pool_recycle = int(os.getenv("NEXUS_DB_POOL_RECYCLE", "1800"))
-                engine_kwargs.update(
-                    {
-                        "pool_size": pool_size,
-                        "max_overflow": max_overflow,
-                        "pool_pre_ping": True,
-                        "pool_use_lifo": True,
-                        "pool_recycle": pool_recycle,
-                    }
-                )
+                    engine_kwargs: dict[str, Any] = {}
+                    if "postgresql" in async_url:
+                        engine_kwargs.update(
+                            self._build_pool_kwargs(
+                                prefix="NEXUS_DB",
+                                is_async=True,
+                                default_pool_size=10 if self._has_read_replica else 20,
+                                default_max_overflow=10 if self._has_read_replica else 30,
+                            )
+                        )
 
-            # Pass async_creator for custom connection factories (e.g. Cloud SQL)
-            if self._async_creator is not None:
-                engine_kwargs["async_creator"] = self._async_creator
+                    # Pass async_creator for custom connection factories (e.g. Cloud SQL)
+                    if self._async_creator is not None:
+                        engine_kwargs["async_creator"] = self._async_creator
 
-            self._async_engine = create_async_engine(async_url, **engine_kwargs)
-            self._async_session_factory_instance = async_sessionmaker(
-                self._async_engine, class_=AsyncSession, expire_on_commit=False
-            )
-            pool_info = {k: v for k, v in engine_kwargs.items() if k.startswith("pool_")}
-            logger.info(
-                "Async session factory initialized: %s (pool=%s)",
-                async_url.split("@")[-1],
-                pool_info or "default",
-            )
+                    self._async_engine = create_async_engine(async_url, **engine_kwargs)
+
+                    # Set plan_cache_mode on async engine for PostgreSQL
+                    if self._is_postgresql:
+                        self._attach_plan_cache_mode_listener(self._async_engine.sync_engine)
+
+                    self._async_session_factory_instance = async_sessionmaker(
+                        self._async_engine, class_=AsyncSession, expire_on_commit=False
+                    )
+                    pool_info = {k: v for k, v in engine_kwargs.items() if k.startswith("pool_")}
+                    logger.info(
+                        "Async session factory initialized: %s (pool=%s)",
+                        async_url.split("@")[-1],
+                        pool_info or "default",
+                    )
 
         return self._async_session_factory_instance
 
+    # -- Read replica properties (Issue #725) --
+
+    @property
+    def read_engine(self) -> Any:
+        """Engine for read-only operations. Returns replica if configured, else primary."""
+        if self._read_engine is not None:
+            return self._read_engine
+        return self._engine
+
+    @property
+    def read_session_factory(self) -> Any:
+        """Session factory for read-only ops. Returns replica if configured, else primary."""
+        if self._read_session_factory_instance is not None:
+            return self._read_session_factory_instance
+        return self._session_factory
+
+    @property
+    def async_read_session_factory(self) -> Any:
+        """Async session factory for read-only ops.
+
+        Lazily creates an async engine for the read replica on first access.
+        Falls back to the primary async session factory if no replica configured.
+        """
+        if not self._has_read_replica:
+            return self.async_session_factory
+
+        if self._async_read_session_factory_instance is None:
+            with self._async_read_init_lock:
+                # Double-check after acquiring lock
+                if self._async_read_session_factory_instance is None:
+                    from sqlalchemy.ext.asyncio import (
+                        AsyncSession,
+                        async_sessionmaker,
+                        create_async_engine,
+                    )
+
+                    assert self._read_replica_url is not None  # guarded by _has_read_replica
+                    async_url = self._to_async_url(self._read_replica_url)
+                    engine_kwargs = self._build_pool_kwargs(
+                        prefix="NEXUS_READ_REPLICA",
+                        is_async=True,
+                        default_pool_size=20,
+                        default_max_overflow=25,
+                    )
+
+                    if self._async_read_replica_creator is not None:
+                        engine_kwargs["async_creator"] = self._async_read_replica_creator
+
+                    self._async_read_engine = create_async_engine(async_url, **engine_kwargs)
+
+                    # Set plan_cache_mode on async read replica engine for PostgreSQL
+                    if self._is_postgresql:
+                        self._attach_plan_cache_mode_listener(self._async_read_engine.sync_engine)
+
+                    self._async_read_session_factory_instance = async_sessionmaker(
+                        self._async_read_engine, class_=AsyncSession, expire_on_commit=False
+                    )
+                    pool_info = {k: v for k, v in engine_kwargs.items() if k.startswith("pool_")}
+                    logger.info(
+                        "Async read session factory initialized: %s (pool=%s)",
+                        async_url.split("@")[-1],
+                        pool_info or "default",
+                    )
+
+        return self._async_read_session_factory_instance
+
+    @property
+    def has_read_replica(self) -> bool:
+        """Whether a separate read replica is configured."""
+        return self._has_read_replica
+
     @staticmethod
     def _to_async_url(sync_url: str) -> str:
-        """Convert a synchronous database URL to its async driver variant."""
+        """Convert a synchronous database URL to its async driver variant.
+
+        Handles multiple PostgreSQL driver prefixes and SQLite variants.
+
+        Raises:
+            ValueError: If the URL scheme is not recognized.
+        """
+        if sync_url.startswith("postgresql+asyncpg://"):
+            return sync_url  # Already async
+        if sync_url.startswith("postgresql+psycopg2://"):
+            return sync_url.replace("postgresql+psycopg2://", "postgresql+asyncpg://", 1)
+        if sync_url.startswith("postgresql+pg8000://"):
+            return sync_url.replace("postgresql+pg8000://", "postgresql+asyncpg://", 1)
         if sync_url.startswith("postgresql://"):
             return sync_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+        if sync_url.startswith("sqlite+aiosqlite://"):
+            return sync_url  # Already async
         if sync_url.startswith("sqlite:///"):
             return sync_url.replace("sqlite:///", "sqlite+aiosqlite:///", 1)
-        return sync_url
+        if sync_url.startswith("sqlite://"):
+            return sync_url.replace("sqlite://", "sqlite+aiosqlite://", 1)
+        raise ValueError(
+            f"Unrecognized database URL scheme: {sync_url.split('://')[0]}://. "
+            "Supported: postgresql://, postgresql+psycopg2://, postgresql+pg8000://, "
+            "sqlite:///, sqlite://"
+        )
 
     def close(self) -> None:
         """Close all engines and release connections."""
@@ -270,4 +521,15 @@ class SQLAlchemyRecordStore(RecordStoreABC):
             self._async_engine.sync_engine.dispose()
             self._async_engine = None
             self._async_session_factory_instance = None
+
+        # Dispose read replica engines (Issue #725)
+        if self._read_engine is not None:
+            self._read_engine.dispose()
+            self._read_engine = None
+            self._read_session_factory_instance = None
+        if self._async_read_engine is not None:
+            self._async_read_engine.sync_engine.dispose()
+            self._async_read_engine = None
+            self._async_read_session_factory_instance = None
+
         logger.info("SQLAlchemyRecordStore closed")

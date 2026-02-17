@@ -8,6 +8,7 @@ References:
     - docs/design/KERNEL-ARCHITECTURE.md §1 (service DI)
 """
 
+
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
 
 # Type alias matching the service's ProgressCallback
 ProgressCallback = Callable[[int, str], None]
+
 
 @dataclass(frozen=True, slots=True)
 class SyncContext:
@@ -30,9 +32,10 @@ class SyncContext:
     include_patterns: list[str] | None = None
     exclude_patterns: list[str] | None = None
     generate_embeddings: bool = False
-    context: "OperationContext | None" = None
+    context: OperationContext | None = None
     progress_callback: ProgressCallback | None = None
     full_sync: bool = False
+
 
 @dataclass(frozen=True, slots=True)
 class SyncResult:
@@ -50,6 +53,7 @@ class SyncResult:
     errors: list[str] = field(default_factory=list)
     mounts_synced: int = 0
     mounts_skipped: int = 0
+
 
 @runtime_checkable
 class SyncServiceProtocol(Protocol):

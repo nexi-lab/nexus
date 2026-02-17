@@ -12,6 +12,7 @@ Issue #1264: CAS dedup at VFS level.
 Pattern follows: services/search_service.py (independent service, injected into NexusFS)
 """
 
+
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -22,13 +23,15 @@ from cachetools import LRUCache
 from nexus.core.workspace_manifest import ManifestEntry, WorkspaceManifest
 
 if TYPE_CHECKING:
-    from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol
+    from nexus.core.metadata import FileMetadata
+    from nexus.core.metastore import MetastoreABC
     from nexus.core.protocols.connector import ConnectorProtocol
 
 logger = logging.getLogger(__name__)
 
 # Sentinel hash value for whiteout markers (deletions in overlay)
 WHITEOUT_HASH = "whiteout:deleted"
+
 
 @dataclass(slots=True)
 class OverlayConfig:
@@ -45,6 +48,7 @@ class OverlayConfig:
     base_manifest_hash: str | None = None
     workspace_path: str = ""
     agent_id: str | None = None
+
 
 @dataclass(slots=True)
 class OverlayStats:
@@ -77,6 +81,7 @@ class OverlayStats:
             "estimated_savings_bytes": self.estimated_savings_bytes,
         }
 
+
 class OverlayResolver:
     """Resolves file lookups through overlay layers (base + upper).
 
@@ -96,8 +101,8 @@ class OverlayResolver:
 
     def __init__(
         self,
-        metadata: "FileMetadataProtocol",
-        backend: "ConnectorProtocol",
+        metadata: MetastoreABC,
+        backend: ConnectorProtocol,
         *,
         max_cached_manifests: int = 256,
     ) -> None:
@@ -135,7 +140,7 @@ class OverlayResolver:
         self,
         path: str,
         overlay_config: OverlayConfig,
-    ) -> "FileMetadata | None":
+    ) -> FileMetadata | None:
         """Resolve a file read through the overlay layers.
 
         Resolution order:
@@ -178,7 +183,7 @@ class OverlayResolver:
         # Synthesize FileMetadata from base manifest entry
         return self._manifest_entry_to_metadata(entry, path)
 
-    def is_whiteout(self, meta: "FileMetadata") -> bool:
+    def is_whiteout(self, meta: FileMetadata) -> bool:
         """Check if a metadata entry is a whiteout marker.
 
         Whiteout markers represent files that exist in the base layer
@@ -208,7 +213,7 @@ class OverlayResolver:
             path: Full absolute path to the file being deleted
             overlay_config: Overlay configuration for this workspace
         """
-        from nexus.core._metadata_generated import FileMetadata
+        from nexus.core.metadata import FileMetadata
 
         whiteout_meta = FileMetadata(
             path=path,
@@ -227,7 +232,7 @@ class OverlayResolver:
         self,
         prefix: str,
         overlay_config: OverlayConfig,
-    ) -> list["FileMetadata"]:
+    ) -> list[FileMetadata]:
         """List files by merging upper and base layers.
 
         Two-pass set merge:
@@ -401,7 +406,7 @@ class OverlayResolver:
         self,
         entry: ManifestEntry,
         full_path: str,
-    ) -> "FileMetadata":
+    ) -> FileMetadata:
         """Synthesize a FileMetadata from a base-layer ManifestEntry.
 
         Args:
@@ -411,7 +416,7 @@ class OverlayResolver:
         Returns:
             FileMetadata pointing to the CAS content
         """
-        from nexus.core._metadata_generated import FileMetadata
+        from nexus.core.metadata import FileMetadata
 
         return FileMetadata(
             path=full_path,

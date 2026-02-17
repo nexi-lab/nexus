@@ -1,15 +1,20 @@
-"""Backward-compatibility re-export tests for core/types.py (Issue #1291, Decision 10A).
+"""Backward-compatibility re-export tests for core/types.py (Issue #1291, #1501).
 
 Verifies that:
-1. Types are importable from both new (core.types) and old (core.permissions) locations.
+1. Types are importable from core.types, core.permissions, and contracts.types.
 2. The imported classes are the *same* objects (identity, not just equality).
-3. core/types.py is a zero-dependency leaf module (no runtime nexus.* imports).
+3. contracts/types.py is a zero-dependency leaf module (no runtime nexus.* imports).
+4. core/types.py is a thin re-export shim pointing to contracts.types.
 """
+
 
 import ast
 from pathlib import Path
 
-_TYPES_FILE = Path(__file__).resolve().parents[3] / "src" / "nexus" / "core" / "types.py"
+_CONTRACTS_TYPES_FILE = (
+    Path(__file__).resolve().parents[3] / "src" / "nexus" / "contracts" / "types.py"
+)
+
 
 class TestOperationContextReExport:
     """OperationContext importable from both modules with identity."""
@@ -30,6 +35,7 @@ class TestOperationContextReExport:
 
         assert OC_permissions is OC_types
 
+
 class TestPermissionReExport:
     """Permission importable from both modules with identity."""
 
@@ -49,6 +55,7 @@ class TestPermissionReExport:
 
         assert P_permissions is P_types
 
+
 class TestContextIdentityReExport:
     """ContextIdentity importable from both modules with identity."""
 
@@ -56,6 +63,7 @@ class TestContextIdentityReExport:
         from nexus.core.types import ContextIdentity
 
         assert ContextIdentity is not None
+
 
 class TestExtractContextIdentityExport:
     """extract_context_identity importable from core.types."""
@@ -65,34 +73,31 @@ class TestExtractContextIdentityExport:
 
         assert extract_context_identity is not None
 
+
 class TestTypesIsLeafModule:
-    """core/types.py must have minimal runtime nexus.* imports.
+    """contracts/types.py must have zero runtime nexus.* imports (Issue #1501)."""
 
-    PEP 649 (Python 3.14): dataclass field annotations are still eagerly evaluated,
-    so ReadSet must be a runtime import. All other nexus imports should remain
-    under TYPE_CHECKING.
-    """
+    def test_no_runtime_nexus_imports(self) -> None:
+        """AST check: contracts/types.py has no runtime imports from nexus.*."""
+        source = _CONTRACTS_TYPES_FILE.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(_CONTRACTS_TYPES_FILE))
 
-    # Imports allowed at runtime because dataclass fields require them
-    _ALLOWED_RUNTIME_IMPORTS = frozenset({
-        "from nexus.core.read_set import ReadSet",
-    })
-
-    def test_only_allowed_runtime_nexus_imports(self) -> None:
-        """AST check: types.py has only the minimal required runtime nexus imports."""
-        source = _TYPES_FILE.read_text(encoding="utf-8")
-        tree = ast.parse(source, filename=str(_TYPES_FILE))
+        # Collect lines inside TYPE_CHECKING blocks
+        tc_lines: set[int] = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.If):
+                test_node = node.test
+                if (isinstance(test_node, ast.Name) and test_node.id == "TYPE_CHECKING") or (
+                    isinstance(test_node, ast.Attribute) and test_node.attr == "TYPE_CHECKING"
+                ):
+                    for child in ast.walk(node):
+                        if hasattr(child, "lineno"):
+                            tc_lines.add(child.lineno)
 
         runtime_nexus_imports: list[str] = []
-
         for node in ast.iter_child_nodes(tree):
-            # Skip TYPE_CHECKING blocks
-            if isinstance(node, ast.If):
-                test = node.test
-                if (isinstance(test, ast.Name) and test.id == "TYPE_CHECKING") or (
-                    isinstance(test, ast.Attribute) and test.attr == "TYPE_CHECKING"
-                ):
-                    continue
+            if hasattr(node, "lineno") and node.lineno in tc_lines:
+                continue
 
             if isinstance(node, ast.Import):
                 for alias in node.names:
@@ -104,15 +109,15 @@ class TestTypesIsLeafModule:
                 names = ", ".join(a.name for a in node.names)
                 runtime_nexus_imports.append(f"from {node.module} import {names}")
 
-        unexpected = [i for i in runtime_nexus_imports if i not in self._ALLOWED_RUNTIME_IMPORTS]
-        assert unexpected == [], (
-            f"core/types.py has unexpected runtime nexus imports: {unexpected}. "
-            f"Only these are allowed (for dataclass fields): {sorted(self._ALLOWED_RUNTIME_IMPORTS)}"
+        assert runtime_nexus_imports == [], (
+            f"contracts/types.py must be a zero-dependency leaf module, "
+            f"but has runtime nexus imports: {runtime_nexus_imports}"
         )
 
-    def test_no_future_annotations(self) -> None:
-        source = _TYPES_FILE.read_text(encoding="utf-8")
-        tree = ast.parse(source, filename=str(_TYPES_FILE))
+    def test_has_future_annotations(self) -> None:
+        """contracts/types.py must use ``from __future__ import annotations``."""
+        source = _CONTRACTS_TYPES_FILE.read_text(encoding="utf-8")
+        tree = ast.parse(source, filename=str(_CONTRACTS_TYPES_FILE))
 
         has_future = False
         for node in ast.iter_child_nodes(tree):
@@ -120,6 +125,4 @@ class TestTypesIsLeafModule:
                 for alias in node.names:
                     if alias.name == "annotations":
                         has_future = True
-
-        assert not has_future, (
-        )
+        assert has_future, "contracts/types.py must use 'from __future__ import annotations'"

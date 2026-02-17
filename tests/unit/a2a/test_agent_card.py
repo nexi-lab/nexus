@@ -7,6 +7,7 @@ Tests cover:
 - ``_detect_auth_schemes()`` all provider branches
 """
 
+
 import json
 from types import SimpleNamespace
 
@@ -22,6 +23,7 @@ from nexus.a2a.models import AgentCard
 # Fixtures
 # ------------------------------------------------------------------
 
+
 def _make_skill(
     name: str = "search",
     description: str = "Search files",
@@ -29,6 +31,7 @@ def _make_skill(
 ) -> SimpleNamespace:
     """Create a fake SkillMetadata-like object."""
     return SimpleNamespace(name=name, description=description, tags=tags or [])
+
 
 def _make_config(
     a2a_agent_name: str | None = None,
@@ -40,14 +43,17 @@ def _make_config(
         a2a_agent_description=a2a_agent_description,
     )
 
+
 def _make_auth_provider(class_name: str) -> object:
     """Create a fake auth provider with a specific class name."""
     cls = type(class_name, (), {})
     return cls()
 
+
 # ------------------------------------------------------------------
 # AgentCardCache
 # ------------------------------------------------------------------
+
 
 class TestAgentCardCache:
     """Tests for the write-once ``AgentCardCache``."""
@@ -117,9 +123,11 @@ class TestAgentCardCache:
         parsed = json.loads(result)
         assert parsed["url"] == "https://example.com/a2a"
 
+
 # ------------------------------------------------------------------
 # build_agent_card()
 # ------------------------------------------------------------------
+
 
 class TestBuildAgentCard:
     """Tests for the pure ``build_agent_card()`` function."""
@@ -186,9 +194,11 @@ class TestBuildAgentCard:
         assert len(card.skills) == 3
         assert [s.name for s in card.skills] == ["search", "write", "read"]
 
+
 # ------------------------------------------------------------------
 # _map_skills()
 # ------------------------------------------------------------------
+
 
 class TestMapSkills:
     """Tests for the ``_map_skills()`` helper."""
@@ -248,9 +258,11 @@ class TestMapSkills:
         assert result[0].name == "good"
         assert result[1].name == "also_good"
 
+
 # ------------------------------------------------------------------
 # _detect_auth_schemes()
 # ------------------------------------------------------------------
+
 
 class TestDetectAuthSchemes:
     """Tests for the ``_detect_auth_schemes()`` helper."""
@@ -310,9 +322,11 @@ class TestDetectAuthSchemes:
         assert len(schemes) == 1
         assert schemes[0].type == "httpBearer"
 
+
 # ------------------------------------------------------------------
 # supportedInterfaces (gRPC transport binding, #1726)
 # ------------------------------------------------------------------
+
 
 class TestSupportedInterfaces:
     """Tests for the ``supportedInterfaces`` field on AgentCard."""

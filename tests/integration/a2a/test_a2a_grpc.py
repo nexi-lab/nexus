@@ -4,6 +4,7 @@ Tests the full gRPC transport path with a real in-process server
 and the TaskManager shared between transports.
 """
 
+
 import asyncio
 import time
 
@@ -15,6 +16,7 @@ from nexus.a2a import a2a_pb2, a2a_pb2_grpc
 from nexus.a2a.grpc_server import create_grpc_server, stop_grpc_server
 from nexus.a2a.models import Message, TaskState, TextPart
 from nexus.a2a.task_manager import TaskManager
+
 
 @pytest.fixture
 async def shared_setup():
@@ -32,9 +34,11 @@ async def shared_setup():
     await channel.close()
     await stop_grpc_server(server, grace=0.5)
 
+
 # ------------------------------------------------------------------
 # Full flow: create -> get -> update -> verify
 # ------------------------------------------------------------------
+
 
 class TestFullTaskFlow:
     """Integration test for the full task lifecycle via gRPC."""
@@ -69,9 +73,11 @@ class TestFullTaskFlow:
         final = await stub.GetTask(a2a_pb2.GetTaskRequest(id=task_id))
         assert final.status.state == a2a_pb2.TASK_STATE_CANCELED
 
+
 # ------------------------------------------------------------------
 # Cross-transport: create via TaskManager, get via gRPC
 # ------------------------------------------------------------------
+
 
 class TestCrossTransport:
     """Test that tasks created via TaskManager are visible via gRPC."""
@@ -108,9 +114,11 @@ class TestCrossTransport:
         task = await tm.get_task(task_id)
         assert task.id == task_id
 
+
 # ------------------------------------------------------------------
 # Streaming integration
 # ------------------------------------------------------------------
+
 
 class TestStreamingIntegration:
     """Integration tests for streaming RPCs."""
@@ -143,9 +151,11 @@ class TestStreamingIntegration:
         assert completed.HasField("status_update")
         assert completed.status_update.final is True
 
+
 # ------------------------------------------------------------------
 # Throughput benchmark
 # ------------------------------------------------------------------
+
 
 class TestThroughput:
     """Simple throughput benchmark for SendMessage."""

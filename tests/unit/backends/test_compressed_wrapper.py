@@ -19,6 +19,7 @@ Design reference:
     - Issue #1705: EncryptedStorage + CompressedStorage recursive wrappers
 """
 
+
 import hashlib
 from unittest.mock import MagicMock, PropertyMock
 
@@ -31,6 +32,7 @@ from nexus.core.response import HandlerResponse
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_leaf(name: str = "local") -> MagicMock:
     """Create a mock leaf backend."""
@@ -48,6 +50,7 @@ def _make_leaf(name: str = "local") -> MagicMock:
     type(mock).is_passthrough = PropertyMock(return_value=False)
     type(mock).supports_parallel_mmap_read = PropertyMock(return_value=False)
     return mock
+
 
 def _make_storage_mock() -> tuple[MagicMock, dict[str, bytes]]:
     """Create a mock leaf that actually stores/retrieves content."""
@@ -78,9 +81,11 @@ def _make_storage_mock() -> tuple[MagicMock, dict[str, bytes]]:
     mock.delete_content = MagicMock(return_value=HandlerResponse.ok(data=None))
     return mock, storage
 
+
 # ---------------------------------------------------------------------------
 # describe() Tests
 # ---------------------------------------------------------------------------
+
 
 class TestCompressedDescribe:
     """describe() should prepend compression layer info."""
@@ -110,9 +115,11 @@ class TestCompressedDescribe:
         wrapper = CompressedStorage(inner=leaf, config=config)
         assert isinstance(wrapper, Describable)
 
+
 # ---------------------------------------------------------------------------
 # Roundtrip Tests
 # ---------------------------------------------------------------------------
+
 
 class TestCompressedRoundtrip:
     """Write + read should return identical content."""
@@ -162,9 +169,11 @@ class TestCompressedRoundtrip:
         assert read_resp.success
         assert read_resp.data == plaintext
 
+
 # ---------------------------------------------------------------------------
 # CAS Dedup Tests (zstd determinism)
 # ---------------------------------------------------------------------------
+
 
 class TestCompressedCASDedup:
     """Same content + same level should produce same compressed output → same hash."""
@@ -181,9 +190,11 @@ class TestCompressedCASDedup:
         hash2 = wrapper.write_content(content).data
         assert hash1 == hash2, "zstd should produce identical output for identical input"
 
+
 # ---------------------------------------------------------------------------
 # Below-Threshold Tests
 # ---------------------------------------------------------------------------
+
 
 class TestCompressedThreshold:
     """Content below min_size should be stored uncompressed."""
@@ -225,9 +236,11 @@ class TestCompressedThreshold:
         assert read_resp.success
         assert read_resp.data == large_content
 
+
 # ---------------------------------------------------------------------------
 # Negative Compression Ratio Tests
 # ---------------------------------------------------------------------------
+
 
 class TestCompressedNegativeRatio:
     """Pre-compressed or random content should be stored uncompressed."""
@@ -251,9 +264,11 @@ class TestCompressedNegativeRatio:
         assert read_resp.success
         assert read_resp.data == random_data
 
+
 # ---------------------------------------------------------------------------
 # Empty Content Edge Case
 # ---------------------------------------------------------------------------
+
 
 class TestCompressedEmptyContent:
     """Empty content should pass through without compression."""
@@ -272,9 +287,11 @@ class TestCompressedEmptyContent:
         assert read_resp.success
         assert read_resp.data == b""
 
+
 # ---------------------------------------------------------------------------
 # Delegation Tests
 # ---------------------------------------------------------------------------
+
 
 class TestCompressedDelegation:
     """Non-content ops should pass through to inner backend."""
@@ -303,9 +320,11 @@ class TestCompressedDelegation:
         leaf.delete_content.assert_called_once()
         assert result.success
 
+
 # ---------------------------------------------------------------------------
 # Config Tests
 # ---------------------------------------------------------------------------
+
 
 class TestCompressedConfig:
     """Config validation."""
@@ -333,9 +352,11 @@ class TestCompressedConfig:
         with pytest.raises(ValueError, match="level"):
             CompressedStorageConfig(level=23)
 
+
 # ---------------------------------------------------------------------------
 # Batch Operation Tests
 # ---------------------------------------------------------------------------
+
 
 class TestCompressedBatch:
     """batch_read_content should decompress each item individually."""

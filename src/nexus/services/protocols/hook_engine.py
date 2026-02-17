@@ -11,6 +11,7 @@ References:
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
+
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
@@ -30,9 +31,17 @@ POST_MKDIR: str = "post_mkdir"
 PRE_COPY: str = "pre_copy"
 POST_COPY: str = "post_copy"
 
+# Brick lifecycle phases (Issue #1704)
+PRE_MOUNT: str = "pre_mount"
+POST_MOUNT: str = "post_mount"
+PRE_UNMOUNT: str = "pre_unmount"
+POST_UNMOUNT: str = "post_unmount"
+
+
 # ---------------------------------------------------------------------------
 # Data models
 # ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True, slots=True)
 class HookId:
@@ -43,6 +52,7 @@ class HookId:
     """
 
     id: str
+
 
 @dataclass(frozen=True, slots=True)
 class HookSpec:
@@ -57,6 +67,7 @@ class HookSpec:
     phase: str
     handler_name: str
     priority: int = 0
+
 
 @dataclass(frozen=True, slots=True)
 class HookContext:
@@ -76,6 +87,7 @@ class HookContext:
     agent_id: str | None
     payload: dict[str, Any]
 
+
 @dataclass(frozen=True, slots=True)
 class HookResult:
     """Result returned by a hook handler.
@@ -90,9 +102,11 @@ class HookResult:
     modified_context: dict[str, Any] | None
     error: str | None
 
+
 # ---------------------------------------------------------------------------
 # Protocol
 # ---------------------------------------------------------------------------
+
 
 @runtime_checkable
 class HookEngineProtocol(Protocol):

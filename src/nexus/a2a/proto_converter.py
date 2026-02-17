@@ -4,6 +4,7 @@ Provides functions to convert between the existing Pydantic-based A2A models
 (``nexus.a2a.models``) and the gRPC protobuf messages (``nexus.a2a.a2a_pb2``).
 """
 
+
 import base64
 from datetime import UTC, datetime
 from typing import Any
@@ -30,17 +31,21 @@ _PROTO_TO_PYDANTIC_STATE: dict[int, models.TaskState] = {
     v: k for k, v in _PYDANTIC_TO_PROTO_STATE.items()
 }
 
+
 def task_state_to_proto(state: models.TaskState) -> int:
     """Convert a Pydantic TaskState to its proto enum value."""
     return _PYDANTIC_TO_PROTO_STATE[state]
+
 
 def task_state_from_proto(value: int) -> models.TaskState:
     """Convert a proto TaskState enum value to a Pydantic TaskState."""
     return _PROTO_TO_PYDANTIC_STATE[value]
 
+
 # ============================================================================
 # Metadata / Struct helpers
 # ============================================================================
+
 
 def _dict_to_struct(d: dict[str, Any] | None) -> struct_pb2.Struct | None:
     """Convert a dict to a google.protobuf.Struct, or None."""
@@ -50,6 +55,7 @@ def _dict_to_struct(d: dict[str, Any] | None) -> struct_pb2.Struct | None:
     s.update(d)
     return s
 
+
 def _struct_to_dict(s: struct_pb2.Struct | None) -> dict[str, Any] | None:
     """Convert a google.protobuf.Struct to a dict, or None."""
     if s is None:
@@ -57,9 +63,11 @@ def _struct_to_dict(s: struct_pb2.Struct | None) -> dict[str, Any] | None:
     result = dict(s)
     return result if result else None
 
+
 # ============================================================================
 # Timestamp helpers
 # ============================================================================
+
 
 def _datetime_to_timestamp(dt: datetime | None) -> timestamp_pb2.Timestamp | None:
     """Convert a datetime to a google.protobuf.Timestamp, or None."""
@@ -69,15 +77,18 @@ def _datetime_to_timestamp(dt: datetime | None) -> timestamp_pb2.Timestamp | Non
     ts.FromDatetime(dt)
     return ts
 
+
 def _timestamp_to_datetime(ts: timestamp_pb2.Timestamp | None) -> datetime | None:
     """Convert a google.protobuf.Timestamp to a datetime, or None."""
     if ts is None:
         return None
     return ts.ToDatetime(tzinfo=UTC)
 
+
 # ============================================================================
 # Part conversion
 # ============================================================================
+
 
 def part_to_proto(part: models.TextPart | models.FilePart | models.DataPart) -> a2a_pb2.Part:
     """Convert a Pydantic Part to a proto Part."""
@@ -104,6 +115,7 @@ def part_to_proto(part: models.TextPart | models.FilePart | models.DataPart) -> 
         pb.data.CopyFrom(struct_pb2.Value(struct_value=data_struct))
 
     return pb
+
 
 def part_from_proto(pb: a2a_pb2.Part) -> models.TextPart | models.FilePart | models.DataPart:
     """Convert a proto Part to a Pydantic Part."""
@@ -135,9 +147,11 @@ def part_from_proto(pb: a2a_pb2.Part) -> models.TextPart | models.FilePart | mod
         # Fallback: empty text part
         return models.TextPart(text="", metadata=metadata)
 
+
 # ============================================================================
 # Message conversion
 # ============================================================================
+
 
 def message_to_proto(msg: models.Message) -> a2a_pb2.Message:
     """Convert a Pydantic Message to a proto Message."""
@@ -149,15 +163,18 @@ def message_to_proto(msg: models.Message) -> a2a_pb2.Message:
         pb.metadata.CopyFrom(meta)
     return pb
 
+
 def message_from_proto(pb: a2a_pb2.Message) -> models.Message:
     """Convert a proto Message to a Pydantic Message."""
     parts = [part_from_proto(p) for p in pb.parts]
     metadata = _struct_to_dict(pb.metadata) if pb.HasField("metadata") else None
     return models.Message(role=pb.role, parts=parts, metadata=metadata)
 
+
 # ============================================================================
 # Artifact conversion
 # ============================================================================
+
 
 def artifact_to_proto(art: models.Artifact) -> a2a_pb2.Artifact:
     """Convert a Pydantic Artifact to a proto Artifact."""
@@ -173,6 +190,7 @@ def artifact_to_proto(art: models.Artifact) -> a2a_pb2.Artifact:
         pb.metadata.CopyFrom(meta)
     return pb
 
+
 def artifact_from_proto(pb: a2a_pb2.Artifact) -> models.Artifact:
     """Convert a proto Artifact to a Pydantic Artifact."""
     parts = [part_from_proto(p) for p in pb.parts]
@@ -185,9 +203,11 @@ def artifact_from_proto(pb: a2a_pb2.Artifact) -> models.Artifact:
         metadata=metadata,
     )
 
+
 # ============================================================================
 # TaskStatus conversion
 # ============================================================================
+
 
 def task_status_to_proto(status: models.TaskStatus) -> a2a_pb2.TaskStatus:
     """Convert a Pydantic TaskStatus to a proto TaskStatus."""
@@ -199,6 +219,7 @@ def task_status_to_proto(status: models.TaskStatus) -> a2a_pb2.TaskStatus:
         pb.timestamp.CopyFrom(ts)
     return pb
 
+
 def task_status_from_proto(pb: a2a_pb2.TaskStatus) -> models.TaskStatus:
     """Convert a proto TaskStatus to a Pydantic TaskStatus."""
     msg = message_from_proto(pb.message) if pb.HasField("message") else None
@@ -209,9 +230,11 @@ def task_status_from_proto(pb: a2a_pb2.TaskStatus) -> models.TaskStatus:
         timestamp=ts,
     )
 
+
 # ============================================================================
 # Task conversion
 # ============================================================================
+
 
 def task_to_proto(task: models.Task) -> a2a_pb2.Task:
     """Convert a Pydantic Task to a proto Task."""
@@ -228,6 +251,7 @@ def task_to_proto(task: models.Task) -> a2a_pb2.Task:
         pb.metadata.CopyFrom(meta)
     return pb
 
+
 def task_from_proto(pb: a2a_pb2.Task) -> models.Task:
     """Convert a proto Task to a Pydantic Task."""
     artifacts = [artifact_from_proto(a) for a in pb.artifacts]
@@ -242,9 +266,11 @@ def task_from_proto(pb: a2a_pb2.Task) -> models.Task:
         metadata=metadata,
     )
 
+
 # ============================================================================
 # Request conversion helpers
 # ============================================================================
+
 
 def send_request_from_proto(
     pb: a2a_pb2.SendMessageRequest,

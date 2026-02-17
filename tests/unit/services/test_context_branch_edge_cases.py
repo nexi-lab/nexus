@@ -11,6 +11,7 @@ Tests all 8 edge cases identified during review:
 8. Empty workspace branching
 """
 
+
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
@@ -27,15 +28,18 @@ from nexus.services.context_branch import ContextBranchService
 from nexus.storage.models._base import Base
 from nexus.storage.models.context_branch import ContextBranchModel
 
+
 @pytest.fixture
 def engine():
     eng = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(eng)
     return eng
 
+
 @pytest.fixture
 def session_factory(engine):
     return sessionmaker(bind=engine)
+
 
 @pytest.fixture
 def service(session_factory):
@@ -65,9 +69,11 @@ def service(session_factory):
         default_zone_id="z1",
     )
 
+
 # ==================================================================
 # Edge Case 1: Branch from non-existent workspace
 # ==================================================================
+
 
 class TestBranchFromNonExistentWorkspace:
     """Branching on a workspace that has no snapshots should still work —
@@ -84,9 +90,11 @@ class TestBranchFromNonExistentWorkspace:
         assert branch.head_snapshot_id is None
         assert branch.fork_point_id is None
 
+
 # ==================================================================
 # Edge Case 2: Merge into self
 # ==================================================================
+
 
 class TestMergeIntoSelf:
     def test_self_merge_raises_state_error(self, service):
@@ -104,9 +112,11 @@ class TestMergeIntoSelf:
         with pytest.raises(BranchStateError, match="Cannot merge a branch into itself"):
             service.merge("/ws", "main", "main")
 
+
 # ==================================================================
 # Edge Case 3: Merge already-merged branch
 # ==================================================================
+
 
 class TestMergeAlreadyMerged:
     def test_merge_merged_branch_raises(self, service, session_factory):
@@ -132,9 +142,11 @@ class TestMergeAlreadyMerged:
         with pytest.raises(BranchStateError, match="already merged"):
             service.merge("/ws", "done", "main")
 
+
 # ==================================================================
 # Edge Case 4: Branch name collisions
 # ==================================================================
+
 
 class TestBranchNameCollisions:
     def test_duplicate_name_raises_exists_error(self, service):
@@ -167,9 +179,11 @@ class TestBranchNameCollisions:
         branch = svc2.create_branch("/ws", "feature")
         assert branch.zone_id == "z2"
 
+
 # ==================================================================
 # Edge Case 5: Checkout with no snapshot
 # ==================================================================
+
 
 class TestCheckoutNoSnapshot:
     def test_checkout_branch_with_no_head(self, service):
@@ -187,9 +201,11 @@ class TestCheckoutNoSnapshot:
         with pytest.raises(BranchStateError, match="status"):
             service.checkout("/ws", "temp")
 
+
 # ==================================================================
 # Edge Case 6: Delete "main" branch
 # ==================================================================
+
 
 class TestDeleteMainBranch:
     def test_delete_main_raises_protected_error(self, service):
@@ -202,9 +218,11 @@ class TestDeleteMainBranch:
         with pytest.raises(BranchProtectedError):
             service.delete_branch("/nonexistent-ws", "main")
 
+
 # ==================================================================
 # Edge Case 7: Circular references (should be impossible)
 # ==================================================================
+
 
 class TestCircularReferences:
     def test_no_circular_by_design(self, service):
@@ -219,9 +237,11 @@ class TestCircularReferences:
         assert branch_b.parent_branch == "a"
         assert branch_b.fork_point_id == branch_a.head_snapshot_id
 
+
 # ==================================================================
 # Edge Case 8: Empty workspace branching
 # ==================================================================
+
 
 class TestEmptyWorkspaceBranching:
     def test_branch_empty_workspace(self, service):

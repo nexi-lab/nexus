@@ -15,6 +15,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+from sqlalchemy import delete, func, select
+
 from nexus.core.exceptions import DatabaseError
 from nexus.storage.sync_store_base import SyncStoreBase
 
@@ -64,8 +66,6 @@ class ChangeLogStore(SyncStoreBase):
         Returns:
             ChangeLogEntry if found, None otherwise
         """
-        from sqlalchemy import select
-
         from nexus.storage.models import BackendChangeLogModel
 
         try:
@@ -162,8 +162,6 @@ class ChangeLogStore(SyncStoreBase):
         Returns:
             Most recent synced_at timestamp, or None if no entries
         """
-        from sqlalchemy import func, select
-
         from nexus.storage.models import BackendChangeLogModel
 
         try:
@@ -194,8 +192,6 @@ class ChangeLogStore(SyncStoreBase):
         Returns:
             Dict mapping path to ChangeLogEntry
         """
-        from sqlalchemy import select
-
         from nexus.storage.models import BackendChangeLogModel
 
         try:
@@ -321,8 +317,6 @@ class ChangeLogStore(SyncStoreBase):
         Returns:
             True if successful, False otherwise
         """
-        from sqlalchemy import delete
-
         from nexus.storage.models import BackendChangeLogModel
 
         try:
@@ -357,8 +351,6 @@ class ChangeLogStore(SyncStoreBase):
         """
         if not paths:
             return True
-
-        from sqlalchemy import delete
 
         from nexus.storage.models import BackendChangeLogModel
 

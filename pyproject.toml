@@ -137,6 +137,12 @@ performance = [
     "fastembed>=0.4.0",
 ]
 
+compression = [
+    # zstd compression for CompressedStorage wrapper (Issue #1705)
+    # Python 3.14+ has native compression.zstd; this is the fallback for 3.12/3.13
+    "zstandard>=0.22.0",
+]
+
 mobile = [
     # GGUF model support via llama.cpp (Issue #1214)
     # For local embedding inference on mobile/edge devices

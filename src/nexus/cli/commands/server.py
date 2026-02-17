@@ -1231,6 +1231,7 @@ def serve(
             from datetime import UTC, datetime, timedelta
 
             from nexus.rebac.entity_registry import EntityRegistry
+            from nexus.raft.zone_manager import ROOT_ZONE_ID
             from nexus.server.auth.database_key import DatabaseAPIKeyAuth
             from nexus.storage.record_store import SQLAlchemyRecordStore
 
@@ -1239,7 +1240,7 @@ def serve(
 
             # Register user in entity registry (for agent permission inheritance)
             entity_registry = EntityRegistry(Session)
-            zone_id = "default"
+            zone_id = ROOT_ZONE_ID
 
             # User might already exist, ignore errors
             try:
@@ -1305,7 +1306,7 @@ def serve(
                         subject=("user", admin_user),
                         relation="direct_owner",
                         object=("file", "/workspace"),
-                        zone_id="default",
+                        zone_id=ROOT_ZONE_ID,
                     )
                     console.print(
                         f"[green]✓[/green] Granted '{admin_user}' ownership of /workspace"

@@ -190,7 +190,7 @@ def _create_wallet_provisioner() -> Any:
     # Shared state for the closure (lazy client)
     _state: dict[str, Any] = {"client": None}
 
-    def _provision_wallet(agent_id: str, zone_id: str = "default") -> None:
+    def _provision_wallet(agent_id: str, zone_id: str = "root") -> None:
         """Create TigerBeetle account for agent. Idempotent."""
         import tigerbeetle as tb
 

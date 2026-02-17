@@ -75,11 +75,8 @@ from nexus.server.path_utils import (
     unscope_internal_path,
     unscope_result,
 )
-from nexus.server.protocol import (
-    RPCErrorCode,
-    RPCRequest,
-    parse_method_params,
-)
+from nexus.core.rpc_types import RPCErrorCode, RPCRequest
+from nexus.server.protocol import parse_method_params
 from nexus.server.rate_limiting import (  # noqa: E402
     RATE_LIMIT_ANONYMOUS,
     RATE_LIMIT_AUTHENTICATED,

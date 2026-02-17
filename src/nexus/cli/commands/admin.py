@@ -87,7 +87,7 @@ def admin() -> None:
 @click.option("--email", help="User email (for documentation purposes)")
 @click.option("--is-admin", is_flag=True, help="Grant admin privileges")
 @click.option("--expires-days", type=int, help="API key expiry in days")
-@click.option("--zone-id", default="default", help="Zone ID (default: 'default')")
+@click.option("--zone-id", default="root", help="Zone ID (default: 'root')")
 @click.option("--subject-type", default="user", help="Subject type: user or agent")
 @click.option("--json-output", is_flag=True, help="Output as JSON")
 @REMOTE_API_KEY_OPTION

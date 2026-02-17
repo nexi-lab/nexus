@@ -502,7 +502,9 @@ class DelegationService:
         if self._reputation_service is None:
             return  # Caller should have checked; defensive no-op
 
-        zone_id = record.zone_id or "default"
+        from nexus.raft.zone_manager import ROOT_ZONE_ID
+
+        zone_id = record.zone_id or ROOT_ZONE_ID
 
         try:
             if outcome == DelegationOutcome.COMPLETED:

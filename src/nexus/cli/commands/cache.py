@@ -44,7 +44,7 @@ def cache_group() -> None:
 @click.option(
     "--hours", type=int, default=24, help="Look back N hours for history-based warmup (default: 24)"
 )
-@click.option("-z", "--zone-id", type=str, default="default", help="Zone ID")
+@click.option("-z", "--zone-id", type=str, default="root", help="Zone ID")
 @add_backend_options
 def warmup(
     path: str,
@@ -357,7 +357,7 @@ def clear(
 
 @cache_group.command(name="hot")
 @click.option("-n", "--limit", type=int, default=20, help="Number of hot files to show")
-@click.option("-z", "--zone-id", type=str, default="default", help="Zone ID")
+@click.option("-z", "--zone-id", type=str, default="root", help="Zone ID")
 @click.option("-u", "--user", type=str, help="Filter by user")
 def hot(
     limit: int,

@@ -5,12 +5,8 @@ from datetime import datetime
 import pytest
 
 from nexus.core.rpc_codec import RPCEncoder, decode_rpc_message, encode_rpc_message
-from nexus.server.protocol import (
-    RPCErrorCode,
-    RPCRequest,
-    RPCResponse,
-    parse_method_params,
-)
+from nexus.core.rpc_types import RPCErrorCode, RPCRequest, RPCResponse
+from nexus.server.protocol import parse_method_params
 
 
 class TestRPCRequest:

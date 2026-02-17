@@ -266,7 +266,7 @@ def list_zones_cmd(
 @click.option(
     "--parent-zone",
     type=str,
-    default="default",
+    default="root",
     show_default=True,
     help="Zone containing the mount point",
 )
@@ -332,7 +332,7 @@ def mount_zone_cmd(
 @click.option(
     "--parent-zone",
     type=str,
-    default="default",
+    default="root",
     show_default=True,
     help="Zone containing the mount point",
 )

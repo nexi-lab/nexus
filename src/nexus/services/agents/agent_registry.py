@@ -506,23 +506,25 @@ class AgentRegistry:
             models = list(session.execute(stmt).scalars().all())
             return [self._model_to_record(m) for m in models]
 
-    def list_by_owner(self, owner_id: str) -> list[AgentRecord]:
+    def list_by_owner(
+        self, owner_id: str, zone_id: str | None = None,
+    ) -> list[AgentRecord]:
         """List agents owned by a user.
 
         Args:
             owner_id: User identifier.
+            zone_id: Optional zone scope for federation isolation.
 
         Returns:
             List of AgentRecord snapshots.
         """
         with self._get_session() as session:
-            models = list(
-                session.execute(
-                    select(AgentRecordModel).where(AgentRecordModel.owner_id == owner_id)
-                )
-                .scalars()
-                .all()
+            stmt = select(AgentRecordModel).where(
+                AgentRecordModel.owner_id == owner_id,
             )
+            if zone_id is not None:
+                stmt = stmt.where(AgentRecordModel.zone_id == zone_id)
+            models = list(session.execute(stmt).scalars().all())
             return [self._model_to_record(m) for m in models]
 
     def validate_ownership(self, agent_id: str, owner_id: str) -> bool:

@@ -151,11 +151,10 @@ def gateway_with_local(local_backend):
 @pytest.fixture
 def write_back_service(gateway_with_local, mock_event_bus, db_session_factory) -> WriteBackService:
     """WriteBackService wired to real local backend."""
-    # Stores expect a gateway-like object with session_factory attribute
     gateway_with_local.session_factory = db_session_factory
-    backlog = SyncBacklogStore(gateway_with_local)
-    change_log = ChangeLogStore(gateway_with_local)
-    conflict_log = ConflictLogStore(gateway_with_local)
+    backlog = SyncBacklogStore(db_session_factory)
+    change_log = ChangeLogStore(db_session_factory)
+    conflict_log = ConflictLogStore(db_session_factory)
 
     return WriteBackService(
         gateway=gateway_with_local,

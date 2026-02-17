@@ -7,14 +7,14 @@ Inherits shared session/dialect logic from SyncStoreBase.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from nexus.storage.sync_store_base import SyncStoreBase
 
 if TYPE_CHECKING:
-    from nexus.services.gateway import NexusFSGateway
     from nexus.storage.models import SyncBacklogModel
 
 logger = logging.getLogger(__name__)
@@ -47,8 +47,8 @@ class SyncBacklogStore(SyncStoreBase):
     Supports upsert coalescing, FIFO fetch, status transitions, and TTL expiry.
     """
 
-    def __init__(self, gateway: NexusFSGateway) -> None:
-        super().__init__(gateway)
+    def __init__(self, session_factory: Callable[..., Any] | None) -> None:
+        super().__init__(session_factory)
 
     def enqueue(
         self,

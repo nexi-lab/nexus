@@ -1432,7 +1432,6 @@ def create_nexus_fs(
             router.register_namespace(ns_config)
     router.add_mount("/", backend, priority=0)
 
-
     # KERNEL-ARCHITECTURE §2: No CacheStore → EventBus disabled.
     # When no real CacheStore is provided (None or NullCacheStore), disable
     # EventBus to prevent creating a standalone Redis/Dragonfly connection

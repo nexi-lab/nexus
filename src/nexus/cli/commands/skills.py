@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+from typing import Any
 from urllib.parse import urlparse
 
 import click

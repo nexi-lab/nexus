@@ -6,7 +6,7 @@ import logging
 import pkgutil
 from pathlib import Path
 
-from nexus.core.exceptions import ParserError
+from nexus.contracts.exceptions import ParserError
 from nexus.core.registry import BaseRegistry
 from nexus.parsers.base import Parser
 

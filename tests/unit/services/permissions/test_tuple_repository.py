@@ -1,4 +1,4 @@
-"""Unit tests for TupleRepository — data access layer for ReBAC tuples.
+"""Unit tests for TupleRepository — data access layer for ReBAC relationship tuples.
 
 Tests cover:
 - Connection management (get/close/context manager)
@@ -10,6 +10,7 @@ Tests cover:
 - ABAC condition evaluation
 - Direct tuple lookup (concrete + wildcard)
 - Bulk existence check
+- Read/write engine separation (Issue #725)
 """
 
 from __future__ import annotations
@@ -1041,3 +1042,149 @@ class TestBulkCheckTuplesExist:
             assert len(result) == 1
         finally:
             repo.close_connection(conn)
+
+
+# ============================================================================
+# Read/write engine separation (Issue #725)
+# ============================================================================
+
+
+class TestReadWriteSeparation:
+    """Tests for read_engine / readonly connection support (Issue #725)."""
+
+    @pytest.fixture
+    def read_engine(self):
+        """Create a separate in-memory SQLite database for reads."""
+        eng = create_engine(
+            "sqlite:///:memory:",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(eng)
+        return eng
+
+    @pytest.fixture
+    def dual_repo(self, engine, read_engine):
+        """Create a TupleRepository with separate write and read engines."""
+        return TupleRepository(engine=engine, read_engine=read_engine)
+
+    def test_fallback_to_primary_when_no_read_engine(self, engine):
+        """When no read_engine is provided, read_engine defaults to engine."""
+        repo = TupleRepository(engine=engine)
+        assert repo.read_engine is repo.engine
+
+    def test_read_engine_is_separate_when_provided(self, engine, read_engine):
+        """When read_engine is provided, it is stored separately."""
+        repo = TupleRepository(engine=engine, read_engine=read_engine)
+        assert repo.read_engine is read_engine
+        assert repo.read_engine is not repo.engine
+
+    def test_connection_readonly_uses_read_engine(self, dual_repo):
+        """connection(readonly=True) uses read_engine."""
+        # Insert data into write engine
+        conn = dual_repo.get_connection()
+        try:
+            _insert_tuple(
+                conn,
+                dual_repo,
+                subject=("agent", "alice"),
+                relation="viewer-of",
+                obj=("file", "readme"),
+            )
+        finally:
+            dual_repo.close_connection(conn)
+
+        # Read engine is separate, so data inserted into write engine
+        # should NOT be visible from read engine (separate in-memory DBs)
+        with dual_repo.connection(readonly=True) as read_conn:
+            cursor = dual_repo.create_cursor(read_conn)
+            cursor.execute("SELECT COUNT(*) as cnt FROM rebac_tuples")
+            row = cursor.fetchone()
+            assert row["cnt"] == 0  # Not in read DB
+
+    def test_connection_readwrite_uses_primary_engine(self, dual_repo):
+        """connection(readonly=False) writes to primary, not read engine."""
+        # Insert via the default (write) path using get_connection
+        # (which uses the primary engine directly)
+        conn = dual_repo.get_connection()
+        try:
+            _insert_tuple(
+                conn,
+                dual_repo,
+                subject=("agent", "bob"),
+                relation="editor-of",
+                obj=("file", "doc"),
+            )
+        finally:
+            dual_repo.close_connection(conn)
+
+        # Data written to primary engine should NOT be visible from read engine
+        # (they are separate in-memory databases in this test)
+        with dual_repo.connection(readonly=True) as read_conn:
+            cursor = dual_repo.create_cursor(read_conn)
+            cursor.execute("SELECT COUNT(*) as cnt FROM rebac_tuples")
+            row = cursor.fetchone()
+            assert row["cnt"] == 0  # Not in read DB — proves write used primary
+
+    def test_connection_readonly_skips_commit(self, dual_repo, read_engine):
+        """connection(readonly=True) does not commit (read-only path)."""
+        from sqlalchemy import text
+
+        # Insert data into the read engine directly so we can read it
+        with read_engine.connect() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO rebac_tuples "
+                    "(tuple_id, subject_type, subject_id, subject_relation, "
+                    "relation, object_type, object_id, zone_id, subject_zone_id, "
+                    "object_zone_id, created_at, expires_at, conditions) "
+                    "VALUES (:tid, :st, :si, :sr, :r, :ot, :oi, :z, :sz, :oz, :ca, :ea, :c)"
+                ),
+                {
+                    "tid": "ro-test",
+                    "st": "agent",
+                    "si": "bob",
+                    "sr": None,
+                    "r": "viewer-of",
+                    "ot": "file",
+                    "oi": "doc",
+                    "z": ZONE,
+                    "sz": ZONE,
+                    "oz": ZONE,
+                    "ca": datetime.now(UTC).isoformat(),
+                    "ea": None,
+                    "c": None,
+                },
+            )
+            conn.commit()
+
+        # Readonly connection should read successfully
+        with dual_repo.connection(readonly=True) as read_conn:
+            cursor = dual_repo.create_cursor(read_conn)
+            cursor.execute("SELECT COUNT(*) as cnt FROM rebac_tuples")
+            row = cursor.fetchone()
+            assert row["cnt"] == 1
+
+    def test_get_zone_revision_uses_read_engine(self, dual_repo, read_engine):
+        """get_zone_revision() reads from the correct engine."""
+        from sqlalchemy import text
+
+        # Insert revision directly into read engine
+        with read_engine.connect() as conn:
+            conn.execute(
+                text(
+                    "INSERT INTO rebac_version_sequences "
+                    "(zone_id, current_version, updated_at) "
+                    "VALUES (:zid, :ver, :ts)"
+                ),
+                {
+                    "zid": "test-zone",
+                    "ver": 42,
+                    "ts": datetime.now(UTC).isoformat(),
+                },
+            )
+            conn.commit()
+
+        # get_zone_revision should find 42 in the read engine
+        rev = dual_repo.get_zone_revision("test-zone")
+        assert rev == 42

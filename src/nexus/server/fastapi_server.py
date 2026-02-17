@@ -415,10 +415,7 @@ async def lifespan(_app: FastAPI) -> Any:
             segment_size_bytes=segment_size,
             sync_mode=sync_mode,  # type: ignore[arg-type]
         )
-        _app.state.event_log = create_event_log(
-            event_log_config,
-            session_factory=getattr(_app.state, "session_factory", None),
-        )
+        _app.state.event_log = create_event_log(event_log_config)
         if _app.state.event_log:
             logger.info(f"Event log initialized (wal_dir={wal_dir}, sync_mode={sync_mode})")
     except Exception as e:
@@ -767,11 +764,11 @@ async def lifespan(_app: FastAPI) -> Any:
 
             # Reuse OAuthCrypto for Fernet encryption of private keys
             _db_url = _app.state.database_url or "sqlite:///nexus.db"
-            _identity_oauth_crypto = OAuthCrypto(db_url=_db_url)
+            _identity_oauth_crypto = OAuthCrypto()
             _identity_crypto = IdentityCrypto(oauth_crypto=_identity_oauth_crypto)
 
             _app.state.key_service = KeyService(
-                session_factory=_app.state.nexus_fs.SessionLocal,
+                record_store=_app.state.nexus_fs.record_store,
                 crypto=_identity_crypto,
             )
             # Inject into NexusFS for register_agent integration

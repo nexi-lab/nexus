@@ -87,6 +87,7 @@ class DelegationService:
         self._entity_registry = entity_registry
         self._agent_registry: AgentRegistry | None = agent_registry
         self._reputation_service = reputation_service
+        self.zone_id: str | None = None
         logger.info("[DelegationService] Initialized")
 
     @contextmanager
@@ -360,6 +361,8 @@ class DelegationService:
             stmt = select(DelegationRecordModel).where(
                 DelegationRecordModel.parent_agent_id == parent_agent_id
             )
+            if self.zone_id is not None:
+                stmt = stmt.where(DelegationRecordModel.zone_id == self.zone_id)
             if status_filter is not None:
                 stmt = stmt.where(DelegationRecordModel.status == status_filter.value)
 
@@ -383,15 +386,12 @@ class DelegationService:
         from nexus.storage.models.agents import DelegationRecordModel
 
         with self._session(commit=False) as session:
-            row = (
-                session.execute(
-                    select(DelegationRecordModel).where(
-                        DelegationRecordModel.delegation_id == delegation_id
-                    )
-                )
-                .scalars()
-                .first()
+            stmt = select(DelegationRecordModel).where(
+                DelegationRecordModel.delegation_id == delegation_id
             )
+            if self.zone_id is not None:
+                stmt = stmt.where(DelegationRecordModel.zone_id == self.zone_id)
+            row = session.execute(stmt).scalars().first()
             if row is None:
                 return None
             return self._model_to_record(row)
@@ -403,16 +403,13 @@ class DelegationService:
         from nexus.storage.models.agents import DelegationRecordModel
 
         with self._session(commit=False) as session:
-            row = (
-                session.execute(
-                    select(DelegationRecordModel).where(
-                        DelegationRecordModel.agent_id == agent_id,
-                        DelegationRecordModel.status == DelegationStatus.ACTIVE.value,
-                    )
-                )
-                .scalars()
-                .first()
+            stmt = select(DelegationRecordModel).where(
+                DelegationRecordModel.agent_id == agent_id,
+                DelegationRecordModel.status == DelegationStatus.ACTIVE.value,
             )
+            if self.zone_id is not None:
+                stmt = stmt.where(DelegationRecordModel.zone_id == self.zone_id)
+            row = session.execute(stmt).scalars().first()
             if row is None:
                 return None
             return self._model_to_record(row)
@@ -775,16 +772,13 @@ class DelegationService:
         from nexus.storage.models.auth import APIKeyModel
 
         with self._session() as session:
-            keys = (
-                session.execute(
-                    select(APIKeyModel).where(
-                        APIKeyModel.subject_type == "agent",
-                        APIKeyModel.subject_id == worker_id,
-                    )
-                )
-                .scalars()
-                .all()
+            stmt = select(APIKeyModel).where(
+                APIKeyModel.subject_type == "agent",
+                APIKeyModel.subject_id == worker_id,
             )
+            if self.zone_id is not None:
+                stmt = stmt.where(APIKeyModel.zone_id == self.zone_id)
+            keys = session.execute(stmt).scalars().all()
             for key in keys:
                 revoke_api_key(session, key.key_id)
 
@@ -795,11 +789,14 @@ class DelegationService:
         from nexus.storage.models.agents import DelegationRecordModel
 
         with self._session() as session:
-            result = session.execute(
+            stmt = (
                 update(DelegationRecordModel)
                 .where(DelegationRecordModel.delegation_id == delegation_id)
                 .values(status=status.value)
             )
+            if self.zone_id is not None:
+                stmt = stmt.where(DelegationRecordModel.zone_id == self.zone_id)
+            result = session.execute(stmt)
             rows_updated = result.rowcount
             if rows_updated == 0:
                 raise DelegationNotFoundError(f"Delegation {delegation_id} not found")
@@ -811,15 +808,12 @@ class DelegationService:
         from nexus.storage.models.agents import DelegationRecordModel
 
         with self._session(commit=False) as session:
-            row = (
-                session.execute(
-                    select(DelegationRecordModel).where(
-                        DelegationRecordModel.delegation_id == delegation_id
-                    )
-                )
-                .scalars()
-                .first()
+            stmt = select(DelegationRecordModel).where(
+                DelegationRecordModel.delegation_id == delegation_id
             )
+            if self.zone_id is not None:
+                stmt = stmt.where(DelegationRecordModel.zone_id == self.zone_id)
+            row = session.execute(stmt).scalars().first()
             if row is None:
                 return None
             return self._model_to_record(row)

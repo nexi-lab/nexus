@@ -65,7 +65,7 @@ def _get_tracer() -> Any:
         return _tracer
     _tracer_resolved = True
     try:
-        from nexus.server.telemetry import get_tracer
+        from nexus.utils.telemetry import get_tracer
 
         _tracer = get_tracer("nexus.brick_lifecycle")
     except Exception:

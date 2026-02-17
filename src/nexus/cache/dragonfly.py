@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 # Redis client is optional - only imported if Dragonfly is configured
 try:
     import redis.asyncio as redis
-    from redis.asyncio import BlockingConnectionPool, ConnectionPool
+    from redis.asyncio import BlockingConnectionPool
     from redis.backoff import ExponentialBackoff
     from redis.retry import Retry
 
@@ -41,7 +41,6 @@ except ImportError:
     REDIS_AVAILABLE = False
     redis = None  # type: ignore
     BlockingConnectionPool = None  # type: ignore
-    ConnectionPool = None  # type: ignore
 
 
 class DragonflyClient:

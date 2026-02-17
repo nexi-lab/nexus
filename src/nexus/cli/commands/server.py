@@ -1230,8 +1230,8 @@ def serve(
 
             from datetime import UTC, datetime, timedelta
 
-            from nexus.rebac.entity_registry import EntityRegistry
             from nexus.raft.zone_manager import ROOT_ZONE_ID
+            from nexus.rebac.entity_registry import EntityRegistry
             from nexus.server.auth.database_key import DatabaseAPIKeyAuth
             from nexus.storage.record_store import SQLAlchemyRecordStore
 

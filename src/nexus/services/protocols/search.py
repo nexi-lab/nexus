@@ -33,54 +33,36 @@ if TYPE_CHECKING:
 class SearchBrickProtocol(Protocol):
     """Brick contract for search operations (Issue #1520).
 
-    This is the **external brick API** — the interface that the search brick
-    exposes to the kernel/services layer. The kernel interacts with search
-    exclusively through this protocol.
+    Defines the interface that search brick implementations must satisfy.
+    ``SearchDaemon`` is the canonical implementation.
 
-    Layering:
-        SearchBrickProtocol = brick API (this protocol)
-        SearchProtocol      = kernel service adapter (see below)
-
-    The SearchService in nexus.services implements SearchProtocol and
-    delegates to an object satisfying SearchBrickProtocol internally.
+    Used by the kernel/services layer to interact with the search brick
+    without hard-coupling to its internals.
     """
+
+    @property
+    def is_initialized(self) -> bool: ...
+
+    async def startup(self) -> None: ...
+
+    async def shutdown(self) -> None: ...
 
     async def search(
         self,
         query: str,
-        *,
+        search_type: str = "hybrid",
         limit: int = 10,
         path_filter: str | None = None,
-        search_mode: str = "hybrid",
+        alpha: float = 0.5,
+        fusion_method: str = "rrf",
+        adaptive_k: bool = False,
     ) -> builtins.list[Any]: ...
 
-    async def index_document(
-        self,
-        path: str,
-        content: str,
-        *,
-        zone_id: str | None = None,
-    ) -> int: ...
+    def get_stats(self) -> dict[str, Any]: ...
 
-    async def index_directory(
-        self,
-        path: str = "/",
-    ) -> dict[str, int]: ...
+    def get_health(self) -> dict[str, Any]: ...
 
-    async def delete_document_index(
-        self,
-        path: str,
-    ) -> None: ...
-
-    async def get_index_stats(self) -> dict[str, Any]: ...
-
-    async def get_stats(self) -> dict[str, Any]: ...
-
-    async def initialize(self) -> None: ...
-
-    async def shutdown(self) -> None: ...
-
-    def verify_imports(self) -> dict[str, bool]: ...
+    async def notify_file_change(self, path: str, change_type: str = "update") -> None: ...
 
 
 # =============================================================================

@@ -113,7 +113,7 @@ if TYPE_CHECKING:
     from nexus.core._metadata_generated import FileMetadataProtocol
     from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter
-    from nexus.services.permissions.enforcer import PermissionEnforcer
+    from nexus.rebac.enforcer import PermissionEnforcer
     from nexus.rebac.manager import EnhancedReBACManager
 
 

@@ -406,7 +406,7 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
         entity_registry = EntityRegistry(ctx.session_factory)
 
         # --- Permission Enforcer ---
-        from nexus.services.permissions.enforcer import PermissionEnforcer
+        from nexus.rebac.enforcer import PermissionEnforcer
 
         permission_enforcer = PermissionEnforcer(
             metadata_store=ctx.metadata_store,

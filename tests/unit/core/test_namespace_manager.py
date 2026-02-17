@@ -20,7 +20,7 @@ import pytest
 from sqlalchemy import create_engine
 
 from nexus.core.permissions import OperationContext, Permission
-from nexus.services.permissions.enforcer import PermissionEnforcer
+from nexus.rebac.enforcer import PermissionEnforcer
 from nexus.services.permissions.namespace_manager import (
     MountEntry,
     NamespaceManager,

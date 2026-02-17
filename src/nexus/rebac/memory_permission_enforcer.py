@@ -17,7 +17,7 @@ from nexus.core.permissions import OperationContext, Permission
 from nexus.rebac.entity_registry import EntityRegistry
 from nexus.rebac.utils.zone import normalize_zone_id
 from nexus.services.memory.memory_router import MemoryViewRouter
-from nexus.services.permissions.enforcer import PermissionEnforcer
+from nexus.rebac.enforcer import PermissionEnforcer
 from nexus.storage.models import MemoryModel
 
 if TYPE_CHECKING:

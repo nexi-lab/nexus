@@ -25,6 +25,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Generator
+from contextlib import contextmanager
 from graphlib import CycleError, TopologicalSorter
 from typing import Any
 
@@ -41,13 +43,69 @@ from nexus.services.protocols.brick_lifecycle import (
 from nexus.services.protocols.hook_engine import (
     HookContext,
     HookEngineProtocol,
-    HookResult,
 )
 
 logger = logging.getLogger(__name__)
 
 # Default timeout for brick.start() in seconds
 DEFAULT_START_TIMEOUT: float = 5.0
+
+
+# ---------------------------------------------------------------------------
+# OTel tracing — zero-overhead when telemetry is not enabled
+# ---------------------------------------------------------------------------
+
+_tracer: Any = None
+_tracer_resolved: bool = False
+
+
+def _get_tracer() -> Any:
+    """Lazy-resolve the OTel tracer (returns None if unavailable)."""
+    global _tracer, _tracer_resolved  # noqa: PLW0603
+    if _tracer_resolved:
+        return _tracer
+    _tracer_resolved = True
+    try:
+        from nexus.server.telemetry import get_tracer
+
+        _tracer = get_tracer("nexus.brick_lifecycle")
+    except Exception:
+        _tracer = None
+    return _tracer
+
+
+@contextmanager
+def _lifecycle_span(
+    operation: str, brick_name: str, **attrs: Any
+) -> Generator[Any, None, None]:
+    """Context manager for a brick lifecycle OTel span.
+
+    Zero-overhead: if no tracer, yields None immediately.
+    """
+    tracer = _get_tracer()
+    if tracer is None:
+        yield None
+        return
+    with tracer.start_as_current_span(f"brick.{operation}") as span:
+        span.set_attribute("brick.name", brick_name)
+        for k, v in attrs.items():
+            span.set_attribute(f"brick.{k}", v)
+        yield span
+
+
+def _record_span_result(span: Any, *, state: str, error: str | None = None) -> None:
+    """Record final state and optional error on a span."""
+    if span is None:
+        return
+    span.set_attribute("brick.state", state)
+    if error:
+        span.set_attribute("brick.error", error)
+        try:
+            from opentelemetry.trace import StatusCode
+
+            span.set_status(StatusCode.ERROR, error)
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -414,39 +472,46 @@ class BrickLifecycleManager:
         If PRE_MOUNT vetoes, brick transitions to FAILED.
         If start() fails, POST_MOUNT is NOT fired.
         """
-        # Fire PRE_MOUNT hook — may veto
-        if not await self._fire_hook(PRE_MOUNT, entry):
-            return  # Vetoed — entry already marked FAILED
+        with _lifecycle_span(
+            "mount", entry.name, protocol=entry.protocol_name, timeout=str(timeout)
+        ) as span:
+            # Fire PRE_MOUNT hook — may veto
+            if not await self._fire_hook(PRE_MOUNT, entry):
+                _record_span_result(span, state="FAILED", error="Vetoed by PRE_MOUNT hook")
+                return  # Vetoed — entry already marked FAILED
 
-        # Transition: REGISTERED → STARTING
-        self._transition(entry.name, "mount")
+            # Transition: REGISTERED → STARTING
+            self._transition(entry.name, "mount")
 
-        is_lifecycle = isinstance(entry.instance, BrickLifecycleProtocol)
+            is_lifecycle = isinstance(entry.instance, BrickLifecycleProtocol)
 
-        if is_lifecycle:
-            try:
-                await asyncio.wait_for(entry.instance.start(), timeout=timeout)
+            if is_lifecycle:
+                try:
+                    await asyncio.wait_for(entry.instance.start(), timeout=timeout)
+                    self._transition(entry.name, "started")
+                    entry.started_at = time.monotonic()
+                    logger.info("[LIFECYCLE] Brick %r mounted (ACTIVE)", entry.name)
+                except TimeoutError:
+                    entry.error = f"Timeout after {timeout}s during start()"
+                    self._transition(entry.name, "failed")
+                    logger.warning("[LIFECYCLE] Brick %r FAILED: %s", entry.name, entry.error)
+                    _record_span_result(span, state="FAILED", error=entry.error)
+                    return  # Don't fire POST_MOUNT on failure
+                except Exception as exc:
+                    entry.error = str(exc)
+                    self._transition(entry.name, "failed")
+                    logger.warning("[LIFECYCLE] Brick %r FAILED: %s", entry.name, entry.error)
+                    _record_span_result(span, state="FAILED", error=entry.error)
+                    return  # Don't fire POST_MOUNT on failure
+            else:
+                # Stateless brick — skip start(), go directly to ACTIVE
                 self._transition(entry.name, "started")
                 entry.started_at = time.monotonic()
-                logger.info("[LIFECYCLE] Brick %r mounted (ACTIVE)", entry.name)
-            except asyncio.TimeoutError:
-                entry.error = f"Timeout after {timeout}s during start()"
-                self._transition(entry.name, "failed")
-                logger.warning("[LIFECYCLE] Brick %r FAILED: %s", entry.name, entry.error)
-                return  # Don't fire POST_MOUNT on failure
-            except Exception as exc:
-                entry.error = str(exc)
-                self._transition(entry.name, "failed")
-                logger.warning("[LIFECYCLE] Brick %r FAILED: %s", entry.name, entry.error)
-                return  # Don't fire POST_MOUNT on failure
-        else:
-            # Stateless brick — skip start(), go directly to ACTIVE
-            self._transition(entry.name, "started")
-            entry.started_at = time.monotonic()
-            logger.info("[LIFECYCLE] Brick %r mounted (ACTIVE, stateless)", entry.name)
+                logger.info("[LIFECYCLE] Brick %r mounted (ACTIVE, stateless)", entry.name)
 
-        # Fire POST_MOUNT hook (informational — no veto check)
-        await self._fire_hook(POST_MOUNT, entry)
+            # Fire POST_MOUNT hook (informational — no veto check)
+            await self._fire_hook(POST_MOUNT, entry)
+            _record_span_result(span, state=entry.state.value)
 
     async def unmount(self, name: str) -> None:
         """Unmount a single brick: ACTIVE → STOPPING → UNREGISTERED.
@@ -475,34 +540,38 @@ class BrickLifecycleManager:
         If PRE_UNMOUNT vetoes, brick stays ACTIVE.
         If stop() fails, POST_UNMOUNT is NOT fired.
         """
-        # Fire PRE_UNMOUNT hook — may veto (brick stays ACTIVE)
-        if not await self._fire_hook(PRE_UNMOUNT, entry, veto_keeps_current=True):
-            return  # Vetoed — brick stays in current state
+        with _lifecycle_span("unmount", entry.name, protocol=entry.protocol_name) as span:
+            # Fire PRE_UNMOUNT hook — may veto (brick stays ACTIVE)
+            if not await self._fire_hook(PRE_UNMOUNT, entry, veto_keeps_current=True):
+                _record_span_result(span, state="ACTIVE", error="Vetoed by PRE_UNMOUNT hook")
+                return  # Vetoed — brick stays in current state
 
-        # Transition: ACTIVE → STOPPING
-        self._transition(entry.name, "unmount")
+            # Transition: ACTIVE → STOPPING
+            self._transition(entry.name, "unmount")
 
-        is_lifecycle = isinstance(entry.instance, BrickLifecycleProtocol)
+            is_lifecycle = isinstance(entry.instance, BrickLifecycleProtocol)
 
-        if is_lifecycle:
-            try:
-                await entry.instance.stop()
+            if is_lifecycle:
+                try:
+                    await entry.instance.stop()
+                    self._transition(entry.name, "stopped")
+                    entry.stopped_at = time.monotonic()
+                    logger.info("[LIFECYCLE] Brick %r unmounted (UNREGISTERED)", entry.name)
+                except Exception as exc:
+                    entry.error = str(exc)
+                    self._transition(entry.name, "failed")
+                    logger.warning("[LIFECYCLE] Brick %r FAILED during stop: %s", entry.name, exc)
+                    _record_span_result(span, state="FAILED", error=entry.error)
+                    return  # Don't fire POST_UNMOUNT on failure
+            else:
+                # Stateless brick — skip stop()
                 self._transition(entry.name, "stopped")
                 entry.stopped_at = time.monotonic()
-                logger.info("[LIFECYCLE] Brick %r unmounted (UNREGISTERED)", entry.name)
-            except Exception as exc:
-                entry.error = str(exc)
-                self._transition(entry.name, "failed")
-                logger.warning("[LIFECYCLE] Brick %r FAILED during stop: %s", entry.name, exc)
-                return  # Don't fire POST_UNMOUNT on failure
-        else:
-            # Stateless brick — skip stop()
-            self._transition(entry.name, "stopped")
-            entry.stopped_at = time.monotonic()
-            logger.info("[LIFECYCLE] Brick %r unmounted (UNREGISTERED, stateless)", entry.name)
+                logger.info("[LIFECYCLE] Brick %r unmounted (UNREGISTERED, stateless)", entry.name)
 
-        # Fire POST_UNMOUNT hook (informational)
-        await self._fire_hook(POST_UNMOUNT, entry)
+            # Fire POST_UNMOUNT hook (informational)
+            await self._fire_hook(POST_UNMOUNT, entry)
+            _record_span_result(span, state=entry.state.value)
 
     # ------------------------------------------------------------------
     # Mount all / unmount all (DAG-ordered, concurrent per level)

@@ -11,12 +11,9 @@ from __future__ import annotations
 
 import logging
 import threading
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    from nexus.services.gateway import NexusFSGateway
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -29,20 +26,20 @@ class SyncStoreBase:
     - _detect_dialect(): Cached, thread-safe PostgreSQL detection
     """
 
-    def __init__(self, gateway: NexusFSGateway) -> None:
-        """Initialize with gateway for database access.
+    def __init__(self, session_factory: Callable[..., Any] | None) -> None:
+        """Initialize with a session factory for database access.
 
         Args:
-            gateway: NexusFSGateway for session factory access
+            session_factory: SQLAlchemy session factory callable.
         """
-        self._gw = gateway
+        self._session_factory = session_factory
         self._is_postgres: bool | None = None
         self._dialect_lock = threading.Lock()
 
     def _get_session(self) -> Any:
-        """Get a database session from the gateway."""
-        if hasattr(self._gw, "session_factory") and self._gw.session_factory is not None:
-            return self._gw.session_factory()
+        """Get a database session from the session factory."""
+        if self._session_factory is not None:
+            return self._session_factory()
         return None
 
     def _detect_dialect(self) -> bool:
@@ -132,10 +129,10 @@ class SyncStoreBase:
             RuntimeError: If no session factory is available
             DatabaseError: On SQLAlchemy failures (translated from SA errors)
         """
-        if not hasattr(self._gw, "session_factory") or self._gw.session_factory is None:
+        if self._session_factory is None:
             raise RuntimeError("No database session factory available")
 
         from nexus.storage.session_scope import session_scope
 
-        with session_scope(self._gw.session_factory) as session:
+        with session_scope(self._session_factory) as session:
             yield session

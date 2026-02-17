@@ -117,8 +117,8 @@ class TestWriteBackIntegration:
     ):
         """Full flow: event -> enqueue -> process -> backend write -> change log update."""
         # Setup stores with real SQLite
-        backlog_store = SyncBacklogStore(mock_gateway)
-        change_log_store = ChangeLogStore(mock_gateway)
+        backlog_store = SyncBacklogStore(mock_gateway.session_factory)
+        change_log_store = ChangeLogStore(mock_gateway.session_factory)
 
         service = WriteBackService(
             gateway=mock_gateway,
@@ -180,8 +180,8 @@ class TestWriteBackIntegration:
     @pytest.mark.asyncio
     async def test_multiple_writes_coalesce_in_backlog(self, mock_gateway, mock_event_bus):
         """Multiple writes to same path coalesce into single backlog entry."""
-        backlog_store = SyncBacklogStore(mock_gateway)
-        change_log_store = ChangeLogStore(mock_gateway)
+        backlog_store = SyncBacklogStore(mock_gateway.session_factory)
+        change_log_store = ChangeLogStore(mock_gateway.session_factory)
 
         service = WriteBackService(
             gateway=mock_gateway,
@@ -217,9 +217,9 @@ class TestConflictIntegration:
     @pytest.mark.asyncio
     async def test_keep_newer_nexus_wins_with_real_stores(self, mock_gateway, mock_event_bus):
         """KEEP_NEWER: Nexus newer -> write proceeds, conflict logged."""
-        backlog_store = SyncBacklogStore(mock_gateway)
-        change_log_store = ChangeLogStore(mock_gateway)
-        conflict_log_store = ConflictLogStore(mock_gateway)
+        backlog_store = SyncBacklogStore(mock_gateway.session_factory)
+        change_log_store = ChangeLogStore(mock_gateway.session_factory)
+        conflict_log_store = ConflictLogStore(mock_gateway.session_factory)
 
         service = WriteBackService(
             gateway=mock_gateway,
@@ -275,9 +275,9 @@ class TestConflictIntegration:
     @pytest.mark.asyncio
     async def test_keep_newer_backend_wins_with_real_stores(self, mock_gateway, mock_event_bus):
         """KEEP_NEWER: Backend newer -> write skipped, conflict logged."""
-        backlog_store = SyncBacklogStore(mock_gateway)
-        change_log_store = ChangeLogStore(mock_gateway)
-        conflict_log_store = ConflictLogStore(mock_gateway)
+        backlog_store = SyncBacklogStore(mock_gateway.session_factory)
+        change_log_store = ChangeLogStore(mock_gateway.session_factory)
+        conflict_log_store = ConflictLogStore(mock_gateway.session_factory)
 
         service = WriteBackService(
             gateway=mock_gateway,
@@ -335,9 +335,9 @@ class TestConflictIntegration:
         self, mock_gateway, mock_event_bus
     ):
         """RENAME_CONFLICT: creates copy and proceeds with real stores."""
-        backlog_store = SyncBacklogStore(mock_gateway)
-        change_log_store = ChangeLogStore(mock_gateway)
-        conflict_log_store = ConflictLogStore(mock_gateway)
+        backlog_store = SyncBacklogStore(mock_gateway.session_factory)
+        change_log_store = ChangeLogStore(mock_gateway.session_factory)
+        conflict_log_store = ConflictLogStore(mock_gateway.session_factory)
 
         service = WriteBackService(
             gateway=mock_gateway,
@@ -400,9 +400,9 @@ class TestConflictIntegration:
         """Full conflict lifecycle: enqueue -> detect -> auto-resolve -> log -> query -> manual resolve."""
         from nexus.services.conflict_resolution import ConflictStatus, ResolutionOutcome
 
-        backlog_store = SyncBacklogStore(mock_gateway)
-        change_log_store = ChangeLogStore(mock_gateway)
-        conflict_log_store = ConflictLogStore(mock_gateway)
+        backlog_store = SyncBacklogStore(mock_gateway.session_factory)
+        change_log_store = ChangeLogStore(mock_gateway.session_factory)
+        conflict_log_store = ConflictLogStore(mock_gateway.session_factory)
 
         service = WriteBackService(
             gateway=mock_gateway,
@@ -479,8 +479,8 @@ class TestMultiZoneIntegration:
         self, mock_gateway, mock_event_bus
     ):
         """Events from different zones create separate backlog entries."""
-        backlog_store = SyncBacklogStore(mock_gateway)
-        change_log_store = ChangeLogStore(mock_gateway)
+        backlog_store = SyncBacklogStore(mock_gateway.session_factory)
+        change_log_store = ChangeLogStore(mock_gateway.session_factory)
 
         service = WriteBackService(
             gateway=mock_gateway,

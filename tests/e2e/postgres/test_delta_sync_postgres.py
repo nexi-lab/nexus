@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import os
 from datetime import UTC, datetime
-from unittest.mock import MagicMock
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -86,9 +85,7 @@ def pg_session_factory(pg_engine):
 @pytest.fixture()
 def store(pg_session_factory):
     """Create a ChangeLogStore backed by real PostgreSQL."""
-    gateway = MagicMock()
-    gateway.session_factory = pg_session_factory
-    return ChangeLogStore(gateway)
+    return ChangeLogStore(pg_session_factory)
 
 
 @pytest.fixture(autouse=True)

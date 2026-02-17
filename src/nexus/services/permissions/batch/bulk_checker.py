@@ -657,7 +657,7 @@ class BulkPermissionChecker:
         results: dict[tuple[tuple[str, str], str, tuple[str, str]], bool],
     ) -> bool:
         """Phase 2a: Try Rust acceleration. Returns True if successful."""
-        from nexus.services.permissions.rebac_fast import (
+        from nexus.services.permissions.utils.fast import (
             check_permissions_bulk_with_fallback,
             is_rust_available,
         )

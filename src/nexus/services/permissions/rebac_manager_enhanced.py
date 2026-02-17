@@ -854,7 +854,7 @@ class EnhancedReBACManager(ReBACManager):
 
         # Try Rust acceleration first (has proper memoization, prevents timeout)
         try:
-            from nexus.services.permissions.rebac_fast import (
+            from nexus.services.permissions.utils.fast import (
                 check_permission_single_rust,
                 is_rust_available,
             )
@@ -2876,7 +2876,7 @@ class EnhancedReBACManager(ReBACManager):
         """
         import time as time_module
 
-        from nexus.services.permissions.rebac_fast import (
+        from nexus.services.permissions.utils.fast import (
             RUST_AVAILABLE,
             list_objects_for_subject_rust,
         )

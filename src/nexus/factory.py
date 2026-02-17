@@ -1423,10 +1423,11 @@ def create_nexus_fs(
 
         services = _dc_replace(services, workflow_engine=workflow_engine)
 
-    # Create parse callback for virtual views (Issue #668: factory creates services)
-    from nexus.parsers import create_default_parse_fn
+    # Create ParsersBrick — owns both registries (Issue #1523)
+    from nexus.parsers.brick import ParsersBrick
 
-    _parse_fn = create_default_parse_fn()
+    parsers_brick = ParsersBrick(parsing_config=parsing)
+    _parse_fn = parsers_brick.create_parse_fn()
 
     nx = NexusFS(
         backend=backend,
@@ -1442,6 +1443,8 @@ def create_nexus_fs(
         parsing=parsing,
         services=services,
         parse_fn=_parse_fn,
+        parser_registry=parsers_brick.parser_registry,
+        provider_registry=parsers_brick.provider_registry,
     )
 
     # Post-construction I/O (mount restoration, etc.)

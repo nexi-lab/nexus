@@ -53,6 +53,7 @@ from nexus.contracts.exceptions import (
     UploadOffsetMismatchError,
     ValidationError,
 )
+from nexus.contracts.registry import BaseRegistry, BrickInfo, BrickRegistry
 from nexus.contracts.types import (
     ContextIdentity,
     OperationContext,
@@ -61,6 +62,10 @@ from nexus.contracts.types import (
 )
 
 __all__ = [
+    # Registry
+    "BaseRegistry",
+    "BrickInfo",
+    "BrickRegistry",
     # Types
     "ContextIdentity",
     "OperationContext",

@@ -16,6 +16,15 @@ import structlog
 
 logger = structlog.get_logger(__name__)
 
+# Issue 3B: 64KB recv buffer to handle large file reads without O(n) loop
+# iterations. 4KB was causing hundreds of loop iterations for multi-MB files.
+_RECV_BUFFER_SIZE = 65536
+
+# Issue 2A: Daemon auto-restart configuration
+_MAX_RESTART_ATTEMPTS = 3
+_INITIAL_BACKOFF_SECS = 0.5
+_MAX_BACKOFF_SECS = 4.0
+
 
 @dataclass
 class FileEntry:
@@ -43,6 +52,9 @@ class RustFUSEClient:
 
     The Rust daemon provides high-performance file operations while Python
     handles permissions, namespaces, and orchestration.
+
+    Issue 2A: Includes automatic daemon restart with exponential backoff
+    if the daemon process dies unexpectedly.
     """
 
     def __init__(
@@ -68,6 +80,7 @@ class RustFUSEClient:
         self.socket_path: Path | None = None
         self.sock: socket.socket | None = None
         self.request_id = 0
+        self._restart_count = 0
 
         self._start_daemon()
         self._connect()
@@ -156,8 +169,73 @@ class RustFUSEClient:
         self.sock.connect(str(self.socket_path))
         logger.info("Connected to Rust daemon", socket_path=self.socket_path)
 
+    def _is_daemon_alive(self) -> bool:
+        """Check if the daemon process is still running."""
+        if self.daemon_process is None:
+            return False
+        return self.daemon_process.poll() is None
+
+    def _reconnect(self) -> None:
+        """Issue 2A: Restart daemon with exponential backoff.
+
+        Called when the daemon crashes or the socket connection breaks.
+        Uses exponential backoff to avoid hammering a failing daemon.
+
+        Raises:
+            RuntimeError: If max restart attempts exceeded
+        """
+        if self._restart_count >= _MAX_RESTART_ATTEMPTS:
+            raise RuntimeError(
+                f"Rust daemon failed {_MAX_RESTART_ATTEMPTS} times, giving up. "
+                "Falling back to Python FUSE operations."
+            )
+
+        backoff = min(
+            _INITIAL_BACKOFF_SECS * (2 ** self._restart_count),
+            _MAX_BACKOFF_SECS,
+        )
+        self._restart_count += 1
+
+        logger.warning(
+            "Rust daemon died, restarting",
+            attempt=self._restart_count,
+            max_attempts=_MAX_RESTART_ATTEMPTS,
+            backoff_secs=backoff,
+        )
+
+        # Cleanup old connection
+        if self.sock:
+            try:
+                self.sock.close()
+            except OSError:
+                pass
+            self.sock = None
+
+        if self.daemon_process:
+            try:
+                self.daemon_process.kill()
+                self.daemon_process.wait(timeout=2)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+            self.daemon_process = None
+
+        if self.socket_path and self.socket_path.exists():
+            try:
+                self.socket_path.unlink()
+            except OSError:
+                pass
+
+        time.sleep(backoff)
+
+        self._start_daemon()
+        self._connect()
+        logger.info("Rust daemon restarted successfully", attempt=self._restart_count)
+
     def _send_request(self, method: str, params: dict) -> dict:
         """Send JSON-RPC request to Rust daemon.
+
+        Issue 2A: Automatically reconnects if daemon has died.
+        Issue 3B: Uses 64KB recv buffer for better large-file performance.
 
         Args:
             method: RPC method name
@@ -167,8 +245,12 @@ class RustFUSEClient:
             Result from Rust daemon
 
         Raises:
-            RuntimeError: If request fails
+            RuntimeError: If request fails after reconnect attempts
         """
+        # Issue 2A: Check daemon health before sending
+        if not self._is_daemon_alive():
+            self._reconnect()
+
         self.request_id += 1
         request = {
             "jsonrpc": "2.0",
@@ -177,29 +259,51 @@ class RustFUSEClient:
             "params": params,
         }
 
-        # Send request
         request_json = json.dumps(request) + "\n"
         if not self.sock:
             raise RuntimeError("Not connected to daemon")
-        self.sock.sendall(request_json.encode())
 
-        # Receive response
-        response_data = b""
-        while True:
-            chunk = self.sock.recv(4096)
-            if not chunk:
-                raise RuntimeError("Connection closed by daemon")
-            response_data += chunk
-            if b"\n" in response_data:
-                break
+        try:
+            self.sock.sendall(request_json.encode())
+
+            # Issue 3B: Receive response with larger buffer (64KB vs old 4KB)
+            response_data = b""
+            while True:
+                chunk = self.sock.recv(_RECV_BUFFER_SIZE)
+                if not chunk:
+                    raise RuntimeError("Connection closed by daemon")
+                response_data += chunk
+                if b"\n" in response_data:
+                    break
+        except (ConnectionError, BrokenPipeError, OSError) as e:
+            # Issue 2A: Connection lost — try reconnecting and retrying once
+            logger.warning(f"Daemon connection lost during {method}: {e}")
+            self._reconnect()
+
+            # Retry the request on the new connection
+            if not self.sock:
+                raise RuntimeError("Reconnection failed") from e
+            self.sock.sendall(request_json.encode())
+
+            response_data = b""
+            while True:
+                chunk = self.sock.recv(_RECV_BUFFER_SIZE)
+                if not chunk:
+                    raise RuntimeError("Connection closed after reconnect")
+                response_data += chunk
+                if b"\n" in response_data:
+                    break
 
         response = json.loads(response_data.decode())
+
+        # Reset restart counter on successful request
+        self._restart_count = 0
 
         # Check for errors
         if "error" in response:
             error = response["error"]
-            errno = error.get("data", {}).get("errno", 5)  # Default to EIO
-            raise OSError(errno, error["message"])
+            error_errno = error.get("data", {}).get("errno", 5)  # Default to EIO
+            raise OSError(error_errno, error["message"])
 
         return response.get("result", {})
 

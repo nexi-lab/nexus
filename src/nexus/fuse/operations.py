@@ -548,37 +548,28 @@ class NexusFUSEOperations(Operations):
         if path == "/.raw":
             return self._dir_attrs()
 
-        # Issue #1569: Delegate to Rust daemon for stat (10-100x faster)
-        if self._use_rust and self._rust_client and not self._context and not view_type:
-            try:
-                metadata = self._rust_client.stat(original_path)
-                if metadata.is_directory:
+        # Issue #1569/8B: Delegate to Rust daemon for stat (10-100x faster)
+        if not view_type:
+            ok, rust_meta = self._try_rust("GETATTR", self._rust_client.stat, original_path)
+            if ok:
+                if rust_meta.is_directory:
                     attrs = self._dir_attrs()
                 else:
                     now = time.time()
                     attrs = {
                         "st_mode": stat.S_IFREG | 0o644,
                         "st_nlink": 1,
-                        "st_size": metadata.size,
+                        "st_size": rust_meta.size,
                         "st_ctime": now,
                         "st_mtime": now,
                         "st_atime": now,
                         "st_uid": os.getuid() if hasattr(os, "getuid") else 0,
                         "st_gid": os.getgid() if hasattr(os, "getgid") else 0,
                     }
-                # Cache and return
                 self.cache.put_attr(path, attrs)
                 elapsed = time.time() - start_time
                 logger.debug(f"[FUSE-PERF] getattr via RUST: path={path}, {elapsed:.3f}s")
                 return attrs
-            except OSError as e:
-                if e.errno == errno.ENOENT:
-                    raise FuseOSError(errno.ENOENT) from None
-                logger.warning(f"[FUSE-GETATTR] Rust failed for {path}: {e}, using Python")
-                # Fall through to Python implementation
-            except Exception as e:
-                logger.warning(f"[FUSE-GETATTR] Rust failed for {path}: {e}, using Python")
-                # Fall through to Python implementation
 
         # Check if it's a directory
         # Issue #1305: Pass context for namespace-scoped visibility
@@ -597,10 +588,8 @@ class NexusFUSEOperations(Operations):
         # Get file metadata (includes size, permissions, etc.)
         metadata = self._get_metadata(original_path)
 
-        # Get file size efficiently
-        # Priority: 1) Use metadata.size if available, 2) Fetch content as fallback
-        # TODO(P4): For files without metadata.size, this fetches full content just
-        # to measure length. Consider a lightweight stat() RPC when available.
+        # Get file size efficiently (Issue 14A: avoid reading full file for size)
+        # Priority: 1) metadata.size, 2) stat() RPC, 3) content fetch (last resort)
         if view_type and view_type != "raw":
             # Special view - need to fetch content for accurate size
             content = self._get_file_content(original_path, view_type)
@@ -613,13 +602,11 @@ class NexusFUSEOperations(Operations):
             if meta_size and meta_size > 0:
                 file_size = meta_size
             else:
-                # Fallback: fetch content to get size
-                content = self._get_file_content(original_path, None)
-                file_size = len(content)
+                # Issue 14A: Use stat() RPC instead of reading the entire file
+                file_size = self._stat_size_fallback(original_path)
         else:
-            # No metadata: fetch content to get size (for backward compatibility)
-            content = self._get_file_content(original_path, None)
-            file_size = len(content)
+            # No metadata: use stat() as lightweight size query (Issue 14A)
+            file_size = self._stat_size_fallback(original_path)
 
         # Return file attributes
         now = time.time()
@@ -724,30 +711,18 @@ class NexusFUSEOperations(Operations):
         if path == "/":
             entries.append(".raw")
 
-        # Issue #1569: Delegate to Rust daemon for directory listing (10-100x faster)
-        if self._use_rust and self._rust_client and not self._context:
-            try:
-                list_start = time.time()
-                file_entries = self._rust_client.list(path)
-                list_elapsed = time.time() - list_start
-                logger.info(
-                    f"[FUSE-PERF] readdir list() via RUST took {list_elapsed:.3f}s, "
-                    f"returned {len(file_entries)} items"
-                )
-                # Convert Rust FileEntry to names
-                entries.extend([f.name for f in file_entries])
-
-                # Cache and return
-                elapsed = time.time() - start_time
-                logger.info(
-                    f"[FUSE-PERF] readdir DONE: path={path}, {len(entries)} entries, {elapsed:.3f}s"
-                )
-                with self._dir_cache_lock:
-                    self._dir_cache[cache_key] = entries
-                return entries
-            except Exception as e:
-                logger.warning(f"[FUSE-READDIR] Rust failed for {path}: {e}, using Python")
-                # Fall through to Python implementation
+        # Issue #1569/8B: Delegate to Rust daemon for directory listing (10-100x faster)
+        ok, file_entries = self._try_rust("READDIR", self._rust_client.list, path)
+        if ok:
+            entries.extend([f.name for f in file_entries])
+            elapsed = time.time() - start_time
+            logger.info(
+                f"[FUSE-PERF] readdir DONE via RUST: path={path}, "
+                f"{len(entries)} entries, {elapsed:.3f}s"
+            )
+            with self._dir_cache_lock:
+                self._dir_cache[cache_key] = entries
+            return entries
 
         # List files in directory (non-recursive) - returns list[dict] with details
         # Using details=True gets directory status in bulk, avoiding individual is_directory() calls
@@ -949,14 +924,11 @@ class NexusFUSEOperations(Operations):
         original_path = file_info["path"]
         view_type = file_info["view_type"]
 
-        # Issue #1569: Delegate to Rust daemon for raw reads (10-100x faster)
-        if self._use_rust and self._rust_client and view_type is None:
-            try:
-                content = self._rust_client.read(original_path)
+        # Issue #1569/8B: Delegate to Rust daemon for raw reads (10-100x faster)
+        if view_type is None:
+            ok, content = self._try_rust("READ", self._rust_client.read, original_path)
+            if ok:
                 return content[offset : offset + size]
-            except Exception as e:
-                logger.warning(f"[FUSE-READ] Rust failed for {original_path}: {e}, using Python")
-                # Fall through to Python implementation
 
         # Issue #1073: Check readahead buffer first (fast path for sequential reads)
         # Only use readahead for raw/binary reads (not parsed views)
@@ -1031,16 +1003,13 @@ class NexusFUSEOperations(Operations):
         # Combine content
         new_content = existing_content[:offset] + data + existing_content[offset + len(data) :]
 
-        # Issue #1569: Delegate to Rust daemon for writes (10-100x faster)
-        if self._use_rust and self._rust_client and not ctx:  # Only for non-context writes
-            try:
-                self._rust_client.write(original_path, new_content)
-            except Exception as e:
-                logger.warning(f"[FUSE-WRITE] Rust failed for {original_path}: {e}, using Python")
-                # Fall through to Python implementation
+        # Issue #1569/8B: Delegate to Rust daemon for writes (10-100x faster)
+        # Only delegate for non-context writes (Rust doesn't handle ReBAC)
+        if not ctx:
+            ok, _ = self._try_rust("WRITE", self._rust_client.write, original_path, new_content)
+            if not ok:
                 self.nexus_fs.write(original_path, new_content, context=ctx)
         else:
-            # Write to Nexus (Python)
             self.nexus_fs.write(original_path, new_content, context=ctx)
 
         # Invalidate caches for this path
@@ -1149,14 +1118,9 @@ class NexusFUSEOperations(Operations):
         # Issue #1305: Pre-flight namespace check (delete() has no context param)
         self._check_namespace_visible(original_path)
 
-        # Issue #1569: Delegate to Rust daemon for delete (10-100x faster)
-        if self._use_rust and self._rust_client and not self._context:
-            try:
-                self._rust_client.delete(original_path)
-            except Exception as e:
-                logger.warning(f"[FUSE-UNLINK] Rust failed for {original_path}: {e}, using Python")
-                self.nexus_fs.delete(original_path)
-        else:
+        # Issue #1569/8B: Delegate to Rust daemon for delete (10-100x faster)
+        ok, _ = self._try_rust("UNLINK", self._rust_client.delete, original_path)
+        if not ok:
             self.nexus_fs.delete(original_path)
 
         # Invalidate caches for this path
@@ -1185,14 +1149,9 @@ class NexusFUSEOperations(Operations):
         # Issue #1305: Pre-flight namespace check (mkdir() has no context param)
         self._check_namespace_visible(path)
 
-        # Issue #1569: Delegate to Rust daemon for mkdir (10-100x faster)
-        if self._use_rust and self._rust_client and not self._context:
-            try:
-                self._rust_client.mkdir(path)
-            except Exception as e:
-                logger.warning(f"[FUSE-MKDIR] Rust failed for {path}: {e}, using Python")
-                self.nexus_fs.mkdir(path, parents=True, exist_ok=True)
-        else:
+        # Issue #1569/8B: Delegate to Rust daemon for mkdir (10-100x faster)
+        ok, _ = self._try_rust("MKDIR", self._rust_client.mkdir, path)
+        if not ok:
             self.nexus_fs.mkdir(path, parents=True, exist_ok=True)
 
         # Issue #1115: Fire directory create event
@@ -1289,18 +1248,9 @@ class NexusFUSEOperations(Operations):
             # Handle file rename/move using metadata-only operation
             logger.debug(f"Renaming file {old_path} to {new_path}")
 
-            # Issue #1569: Delegate to Rust daemon for rename (10-100x faster)
-            if self._use_rust and self._rust_client and not self._context:
-                try:
-                    self._rust_client.rename(old_path, new_path)
-                except Exception as e:
-                    logger.warning(
-                        f"[FUSE-RENAME] Rust failed for {old_path}->{new_path}: {e}, using Python"
-                    )
-                    # Metadata-only rename - instant, no content copy!
-                    self.nexus_fs.rename(old_path, new_path)
-            else:
-                # Metadata-only rename - instant, no content copy!
+            # Issue #1569/8B: Delegate to Rust daemon for rename (10-100x faster)
+            ok, _ = self._try_rust("RENAME", self._rust_client.rename, old_path, new_path)
+            if not ok:
                 self.nexus_fs.rename(old_path, new_path)
 
         # Invalidate caches for both old and new paths
@@ -1736,6 +1686,33 @@ class NexusFUSEOperations(Operations):
                 return MetadataObj.from_dict(metadata_dict)
 
         return None
+
+    def _stat_size_fallback(self, path: str) -> int:
+        """Issue 14A: Get file size without reading the full file content.
+
+        Uses stat() RPC as a lightweight alternative to reading the entire file
+        just to measure its length. Falls back to content fetch only as last resort.
+
+        Args:
+            path: File path
+
+        Returns:
+            File size in bytes
+        """
+        # Try stat() RPC first (lightweight, returns size without content)
+        if hasattr(self.nexus_fs, "stat"):
+            try:
+                stat_result = self.nexus_fs.stat(path)
+                if stat_result:
+                    stat_size = stat_result.get("st_size") or stat_result.get("size", 0)
+                    if stat_size and stat_size > 0:
+                        return stat_size
+            except Exception:
+                pass
+
+        # Last resort: read content to get size (backward compatibility)
+        content = self._get_file_content(path, None)
+        return len(content)
 
     def _cache_file_attrs_from_list(
         self, file_path: str, file_info: dict[str, Any], is_dir: bool

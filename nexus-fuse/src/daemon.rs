@@ -102,7 +102,7 @@ impl Daemon {
         // Create Unix socket listener
         let listener = UnixListener::bind(&self.config.socket_path)?;
         info!(
-            "🚀 Rust FUSE daemon listening on {}",
+            "Rust FUSE daemon listening on {}",
             self.config.socket_path.display()
         );
 
@@ -178,6 +178,14 @@ async fn handle_connection(stream: UnixStream, client: NexusClient) -> anyhow::R
     Ok(())
 }
 
+/// Issue 5A: Generic param extraction to eliminate 8x identical boilerplate.
+/// Deserializes JSON params into a typed struct, returning a consistent error
+/// on failure.
+fn extract_params<T: for<'de> Deserialize<'de>>(params: &Value) -> Result<T, NexusClientError> {
+    serde_json::from_value(params.clone())
+        .map_err(|e| NexusClientError::InvalidResponse(format!("Invalid params: {}", e)))
+}
+
 /// Handle a single JSON-RPC request.
 async fn handle_request(request: JsonRpcRequest, client: &NexusClient) -> JsonRpcResponse {
     debug!("Handling method: {}", request.method);
@@ -222,16 +230,13 @@ async fn handle_request(request: JsonRpcRequest, client: &NexusClient) -> JsonRp
     }
 }
 
-// Handler functions for each method
+// Handler functions — Issue 5A: use extract_params<T>() to eliminate
+// repeated deserialization boilerplate.
 
 fn handle_read(params: &Value, client: &NexusClient) -> Result<Value, NexusClientError> {
     #[derive(Deserialize)]
-    struct ReadParams {
-        path: String,
-    }
-
-    let p: ReadParams = serde_json::from_value(params.clone())
-        .map_err(|e| NexusClientError::InvalidResponse(format!("Invalid params: {}", e)))?;
+    struct P { path: String }
+    let p: P = extract_params(params)?;
 
     let content = client.read(&p.path)?;
     let encoded = base64::engine::general_purpose::STANDARD.encode(&content);
@@ -244,20 +249,14 @@ fn handle_read(params: &Value, client: &NexusClient) -> Result<Value, NexusClien
 
 fn handle_write(params: &Value, client: &NexusClient) -> Result<Value, NexusClientError> {
     #[derive(Deserialize)]
-    struct WriteParams {
-        path: String,
-        content: ContentBytes,
-    }
-
-    #[derive(Deserialize)]
     struct ContentBytes {
         #[serde(rename = "__type__")]
         type_tag: String,
         data: String,
     }
-
-    let p: WriteParams = serde_json::from_value(params.clone())
-        .map_err(|e| NexusClientError::InvalidResponse(format!("Invalid params: {}", e)))?;
+    #[derive(Deserialize)]
+    struct P { path: String, content: ContentBytes }
+    let p: P = extract_params(params)?;
 
     let content = base64::engine::general_purpose::STANDARD
         .decode(&p.content.data)
@@ -269,12 +268,8 @@ fn handle_write(params: &Value, client: &NexusClient) -> Result<Value, NexusClie
 
 fn handle_list(params: &Value, client: &NexusClient) -> Result<Value, NexusClientError> {
     #[derive(Deserialize)]
-    struct ListParams {
-        path: String,
-    }
-
-    let p: ListParams = serde_json::from_value(params.clone())
-        .map_err(|e| NexusClientError::InvalidResponse(format!("Invalid params: {}", e)))?;
+    struct P { path: String }
+    let p: P = extract_params(params)?;
 
     let files = client.list(&p.path)?;
     Ok(json!({ "files": files }))
@@ -282,12 +277,8 @@ fn handle_list(params: &Value, client: &NexusClient) -> Result<Value, NexusClien
 
 fn handle_stat(params: &Value, client: &NexusClient) -> Result<Value, NexusClientError> {
     #[derive(Deserialize)]
-    struct StatParams {
-        path: String,
-    }
-
-    let p: StatParams = serde_json::from_value(params.clone())
-        .map_err(|e| NexusClientError::InvalidResponse(format!("Invalid params: {}", e)))?;
+    struct P { path: String }
+    let p: P = extract_params(params)?;
 
     let metadata = client.stat(&p.path)?;
     Ok(serde_json::to_value(metadata)
@@ -296,12 +287,8 @@ fn handle_stat(params: &Value, client: &NexusClient) -> Result<Value, NexusClien
 
 fn handle_mkdir(params: &Value, client: &NexusClient) -> Result<Value, NexusClientError> {
     #[derive(Deserialize)]
-    struct MkdirParams {
-        path: String,
-    }
-
-    let p: MkdirParams = serde_json::from_value(params.clone())
-        .map_err(|e| NexusClientError::InvalidResponse(format!("Invalid params: {}", e)))?;
+    struct P { path: String }
+    let p: P = extract_params(params)?;
 
     client.mkdir(&p.path)?;
     Ok(json!({}))
@@ -309,12 +296,8 @@ fn handle_mkdir(params: &Value, client: &NexusClient) -> Result<Value, NexusClie
 
 fn handle_delete(params: &Value, client: &NexusClient) -> Result<Value, NexusClientError> {
     #[derive(Deserialize)]
-    struct DeleteParams {
-        path: String,
-    }
-
-    let p: DeleteParams = serde_json::from_value(params.clone())
-        .map_err(|e| NexusClientError::InvalidResponse(format!("Invalid params: {}", e)))?;
+    struct P { path: String }
+    let p: P = extract_params(params)?;
 
     client.delete(&p.path)?;
     Ok(json!({}))
@@ -322,13 +305,8 @@ fn handle_delete(params: &Value, client: &NexusClient) -> Result<Value, NexusCli
 
 fn handle_rename(params: &Value, client: &NexusClient) -> Result<Value, NexusClientError> {
     #[derive(Deserialize)]
-    struct RenameParams {
-        old_path: String,
-        new_path: String,
-    }
-
-    let p: RenameParams = serde_json::from_value(params.clone())
-        .map_err(|e| NexusClientError::InvalidResponse(format!("Invalid params: {}", e)))?;
+    struct P { old_path: String, new_path: String }
+    let p: P = extract_params(params)?;
 
     client.rename(&p.old_path, &p.new_path)?;
     Ok(json!({}))
@@ -336,12 +314,8 @@ fn handle_rename(params: &Value, client: &NexusClient) -> Result<Value, NexusCli
 
 fn handle_exists(params: &Value, client: &NexusClient) -> Result<Value, NexusClientError> {
     #[derive(Deserialize)]
-    struct ExistsParams {
-        path: String,
-    }
-
-    let p: ExistsParams = serde_json::from_value(params.clone())
-        .map_err(|e| NexusClientError::InvalidResponse(format!("Invalid params: {}", e)))?;
+    struct P { path: String }
+    let p: P = extract_params(params)?;
 
     let exists = client.exists(&p.path);
     Ok(json!({ "exists": exists }))

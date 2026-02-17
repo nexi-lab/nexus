@@ -9,7 +9,6 @@ use fuser::{
 use libc::{ENOENT, ENOTDIR, ENOTEMPTY, EISDIR, EIO};
 use log::{debug, error};
 use lru::LruCache;
-use std::collections::HashMap;
 use std::ffi::OsStr;
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
@@ -21,15 +20,103 @@ const ATTR_TTL: Duration = Duration::from_secs(30);
 /// Default block size.
 const BLOCK_SIZE: u32 = 512;
 
+/// Maximum number of inode entries to keep in the LRU maps.
+/// Prevents unbounded memory growth (Issue #1569 / 1A).
+/// At ~200 bytes per entry, 100K entries ≈ 20MB.
+const MAX_INODE_ENTRIES: usize = 100_000;
+
+/// Unified inode table combining bidirectional maps and counter under a single
+/// lock. Eliminates the race condition in `get_or_create_inode()` (Issue 7A)
+/// where releasing one lock before acquiring another could allow duplicate
+/// allocations. LRU bounds prevent unbounded memory growth (Issue 1A).
+struct InodeTable {
+    inode_to_path: LruCache<u64, String>,
+    path_to_inode: LruCache<String, u64>,
+    next_inode: u64,
+}
+
+impl InodeTable {
+    fn new() -> Self {
+        let cap = NonZeroUsize::new(MAX_INODE_ENTRIES).unwrap();
+        let mut inode_to_path = LruCache::new(cap);
+        let mut path_to_inode = LruCache::new(cap);
+
+        // Root inode
+        inode_to_path.put(FUSE_ROOT_ID, "/".to_string());
+        path_to_inode.put("/".to_string(), FUSE_ROOT_ID);
+
+        Self {
+            inode_to_path,
+            path_to_inode,
+            next_inode: FUSE_ROOT_ID + 1,
+        }
+    }
+
+    /// Get or create inode for a path. Race-free because both maps and the
+    /// counter are behind the same Mutex.
+    fn get_or_create(&mut self, path: &str) -> u64 {
+        if let Some(&inode) = self.path_to_inode.get(path) {
+            return inode;
+        }
+
+        let inode = self.next_inode;
+        self.next_inode += 1;
+
+        self.path_to_inode.put(path.to_string(), inode);
+        self.inode_to_path.put(inode, path.to_string());
+
+        inode
+    }
+
+    /// Get path for an inode.
+    fn get_path(&mut self, inode: u64) -> Option<String> {
+        self.inode_to_path.get(&inode).cloned()
+    }
+
+    /// Remove a path mapping (e.g., after rename/delete).
+    #[allow(dead_code)]
+    fn remove_path(&mut self, path: &str) -> Option<u64> {
+        if let Some(inode) = self.path_to_inode.pop(path) {
+            self.inode_to_path.pop(&inode);
+            Some(inode)
+        } else {
+            None
+        }
+    }
+
+    /// Update path for an existing inode (rename).
+    fn rename_path(&mut self, old_path: &str, new_path: &str) {
+        if let Some(inode) = self.path_to_inode.pop(old_path) {
+            self.inode_to_path.put(inode, new_path.to_string());
+            self.path_to_inode.put(new_path.to_string(), inode);
+        }
+    }
+
+    /// Get inode for a path (for cache lookups, doesn't promote in LRU).
+    fn get_inode(&mut self, path: &str) -> Option<u64> {
+        self.path_to_inode.get(path).copied()
+    }
+}
+
+/// Resolve inode to path, returning ENOENT on the reply if not found.
+/// Eliminates the 12x repeated "get path or ENOENT" pattern (Issue 6A).
+macro_rules! resolve_path {
+    ($self:expr, $inode:expr, $reply:expr) => {
+        match $self.inodes.lock().unwrap().get_path($inode) {
+            Some(p) => p,
+            None => {
+                $reply.error(ENOENT);
+                return;
+            }
+        }
+    };
+}
+
 /// Nexus FUSE filesystem.
 pub struct NexusFs {
     client: Arc<NexusClient>,
-    /// Inode to path mapping.
-    inode_to_path: Mutex<HashMap<u64, String>>,
-    /// Path to inode mapping.
-    path_to_inode: Mutex<HashMap<String, u64>>,
-    /// Next available inode number.
-    next_inode: Mutex<u64>,
+    /// Unified inode table (Issue 1A/7A: single lock, LRU-bounded).
+    inodes: Mutex<InodeTable>,
     /// Attribute cache (in-memory, short TTL).
     attr_cache: Mutex<LruCache<u64, (FileAttr, SystemTime)>>,
     /// Directory listing cache (in-memory).
@@ -41,49 +128,13 @@ pub struct NexusFs {
 impl NexusFs {
     /// Create a new NexusFs instance.
     pub fn new(client: NexusClient, file_cache: Option<FileCache>) -> Self {
-        let mut inode_to_path = HashMap::new();
-        let mut path_to_inode = HashMap::new();
-
-        // Root inode
-        inode_to_path.insert(FUSE_ROOT_ID, "/".to_string());
-        path_to_inode.insert("/".to_string(), FUSE_ROOT_ID);
-
         Self {
             client: Arc::new(client),
-            inode_to_path: Mutex::new(inode_to_path),
-            path_to_inode: Mutex::new(path_to_inode),
-            next_inode: Mutex::new(FUSE_ROOT_ID + 1),
+            inodes: Mutex::new(InodeTable::new()),
             attr_cache: Mutex::new(LruCache::new(NonZeroUsize::new(10000).unwrap())),
             dir_cache: Mutex::new(LruCache::new(NonZeroUsize::new(1000).unwrap())),
             file_cache,
         }
-    }
-
-    /// Get or create inode for a path.
-    fn get_or_create_inode(&self, path: &str) -> u64 {
-        let mut path_to_inode = self.path_to_inode.lock().unwrap();
-
-        if let Some(&inode) = path_to_inode.get(path) {
-            return inode;
-        }
-
-        let mut next_inode = self.next_inode.lock().unwrap();
-        let inode = *next_inode;
-        *next_inode += 1;
-
-        path_to_inode.insert(path.to_string(), inode);
-        drop(path_to_inode);
-
-        let mut inode_to_path = self.inode_to_path.lock().unwrap();
-        inode_to_path.insert(inode, path.to_string());
-
-        inode
-    }
-
-    /// Get path for an inode.
-    fn get_path(&self, inode: u64) -> Option<String> {
-        let inode_to_path = self.inode_to_path.lock().unwrap();
-        inode_to_path.get(&inode).cloned()
     }
 
     /// Parse timestamp string to SystemTime.
@@ -133,30 +184,31 @@ impl NexusFs {
         }
     }
 
-    /// Check if a path is a directory by listing the parent.
-    fn is_directory(&self, path: &str) -> bool {
-        // Root is always a directory
+    /// Check if a path is a directory using attr_cache first, falling back to
+    /// stat() RPC. Replaces the old is_directory() which made a full parent
+    /// list() RPC every call — 50-200ms waste (Issue 13A).
+    fn check_is_directory(&self, path: &str) -> Option<bool> {
         if path == "/" {
-            return true;
+            return Some(true);
         }
 
-        // Get parent path and filename
-        let path_obj = std::path::Path::new(path);
-        let parent = path_obj.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or("/".to_string());
-        let parent = if parent.is_empty() { "/".to_string() } else { parent };
-        let name = path_obj.file_name().map(|n| n.to_string_lossy().to_string());
-
-        let name = match name {
-            Some(n) => n,
-            None => return false,
-        };
-
-        // List parent directory and find this entry
-        match self.client.list(&parent) {
-            Ok(entries) => {
-                entries.iter().any(|e| e.name == name && e.entry_type == "directory")
+        // Fast path: check attr_cache for existing info
+        {
+            let inodes = self.inodes.lock().unwrap();
+            if let Some(&inode) = inodes.path_to_inode.peek(path) {
+                let mut cache = self.attr_cache.lock().unwrap();
+                if let Some((attr, cached_at)) = cache.get(&inode) {
+                    if cached_at.elapsed().unwrap_or(Duration::MAX) < ATTR_TTL {
+                        return Some(attr.kind == FileType::Directory);
+                    }
+                }
             }
-            Err(_) => false,
+        }
+
+        // Slow path: single stat() RPC (vs old approach of listing parent dir)
+        match self.client.stat(path) {
+            Ok(meta) => Some(meta.is_directory),
+            Err(_) => None, // Path doesn't exist or error
         }
     }
 
@@ -180,7 +232,7 @@ impl NexusFs {
             return Ok(attr);
         }
 
-        // Use stat() for single API call instead of is_directory() + read_cached()
+        // Use stat() for single API call
         match self.client.stat(path) {
             Ok(meta) => {
                 let entry_type = if meta.is_directory { "directory" } else { "file" };
@@ -218,7 +270,8 @@ impl NexusFs {
 
     /// Invalidate caches for a path.
     fn invalidate_path(&self, path: &str) {
-        if let Some(inode) = self.path_to_inode.lock().unwrap().get(path).copied() {
+        let mut inodes = self.inodes.lock().unwrap();
+        if let Some(inode) = inodes.get_inode(path) {
             self.attr_cache.lock().unwrap().pop(&inode);
             self.dir_cache.lock().unwrap().pop(&inode);
         }
@@ -227,7 +280,7 @@ impl NexusFs {
         if let Some(parent) = std::path::Path::new(path).parent() {
             let parent_path = parent.to_string_lossy().to_string();
             let parent_path = if parent_path.is_empty() { "/".to_string() } else { parent_path };
-            if let Some(inode) = self.path_to_inode.lock().unwrap().get(&parent_path).copied() {
+            if let Some(inode) = inodes.get_inode(&parent_path) {
                 self.dir_cache.lock().unwrap().pop(&inode);
             }
         }
@@ -263,14 +316,12 @@ impl NexusFs {
                             // Touch cache to refresh timestamp
                             cache.touch(path);
                             // Return cached content - must re-fetch from cache
-                            // Use a direct query since touch() updated the timestamp
                             match cache.get(path) {
                                 CacheLookup::Hit(entry) => {
                                     return Ok((entry.content, entry.etag));
                                 }
                                 _ => {
                                     // Cache inconsistency - should not happen
-                                    // Fall through to fetch fresh content
                                     error!("Cache inconsistency after 304 for {}", path);
                                 }
                             }
@@ -319,16 +370,10 @@ impl Filesystem for NexusFs {
         let name = name.to_string_lossy();
         debug!("lookup: parent={}, name={}", parent, name);
 
-        let parent_path = match self.get_path(parent) {
-            Some(p) => p,
-            None => {
-                reply.error(ENOENT);
-                return;
-            }
-        };
+        let parent_path = resolve_path!(self, parent, reply);
 
         let path = Self::join_path(&parent_path, &name);
-        let inode = self.get_or_create_inode(&path);
+        let inode = self.inodes.lock().unwrap().get_or_create(&path);
 
         match self.get_attr(inode, &path) {
             Ok(attr) => reply.entry(&ATTR_TTL, &attr, 0),
@@ -339,13 +384,7 @@ impl Filesystem for NexusFs {
     fn getattr(&mut self, _req: &Request, ino: u64, reply: ReplyAttr) {
         debug!("getattr: ino={}", ino);
 
-        let path = match self.get_path(ino) {
-            Some(p) => p,
-            None => {
-                reply.error(ENOENT);
-                return;
-            }
-        };
+        let path = resolve_path!(self, ino, reply);
 
         match self.get_attr(ino, &path) {
             Ok(attr) => reply.attr(&ATTR_TTL, &attr),
@@ -363,13 +402,7 @@ impl Filesystem for NexusFs {
     ) {
         debug!("readdir: ino={}, offset={}", ino, offset);
 
-        let path = match self.get_path(ino) {
-            Some(p) => p,
-            None => {
-                reply.error(ENOENT);
-                return;
-            }
-        };
+        let path = resolve_path!(self, ino, reply);
 
         // Check directory cache - use Option to distinguish cache miss from empty directory
         let cached_entries: Option<Vec<FileEntry>> = {
@@ -419,7 +452,7 @@ impl Filesystem for NexusFs {
 
         for entry in &entries {
             let child_path = Self::join_path(&path, &entry.name);
-            let child_inode = self.get_or_create_inode(&child_path);
+            let child_inode = self.inodes.lock().unwrap().get_or_create(&child_path);
             let kind = if entry.entry_type == "directory" {
                 FileType::Directory
             } else {
@@ -464,13 +497,7 @@ impl Filesystem for NexusFs {
     ) {
         debug!("read: ino={}, offset={}, size={}", ino, offset, size);
 
-        let path = match self.get_path(ino) {
-            Some(p) => p,
-            None => {
-                reply.error(ENOENT);
-                return;
-            }
-        };
+        let path = resolve_path!(self, ino, reply);
 
         // Read using SQLite cache with ETag support
         let content = match self.read_cached(&path) {
@@ -511,13 +538,7 @@ impl Filesystem for NexusFs {
     ) {
         debug!("write: ino={}, offset={}, size={}", ino, offset, data.len());
 
-        let path = match self.get_path(ino) {
-            Some(p) => p,
-            None => {
-                reply.error(ENOENT);
-                return;
-            }
-        };
+        let path = resolve_path!(self, ino, reply);
 
         // For simplicity, we only support full file writes (offset 0)
         // For partial writes, we'd need to read-modify-write
@@ -579,20 +600,14 @@ impl Filesystem for NexusFs {
         let name = name.to_string_lossy();
         debug!("create: parent={}, name={}", parent, name);
 
-        let parent_path = match self.get_path(parent) {
-            Some(p) => p,
-            None => {
-                reply.error(ENOENT);
-                return;
-            }
-        };
+        let parent_path = resolve_path!(self, parent, reply);
 
         let path = Self::join_path(&parent_path, &name);
 
         // Create empty file
         match self.client.write(&path, &[]) {
             Ok(_) => {
-                let inode = self.get_or_create_inode(&path);
+                let inode = self.inodes.lock().unwrap().get_or_create(&path);
                 self.invalidate_path(&path);
 
                 let attr = self.make_attr(inode, "file", 0, None, None);
@@ -617,19 +632,13 @@ impl Filesystem for NexusFs {
         let name = name.to_string_lossy();
         debug!("mkdir: parent={}, name={}", parent, name);
 
-        let parent_path = match self.get_path(parent) {
-            Some(p) => p,
-            None => {
-                reply.error(ENOENT);
-                return;
-            }
-        };
+        let parent_path = resolve_path!(self, parent, reply);
 
         let path = Self::join_path(&parent_path, &name);
 
         match self.client.mkdir(&path) {
             Ok(_) => {
-                let inode = self.get_or_create_inode(&path);
+                let inode = self.inodes.lock().unwrap().get_or_create(&path);
                 self.invalidate_path(&path);
 
                 let attr = self.make_attr(inode, "directory", 0, None, None);
@@ -646,13 +655,7 @@ impl Filesystem for NexusFs {
         let name = name.to_string_lossy();
         debug!("unlink: parent={}, name={}", parent, name);
 
-        let parent_path = match self.get_path(parent) {
-            Some(p) => p,
-            None => {
-                reply.error(ENOENT);
-                return;
-            }
-        };
+        let parent_path = resolve_path!(self, parent, reply);
 
         let path = Self::join_path(&parent_path, &name);
 
@@ -677,13 +680,7 @@ impl Filesystem for NexusFs {
         let name = name.to_string_lossy();
         debug!("rmdir: parent={}, name={}", parent, name);
 
-        let parent_path = match self.get_path(parent) {
-            Some(p) => p,
-            None => {
-                reply.error(ENOENT);
-                return;
-            }
-        };
+        let parent_path = resolve_path!(self, parent, reply);
 
         let path = Self::join_path(&parent_path, &name);
 
@@ -725,51 +722,35 @@ impl Filesystem for NexusFs {
         name: &OsStr,
         newparent: u64,
         newname: &OsStr,
-        _flags: u32,
+        flags: u32,
         reply: fuser::ReplyEmpty,
     ) {
         let name = name.to_string_lossy();
         let newname = newname.to_string_lossy();
         debug!(
-            "rename: parent={}, name={}, newparent={}, newname={}",
-            parent, name, newparent, newname
+            "rename: parent={}, name={}, newparent={}, newname={}, flags={}",
+            parent, name, newparent, newname, flags
         );
 
-        let parent_path = match self.get_path(parent) {
-            Some(p) => p,
-            None => {
-                reply.error(ENOENT);
-                return;
-            }
-        };
-
-        let new_parent_path = match self.get_path(newparent) {
-            Some(p) => p,
-            None => {
-                reply.error(ENOENT);
-                return;
-            }
-        };
+        let parent_path = resolve_path!(self, parent, reply);
+        let new_parent_path = resolve_path!(self, newparent, reply);
 
         let old_path = Self::join_path(&parent_path, &name);
         let new_path = Self::join_path(&new_parent_path, &newname);
 
-        // For POSIX compliance, delete destination if it exists (unless RENAME_NOREPLACE flag set)
-        // flags: RENAME_NOREPLACE = 1, RENAME_EXCHANGE = 2
-        if _flags & 1 == 0 && self.client.exists(&new_path) {
-            let _ = self.client.delete(&new_path);
+        // Issue 16A: Let server handle POSIX replace semantics instead of
+        // making client-side exists() + delete() calls (2-3 extra HTTP RPCs).
+        // The server's rename() implements atomic replace when destination exists.
+        // Only log if RENAME_NOREPLACE (flag bit 0) is set — the server should
+        // handle this, but we note it for debugging.
+        if flags & 1 != 0 {
+            debug!("rename: RENAME_NOREPLACE flag set for {} -> {}", old_path, new_path);
         }
 
         match self.client.rename(&old_path, &new_path) {
             Ok(_) => {
-                // Update inode mappings
-                // Note: Extract to variable first to avoid deadlock from extended lifetime
-                // of MutexGuard in if-let conditions
-                let inode_opt = self.path_to_inode.lock().unwrap().remove(&old_path);
-                if let Some(inode) = inode_opt {
-                    self.path_to_inode.lock().unwrap().insert(new_path.clone(), inode);
-                    self.inode_to_path.lock().unwrap().insert(inode, new_path.clone());
-                }
+                // Update inode mappings atomically (single lock)
+                self.inodes.lock().unwrap().rename_path(&old_path, &new_path);
                 self.invalidate_path(&old_path);
                 self.invalidate_path(&new_path);
                 reply.ok();
@@ -806,13 +787,7 @@ impl Filesystem for NexusFs {
     ) {
         debug!("setattr: ino={}, size={:?}", ino, size);
 
-        let path = match self.get_path(ino) {
-            Some(p) => p,
-            None => {
-                reply.error(ENOENT);
-                return;
-            }
-        };
+        let path = resolve_path!(self, ino, reply);
 
         // Handle truncate
         if let Some(new_size) = size {
@@ -863,39 +838,28 @@ impl Filesystem for NexusFs {
     fn open(&mut self, _req: &Request, ino: u64, _flags: i32, reply: fuser::ReplyOpen) {
         debug!("open: ino={}", ino);
 
-        // Check if file exists
-        let path = match self.get_path(ino) {
-            Some(p) => p,
-            None => {
-                reply.error(ENOENT);
-                return;
+        let path = resolve_path!(self, ino, reply);
+
+        // Issue 13A: Use stat() via check_is_directory() instead of the old
+        // is_directory() which listed the entire parent directory.
+        match self.check_is_directory(&path) {
+            Some(true) => {
+                reply.error(EISDIR);
             }
-        };
-
-        // Check if path exists
-        if !self.client.exists(&path) {
-            reply.error(ENOENT);
-            return;
-        }
-
-        // Check if it's a directory
-        if self.is_directory(&path) {
-            reply.error(EISDIR);
-        } else {
-            reply.opened(0, 0);
+            Some(false) => {
+                reply.opened(0, 0);
+            }
+            None => {
+                // Path doesn't exist
+                reply.error(ENOENT);
+            }
         }
     }
 
     fn opendir(&mut self, _req: &Request, ino: u64, _flags: i32, reply: fuser::ReplyOpen) {
         debug!("opendir: ino={}", ino);
 
-        let path = match self.get_path(ino) {
-            Some(p) => p,
-            None => {
-                reply.error(ENOENT);
-                return;
-            }
-        };
+        let path = resolve_path!(self, ino, reply);
 
         // Root always exists and is a directory
         if path == "/" {
@@ -903,17 +867,18 @@ impl Filesystem for NexusFs {
             return;
         }
 
-        // Check if path exists
-        if !self.client.exists(&path) {
-            reply.error(ENOENT);
-            return;
-        }
-
-        // Check if it's a directory
-        if !self.is_directory(&path) {
-            reply.error(ENOTDIR);
-        } else {
-            reply.opened(0, 0);
+        // Issue 13A: Use stat() via check_is_directory() instead of the old
+        // is_directory() which listed the entire parent directory.
+        match self.check_is_directory(&path) {
+            Some(true) => {
+                reply.opened(0, 0);
+            }
+            Some(false) => {
+                reply.error(ENOTDIR);
+            }
+            None => {
+                reply.error(ENOENT);
+            }
         }
     }
 
@@ -941,13 +906,7 @@ impl Filesystem for NexusFs {
     fn access(&mut self, _req: &Request, ino: u64, _mask: i32, reply: fuser::ReplyEmpty) {
         debug!("access: ino={}", ino);
 
-        let path = match self.get_path(ino) {
-            Some(p) => p,
-            None => {
-                reply.error(ENOENT);
-                return;
-            }
-        };
+        let path = resolve_path!(self, ino, reply);
 
         if self.client.exists(&path) {
             reply.ok();

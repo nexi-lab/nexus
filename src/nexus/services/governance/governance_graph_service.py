@@ -110,8 +110,8 @@ class GovernanceGraphService:
             created_at=now,
         )
 
-    async def remove_constraint(self, edge_id: str) -> bool:
-        """Remove a constraint by edge ID.
+    async def remove_constraint(self, edge_id: str, zone_id: str = "root") -> bool:
+        """Remove a constraint by edge ID with zone isolation.
 
         Returns True if removed, False if not found.
         """
@@ -120,19 +120,24 @@ class GovernanceGraphService:
         from nexus.services.governance.db_models import GovernanceEdgeModel
 
         async with self._session_factory() as session, session.begin():
-            # Fetch for cache invalidation
-            stmt = select(GovernanceEdgeModel).where(GovernanceEdgeModel.id == edge_id)
+            # Fetch for cache invalidation (zone-scoped)
+            stmt = select(GovernanceEdgeModel).where(
+                GovernanceEdgeModel.id == edge_id,
+                GovernanceEdgeModel.zone_id == zone_id,
+            )
             result = await session.execute(stmt)
             model = result.scalar_one_or_none()
 
             if model is None:
                 return False
 
-            zone_id = model.zone_id
             from_node = model.from_node
             to_node = model.to_node
 
-            del_stmt = delete(GovernanceEdgeModel).where(GovernanceEdgeModel.id == edge_id)
+            del_stmt = delete(GovernanceEdgeModel).where(
+                GovernanceEdgeModel.id == edge_id,
+                GovernanceEdgeModel.zone_id == zone_id,
+            )
             await session.execute(del_stmt)
 
         self._invalidate(zone_id, from_node, to_node)
@@ -206,6 +211,7 @@ class GovernanceGraphService:
         edge_id: str,
         constraint_type: ConstraintType | None = None,
         reason: str | None = None,
+        zone_id: str = "root",
     ) -> GovernanceEdge | None:
         """Update a constraint. Returns updated edge or None if not found."""
         from sqlalchemy import select
@@ -213,7 +219,10 @@ class GovernanceGraphService:
         from nexus.services.governance.db_models import GovernanceEdgeModel
 
         async with self._session_factory() as session, session.begin():
-            stmt = select(GovernanceEdgeModel).where(GovernanceEdgeModel.id == edge_id)
+            stmt = select(GovernanceEdgeModel).where(
+                GovernanceEdgeModel.id == edge_id,
+                GovernanceEdgeModel.zone_id == zone_id,
+            )
             result = await session.execute(stmt)
             model = result.scalar_one_or_none()
             if model is None:

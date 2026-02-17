@@ -398,9 +398,10 @@ def get_dispute(
     deps: tuple[Any, Any, dict[str, Any]] = Depends(get_reputation_context),
 ) -> DisputeResponse:
     """Get dispute status by ID."""
-    _reputation_service, dispute_service, _auth_ctx = deps
+    _reputation_service, dispute_service, auth_ctx = deps
+    zone_id = auth_ctx.get("zone_id", "root") or "root"
 
-    dispute = dispute_service.get_dispute(dispute_id)
+    dispute = dispute_service.get_dispute(dispute_id, zone_id=zone_id)
     if dispute is None:
         raise HTTPException(status_code=404, detail="Dispute not found")
 
@@ -419,13 +420,15 @@ def resolve_dispute(
         InvalidTransitionError,
     )
 
-    _reputation_service, dispute_service, _auth_ctx = deps
+    _reputation_service, dispute_service, auth_ctx = deps
+    zone_id = auth_ctx.get("zone_id", "root") or "root"
 
     try:
         dispute = dispute_service.resolve(
             dispute_id=dispute_id,
             resolution=request.resolution,
             evidence_hash=request.evidence_hash,
+            zone_id=zone_id,
         )
     except DisputeNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e)) from e

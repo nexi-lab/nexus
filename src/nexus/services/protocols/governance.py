@@ -130,8 +130,8 @@ class GovernanceProtocol(Protocol):
         """
         ...
 
-    async def remove_constraint(self, edge_id: str) -> bool:
-        """Remove a constraint by edge ID.
+    async def remove_constraint(self, edge_id: str, zone_id: str = "root") -> bool:
+        """Remove a constraint by edge ID with zone isolation.
 
         Returns:
             True if removed, False if not found.

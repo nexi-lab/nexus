@@ -319,10 +319,11 @@ async def list_constraints(
 async def remove_constraint(
     request: Request,
     edge_id: str,
+    zone_id: str = Query(default="root"),
 ) -> JSONResponse:
     """Remove a governance constraint."""
     service = _get_graph_service(request)
-    removed = await service.remove_constraint(edge_id)
+    removed = await service.remove_constraint(edge_id, zone_id=zone_id)
 
     if not removed:
         raise HTTPException(status_code=404, detail=f"Constraint {edge_id} not found")

@@ -201,6 +201,7 @@ class TestBootSystemServices:
             "observability_subsystem",
             "resiliency_manager",
             "context_branch_service",
+            "brick_lifecycle_manager",
         }
         assert expected_keys == set(result.keys())
 

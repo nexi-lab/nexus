@@ -228,6 +228,14 @@ def build_v2_registry(
     except ImportError as e:
         logger.warning("Failed to import Snapshots routes: %s", e)
 
+    # ---- Bricks lifecycle router (Issue #1704) ----
+    try:
+        from nexus.server.api.v2.routers.bricks import router as bricks_router
+
+        registry.add(RouterEntry(router=bricks_router, name="bricks", endpoint_count=4))
+    except ImportError as e:
+        logger.warning("Failed to import Bricks routes: %s", e)
+
     return registry
 
 

@@ -4,7 +4,11 @@ This service handles file watching and advisory locking operations
 with dual-track support:
 
 Layer 1 (Same-box): OS-native file watching (inotify/FSEvents) + in-memory locks
-Layer 2 (Distributed): Redis Pub/Sub events + distributed locks
+Layer 2 (Distributed): EventBus (gRPC point-to-point / CacheStoreABC fan-out) + distributed locks
+
+Per KERNEL-ARCHITECTURE.md §6 three-tier messaging:
+  - System tier: gRPC IPC (point-to-point)
+  - User Space tier: EventBus / CacheStoreABC (fan-out)
 
 Phase 2: Core Refactoring (Issue #1287)
 Extracted from: nexus_fs_events.py (836 lines)
@@ -37,7 +41,7 @@ class EventsService:
 
     Provides dual-track support for file watching and locking:
     - Layer 1: Same-box mode using OS-native APIs (PassthroughBackend only)
-    - Layer 2: Distributed mode using Redis Pub/Sub and locks (any backend)
+    - Layer 2: Distributed mode using EventBus + distributed locks (any backend)
 
     Architecture:
         - Clean dependency injection for all external systems
@@ -58,7 +62,7 @@ class EventsService:
 
         Args:
             backend: Storage backend (needed for same-box detection)
-            event_bus: Distributed event bus (Redis Pub/Sub) or None
+            event_bus: Distributed event bus (EventBus) or None
             lock_manager: Distributed lock manager or None
             file_watcher: OS-native file watcher or None (lazy init for same-box)
             zone_id: Default zone ID
@@ -155,7 +159,7 @@ class EventsService:
         """Wait for file system changes on a path.
 
         Dual-track implementation:
-        - Layer 2 (preferred): Uses RedisEventBus (Redis Pub/Sub)
+        - Layer 2 (preferred): Uses EventBus (distributed)
         - Layer 1 (fallback): Uses OS-native file watching (same-box only)
 
         Args:
@@ -517,7 +521,7 @@ class EventsService:
 
         self._cache_invalidation_started = True
 
-        # Layer 2: Distributed event bus (Redis Pub/Sub)
+        # Layer 2: Distributed event bus
         if self._has_distributed_events():
             zone_id = self._get_zone_id(None)
 

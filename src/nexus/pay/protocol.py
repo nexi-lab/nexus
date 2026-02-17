@@ -26,8 +26,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.pay.audit_types import TransactionProtocol
 
 if TYPE_CHECKING:
-    from nexus.pay.credits import CreditsError
-    from nexus.pay.x402 import X402Client, validate_wallet_address
+    from nexus.pay.x402 import X402Client
     from nexus.services.protocols.payment import PaymentProtocol
 
 logger = logging.getLogger(__name__)

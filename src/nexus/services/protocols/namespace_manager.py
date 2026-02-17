@@ -17,9 +17,10 @@ References:
 
 from __future__ import annotations
 
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
-from nexus.rebac.namespace_manager import NamespaceMount
+if TYPE_CHECKING:
+    from nexus.rebac.namespace_manager import NamespaceMount
 
 
 @runtime_checkable

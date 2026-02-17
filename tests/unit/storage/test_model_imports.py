@@ -99,6 +99,8 @@ EXPECTED_MODELS = [
     "RefreshTokenHistoryModel",
     # Secrets Audit (Issue #997)
     "SecretsAuditLogModel",
+    # Dead Letter Queue (Issue #1138)
+    "DeadLetterModel",
 ]
 
 

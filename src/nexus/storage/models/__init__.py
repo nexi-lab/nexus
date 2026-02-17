@@ -61,6 +61,11 @@ from nexus.storage.models.auth import UserOAuthAccountModel as UserOAuthAccountM
 from nexus.storage.models.auth import ZoneModel as ZoneModel
 from nexus.storage.models.dead_letter import DeadLetterModel as DeadLetterModel
 
+# Issue #1752: Transactional filesystem snapshots for agent rollback
+from nexus.storage.models.transactional_snapshot import (
+    TransactionSnapshotModel as TransactionSnapshotModel,
+)
+
 # Issue #1356: Reputation & Trust models
 from nexus.storage.models.dispute import DisputeModel as DisputeModel
 from nexus.storage.models.exchange_audit_log import ExchangeAuditLogModel as ExchangeAuditLogModel

@@ -788,7 +788,7 @@ class TestConsistencyModuleIntegration:
             assert isinstance(result, WriteResult)
 
             # Cross-zone write with non-shared relation should fail
-            from nexus.services.permissions.consistency.zone_manager import ZoneIsolationError
+            from nexus.rebac.consistency.zone_manager import ZoneIsolationError
 
             with pytest.raises(ZoneIsolationError):
                 mgr.rebac_write(

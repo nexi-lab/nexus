@@ -343,6 +343,47 @@ class NexusFUSEOperations(Operations):
                 self._event_loop = asyncio.get_running_loop()
             logger.info("[FUSE] Event firing enabled")
 
+    def _resolve_io_profile(self, path: str) -> str:
+        """Resolve the I/O profile for a file path based on its mount (Issue #1413).
+
+        Finds the longest mount_point prefix that matches path and returns its
+        io_profile. Falls back to "balanced" when no match or list_mounts fails.
+
+        Results are cached for the lifetime of the FUSE mount (mounts don't change often).
+        """
+        if not hasattr(self, "_io_profile_cache"):
+            self._io_profile_cache: dict[str, str] = {}
+            self._io_profile_mounts: list[tuple[str, str]] = []
+            self._io_profile_loaded = False
+
+        # Lazy-load mount→profile mapping once
+        if not self._io_profile_loaded:
+            self._io_profile_loaded = True
+            try:
+                mounts = self.nexus_fs.list_mounts()
+                self._io_profile_mounts = sorted(
+                    [(m["mount_point"], m.get("io_profile", "balanced")) for m in mounts],
+                    key=lambda x: len(x[0]),
+                    reverse=True,  # longest prefix first
+                )
+            except Exception:
+                pass
+
+        # Check cache
+        if path in self._io_profile_cache:
+            return self._io_profile_cache[path]
+
+        # Longest prefix match
+        profile = "balanced"
+        for mount_point, mp_profile in self._io_profile_mounts:
+            if path == mount_point or path.startswith(mount_point.rstrip("/") + "/"):
+                profile = mp_profile
+                break
+
+        self._io_profile_cache[path] = profile
+        return profile
+
+
     @property
     def _rust_available(self) -> bool:
         """Check if Rust daemon is available for delegation (Issue 8B DRY).
@@ -892,12 +933,16 @@ class NexusFUSEOperations(Operations):
             self.fd_counter += 1
             fd = self.fd_counter
 
+            # Issue #1413: Resolve I/O profile for this path's mount
+            io_profile_str = self._resolve_io_profile(original_path)
+
             # Store file info — A1-B: record that auth was checked at open time
             self.open_files[fd] = {
                 "path": original_path,
                 "view_type": view_type,
                 "flags": flags,
                 "auth_verified": self._context is not None,
+                "io_profile": io_profile_str,
             }
 
         # Trigger prefetch-on-open for readahead (Issue #1073)
@@ -911,7 +956,17 @@ class NexusFUSEOperations(Operations):
                     stat_result = self.nexus_fs.stat(original_path)
                     if stat_result:
                         file_size = stat_result.get("st_size")
-                self._readahead.on_open(fd, original_path, file_size)
+
+                # Issue #1413: Pass io_profile to readahead for per-session tuning
+                io_profile_arg = None
+                try:
+                    from nexus.core.io_profile import IOProfile
+
+                    io_profile_arg = IOProfile(io_profile_str)
+                except (ImportError, ValueError):
+                    pass
+
+                self._readahead.on_open(fd, original_path, file_size, io_profile=io_profile_arg)
             except Exception as e:
                 logger.debug(f"[FUSE-OPEN] Readahead on_open failed (non-critical): {e}")
         elif content_cached:
@@ -970,7 +1025,20 @@ class NexusFUSEOperations(Operations):
 
         # A1-B: Permission was checked at open() — skip context for I/O
         skip_auth = file_info.get("auth_verified", False)
-        content = self._get_file_content(original_path, view_type, skip_auth=skip_auth)
+
+        # Issue #1413: Derive L2 cache priority from mount's IOProfile
+        cache_priority = 0
+        io_profile_str = file_info.get("io_profile", "balanced")
+        try:
+            from nexus.core.io_profile import IOProfile
+
+            cache_priority = IOProfile(io_profile_str).config().cache_priority
+        except (ImportError, ValueError):
+            pass
+
+        content = self._get_file_content(
+            original_path, view_type, skip_auth=skip_auth, cache_priority=cache_priority
+        )
 
         # Return requested slice
         return content[offset : offset + size]
@@ -1486,7 +1554,12 @@ class NexusFUSEOperations(Operations):
         return parse_virtual_path(path, self.nexus_fs.exists)
 
     def _get_file_content(
-        self, path: str, view_type: str | None, *, skip_auth: bool = False
+        self,
+        path: str,
+        view_type: str | None,
+        *,
+        skip_auth: bool = False,
+        cache_priority: int = 0,
     ) -> bytes:
         """Get file content with appropriate view transformation.
 
@@ -1505,6 +1578,7 @@ class NexusFUSEOperations(Operations):
             path: Original file path
             view_type: View type ("txt", "md", or None for binary)
             skip_auth: If True, skip context on backend read (auth was at open time)
+            cache_priority: L2 cache priority hint (Issue #1413, from IOProfile)
 
         Returns:
             File content as bytes
@@ -1542,8 +1616,8 @@ class NexusFUSEOperations(Operations):
                     f"[FUSE-CONTENT] L3 BACKEND GOT: {path} ({len(content)} bytes) in {fetch_time:.3f}s"
                 )
 
-                # Populate L2 disk cache
-                self._put_to_local_disk_cache(path, content)
+                # Populate L2 disk cache (Issue #1413: priority from IOProfile)
+                self._put_to_local_disk_cache(path, content, priority=cache_priority)
 
             # Populate L1 memory cache
             self.cache.cache_content(path, content)
@@ -1662,12 +1736,14 @@ class NexusFUSEOperations(Operations):
             logger.debug(f"[FUSE-L2] Error reading {path}: {e}")
             return None
 
-    def _put_to_local_disk_cache(self, path: str, content: bytes) -> None:
+    def _put_to_local_disk_cache(self, path: str, content: bytes, *, priority: int = 0) -> None:
         """Store content in L2 local disk cache.
 
         Args:
             path: File path (used to get content_hash)
             content: Content bytes to cache
+            priority: Cache priority hint (Issue #1413). Higher priority entries
+                     survive CLOCK eviction longer. Derived from IOProfile.
         """
         if self._local_disk_cache is None:
             return
@@ -1688,7 +1764,11 @@ class NexusFUSEOperations(Operations):
             # Store blocks for files > 4MB for efficient partial reads
             store_blocks = len(content) > self._local_disk_cache.block_size
             self._local_disk_cache.put(
-                content_hash, content, zone_id=zone_id, store_blocks=store_blocks
+                content_hash,
+                content,
+                zone_id=zone_id,
+                store_blocks=store_blocks,
+                priority=priority,
             )
             logger.debug(f"[FUSE-L2] CACHED: {path} ({len(content)} bytes, zone={zone_id})")
         except Exception as e:

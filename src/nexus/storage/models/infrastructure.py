@@ -105,6 +105,8 @@ class MountConfigModel(TimestampMixin, Base):
 
     conflict_strategy: Mapped[str | None] = mapped_column(String(50), nullable=True, default=None)
 
+    io_profile: Mapped[str] = mapped_column(String(50), nullable=False, default="balanced")
+
     __table_args__ = (
         Index("idx_mount_configs_owner", "owner_user_id"),
         Index("idx_mount_configs_zone", "zone_id"),

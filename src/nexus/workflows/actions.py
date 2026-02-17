@@ -240,6 +240,20 @@ class WebhookAction(BaseAction):
     async def execute(self, context: WorkflowContext) -> ActionResult:
         try:
             url = self.interpolate(self.config["url"], context)
+
+            # SSRF protection: block private/internal IPs (Issue #1596)
+            from nexus.server.security.url_validator import validate_outbound_url
+
+            try:
+                validate_outbound_url(url)
+            except ValueError as ssrf_err:
+                logger.warning("Webhook SSRF blocked for action '%s': %s", self.name, ssrf_err)
+                return ActionResult(
+                    action_name=self.name,
+                    success=False,
+                    error="Webhook URL blocked by security policy",
+                )
+
             method = self.config.get("method", "POST").upper()
             headers = self.config.get("headers", {})
             body = self.config.get("body", {})
@@ -261,87 +275,88 @@ class WebhookAction(BaseAction):
                 output={"status": status, "response": response_text},
             )
         except Exception as e:
-            logger.error(f"Webhook action failed: {e}")
-            return ActionResult(action_name=self.name, success=False, error=str(e))
+            logger.error("Webhook action '%s' failed: %s", self.name, e)
+            return ActionResult(
+                action_name=self.name,
+                success=False,
+                error="Webhook delivery failed",
+            )
 
 
 class PythonAction(BaseAction):
-    """Execute Python code."""
+    """Execute Python code via SandboxManager (Issue #1596).
+
+    Routes all code execution through the SandboxManager brick for
+    process-level isolation. Fails closed if no sandbox provider is available.
+    """
 
     async def execute(self, context: WorkflowContext) -> ActionResult:
-        import sys
-        from io import StringIO
+        code = self.config.get("code", "")
+        timeout = self.config.get("timeout", 300)
 
-        try:
-            code = self.config.get("code", "")
-            file_path = context.file_path
+        logger.debug("PythonAction: code=%d bytes, file_path=%s", len(code), context.file_path)
 
-            logger.debug("PythonAction: code=%d bytes, file_path=%s", len(code), file_path)
-
-            exec_globals: dict[str, Any] = {
-                "context": context,
-                "file_path": file_path,
-                "variables": context.variables,
-            }
-
-            old_stdout = sys.stdout
-            old_stderr = sys.stderr
-            captured_stdout = StringIO()
-            captured_stderr = StringIO()
-
-            try:
-                sys.stdout = captured_stdout
-                sys.stderr = captured_stderr
-
-                def _print(*args: Any, **kwargs: Any) -> None:
-                    import builtins
-
-                    kwargs.setdefault("file", captured_stdout)
-                    builtins.print(*args, **kwargs)
-
-                exec_globals["print"] = _print
-
-                try:
-                    exec(code, exec_globals)
-                except Exception as exec_error:
-                    import traceback
-
-                    error_msg = f"Error during exec: {exec_error}\n{traceback.format_exc()}"
-                    captured_stderr.write(error_msg)
-                    logger.debug("PythonAction exec error: %s", error_msg)
-            finally:
-                sys.stdout = old_stdout
-                sys.stderr = old_stderr
-
-            stdout_value = captured_stdout.getvalue()
-            stderr_value = captured_stderr.getvalue()
-
-            logger.debug(
-                "PythonAction: stdout=%d bytes, stderr=%d bytes",
-                len(stdout_value),
-                len(stderr_value),
+        # Fail closed: require SandboxManager (Issue #1596 — no bare exec())
+        sandbox_mgr = (
+            getattr(context.services, "sandbox_manager", None) if context.services else None
+        )
+        if sandbox_mgr is None:
+            logger.error(
+                "PythonAction refused: no sandbox_manager available in context.services. "
+                "Code execution requires a sandbox provider (Docker, E2B, or Monty)."
+            )
+            return ActionResult(
+                action_name=self.name,
+                success=False,
+                error="Python code execution requires a sandbox provider (not configured)",
             )
 
-            if stderr_value:
+        try:
+            # Get or create a sandbox scoped to this workflow execution
+            zone_id = context.zone_id
+            user_id = context.variables.get("user_id", "workflow")
+            agent_id = context.variables.get("agent_id")
+
+            sandbox = await sandbox_mgr.get_or_create_sandbox(
+                name=f"workflow-{context.workflow_id}",
+                user_id=user_id,
+                zone_id=zone_id,
+                agent_id=agent_id,
+                ttl_minutes=30,
+            )
+            sandbox_id = sandbox["sandbox_id"]
+
+            # Execute code in isolated sandbox
+            result = await sandbox_mgr.run_code(
+                sandbox_id=sandbox_id,
+                language="python",
+                code=code,
+                timeout=timeout,
+            )
+
+            if result.exit_code == 0:
+                return ActionResult(
+                    action_name=self.name,
+                    success=True,
+                    output={
+                        "stdout": result.stdout,
+                        "execution_time": result.execution_time,
+                    },
+                )
+            else:
                 return ActionResult(
                     action_name=self.name,
                     success=False,
-                    error=stderr_value,
+                    error=result.stderr or f"Exit code: {result.exit_code}",
                 )
 
-            result = exec_globals.get("result")
-
+        except Exception as e:
+            logger.error("PythonAction '%s' sandbox execution failed: %s", self.name, e)
             return ActionResult(
                 action_name=self.name,
-                success=True,
-                output=result,
+                success=False,
+                error="Python code execution failed",
             )
-        except Exception as e:
-            import traceback
-
-            full_error = f"Python action failed: {e}\n{traceback.format_exc()}"
-            logger.error(full_error)
-            return ActionResult(action_name=self.name, success=False, error=str(e))
 
 
 class BashAction(BaseAction):

@@ -1359,13 +1359,20 @@ def create_app(
     except Exception as e:
         logger.warning(f"Failed to initialize subscription manager: {e}")
 
-    # Add CORS middleware
+    # Add CORS middleware (Issue #1596: env-based allowlist, never wildcard + credentials)
+    _cors_origins_raw = os.environ.get("CORS_ORIGINS", "")
+    _cors_origins: list[str] = (
+        [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
+        if _cors_origins_raw
+        else ["http://localhost:3000", "http://localhost:5173"]
+    )
+    _cors_allow_credentials = bool(_cors_origins_raw)  # credentials only with explicit origins
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
+        allow_origins=_cors_origins,
+        allow_credentials=_cors_allow_credentials,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "X-Zone-ID", "X-Request-ID"],
     )
 
     # Add Gzip compression middleware (60-80% response size reduction)
@@ -1964,53 +1971,56 @@ def _register_routes(app: FastAPI) -> None:
     except ImportError as e:
         logger.warning(f"Failed to import secrets audit router: {e}")
 
-    # Asyncio debug endpoint (Python 3.14+)
-    @app.get("/debug/asyncio", tags=["debug"])
-    async def debug_asyncio() -> dict[str, Any]:
-        """Debug endpoint for asyncio task introspection.
+    # Asyncio debug endpoint (Python 3.14+) — gated behind env flag + admin auth (Issue #1596)
+    if os.environ.get("NEXUS_DEBUG_ENABLED", "").lower() in ("1", "true", "yes"):
+        from nexus.server.dependencies import require_admin as _require_admin_dep
 
-        Returns information about running async tasks, including:
-        - Total task count
-        - Current task info
-        - Call graph (Python 3.14+ only)
+        @app.get("/debug/asyncio", tags=["debug"], dependencies=[Depends(_require_admin_dep)])
+        async def debug_asyncio() -> dict[str, Any]:
+            """Debug endpoint for asyncio task introspection.
 
-        This is useful for debugging stuck or slow async operations.
-        """
-        result: dict[str, Any] = {
-            "python_version": f"{__import__('sys').version_info.major}.{__import__('sys').version_info.minor}",
-        }
+            Requires NEXUS_DEBUG_ENABLED=true and admin privileges.
 
-        # Get all running tasks
-        try:
-            all_tasks = asyncio.all_tasks()
-            current = asyncio.current_task()
-            result["task_count"] = len(all_tasks)
-            result["current_task"] = current.get_name() if current else None
-            result["tasks"] = [
-                {
-                    "name": task.get_name(),
-                    "done": task.done(),
-                    "cancelled": task.cancelled(),
-                }
-                for task in list(all_tasks)[:50]  # Limit to 50 tasks
-            ]
-        except Exception as e:
-            result["tasks_error"] = str(e)
+            Returns information about running async tasks, including:
+            - Total task count
+            - Current task info
+            - Call graph (Python 3.14+ only)
+            """
+            result: dict[str, Any] = {
+                "python_version": f"{__import__('sys').version_info.major}.{__import__('sys').version_info.minor}",
+            }
 
-        # Python 3.14+ call graph introspection
-        try:
-            from asyncio import format_call_graph  # type: ignore[attr-defined]
+            # Get all running tasks
+            try:
+                all_tasks = asyncio.all_tasks()
+                current = asyncio.current_task()
+                result["task_count"] = len(all_tasks)
+                result["current_task"] = current.get_name() if current else None
+                result["tasks"] = [
+                    {
+                        "name": task.get_name(),
+                        "done": task.done(),
+                        "cancelled": task.cancelled(),
+                    }
+                    for task in list(all_tasks)[:50]  # Limit to 50 tasks
+                ]
+            except Exception as e:
+                result["tasks_error"] = str(e)
 
-            # Format call graph for current task (no args needed)
-            result["call_graph_available"] = True
-            result["call_graph"] = format_call_graph()
-        except ImportError:
-            result["call_graph_available"] = False
-            result["call_graph_note"] = "Requires Python 3.14+"
-        except Exception as e:
-            result["call_graph_error"] = str(e)
+            # Python 3.14+ call graph introspection
+            try:
+                from asyncio import format_call_graph  # type: ignore[attr-defined]
 
-        return result
+                # Format call graph for current task (no args needed)
+                result["call_graph_available"] = True
+                result["call_graph"] = format_call_graph()
+            except ImportError:
+                result["call_graph_available"] = False
+                result["call_graph_note"] = "Requires Python 3.14+"
+            except Exception as e:
+                result["call_graph_error"] = str(e)
+
+            return result
 
     # Auth whoami
     @app.get("/api/auth/whoami", response_model=WhoamiResponse)

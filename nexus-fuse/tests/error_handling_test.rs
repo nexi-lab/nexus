@@ -22,7 +22,7 @@ fn test_404_maps_to_not_found() {
         .with_body(r#"{"jsonrpc": "2.0", "id": 1, "error": {"code": -32000, "message": "File not found"}}"#)
         .create();
 
-    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let client = NexusClient::new(&server.url(), "sk-test-key", None).unwrap();
     let result = client.read("/missing.txt");
 
     assert!(result.is_err());
@@ -45,7 +45,7 @@ fn test_429_maps_to_ebusy() {
         .with_body(r#"{"error": "Rate limit exceeded"}"#)
         .create();
 
-    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let client = NexusClient::new(&server.url(), "sk-test-key", None).unwrap();
     let result = client.read("/file.txt");
 
     assert!(result.is_err());
@@ -66,7 +66,7 @@ fn test_500_maps_to_eio() {
         .with_body(r#"{"error": "Internal Server Error"}"#)
         .create();
 
-    let client = NexusClient::new(&server.url(), "test-key", None).unwrap();
+    let client = NexusClient::new(&server.url(), "sk-test-key", None).unwrap();
     let result = client.read("/file.txt");
 
     assert!(result.is_err());
@@ -79,7 +79,7 @@ fn test_500_maps_to_eio() {
 #[test]
 fn test_connection_refused_maps_to_econnrefused() {
     // Try to connect to a server that doesn't exist
-    let client = NexusClient::new("http://localhost:1", "test-key", None).unwrap();
+    let client = NexusClient::new("http://localhost:1", "sk-test-key", None).unwrap();
     let result = client.read("/file.txt");
 
     assert!(result.is_err());

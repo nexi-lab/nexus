@@ -89,7 +89,24 @@ pub struct NexusClient {
 
 impl NexusClient {
     /// Create a new Nexus client.
+    ///
+    /// The API key must start with "sk-" (Nexus static auth convention).
+    /// Returns an error if the key is missing or has an invalid prefix.
     pub fn new(base_url: &str, api_key: &str, agent_id: Option<String>) -> Result<Self, NexusClientError> {
+        if api_key.is_empty() {
+            return Err(NexusClientError::InvalidResponse(
+                "API key must not be empty".to_string(),
+            ));
+        }
+        if !api_key.starts_with("sk-") {
+            return Err(NexusClientError::InvalidResponse(
+                format!(
+                    "API key must start with 'sk-' (got '{}...'). See nexus auth docs.",
+                    &api_key[..api_key.len().min(4)]
+                ),
+            ));
+        }
+
         let client = Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .connect_timeout(std::time::Duration::from_secs(5))

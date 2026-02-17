@@ -10,7 +10,6 @@ and served from app.state.features_info with O(1) cost.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
@@ -34,13 +33,13 @@ class FeaturesResponse(BaseModel):
 
 @router.get("/api/v2/features", response_model=FeaturesResponse)
 @limiter.exempt
-async def get_features(request: Request) -> FeaturesResponse | dict[str, Any]:
+async def get_features(request: Request) -> FeaturesResponse:
     """Return the active deployment profile and enabled bricks.
 
     This endpoint is public (no auth required) to enable client
     capability discovery before authentication.
     """
-    features_info = getattr(request.app.state, "features_info", None)
+    features_info: FeaturesResponse | None = getattr(request.app.state, "features_info", None)
     if features_info is not None:
         return features_info
 

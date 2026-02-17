@@ -70,6 +70,7 @@ from nexus.rebac.tuples.repository import TupleRepository
 from nexus.rebac.types import (
     CheckResult,
     ConsistencyLevel,
+    ConsistencyMode,
     ConsistencyRequirement,
     GraphLimitExceeded,
     GraphLimits,

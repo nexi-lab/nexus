@@ -13,7 +13,7 @@ References:
 import pytest
 
 from nexus.rebac.cache.result_cache import ReBACPermissionCache
-from nexus.rebac.manager import (
+from nexus.rebac.types import (
     ConsistencyLevel,
     ConsistencyMode,
     ConsistencyRequirement,

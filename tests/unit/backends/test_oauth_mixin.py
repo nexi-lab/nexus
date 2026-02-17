@@ -33,9 +33,7 @@ class TestInitOAuth:
         assert obj.user_email == "a@b.com"
         assert obj.provider == "gmail"
 
-    @patch(
-        "nexus.backends.connector_utils.resolve_database_url", return_value="/data/tokens.db"
-    )
+    @patch("nexus.backends.connector_utils.resolve_database_url", return_value="/data/tokens.db")
     @patch("nexus.server.auth.token_manager.TokenManager")
     def test_init_oauth_db_url_path(self, mock_tm_cls: MagicMock, _mock_resolve: MagicMock) -> None:
         """Plain path (no scheme) creates TokenManager with db_path."""

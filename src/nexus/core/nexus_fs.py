@@ -38,18 +38,6 @@ from nexus.core.export_import import (
 )
 from nexus.core.filesystem import NexusFilesystem
 from nexus.core.nexus_fs_core import NexusFSCoreMixin
-from nexus.core.nexus_fs_events import NexusFSEventsMixin
-
-# NexusFSLLMMixin removed in Phase B — replaced by LLMSubsystem (Issue #1287)
-# NexusFSMCPMixin removed in Phase 1.4 — replaced by MCPService delegation (Issue #1287)
-# NexusFSMountsMixin removed in Phase 3 — replaced by service delegation (Issue #1387)
-# NexusFSOAuthMixin removed in Phase 1.3 — replaced by OAuthService delegation (Issue #1287)
-# NexusFSReBACMixin removed in Phase 3 — replaced by service delegation (Issue #1387)
-# NexusFSSearchMixin removed in Phase 1.1 — replaced by SearchService delegation (Issue #1287)
-# NexusFSShareLinksMixin removed in Phase 3 — replaced by ShareLinkService delegation (Issue #1387)
-# NexusFSSkillsMixin removed in Phase 1.5 — replaced by SkillService delegation (Issue #1287)
-# NexusFSTasksMixin removed in Phase 3 — replaced by TaskQueueService delegation (Issue #1387)
-# NexusFSVersionsMixin removed in Phase 2.3 - replaced by VersionService
 from nexus.core.permissions import OperationContext, Permission
 from nexus.core.router import NamespaceConfig, PathRouter
 from nexus.core.rpc_decorator import rpc_expose
@@ -66,16 +54,6 @@ logger = logging.getLogger(__name__)
 
 class NexusFS(  # type: ignore[misc]
     NexusFSCoreMixin,
-    # NexusFSReBACMixin removed — replaced by service delegation (Issue #1387)
-    # NexusFSShareLinksMixin removed — replaced by ShareLinkService delegation (Issue #1387)
-    # NexusFSVersionsMixin removed - replaced by VersionService (Phase 2.3)
-    # NexusFSMountsMixin removed — replaced by service delegation (Issue #1387)
-    # NexusFSOAuthMixin removed — replaced by OAuthService delegation (Issue #1287)
-    # NexusFSSkillsMixin removed — replaced by SkillService delegation (Issue #1287)
-    # NexusFSMCPMixin removed — replaced by MCPService delegation (Issue #1287)
-    # NexusFSLLMMixin removed — replaced by LLMSubsystem (Issue #1287)
-    NexusFSEventsMixin,  # Issue #1106: Same-box file watching
-    # NexusFSTasksMixin removed — replaced by TaskQueueService delegation (Issue #1387)
     NexusFilesystem,
 ):
     """

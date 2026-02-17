@@ -198,13 +198,13 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     (
         "WatchProtocol",
         "nexus.services.protocols.watch",
-        "nexus.core.nexus_fs_events.NexusFSEventsMixin",
+        "nexus.services.events_service.EventsService",
         True,  # wait_for_changes method match
     ),
     (
         "LockProtocol",
         "nexus.services.protocols.lock",
-        "nexus.core.nexus_fs_events.NexusFSEventsMixin",
+        "nexus.services.events_service.EventsService",
         True,  # lock/extend_lock/unlock methods match
     ),
     # ── TransactionalSnapshotService (Issue #1752) ──────────────────────

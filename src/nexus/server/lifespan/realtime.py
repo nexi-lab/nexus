@@ -188,15 +188,15 @@ async def _startup_writeback(app: FastAPI) -> None:
         gw = NexusFSGateway(app.state.nexus_fs)
 
         # ConflictLogStore is always available for the REST API
-        conflict_log_store = ConflictLogStore(gw)
+        conflict_log_store = ConflictLogStore(gw.session_factory)
         app.state.conflict_log_store = conflict_log_store
 
         wb_event_bus = None
         if hasattr(app.state.nexus_fs, "_event_bus"):
             wb_event_bus = app.state.nexus_fs._event_bus
         if wb_event_bus:
-            backlog_store = SyncBacklogStore(gw)
-            change_log_store = ChangeLogStore(gw)
+            backlog_store = SyncBacklogStore(gw.session_factory)
+            change_log_store = ChangeLogStore(gw.session_factory)
 
             # Map env var to ConflictStrategy (backward compat)
             _policy_map = {

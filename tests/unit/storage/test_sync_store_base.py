@@ -1,7 +1,7 @@
 """Unit tests for SyncStoreBase shared session/dialect logic.
 
 Tests cover:
-- __init__: gateway assignment, initial state
+- __init__: session_factory assignment, initial state
 - _get_session: session factory present/absent
 - _detect_dialect: PostgreSQL detection, SQLite fallback, caching, thread safety
 - _dialect_insert: correct dialect-specific INSERT statement
@@ -23,20 +23,6 @@ from nexus.storage.sync_store_base import SyncStoreBase
 # ---------------------------------------------------------------------------
 
 
-def _make_gateway(
-    *,
-    session_factory: Any = None,
-    dialect_name: str = "sqlite",
-) -> MagicMock:
-    """Build a mock gateway with optional session factory."""
-    gw = MagicMock()
-    if session_factory is not None:
-        gw.session_factory = session_factory
-    else:
-        gw.session_factory = None
-    return gw
-
-
 def _make_session(dialect_name: str = "sqlite") -> MagicMock:
     """Build a mock SQLAlchemy session."""
     session = MagicMock()
@@ -48,23 +34,20 @@ def _make_session(dialect_name: str = "sqlite") -> MagicMock:
 def sqlite_store() -> SyncStoreBase:
     """SyncStoreBase backed by a SQLite session."""
     session = _make_session("sqlite")
-    gw = _make_gateway(session_factory=lambda: session)
-    return SyncStoreBase(gw)
+    return SyncStoreBase(lambda: session)
 
 
 @pytest.fixture
 def pg_store() -> SyncStoreBase:
     """SyncStoreBase backed by a PostgreSQL session."""
     session = _make_session("postgresql")
-    gw = _make_gateway(session_factory=lambda: session)
-    return SyncStoreBase(gw)
+    return SyncStoreBase(lambda: session)
 
 
 @pytest.fixture
 def no_session_store() -> SyncStoreBase:
     """SyncStoreBase with no session factory."""
-    gw = _make_gateway(session_factory=None)
-    return SyncStoreBase(gw)
+    return SyncStoreBase(None)
 
 
 # ===========================================================================
@@ -75,10 +58,10 @@ def no_session_store() -> SyncStoreBase:
 class TestInit:
     """Tests for SyncStoreBase initialization."""
 
-    def test_stores_gateway(self):
-        gw = MagicMock()
-        store = SyncStoreBase(gw)
-        assert store._gw is gw
+    def test_stores_session_factory(self):
+        factory = MagicMock()
+        store = SyncStoreBase(factory)
+        assert store._session_factory is factory
 
     def test_initial_dialect_is_none(self):
         store = SyncStoreBase(MagicMock())
@@ -99,12 +82,6 @@ class TestGetSession:
 
     def test_returns_none_without_factory(self, no_session_store):
         assert no_session_store._get_session() is None
-
-    def test_returns_none_when_factory_attr_missing(self):
-        """Gateway without session_factory attribute should return None."""
-        gw = MagicMock(spec=[])  # No attributes at all
-        store = SyncStoreBase(gw)
-        assert store._get_session() is None
 
 
 # ===========================================================================
@@ -138,15 +115,13 @@ class TestDetectDialect:
         # Simpler: make the attribute access raise
         type(session.bind.dialect).name = property(lambda self: (_ for _ in ()).throw(RuntimeError))
 
-        gw = _make_gateway(session_factory=lambda: session)
-        store = SyncStoreBase(gw)
+        store = SyncStoreBase(lambda: session)
         assert store._detect_dialect() is False
 
     def test_session_closed_after_detection(self):
         """Session should be closed after dialect detection."""
         session = _make_session("postgresql")
-        gw = _make_gateway(session_factory=lambda: session)
-        store = SyncStoreBase(gw)
+        store = SyncStoreBase(lambda: session)
         store._detect_dialect()
         session.close.assert_called_once()
 
@@ -265,8 +240,7 @@ class TestWithSession:
     def test_commits_on_success(self):
         """Session should be committed on successful block execution."""
         session = MagicMock()
-        gw = _make_gateway(session_factory=lambda: session)
-        store = SyncStoreBase(gw)
+        store = SyncStoreBase(lambda: session)
 
         with store._with_session() as s:
             s.execute("SELECT 1")
@@ -277,8 +251,7 @@ class TestWithSession:
     def test_rollback_on_exception(self):
         """Session should be rolled back on exception."""
         session = MagicMock()
-        gw = _make_gateway(session_factory=lambda: session)
-        store = SyncStoreBase(gw)
+        store = SyncStoreBase(lambda: session)
 
         with pytest.raises(ValueError, match="boom"), store._with_session() as _s:
             raise ValueError("boom")
@@ -291,8 +264,7 @@ class TestWithSession:
         """Session.close() must be called even if commit raises."""
         session = MagicMock()
         session.commit.side_effect = RuntimeError("commit failed")
-        gw = _make_gateway(session_factory=lambda: session)
-        store = SyncStoreBase(gw)
+        store = SyncStoreBase(lambda: session)
 
         with pytest.raises(RuntimeError, match="commit failed"), store._with_session():
             pass  # Success path triggers commit, which fails
@@ -310,8 +282,7 @@ class TestWithSession:
     def test_yields_session_object(self):
         """The yielded object should be the session from the factory."""
         session = MagicMock()
-        gw = _make_gateway(session_factory=lambda: session)
-        store = SyncStoreBase(gw)
+        store = SyncStoreBase(lambda: session)
 
         with store._with_session() as s:
             assert s is session

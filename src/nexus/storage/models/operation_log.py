@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, Index, String, Text, text
+from sqlalchemy import BigInteger, Boolean, DateTime, Index, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base, _generate_uuid, _get_uuid_server_default
@@ -62,6 +62,10 @@ class OperationLogModel(Base):
         Boolean, nullable=False, default=False, server_default="false"
     )
 
+    # Monotonic sequence for cursor-based replay pagination (Issue #1138/#1139).
+    # Nullable for backfill of existing rows; new rows auto-populated via trigger/app.
+    sequence_number: Mapped[int | None] = mapped_column(BigInteger, nullable=True, default=None)
+
     # Indexes
     __table_args__ = (
         Index("idx_operation_log_type", "operation_type"),
@@ -98,6 +102,13 @@ class OperationLogModel(Base):
             "created_at",
             postgresql_where=text("delivered = false"),
         ),
+        # BRIN index for efficient replay cursor queries (Issue #1138/#1139).
+        Index(
+            "idx_operation_log_zone_seq_brin",
+            "zone_id",
+            "sequence_number",
+            postgresql_using="brin",
+        ),
     )
 
     def __repr__(self) -> str:
@@ -106,18 +117,9 @@ class OperationLogModel(Base):
     def validate(self) -> None:
         """Validate operation log model before database operations."""
         from nexus.core.exceptions import ValidationError
+        from nexus.core.operation_types import OperationType
 
-        valid_types = [
-            "write",
-            "delete",
-            "rename",
-            "mkdir",
-            "rmdir",
-            "chmod",
-            "chown",
-            "chgrp",
-            "setfacl",
-        ]
+        valid_types = [t.value for t in OperationType]
         if self.operation_type not in valid_types:
             raise ValidationError(
                 f"operation_type must be one of {valid_types}, got {self.operation_type}"

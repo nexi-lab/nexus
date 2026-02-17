@@ -29,7 +29,6 @@ from nexus.services.event_log.protocol import EventLogConfig, EventLogProtocol
 from nexus.services.governance.protocols import AnomalyDetectorProtocol
 from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProtocol
 from nexus.services.protocols.context_manifest import ContextManifestProtocol
-from nexus.services.protocols.events import EventsProtocol
 from nexus.services.protocols.governance import GovernanceProtocol
 from nexus.services.protocols.hook_engine import (
     POST_COPY,
@@ -49,6 +48,7 @@ from nexus.services.protocols.hook_engine import (
     HookSpec,
 )
 from nexus.services.protocols.llm import LLMProtocol
+from nexus.services.protocols.lock import LockProtocol
 from nexus.services.protocols.mcp import MCPProtocol
 from nexus.services.protocols.mount import MountProtocol, ProgressCallback
 from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol, NamespaceMount
@@ -63,6 +63,7 @@ from nexus.services.protocols.scheduler import AgentRequest, SchedulerProtocol
 from nexus.services.protocols.search import SearchBrickProtocol
 from nexus.services.protocols.share_link import ShareLinkProtocol
 from nexus.services.protocols.skills import SkillsProtocol
+from nexus.services.protocols.watch import WatchProtocol
 from nexus.workflows.protocol import (
     LLMProviderProtocol,
     MetadataStoreProtocol,
@@ -78,7 +79,6 @@ __all__ = [
     "ContextManifestProtocol",
     "EventLogConfig",
     "EventLogProtocol",
-    "EventsProtocol",
     "GovernanceProtocol",
     "HookContext",
     "HookEngineProtocol",
@@ -87,6 +87,7 @@ __all__ = [
     "HookSpec",
     "LLMProtocol",
     "LLMProviderProtocol",
+    "LockProtocol",
     "MCPProtocol",
     "MetadataStoreProtocol",
     "MountProtocol",
@@ -115,5 +116,6 @@ __all__ = [
     "SearchBrickProtocol",
     "ShareLinkProtocol",
     "SkillsProtocol",
+    "WatchProtocol",
     "WorkflowProtocol",
 ]

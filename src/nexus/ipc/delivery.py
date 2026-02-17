@@ -13,10 +13,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from collections import OrderedDict
 from collections.abc import Callable, Coroutine
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nexus.ipc.conventions import (
     dead_letter_path,
@@ -35,6 +34,9 @@ from nexus.ipc.exceptions import (
 )
 from nexus.ipc.protocols import EventPublisher, HotPathPublisher, HotPathSubscriber
 from nexus.ipc.storage.protocol import IPCStorageDriver
+
+if TYPE_CHECKING:
+    from nexus.core.cache_store import CacheStoreABC
 
 logger = logging.getLogger(__name__)
 
@@ -304,7 +306,11 @@ class MessageProcessor:
     - Success: move to processed/
     - Failure: move to dead_letter/
     - Expired TTL: move to dead_letter/ without invoking handler
-    - Duplicate: skip (dedup via in-memory ID set)
+    - Duplicate: skip (dedup via CacheStoreABC)
+
+    Uses CacheStoreABC for TTL-based dedup tracking per KERNEL-ARCHITECTURE.md §2
+    (CacheStore pillar: ephemeral KV with TTL).  When no cache_store is provided,
+    a NullCacheStore is used and dedup is effectively disabled.
 
     Optionally listens on a NATS hot-path subject for instant delivery.
     The dedup set is shared between cold (``process_inbox``) and hot
@@ -316,7 +322,8 @@ class MessageProcessor:
         agent_id: The agent whose inbox to process.
         handler: Async callback invoked for each valid message.
         zone_id: Zone ID for multi-tenant isolation.
-        max_dedup_size: Maximum size of the in-memory dedup set.
+        cache_store: CacheStoreABC for dedup tracking (optional, degrades gracefully).
+        dedup_ttl_seconds: TTL for dedup cache entries.
         hot_subscriber: NATS hot-path subscriber. Optional.
         max_handler_concurrency: Semaphore bound for concurrent handler dispatch.
     """
@@ -328,7 +335,8 @@ class MessageProcessor:
         handler: MessageHandler,
         *,
         zone_id: str,
-        max_dedup_size: int = 10_000,
+        cache_store: CacheStoreABC | None = None,
+        dedup_ttl_seconds: int = 3600,
         hot_subscriber: HotPathSubscriber | None = None,
         max_handler_concurrency: int = DEFAULT_MAX_HANDLER_CONCURRENCY,
     ) -> None:
@@ -336,12 +344,27 @@ class MessageProcessor:
         self._agent_id = agent_id
         self._handler = handler
         self._zone_id = zone_id
-        self._max_dedup_size = max_dedup_size
-        self._processed_ids: OrderedDict[str, None] = OrderedDict()
+        self._cache_store = cache_store
+        self._dedup_ttl = dedup_ttl_seconds
         self._hot_subscriber = hot_subscriber
         self._hot_task: asyncio.Task[None] | None = None
         self._handler_semaphore = asyncio.Semaphore(max_handler_concurrency)
         self._handler_tasks: set[asyncio.Task[None]] = set()
+
+    def _dedup_key(self, msg_id: str) -> str:
+        """Zone-scoped cache key for message dedup."""
+        return f"ipc:dedup:{self._zone_id}:{msg_id}"
+
+    async def _is_duplicate(self, msg_id: str) -> bool:
+        """Check if a message ID has already been processed (via CacheStoreABC)."""
+        if self._cache_store is None:
+            return False
+        return await self._cache_store.exists(self._dedup_key(msg_id))
+
+    async def _track_processed(self, message_id: str) -> None:
+        """Record message ID in dedup cache (TTL-based eviction via CacheStoreABC)."""
+        if self._cache_store is not None:
+            await self._cache_store.set(self._dedup_key(message_id), b"1", ttl=self._dedup_ttl)
 
     async def start(self) -> None:
         """Start the hot-path listener (if a subscriber is configured)."""
@@ -378,7 +401,7 @@ class MessageProcessor:
                     continue
 
                 # Dedup (shared with process_inbox)
-                if envelope.id in self._processed_ids:
+                if await self._is_duplicate(envelope.id):
                     logger.debug("Hot-path dedup: skipping %s", envelope.id)
                     continue
 
@@ -389,7 +412,7 @@ class MessageProcessor:
                         envelope.id,
                         envelope.ttl_seconds,
                     )
-                    self._track_processed(envelope.id)
+                    await self._track_processed(envelope.id)
                     continue
 
                 # Dispatch handler with semaphore
@@ -416,7 +439,7 @@ class MessageProcessor:
                         envelope.id,
                         exc_info=True,
                     )
-                self._track_processed(envelope.id)
+                await self._track_processed(envelope.id)
 
         task = asyncio.create_task(_run())
         self._handler_tasks.add(task)
@@ -478,8 +501,8 @@ class MessageProcessor:
             await self._move_to_dead_letter_raw(msg_path, reason=str(exc))
             return
 
-        # Dedup check (OrderedDict preserves insertion order for LRU eviction)
-        if envelope.id in self._processed_ids:
+        # Dedup check via CacheStoreABC
+        if await self._is_duplicate(envelope.id):
             logger.debug(
                 "Skipping duplicate message %s for agent %s",
                 envelope.id,
@@ -532,14 +555,8 @@ class MessageProcessor:
                 exc_info=True,
             )
 
-        # Track in dedup set
-        self._track_processed(envelope.id)
-
-    def _track_processed(self, message_id: str) -> None:
-        """Add message ID to the bounded dedup set (FIFO eviction)."""
-        self._processed_ids[message_id] = None
-        while len(self._processed_ids) > self._max_dedup_size:
-            self._processed_ids.popitem(last=False)  # evict oldest
+        # Track in dedup cache (TTL-based eviction via CacheStoreABC)
+        await self._track_processed(envelope.id)
 
     async def _move_to_dead_letter(
         self,

@@ -47,8 +47,14 @@ _initialized = False
 _tracer: "Tracer | None" = None
 
 def is_telemetry_enabled() -> bool:
-    """Check if telemetry is enabled via environment variable."""
-    return os.environ.get("OTEL_ENABLED", "false").lower() in ("true", "1", "yes")
+    """Check if telemetry is enabled via environment variable.
+
+    Canonical implementation lives in ``nexus.utils.telemetry``.
+    Bricks should import from there to avoid server-layer coupling.
+    """
+    from nexus.utils.telemetry import is_telemetry_enabled as _check
+
+    return _check()
 
 def setup_telemetry(
     service_name: str | None = None,

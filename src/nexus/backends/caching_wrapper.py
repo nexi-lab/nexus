@@ -495,7 +495,7 @@ class CachingBackendWrapper(DelegatingBackend):
         self._metrics_initialized = True
 
         try:
-            from nexus.server.telemetry import is_telemetry_enabled
+            from nexus.utils.telemetry import is_telemetry_enabled
 
             if not is_telemetry_enabled():
                 return None

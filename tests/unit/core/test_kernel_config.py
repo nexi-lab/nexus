@@ -284,6 +284,8 @@ class TestKernelServices:
             "rebac_service",
             "search_service",
             "events_service",
+            # Transactional Snapshots (Issue #1752)
+            "transactional_snapshot_service",
         }
         assert expected_fields.issubset(field_names), f"Missing: {expected_fields - field_names}"
 

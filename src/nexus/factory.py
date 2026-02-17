@@ -619,6 +619,20 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
     except Exception as exc:
         logger.warning("[BOOT:SYSTEM] ResiliencyManager unavailable: %s", exc)
 
+    # --- Transactional Snapshot Service (Issue #1752) ---
+    transactional_snapshot_service: Any = None
+    if ctx.session_factory is not None:
+        try:
+            from nexus.services.transactional_snapshot import TransactionalSnapshotService
+
+            transactional_snapshot_service = TransactionalSnapshotService(
+                metadata_store=ctx.metadata_store,
+                session_factory=ctx.session_factory,
+            )
+            logger.debug("[BOOT:SYSTEM] TransactionalSnapshotService created")
+        except Exception as exc:
+            logger.warning("[BOOT:SYSTEM] TransactionalSnapshotService unavailable: %s", exc)
+
     # TODO: EventLog, Hook, Scheduler services (not yet implemented)
 
     result = {
@@ -630,6 +644,7 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
         "delivery_worker": delivery_worker,
         "observability_subsystem": observability_subsystem,
         "resiliency_manager": resiliency_manager,
+        "transactional_snapshot_service": transactional_snapshot_service,
     }
 
     elapsed = time.perf_counter() - t0
@@ -978,6 +993,7 @@ def create_nexus_services(
         tool_namespace_middleware=brick["tool_namespace_middleware"],
         delivery_worker=system["delivery_worker"],
         api_key_creator=brick["api_key_creator"],
+        transactional_snapshot_service=system["transactional_snapshot_service"],
     )
 
 

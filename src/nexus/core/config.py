@@ -172,6 +172,9 @@ class KernelServices:
     search_service: Any = None
     events_service: Any = None
 
+    # Transactional Snapshots (Issue #1752)
+    transactional_snapshot_service: Any = None
+
 
 # ---------------------------------------------------------------------------
 # Observability (unchanged from before)

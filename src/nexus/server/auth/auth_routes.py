@@ -9,8 +9,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, Header, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
 
-from nexus.raft.zone_manager import ROOT_ZONE_ID
 from nexus.auth.providers.database_local import DatabaseLocalAuth
+from nexus.raft.zone_manager import ROOT_ZONE_ID
 from nexus.server.auth.oauth_user_auth import OAuthUserAuth
 
 logger = logging.getLogger(__name__)

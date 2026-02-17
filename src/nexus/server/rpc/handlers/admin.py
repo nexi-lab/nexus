@@ -178,8 +178,8 @@ def handle_admin_get_key(auth_provider: Any, params: Any, context: Any) -> dict[
 
 def handle_admin_revoke_key(auth_provider: Any, params: Any, context: Any) -> dict[str, Any]:
     """Handle admin_revoke_key method."""
-    from nexus.core.exceptions import NexusFileNotFoundError
     from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.core.exceptions import NexusFileNotFoundError
 
     require_admin(context)
 

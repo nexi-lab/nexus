@@ -31,8 +31,8 @@ from contextlib import contextmanager
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from nexus.delegation.derivation import MAX_DELEGATABLE_GRANTS, GrantSpec, derive_grants
-from nexus.delegation.errors import (
+from nexus.services.delegation.derivation import MAX_DELEGATABLE_GRANTS, GrantSpec, derive_grants
+from nexus.services.delegation.errors import (
     DelegationChainError,
     DelegationError,
     DelegationNotFoundError,
@@ -49,10 +49,10 @@ from nexus.services.delegation.models import (
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
 
-    from nexus.services.agents.agent_registry import AgentRegistry
     from nexus.rebac.entity_registry import EntityRegistry
-    from nexus.rebac.namespace_manager import NamespaceManager
     from nexus.rebac.manager import EnhancedReBACManager
+    from nexus.rebac.namespace_manager import NamespaceManager
+    from nexus.services.agents.agent_registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
 

@@ -21,7 +21,6 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from nexus.services.agents.agent_registry import AgentRegistry
 from nexus.services.delegation.errors import DelegationChainError, EscalationError
 from nexus.services.delegation.models import DelegationMode, DelegationStatus
 from nexus.services.delegation.service import DelegationService

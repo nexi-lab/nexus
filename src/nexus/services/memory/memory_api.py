@@ -11,16 +11,19 @@ from __future__ import annotations
 
 import builtins
 import contextlib
+import logging
 from datetime import UTC, datetime
 from typing import Any, Literal
 
 from sqlalchemy.orm import Session
 
-from nexus.services.memory.memory_router import MemoryViewRouter
 from nexus.core.permissions import OperationContext, Permission
 from nexus.core.temporal import parse_datetime, validate_temporal_params
 from nexus.rebac.entity_registry import EntityRegistry
 from nexus.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
+from nexus.services.memory.memory_router import MemoryViewRouter
+
+logger = logging.getLogger(__name__)
 
 # Importance decay configuration (Issue #1030)
 DEFAULT_DECAY_FACTOR = 0.95  # 5% decay per day
@@ -166,7 +169,6 @@ class Memory:
             agent_id=agent_id,
             zone_id=zone_id,
         )
-
 
     @staticmethod
     def _get_text_content(content: str | bytes | dict[str, Any]) -> str | None:

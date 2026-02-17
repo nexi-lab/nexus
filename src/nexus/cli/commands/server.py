@@ -1234,8 +1234,8 @@ def serve(
 
             from datetime import UTC, datetime, timedelta
 
-            from nexus.rebac.entity_registry import EntityRegistry
             from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+            from nexus.rebac.entity_registry import EntityRegistry
             from nexus.storage.record_store import SQLAlchemyRecordStore
 
             _init_store = SQLAlchemyRecordStore(db_url=db_url)

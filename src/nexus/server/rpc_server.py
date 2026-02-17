@@ -36,6 +36,7 @@ from nexus.core.exceptions import (
 )
 from nexus.core.filters import is_os_metadata_file
 from nexus.core.nexus_fs import NexusFS
+from nexus.core.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.core.virtual_views import (
     add_virtual_views_to_listing,
     get_parsed_content,
@@ -46,7 +47,6 @@ from nexus.server.path_utils import (
     unscope_internal_path,
     unscope_result,
 )
-from nexus.core.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.server.protocol import (
     RPCErrorCode,
     RPCRequest,
@@ -489,8 +489,8 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         import uuid
         from datetime import timedelta
 
-        from nexus.rebac.entity_registry import EntityRegistry
         from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+        from nexus.rebac.entity_registry import EntityRegistry
 
         if not self.auth_provider or not hasattr(self.auth_provider, "session_factory"):
             raise RuntimeError("Database auth provider not configured")

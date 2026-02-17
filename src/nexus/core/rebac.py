@@ -38,6 +38,8 @@ from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
 
+from nexus.services.permissions.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS  # noqa: F401
+
 # Wildcard subject for public access
 WILDCARD_SUBJECT = ("*", "*")
 

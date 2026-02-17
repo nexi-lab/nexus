@@ -24,7 +24,11 @@ from nexus.server.auth.microsoft_oauth import MicrosoftOAuthProvider  # noqa: F4
 from nexus.server.auth.oauth_config import OAuthConfig, OAuthProviderConfig  # noqa: F401
 from nexus.server.auth.oauth_crypto import OAuthCrypto  # noqa: F401
 from nexus.server.auth.oauth_factory import OAuthProviderFactory  # noqa: F401
-from nexus.server.auth.oauth_provider import OAuthCredential, OAuthError, OAuthProvider  # noqa: F401
+from nexus.server.auth.oauth_provider import (  # noqa: F401
+    OAuthCredential,
+    OAuthError,
+    OAuthProvider,
+)
 from nexus.server.auth.token_manager import TokenManager  # noqa: F401
 
 __all__ = [
@@ -67,8 +71,7 @@ def __getattr__(name: str) -> object:
         "MultiOIDCAuth",
     ):
         warnings.warn(
-            f"Importing {name} from nexus.server.auth is deprecated. "
-            f"Use nexus.auth instead.",
+            f"Importing {name} from nexus.server.auth is deprecated. Use nexus.auth instead.",
             DeprecationWarning,
             stacklevel=2,
         )

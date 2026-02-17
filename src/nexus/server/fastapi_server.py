@@ -59,6 +59,7 @@ from nexus.core.exceptions import (
     NexusPermissionError,
     ValidationError,
 )
+from nexus.core.rpc_codec import decode_rpc_message, encode_rpc_message
 
 # --- Extracted modules (re-exported for backward compatibility) ---
 from nexus.server.dependencies import (  # noqa: F401, E402
@@ -74,7 +75,6 @@ from nexus.server.path_utils import (
     unscope_internal_path,
     unscope_result,
 )
-from nexus.core.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.server.protocol import (
     RPCErrorCode,
     RPCRequest,
@@ -292,9 +292,9 @@ async def lifespan(_app: FastAPI) -> Any:
                 logger.info("Async ReBAC manager initialized (wrapping sync manager)")
             else:
                 # Fallback: create a fresh sync manager for async wrapper
-                from nexus.rebac.manager import ReBACManager
-
                 from sqlalchemy import create_engine as _create_engine
+
+                from nexus.rebac.manager import ReBACManager
 
                 _sync_engine = _create_engine(_app.state.database_url)
                 _sync_mgr = ReBACManager(engine=_sync_engine)
@@ -1371,12 +1371,11 @@ def create_app(
     # Initialize authentication provider for user registration/login endpoints
     if auth_provider is not None:
         try:
-            from nexus.server.auth.auth_routes import set_auth_provider
-
             # Extract DatabaseLocalAuth from DiscriminatingAuthProvider if needed
             from nexus.auth.providers.base import AuthProvider
             from nexus.auth.providers.database_local import DatabaseLocalAuth
             from nexus.auth.providers.discriminator import DiscriminatingAuthProvider
+            from nexus.server.auth.auth_routes import set_auth_provider
 
             local_auth_provider: AuthProvider | None = None
             if isinstance(auth_provider, DatabaseLocalAuth):
@@ -3507,8 +3506,8 @@ def _handle_admin_get_key(params: Any, context: Any) -> dict[str, Any]:
 
 def _handle_admin_revoke_key(params: Any, context: Any) -> dict[str, Any]:
     """Handle admin_revoke_key method."""
-    from nexus.core.exceptions import NexusFileNotFoundError
     from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
+    from nexus.core.exceptions import NexusFileNotFoundError
 
     _require_admin(context)
 

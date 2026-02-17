@@ -5,8 +5,8 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from nexus.backends.local import LocalBackend
-from nexus.services.memory.memory_api import Memory
 from nexus.rebac.entity_registry import EntityRegistry
+from nexus.services.memory.memory_api import Memory
 from nexus.storage.models import Base
 
 

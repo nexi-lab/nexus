@@ -149,10 +149,10 @@ def app(tmp_path: Any, db_path: Any, session_factory: Any, api_keys: Any) -> Any
     Uses RaftMetadataStore.embedded() for realistic filesystem operations
     (mkdir, write) that the identity layer needs for DID document writing.
     """
-    from nexus.backends.local import LocalBackend
-    from nexus.core.nexus_fs import NexusFS
     from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
     from nexus.auth.providers.discriminator import DiscriminatingAuthProvider
+    from nexus.backends.local import LocalBackend
+    from nexus.core.nexus_fs import NexusFS
     from nexus.server.fastapi_server import create_app
     from nexus.storage.record_store import SQLAlchemyRecordStore
 

@@ -283,7 +283,9 @@ class TestTimeTravelDebug:
         from nexus.storage.time_travel import TimeTravelReader
 
         # Use context parameter with agent ID
-        context = EnhancedOperationContext(user="test", groups=[], agent_id="agent-1", zone_id="root")
+        context = EnhancedOperationContext(
+            user="test", groups=[], agent_id="agent-1", zone_id="root"
+        )
 
         path = "/workspace/agent_file.txt"
         nx.write(path, b"Agent 1 content", context=context)

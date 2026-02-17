@@ -23,10 +23,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
-from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol, PaginatedResult
-from nexus.core.config import PermissionConfig
 from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.auth.providers.discriminator import DiscriminatingAuthProvider
+from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol, PaginatedResult
+from nexus.core.config import PermissionConfig
 from nexus.storage.models import Base
 
 # ==============================================================================

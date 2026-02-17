@@ -71,6 +71,13 @@ def _get_tracer() -> Any:
     return _tracer
 
 
+def set_tracer(tracer: Any) -> None:
+    """Inject a pre-built tracer instance (called from telemetry init)."""
+    global _tracer_resolved, _tracer
+    _tracer = tracer
+    _tracer_resolved = True
+
+
 def reset_tracer() -> None:
     """Reset cached tracer — only for tests."""
     global _tracer_resolved, _tracer

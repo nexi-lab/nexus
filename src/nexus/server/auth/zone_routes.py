@@ -9,17 +9,17 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from nexus.server.auth.auth_routes import (
-    get_auth_provider,
-    get_authenticated_user,
-    get_nexus_instance,
-)
 from nexus.auth.providers.database_local import DatabaseLocalAuth
 from nexus.auth.zone_helpers import (
     create_zone,
     normalize_to_slug,
     suggest_zone_id,
     validate_zone_id,
+)
+from nexus.server.auth.auth_routes import (
+    get_auth_provider,
+    get_authenticated_user,
+    get_nexus_instance,
 )
 from nexus.server.auth.user_helpers import (
     add_user_to_zone,

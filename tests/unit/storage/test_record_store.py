@@ -279,14 +279,17 @@ class TestRecordStoreCreatorParams:
                 async_creator=mock_async_creator,
             )
 
-        with patch("sqlalchemy.ext.asyncio.create_async_engine") as mock_async_create:
+        with (
+            patch("sqlalchemy.ext.asyncio.create_async_engine") as mock_async_create,
+            patch("sqlalchemy.ext.asyncio.async_sessionmaker") as mock_asm,
+            patch.object(SQLAlchemyRecordStore, "_attach_plan_cache_mode_listener"),
+        ):
             mock_async_create.return_value = MagicMock()
-            with patch("sqlalchemy.ext.asyncio.async_sessionmaker") as mock_asm:
-                mock_asm.return_value = MagicMock()
-                _ = store.async_session_factory
+            mock_asm.return_value = MagicMock()
+            _ = store.async_session_factory
 
-                call_kwargs = mock_async_create.call_args[1]
-                assert call_kwargs["async_creator"] is mock_async_creator
+            call_kwargs = mock_async_create.call_args[1]
+            assert call_kwargs["async_creator"] is mock_async_creator
 
 
 class TestRecordStoreAsyncSessionFactory:

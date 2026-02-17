@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -224,12 +225,14 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         # Async engine/session are created lazily on first access
         self._async_engine: Any = None
         self._async_session_factory_instance: Any = None
+        self._async_init_lock = threading.Lock()
 
         # Read replica engine/session (Issue #725)
         self._read_engine: Any = None
         self._read_session_factory_instance: Any = None
         self._async_read_engine: Any = None
         self._async_read_session_factory_instance: Any = None
+        self._async_read_init_lock = threading.Lock()
 
         if self._has_read_replica:
             read_engine_kwargs: dict[str, Any] = self._build_pool_kwargs(
@@ -319,7 +322,7 @@ class SQLAlchemyRecordStore(RecordStoreABC):
             try:
                 cursor.execute("SET plan_cache_mode = 'force_custom_plan'")
             except Exception:
-                pass  # Not all PG connections support this
+                logger.debug("plan_cache_mode not supported on this connection", exc_info=True)
             finally:
                 cursor.close()
 
@@ -367,35 +370,47 @@ class SQLAlchemyRecordStore(RecordStoreABC):
         custom factory (e.g. Cloud SQL Python Connector).
         """
         if self._async_session_factory_instance is None:
-            from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
-
-            async_url = self._to_async_url(self.database_url)
-
-            engine_kwargs: dict[str, Any] = {}
-            if "postgresql" in async_url:
-                engine_kwargs.update(
-                    self._build_pool_kwargs(
-                        prefix="NEXUS_DB",
-                        is_async=True,
-                        default_pool_size=10 if self._has_read_replica else 20,
-                        default_max_overflow=10 if self._has_read_replica else 30,
+            with self._async_init_lock:
+                # Double-check after acquiring lock
+                if self._async_session_factory_instance is None:
+                    from sqlalchemy.ext.asyncio import (
+                        AsyncSession,
+                        async_sessionmaker,
+                        create_async_engine,
                     )
-                )
 
-            # Pass async_creator for custom connection factories (e.g. Cloud SQL)
-            if self._async_creator is not None:
-                engine_kwargs["async_creator"] = self._async_creator
+                    async_url = self._to_async_url(self.database_url)
 
-            self._async_engine = create_async_engine(async_url, **engine_kwargs)
-            self._async_session_factory_instance = async_sessionmaker(
-                self._async_engine, class_=AsyncSession, expire_on_commit=False
-            )
-            pool_info = {k: v for k, v in engine_kwargs.items() if k.startswith("pool_")}
-            logger.info(
-                "Async session factory initialized: %s (pool=%s)",
-                async_url.split("@")[-1],
-                pool_info or "default",
-            )
+                    engine_kwargs: dict[str, Any] = {}
+                    if "postgresql" in async_url:
+                        engine_kwargs.update(
+                            self._build_pool_kwargs(
+                                prefix="NEXUS_DB",
+                                is_async=True,
+                                default_pool_size=10 if self._has_read_replica else 20,
+                                default_max_overflow=10 if self._has_read_replica else 30,
+                            )
+                        )
+
+                    # Pass async_creator for custom connection factories (e.g. Cloud SQL)
+                    if self._async_creator is not None:
+                        engine_kwargs["async_creator"] = self._async_creator
+
+                    self._async_engine = create_async_engine(async_url, **engine_kwargs)
+
+                    # Set plan_cache_mode on async engine for PostgreSQL
+                    if self._is_postgresql:
+                        self._attach_plan_cache_mode_listener(self._async_engine.sync_engine)
+
+                    self._async_session_factory_instance = async_sessionmaker(
+                        self._async_engine, class_=AsyncSession, expire_on_commit=False
+                    )
+                    pool_info = {k: v for k, v in engine_kwargs.items() if k.startswith("pool_")}
+                    logger.info(
+                        "Async session factory initialized: %s (pool=%s)",
+                        async_url.split("@")[-1],
+                        pool_info or "default",
+                    )
 
         return self._async_session_factory_instance
 
@@ -426,30 +441,42 @@ class SQLAlchemyRecordStore(RecordStoreABC):
             return self.async_session_factory
 
         if self._async_read_session_factory_instance is None:
-            from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+            with self._async_read_init_lock:
+                # Double-check after acquiring lock
+                if self._async_read_session_factory_instance is None:
+                    from sqlalchemy.ext.asyncio import (
+                        AsyncSession,
+                        async_sessionmaker,
+                        create_async_engine,
+                    )
 
-            assert self._read_replica_url is not None  # guarded by _has_read_replica
-            async_url = self._to_async_url(self._read_replica_url)
-            engine_kwargs = self._build_pool_kwargs(
-                prefix="NEXUS_READ_REPLICA",
-                is_async=True,
-                default_pool_size=20,
-                default_max_overflow=25,
-            )
+                    assert self._read_replica_url is not None  # guarded by _has_read_replica
+                    async_url = self._to_async_url(self._read_replica_url)
+                    engine_kwargs = self._build_pool_kwargs(
+                        prefix="NEXUS_READ_REPLICA",
+                        is_async=True,
+                        default_pool_size=20,
+                        default_max_overflow=25,
+                    )
 
-            if self._async_read_replica_creator is not None:
-                engine_kwargs["async_creator"] = self._async_read_replica_creator
+                    if self._async_read_replica_creator is not None:
+                        engine_kwargs["async_creator"] = self._async_read_replica_creator
 
-            self._async_read_engine = create_async_engine(async_url, **engine_kwargs)
-            self._async_read_session_factory_instance = async_sessionmaker(
-                self._async_read_engine, class_=AsyncSession, expire_on_commit=False
-            )
-            pool_info = {k: v for k, v in engine_kwargs.items() if k.startswith("pool_")}
-            logger.info(
-                "Async read session factory initialized: %s (pool=%s)",
-                async_url.split("@")[-1],
-                pool_info or "default",
-            )
+                    self._async_read_engine = create_async_engine(async_url, **engine_kwargs)
+
+                    # Set plan_cache_mode on async read replica engine for PostgreSQL
+                    if self._is_postgresql:
+                        self._attach_plan_cache_mode_listener(self._async_read_engine.sync_engine)
+
+                    self._async_read_session_factory_instance = async_sessionmaker(
+                        self._async_read_engine, class_=AsyncSession, expire_on_commit=False
+                    )
+                    pool_info = {k: v for k, v in engine_kwargs.items() if k.startswith("pool_")}
+                    logger.info(
+                        "Async read session factory initialized: %s (pool=%s)",
+                        async_url.split("@")[-1],
+                        pool_info or "default",
+                    )
 
         return self._async_read_session_factory_instance
 

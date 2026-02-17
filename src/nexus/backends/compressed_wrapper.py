@@ -252,7 +252,7 @@ class CompressedStorage(DelegatingBackend):
             return content
 
         try:
-            compressed = _zstd_compress(content, level=self._config.level)  # type: ignore[misc]
+            compressed: bytes = _zstd_compress(content, level=self._config.level)  # type: ignore[misc, operator]
 
             # Only use compressed version if it actually saves space
             if len(compressed) >= len(content):
@@ -282,7 +282,7 @@ class CompressedStorage(DelegatingBackend):
             return data
 
         compressed = data[_HEADER_LEN:]
-        return bytes(_zstd_decompress(compressed))  # type: ignore[misc]
+        return bytes(_zstd_decompress(compressed))  # type: ignore[misc, operator]
 
     def _decompress_response(self, data: bytes) -> HandlerResponse[bytes]:
         """Decompress and return as HandlerResponse."""

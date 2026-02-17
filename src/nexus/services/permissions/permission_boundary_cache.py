@@ -9,6 +9,6 @@ New code should import from:
 Related: Issue #922, Issue #1459 (decomposition)
 """
 
-from nexus.services.permissions.cache.boundary import PermissionBoundaryCache  # noqa: F401
+from nexus.rebac.cache.boundary import PermissionBoundaryCache  # noqa: F401
 
 __all__ = ["PermissionBoundaryCache"]

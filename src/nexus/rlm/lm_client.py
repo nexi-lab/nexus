@@ -96,7 +96,7 @@ class NexusLMClient:
             Token count estimate.
         """
         formatted = self._format_messages(messages)
-        return self._provider.count_tokens(formatted)
+        return int(self._provider.count_tokens(formatted))
 
     def _format_messages(self, messages: list[dict[str, str]]) -> list[dict[str, Any]]:
         """Convert rlm-style message dicts to LiteLLMProvider format.

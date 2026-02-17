@@ -88,7 +88,7 @@ def nexus_search(
             params={
                 "q": query,
                 "zone_id": zone_id,
-                "limit": limit,
+                "limit": str(limit),
                 "mode": search_mode,
             },
             timeout=30,

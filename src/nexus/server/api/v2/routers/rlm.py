@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import AsyncIterator
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -132,7 +133,7 @@ async def infer(
 
     if request.stream:
         # SSE streaming response
-        async def event_generator():
+        async def event_generator() -> AsyncIterator[str]:
             async for event in rlm_service.infer_stream(
                 rlm_request, user_id=user_id, api_key=api_key
             ):

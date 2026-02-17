@@ -11,8 +11,6 @@ wrapping).  Business logic lives in ``handlers.py`` and
 ``streaming.py``.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from collections.abc import Awaitable, Callable
@@ -35,7 +33,6 @@ logger = logging.getLogger(__name__)
 # Type alias for the injected auth callback
 AuthFn = Callable[[Request], Awaitable[dict[str, Any] | None]]
 
-
 def _error_response(
     request_id: str | int | None,
     code: int,
@@ -49,7 +46,6 @@ def _error_response(
         content=resp.model_dump(mode="json", exclude_none=True),
         status_code=200,
     )
-
 
 def build_router(
     *,
@@ -241,11 +237,9 @@ def build_router(
 
     return router
 
-
 # ======================================================================
 # Utilities
 # ======================================================================
-
 
 def _extract_zone_id(auth_result: dict[str, Any] | None) -> str:
     """Extract zone_id from auth result."""
@@ -253,7 +247,6 @@ def _extract_zone_id(auth_result: dict[str, Any] | None) -> str:
         zone_id: str = auth_result["zone_id"]
         return zone_id
     return "root"
-
 
 def _extract_agent_id(auth_result: dict[str, Any] | None) -> str | None:
     """Extract agent_id from auth result."""

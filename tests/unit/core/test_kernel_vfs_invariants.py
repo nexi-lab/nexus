@@ -8,8 +8,6 @@ Invariants proven:
   5. Read-only namespaces reject writes, accept reads
 """
 
-from __future__ import annotations
-
 import tempfile
 
 from hypothesis import example, given, settings
@@ -33,7 +31,6 @@ from tests.strategies.kernel import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-
 def _make_router_with_mounts() -> tuple[PathRouter, LocalBackend]:
     """Create a PathRouter with standard mounts for testing."""
     tmpdir = tempfile.mkdtemp()
@@ -46,11 +43,9 @@ def _make_router_with_mounts() -> tuple[PathRouter, LocalBackend]:
     router.add_mount("/archives", backend)
     return router, backend
 
-
 # ---------------------------------------------------------------------------
 # Invariant 1: Path normalization is idempotent
 # ---------------------------------------------------------------------------
-
 
 class TestPathNormalizationInvariants:
     """Path normalization properties."""
@@ -88,11 +83,9 @@ class TestPathNormalizationInvariants:
         if normalized != "/":
             assert not normalized.endswith("/")
 
-
 # ---------------------------------------------------------------------------
 # Invariant 2: Path traversal never escapes namespace
 # ---------------------------------------------------------------------------
-
 
 class TestPathTraversalInvariants:
     """Path traversal security properties."""
@@ -138,11 +131,9 @@ class TestPathTraversalInvariants:
         except (InvalidPathError, ValueError):
             pass  # Some generated paths may fail validation
 
-
 # ---------------------------------------------------------------------------
 # Invariant 3: Zone isolation enforcement
 # ---------------------------------------------------------------------------
-
 
 class TestZoneIsolationInvariants:
     """Zone isolation security properties."""
@@ -206,11 +197,9 @@ class TestZoneIsolationInvariants:
         )
         assert result.backend == backend
 
-
 # ---------------------------------------------------------------------------
 # Invariant 4: Longest prefix match determinism
 # ---------------------------------------------------------------------------
-
 
 class TestLongestPrefixMatchInvariants:
     """Mount matching properties."""
@@ -258,11 +247,9 @@ class TestLongestPrefixMatchInvariants:
         except (InvalidPathError, AccessDeniedError):
             pass  # Path validation may reject generated paths
 
-
 # ---------------------------------------------------------------------------
 # Invariant 5: Read-only namespace enforcement
 # ---------------------------------------------------------------------------
-
 
 class TestReadOnlyNamespaceInvariants:
     """Read-only namespace properties."""

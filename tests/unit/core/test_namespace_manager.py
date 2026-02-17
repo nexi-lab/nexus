@@ -11,8 +11,6 @@ Tests cover:
 - PermissionEnforcer integration: admin bypass, namespace check, ReBAC check
 """
 
-from __future__ import annotations
-
 import threading
 from unittest.mock import patch
 
@@ -31,14 +29,12 @@ from nexus.storage.models import Base
 # Fixtures
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture
 def engine():
     """Create in-memory SQLite database for testing."""
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     return engine
-
 
 @pytest.fixture
 def enhanced_rebac_manager(engine):
@@ -53,7 +49,6 @@ def enhanced_rebac_manager(engine):
     yield manager
     manager.close()
 
-
 @pytest.fixture
 def namespace_manager(enhanced_rebac_manager):
     """Create a NamespaceManager backed by a real ReBAC manager."""
@@ -64,11 +59,9 @@ def namespace_manager(enhanced_rebac_manager):
         revision_window=10,
     )
 
-
 # ---------------------------------------------------------------------------
 # Unit tests for build_mount_entries() — pure function, no DB
 # ---------------------------------------------------------------------------
-
 
 class TestBuildMountEntries:
     """Tests for the pure build_mount_entries() function."""
@@ -153,11 +146,9 @@ class TestBuildMountEntries:
         # /workspace/proj subsumes /workspace/proj/sub/deep
         assert result == [MountEntry(virtual_path="/workspace/proj")]
 
-
 # ---------------------------------------------------------------------------
 # Integration tests — NamespaceManager with real ReBAC
 # ---------------------------------------------------------------------------
-
 
 class TestNamespaceManagerVisibility:
     """Integration tests for is_visible() with real ReBAC grants."""
@@ -324,11 +315,9 @@ class TestNamespaceManagerVisibility:
         # After revocation + new revision window, path should be invisible
         assert fresh_ns.is_visible(alice, "/workspace/project/file.txt", zone) is False
 
-
 # ---------------------------------------------------------------------------
 # Cache behavior tests
 # ---------------------------------------------------------------------------
-
 
 class TestNamespaceManagerCache:
     """Tests for cache behavior: TTL, revision quantization, single-query invariant."""
@@ -423,11 +412,9 @@ class TestNamespaceManagerCache:
             mount_table = ns.get_mount_table(("user", "alice"), "zone")
             assert mount_table == []  # Fail-closed
 
-
 # ---------------------------------------------------------------------------
 # Thread safety tests
 # ---------------------------------------------------------------------------
-
 
 class TestNamespaceManagerThreadSafety:
     """Thread safety: concurrent access doesn't corrupt state."""
@@ -468,11 +455,9 @@ class TestNamespaceManagerThreadSafety:
 
         assert errors == [], f"Concurrent access produced errors: {errors}"
 
-
 # ---------------------------------------------------------------------------
 # PermissionEnforcer integration tests
 # ---------------------------------------------------------------------------
-
 
 class TestPermissionEnforcerNamespaceIntegration:
     """Tests for NamespaceManager integration with PermissionEnforcer."""
@@ -619,11 +604,9 @@ class TestPermissionEnforcerNamespaceIntegration:
         # project-alpha paths pass namespace, then go through ReBAC
         # (whether they ultimately pass depends on ReBAC grants)
 
-
 # ---------------------------------------------------------------------------
 # Rust/Python dual-path parametrization
 # ---------------------------------------------------------------------------
-
 
 class TestNamespaceManagerDualPath:
     """Test with both Rust and Python paths for rebac_list_objects."""
@@ -654,11 +637,9 @@ class TestNamespaceManagerDualPath:
         assert ns_manager_dual.is_visible(alice, "/workspace/proj/other.txt", zone) is True
         assert ns_manager_dual.is_visible(alice, "/workspace/other/file.txt", zone) is False
 
-
 # ---------------------------------------------------------------------------
 # Parametrized edge cases (Issue #1305)
 # ---------------------------------------------------------------------------
-
 
 class TestNamespaceEdgeCases:
     """Parametrized edge case tests for namespace visibility (Issue #1305).

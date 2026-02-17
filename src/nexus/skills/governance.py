@@ -1,7 +1,5 @@
 """Skill governance and approval workflows."""
 
-from __future__ import annotations
-
 import logging
 import uuid
 from dataclasses import dataclass
@@ -11,11 +9,11 @@ from typing import TYPE_CHECKING
 
 from nexus.skills.exceptions import SkillPermissionDeniedError, SkillValidationError
 
+from nexus.rebac.manager import ReBACManager
 if TYPE_CHECKING:
     from nexus.rebac.manager import ReBACManager
 
 logger = logging.getLogger(__name__)
-
 
 class ApprovalStatus(StrEnum):
     """Status of a skill approval request."""
@@ -23,7 +21,6 @@ class ApprovalStatus(StrEnum):
     PENDING = "pending"
     APPROVED = "approved"
     REJECTED = "rejected"
-
 
 @dataclass
 class SkillApproval:
@@ -57,12 +54,10 @@ class SkillApproval:
         if not isinstance(self.status, ApprovalStatus):
             raise SkillValidationError(f"status must be ApprovalStatus, got {type(self.status)}")
 
-
 class GovernanceError(SkillValidationError):
     """Raised when governance operations fail."""
 
     pass
-
 
 class SkillGovernance:
     """Governance system for skill approvals.

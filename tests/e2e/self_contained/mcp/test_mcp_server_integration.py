@@ -4,8 +4,6 @@ These tests use actual NexusFS instances with LocalBackend to test
 end-to-end workflows and real component interactions.
 """
 
-from __future__ import annotations
-
 import json
 
 import pytest
@@ -20,16 +18,13 @@ from nexus.storage.record_store import SQLAlchemyRecordStore
 # HELPER FUNCTIONS
 # ============================================================================
 
-
 def get_tool(server, tool_name: str):
     """Helper to get a tool from the MCP server."""
     return server._tool_manager._tools[tool_name]
 
-
 def get_prompt(server, prompt_name: str):
     """Helper to get a prompt from the MCP server."""
     return server._prompt_manager._prompts[prompt_name]
-
 
 def get_resource_template(server, uri_pattern: str):
     """Helper to get a resource template from the MCP server."""
@@ -39,11 +34,9 @@ def get_resource_template(server, uri_pattern: str):
             return template
     raise KeyError(f"Resource template with pattern '{uri_pattern}' not found")
 
-
 def tool_exists(server, tool_name: str) -> bool:
     """Check if a tool exists in the server."""
     return tool_name in server._tool_manager._tools
-
 
 def extract_items(result: str | list | dict) -> list:
     """Extract items from a potentially paginated response.
@@ -69,11 +62,9 @@ def extract_items(result: str | list | dict) -> list:
     else:
         return result
 
-
 # ============================================================================
 # FIXTURES
 # ============================================================================
-
 
 @pytest.fixture
 def nexus_fs(isolated_db, tmp_path):
@@ -88,12 +79,10 @@ def nexus_fs(isolated_db, tmp_path):
     yield nx
     nx.close()
 
-
 @pytest.fixture
 def mcp_server(nexus_fs):
     """Create an MCP server with real NexusFS instance."""
     return create_mcp_server(nx=nexus_fs)
-
 
 @pytest.fixture
 def test_files(nexus_fs, tmp_path):
@@ -111,11 +100,9 @@ def test_files(nexus_fs, tmp_path):
 
     return test_data
 
-
 # ============================================================================
 # INTEGRATION TESTS
 # ============================================================================
-
 
 class TestFileOperationsIntegration:
     """Integration tests for file operations with real filesystem."""
@@ -209,7 +196,6 @@ class TestFileOperationsIntegration:
 
         assert info_dir["is_directory"] is True
 
-
 class TestSearchIntegration:
     """Integration tests for search operations."""
 
@@ -247,7 +233,6 @@ class TestSearchIntegration:
 
         assert len(matches_case) >= 1
 
-
 class TestResourcesAndPromptsIntegration:
     """Integration tests for resources and prompts."""
 
@@ -279,7 +264,6 @@ class TestResourcesAndPromptsIntegration:
 
         assert "authentication" in result_search
         assert "nexus_semantic_search" in result_search
-
 
 class TestMultiToolWorkflows:
     """Integration tests for workflows using multiple tools."""
@@ -335,7 +319,6 @@ class TestMultiToolWorkflows:
         files_after = extract_items(list_result_after)
         assert len(files_after) == 10  # Half deleted
 
-
 class TestErrorHandlingIntegration:
     """Integration tests for error handling with real errors."""
 
@@ -364,7 +347,6 @@ class TestErrorHandlingIntegration:
 
             # Should contain an error message (either from JSON parsing or workflow not available)
             assert "Error" in result or "not available" in result
-
 
 class TestMemoryIntegration:
     """Integration tests for memory system."""
@@ -412,7 +394,6 @@ class TestMemoryIntegration:
             # Should either succeed or provide clear error message
             assert "Successfully" in result or "not available" in result or "Error" in result
 
-
 class TestWorkflowIntegration:
     """Integration tests for workflow system."""
 
@@ -443,7 +424,6 @@ class TestWorkflowIntegration:
             or result.startswith("{")
         )
 
-
 class TestSemanticSearchIntegration:
     """Integration tests for semantic search."""
 
@@ -457,7 +437,6 @@ class TestSemanticSearchIntegration:
 
         # Should return JSON results or indicate not available
         assert "not available" in result or result.startswith("[") or result.startswith("{")
-
 
 class TestSandboxIntegration:
     """Integration tests for sandbox execution (requires Docker or E2B)."""
@@ -529,7 +508,6 @@ class TestSandboxIntegration:
             # Cleanup
             stop_tool.fn(sandbox_id=sandbox_id)
 
-
 class TestServerConfiguration:
     """Integration tests for server configuration and setup."""
 
@@ -573,7 +551,6 @@ class TestServerConfiguration:
         result = read_tool2.fn(path="/shared_file.txt")
 
         assert result == "Shared content"
-
 
 class TestComprehensiveMCPToolsWorkflow:
     """Comprehensive test that mirrors test_mcp_tools.sh bash script."""
@@ -691,7 +668,6 @@ class TestComprehensiveMCPToolsWorkflow:
 
         # Verify directory was removed
         assert not nexus_fs.exists("/mcp_integration_test")
-
 
 class TestPerformanceCharacteristics:
     """Integration tests for performance characteristics."""

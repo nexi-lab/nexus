@@ -8,8 +8,6 @@ requiring a full database. For real E2E tests with database failure
 injection, see the E2E validation step in the plan.
 """
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import MagicMock
 
@@ -20,7 +18,6 @@ from nexus.rebac.circuit_breaker import (
     CircuitBreakerConfig,
     CircuitState,
 )
-
 
 class TestHealthDetailedShowsCircuitState:
     """Test 1: GET /health/detailed shows circuit_state."""
@@ -54,7 +51,6 @@ class TestHealthDetailedShowsCircuitState:
         assert health["failure_count"] == 0
         assert health["open_count"] == 0
         assert health["status"] == "healthy"
-
 
 class TestCircuitStateTransitionsInHealthReport:
     """Test 2: Health endpoint reflects OPEN state correctly."""
@@ -94,7 +90,6 @@ class TestCircuitStateTransitionsInHealthReport:
 
         assert status == "unhealthy"
         assert cb.open_count == 1
-
 
 class TestCachedPermissionServedWhenCircuitOpen:
     """Test 3: Cached permissions are served when circuit is open."""
@@ -145,7 +140,6 @@ class TestCachedPermissionServedWhenCircuitOpen:
             object=("file", "/doc.txt"),
         )
         assert result is True
-
 
 class TestCircuitRecoveryThroughService:
     """Test 4: Full recovery cycle through the service layer."""

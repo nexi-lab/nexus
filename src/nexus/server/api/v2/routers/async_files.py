@@ -15,8 +15,6 @@ All operations use true async I/O for better concurrency.
 All operations pass user context for permission enforcement.
 """
 
-from __future__ import annotations
-
 import base64
 import logging
 from typing import TYPE_CHECKING, Any, cast
@@ -32,16 +30,15 @@ from nexus.core.exceptions import (
     NexusPermissionError,
 )
 
+from nexus.core.async_nexus_fs import AsyncNexusFS
 if TYPE_CHECKING:
     from nexus.core.async_nexus_fs import AsyncNexusFS
 
 logger = logging.getLogger(__name__)
 
-
 # =============================================================================
 # Request/Response Models
 # =============================================================================
-
 
 class WriteRequest(BaseModel):
     """Request model for write operation."""
@@ -52,7 +49,6 @@ class WriteRequest(BaseModel):
     if_match: str | None = Field(None, description="ETag for optimistic concurrency")
     if_none_match: bool = Field(False, description="Only write if file doesn't exist")
 
-
 class WriteResponse(BaseModel):
     """Response model for write operation."""
 
@@ -60,7 +56,6 @@ class WriteResponse(BaseModel):
     version: int
     size: int
     modified_at: str
-
 
 class ReadResponse(BaseModel):
     """Response model for read operation."""
@@ -71,32 +66,27 @@ class ReadResponse(BaseModel):
     modified_at: str | None = None
     size: int | None = None
 
-
 class DeleteResponse(BaseModel):
     """Response model for delete operation."""
 
     deleted: bool
     path: str
 
-
 class ExistsResponse(BaseModel):
     """Response model for exists check."""
 
     exists: bool
-
 
 class ListResponse(BaseModel):
     """Response model for list directory."""
 
     items: list[str]
 
-
 class MkdirRequest(BaseModel):
     """Request model for mkdir operation."""
 
     path: str = Field(..., description="Directory path to create")
     parents: bool = Field(True, description="Create parent directories if needed")
-
 
 class MetadataResponse(BaseModel):
     """Response model for file metadata."""
@@ -109,17 +99,14 @@ class MetadataResponse(BaseModel):
     created_at: str | None = None
     modified_at: str | None = None
 
-
 class BatchReadRequest(BaseModel):
     """Request model for batch read."""
 
     paths: list[str] = Field(..., description="List of paths to read")
 
-
 # =============================================================================
 # Router Factory
 # =============================================================================
-
 
 def create_async_files_router(
     async_fs: AsyncNexusFS | None = None,

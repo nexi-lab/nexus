@@ -8,7 +8,6 @@ from nexus.backends.service_map import (
     _sync_from_connector_registry,
 )
 
-
 class TestServiceInfo:
     """Test ServiceInfo dataclass."""
 
@@ -48,7 +47,6 @@ class TestServiceInfo:
         assert info.klavis_mcp is None
         assert info.oauth_provider is None
         assert info.description == ""  # Default value
-
 
 class TestServiceRegistry:
     """Test SERVICE_REGISTRY contents after sync."""
@@ -112,7 +110,6 @@ class TestServiceRegistry:
             if name not in connector_only_services:
                 assert info.klavis_mcp is not None, f"Service '{name}' should have MCP"
 
-
 class TestAutoDerive:
     """Test auto-derivation of connector fields from ConnectorRegistry."""
 
@@ -145,7 +142,6 @@ class TestAutoDerive:
                     f"Service '{info.service_name}' should map to connector '{info.name}', "
                     f"got '{connector}'"
                 )
-
 
 class TestServiceMapGetServiceName:
     """Test ServiceMap.get_service_name() method."""
@@ -187,7 +183,6 @@ class TestServiceMapGetServiceName:
         """Test calling without arguments."""
         assert ServiceMap.get_service_name() is None
 
-
 class TestServiceMapGetServiceInfo:
     """Test ServiceMap.get_service_info() method."""
 
@@ -202,7 +197,6 @@ class TestServiceMapGetServiceInfo:
     def test_get_service_info_not_found(self) -> None:
         """Test getting info for non-existent service."""
         assert ServiceMap.get_service_info("nonexistent") is None
-
 
 class TestServiceMapGetConnector:
     """Test ServiceMap.get_connector() method."""
@@ -222,7 +216,6 @@ class TestServiceMapGetConnector:
     def test_get_connector_not_found(self) -> None:
         """Test getting connector for non-existent service."""
         assert ServiceMap.get_connector("nonexistent") is None
-
 
 class TestServiceMapGetMcp:
     """Test ServiceMap.get_mcp() method."""
@@ -244,7 +237,6 @@ class TestServiceMapGetMcp:
         """Test getting MCP for non-existent service."""
         assert ServiceMap.get_mcp("nonexistent") is None
 
-
 class TestServiceMapGetOAuthProvider:
     """Test ServiceMap.get_oauth_provider() method."""
 
@@ -262,7 +254,6 @@ class TestServiceMapGetOAuthProvider:
         """Test getting OAuth provider for non-existent service."""
         assert ServiceMap.get_oauth_provider("nonexistent") is None
 
-
 class TestServiceMapListServices:
     """Test ServiceMap.list_services() method."""
 
@@ -273,7 +264,6 @@ class TestServiceMapListServices:
         assert len(services) > 0
         assert "google-drive" in services
         assert "gmail" in services
-
 
 class TestServiceMapListServicesWithConnector:
     """Test ServiceMap.list_services_with_connector() method."""
@@ -290,7 +280,6 @@ class TestServiceMapListServicesWithConnector:
         assert "notion" not in services
         assert "google-docs" not in services
 
-
 class TestServiceMapListServicesWithMcp:
     """Test ServiceMap.list_services_with_mcp() method."""
 
@@ -301,7 +290,6 @@ class TestServiceMapListServicesWithMcp:
         assert "google-drive" in services  # Has google_drive MCP
         assert "gmail" in services  # Has gmail MCP
         assert "github" in services  # Has github MCP
-
 
 class TestServiceMapHasBoth:
     """Test ServiceMap.has_both() method."""

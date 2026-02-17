@@ -19,7 +19,6 @@ down_revision: Union[str, Sequence[str], None] = "da7be77fac7c"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Upgrade schema.
 
@@ -37,7 +36,6 @@ def upgrade() -> None:
 
     # Create index for fast lookups
     op.create_index("ix_rebac_version_sequences_zone_id", "rebac_version_sequences", ["zone_id"])
-
 
 def downgrade() -> None:
     """Downgrade schema."""

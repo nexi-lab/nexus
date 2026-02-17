@@ -7,8 +7,6 @@ Validates:
 - KernelServices is frozen — use dataclasses.replace() for modified copies
 """
 
-from __future__ import annotations
-
 import dataclasses
 
 import pytest
@@ -25,7 +23,6 @@ from nexus.core.config import (
 # ---------------------------------------------------------------------------
 # CacheConfig
 # ---------------------------------------------------------------------------
-
 
 class TestCacheConfig:
     """Tests for CacheConfig frozen dataclass."""
@@ -62,11 +59,9 @@ class TestCacheConfig:
         assert cfg.ttl_seconds is None
         assert cfg.content_cache_size_mb == 512
 
-
 # ---------------------------------------------------------------------------
 # PermissionConfig
 # ---------------------------------------------------------------------------
-
 
 class TestPermissionConfig:
     """Tests for PermissionConfig frozen dataclass."""
@@ -100,11 +95,9 @@ class TestPermissionConfig:
         assert cfg.enforce is False
         assert cfg.audit_strict_mode is True  # other defaults unchanged
 
-
 # ---------------------------------------------------------------------------
 # DistributedConfig
 # ---------------------------------------------------------------------------
-
 
 class TestDistributedConfig:
     """Tests for DistributedConfig frozen dataclass."""
@@ -134,11 +127,9 @@ class TestDistributedConfig:
         assert cfg.enable_locks is False
         assert cfg.enable_workflows is False
 
-
 # ---------------------------------------------------------------------------
 # MemoryConfig
 # ---------------------------------------------------------------------------
-
 
 class TestMemoryConfig:
     """Tests for MemoryConfig frozen dataclass."""
@@ -159,11 +150,9 @@ class TestMemoryConfig:
         assert cfg.main_capacity == 200
         assert cfg.recall_max_age_hours == 48.0
 
-
 # ---------------------------------------------------------------------------
 # ParseConfig
 # ---------------------------------------------------------------------------
-
 
 class TestParseConfig:
     """Tests for ParseConfig frozen dataclass."""
@@ -188,11 +177,9 @@ class TestParseConfig:
         cfg = ParseConfig(providers=providers)
         assert cfg.providers == ({"name": "pdf"}, {"name": "docx"})
 
-
 # ---------------------------------------------------------------------------
 # KernelServices
 # ---------------------------------------------------------------------------
-
 
 class TestKernelServices:
     """Tests for KernelServices frozen dataclass."""

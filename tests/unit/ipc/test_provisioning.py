@@ -1,7 +1,5 @@
 """Unit tests for AgentProvisioner."""
 
-from __future__ import annotations
-
 import json
 
 import pytest
@@ -17,7 +15,6 @@ from nexus.ipc.provisioning import AgentProvisioner
 from .fakes import InMemoryVFS
 
 ZONE = "test-zone"
-
 
 class TestAgentProvisioner:
     """Tests for auto-provisioning agent IPC directories."""

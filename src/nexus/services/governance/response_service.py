@@ -4,8 +4,6 @@ Issue #1359 Phase 4: Automatic throttling based on fraud scores,
 agent suspension with appeal workflow, reputation integration.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import uuid
@@ -21,6 +19,9 @@ from nexus.services.governance.models import (
     ThrottleConfig,
 )
 
+from collections.abc import Callable
+from nexus.services.governance.protocols import AnomalyServiceProtocol, CollusionServiceProtocol, GovernanceGraphProtocol
+from sqlalchemy.ext.asyncio import AsyncSession
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -33,7 +34,6 @@ if TYPE_CHECKING:
     )
 
 logger = logging.getLogger(__name__)
-
 
 class ResponseService:
     """Manages governance response actions.
@@ -389,7 +389,6 @@ class ResponseService:
 
         async with self._session_factory() as session, session.begin():
             session.add(model)
-
 
 def _suspension_model_to_domain(model: Any) -> SuspensionRecord:
     """Convert SuspensionModel to domain SuspensionRecord."""

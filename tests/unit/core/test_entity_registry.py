@@ -7,14 +7,12 @@ from sqlalchemy.orm import sessionmaker
 from nexus.rebac.entity_registry import EntityRegistry
 from nexus.storage.models import Base
 
-
 @pytest.fixture
 def engine():
     """Create in-memory SQLite database."""
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     return engine
-
 
 @pytest.fixture
 def session(engine):
@@ -24,12 +22,10 @@ def session(engine):
     yield session
     session.close()
 
-
 @pytest.fixture
 def registry(session):
     """Create EntityRegistry instance."""
     return EntityRegistry(session)
-
 
 def test_delete_entity_basic(registry):
     """Test basic entity deletion without children."""
@@ -49,12 +45,10 @@ def test_delete_entity_basic(registry):
     entity = registry.get_entity("zone", "acme")
     assert entity is None
 
-
 def test_delete_entity_not_found(registry):
     """Test deleting non-existent entity."""
     result = registry.delete_entity("user", "nonexistent")
     assert result is False
-
 
 def test_cascade_delete_user_with_agents(registry):
     """Test cascade deletion: deleting user deletes their agents."""
@@ -81,7 +75,6 @@ def test_cascade_delete_user_with_agents(registry):
 
     # Zone should still exist
     assert registry.get_entity("zone", "acme") is not None
-
 
 def test_cascade_delete_zone_with_hierarchy(registry):
     """Test cascade deletion: deleting zone deletes users and agents."""
@@ -110,7 +103,6 @@ def test_cascade_delete_zone_with_hierarchy(registry):
     assert registry.get_entity("agent", "alice_agent") is None
     assert registry.get_entity("agent", "bob_agent") is None
 
-
 def test_no_cascade_delete_leaves_orphans(registry):
     """Test non-cascade deletion leaves children orphaned."""
     # Register hierarchy: user → agent
@@ -129,7 +121,6 @@ def test_no_cascade_delete_leaves_orphans(registry):
     assert agent is not None
     assert agent.parent_id == "alice"  # Still references deleted parent
 
-
 def test_cascade_delete_default_behavior(registry):
     """Test that cascade=True is the default behavior."""
     # Register hierarchy: user → agent
@@ -143,7 +134,6 @@ def test_cascade_delete_default_behavior(registry):
     # Both should be gone
     assert registry.get_entity("user", "alice") is None
     assert registry.get_entity("agent", "agent_1") is None
-
 
 def test_cascade_delete_multiple_levels(registry):
     """Test cascade deletion works through multiple levels."""
@@ -168,7 +158,6 @@ def test_cascade_delete_multiple_levels(registry):
     assert registry.get_entity("user", "user2") is None
     assert registry.get_entity("agent", "agent1") is None
     assert registry.get_entity("agent", "agent2") is None
-
 
 def test_get_children_returns_direct_children_only(registry):
     """Test that get_children only returns direct children, not descendants."""

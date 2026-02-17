@@ -17,8 +17,6 @@ Example:
     ...     print(f"{name}: {config.type.value}")
 """
 
-from __future__ import annotations
-
 import logging
 import os
 from dataclasses import dataclass, field
@@ -32,13 +30,11 @@ from nexus.core.registry import BaseRegistry
 
 logger = logging.getLogger(__name__)
 
-
 class ProviderType(Enum):
     """Type of MCP provider."""
 
     KLAVIS = "klavis"  # Hosted by Klavis
     LOCAL = "local"  # Local OAuth + local/stdio MCP
-
 
 @dataclass
 class OAuthConfig:
@@ -53,7 +49,6 @@ class OAuthConfig:
     authorization_url: str | None = None
     token_url: str | None = None
 
-
 @dataclass
 class MCPConfig:
     """MCP server configuration for local providers."""
@@ -66,14 +61,12 @@ class MCPConfig:
     )  # e.g., {"GITHUB_TOKEN": "{access_token}"}
     url: str | None = None  # For sse/http
 
-
 @dataclass
 class BackendConfig:
     """Backend connector configuration (alternative to MCP)."""
 
     type: str  # e.g., "gdrive_connector"
     config_template: dict[str, Any] = field(default_factory=dict)
-
 
 @dataclass
 class ProviderConfig:
@@ -94,7 +87,7 @@ class ProviderConfig:
     backend: BackendConfig | None = None
 
     @classmethod
-    def from_dict(cls, name: str, data: dict[str, Any]) -> ProviderConfig:
+    def from_dict(cls, name: str, data: dict[str, Any]) -> "ProviderConfig":
         """Create ProviderConfig from dictionary."""
         provider_type = ProviderType(data.get("type", "local"))
 
@@ -189,7 +182,6 @@ class ProviderConfig:
 
         return result
 
-
 class MCPProviderRegistry(BaseRegistry[ProviderConfig]):
     """Registry for MCP providers.
 
@@ -209,7 +201,7 @@ class MCPProviderRegistry(BaseRegistry[ProviderConfig]):
                 self.register(name, config, allow_overwrite=True)
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> MCPProviderRegistry:
+    def from_yaml(cls, path: str | Path) -> "MCPProviderRegistry":
         """Load registry from YAML file.
 
         Args:
@@ -232,7 +224,7 @@ class MCPProviderRegistry(BaseRegistry[ProviderConfig]):
         return cls(providers=providers)
 
     @classmethod
-    def load_default(cls) -> MCPProviderRegistry:
+    def load_default(cls) -> "MCPProviderRegistry":
         """Load default provider registry.
 
         Searches for mcp-providers.yaml in:
@@ -272,7 +264,7 @@ class MCPProviderRegistry(BaseRegistry[ProviderConfig]):
         return cls.with_builtin_defaults()
 
     @classmethod
-    def with_builtin_defaults(cls) -> MCPProviderRegistry:
+    def with_builtin_defaults(cls) -> "MCPProviderRegistry":
         """Create registry with built-in default providers.
 
         Returns:

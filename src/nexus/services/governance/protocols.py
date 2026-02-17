@@ -8,13 +8,12 @@ AnomalyServiceProtocol: anomaly detection lifecycle.
 CollusionServiceProtocol: collusion/fraud ring detection.
 """
 
-from __future__ import annotations
-
 from datetime import datetime
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from nexus.services.governance.models import AnomalyAlert, TransactionSummary
 
+from nexus.services.governance.models import ConstraintCheckResult, ConstraintType, FraudRing, FraudScore, GovernanceEdge
 if TYPE_CHECKING:
     from nexus.services.governance.models import (
         ConstraintCheckResult,
@@ -23,7 +22,6 @@ if TYPE_CHECKING:
         FraudScore,
         GovernanceEdge,
     )
-
 
 @runtime_checkable
 class AnomalyDetectorProtocol(Protocol):
@@ -43,7 +41,6 @@ class AnomalyDetectorProtocol(Protocol):
             List of anomaly alerts (empty if no anomalies detected).
         """
         ...
-
 
 @runtime_checkable
 class GovernanceGraphProtocol(Protocol):
@@ -85,7 +82,6 @@ class GovernanceGraphProtocol(Protocol):
         """List constraint edges, optionally filtered by agent."""
         ...
 
-
 @runtime_checkable
 class AnomalyServiceProtocol(Protocol):
     """Protocol for anomaly detection service lifecycle.
@@ -104,7 +100,6 @@ class AnomalyServiceProtocol(Protocol):
     ) -> list[AnomalyAlert]:
         """Analyze a transaction for anomalies."""
         ...
-
 
 @runtime_checkable
 class CollusionServiceProtocol(Protocol):

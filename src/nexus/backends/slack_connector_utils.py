@@ -6,7 +6,6 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-
 def list_channels(
     client: Any,
     types: str = "public_channel,private_channel",
@@ -102,7 +101,6 @@ def list_channels(
         print(f"   Found {len(channels)} channels")
 
     return channels
-
 
 def list_messages_from_channel(
     client: Any,
@@ -217,7 +215,6 @@ def list_messages_from_channel(
 
     return messages
 
-
 def list_thread_replies(
     client: Any,
     channel_id: str,
@@ -256,7 +253,6 @@ def list_thread_replies(
     except Exception as e:
         logger.error(f"[LIST-THREAD-REPLIES] Error fetching thread replies: {e}")
         return []
-
 
 def get_user_info(
     client: Any,
@@ -307,7 +303,6 @@ def get_user_info(
         logger.warning(f"[GET-USER-INFO] Error fetching user {user_id}: {e}")
         return None
 
-
 def fetch_messages_batch(
     client: Any,
     channels: list[dict[str, Any]],
@@ -357,7 +352,6 @@ def fetch_messages_batch(
         messages_by_channel[channel_id] = messages
 
     return messages_by_channel
-
 
 def print_channel_statistics(
     channels: list[dict[str, Any]],

@@ -14,8 +14,6 @@ Test categories:
 Related: Issue #1212
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
 
@@ -37,12 +35,10 @@ from nexus.scheduler.service import SchedulerService
 # Fixtures
 # =============================================================================
 
-
 @pytest.fixture
 def disabled_credits():
     """CreditsService in disabled mode (no TigerBeetle needed)."""
     return CreditsService(enabled=False)
-
 
 @pytest.fixture
 def mock_queue():
@@ -56,7 +52,6 @@ def mock_queue():
     queue.aging_sweep = AsyncMock(return_value=0)
     return queue
 
-
 @pytest.fixture
 def mock_pool():
     """Mock DB pool."""
@@ -68,7 +63,6 @@ def mock_pool():
     pool.acquire = MagicMock(return_value=acm)
     return pool
 
-
 @pytest.fixture
 def scheduler(mock_queue, mock_pool, disabled_credits):
     """SchedulerService with disabled CreditsService."""
@@ -78,11 +72,9 @@ def scheduler(mock_queue, mock_pool, disabled_credits):
         credits_service=disabled_credits,
     )
 
-
 # =============================================================================
 # 1. Full Submit-Dequeue-Complete Flow
 # =============================================================================
-
 
 class TestFullFlow:
     """Test complete task lifecycle."""
@@ -138,11 +130,9 @@ class TestFullFlow:
         assert dequeued.id == submitted.id
         assert dequeued.status == TASK_STATUS_RUNNING
 
-
 # =============================================================================
 # 2. Boost with Credits Integration
 # =============================================================================
-
 
 class TestBoostIntegration:
     """Test boost with CreditsService (disabled mode)."""
@@ -164,11 +154,9 @@ class TestBoostIntegration:
         assert task.effective_tier == 1  # 3 (LOW) - 2 (boost) = 1 (HIGH)
         assert task.boost_tiers == 2
 
-
 # =============================================================================
 # 3. Cancel Flow
 # =============================================================================
-
 
 class TestCancelFlow:
     """Test cancel with credits release."""
@@ -194,11 +182,9 @@ class TestCancelFlow:
         result = await scheduler.cancel_task("task-cancel-1", agent_id="agent-a")
         assert result is True
 
-
 # =============================================================================
 # 4. Aging Progression
 # =============================================================================
-
 
 class TestAgingProgression:
     """Test priority aging over time."""
@@ -237,11 +223,9 @@ class TestAgingProgression:
         )
         assert aged_3 == 0  # 3 - 3 = CRITICAL (clamped)
 
-
 # =============================================================================
 # 5. Priority Ordering
 # =============================================================================
-
 
 class TestPriorityOrdering:
     """Test that tasks are ordered correctly by effective tier."""

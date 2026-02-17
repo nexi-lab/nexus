@@ -27,7 +27,6 @@ from nexus.core.exceptions import (
     ValidationError,
 )
 
-
 def test_nexus_error() -> None:
     """Test base NexusError."""
     # Without path
@@ -42,7 +41,6 @@ def test_nexus_error() -> None:
     assert error.message == "Something went wrong"
     assert error.path == "/test/file.txt"
 
-
 def test_file_not_found_error() -> None:
     """Test NexusFileNotFoundError."""
     # Default message
@@ -56,7 +54,6 @@ def test_file_not_found_error() -> None:
     assert "Custom message" in str(error)
     assert error.path == "/missing/file.txt"
 
-
 def test_permission_error() -> None:
     """Test NexusPermissionError."""
     # Default message
@@ -68,7 +65,6 @@ def test_permission_error() -> None:
     # Custom message
     error = NexusPermissionError("/forbidden/file.txt", "Access denied")
     assert "Access denied" in str(error)
-
 
 def test_backend_error() -> None:
     """Test BackendError."""
@@ -90,7 +86,6 @@ def test_backend_error() -> None:
     assert error.backend == "gcs"
     assert error.path == "/test/file.txt"
 
-
 def test_invalid_path_error() -> None:
     """Test InvalidPathError."""
     # Default message
@@ -101,7 +96,6 @@ def test_invalid_path_error() -> None:
     # Custom message
     error = InvalidPathError("bad\x00path", "Contains null byte")
     assert "Contains null byte" in str(error)
-
 
 def test_metadata_error() -> None:
     """Test MetadataError."""
@@ -115,7 +109,6 @@ def test_metadata_error() -> None:
     assert "Database error" in str(error)
     assert "/test/file.txt" in str(error)
     assert error.path == "/test/file.txt"
-
 
 def test_parser_error() -> None:
     """Test ParserError."""
@@ -137,7 +130,6 @@ def test_parser_error() -> None:
     assert error.parser == "MarkItDown"
     assert error.path == "/test/file.pdf"
 
-
 def test_exception_inheritance() -> None:
     """Test that all custom exceptions inherit from NexusError."""
     assert issubclass(NexusFileNotFoundError, NexusError)
@@ -152,11 +144,9 @@ def test_exception_inheritance() -> None:
     # All should also be standard Exceptions
     assert issubclass(NexusError, Exception)
 
-
 # ============================================================================
 # Error Classification Tests (Issue #706)
 # ============================================================================
-
 
 def test_is_expected_default_values() -> None:
     """Test that each exception class has the correct is_expected default.
@@ -190,7 +180,6 @@ def test_is_expected_default_values() -> None:
     # Base class defaults to False (unexpected)
     assert NexusError("Generic error").is_expected is False
 
-
 def test_is_expected_instance_override() -> None:
     """Test that is_expected can be overridden at instance creation.
 
@@ -213,7 +202,6 @@ def test_is_expected_instance_override() -> None:
     error = MetadataError("DB error", is_expected=True)
     assert error.is_expected is True  # Overridden from class default of False
 
-
 def test_is_expected_class_attribute() -> None:
     """Test that is_expected is a class attribute that can be checked."""
     # Class-level check (without instantiation)
@@ -221,7 +209,6 @@ def test_is_expected_class_attribute() -> None:
     assert ValidationError.is_expected is True
     assert BackendError.is_expected is False
     assert MetadataError.is_expected is False
-
 
 def test_base_error_is_expected_default() -> None:
     """Test that NexusError base class defaults to is_expected=False."""
@@ -232,7 +219,6 @@ def test_base_error_is_expected_default() -> None:
     error = NexusError("User mistake", is_expected=True)
     assert error.is_expected is True
 
-
 def test_conflict_error_is_expected() -> None:
     """Test ConflictError is classified as expected (normal in concurrent systems)."""
     error = ConflictError("/path/file.txt", "etag-old", "etag-new")
@@ -241,24 +227,20 @@ def test_conflict_error_is_expected() -> None:
     assert error.expected_etag == "etag-old"
     assert error.current_etag == "etag-new"
 
-
 def test_audit_log_error_is_unexpected() -> None:
     """Test AuditLogError is classified as unexpected (critical infrastructure)."""
     error = AuditLogError("Database write failed", path="/audit/log")
     assert error.is_expected is False
     assert error.path == "/audit/log"
 
-
 def test_authentication_error_is_expected() -> None:
     """Test AuthenticationError is classified as expected (user auth issue)."""
     error = AuthenticationError("Token expired")
     assert error.is_expected is True
 
-
 # ============================================================================
 # Issue #1460: Unified Exception Hierarchy Tests
 # ============================================================================
-
 
 def test_all_nexus_error_subclasses_have_is_expected() -> None:
     """Every NexusError subclass must define is_expected as a class attribute.
@@ -274,7 +256,6 @@ def test_all_nexus_error_subclasses_have_is_expected() -> None:
             assert isinstance(cls.is_expected, bool), (
                 f"{name}.is_expected must be bool, got {type(cls.is_expected)}"
             )
-
 
 def test_permission_denied_is_subclass_of_nexus_permission_error() -> None:
     """PermissionDeniedError must be a subclass of NexusPermissionError (Issue #1460).
@@ -293,14 +274,12 @@ def test_permission_denied_is_subclass_of_nexus_permission_error() -> None:
         caught = True
     assert caught, "except NexusPermissionError must catch PermissionDeniedError"
 
-
 def test_permission_denied_error_attributes() -> None:
     """PermissionDeniedError preserves path and message after reparenting."""
     error = PermissionDeniedError("No read access", path="/workspace/secret.txt")
     assert error.is_expected is True
     assert error.path == "/workspace/secret.txt"
     assert "No read access" in str(error)
-
 
 def test_access_denied_error() -> None:
     """AccessDeniedError (from router) now inherits NexusError."""
@@ -313,7 +292,6 @@ def test_access_denied_error() -> None:
     # With path
     error = AccessDeniedError("Zone isolation violation", path="/shared/zone-a/file.txt")
     assert error.path == "/shared/zone-a/file.txt"
-
 
 def test_path_not_mounted_error() -> None:
     """PathNotMountedError (from router) now inherits NexusError."""
@@ -328,7 +306,6 @@ def test_path_not_mounted_error() -> None:
     assert "Backend offline" in str(error)
     assert error.path == "/custom"
 
-
 def test_not_found_error_alias_removed() -> None:
     """NotFoundError alias must be removed from exceptions module (Issue #1460)."""
     import nexus.core.exceptions as exc_module
@@ -336,7 +313,6 @@ def test_not_found_error_alias_removed() -> None:
     assert not hasattr(exc_module, "NotFoundError"), (
         "NotFoundError alias should be removed; use NexusFileNotFoundError directly"
     )
-
 
 def test_router_exceptions_in_error_handler() -> None:
     """Error handler must map router exceptions to correct HTTP status codes."""
@@ -378,7 +354,6 @@ def test_router_exceptions_in_error_handler() -> None:
     resp = nexus_error_handler(request, NexusError("Unknown"))
     assert resp.status_code == 500
 
-
 def test_error_handler_response_includes_is_expected() -> None:
     """Error handler response body must include is_expected flag."""
     import json
@@ -397,7 +372,6 @@ def test_error_handler_response_includes_is_expected() -> None:
     resp = nexus_error_handler(request, BackendError("DB down"))
     body = json.loads(resp.body)
     assert body["is_expected"] is False
-
 
 def test_all_nexus_error_subclasses_have_status_code() -> None:
     """Every NexusError subclass must define status_code and error_type.
@@ -420,7 +394,6 @@ def test_all_nexus_error_subclasses_have_status_code() -> None:
             assert isinstance(cls.error_type, str), (
                 f"{name}.error_type must be str, got {type(cls.error_type)}"
             )
-
 
 def test_status_code_class_values() -> None:
     """Verify specific status_code mappings match HTTP semantics."""
@@ -461,7 +434,6 @@ def test_status_code_class_values() -> None:
     assert UploadOffsetMismatchError.status_code == 409
     assert UploadChecksumMismatchError.status_code == 460
 
-
 def test_error_handler_uses_class_status_code() -> None:
     """Error handler reads status_code from exception class, not isinstance chain."""
     from unittest.mock import MagicMock
@@ -501,7 +473,6 @@ def test_error_handler_uses_class_status_code() -> None:
             f"{type(exc).__name__} expected {expected_code}, got {resp.status_code}"
         )
 
-
 def test_router_uses_canonical_exceptions() -> None:
     """Router must raise exceptions from core.exceptions, not local definitions."""
     from nexus.core import router as router_module
@@ -516,11 +487,9 @@ def test_router_uses_canonical_exceptions() -> None:
                 f"router.{name} must be a NexusError subclass, got bases: {cls.__bases__}"
             )
 
-
 # ============================================================================
 # Database & Connector Exception Hierarchy Tests (Issue #1254)
 # ============================================================================
-
 
 def test_database_error_hierarchy() -> None:
     """Test DatabaseError inherits BackendError → NexusError."""
@@ -529,7 +498,6 @@ def test_database_error_hierarchy() -> None:
     assert issubclass(DatabaseConnectionError, DatabaseError)
     assert issubclass(DatabaseTimeoutError, DatabaseError)
     assert issubclass(DatabaseIntegrityError, DatabaseError)
-
 
 def test_database_error_creation() -> None:
     """Test DatabaseError can be created with message and optional path."""
@@ -541,7 +509,6 @@ def test_database_error_creation() -> None:
     assert "Query failed" in str(error)
     assert error.path == "/data/table"
 
-
 def test_database_children_is_expected() -> None:
     """Test is_expected classification for DatabaseError subtypes."""
     # Connection errors are unexpected (infrastructure failure)
@@ -550,7 +517,6 @@ def test_database_children_is_expected() -> None:
     assert DatabaseTimeoutError("Query timed out").is_expected is False
     # Integrity errors are expected (user-caused, e.g., duplicate key)
     assert DatabaseIntegrityError("Duplicate key").is_expected is True
-
 
 def test_database_error_caught_by_backend_error() -> None:
     """Test that except BackendError catches DatabaseError and children."""
@@ -567,7 +533,6 @@ def test_database_error_caught_by_backend_error() -> None:
             with_caught.append(exc_class.__name__)
     assert len(with_caught) == 4
 
-
 def test_connector_error_hierarchy() -> None:
     """Test ConnectorError inherits BackendError → NexusError."""
     assert issubclass(ConnectorError, BackendError)
@@ -575,7 +540,6 @@ def test_connector_error_hierarchy() -> None:
     assert issubclass(ConnectorAuthError, ConnectorError)
     assert issubclass(ConnectorRateLimitError, ConnectorError)
     assert issubclass(ConnectorQuotaError, ConnectorError)
-
 
 def test_connector_error_creation() -> None:
     """Test ConnectorError can be created with message and optional path."""
@@ -585,7 +549,6 @@ def test_connector_error_creation() -> None:
 
     error = ConnectorError("Timeout", path="/mnt/gmail")
     assert error.path == "/mnt/gmail"
-
 
 def test_connector_children_is_expected() -> None:
     """Test is_expected classification for ConnectorError subtypes."""
@@ -597,7 +560,6 @@ def test_connector_children_is_expected() -> None:
     assert ConnectorQuotaError("Quota exceeded").is_expected is True
     # Base connector error is unexpected (generic failure)
     assert ConnectorError("Unknown failure").is_expected is False
-
 
 def test_connector_error_caught_by_backend_error() -> None:
     """Test that except BackendError catches ConnectorError and children."""
@@ -614,7 +576,6 @@ def test_connector_error_caught_by_backend_error() -> None:
             with_caught.append(exc_class.__name__)
     assert len(with_caught) == 4
 
-
 def test_connector_validation_error_caught_by_core() -> None:
     """Test that connectors.base.ValidationError is caught by core ValidationError."""
     from nexus.connectors.base import ValidationError as ConnectorValidationError
@@ -629,7 +590,6 @@ def test_connector_validation_error_caught_by_core() -> None:
         )
     except ValidationError:
         pass  # Should be caught
-
 
 def test_is_expected_defaults_new_types() -> None:
     """Test is_expected class attributes for new exception types."""

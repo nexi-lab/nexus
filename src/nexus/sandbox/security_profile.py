@@ -6,8 +6,6 @@ to concrete Docker container settings (capabilities, network, filesystem, resour
 Issue #1000: Enhance agent sandboxing with network isolation.
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -28,7 +26,6 @@ TRUST_TIER_PROFILE_MAP: dict[str, str] = {
     "SkillBuilder": "standard",
     "ImpersonatedUser": "permissive",
 }
-
 
 @dataclass(frozen=True)
 class SandboxSecurityProfile:
@@ -82,7 +79,7 @@ class SandboxSecurityProfile:
     pids_limit: int = 256
 
     @classmethod
-    def strict(cls) -> SandboxSecurityProfile:
+    def strict(cls) -> "SandboxSecurityProfile":
         """Maximum isolation for untrusted agents.
 
         - No network access (network=none)
@@ -109,7 +106,7 @@ class SandboxSecurityProfile:
         )
 
     @classmethod
-    def standard(cls) -> SandboxSecurityProfile:
+    def standard(cls) -> "SandboxSecurityProfile":
         """Balanced isolation for skill-builder and default agents.
 
         - No direct network (network=none), egress via proxy
@@ -137,7 +134,7 @@ class SandboxSecurityProfile:
         )
 
     @classmethod
-    def permissive(cls) -> SandboxSecurityProfile:
+    def permissive(cls) -> "SandboxSecurityProfile":
         """Minimal restrictions for trusted (impersonated user) agents.
 
         - Default bridge network (full network access)
@@ -165,7 +162,7 @@ class SandboxSecurityProfile:
         )
 
     @classmethod
-    def from_trust_tier(cls, agent_name: str | None) -> SandboxSecurityProfile:
+    def from_trust_tier(cls, agent_name: str | None) -> "SandboxSecurityProfile":
         """Resolve agent trust tier to security profile.
 
         Args:

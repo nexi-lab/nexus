@@ -12,18 +12,16 @@ References:
     - Issue #1341: Context manifest with deterministic pre-execution
 """
 
-from __future__ import annotations
-
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from nexus.services.context_manifest.models import ContextSourceProtocol, ManifestResult
 if TYPE_CHECKING:
     from nexus.services.context_manifest.models import (
         ContextSourceProtocol,
         ManifestResult,
     )
-
 
 @runtime_checkable
 class ContextManifestProtocol(Protocol):

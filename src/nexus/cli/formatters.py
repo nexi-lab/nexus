@@ -1,13 +1,10 @@
 """CLI output formatters - Rich formatting utilities for Nexus CLI."""
 
-from __future__ import annotations
-
 from datetime import datetime
 
 from rich.table import Table
 
 from nexus.cli.utils import console
-
 
 def format_permissions(mode: int | None) -> str:
     """Format file mode as permission string.
@@ -30,7 +27,6 @@ def format_permissions(mode: int | None) -> str:
         perms.append("x" if perm & 0o1 else "-")
     return "".join(perms)
 
-
 def format_size(size: int) -> str:
     """Format file size in human-readable format.
 
@@ -47,7 +43,6 @@ def format_size(size: int) -> str:
         size_float /= 1024.0
     return f"{size_float:.1f} PB"
 
-
 def format_timestamp(dt: datetime | None) -> str:
     """Format datetime as string.
 
@@ -60,7 +55,6 @@ def format_timestamp(dt: datetime | None) -> str:
     if dt is None:
         return "N/A"
     return dt.strftime("%Y-%m-%d %H:%M:%S")
-
 
 def create_file_table(title: str, show_permissions: bool = True) -> Table:
     """Create a Rich table for file listings.
@@ -84,7 +78,6 @@ def create_file_table(title: str, show_permissions: bool = True) -> Table:
     table.add_column("Modified", style="yellow")
 
     return table
-
 
 def add_file_row(
     table: Table,
@@ -116,21 +109,17 @@ def add_file_row(
     else:
         table.add_row(path, size_str, modified_str)
 
-
 def print_success(message: str) -> None:
     """Print success message."""
     console.print(f"[green]✓[/green] {message}")
-
 
 def print_error(message: str) -> None:
     """Print error message."""
     console.print(f"[red]✗[/red] {message}")
 
-
 def print_warning(message: str) -> None:
     """Print warning message."""
     console.print(f"[yellow]⚠[/yellow] {message}")
-
 
 def print_info(message: str) -> None:
     """Print info message."""

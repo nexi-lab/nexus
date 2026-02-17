@@ -3,12 +3,9 @@
 Issue #1360: Exchange audit log query & export API.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 from nexus.server.api.v2.models.base import ApiModel
-
 
 class AuditTransactionResponse(ApiModel):
     """Single exchange audit log entry."""
@@ -28,7 +25,6 @@ class AuditTransactionResponse(ApiModel):
     metadata_hash: str | None = None
     transfer_id: str | None = None
 
-
 class AuditTransactionListResponse(ApiModel):
     """Paginated list of audit transactions."""
 
@@ -38,7 +34,6 @@ class AuditTransactionListResponse(ApiModel):
     total: int | None = None
     next_cursor: str | None = None
 
-
 class AuditAggregationResponse(ApiModel):
     """Aggregation results for audit transactions."""
 
@@ -46,7 +41,6 @@ class AuditAggregationResponse(ApiModel):
     tx_count: int
     top_buyers: list[dict[str, Any]]
     top_sellers: list[dict[str, Any]]
-
 
 class AuditIntegrityResponse(ApiModel):
     """Result of integrity verification for a single record."""

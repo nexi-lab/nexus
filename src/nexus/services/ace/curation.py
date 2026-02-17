@@ -1,7 +1,5 @@
 """Curation system for updating playbooks with reflection learnings."""
 
-from __future__ import annotations
-
 import json
 from datetime import UTC, datetime
 from typing import Any
@@ -10,7 +8,6 @@ from sqlalchemy.orm import Session
 
 from nexus.services.ace.playbook import PlaybookManager
 from nexus.storage.models import MemoryModel
-
 
 class Curator:
     """Curate playbooks by integrating reflection learnings.

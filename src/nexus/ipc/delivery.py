@@ -8,8 +8,6 @@ MessageProcessor: reads messages from an agent's inbox, invokes a handler,
     dead_letter on failure). Supports EventBus push with poll fallback.
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import logging
@@ -35,11 +33,11 @@ from nexus.ipc.exceptions import (
 from nexus.ipc.protocols import EventPublisher, HotPathPublisher, HotPathSubscriber
 from nexus.ipc.storage.protocol import IPCStorageDriver
 
+from nexus.core.cache_store import CacheStoreABC
 if TYPE_CHECKING:
     from nexus.core.cache_store import CacheStoreABC
 
 logger = logging.getLogger(__name__)
-
 
 class DeliveryMode(StrEnum):
     """How messages are delivered between agents."""
@@ -47,7 +45,6 @@ class DeliveryMode(StrEnum):
     COLD_ONLY = "cold_only"  # Current behavior: filesystem only
     HOT_COLD = "hot_cold"  # NATS instant + async filesystem persistence
     HOT_ONLY = "hot_only"  # NATS only, no persistence
-
 
 # Type alias for message handler callbacks
 MessageHandler = Callable[[MessageEnvelope], Coroutine[Any, Any, None]]
@@ -61,7 +58,6 @@ DEFAULT_MAX_PAYLOAD_BYTES = 1_048_576
 # Default concurrency bounds for hot/cold delivery
 DEFAULT_MAX_COLD_CONCURRENCY = 100
 DEFAULT_MAX_HANDLER_CONCURRENCY = 50
-
 
 class MessageSender:
     """Sends messages to agent inboxes via IPCStorageDriver.
@@ -297,7 +293,6 @@ class MessageSender:
             raise EnvelopeValidationError(
                 f"Messages of type '{envelope.type.value}' require a correlation_id"
             )
-
 
 class MessageProcessor:
     """Processes messages from an agent's inbox.

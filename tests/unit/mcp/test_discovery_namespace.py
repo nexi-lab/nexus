@@ -8,8 +8,6 @@ the ToolNamespaceMiddleware's visible tool set:
     - nexus_discovery_load_tools: invisible → "not found"
 """
 
-from __future__ import annotations
-
 import json
 from unittest.mock import Mock
 
@@ -21,16 +19,13 @@ from nexus.mcp.server import create_mcp_server
 # Helpers
 # ---------------------------------------------------------------------------
 
-
 def get_tool(server, tool_name: str):
     """Helper to get a tool callable from the MCP server."""
     return server._tool_manager._tools[tool_name]
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
 
 @pytest.fixture
 def mock_nx():
@@ -50,7 +45,6 @@ def mock_nx():
         return_value={"success": True, "diff": "", "applied_count": 0, "matches": [], "errors": []}
     )
     return nx
-
 
 @pytest.fixture
 def mock_middleware():
@@ -77,7 +71,6 @@ def mock_middleware():
     mw._get_visible_tools = Mock(return_value=visible)
     return mw
 
-
 @pytest.fixture
 def mock_ctx():
     """Mock FastMCP Context with subject state."""
@@ -90,23 +83,19 @@ def mock_ctx():
     )
     return ctx
 
-
 @pytest.fixture
 def server_with_namespace(mock_nx, mock_middleware):
     """MCP server with namespace middleware wired in."""
     return create_mcp_server(nx=mock_nx, tool_namespace_middleware=mock_middleware)
-
 
 @pytest.fixture
 def server_without_namespace(mock_nx):
     """MCP server without namespace middleware (backward compat)."""
     return create_mcp_server(nx=mock_nx)
 
-
 # ---------------------------------------------------------------------------
 # nexus_discovery_search_tools
 # ---------------------------------------------------------------------------
-
 
 class TestSearchToolsNamespace:
     def test_filters_results_through_visible_set(self, server_with_namespace, mock_ctx):
@@ -138,11 +127,9 @@ class TestSearchToolsNamespace:
         for tool in result["tools"]:
             assert tool["name"] in {"nexus_read_file", "nexus_write_file"}
 
-
 # ---------------------------------------------------------------------------
 # nexus_discovery_list_servers
 # ---------------------------------------------------------------------------
-
 
 class TestListServersNamespace:
     def test_tool_counts_filtered_by_namespace(self, server_with_namespace, mock_ctx):
@@ -184,11 +171,9 @@ class TestListServersNamespace:
         assert "nexus" in result["servers"]
         assert result["total_tools"] == 0
 
-
 # ---------------------------------------------------------------------------
 # nexus_discovery_get_tool_details
 # ---------------------------------------------------------------------------
-
 
 class TestGetToolDetailsNamespace:
     def test_visible_tool_returns_details(self, server_with_namespace, mock_ctx):
@@ -222,11 +207,9 @@ class TestGetToolDetailsNamespace:
         assert result["found"] is False
         assert "not found" in result["error"]
 
-
 # ---------------------------------------------------------------------------
 # nexus_discovery_load_tools
 # ---------------------------------------------------------------------------
-
 
 class TestLoadToolsNamespace:
     def test_invisible_tool_reported_as_not_found(self, server_with_namespace, mock_ctx):
@@ -282,11 +265,9 @@ class TestLoadToolsNamespace:
         assert result["loaded"] == []
         assert set(result["not_found"]) == {"nexus_read_file", "nexus_write_file"}
 
-
 # ---------------------------------------------------------------------------
 # _get_visible_tool_names — edge cases
 # ---------------------------------------------------------------------------
-
 
 class TestGetVisibleToolNames:
     def test_no_ctx_returns_none_no_filtering(self, server_with_namespace):

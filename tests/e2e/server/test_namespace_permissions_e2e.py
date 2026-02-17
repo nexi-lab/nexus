@@ -7,8 +7,6 @@ Tests the per-subject namespace visibility model with a real FastAPI server:
 - Performance validation for namespace visibility checks
 """
 
-from __future__ import annotations
-
 import os
 import shutil
 import signal
@@ -36,18 +34,15 @@ for _key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
     os.environ.pop(_key, None)
 os.environ["NO_PROXY"] = "*"
 
-
 def _find_free_port() -> int:
     """Find a free TCP port on localhost."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
 
-
 def _make_client() -> httpx.Client:
     """Create httpx client for localhost connections."""
     return httpx.Client(timeout=60)
-
 
 def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> None:
     """Poll /health until the server responds or timeout."""
@@ -62,7 +57,6 @@ def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> 
                 pass
             time.sleep(0.3)
     raise TimeoutError(f"Server did not start within {timeout}s at {base_url}")
-
 
 def _rpc(
     client: httpx.Client,
@@ -86,7 +80,6 @@ def _rpc(
         f"RPC {method} returned HTTP {resp.status_code}: {resp.text[:500]}"
     )
     return resp.json()
-
 
 def _rebac_grant(
     client: httpx.Client,
@@ -113,7 +106,6 @@ def _rebac_grant(
     rpc_result = result.get("result", {})
     return rpc_result.get("tuple_id") if isinstance(rpc_result, dict) else None
 
-
 def _rebac_revoke(
     client: httpx.Client,
     base_url: str,
@@ -130,9 +122,7 @@ def _rebac_revoke(
     )
     return result.get("error") is None
 
-
 # === Fixtures ===
-
 
 @pytest.fixture(scope="module")
 def server():
@@ -239,19 +229,16 @@ def server():
         # Cleanup temp dir
         shutil.rmtree(data_dir, ignore_errors=True)
 
-
 @pytest.fixture(scope="module")
 def client(server: dict) -> httpx.Client:
     """Shared httpx client."""
     with _make_client() as c:
         yield c
 
-
 @pytest.fixture()
 def base_url(server: dict) -> str:
     """Get the base URL of the running server."""
     return server["base_url"]
-
 
 @pytest.fixture()
 def alice_headers() -> dict[str, str]:
@@ -261,7 +248,6 @@ def alice_headers() -> dict[str, str]:
         "X-Nexus-Zone-ID": "test",
     }
 
-
 @pytest.fixture()
 def bob_headers() -> dict[str, str]:
     """Headers for user bob in zone test."""
@@ -269,7 +255,6 @@ def bob_headers() -> dict[str, str]:
         "X-Nexus-Subject": "user:bob",
         "X-Nexus-Zone-ID": "test",
     }
-
 
 @pytest.fixture()
 def admin_headers() -> dict[str, str]:
@@ -279,18 +264,15 @@ def admin_headers() -> dict[str, str]:
         "X-Nexus-Zone-ID": "test",
     }
 
-
 # =============================================================================
 # Namespace Visibility Tests (Issue #1239)
 # =============================================================================
-
 
 def test_health(base_url: str, client: httpx.Client) -> None:
     """Health endpoint responds."""
     resp = client.get(f"{base_url}/health")
     assert resp.status_code == 200
     assert resp.json()["status"] == "healthy"
-
 
 def test_zero_grants_zero_visibility(base_url: str, client: httpx.Client) -> None:
     """Subject with no grants sees nothing (fail-closed).
@@ -308,7 +290,6 @@ def test_zero_grants_zero_visibility(base_url: str, client: httpx.Client) -> Non
     # Should return 404 (path invisible), not 403 (permission denied)
     assert resp.status_code == 404
     assert "not found" in resp.json().get("detail", "").lower()
-
 
 def test_per_subject_namespace_isolation(
     base_url: str, client: httpx.Client, alice_headers: dict, bob_headers: dict, admin_headers: dict
@@ -391,7 +372,6 @@ def test_per_subject_namespace_isolation(
     # Should return 404 (path invisible to bob), not 403
     assert resp.status_code == 404, f"Bob should NOT see {alice_path}: {resp.text}"
 
-
 def test_admin_bypasses_namespace(base_url: str, client: httpx.Client, admin_headers: dict) -> None:
     """Admin user bypasses namespace visibility checks.
 
@@ -425,7 +405,6 @@ def test_admin_bypasses_namespace(base_url: str, client: httpx.Client, admin_hea
     )
     assert resp.status_code == 200
     assert resp.json()["content"] == "Top secret"
-
 
 def test_fine_grained_rebac_check_after_namespace(
     base_url: str, client: httpx.Client, admin_headers: dict
@@ -472,7 +451,6 @@ def test_fine_grained_rebac_check_after_namespace(
         headers=dave_headers,
     )
     assert resp.status_code == 403, f"Dave should get 403 (no write perm): {resp.text}"
-
 
 def test_grant_revocation_makes_path_invisible(
     base_url: str, client: httpx.Client, admin_headers: dict
@@ -526,11 +504,9 @@ def test_grant_revocation_makes_path_invisible(
     )
     assert resp.status_code == 404
 
-
 # =============================================================================
 # Performance Tests
 # =============================================================================
-
 
 def test_namespace_check_performance(
     base_url: str, client: httpx.Client, admin_headers: dict
@@ -578,9 +554,7 @@ def test_namespace_check_performance(
     # Namespace check alone should be <1ms, total <100ms per request reasonable
     assert avg_ms < 100, f"Namespace check too slow: {avg_ms:.2f}ms avg (expected <100ms)"
 
-
 # === Issue #1398: VFS Lock Manager active ===
-
 
 def test_vfs_lock_manager_active(server: dict) -> None:
     """Verify the VFS lock manager is initialized in the running server.

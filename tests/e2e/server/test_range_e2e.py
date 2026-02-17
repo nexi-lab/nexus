@@ -9,8 +9,6 @@ Uses the nexus_server fixture from conftest.py which starts
 Run with: .venv/bin/python3.12 -m pytest tests/e2e/test_range_e2e.py -v -p no:xdist -o "addopts="
 """
 
-from __future__ import annotations
-
 import base64
 
 import httpx
@@ -19,7 +17,6 @@ AUTH_HEADERS = {"Authorization": "Bearer test-e2e-api-key-12345"}
 
 # 10KB test content with a repeating pattern for easy verification
 TEST_CONTENT = bytes(range(256)) * 40  # 10240 bytes
-
 
 def _write_file(client: httpx.Client, path: str, content: bytes) -> dict:
     """Upload a file via the v2 API and return write response data."""
@@ -34,7 +31,6 @@ def _write_file(client: httpx.Client, path: str, content: bytes) -> dict:
     )
     assert resp.status_code == 200, f"Write failed: {resp.text}"
     return resp.json()
-
 
 class TestBasicRange:
     """Basic range request: first 5KB of a 10KB file."""
@@ -53,7 +49,6 @@ class TestBasicRange:
             assert "bytes 0-4999/10240" in resp.headers.get("content-range", "")
             assert resp.headers.get("accept-ranges") == "bytes"
 
-
 class TestResumeDownload:
     """Simulate download resumption: request bytes from offset to end."""
 
@@ -69,7 +64,6 @@ class TestResumeDownload:
             assert resp.status_code == 206
             assert resp.content == TEST_CONTENT[5000:]
             assert "bytes 5000-10239/10240" in resp.headers.get("content-range", "")
-
 
 class TestSuffixRange:
     """Suffix range: last N bytes of file."""
@@ -87,7 +81,6 @@ class TestSuffixRange:
             assert resp.content == TEST_CONTENT[-500:]
             assert "bytes 9740-10239/10240" in resp.headers.get("content-range", "")
 
-
 class TestNoRange:
     """Without Range header, get full content with Accept-Ranges."""
 
@@ -103,7 +96,6 @@ class TestNoRange:
             assert resp.status_code == 200
             assert resp.content == TEST_CONTENT
             assert resp.headers.get("accept-ranges") == "bytes"
-
 
 class TestUnsatisfiableRange:
     """Range beyond file size returns 416."""
@@ -121,7 +113,6 @@ class TestUnsatisfiableRange:
             )
             assert resp.status_code == 416
             assert "bytes */100" in resp.headers.get("content-range", "")
-
 
 class TestUnauthenticatedDenied:
     """Unauthenticated requests are denied when auth is required."""

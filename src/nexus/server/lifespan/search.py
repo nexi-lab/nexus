@@ -3,19 +3,17 @@
 Extracted from fastapi_server.py (#1602).
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import logging
 import os
 from typing import TYPE_CHECKING
 
+from fastapi import FastAPI
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
-
 
 async def startup_search(app: FastAPI) -> list[asyncio.Task]:
     """Initialize search daemon and return background tasks."""

@@ -10,11 +10,8 @@ Nexus versions, including:
 Issue #165: Migration Tools & Upgrade Paths
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from typing import Any
-
 
 @dataclass
 class ConfigMigrationResult:
@@ -35,7 +32,6 @@ class ConfigMigrationResult:
     changes_made: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
-
 
 class ConfigMigrator:
     """Migrates configuration between Nexus versions.

@@ -22,18 +22,15 @@ TOKEN_EXPIRY_HOURS = 24
 MAX_LOGIN_ATTEMPTS = 5
 RATE_LIMIT_WINDOW_SECONDS = 60
 
-
 class AuthenticationError(Exception):
     """Raised when authentication fails."""
 
     pass
 
-
 class AuthorizationError(Exception):
     """Raised when user lacks required permissions."""
 
     pass
-
 
 class UserAuthenticator:
     """Handles user authentication and JWT token management.
@@ -67,7 +64,6 @@ class UserAuthenticator:
     def check_rate_limit(self, username: str) -> bool:
         """Check if user has exceeded login attempt rate limit."""
         pass
-
 
 class PermissionManager:
     """Manages role-based access control permissions.

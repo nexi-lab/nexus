@@ -24,7 +24,6 @@ down_revision: Union[str, Sequence[str], None] = "0dec0068b76e"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add partial index for cross-tenant share lookups.
 
@@ -47,7 +46,6 @@ def upgrade() -> None:
               AND expires_at IS NULL
         """)
     )
-
 
 def downgrade() -> None:
     """Remove cross-tenant share index."""

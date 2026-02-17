@@ -9,8 +9,6 @@ Uses multi-key StaticAPIKeyAuth for proper per-user identity, and the sync
 RPC endpoint (/api/nfs/) which doesn't require AsyncNexusFS (database_url).
 """
 
-from __future__ import annotations
-
 import base64
 import os
 import shutil
@@ -43,9 +41,7 @@ for _key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
     os.environ.pop(_key, None)
 os.environ["NO_PROXY"] = "*"
 
-
 # === Helpers ===
-
 
 def _find_free_port() -> int:
     """Find a free TCP port on localhost."""
@@ -53,11 +49,9 @@ def _find_free_port() -> int:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
 
-
 def _make_client() -> httpx.Client:
     """Create httpx client for localhost connections (no proxy)."""
     return httpx.Client(timeout=15, trust_env=False)
-
 
 def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> None:
     """Poll /health until the server responds or timeout."""
@@ -73,7 +67,6 @@ def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> 
             time.sleep(0.3)
     raise TimeoutError(f"Server did not start within {timeout}s at {base_url}")
 
-
 def _rpc_call(
     client: httpx.Client,
     base_url: str,
@@ -88,7 +81,6 @@ def _rpc_call(
         headers=headers,
     )
     return {"status_code": resp.status_code, "body": resp.json()}
-
 
 def _rpc_write(
     client: httpx.Client,
@@ -107,7 +99,6 @@ def _rpc_write(
         headers,
     )
 
-
 def _rpc_read(
     client: httpx.Client,
     base_url: str,
@@ -116,7 +107,6 @@ def _rpc_read(
 ) -> dict[str, Any]:
     """Read a file via RPC. Returns raw response dict."""
     return _rpc_call(client, base_url, "read", {"path": path}, headers)
-
 
 def _rpc_grant(
     client: httpx.Client,
@@ -139,7 +129,6 @@ def _rpc_grant(
         },
         headers,
     )
-
 
 def _build_startup_script(port: int, data_dir: str) -> str:
     """Build Python startup script with multi-key auth and no-cache namespace."""
@@ -200,9 +189,7 @@ def _build_startup_script(port: int, data_dir: str) -> str:
         ])
     """)
 
-
 # === Fixtures ===
-
 
 @pytest.fixture(scope="module")
 def server() -> Generator[dict[str, Any], None, None]:
@@ -288,45 +275,37 @@ def server() -> Generator[dict[str, Any], None, None]:
                 proc.wait(timeout=5)
         shutil.rmtree(data_dir, ignore_errors=True)
 
-
 @pytest.fixture(scope="module")
 def client(server: dict[str, Any]) -> Generator[httpx.Client, None, None]:
     """Shared httpx client (no proxy)."""
     with _make_client() as c:
         yield c
 
-
 @pytest.fixture()
 def base_url(server: dict[str, Any]) -> str:
     return server["base_url"]
-
 
 @pytest.fixture()
 def admin_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {ADMIN_API_KEY}"}
 
-
 @pytest.fixture()
 def alice_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {ALICE_API_KEY}"}
-
 
 @pytest.fixture()
 def bob_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {BOB_API_KEY}"}
 
-
 # =============================================================================
 # Tests: L3 Persistent Views with Real Server
 # =============================================================================
-
 
 def test_health_shows_server_ready(base_url: str, client: httpx.Client) -> None:
     """Health endpoint responds and server is ready."""
     resp = client.get(f"{base_url}/health")
     assert resp.status_code == 200
     assert resp.json()["status"] == "healthy"
-
 
 def test_zero_grants_invisible(
     base_url: str, client: httpx.Client, alice_headers: dict[str, str]
@@ -340,7 +319,6 @@ def test_zero_grants_invisible(
     assert "error" in body or result["status_code"] != 200, (
         f"Expected error for invisible path, got: {body}"
     )
-
 
 def test_namespace_isolation_with_l3(
     base_url: str,
@@ -393,7 +371,6 @@ def test_namespace_isolation_with_l3(
     result = _rpc_read(client, base_url, alice_path, bob_headers)
     body = result["body"]
     assert "error" in body, f"Bob should NOT see {alice_path}: {body}"
-
 
 def test_admin_bypass_with_l3(
     base_url: str,

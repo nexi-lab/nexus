@@ -9,8 +9,6 @@ Tests cover:
 - Cache freshness with grants_hash
 """
 
-from __future__ import annotations
-
 import pytest
 from sqlalchemy import create_engine
 
@@ -25,14 +23,12 @@ from nexus.storage.models import Base
 # Fixtures
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture
 def engine():
     """Create in-memory SQLite database for testing."""
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     return engine
-
 
 @pytest.fixture
 def enhanced_rebac_manager(engine):
@@ -47,7 +43,6 @@ def enhanced_rebac_manager(engine):
     yield manager
     manager.close()
 
-
 @pytest.fixture
 def namespace_manager(enhanced_rebac_manager):
     """Create a NamespaceManager backed by a real ReBAC manager."""
@@ -58,11 +53,9 @@ def namespace_manager(enhanced_rebac_manager):
         revision_window=10,
     )
 
-
 # ---------------------------------------------------------------------------
 # grants_hash computation tests (Decision #14A)
 # ---------------------------------------------------------------------------
-
 
 class TestGrantsHash:
     """Tests for grants_hash computation in NamespaceManager."""
@@ -184,11 +177,9 @@ class TestGrantsHash:
         assert h is not None
         assert len(h) == 16
 
-
 # ---------------------------------------------------------------------------
 # Namespace visibility with multiple subjects
 # ---------------------------------------------------------------------------
-
 
 class TestMultiSubjectVisibility:
     """Tests for namespace isolation between subjects."""
@@ -244,11 +235,9 @@ class TestMultiSubjectVisibility:
         assert not namespace_manager.is_visible(("user", "nobody"), "/")
         assert not namespace_manager.is_visible(("user", "nobody"), "/admin/secrets")
 
-
 # ---------------------------------------------------------------------------
 # build_mount_entries edge cases
 # ---------------------------------------------------------------------------
-
 
 class TestBuildMountEntriesEdgeCases:
     """Additional edge cases for the pure build_mount_entries function."""
@@ -333,11 +322,9 @@ class TestBuildMountEntriesEdgeCases:
         entries = build_mount_entries(paths)
         assert len(entries) == 100  # 100 project directories
 
-
 # ---------------------------------------------------------------------------
 # Cache behavior tests
 # ---------------------------------------------------------------------------
-
 
 class TestCacheBehavior:
     """Tests for cache invalidation and grants_hash interaction."""
@@ -403,11 +390,9 @@ class TestCacheBehavior:
 
         assert rebuilds_2 == rebuilds_1  # No additional rebuild
 
-
 # ---------------------------------------------------------------------------
 # Visibility bisect edge cases
 # ---------------------------------------------------------------------------
-
 
 class TestVisibilityEdgeCases:
     """Edge cases for bisect-based visibility checks."""

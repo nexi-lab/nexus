@@ -17,8 +17,6 @@ Issue: #1243
 Architecture: KERNEL-ARCHITECTURE.md
 """
 
-from __future__ import annotations
-
 import asyncio
 import hashlib
 import logging
@@ -28,12 +26,13 @@ from typing import TYPE_CHECKING, Any
 from nexus.backends.backend import Backend, HandlerStatusResponse
 from nexus.core.response import HandlerResponse, timed_response
 
+from nexus.core.permissions import OperationContext
+from nexus.ipc.storage.protocol import IPCStorageDriver
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.ipc.storage.protocol import IPCStorageDriver
 
 logger = logging.getLogger(__name__)
-
 
 class IPCVFSDriver(Backend):
     """VFS backend for the ``/agents/`` mount point.

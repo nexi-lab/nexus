@@ -18,7 +18,6 @@ UTC = UTC
 # Run these tests in the same xdist worker to avoid server conflicts
 pytestmark = [pytest.mark.xdist_group("memory_pit"), pytest.mark.quarantine]
 
-
 class TestPointInTimeQueryE2E:
     """E2E tests for POST /api/v2/memories/query endpoint (#1185)."""
 
@@ -181,7 +180,6 @@ class TestPointInTimeQueryE2E:
         assert "Version 2" in current_results[0]["content"], (
             "Current query should return latest content"
         )
-
 
 class TestInvalidateAndQueryE2E:
     """E2E tests for invalidate + point-in-time query workflow (#1185)."""

@@ -23,18 +23,19 @@ References:
     - Issue #1703: Make backends implement ConnectorProtocol
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from collections.abc import Iterator
+from nexus.backends.backend import FileInfo, HandlerStatusResponse
+from nexus.core.permissions import OperationContext
+from nexus.core.response import HandlerResponse
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from nexus.backends.backend import FileInfo, HandlerStatusResponse
     from nexus.core.permissions import OperationContext
     from nexus.core.response import HandlerResponse
-
 
 @runtime_checkable
 class ContentStoreProtocol(Protocol):
@@ -71,7 +72,6 @@ class ContentStoreProtocol(Protocol):
         self, content_hash: str, context: OperationContext | None = None
     ) -> HandlerResponse[int]: ...
 
-
 @runtime_checkable
 class DirectoryOpsProtocol(Protocol):
     """Directory operations — needed by VFS Router and mount services."""
@@ -94,7 +94,6 @@ class DirectoryOpsProtocol(Protocol):
     def is_directory(
         self, path: str, context: OperationContext | None = None
     ) -> HandlerResponse[bool]: ...
-
 
 @runtime_checkable
 class ConnectorProtocol(ContentStoreProtocol, DirectoryOpsProtocol, Protocol):
@@ -134,7 +133,6 @@ class ConnectorProtocol(ContentStoreProtocol, DirectoryOpsProtocol, Protocol):
     @property
     def has_token_manager(self) -> bool: ...
 
-
 @runtime_checkable
 class PassthroughProtocol(Protocol):
     """Same-box operations — locking, physical path access.
@@ -152,7 +150,6 @@ class PassthroughProtocol(Protocol):
 
     def unlock(self, lock_id: str) -> bool: ...
 
-
 @runtime_checkable
 class OAuthCapableProtocol(Protocol):
     """OAuth token management capability.
@@ -166,7 +163,6 @@ class OAuthCapableProtocol(Protocol):
     token_manager_db: str
     user_email: str | None
     provider: str
-
 
 @runtime_checkable
 class StreamingProtocol(Protocol):
@@ -199,7 +195,6 @@ class StreamingProtocol(Protocol):
         context: OperationContext | None = None,
     ) -> HandlerResponse[str]: ...
 
-
 @runtime_checkable
 class BatchContentProtocol(Protocol):
     """Bulk content read optimization.
@@ -213,7 +208,6 @@ class BatchContentProtocol(Protocol):
         content_hashes: list[str],
         context: OperationContext | None = None,
     ) -> dict[str, bytes | None]: ...
-
 
 @runtime_checkable
 class DirectoryListingProtocol(Protocol):

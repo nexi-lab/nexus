@@ -15,7 +15,6 @@ from pathlib import Path
 import pytest
 import requests
 
-
 @pytest.fixture(scope="module")
 def server_process():
     """Start nexus server for testing."""
@@ -56,7 +55,6 @@ def server_process():
     proc.send_signal(signal.SIGTERM)
     proc.wait(timeout=5)
 
-
 @pytest.fixture
 def api_key(server_process):
     """Get API key from admin user."""
@@ -69,7 +67,6 @@ def api_key(server_process):
     # Fallback: try to create a new key via API
     # (This would require auth, so might not work)
     pytest.skip("No API key found")
-
 
 class TestMemoryPagingHTTP:
     """Test memory paging through HTTP API."""
@@ -132,7 +129,6 @@ class TestMemoryPagingHTTP:
         # This test would require server config to enable paging
         # For now, skip - needs server-side integration
         pass
-
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

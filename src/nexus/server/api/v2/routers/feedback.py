@@ -8,8 +8,6 @@ Provides 5 endpoints for feedback management:
 - POST /api/v2/feedback/relearn          - Mark for relearning
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -32,13 +30,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/feedback", tags=["feedback"])
 
-
 # =============================================================================
 # Endpoints
 # Note: Static paths (/queue, /score, /relearn) must be defined BEFORE
 # dynamic path (/{trajectory_id}) to ensure proper route matching.
 # =============================================================================
-
 
 @router.post("", response_model=FeedbackAddResponse, status_code=status.HTTP_201_CREATED)
 async def add_feedback(
@@ -65,7 +61,6 @@ async def add_feedback(
         logger.error(f"Feedback add error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to add feedback") from e
 
-
 @router.get("/queue")
 async def get_relearning_queue(
     limit: int = Query(10, ge=1, le=100, description="Maximum items to return"),
@@ -85,7 +80,6 @@ async def get_relearning_queue(
     except Exception as e:
         logger.error(f"Relearning queue error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to retrieve relearning queue") from e
-
 
 @router.post("/score", response_model=FeedbackScoreResponse)
 async def calculate_score(
@@ -111,7 +105,6 @@ async def calculate_score(
     except Exception as e:
         logger.error(f"Score calculation error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to calculate score") from e
-
 
 @router.post("/relearn")
 async def mark_for_relearning(
@@ -139,7 +132,6 @@ async def mark_for_relearning(
     except Exception as e:
         logger.error(f"Relearn mark error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to mark for relearning") from e
-
 
 # Dynamic path must be defined LAST to avoid matching static paths
 @router.get("/{trajectory_id}", response_model=TrajectoryFeedbackListResponse)

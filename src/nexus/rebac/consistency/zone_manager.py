@@ -21,14 +21,11 @@ Usage:
 Related: Issue #1459 (decomposition), Issue #773 (zone isolation)
 """
 
-from __future__ import annotations
-
 import logging
 
 from nexus.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 
 logger = logging.getLogger(__name__)
-
 
 class ZoneIsolationError(Exception):
     """Raised when attempting cross-zone operations.
@@ -42,7 +39,6 @@ class ZoneIsolationError(Exception):
         super().__init__(message)
         self.subject_zone = subject_zone
         self.object_zone = object_zone
-
 
 class ZoneManager:
     """Zone isolation enforcement helper.

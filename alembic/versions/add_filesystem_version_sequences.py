@@ -22,7 +22,6 @@ down_revision: Union[str, Sequence[str], None] = "add_tiger_directory_grants"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Upgrade schema.
 
@@ -46,7 +45,6 @@ def upgrade() -> None:
         "INSERT INTO filesystem_version_sequences (tenant_id, current_revision, updated_at) "
         "VALUES ('default', 0, CURRENT_TIMESTAMP)"
     )
-
 
 def downgrade() -> None:
     """Downgrade schema."""

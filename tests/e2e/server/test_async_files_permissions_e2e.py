@@ -11,8 +11,6 @@ server stack, including:
 Issue #940: Full async migration for FileMetadataProtocol and NexusFS.
 """
 
-from __future__ import annotations
-
 import os
 import shutil
 import signal
@@ -36,18 +34,15 @@ for _key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
     os.environ.pop(_key, None)
 os.environ["NO_PROXY"] = "*"
 
-
 def _find_free_port() -> int:
     """Find a free TCP port on localhost."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
 
-
 def _make_client() -> httpx.Client:
     """Create httpx client for localhost connections."""
     return httpx.Client(timeout=10)
-
 
 def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> None:
     """Poll /health until the server responds or timeout."""
@@ -63,9 +58,7 @@ def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> 
             time.sleep(0.3)
     raise TimeoutError(f"Server did not start within {timeout}s at {base_url}")
 
-
 # === Fixtures ===
-
 
 @pytest.fixture(scope="module")
 def server():
@@ -174,19 +167,16 @@ def server():
         # Cleanup temp dir
         shutil.rmtree(data_dir, ignore_errors=True)
 
-
 @pytest.fixture(scope="module")
 def client(server: dict) -> httpx.Client:
     """Shared httpx client that bypasses proxy."""
     with _make_client() as c:
         yield c
 
-
 @pytest.fixture()
 def base_url(server: dict) -> str:
     """Get the base URL of the running server."""
     return server["base_url"]
-
 
 @pytest.fixture()
 def user_headers() -> dict[str, str]:
@@ -196,18 +186,15 @@ def user_headers() -> dict[str, str]:
         "X-Nexus-Zone-ID": "e2e-test",
     }
 
-
 # =============================================================================
 # All 9 endpoints — happy path through real HTTP server
 # =============================================================================
-
 
 def test_health(base_url: str, client: httpx.Client) -> None:
     """Health endpoint responds."""
     resp = client.get(f"{base_url}/health")
     assert resp.status_code == 200
     assert resp.json()["status"] == "healthy"
-
 
 def test_write(base_url: str, client: httpx.Client, user_headers: dict) -> None:
     """POST /api/v2/files/write creates a file."""
@@ -229,7 +216,6 @@ def test_write(base_url: str, client: httpx.Client, user_headers: dict) -> None:
     assert data["size"] == len("Hello E2E!")
     assert "etag" in data
 
-
 def test_read(base_url: str, client: httpx.Client, user_headers: dict) -> None:
     """GET /api/v2/files/read returns file content."""
     client.post(
@@ -245,7 +231,6 @@ def test_read(base_url: str, client: httpx.Client, user_headers: dict) -> None:
     assert resp.status_code == 200, resp.text
     assert resp.json()["content"] == "readable"
 
-
 def test_delete(base_url: str, client: httpx.Client, user_headers: dict) -> None:
     """DELETE /api/v2/files/delete removes a file."""
     client.post(
@@ -260,7 +245,6 @@ def test_delete(base_url: str, client: httpx.Client, user_headers: dict) -> None
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["deleted"] is True
-
 
 def test_exists(base_url: str, client: httpx.Client, user_headers: dict) -> None:
     """GET /api/v2/files/exists checks file existence."""
@@ -286,7 +270,6 @@ def test_exists(base_url: str, client: httpx.Client, user_headers: dict) -> None
     assert resp2.status_code == 200
     assert resp2.json()["exists"] is False
 
-
 def test_list(base_url: str, client: httpx.Client, user_headers: dict) -> None:
     """GET /api/v2/files/list lists directory contents."""
     for name in ["alpha.txt", "beta.txt", "gamma.txt"]:
@@ -307,7 +290,6 @@ def test_list(base_url: str, client: httpx.Client, user_headers: dict) -> None:
     assert "beta.txt" in items
     assert "gamma.txt" in items
 
-
 def test_mkdir(base_url: str, client: httpx.Client, user_headers: dict) -> None:
     """POST /api/v2/files/mkdir creates a directory."""
     # Clean up if exists from previous run
@@ -324,7 +306,6 @@ def test_mkdir(base_url: str, client: httpx.Client, user_headers: dict) -> None:
     )
     assert resp.status_code == 200
     assert resp.json()["created"] is True
-
 
 def test_metadata(base_url: str, client: httpx.Client, user_headers: dict) -> None:
     """GET /api/v2/files/metadata returns file metadata."""
@@ -352,7 +333,6 @@ def test_metadata(base_url: str, client: httpx.Client, user_headers: dict) -> No
     assert data["version"] == 1
     assert data["is_directory"] is False
 
-
 def test_batch_read(base_url: str, client: httpx.Client, user_headers: dict) -> None:
     """POST /api/v2/files/batch-read reads multiple files."""
     paths = ["/e2e/batch1.txt", "/e2e/batch2.txt"]
@@ -372,7 +352,6 @@ def test_batch_read(base_url: str, client: httpx.Client, user_headers: dict) -> 
     for p in paths:
         assert data[p]["content"] == f"content-{p}"
 
-
 def test_stream(base_url: str, client: httpx.Client, user_headers: dict) -> None:
     """GET /api/v2/files/stream streams file content."""
     content = "S" * 5000
@@ -389,11 +368,9 @@ def test_stream(base_url: str, client: httpx.Client, user_headers: dict) -> None
     assert resp.status_code == 200
     assert resp.content.decode() == content
 
-
 # =============================================================================
 # Version + ETag tests
 # =============================================================================
-
 
 def test_version_bumps(base_url: str, client: httpx.Client, user_headers: dict) -> None:
     """Version increments on each write."""
@@ -420,7 +397,6 @@ def test_version_bumps(base_url: str, client: httpx.Client, user_headers: dict) 
     )
     assert resp.json()["content"] == "v3"
 
-
 def test_404_on_missing(base_url: str, client: httpx.Client, user_headers: dict) -> None:
     """Non-existent files return 404."""
     resp = client.get(
@@ -444,11 +420,9 @@ def test_404_on_missing(base_url: str, client: httpx.Client, user_headers: dict)
     )
     assert resp.status_code == 404
 
-
 # =============================================================================
 # Full CRUD workflow with user context
 # =============================================================================
-
 
 def test_full_crud_workflow(base_url: str, client: httpx.Client, user_headers: dict) -> None:
     """Full create-read-update-delete workflow via real HTTP."""
@@ -500,7 +474,6 @@ def test_full_crud_workflow(base_url: str, client: httpx.Client, user_headers: d
         headers=user_headers,
     )
     assert e.json()["exists"] is False
-
 
 def test_user_context_passed(base_url: str, client: httpx.Client) -> None:
     """Verify user context headers are recognized by the server."""

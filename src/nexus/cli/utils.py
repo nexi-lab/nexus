@@ -1,7 +1,5 @@
 """CLI utilities - Common helpers for Nexus CLI commands."""
 
-from __future__ import annotations
-
 import os
 import sys
 from pathlib import Path
@@ -115,7 +113,6 @@ ADMIN_CAPABILITIES_OPTION = click.option(
     help="Admin capability to grant (can be specified multiple times). Example: admin:read:*",
 )
 
-
 class BackendConfig:
     """Configuration for backend connection."""
 
@@ -138,7 +135,6 @@ class BackendConfig:
         self.gcs_credentials = gcs_credentials
         self.remote_url = remote_url
         self.remote_api_key = remote_api_key
-
 
 def add_backend_options(func: Any) -> Any:
     """Decorator to add all backend-related options to a command and pass them via context."""
@@ -178,7 +174,6 @@ def add_backend_options(func: Any) -> Any:
         return func(backend_config=backend_config, **kwargs)
 
     return wrapper
-
 
 def get_filesystem(
     backend_config: BackendConfig,
@@ -291,7 +286,6 @@ def get_filesystem(
         console.print(f"[red]Error connecting to Nexus:[/red] {e}")
         sys.exit(1)
 
-
 def create_backend_from_config(
     backend_type: str, config: dict[str, Any], session_factory: Any = None
 ) -> Any:
@@ -319,7 +313,6 @@ def create_backend_from_config(
     from nexus.backends.factory import BackendFactory
 
     return BackendFactory.create(backend_type, config, session_factory=session_factory)
-
 
 def get_default_filesystem() -> NexusFilesystem:
     """Get Nexus filesystem instance with default configuration.
@@ -357,7 +350,6 @@ def get_default_filesystem() -> NexusFilesystem:
         console.print(f"[red]Error connecting to Nexus:[/red] {e}")
         sys.exit(1)
 
-
 def get_subject_from_env() -> tuple[str, str] | None:
     """Get subject from environment variables.
 
@@ -377,7 +369,6 @@ def get_subject_from_env() -> tuple[str, str] | None:
         return (subject_type, subject_id)
 
     return None
-
 
 def parse_subject(subject_str: str | None) -> tuple[str, str] | None:
     """Parse subject string in format 'type:id'.
@@ -415,7 +406,6 @@ def parse_subject(subject_str: str | None) -> tuple[str, str] | None:
     parts = subject_str.split(":", 1)
     return (parts[0], parts[1])
 
-
 def get_zone_id(zone_id: str | None) -> str | None:
     """Get zone ID from parameter or environment.
 
@@ -428,7 +418,6 @@ def get_zone_id(zone_id: str | None) -> str | None:
     if zone_id:
         return zone_id
     return os.getenv("NEXUS_ZONE_ID")
-
 
 def create_operation_context(
     subject: str | None = None,
@@ -478,7 +467,6 @@ def create_operation_context(
 
     return context
 
-
 def add_context_options(func: Any) -> Any:
     """Decorator to add enhanced context options to a command.
 
@@ -513,7 +501,6 @@ def add_context_options(func: Any) -> Any:
 
     return wrapper
 
-
 def get_subject(subject_option: str | None) -> tuple[str, str] | None:
     """Get subject from CLI option or environment variables.
 
@@ -537,7 +524,6 @@ def get_subject(subject_option: str | None) -> tuple[str, str] | None:
 
     # Fall back to environment variables
     return get_subject_from_env()
-
 
 def handle_error(e: Exception) -> None:
     """Handle errors with beautiful output and proper exit codes.

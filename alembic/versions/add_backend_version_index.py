@@ -21,7 +21,6 @@ down_revision: Union[str, Sequence[str], None] = "d5ed2f68c1bc"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add backend_version index for cache invalidation queries."""
     bind = op.get_bind()
@@ -43,7 +42,6 @@ def upgrade() -> None:
             "content_cache",
             ["backend_version"],
         )
-
 
 def downgrade() -> None:
     """Remove backend_version index."""

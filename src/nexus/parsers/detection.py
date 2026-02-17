@@ -9,7 +9,6 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-
 def detect_mime_type(content: bytes, file_path: str | None = None) -> str | None:
     """Detect MIME type of file content.
 
@@ -41,7 +40,6 @@ def detect_mime_type(content: bytes, file_path: str | None = None) -> str | None
 
     return None
 
-
 def _detect_mime_from_extension(file_path: str) -> str | None:
     """Detect MIME type from file extension.
 
@@ -57,7 +55,6 @@ def _detect_mime_from_extension(file_path: str) -> str | None:
     if mime_type:
         logger.debug(f"Detected MIME type from extension: {mime_type}")
     return mime_type
-
 
 def detect_encoding(content: bytes) -> str:
     """Detect text encoding of file content.
@@ -91,7 +88,6 @@ def detect_encoding(content: bytes) -> str:
     # Default to UTF-8
     return "utf-8"
 
-
 def is_compressed(file_path: str) -> bool:
     """Check if a file is compressed based on extension.
 
@@ -103,7 +99,6 @@ def is_compressed(file_path: str) -> bool:
     """
     ext = Path(file_path).suffix.lower()
     return ext in {".gz", ".gzip", ".zip", ".bz2", ".xz"}
-
 
 def decompress_content(content: bytes, file_path: str) -> tuple[bytes, str | None]:
     """Decompress file content if it's compressed.
@@ -187,7 +182,6 @@ def decompress_content(content: bytes, file_path: str) -> tuple[bytes, str | Non
 
     # Not compressed
     return content, None
-
 
 def prepare_content_for_parsing(
     content: bytes, file_path: str

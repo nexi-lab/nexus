@@ -13,8 +13,6 @@ Tests cover:
 - Boundary conditions
 """
 
-from __future__ import annotations
-
 import tempfile
 import uuid
 from collections.abc import Generator
@@ -31,12 +29,10 @@ from nexus.services.event_log.replay_service import (
 from nexus.storage.models import OperationLogModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
-
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
-
 
 @pytest.fixture
 def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]:
@@ -44,11 +40,9 @@ def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]
     yield rs
     rs.close()
 
-
 @pytest.fixture
 def service(record_store: SQLAlchemyRecordStore) -> EventReplayService:
     return EventReplayService(record_store.session_factory)
-
 
 def _insert_event(
     session_factory,
@@ -77,11 +71,9 @@ def _insert_event(
         session.commit()
     return op_id
 
-
 # =========================================================================
 # Cursor encoding/decoding
 # =========================================================================
-
 
 class TestCursorEncoding:
     def test_round_trip(self) -> None:
@@ -98,11 +90,9 @@ class TestCursorEncoding:
     def test_empty_cursor_returns_none(self) -> None:
         assert _decode_cursor("") is None
 
-
 # =========================================================================
 # Empty table
 # =========================================================================
-
 
 class TestEmptyTable:
     def test_empty_returns_empty_result(self, service: EventReplayService) -> None:
@@ -111,11 +101,9 @@ class TestEmptyTable:
         assert result.next_cursor is None
         assert result.has_more is False
 
-
 # =========================================================================
 # Single event
 # =========================================================================
-
 
 class TestSingleEvent:
     def test_single_event_returned(
@@ -141,11 +129,9 @@ class TestSingleEvent:
         assert d["agent_id"] == "agent-1"
         assert d["sequence_number"] == 1
 
-
 # =========================================================================
 # Pagination
 # =========================================================================
-
 
 class TestPagination:
     def test_limit_returns_correct_count(
@@ -223,11 +209,9 @@ class TestPagination:
         result = service.replay(cursor="invalid-cursor-value")
         assert len(result.events) == 1
 
-
 # =========================================================================
 # Filtering
 # =========================================================================
-
 
 class TestFiltering:
     def test_filter_by_zone(
@@ -305,11 +289,9 @@ class TestFiltering:
         seqs = [ev.sequence_number for ev in result.events]
         assert seqs == [4, 5]
 
-
 # =========================================================================
 # Monotonic ordering
 # =========================================================================
-
 
 class TestOrdering:
     def test_events_ordered_by_sequence_number(
@@ -324,11 +306,9 @@ class TestOrdering:
         seqs = [ev.sequence_number for ev in result.events]
         assert seqs == [1, 2, 3]
 
-
 # =========================================================================
 # V1-compatible list_v1()
 # =========================================================================
-
 
 class TestListV1:
     """Tests for the V1-compatible list_v1() method."""

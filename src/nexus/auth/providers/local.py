@@ -1,7 +1,5 @@
 """Local username/password authentication with JWT tokens."""
 
-from __future__ import annotations
-
 import logging
 import secrets
 import time
@@ -13,7 +11,6 @@ from authlib.jose import JoseError, jwt
 from nexus.auth.providers.base import AuthProvider, AuthResult
 
 logger = logging.getLogger(__name__)
-
 
 class LocalAuth(AuthProvider):
     """Local username/password authentication with JWT tokens.
@@ -185,7 +182,7 @@ class LocalAuth(AuthProvider):
         pass
 
     @classmethod
-    def from_config(cls, config: dict[str, Any]) -> LocalAuth:
+    def from_config(cls, config: dict[str, Any]) -> "LocalAuth":
         """Create from configuration dictionary."""
         return cls(
             jwt_secret=config.get("jwt_secret"),

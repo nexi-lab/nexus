@@ -26,7 +26,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 class AsyncLocalBackend(AsyncBackend):
     """
     Async local filesystem backend with Content-Addressable Storage (CAS).

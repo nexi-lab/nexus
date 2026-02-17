@@ -16,8 +16,6 @@ Prerequisites:
        nexus oauth setup-x --user-email "your-email@example.com"
 """
 
-from __future__ import annotations
-
 import json
 import os
 from pathlib import Path
@@ -30,7 +28,6 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 from nexus.backends import XConnectorBackend  # noqa: E402
 from nexus.core.exceptions import AuthenticationError, BackendError  # noqa: E402
 from nexus.core.permissions import OperationContext  # noqa: E402
-
 
 async def main():
     """Main example function."""
@@ -159,7 +156,6 @@ async def main():
     print("2. Try: context.backend_path = '/x/posts/all.json'")
     print("3. Use with NexusFS for full filesystem operations")
 
-
 async def grep_example():
     """Example: Search tweets using grep."""
     print("\n" + "=" * 60)
@@ -210,7 +206,6 @@ async def grep_example():
     print("\n" + "=" * 60)
     print("Grep example completed!")
     print("=" * 60)
-
 
 async def glob_example():
     """Example: List files using glob patterns."""
@@ -266,7 +261,6 @@ async def glob_example():
     print("\n" + "=" * 60)
     print("Glob example completed!")
     print("=" * 60)
-
 
 if __name__ == "__main__":
     # Run main example (synchronous - backend handles async internally)

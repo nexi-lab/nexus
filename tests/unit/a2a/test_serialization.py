@@ -3,8 +3,6 @@
 TDD-first tests for the extracted serialization module.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from typing import Any
 from unittest.mock import MagicMock
@@ -27,7 +25,6 @@ from nexus.a2a.stores.serialization import (
     task_to_dict,
 )
 
-
 def _make_task(
     task_id: str = "t-1",
     state: TaskState = TaskState.SUBMITTED,
@@ -43,7 +40,6 @@ def _make_task(
         artifacts=artifacts or [],
         metadata=metadata,
     )
-
 
 class TestTaskToDict:
     def test_roundtrip(self) -> None:
@@ -103,7 +99,6 @@ class TestTaskToDict:
         restored = task_from_dict(d)
         assert len(restored.history) == 2
         assert len(restored.history[1].parts) == 3
-
 
 class TestDbColumns:
     def test_state_value(self) -> None:

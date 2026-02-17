@@ -15,8 +15,6 @@ Usage:
     fs.read("/local/file.txt")          # → stays in root zone
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Iterator, Sequence
 from dataclasses import replace
@@ -25,12 +23,13 @@ from typing import TYPE_CHECKING, Any
 from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol, PaginatedResult
 from nexus.raft.zone_manager import ROOT_ZONE_ID
 
+from nexus.raft.zone_path_resolver import ResolvedPath
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 if TYPE_CHECKING:
     from nexus.raft.zone_path_resolver import ResolvedPath, ZonePathResolver
     from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 logger = logging.getLogger(__name__)
-
 
 class FederatedMetadataProxy(FileMetadataProtocol):
     """Proxy that routes metadata operations across zones via DT_MOUNT.
@@ -42,7 +41,7 @@ class FederatedMetadataProxy(FileMetadataProtocol):
 
     def __init__(
         self,
-        resolver: ZonePathResolver,
+        resolver: "ZonePathResolver",
         root_store: RaftMetadataStore,
         *,
         zone_manager: Any | None = None,
@@ -62,7 +61,7 @@ class FederatedMetadataProxy(FileMetadataProtocol):
         cls,
         zone_manager: Any,
         root_zone_id: str = ROOT_ZONE_ID,
-    ) -> FederatedMetadataProxy:
+    ) -> "FederatedMetadataProxy":
         """Create from a ZoneManager instance.
 
         Args:

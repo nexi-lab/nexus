@@ -24,7 +24,6 @@ import time
 
 import pytest
 
-
 # Skip all tests if Redis is not available
 def is_redis_available():
     """Check if Redis/Dragonfly is available."""
@@ -43,7 +42,6 @@ def is_redis_available():
     except Exception:
         return False
 
-
 def is_linux_container_available():
     """Check if the Linux test container is running."""
     try:
@@ -56,7 +54,6 @@ def is_linux_container_available():
         return result.returncode == 0
     except Exception:
         return False
-
 
 pytestmark = [
     pytest.mark.skip(
@@ -71,7 +68,6 @@ pytestmark = [
         reason="Linux container not running (docker compose --profile test up -d)",
     ),
 ]
-
 
 class TestCrossPlatformLocking:
     """Tests for cross-platform distributed lock coordination."""
@@ -792,7 +788,6 @@ asyncio.run(try_acquire())
             await win_client.disconnect()
             if linux_proc.poll() is None:
                 linux_proc.terminate()
-
 
 class TestHighContention:
     """Tests for high contention scenarios with many concurrent acquirers."""

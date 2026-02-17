@@ -10,8 +10,6 @@ Validates the complete profiling pipeline end-to-end:
 Following the pattern of tests/e2e/test_pg_metrics_e2e.py.
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 from unittest.mock import patch
 
@@ -19,7 +17,6 @@ import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 OBSERVABILITY_DIR = PROJECT_ROOT / "observability"
-
 
 def _load_yaml(path: Path) -> dict:
     """Load and parse a YAML file, failing the test on syntax errors."""
@@ -29,11 +26,9 @@ def _load_yaml(path: Path) -> dict:
     assert isinstance(data, dict), f"Expected top-level dict in {path.name}"
     return data
 
-
 # ---------------------------------------------------------------------------
 # Config validation
 # ---------------------------------------------------------------------------
-
 
 class TestPyroscopeConfigE2E:
     """Validate pyroscope.yml has production-ready settings."""
@@ -67,11 +62,9 @@ class TestPyroscopeConfigE2E:
         data = _load_yaml(self.CONFIG)
         assert data["limits"]["max_nodes_per_profile"] == 16384
 
-
 # ---------------------------------------------------------------------------
 # Docker Compose service validation
 # ---------------------------------------------------------------------------
-
 
 class TestDockerComposeServiceE2E:
     """Validate pyroscope service is correctly wired in docker-compose."""
@@ -119,11 +112,9 @@ class TestDockerComposeServiceE2E:
         data = _load_yaml(self.COMPOSE)
         assert "pyroscope-data" in data["volumes"]
 
-
 # ---------------------------------------------------------------------------
 # Grafana datasource provisioning
 # ---------------------------------------------------------------------------
-
 
 class TestDatasourceProvisioningE2E:
     """Validate Grafana auto-provisions Pyroscope datasource."""
@@ -153,11 +144,9 @@ class TestDatasourceProvisioningE2E:
         assert "cpu" in t2p["profileTypeId"]
         assert t2p["customQuery"] is True
 
-
 # ---------------------------------------------------------------------------
 # Module wiring
 # ---------------------------------------------------------------------------
-
 
 class TestModuleWiringE2E:
     """Validate the profiling module is importable and callable."""
@@ -177,11 +166,9 @@ class TestModuleWiringE2E:
 
         assert callable(is_profiling_enabled)
 
-
 # ---------------------------------------------------------------------------
 # Graceful degradation
 # ---------------------------------------------------------------------------
-
 
 class TestGracefulDegradationE2E:
     """Profiling should degrade gracefully when dependencies are missing."""

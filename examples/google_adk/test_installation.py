@@ -10,7 +10,6 @@ Usage:
 
 import sys
 
-
 def test_google_adk():
     """Test if Google ADK is installed and accessible."""
     print("Testing Google ADK installation...")
@@ -26,7 +25,6 @@ def test_google_adk():
         print("\n  Install with: pip install google-adk")
         print("  See README.md for troubleshooting")
         return False
-
 
 def test_nexus():
     """Test if Nexus is installed and accessible."""
@@ -49,7 +47,6 @@ def test_nexus():
         print(f"✗ Nexus connection failed: {e}")
         return False
 
-
 def test_environment():
     """Test environment variables."""
     import os
@@ -70,7 +67,6 @@ def test_environment():
         print("ℹ NEXUS_URL not set (will use local Nexus)")
 
     return bool(google_key)
-
 
 def main():
     """Run all installation tests."""
@@ -107,7 +103,6 @@ def main():
 
         print("\nSee README.md for installation instructions.")
         return 1
-
 
 if __name__ == "__main__":
     sys.exit(main())

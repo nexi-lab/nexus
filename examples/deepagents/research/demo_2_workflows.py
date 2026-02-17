@@ -41,7 +41,6 @@ except ImportError as e:
     print(f"Details: {e}")
     sys.exit(1)
 
-
 def create_research_agent(nx, workspace):
     """Create research agent with internet search."""
 
@@ -60,7 +59,6 @@ def create_research_agent(nx, workspace):
     )
 
     return agent
-
 
 async def main_async():
     """Run the demo (async version for workflows)."""
@@ -264,11 +262,9 @@ Keep it concise (2-3 paragraphs)."""
     print("Next demo: See demo_1_drop_in.py for full research workflow")
     print()
 
-
 def main():
     """Run the demo."""
     asyncio.run(main_async())
-
 
 if __name__ == "__main__":
     main()

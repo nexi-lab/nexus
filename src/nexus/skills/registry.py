@@ -1,7 +1,5 @@
 """Skill registry with progressive disclosure and lazy loading."""
 
-from __future__ import annotations
-
 import logging
 from collections import defaultdict
 from pathlib import Path
@@ -15,24 +13,23 @@ from nexus.skills.models import Skill, SkillMetadata
 from nexus.skills.parser import SkillParseError, SkillParser
 from nexus.skills.protocols import NexusFilesystem
 
+from nexus.core.permissions import OperationContext
+from nexus.rebac.manager import ReBACManager
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.rebac.manager import ReBACManager
 
 logger = logging.getLogger(__name__)
 
-
 class SkillNotFoundError(SkillValidationError):
     """Raised when a skill is not found in the registry."""
 
     pass
 
-
 class SkillDependencyError(SkillValidationError):
     """Raised when skill dependencies cannot be resolved."""
 
     pass
-
 
 class SkillRegistry:
     """Registry for managing skills with progressive disclosure and lazy loading.

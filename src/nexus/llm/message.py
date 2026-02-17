@@ -1,12 +1,9 @@
 """Message types for LLM interactions."""
 
-from __future__ import annotations
-
 from enum import StrEnum
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
-
 
 class MessageRole(StrEnum):
     """Role of a message in a conversation."""
@@ -16,7 +13,6 @@ class MessageRole(StrEnum):
     ASSISTANT = "assistant"
     TOOL = "tool"
 
-
 class ContentType(StrEnum):
     """Type of content in a message."""
 
@@ -24,14 +20,12 @@ class ContentType(StrEnum):
     IMAGE_URL = "image_url"
     IMAGE_FILE = "image_file"
 
-
 class ImageDetail(StrEnum):
     """Level of detail for image analysis."""
 
     AUTO = "auto"
     LOW = "low"
     HIGH = "high"
-
 
 class ImageContent(BaseModel):
     """Image content in a message."""
@@ -55,7 +49,6 @@ class ImageContent(BaseModel):
             }
         return super().model_dump(**kwargs)
 
-
 class TextContent(BaseModel):
     """Text content in a message."""
 
@@ -66,21 +59,18 @@ class TextContent(BaseModel):
         """Convert to dict format expected by LLM providers."""
         return {"type": "text", "text": self.text}
 
-
 class ToolCall(BaseModel):
     """A tool/function call made by the LLM."""
 
     id: str
     type: Literal["function"] = "function"
-    function: ToolFunction
-
+    function: "ToolFunction"
 
 class ToolFunction(BaseModel):
     """Function details in a tool call."""
 
     name: str
     arguments: str  # JSON string of arguments
-
 
 class Message(BaseModel):
     """A message in a conversation with an LLM."""
@@ -140,7 +130,7 @@ class Message(BaseModel):
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> Message:
+    def from_dict(cls, data: dict[str, Any]) -> "Message":
         """Create a Message from a dict."""
         role = MessageRole(data["role"])
         content = data.get("content")

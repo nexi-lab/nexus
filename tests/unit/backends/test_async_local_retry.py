@@ -6,8 +6,6 @@ with tenacity, freeing thread pool slots during backoff sleep.
 Does NOT depend on pytest-asyncio — uses explicit event loop helper.
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import os
@@ -23,7 +21,6 @@ from nexus.core.exceptions import BackendError
 # Helpers
 # ---------------------------------------------------------------------------
 
-
 def _run_async(coro):
     """Run a coroutine in a fresh event loop."""
     loop = asyncio.new_event_loop()
@@ -32,7 +29,6 @@ def _run_async(coro):
     finally:
         loop.close()
 
-
 @pytest.fixture
 def backend(tmp_path: Path) -> AsyncLocalBackend:
     """Create a temporary async local backend for testing."""
@@ -40,9 +36,7 @@ def backend(tmp_path: Path) -> AsyncLocalBackend:
     _run_async(b.initialize())
     return b
 
-
 # === _read_metadata tests ===
-
 
 class TestReadMetadataRetry:
     """Tests for _read_metadata tenacity retry behavior."""
@@ -150,9 +144,7 @@ class TestReadMetadataRetry:
         assert result == {"ref_count": 1, "size": 10}
         assert len(sleep_calls) >= 1, "Expected asyncio.sleep calls for retry backoff"
 
-
 # === _write_metadata tests ===
-
 
 class TestWriteMetadataRetry:
     """Tests for _write_metadata tenacity retry behavior."""
@@ -258,9 +250,7 @@ class TestWriteMetadataRetry:
         _run_async(backend._write_metadata(content_hash, updated))
         assert json.loads(meta_path.read_text()) == updated
 
-
 # === Integration: read + write round-trip ===
-
 
 class TestMetadataRoundTrip:
     """Integration tests for read/write metadata cycle."""

@@ -7,13 +7,11 @@ from typing import Any, TypedDict
 
 logger = logging.getLogger(__name__)
 
-
 class FolderStats(TypedDict):
     """Type for folder statistics."""
 
     emails: int
     threads: set[str]
-
 
 def get_email_folder(email_labels: list[str]) -> str | None:
     """Determine which folder an email belongs to based on priority.
@@ -48,7 +46,6 @@ def get_email_folder(email_labels: list[str]) -> str | None:
 
     # Priority 4: Remaining INBOX emails
     return "INBOX"
-
 
 def list_emails_by_folder(
     service: Any,
@@ -292,7 +289,6 @@ def list_emails_by_folder(
 
     return all_emails
 
-
 def print_folder_statistics(emails: list[dict[str, Any]]) -> None:
     """Print detailed statistics about email folders grouped by threads.
 
@@ -348,7 +344,6 @@ def print_folder_statistics(emails: list[dict[str, Any]]) -> None:
                 print(f"      {email['path']}")
             if num_emails > 5:
                 print(f"      ... and {num_emails - 5} more")
-
 
 def fetch_emails_batch(
     service: Any,

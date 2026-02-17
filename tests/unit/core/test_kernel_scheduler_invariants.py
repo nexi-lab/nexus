@@ -7,8 +7,6 @@ Invariants proven:
   4. Pending count accuracy: pending_count == submitted - consumed - cancelled
 """
 
-from __future__ import annotations
-
 import asyncio
 
 from hypothesis import given, settings
@@ -21,16 +19,13 @@ from tests.strategies.kernel import agent_request
 # Helpers
 # ---------------------------------------------------------------------------
 
-
 def _run(coro):
     """Run an async coroutine synchronously for Hypothesis compatibility."""
     return asyncio.run(coro)
 
-
 # ---------------------------------------------------------------------------
 # Invariant 1: No starvation
 # ---------------------------------------------------------------------------
-
 
 class TestSchedulerNoStarvation:
     """Every submitted request is eventually returned."""
@@ -81,11 +76,9 @@ class TestSchedulerNoStarvation:
 
         _run(_inner())
 
-
 # ---------------------------------------------------------------------------
 # Invariant 2: Priority ordering
 # ---------------------------------------------------------------------------
-
 
 class TestSchedulerPriorityOrdering:
     """Higher priority requests are scheduled before lower priority."""
@@ -154,11 +147,9 @@ class TestSchedulerPriorityOrdering:
 
         _run(_inner())
 
-
 # ---------------------------------------------------------------------------
 # Invariant 3: Cancel correctness
 # ---------------------------------------------------------------------------
-
 
 class TestSchedulerCancelInvariants:
     """Cancelled requests are never returned."""
@@ -198,11 +189,9 @@ class TestSchedulerCancelInvariants:
 
         _run(_inner())
 
-
 # ---------------------------------------------------------------------------
 # Invariant 4: Pending count accuracy
 # ---------------------------------------------------------------------------
-
 
 class TestSchedulerPendingCountInvariants:
     """Pending count is always accurate."""

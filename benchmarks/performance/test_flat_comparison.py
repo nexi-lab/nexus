@@ -20,7 +20,6 @@ NEXUS_API_KEY = os.getenv(
     "NEXUS_API_KEY", "sk-default_admin_dddddddd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 )
 
-
 def test_native_bash(file_count=1000):
     """Test native filesystem using bash commands."""
     print(f"\n{'=' * 70}")
@@ -87,7 +86,6 @@ def test_native_bash(file_count=1000):
 
     return results
 
-
 def test_native_python(file_count=1000):
     """Test native filesystem using Python pathlib."""
     print(f"\n{'=' * 70}")
@@ -140,7 +138,6 @@ def test_native_python(file_count=1000):
     }
 
     return results
-
 
 def test_nexus(file_count=1000):
     """Test Nexus filesystem."""
@@ -237,7 +234,6 @@ def test_nexus(file_count=1000):
     }
 
     return results
-
 
 def test_sandbox_bash(file_count=1000):
     """Test Nexus mounted via FUSE in Docker sandbox using bash commands."""
@@ -352,7 +348,6 @@ echo $count
             print(f"  ✓ Stopped sandbox {sandbox_id}")
         except Exception as e:
             print(f"  ⚠️ Error stopping sandbox: {e}")
-
 
 def test_sandbox_python(file_count=1000):
     """Test Nexus mounted via FUSE in Docker sandbox using Python."""
@@ -485,7 +480,6 @@ print(f"STAT|{stat_limit}|{{stat_duration:.4f}}")
         except Exception as e:
             print(f"  ⚠️ Error stopping sandbox: {e}")
 
-
 def write_csv(results, filename):
     """Write results to CSV file."""
     fieldnames = [
@@ -544,7 +538,6 @@ def write_csv(results, filename):
 
     print(f"\n✅ Results written to {filename}")
 
-
 def main():
     print(f"\n{'=' * 120}")
     print(f"{'COMPREHENSIVE FLAT DIRECTORY TEST':^120}")
@@ -583,7 +576,6 @@ def main():
     print(f"\n{'=' * 120}")
     print(f"{'TEST COMPLETE!':^120}")
     print(f"{'=' * 120}")
-
 
 if __name__ == "__main__":
     main()

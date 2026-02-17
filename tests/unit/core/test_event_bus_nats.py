@@ -14,8 +14,6 @@ Tests cover:
 Related: Issue #1331
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 from dataclasses import dataclass
@@ -29,7 +27,6 @@ from nexus.raft.zone_manager import ROOT_ZONE_ID
 # ============================================================================
 # Fixtures
 # ============================================================================
-
 
 @pytest.fixture
 def mock_nats_connect():
@@ -47,7 +44,6 @@ def mock_nats_connect():
         mock_connect.return_value = nc
         yield mock_connect, nc, js
 
-
 @pytest.fixture
 def make_bus():
     """Create a NatsEventBus with default test settings."""
@@ -61,7 +57,6 @@ def make_bus():
 
     return _make
 
-
 @pytest.fixture
 def sample_event():
     """A sample FileEvent for testing."""
@@ -72,11 +67,9 @@ def sample_event():
         event_id="evt-123",
     )
 
-
 # ============================================================================
 # Start / Stop Tests
 # ============================================================================
-
 
 class TestNatsEventBusStartStop:
     """Tests for connection lifecycle."""
@@ -138,11 +131,9 @@ class TestNatsEventBusStartStop:
         await bus.stop()
         assert bus._started is False
 
-
 # ============================================================================
 # Publish Tests
 # ============================================================================
-
 
 class TestNatsEventBusPublish:
     """Tests for event publishing."""
@@ -238,11 +229,9 @@ class TestNatsEventBusPublish:
         with pytest.raises(Exception, match="NATS unavailable"):
             await bus.publish(sample_event)
 
-
 # ============================================================================
 # Subscribe Tests (auto-ack wrapper)
 # ============================================================================
-
 
 class TestNatsEventBusSubscribe:
     """Tests for the backward-compat subscribe() wrapper."""
@@ -310,11 +299,9 @@ class TestNatsEventBusSubscribe:
         msg1.ack.assert_called_once()
         msg2.ack.assert_called_once()
 
-
 # ============================================================================
 # Durable Subscribe Tests
 # ============================================================================
-
 
 class TestNatsEventBusSubscribeDurable:
     """Tests for durable pull consumer subscription."""
@@ -575,11 +562,9 @@ class TestNatsEventBusSubscribeDurable:
             async for _ in bus.subscribe_durable("z1", "consumer-1"):
                 pass
 
-
 # ============================================================================
 # Wait For Event Tests
 # ============================================================================
-
 
 class TestNatsEventBusWaitForEvent:
     """Tests for wait_for_event with ephemeral consumer."""
@@ -693,11 +678,9 @@ class TestNatsEventBusWaitForEvent:
         with pytest.raises(RuntimeError, match="not started"):
             await bus.wait_for_event("z1", "/inbox/")
 
-
 # ============================================================================
 # Health Check Tests
 # ============================================================================
-
 
 class TestNatsEventBusHealthCheck:
     """Tests for health check."""
@@ -730,11 +713,9 @@ class TestNatsEventBusHealthCheck:
 
         assert result is False
 
-
 # ============================================================================
 # Reconnection Callback Tests
 # ============================================================================
-
 
 class TestNatsEventBusReconnection:
     """Tests for disconnect/reconnect callbacks."""
@@ -755,11 +736,9 @@ class TestNatsEventBusReconnection:
         bus = make_bus()
         await bus._on_error(Exception("test error"))
 
-
 # ============================================================================
 # Error Handling Tests
 # ============================================================================
-
 
 class TestNatsEventBusErrors:
     """Tests for error scenarios."""

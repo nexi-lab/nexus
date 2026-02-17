@@ -9,8 +9,6 @@ Performance:
     - Thread pool is configurable via constructor (14B).
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import time
@@ -30,7 +28,6 @@ from nexus.services.context_manifest.models import ContextSourceProtocol, Source
 logger = logging.getLogger(__name__)
 
 MAX_TREE_FILES = 200
-
 
 class WorkspaceSnapshotExecutor:
     """Execute workspace_snapshot sources by loading snapshot metadata.
@@ -164,7 +161,6 @@ class WorkspaceSnapshotExecutor:
         if snapshot is None:
             raise _SnapshotError(f"Snapshot '{snapshot_id}' not found")
         return snapshot
-
 
 class _SnapshotError(Exception):
     """Internal error for snapshot resolution failures."""

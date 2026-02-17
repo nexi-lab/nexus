@@ -14,8 +14,6 @@ Reference: SimpleMem: Efficient Lifelong Memory for LLM Agents
 https://arxiv.org/html/2601.02553
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -28,7 +26,6 @@ from numpy.typing import NDArray
 
 if TYPE_CHECKING:
     pass
-
 
 @dataclass
 class AffinityConfig:
@@ -74,7 +71,6 @@ class AffinityConfig:
         if self.min_cluster_size < 2:
             raise ValueError(f"min_cluster_size must be >= 2, got {self.min_cluster_size}")
 
-
 @dataclass
 class MemoryVector:
     """Memory with embedding and timestamp for clustering.
@@ -98,7 +94,6 @@ class MemoryVector:
     def to_numpy(self) -> NDArray[np.floating]:
         """Convert embedding to numpy array."""
         return np.array(self.embedding, dtype=np.float64)
-
 
 @dataclass
 class ClusterResult:
@@ -124,7 +119,6 @@ class ClusterResult:
         """Size of each cluster."""
         return [len(c) for c in self.clusters]
 
-
 def compute_cosine_similarity(
     v_i: NDArray[np.floating],
     v_j: NDArray[np.floating],
@@ -145,7 +139,6 @@ def compute_cosine_similarity(
         return 0.0
 
     return float(np.dot(v_i, v_j) / (norm_i * norm_j))
-
 
 def compute_temporal_proximity(
     t_i: datetime,
@@ -173,7 +166,6 @@ def compute_temporal_proximity(
 
     # Exponential decay: e^(-lambda * t)
     return float(np.exp(-lambda_decay * time_diff_normalized))
-
 
 def compute_affinity(
     v_i: list[float] | NDArray[np.floating],
@@ -230,7 +222,6 @@ def compute_affinity(
     affinity = config.beta * semantic_sim_normalized + (1 - config.beta) * temporal_prox
 
     return affinity
-
 
 def compute_affinity_matrix(
     memories: list[MemoryVector],
@@ -317,7 +308,6 @@ def compute_affinity_matrix(
 
     return affinity_matrix
 
-
 def cluster_by_affinity(
     memories: list[MemoryVector],
     config: AffinityConfig | None = None,
@@ -399,7 +389,6 @@ def cluster_by_affinity(
         affinity_matrix=affinity_matrix,
         memory_ids=memory_ids,
     )
-
 
 def get_cluster_statistics(
     memories: list[MemoryVector],

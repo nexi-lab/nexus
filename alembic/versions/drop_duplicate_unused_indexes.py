@@ -25,7 +25,6 @@ down_revision: Union[str, Sequence[str], None] = "add_cross_tenant_share_index"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Drop duplicate and unused indexes.
 
@@ -41,7 +40,6 @@ def upgrade() -> None:
     # These are superseded by comprehensive composite indexes from Issue #591
     op.execute(text("DROP INDEX IF EXISTS idx_rebac_subject"))
     op.execute(text("DROP INDEX IF EXISTS idx_rebac_object"))
-
 
 def downgrade() -> None:
     """Recreate indexes if needed for rollback."""

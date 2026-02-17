@@ -17,13 +17,11 @@ from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
-
 def cleanup_windows_db():
     """Force cleanup of database connections on Windows."""
     gc.collect()
     if platform.system() == "Windows":
         time.sleep(0.05)
-
 
 def test_workspace_namespace_operations():
     """Test basic operations in workspace namespace with ReBAC."""
@@ -67,7 +65,6 @@ def test_workspace_namespace_operations():
         nx.close()
         cleanup_windows_db()
 
-
 def test_shared_namespace_operations():
     """Test basic operations in shared namespace with ReBAC."""
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -106,7 +103,6 @@ def test_shared_namespace_operations():
         nx.close()
         cleanup_windows_db()
 
-
 def test_external_namespace_operations():
     """Test basic operations in external namespace with ReBAC."""
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -140,7 +136,6 @@ def test_external_namespace_operations():
         nx.close()
         cleanup_windows_db()
 
-
 def test_multi_namespace_operations_single_zone():
     """Test operations across multiple namespaces for single zone."""
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -173,7 +168,6 @@ def test_multi_namespace_operations_single_zone():
 
         nx.close()
         cleanup_windows_db()
-
 
 def test_namespace_isolation_between_zones():
     """Test that different zones' workspaces are isolated."""

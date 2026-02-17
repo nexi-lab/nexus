@@ -4,8 +4,6 @@ Manages the sync_backlog table: enqueue, fetch, status transitions, and expiry.
 Inherits shared session/dialect logic from SyncStoreBase.
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -18,7 +16,6 @@ if TYPE_CHECKING:
     from nexus.storage.models import SyncBacklogModel
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass(frozen=True)
 class SyncBacklogEntry:
@@ -38,7 +35,6 @@ class SyncBacklogEntry:
     updated_at: datetime
     last_attempted_at: datetime | None
     error_message: str | None
-
 
 class SyncBacklogStore(SyncStoreBase):
     """Store for sync backlog CRUD operations (Issue #1129).

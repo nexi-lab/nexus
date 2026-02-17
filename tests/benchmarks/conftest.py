@@ -1,7 +1,5 @@
 """Shared fixtures for benchmark tests."""
 
-from __future__ import annotations
-
 import uuid
 
 import pytest
@@ -10,7 +8,6 @@ from nexus.backends.local import LocalBackend
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-
 
 @pytest.fixture
 def benchmark_db(tmp_path, monkeypatch):
@@ -27,14 +24,12 @@ def benchmark_db(tmp_path, monkeypatch):
     db_path = tmp_path / f"benchmark_db_{unique_id}.db"
     yield db_path
 
-
 @pytest.fixture
 def benchmark_backend(tmp_path):
     """Create a local backend for benchmarks."""
     storage_path = tmp_path / "storage"
     storage_path.mkdir(parents=True, exist_ok=True)
     return LocalBackend(str(storage_path))
-
 
 @pytest.fixture
 def benchmark_nexus(benchmark_backend, benchmark_db):
@@ -61,7 +56,6 @@ def benchmark_nexus(benchmark_backend, benchmark_db):
     yield nx
     nx.close()
 
-
 @pytest.fixture
 def benchmark_nexus_with_permissions(benchmark_backend, benchmark_db):
     """Create a NexusFS instance with permissions enabled for ReBAC benchmarks."""
@@ -82,7 +76,6 @@ def benchmark_nexus_with_permissions(benchmark_backend, benchmark_db):
     yield nx
     nx.close()
 
-
 @pytest.fixture
 def sample_files():
     """Generate sample file data of various sizes."""
@@ -93,7 +86,6 @@ def sample_files():
         "large": b"z" * (1024 * 1024),  # 1 MB
         "xlarge": b"w" * (10 * 1024 * 1024),  # 10 MB
     }
-
 
 @pytest.fixture
 def populated_nexus(benchmark_nexus, sample_files):
@@ -122,7 +114,6 @@ def populated_nexus(benchmark_nexus, sample_files):
 
     yield nx
 
-
 @pytest.fixture
 def deep_directory_nexus(benchmark_nexus):
     """Create a NexusFS with deep directory structure for path resolution benchmarks."""
@@ -136,7 +127,6 @@ def deep_directory_nexus(benchmark_nexus):
         nx.write(f"{current_path}/file.txt", f"Content at depth {i}".encode())
 
     yield nx
-
 
 # Benchmark group markers
 def pytest_configure(config):

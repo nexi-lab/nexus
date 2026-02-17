@@ -17,8 +17,6 @@ Usage::
 Issue #1366.
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import enum
@@ -46,7 +44,6 @@ INFRA_EXCEPTIONS: tuple[type[BaseException], ...] = (
 
 _infra_exceptions_with_httpx: tuple[type[BaseException], ...] | None = None
 
-
 def _get_infra_exceptions() -> tuple[type[BaseException], ...]:
     """Return infrastructure exceptions, lazily extending with httpx types."""
     global _infra_exceptions_with_httpx
@@ -65,18 +62,15 @@ def _get_infra_exceptions() -> tuple[type[BaseException], ...]:
     _infra_exceptions_with_httpx = INFRA_EXCEPTIONS + tuple(extras)
     return _infra_exceptions_with_httpx
 
-
 # ---------------------------------------------------------------------------
 # 1B: Frozen dataclass config models
 # ---------------------------------------------------------------------------
-
 
 @dataclass(frozen=True)
 class TimeoutPolicy:
     """Timeout policy — wraps the call with ``asyncio.timeout``."""
 
     seconds: float = 5.0
-
 
 @dataclass(frozen=True)
 class RetryPolicy:
@@ -87,7 +81,6 @@ class RetryPolicy:
     multiplier: float = 2.0
     min_wait: float = 1.0
 
-
 @dataclass(frozen=True)
 class CircuitBreakerPolicy:
     """Circuit breaker policy — trip after *failure_threshold* infra errors."""
@@ -96,7 +89,6 @@ class CircuitBreakerPolicy:
     success_threshold: int = 3
     timeout: float = 30.0  # seconds in OPEN before attempting HALF_OPEN
 
-
 @dataclass(frozen=True)
 class TargetBinding:
     """Maps a named target to named policies."""
@@ -104,7 +96,6 @@ class TargetBinding:
     timeout: str = "default"
     retry: str = "default"
     circuit_breaker: str = "default"
-
 
 @dataclass(frozen=True)
 class ResiliencyConfig:
@@ -117,17 +108,14 @@ class ResiliencyConfig:
     )
     targets: dict[str, TargetBinding] = field(default_factory=dict)
 
-
 # ---------------------------------------------------------------------------
 # 1C: CircuitBreakerOpenError
 # ---------------------------------------------------------------------------
-
 
 class CircuitState(enum.Enum):
     CLOSED = "closed"
     OPEN = "open"
     HALF_OPEN = "half_open"
-
 
 class CircuitBreakerOpenError(Exception):
     """Raised when a call is rejected because the circuit breaker is open."""
@@ -137,11 +125,9 @@ class CircuitBreakerOpenError(Exception):
         self.state = state
         super().__init__(f"Circuit breaker '{name}' is {state.value}")
 
-
 # ---------------------------------------------------------------------------
 # 1D: AsyncCircuitBreaker state machine
 # ---------------------------------------------------------------------------
-
 
 class AsyncCircuitBreaker:
     """Async context-manager circuit breaker with 3 states.
@@ -191,7 +177,7 @@ class AsyncCircuitBreaker:
 
     # -- context manager -----------------------------------------------------
 
-    async def __aenter__(self) -> AsyncCircuitBreaker:
+    async def __aenter__(self) -> "AsyncCircuitBreaker":
         state = self.current_state
 
         if state is CircuitState.CLOSED:
@@ -282,11 +268,9 @@ class AsyncCircuitBreaker:
             with contextlib.suppress(RuntimeError):
                 self._half_open_lock.release()
 
-
 # ---------------------------------------------------------------------------
 # 1E: ResiliencyManager
 # ---------------------------------------------------------------------------
-
 
 class ResiliencyManager:
     """Singleton-style manager that owns circuit breaker instances and config."""
@@ -342,24 +326,20 @@ class ResiliencyManager:
             "circuit_breakers": breakers_health,
         }
 
-
 # ---------------------------------------------------------------------------
 # 1F: with_resiliency decorator
 # ---------------------------------------------------------------------------
 
 _default_manager: ResiliencyManager | None = None
 
-
 def set_default_manager(mgr: ResiliencyManager) -> None:
     """Set the module-level default ResiliencyManager."""
     global _default_manager
     _default_manager = mgr
 
-
 def get_default_manager() -> ResiliencyManager | None:
     """Return the module-level default ResiliencyManager (or None)."""
     return _default_manager
-
 
 def with_resiliency(
     target: str | None = None,
@@ -454,13 +434,11 @@ def with_resiliency(
 
     return decorator
 
-
 # ---------------------------------------------------------------------------
 # 1G: Duration parser helper
 # ---------------------------------------------------------------------------
 
 _DURATION_RE = re.compile(r"^\s*(\d+(?:\.\d+)?)\s*([smh]?)\s*$", re.IGNORECASE)
-
 
 def parse_duration(value: str | int | float) -> float:
     """Parse ``'5s'``, ``'60s'``, ``'10m'``, ``'1h'`` or numeric seconds.

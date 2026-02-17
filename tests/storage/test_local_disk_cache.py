@@ -8,8 +8,6 @@ Tests the local disk cache layer for FUSE operations including:
 - Block-level storage for large files
 """
 
-from __future__ import annotations
-
 import hashlib
 import os
 import tempfile
@@ -26,13 +24,11 @@ from nexus.storage.local_disk_cache import (
     set_local_disk_cache,
 )
 
-
 @pytest.fixture
 def cache_dir():
     """Create a temporary cache directory."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield tmpdir
-
 
 @pytest.fixture
 def cache(cache_dir):
@@ -44,11 +40,9 @@ def cache(cache_dir):
     yield cache
     cache.close()
 
-
 def content_hash(content: bytes) -> str:
     """Compute SHA-256 hash of content."""
     return hashlib.sha256(content).hexdigest()
-
 
 class TestLocalDiskCacheBasics:
     """Test basic cache operations."""
@@ -130,7 +124,6 @@ class TestLocalDiskCacheBasics:
         # Should still be one entry
         assert stats1["entries"] == stats2["entries"] == 1
 
-
 class TestClockEviction:
     """Test CLOCK eviction algorithm."""
 
@@ -209,7 +202,6 @@ class TestClockEviction:
         # (unless cache is extremely small)
         cache.close()
 
-
 class TestBlockStorage:
     """Test block-level storage for large files."""
 
@@ -249,7 +241,6 @@ class TestBlockStorage:
         # Nonexistent block
         block3 = cache.get_block(hash_val, 3)
         assert block3 is None
-
 
 class TestPersistence:
     """Test cache persistence across restarts."""
@@ -298,7 +289,6 @@ class TestPersistence:
 
         cache2.close()
 
-
 class TestBloomFilter:
     """Test Bloom filter optimization."""
 
@@ -327,7 +317,6 @@ class TestBloomFilter:
         for hash_val, content in contents:
             result = cache.get(hash_val)
             assert result == content
-
 
 class TestStatistics:
     """Test cache statistics."""
@@ -366,7 +355,6 @@ class TestStatistics:
         assert stats["size_bytes"] == 3000
         assert stats["entries"] == 2
 
-
 class TestGlobalInstance:
     """Test global cache instance management."""
 
@@ -403,7 +391,6 @@ class TestGlobalInstance:
         assert global_cache is cache
 
         close_local_disk_cache()
-
 
 class TestEdgeCases:
     """Test edge cases and error handling."""
@@ -466,7 +453,6 @@ class TestEdgeCases:
         # All content should be cached
         for hash_val, content in contents.items():
             assert cache.get(hash_val) == content
-
 
 class TestMultiZoneIsolation:
     """Test multi-zone cache isolation."""
@@ -552,7 +538,6 @@ class TestMultiZoneIsolation:
         assert stats["entries"] == 2
 
         cache.close()
-
 
 class TestCacheEntry:
     """Test CacheEntry dataclass."""

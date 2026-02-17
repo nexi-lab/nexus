@@ -15,7 +15,6 @@ from pathlib import Path
 
 import yaml
 
-
 def check_semantic_search_enabled(config_file: str) -> bool:
     """
     Check if semantic search is enabled in config file.
@@ -39,7 +38,6 @@ def check_semantic_search_enabled(config_file: str) -> bool:
         print(f"Warning: Could not read semantic_search config: {e}", file=sys.stderr)
         return False
 
-
 def main() -> None:
     """Main entry point."""
     if len(sys.argv) < 2:
@@ -51,7 +49,6 @@ def main() -> None:
 
     print("true" if enabled else "false")
     sys.exit(0)
-
 
 if __name__ == "__main__":
     main()

@@ -19,7 +19,6 @@ down_revision: Union[str, Sequence[str], None] = "928a619dabf4"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Upgrade schema."""
     # Create permission_policies table
@@ -49,7 +48,6 @@ def upgrade() -> None:
     op.create_index(
         "idx_permission_policies_priority", "permission_policies", ["priority"], unique=False
     )
-
 
 def downgrade() -> None:
     """Downgrade schema."""

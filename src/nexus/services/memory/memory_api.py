@@ -7,8 +7,6 @@ Includes temporal query operators (Issue #1023) for time-based filtering
 inspired by SimpleMem (arXiv:2601.02553).
 """
 
-from __future__ import annotations
-
 import builtins
 import logging
 from collections.abc import Callable
@@ -28,7 +26,6 @@ logger = logging.getLogger(__name__)
 # Importance decay configuration (Issue #1030)
 DEFAULT_DECAY_FACTOR = 0.95  # 5% decay per day
 DEFAULT_MIN_IMPORTANCE = 0.1  # Minimum importance floor
-
 
 def get_effective_importance(
     importance_original: float | None,
@@ -81,7 +78,6 @@ def get_effective_importance(
 
     # Clamp to minimum importance
     return max(min_importance, decayed)
-
 
 class Memory:
     """High-level Memory API for AI agents.

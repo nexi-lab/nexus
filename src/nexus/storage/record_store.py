@@ -24,20 +24,19 @@ Usage:
     nx = NexusFS(metastore=metastore, record_store=record_store)
 """
 
-from __future__ import annotations
-
 import logging
 import os
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy.engine.interfaces import DBAPIConnection
+from sqlalchemy.pool import ConnectionPoolEntry
 if TYPE_CHECKING:
     from sqlalchemy.engine.interfaces import DBAPIConnection
     from sqlalchemy.pool import ConnectionPoolEntry
 
 logger = logging.getLogger(__name__)
-
 
 class RecordStoreABC(ABC):
     """Abstract base class for relational data storage (the "Truth" pillar).
@@ -84,7 +83,6 @@ class RecordStoreABC(ABC):
     def close(self) -> None:
         """Close the store and release resources."""
         ...
-
 
 class SQLAlchemyRecordStore(RecordStoreABC):
     """SQLAlchemy-based RecordStore for PostgreSQL and SQLite.

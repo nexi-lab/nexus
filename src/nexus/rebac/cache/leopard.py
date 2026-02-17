@@ -15,8 +15,6 @@ Trade-offs:
 Related: Issue #692
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 import time
@@ -25,6 +23,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy.engine import Connection, Engine
 if TYPE_CHECKING:
     from sqlalchemy.engine import Connection, Engine
 
@@ -35,7 +34,6 @@ MEMBERSHIP_RELATIONS = frozenset({"member-of", "member", "belongs-to"})
 
 # Entity types that can contain members (groups)
 GROUP_ENTITY_TYPES = frozenset({"group", "team", "organization", "zone"})
-
 
 @dataclass
 class ClosureEntry:
@@ -48,7 +46,6 @@ class ClosureEntry:
     zone_id: str
     depth: int
     updated_at: datetime = field(default_factory=lambda: datetime.now(UTC))
-
 
 class LeopardCache:
     """In-memory cache for transitive group closure.
@@ -213,7 +210,6 @@ class LeopardCache:
         """Return current cache size."""
         with self._lock:
             return len(self._member_to_groups)
-
 
 class LeopardIndex:
     """Leopard-style transitive closure index.

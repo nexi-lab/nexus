@@ -4,8 +4,6 @@ This module provides caching layers for file attributes, content, and parsed
 content to optimize FUSE filesystem operations and reduce latency.
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 from typing import Any
@@ -13,7 +11,6 @@ from typing import Any
 from cachetools import LRUCache, TTLCache
 
 logger = logging.getLogger(__name__)
-
 
 class FUSECacheManager:
     """Manages caching for FUSE operations.

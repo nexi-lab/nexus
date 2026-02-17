@@ -9,8 +9,6 @@ Tests cover:
 - get_operation_context: subject mapping, admin capabilities, agent handling
 """
 
-from __future__ import annotations
-
 import hashlib
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -31,7 +29,6 @@ from nexus.server.dependencies import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-
 def _make_app_state(
     *,
     api_key: str | None = None,
@@ -42,7 +39,6 @@ def _make_app_state(
     state.api_key = api_key
     state.auth_provider = auth_provider
     return state
-
 
 def _make_mock_request(
     *,
@@ -55,13 +51,11 @@ def _make_mock_request(
     request.app.state = state
     return request
 
-
 def _make_mock_request_from_state(state: MagicMock) -> MagicMock:
     """Create a mock Request wrapping an existing state mock."""
     request = MagicMock()
     request.app.state = state
     return request
-
 
 async def _call_get_auth_result(
     *,
@@ -87,11 +81,9 @@ async def _call_get_auth_result(
         x_nexus_zone_id=x_nexus_zone_id,
     )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
 
 @pytest.fixture(autouse=True)
 def clean_auth_cache():
@@ -100,11 +92,9 @@ def clean_auth_cache():
     yield
     _reset_auth_cache()
 
-
 # ===========================================================================
 # Cache layer
 # ===========================================================================
-
 
 class TestAuthCacheOperations:
     """Tests for _get_cached_auth / _set_cached_auth / _reset_auth_cache."""
@@ -157,11 +147,9 @@ class TestAuthCacheOperations:
         _set_cached_auth(token, {"ok": True})
         assert expected_hash in _AUTH_CACHE
 
-
 # ===========================================================================
 # get_auth_result
 # ===========================================================================
-
 
 class TestGetAuthResultOpenAccess:
     """Tests for open-access mode (no api_key, no auth_provider)."""
@@ -231,7 +219,6 @@ class TestGetAuthResultOpenAccess:
         assert result["subject_type"] is None
         assert result["subject_id"] is None
 
-
 class TestGetAuthResultStaticKey:
     """Tests for static API key authentication."""
 
@@ -283,7 +270,6 @@ class TestGetAuthResultStaticKey:
             authorization="Bearer secret-key-123",
         )
         assert result["inherit_permissions"] is True
-
 
 class TestGetAuthResultAuthProvider:
     """Tests for external auth provider authentication."""
@@ -377,11 +363,9 @@ class TestGetAuthResultAuthProvider:
         assert "_auth_time_ms" not in cached
         assert "_auth_cached" not in cached
 
-
 # ===========================================================================
 # require_auth
 # ===========================================================================
-
 
 class TestRequireAuth:
     """Tests for the require_auth dependency."""
@@ -411,11 +395,9 @@ class TestRequireAuth:
             await require_auth(auth_result={})
         assert exc_info.value.status_code == 401
 
-
 # ===========================================================================
 # get_operation_context
 # ===========================================================================
-
 
 class TestGetOperationContext:
     """Tests for get_operation_context."""

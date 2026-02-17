@@ -24,7 +24,6 @@ except ImportError:
 
 console = Console()
 
-
 def run_baseline_trial(data_loader: Any) -> dict[str, float]:
     """Run baseline validation with NO learning (empty playbook).
 
@@ -48,7 +47,6 @@ def run_baseline_trial(data_loader: Any) -> dict[str, float]:
         "recall": result["recall"],
         "f1": result["f1"],
     }
-
 
 def run_ace_trial(data_loader: Any, epochs: int) -> dict[str, Any]:
     """Run ACE trial with learning enabled.
@@ -142,7 +140,6 @@ def run_ace_trial(data_loader: Any, epochs: int) -> dict[str, Any]:
         "improvement": final_result["accuracy"] - history[0]["accuracy"],
     }
 
-
 def run_benchmark(epochs: int = 10, trials: int = 3) -> dict[str, Any]:
     """Run complete benchmark comparing baseline vs ACE.
 
@@ -219,7 +216,6 @@ def run_benchmark(epochs: int = 10, trials: int = 3) -> dict[str, Any]:
         },
     }
 
-
 def display_results(results: dict[str, Any]):
     """Display benchmark results in a nice format.
 
@@ -273,7 +269,6 @@ def display_results(results: dict[str, Any]):
         f"   Averaged over {results['config']['trials']} trials, {results['config']['epochs']} epochs each\n"
     )
 
-
 def save_results(results: dict[str, Any], output_path: str):
     """Save benchmark results to JSON file.
 
@@ -284,7 +279,6 @@ def save_results(results: dict[str, Any], output_path: str):
     with open(output_path, "w") as f:
         json.dump(results, f, indent=2)
     console.print(f"[green]✓[/green] Results saved to: {output_path}")
-
 
 def plot_results(results: dict[str, Any], output_path: str = "benchmark_plot.png"):
     """Plot learning curves (requires matplotlib).
@@ -325,7 +319,6 @@ def plot_results(results: dict[str, Any], output_path: str = "benchmark_plot.png
 
     plt.savefig(output_path, dpi=150)
     console.print(f"[green]✓[/green] Plot saved to: {output_path}")
-
 
 def main():
     """Main entry point."""
@@ -380,7 +373,6 @@ def main():
 
         traceback.print_exc()
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()

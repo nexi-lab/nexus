@@ -4,8 +4,6 @@ Verifies that FileMetadata (proto) and FilePathModel (SQLAlchemy) stay in sync.
 Catches field additions/removals that aren't reflected in both representations.
 """
 
-from __future__ import annotations
-
 import dataclasses
 from datetime import datetime
 
@@ -48,7 +46,6 @@ SQL_ONLY_FIELDS: set[str] = {
     "locked_by",
 }
 
-
 class TestProtoFieldsCovered:
     """Every FileMetadata field must have an entry in the field map."""
 
@@ -73,7 +70,6 @@ class TestProtoFieldsCovered:
             f"PROTO_TO_SQL_FIELD_MAP references fields not in FileMetadata: {stale}. "
             f"Remove them from the map."
         )
-
 
 class TestSqlColumnsCovered:
     """Every mapped SQL column must actually exist in FilePathModel."""
@@ -114,7 +110,6 @@ class TestSqlColumnsCovered:
             f"FilePathModel has columns not in field map or SQL_ONLY_FIELDS: {unaccounted}. "
             f"Add them to the appropriate set in test_schema_drift.py."
         )
-
 
 class TestRoundtripConsistency:
     """FileMetadata -> FilePathModel values -> verify no data loss."""

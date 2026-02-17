@@ -12,8 +12,6 @@ before embedding, reducing storage costs and improving retrieval quality.
 Based on SimpleMem paper (arXiv:2601.02553).
 """
 
-from __future__ import annotations
-
 import logging
 import math
 import re
@@ -23,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 
 logger = logging.getLogger(__name__)
 
+from nexus.search.embeddings import EmbeddingProvider
 if TYPE_CHECKING:
     import tiktoken as tiktoken_module
 
@@ -38,14 +37,12 @@ else:
         tiktoken_module = None  # type: ignore[assignment]
         TIKTOKEN_AVAILABLE = False
 
-
 class ChunkStrategy(StrEnum):
     """Chunking strategy."""
 
     FIXED = "fixed"  # Fixed-size chunks
     SEMANTIC = "semantic"  # Semantic chunks (paragraphs/sections)
     OVERLAPPING = "overlapping"  # Overlapping fixed-size chunks
-
 
 @dataclass
 class DocumentChunk:
@@ -58,7 +55,6 @@ class DocumentChunk:
     end_offset: int  # End character offset
     line_start: int | None = None  # Line number where chunk starts (1-indexed)
     line_end: int | None = None  # Line number where chunk ends (1-indexed)
-
 
 def _offset_to_line(content: str, offset: int) -> int:
     """Convert character offset to line number (1-indexed).
@@ -73,7 +69,6 @@ def _offset_to_line(content: str, offset: int) -> int:
     if offset <= 0:
         return 1
     return content[:offset].count("\n") + 1
-
 
 def _compute_line_numbers(content: str, start_offset: int, end_offset: int) -> tuple[int, int]:
     """Compute line numbers for a chunk.
@@ -90,7 +85,6 @@ def _compute_line_numbers(content: str, start_offset: int, end_offset: int) -> t
     line_end = _offset_to_line(content, end_offset)
     return line_start, line_end
 
-
 def _build_line_offsets(content: str) -> list[int]:
     """Pre-compute line start offsets for O(1) line number lookup.
 
@@ -105,7 +99,6 @@ def _build_line_offsets(content: str) -> list[int]:
         if c == "\n":
             offsets.append(i + 1)
     return offsets
-
 
 def _offset_to_line_fast(offset: int, line_offsets: list[int]) -> int:
     """Convert character offset to line number using pre-computed table.
@@ -126,7 +119,6 @@ def _offset_to_line_fast(offset: int, line_offsets: list[int]) -> int:
     # bisect_right returns insertion point; that's the line number (1-indexed)
     return bisect.bisect_right(line_offsets, offset)
 
-
 def _compute_line_numbers_fast(
     start_offset: int, end_offset: int, line_offsets: list[int]
 ) -> tuple[int, int]:
@@ -143,7 +135,6 @@ def _compute_line_numbers_fast(
     line_start = _offset_to_line_fast(start_offset, line_offsets)
     line_end = _offset_to_line_fast(end_offset, line_offsets)
     return line_start, line_end
-
 
 class DocumentChunker:
     """Document chunker for semantic search.
@@ -655,7 +646,6 @@ class DocumentChunker:
 
         return chunks
 
-
 @dataclass
 class EntropyFilterResult:
     """Result of entropy-aware filtering.
@@ -674,7 +664,6 @@ class EntropyFilterResult:
         if self.original_count == 0:
             return 0.0
         return ((self.original_count - self.filtered_count) / self.original_count) * 100
-
 
 def _cosine_similarity(vec1: list[float], vec2: list[float]) -> float:
     """Calculate cosine similarity between two vectors.
@@ -697,7 +686,6 @@ def _cosine_similarity(vec1: list[float], vec2: list[float]) -> float:
         return 0.0
 
     return dot_product / (norm1 * norm2)
-
 
 class EntropyAwareChunker:
     """Entropy-aware chunker that filters redundant/low-information chunks.

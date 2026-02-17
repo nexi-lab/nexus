@@ -5,15 +5,12 @@ and immutable return types. Used by identity models and services, and available 
 backfill into existing code (agent_registry.py, workspace_registry.py) in future PRs.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import types
 from typing import Any
 
 logger = logging.getLogger(__name__)
-
 
 def parse_metadata(raw: str | None, context: str = "unknown") -> types.MappingProxyType[str, Any]:
     """Safely parse a JSON metadata string to an immutable dict.
@@ -40,7 +37,6 @@ def parse_metadata(raw: str | None, context: str = "unknown") -> types.MappingPr
         return types.MappingProxyType({})
 
     return types.MappingProxyType(parsed)
-
 
 def serialize_metadata(metadata: dict[str, Any] | None) -> str | None:
     """Serialize a metadata dict to a JSON string.

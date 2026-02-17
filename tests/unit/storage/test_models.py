@@ -9,7 +9,6 @@ from sqlalchemy.orm import sessionmaker
 
 from nexus.storage.models import Base, ContentChunkModel, FileMetadataModel, FilePathModel
 
-
 @pytest.fixture
 def engine():
     """Create an in-memory SQLite engine for testing."""
@@ -27,7 +26,6 @@ def engine():
     Base.metadata.create_all(engine)
     return engine
 
-
 @pytest.fixture
 def session(engine):
     """Create a database session for testing."""
@@ -35,7 +33,6 @@ def session(engine):
     session = SessionLocal()
     yield session
     session.close()
-
 
 class TestFilePathModel:
     """Test suite for FilePathModel."""
@@ -133,7 +130,6 @@ class TestFilePathModel:
         result = session.scalar(stmt)
         assert result is None
 
-
 class TestFileMetadataModel:
     """Test suite for FileMetadataModel."""
 
@@ -185,7 +181,6 @@ class TestFileMetadataModel:
         session.commit()
 
         assert len(file_path.metadata_entries) == 2
-
 
 class TestContentChunkModel:
     """Test suite for ContentChunkModel."""
@@ -265,7 +260,6 @@ class TestContentChunkModel:
         session.commit()
 
         assert chunk.last_accessed_at is not None
-
 
 class TestModelIndexes:
     """Test that indexes are created correctly."""

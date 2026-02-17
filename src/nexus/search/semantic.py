@@ -14,8 +14,6 @@ Supports hybrid search combining keyword (FTS/BM25) and semantic (vector) search
 Issue #1021: Supports adaptive retrieval depth based on query complexity.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import uuid
@@ -44,10 +42,10 @@ from nexus.search.vector_db import VectorDatabase
 
 logger = logging.getLogger(__name__)
 
+from nexus.services.llm_context_builder import AdaptiveRetrievalConfig
 if TYPE_CHECKING:
     from nexus.search.ranking import RankingConfig
     from nexus.services.llm_context_builder import AdaptiveRetrievalConfig
-
 
 @dataclass
 class SemanticSearchResult(BaseSearchResult):
@@ -60,7 +58,6 @@ class SemanticSearchResult(BaseSearchResult):
     matched_field: str | None = None  # Which field matched (filename, path, content, etc.)
     attribute_boost: float | None = None  # Boost multiplier applied
     original_score: float | None = None  # Score before attribute boosting
-
 
 class SemanticSearch:
     """Semantic search engine for Nexus.
@@ -82,7 +79,7 @@ class SemanticSearch:
         entropy_filtering: bool = False,
         entropy_threshold: float = 0.35,
         entropy_alpha: float = 0.5,
-        ranking_config: RankingConfig | None = None,
+        ranking_config: "RankingConfig | None" = None,
         engine: Any | None = None,
         contextual_chunking: bool = False,
         contextual_config: ContextualChunkingConfig | None = None,

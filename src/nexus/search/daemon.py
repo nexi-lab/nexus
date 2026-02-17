@@ -40,6 +40,8 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from nexus.search.results import BaseSearchResult
 
+from nexus.search.async_search import AsyncSemanticSearch
+from sqlalchemy.ext.asyncio import AsyncEngine
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine
 

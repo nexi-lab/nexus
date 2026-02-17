@@ -30,13 +30,11 @@ except ImportError:
     print("❌ nexus-ai-fs not installed. Run: pip install nexus-ai-fs")
     sys.exit(1)
 
-
 def print_section(title: str):
     """Print a formatted section header"""
     print(f"\n{'=' * 60}")
     print(f"  {title}")
     print(f"{'=' * 60}\n")
-
 
 def main():
     # Get server URL and API key from environment
@@ -279,7 +277,6 @@ def main():
     finally:
         nx.close()
         print("\n🔌 Disconnected from server")
-
 
 if __name__ == "__main__":
     main()

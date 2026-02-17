@@ -34,13 +34,11 @@ MULTI_SECRET_LINE = (
     "password=my_super_secret_password_value"
 )
 
-
 @pytest.mark.benchmark(group="redaction")
 def test_benchmark_redact_clean_line(benchmark: pytest.fixture) -> None:
     """Benchmark: redacting a clean line (no secrets) — common case."""
     result = benchmark(redact_text, CLEAN_LINE)
     assert "[REDACTED]" not in result
-
 
 @pytest.mark.benchmark(group="redaction")
 def test_benchmark_redact_one_secret(benchmark: pytest.fixture) -> None:
@@ -48,13 +46,11 @@ def test_benchmark_redact_one_secret(benchmark: pytest.fixture) -> None:
     result = benchmark(redact_text, SECRET_LINE)
     assert "[REDACTED]" in result
 
-
 @pytest.mark.benchmark(group="redaction")
 def test_benchmark_redact_multi_secret(benchmark: pytest.fixture) -> None:
     """Benchmark: redacting a line with multiple secrets — worst case."""
     result = benchmark(redact_text, MULTI_SECRET_LINE)
     assert result.count("[REDACTED]") >= 3
-
 
 @pytest.mark.benchmark(group="formatter")
 def test_benchmark_formatter_clean(benchmark: pytest.fixture) -> None:
@@ -71,7 +67,6 @@ def test_benchmark_formatter_clean(benchmark: pytest.fixture) -> None:
     )
     result = benchmark(formatter.format, record)
     assert "[REDACTED]" not in result
-
 
 @pytest.mark.benchmark(group="formatter")
 def test_benchmark_formatter_with_secret(benchmark: pytest.fixture) -> None:

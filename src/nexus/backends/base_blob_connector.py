@@ -35,7 +35,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 class BaseBlobStorageConnector(Backend):
     """
     Abstract base class for blob storage connector backends.

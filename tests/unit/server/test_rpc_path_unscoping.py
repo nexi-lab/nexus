@@ -6,14 +6,11 @@ from paths before returning them to API clients.
 Related: Issue #1202 - list('/') returns paths with /tenant: prefix
 """
 
-from __future__ import annotations
-
 from unittest.mock import Mock
 
 import pytest
 
 from nexus.server.rpc_server import RPCRequestHandler
-
 
 @pytest.fixture
 def mock_filesystem():
@@ -22,7 +19,6 @@ def mock_filesystem():
     fs.is_directory = Mock(return_value=False)
     fs.exists = Mock(return_value=True)
     return fs
-
 
 @pytest.fixture
 def mock_handler(mock_filesystem):
@@ -40,7 +36,6 @@ def mock_handler(mock_filesystem):
     handler._get_operation_context = Mock(return_value=None)
     handler.exposed_methods = {}
     return handler
-
 
 class TestListPathUnscoping:
     """Test that list() results have internal prefixes stripped."""
@@ -141,7 +136,6 @@ class TestListPathUnscoping:
 
         assert result == {"files": ["/workspace/file.txt", "/skills/my-skill/main.py"]}
 
-
 class TestWritePathUnscoping:
     """Test that write() response has internal prefix stripped."""
 
@@ -167,7 +161,6 @@ class TestWritePathUnscoping:
 
         assert result["path"] == "/workspace/file.txt"
         assert result["etag"] == "abc123"
-
 
 class TestReadPathUnscoping:
     """Test that read(return_metadata=True) response has internal prefix stripped."""
@@ -195,7 +188,6 @@ class TestReadPathUnscoping:
         assert result["content"] == b"hello world"
         assert result["etag"] == "abc123"
 
-
 class TestAppendPathUnscoping:
     """Test that append() response has internal prefix stripped."""
 
@@ -221,7 +213,6 @@ class TestAppendPathUnscoping:
         assert result["path"] == "/workspace/log.txt"
         assert result["etag"] == "def456"
         assert result["version"] == 3
-
 
 class TestGetMetadataPathUnscoping:
     """Test that get_metadata() response has internal prefix stripped."""
@@ -255,7 +246,6 @@ class TestGetMetadataPathUnscoping:
         assert meta["backend_name"] == "local"
         assert meta["size"] == 100
 
-
 class TestGlobPathUnscoping:
     """Test that glob() results have internal prefixes stripped."""
 
@@ -280,7 +270,6 @@ class TestGlobPathUnscoping:
                 "/connector/gcs/data.csv",
             ]
         }
-
 
 class TestGrepPathUnscoping:
     """Test that grep() results have internal prefixes stripped."""

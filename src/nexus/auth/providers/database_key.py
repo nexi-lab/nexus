@@ -1,7 +1,5 @@
 """Database-backed API key authentication provider."""
 
-from __future__ import annotations
-
 import hashlib
 import hmac
 import logging
@@ -16,7 +14,6 @@ from nexus.auth.constants import API_KEY_MIN_LENGTH, API_KEY_PREFIX, HMAC_SALT
 from nexus.auth.providers.base import AuthProvider, AuthResult
 
 logger = logging.getLogger(__name__)
-
 
 class DatabaseAPIKeyAuth(AuthProvider):
     """Database-backed API key authentication with expiry and revocation.

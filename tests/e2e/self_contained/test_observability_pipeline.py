@@ -5,8 +5,6 @@ wired through the real FastAPI application (create_app), and that
 the middleware correctly tracks request metrics with acceptable overhead.
 """
 
-from __future__ import annotations
-
 import os
 import time
 
@@ -21,7 +19,6 @@ from nexus.storage.record_store import SQLAlchemyRecordStore
 # ---------------------------------------------------------------------------
 # Fixture: create a real FastAPI app with Prometheus middleware wired
 # ---------------------------------------------------------------------------
-
 
 @pytest.fixture()
 def app_and_key(tmp_path):
@@ -52,13 +49,11 @@ def app_and_key(tmp_path):
 
     return app, api_key
 
-
 @pytest.fixture()
 def client(app_and_key):
     """TestClient backed by the real app."""
     app, _ = app_and_key
     return TestClient(app)
-
 
 @pytest.fixture()
 def auth_headers(app_and_key):
@@ -66,11 +61,9 @@ def auth_headers(app_and_key):
     _, key = app_and_key
     return {"Authorization": f"Bearer {key}"}
 
-
 # ---------------------------------------------------------------------------
 # Metrics endpoint integration
 # ---------------------------------------------------------------------------
-
 
 class TestMetricsIntegration:
     """Test /metrics endpoint through the real FastAPI app."""
@@ -112,11 +105,9 @@ class TestMetricsIntegration:
         resp = client.get("/metrics")
         assert "http_requests_total" in resp.text
 
-
 # ---------------------------------------------------------------------------
 # Performance: verify minimal overhead
 # ---------------------------------------------------------------------------
-
 
 class TestDatabaseMetricsIntegration:
     """Test QueryObserver metrics appear in /metrics output (Issue #762)."""
@@ -135,7 +126,6 @@ class TestDatabaseMetricsIntegration:
         """The observer disabled gauge should always be present."""
         resp = client.get("/metrics")
         assert "nexus_db_observer_disabled" in resp.text
-
 
 class TestMetricsPerformance:
     """Verify Prometheus middleware adds minimal overhead."""

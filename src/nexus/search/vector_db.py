@@ -18,8 +18,6 @@ Backend-specific logic is delegated to:
 - vector_db_postgres.py: PostgreSQL init, vector search, keyword search
 """
 
-from __future__ import annotations
-
 import asyncio
 import atexit
 import concurrent.futures
@@ -34,7 +32,6 @@ logger = logging.getLogger(__name__)
 _SYNC_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=2, thread_name_prefix="nexus-vdb")
 atexit.register(_SYNC_POOL.shutdown, wait=False)
 
-
 def _run_sync(coro: Any) -> Any:
     """Run an async coroutine synchronously (Issue #1520: avoid core.sync_bridge import)."""
     try:
@@ -44,11 +41,11 @@ def _run_sync(coro: Any) -> Any:
     # If a loop is already running, use shared thread pool
     return _SYNC_POOL.submit(asyncio.run, coro).result()
 
-
+from sqlalchemy.engine import Engine
+from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
     from sqlalchemy.orm import Session
-
 
 class VectorDatabase:
     """Vector database using sqlite-vec or pgvector based on database type.

@@ -24,7 +24,6 @@ down_revision: Union[str, None] = "drop_duplicate_unused_indexes"
 branch_labels: Sequence[str] | None = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 # The correct file namespace config with shared-* relations
 FILE_NAMESPACE_CONFIG = """{
     "relations": {
@@ -52,7 +51,6 @@ FILE_NAMESPACE_CONFIG = """{
     }
 }"""
 
-
 def upgrade() -> None:
     """Update file namespace to include shared-* relations."""
     # Update the file namespace config
@@ -65,7 +63,6 @@ def upgrade() -> None:
             """
         ).bindparams(config=FILE_NAMESPACE_CONFIG)
     )
-
 
 def downgrade() -> None:
     """Remove shared-* relations from file namespace (not recommended)."""

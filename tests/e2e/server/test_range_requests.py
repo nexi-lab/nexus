@@ -8,8 +8,6 @@ Requires LocalRaft (Rust extension). Skipped if unavailable.
 Run with: .venv/bin/python3.12 -m pytest tests/integration/test_range_requests.py -v
 """
 
-from __future__ import annotations
-
 import base64
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -37,7 +35,6 @@ from nexus.core.async_nexus_fs import AsyncNexusFS  # noqa: E402
 # =============================================================================
 
 TEST_CONTENT = b"ABCDEFGHIJ" * 100  # 1000 bytes
-
 
 @pytest_asyncio.fixture
 async def client(
@@ -80,7 +77,6 @@ async def client(
     _fastapi_app.state.async_nexus_fs = None
     metadata_store.close()
 
-
 async def _write_file(client: AsyncClient, path: str, content: bytes) -> dict:
     """Helper: write a file via the API and return response data."""
     resp = await client.post(
@@ -94,11 +90,9 @@ async def _write_file(client: AsyncClient, path: str, content: bytes) -> dict:
     assert resp.status_code == 200, f"Write failed: {resp.text}"
     return resp.json()
 
-
 # =============================================================================
 # Tests
 # =============================================================================
-
 
 @pytest.mark.asyncio
 async def test_range_first_500_bytes(client: AsyncClient) -> None:
@@ -116,7 +110,6 @@ async def test_range_first_500_bytes(client: AsyncClient) -> None:
     assert len(resp.content) == 500
     assert resp.headers["accept-ranges"] == "bytes"
 
-
 @pytest.mark.asyncio
 async def test_range_from_offset(client: AsyncClient) -> None:
     """Range: bytes=500- → 206 with last 500 bytes."""
@@ -132,7 +125,6 @@ async def test_range_from_offset(client: AsyncClient) -> None:
     assert resp.headers["content-range"] == "bytes 500-999/1000"
     assert len(resp.content) == 500
 
-
 @pytest.mark.asyncio
 async def test_range_suffix(client: AsyncClient) -> None:
     """Range: bytes=-100 → 206 with last 100 bytes."""
@@ -146,7 +138,6 @@ async def test_range_suffix(client: AsyncClient) -> None:
     assert resp.status_code == 206
     assert resp.content == TEST_CONTENT[-100:]
     assert resp.headers["content-range"] == "bytes 900-999/1000"
-
 
 @pytest.mark.asyncio
 async def test_no_range_returns_200_with_accept_ranges(client: AsyncClient) -> None:
@@ -162,7 +153,6 @@ async def test_no_range_returns_200_with_accept_ranges(client: AsyncClient) -> N
     assert resp.headers["accept-ranges"] == "bytes"
     assert len(resp.content) == 1000
 
-
 @pytest.mark.asyncio
 async def test_unsatisfiable_range_returns_416(client: AsyncClient) -> None:
     """Range beyond file size → 416 with Content-Range: bytes */1000."""
@@ -175,7 +165,6 @@ async def test_unsatisfiable_range_returns_416(client: AsyncClient) -> None:
     )
     assert resp.status_code == 416
     assert resp.headers["content-range"] == "bytes */1000"
-
 
 @pytest.mark.asyncio
 async def test_if_range_matching_etag(client: AsyncClient) -> None:
@@ -191,7 +180,6 @@ async def test_if_range_matching_etag(client: AsyncClient) -> None:
     assert resp.status_code == 206
     assert resp.content == TEST_CONTENT[:100]
 
-
 @pytest.mark.asyncio
 async def test_if_range_wrong_etag(client: AsyncClient) -> None:
     """If-Range with wrong ETag → 200 (full content)."""
@@ -204,7 +192,6 @@ async def test_if_range_wrong_etag(client: AsyncClient) -> None:
     )
     assert resp.status_code == 200
     assert resp.content == TEST_CONTENT
-
 
 @pytest.mark.asyncio
 async def test_single_byte_range(client: AsyncClient) -> None:

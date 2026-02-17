@@ -19,7 +19,6 @@ down_revision: Union[str, Sequence[str], None] = "68edc50fe6d6"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Upgrade schema - Add zone_id columns for tenant isolation (P0-2)."""
 
@@ -48,7 +47,6 @@ def upgrade() -> None:
 
     # Note: Columns left nullable for backward compatibility
     # Production deployments should run backfill and make NOT NULL
-
 
 def downgrade() -> None:
     """Downgrade schema - Remove zone_id columns."""

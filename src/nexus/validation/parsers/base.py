@@ -5,12 +5,9 @@ Defines the interface that all validator parsers must implement:
 - build_command: produce the shell command to run the tool
 """
 
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
 
 from nexus.validation.models import ValidationError, ValidatorConfig
-
 
 class Validator(ABC):
     """Abstract base for linter/checker output parsers."""

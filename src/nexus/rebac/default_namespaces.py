@@ -8,8 +8,6 @@ Canonical import:
     from nexus.rebac.default_namespaces import DEFAULT_FILE_NAMESPACE
 """
 
-from __future__ import annotations
-
 import uuid
 
 from nexus.core.rebac import NamespaceConfig

@@ -25,8 +25,6 @@ Usage:
     buffer.stop()
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 import time
@@ -37,14 +35,12 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-
 class EventType(Enum):
     """Types of write events that can be buffered."""
 
     WRITE = "write"
     DELETE = "delete"
     RENAME = "rename"
-
 
 @dataclass(frozen=True)
 class WriteEvent:
@@ -65,7 +61,6 @@ class WriteEvent:
     # Rename-specific
     old_path: str | None = None
     new_path: str | None = None
-
 
 class WriteBuffer:
     """Thread-safe write-behind buffer for PostgreSQL materialized view sync.

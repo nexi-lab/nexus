@@ -13,7 +13,6 @@ from nexus.core.response import HandlerResponse
 from nexus.services.workspace_manager import WorkspaceManager
 from nexus.storage.models import WorkspaceSnapshotModel
 
-
 @pytest.fixture
 def mock_metadata():
     """Mock metadata store."""
@@ -21,18 +20,15 @@ def mock_metadata():
     metadata.SessionLocal = MagicMock()
     return metadata
 
-
 @pytest.fixture
 def mock_backend():
     """Mock backend."""
     return MagicMock()
 
-
 @pytest.fixture
 def mock_rebac_manager():
     """Mock ReBAC manager."""
     return MagicMock()
-
 
 @pytest.fixture
 def workspace_manager(mock_metadata, mock_backend, mock_rebac_manager):
@@ -45,7 +41,6 @@ def workspace_manager(mock_metadata, mock_backend, mock_rebac_manager):
         agent_id="agent1",
         session_factory=mock_metadata.SessionLocal,
     )
-
 
 class TestWorkspaceManagerPermissions:
     """Test ReBAC permission enforcement in WorkspaceManager."""

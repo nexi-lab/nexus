@@ -9,10 +9,7 @@ as their response ratio grows with wait time.
 No I/O, no side effects — suitable for Hypothesis property-based testing.
 """
 
-from __future__ import annotations
-
 from nexus.scheduler.constants import DEFAULT_EST_SERVICE_TIME_SECS
-
 
 def compute_hrrn_score(
     wait_seconds: float,
@@ -34,7 +31,6 @@ def compute_hrrn_score(
         raise ValueError(f"estimated_service_time must be > 0, got {estimated_service_time}")
     wait = max(0.0, wait_seconds)
     return (wait + estimated_service_time) / estimated_service_time
-
 
 def rank_by_hrrn(
     tasks: list[dict],

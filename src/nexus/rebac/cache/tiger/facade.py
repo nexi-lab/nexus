@@ -10,17 +10,16 @@ route through this facade.
 Related: Issue #1459 Phase 12, Issue #682 (Tiger Cache)
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING
 
+from nexus.rebac.cache.tiger.bitmap_cache import TigerCache
+from nexus.rebac.cache.tiger.updater import TigerCacheUpdater
 if TYPE_CHECKING:
     from nexus.rebac.cache.tiger.bitmap_cache import TigerCache
     from nexus.rebac.cache.tiger.updater import TigerCacheUpdater
 
 logger = logging.getLogger(__name__)
-
 
 class TigerFacade:
     """Facade for Tiger Cache operations.

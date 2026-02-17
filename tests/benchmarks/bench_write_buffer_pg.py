@@ -11,8 +11,6 @@ Usage:
     PYTHONPATH=src python3.13 tests/benchmarks/bench_write_buffer_pg.py
 """
 
-from __future__ import annotations
-
 import statistics
 import time
 from contextlib import contextmanager
@@ -27,7 +25,6 @@ PG_URL = "postgresql://nexus_test:nexus_test_password@localhost:5433/nexus_test"
 WRITE_COUNT = 200  # Number of writes per benchmark run
 BATCH_SIZES = [1, 10, 50]  # Test different batch sizes
 
-
 def make_engine(pool_size: int = 5, max_overflow: int = 10):
     return create_engine(
         PG_URL,
@@ -36,7 +33,6 @@ def make_engine(pool_size: int = 5, max_overflow: int = 10):
         pool_pre_ping=True,
         pool_recycle=1800,
     )
-
 
 @contextmanager
 def pg_schema(engine):
@@ -55,14 +51,11 @@ def pg_schema(engine):
     finally:
         Base.metadata.drop_all(engine)
 
-
 def count_rows(session_factory, table: str) -> int:
     with session_factory() as session:
         return session.execute(text(f"SELECT count(*) FROM {table}")).scalar()
 
-
 # ── Fake metadata object ────────────────────────────────────────────────
-
 
 class FakeMetadata:
     """Minimal object satisfying FileMetadata protocol for benchmarks."""
@@ -83,9 +76,7 @@ class FakeMetadata:
         self.entry_type = 0
         self.owner_id = None
 
-
 # ── Benchmark: Synchronous RecordStoreSyncer ────────────────────────────
-
 
 def bench_sync(engine, session_factory, n: int) -> dict:
     """Benchmark sync writes (one DB round-trip per write)."""
@@ -121,9 +112,7 @@ def bench_sync(engine, session_factory, n: int) -> dict:
         "version_history": vh_count,
     }
 
-
 # ── Benchmark: Buffered WriteBuffer ─────────────────────────────────────
-
 
 def bench_buffered(
     engine, session_factory, n: int, flush_interval_ms: int = 50, max_buffer_size: int = 50
@@ -172,9 +161,7 @@ def bench_buffered(
         "version_history": vh_count,
     }
 
-
 # ── Main ────────────────────────────────────────────────────────────────
-
 
 def print_result(r: dict):
     print(f"\n  Mode:       {r['mode']}")
@@ -190,7 +177,6 @@ def print_result(r: dict):
     print(
         f"  DB rows:    file_paths={r['file_paths']}, operation_log={r['operation_log']}, version_history={r['version_history']}"
     )
-
 
 def main():
     print("=" * 70)
@@ -248,7 +234,6 @@ def main():
     print("  cold path (flush to PG). For PostgreSQL with network latency,")
     print(f"  the hot path is ~0.01ms vs ~{sync_result['mean_ms']:.1f}ms for sync.")
     print("=" * 70)
-
 
 if __name__ == "__main__":
     main()

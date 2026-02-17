@@ -24,21 +24,21 @@ Design reference:
     - Issue #1449: Recursive Protocol wrapping + describe() for composition chains
 """
 
-from __future__ import annotations
-
 import logging
 import time
 from typing import TYPE_CHECKING
 
 from nexus.backends.delegating import DelegatingBackend
 
+from nexus.backends.backend import Backend, HandlerStatusResponse
+from nexus.core.permissions import OperationContext
+from nexus.core.response import HandlerResponse
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend, HandlerStatusResponse
     from nexus.core.permissions import OperationContext
     from nexus.core.response import HandlerResponse
 
 logger = logging.getLogger(__name__)
-
 
 class LoggingBackendWrapper(DelegatingBackend):
     """Transparent logging decorator for any Backend implementation.

@@ -14,8 +14,6 @@ Usage:
     python scripts/test_query_router_api_e2e.py --url http://localhost:2026
 """
 
-from __future__ import annotations
-
 import argparse
 import asyncio
 import logging
@@ -29,7 +27,6 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
-
 
 class QueryRouterAPITest:
     """E2E test for query router API."""
@@ -333,7 +330,6 @@ class QueryRouterAPITest:
 
         return self.failed == 0
 
-
 async def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(description="Query Router API E2E Tests")
@@ -361,7 +357,6 @@ async def main():
     test = QueryRouterAPITest(base_url=args.url, api_key=args.api_key)
     success = await test.run_all_tests()
     sys.exit(0 if success else 1)
-
 
 if __name__ == "__main__":
     asyncio.run(main())

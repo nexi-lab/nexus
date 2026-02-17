@@ -19,7 +19,6 @@ import pytest
 
 pytestmark = pytest.mark.xdist_group("memory_append_only")
 
-
 class TestAppendOnlyUpdateE2E:
     """E2E tests for append-only update behavior (#1188)."""
 
@@ -109,7 +108,6 @@ class TestAppendOnlyUpdateE2E:
             assert resp.status_code == 200
             assert resp.json()["memory"]["content"] == "Version 3"
 
-
 class TestSoftDeleteE2E:
     """E2E tests for soft-delete behavior (#1188)."""
 
@@ -148,7 +146,6 @@ class TestSoftDeleteE2E:
         # GET should return 404
         resp = test_app.get(f"/api/v2/memories/{memory_id}")
         assert resp.status_code == 404
-
 
 class TestQueryFilteringE2E:
     """E2E tests for query filtering with append-only (#1188)."""
@@ -219,7 +216,6 @@ class TestQueryFilteringE2E:
         contents = {r["content"] for r in data["results"]}
         assert "V1 content" in contents
         assert "V2 content" in contents
-
 
 class TestLineageE2E:
     """E2E tests for lineage traversal (#1188)."""
@@ -301,7 +297,6 @@ class TestLineageE2E:
         """Lineage for nonexistent memory should return 404."""
         resp = test_app.get("/api/v2/memories/nonexistent-id/lineage")
         assert resp.status_code == 404
-
 
 class TestHistoryWithChainE2E:
     """E2E tests for version history working across append-only chains (#1188)."""

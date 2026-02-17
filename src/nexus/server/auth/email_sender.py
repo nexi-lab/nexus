@@ -4,13 +4,10 @@ Provides a Protocol for email sending and a default LogEmailSender
 that logs the verification URL to the console (development mode).
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Protocol
 
 logger = logging.getLogger(__name__)
-
 
 class EmailSenderProtocol(Protocol):
     """Protocol for sending verification emails."""
@@ -23,7 +20,6 @@ class EmailSenderProtocol(Protocol):
             verification_url: URL containing the verification token
         """
         ...
-
 
 class LogEmailSender:
     """Development email sender — logs verification URL to console."""

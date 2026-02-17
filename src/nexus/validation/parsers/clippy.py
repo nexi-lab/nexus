@@ -3,8 +3,6 @@
 Parses JSON-lines output from `cargo clippy --message-format json`.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import shlex
@@ -23,7 +21,6 @@ _CLIPPY_LEVEL_MAP: dict[str, _Severity] = {
     "note": "info",
     "help": "info",
 }
-
 
 class CargoClippyValidator(Validator):
     """Parser for cargo clippy JSON output."""

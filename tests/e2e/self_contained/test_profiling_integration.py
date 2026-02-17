@@ -5,15 +5,12 @@ the profiling module integrates properly with existing observability
 components (Grafana datasources, Docker Compose, Tempo correlation).
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import yaml
 
 OBSERVABILITY_DIR = Path(__file__).resolve().parents[3] / "observability"
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
-
 
 def _load_yaml(path: Path) -> dict:
     """Load and parse a YAML file, failing the test on syntax errors."""
@@ -23,11 +20,9 @@ def _load_yaml(path: Path) -> dict:
     assert isinstance(data, dict), f"Expected top-level dict in {path.name}"
     return data
 
-
 # ---------------------------------------------------------------------------
 # Pyroscope config validation
 # ---------------------------------------------------------------------------
-
 
 class TestPyroscopeConfig:
     """Validate observability/pyroscope/pyroscope.yml structure."""
@@ -53,11 +48,9 @@ class TestPyroscopeConfig:
         data = _load_yaml(self.CONFIG)
         assert data["limits"]["max_nodes_per_profile"] == 16384
 
-
 # ---------------------------------------------------------------------------
 # Grafana datasource validation
 # ---------------------------------------------------------------------------
-
 
 class TestGrafanaDatasourceIntegration:
     """Validate Pyroscope entry in Grafana datasource provisioning."""
@@ -84,11 +77,9 @@ class TestGrafanaDatasourceIntegration:
         pyroscope_ds = next(ds for ds in data["datasources"] if ds["name"] == "Pyroscope")
         assert pyroscope_ds["url"] == "http://pyroscope:4040"
 
-
 # ---------------------------------------------------------------------------
 # Tempo trace-to-profile correlation
 # ---------------------------------------------------------------------------
-
 
 class TestTempoTraceToProfile:
     """Validate tracesToProfiles config on Tempo datasource."""
@@ -113,11 +104,9 @@ class TestTempoTraceToProfile:
         assert "profileTypeId" in t2p
         assert "cpu" in t2p["profileTypeId"]
 
-
 # ---------------------------------------------------------------------------
 # Docker Compose validation
 # ---------------------------------------------------------------------------
-
 
 class TestDockerComposeIntegration:
     """Validate pyroscope service in docker-compose.observability.yml."""

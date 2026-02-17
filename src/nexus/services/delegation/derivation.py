@@ -14,8 +14,6 @@ Modes:
     SHARED: all parent grants (within scope_prefix) → cap at MAX
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 from nexus.services.delegation.errors import (
@@ -27,7 +25,6 @@ from nexus.services.delegation.errors import (
 from nexus.services.delegation.models import DelegationMode
 
 MAX_DELEGATABLE_GRANTS = 1000
-
 
 def validate_scope_prefix(prefix: str | None) -> None:
     """Validate scope_prefix at system boundary.
@@ -49,7 +46,6 @@ def validate_scope_prefix(prefix: str | None) -> None:
     if "/.." in prefix or "/../" in prefix or prefix.endswith("/.."):
         raise InvalidPrefixError(f"scope_prefix must not contain '..': {prefix!r}")
 
-
 @dataclass(frozen=True)
 class GrantSpec:
     """A single grant to materialize as a ReBAC tuple.
@@ -63,7 +59,6 @@ class GrantSpec:
     object_type: str
     object_id: str
     relation: str
-
 
 def derive_grants(
     parent_grants: list[tuple[str, str]],
@@ -127,7 +122,6 @@ def derive_grants(
 
     return result
 
-
 def _relation_rank(relation: str) -> int:
     """Rank relations by privilege level (higher = more privilege)."""
     if "editor" in relation:
@@ -136,7 +130,6 @@ def _relation_rank(relation: str) -> int:
         return 1
     return 0
 
-
 def _matches_prefix(object_id: str, prefix: str | None) -> bool:
     """Check if object_id matches the scope prefix."""
     if prefix is None:
@@ -144,7 +137,6 @@ def _matches_prefix(object_id: str, prefix: str | None) -> bool:
     # Normalize: ensure prefix ends with / for directory matching
     normalized = prefix.rstrip("/") + "/"
     return object_id.startswith(normalized) or object_id == prefix.rstrip("/")
-
 
 def _derive_copy(
     parent_map: dict[str, str],
@@ -167,7 +159,6 @@ def _derive_copy(
         result.append(GrantSpec(object_type="file", object_id=object_id, relation=relation))
     return result
 
-
 def _derive_clean(
     parent_map: dict[str, str],
     add_set: frozenset[str],
@@ -186,7 +177,6 @@ def _derive_clean(
         relation = parent_map[object_id]
         result.append(GrantSpec(object_type="file", object_id=object_id, relation=relation))
     return result
-
 
 def _derive_shared(
     parent_map: dict[str, str],

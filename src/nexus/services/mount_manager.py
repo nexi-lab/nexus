@@ -10,8 +10,6 @@ Supports:
 - Removing mount configurations
 """
 
-from __future__ import annotations
-
 import json
 import uuid
 from datetime import UTC, datetime
@@ -22,9 +20,9 @@ from sqlalchemy import select
 from nexus.core.router import MountConfig
 from nexus.storage.models import MountConfigModel
 
+from nexus.storage.record_store import RecordStoreABC
 if TYPE_CHECKING:
     from nexus.storage.record_store import RecordStoreABC
-
 
 class MountManager:
     """Manager for persistent mount configurations.

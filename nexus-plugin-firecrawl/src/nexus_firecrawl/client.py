@@ -6,7 +6,6 @@ from typing import Any, Optional
 import httpx
 from pydantic import BaseModel, ConfigDict, Field
 
-
 class ScrapeResponse(BaseModel):
     """Response from Firecrawl scrape endpoint."""
 
@@ -15,7 +14,6 @@ class ScrapeResponse(BaseModel):
     markdown: Optional[str] = None
     html: Optional[str] = None
     metadata: dict[str, Any] = Field(default_factory=dict)
-
 
 class CrawlJob(BaseModel):
     """Crawl job information."""
@@ -30,13 +28,11 @@ class CrawlJob(BaseModel):
     expires_at: Optional[str] = Field(default=None, alias="expiresAt")
     data: list[dict[str, Any]] = Field(default_factory=list)
 
-
 class MapResponse(BaseModel):
     """Response from Firecrawl map endpoint."""
 
     success: bool
     links: list[str] = Field(default_factory=list)
-
 
 class FirecrawlClient:
     """Async client for Firecrawl API.

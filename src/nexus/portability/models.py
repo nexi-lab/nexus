@@ -33,8 +33,6 @@ References:
 - Epic #1161: Zone Data Portability
 """
 
-from __future__ import annotations
-
 import builtins
 import hashlib
 import json
@@ -57,7 +55,6 @@ DEFAULT_HASH_ALGORITHM = "sha256"
 MANIFEST_SCHEMA_URL = "https://nexus.io/schemas/manifest-v1.json"
 MANIFEST_SCHEMA_PATH = Path(__file__).parent / "schemas" / "manifest-v1.json"
 
-
 class ConflictMode(StrEnum):
     """How to handle path collisions during import."""
 
@@ -66,7 +63,6 @@ class ConflictMode(StrEnum):
     MERGE = "merge"  # Merge metadata, prefer newer content
     FAIL = "fail"  # Abort import on first conflict
 
-
 class ContentMode(StrEnum):
     """How to handle content blobs during import."""
 
@@ -74,11 +70,9 @@ class ContentMode(StrEnum):
     REFERENCE = "reference"  # Only import references (content must exist)
     SKIP = "skip"  # Skip content entirely (metadata only)
 
-
 # =============================================================================
 # Checksum Models
 # =============================================================================
-
 
 @dataclass
 class FileChecksum:
@@ -134,7 +128,6 @@ class FileChecksum:
             hash=data["hash"],
             size_bytes=data["size_bytes"],
         )
-
 
 @dataclass
 class BundleChecksums:
@@ -271,11 +264,9 @@ class BundleChecksums:
             merkle_root=data.get("merkle_root"),
         )
 
-
 # =============================================================================
 # Export Options
 # =============================================================================
-
 
 @dataclass
 class ZoneExportOptions:
@@ -351,11 +342,9 @@ class ZoneExportOptions:
             # Note: encryption_key intentionally excluded for security
         }
 
-
 # =============================================================================
 # Import Options
 # =============================================================================
-
 
 @dataclass
 class ZoneImportOptions:
@@ -475,11 +464,9 @@ class ZoneImportOptions:
             # Note: decryption_key intentionally excluded for security
         }
 
-
 # =============================================================================
 # Export Manifest
 # =============================================================================
-
 
 @dataclass
 class ExportManifest:
@@ -763,11 +750,9 @@ class ExportManifest:
         schema: dict[str, Any] = json.loads(MANIFEST_SCHEMA_PATH.read_text())
         return schema
 
-
 # =============================================================================
 # Import Result
 # =============================================================================
-
 
 @dataclass
 class ImportError:
@@ -793,7 +778,6 @@ class ImportError:
             "message": self.message,
             "details": self.details,
         }
-
 
 @dataclass
 class ImportResult:
@@ -946,11 +930,9 @@ class ImportResult:
             f"duration={self.duration_seconds:.2f}s"
         )
 
-
 # =============================================================================
 # File Record Models (for JSONL streaming)
 # =============================================================================
-
 
 @dataclass
 class FileRecord:
@@ -1044,7 +1026,6 @@ class FileRecord:
         """Create from JSONL line."""
         return cls.from_dict(json.loads(line))
 
-
 @dataclass
 class PermissionRecord:
     """Permission tuple record for JSONL export.
@@ -1102,7 +1083,6 @@ class PermissionRecord:
     def from_jsonl(cls, line: str) -> Self:
         """Create from JSONL line."""
         return cls.from_dict(json.loads(line))
-
 
 # =============================================================================
 # Bundle Path Constants

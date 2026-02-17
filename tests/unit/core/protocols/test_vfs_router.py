@@ -1,7 +1,5 @@
 """Tests for VFSRouterProtocol, ResolvedPath, and MountInfo (Issue #1383)."""
 
-from __future__ import annotations
-
 import dataclasses
 
 import pytest
@@ -11,7 +9,6 @@ from nexus.core.protocols.vfs_router import MountInfo, ResolvedPath, VFSRouterPr
 # ---------------------------------------------------------------------------
 # ResolvedPath frozen dataclass tests
 # ---------------------------------------------------------------------------
-
 
 class TestResolvedPath:
     """Verify ResolvedPath is a proper frozen, slots dataclass."""
@@ -60,11 +57,9 @@ class TestResolvedPath:
         }
         assert ResolvedPath(**kwargs) == ResolvedPath(**kwargs)
 
-
 # ---------------------------------------------------------------------------
 # MountInfo frozen dataclass tests
 # ---------------------------------------------------------------------------
-
 
 class TestMountInfo:
     """Verify MountInfo is a proper frozen, slots dataclass."""
@@ -89,11 +84,9 @@ class TestMountInfo:
         assert mi.readonly is True
         assert mi.priority == 1
 
-
 # ---------------------------------------------------------------------------
 # Protocol structural tests
 # ---------------------------------------------------------------------------
-
 
 class TestVFSRouterProtocol:
     """Verify the protocol is runtime-checkable and has expected methods."""
@@ -107,11 +100,9 @@ class TestVFSRouterProtocol:
         }
         assert expected <= actual
 
-
 # ---------------------------------------------------------------------------
 # Conformance test against existing PathRouter
 # ---------------------------------------------------------------------------
-
 
 class TestPathRouterConformance:
     """Verify existing PathRouter has the methods the protocol expects."""

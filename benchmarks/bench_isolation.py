@@ -10,15 +10,12 @@ Measures ops/sec and p50/p95/p99 latency for:
     - IsolatedBackend with InterpreterPoolExecutor (Python 3.14+ only)
 """
 
-from __future__ import annotations
-
 import hashlib
 import sys
 import time
 from typing import Any
 
 # ── Inline MockBackend (avoids importing test fixtures) ─────────────────
-
 
 class BenchMockBackend:
     """Minimal in-memory backend for benchmarking."""
@@ -117,9 +114,7 @@ class BenchMockBackend:
     def list_dir(self, path: str, context: Any = None) -> list[str]:  # noqa: ARG002
         return []
 
-
 # ── Benchmark harness ──────────────────────────────────────────────────
-
 
 def _percentile(data: list[float], pct: float) -> float:
     """Return the *pct*-th percentile of *data* (0–100)."""
@@ -129,7 +124,6 @@ def _percentile(data: list[float], pct: float) -> float:
     upper = min(lower + 1, len(sorted_data) - 1)
     frac = idx - lower
     return sorted_data[lower] * (1 - frac) + sorted_data[upper] * frac
-
 
 def bench(label: str, func: Any, n: int = 1000) -> dict[str, float]:
     """Run *func* *n* times, report ops/sec and latency percentiles."""
@@ -148,7 +142,6 @@ def bench(label: str, func: Any, n: int = 1000) -> dict[str, float]:
 
     print(f"  {label:30s}  {ops:8.1f} ops/s  p50={p50:6.2f}ms  p95={p95:6.2f}ms  p99={p99:6.2f}ms")
     return {"ops": ops, "p50": p50, "p95": p95, "p99": p99}
-
 
 def main() -> None:
     from nexus.isolation import IsolatedBackend, IsolationConfig
@@ -221,7 +214,6 @@ def main() -> None:
 
     print()
     print("Done.")
-
 
 if __name__ == "__main__":
     main()

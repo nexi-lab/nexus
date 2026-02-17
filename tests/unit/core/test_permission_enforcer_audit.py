@@ -21,13 +21,11 @@ import pytest
 from nexus.core.permissions import OperationContext, Permission
 from nexus.services.permissions.enforcer import PermissionEnforcer
 
-
 class MockReBACManager:
     """Mock ReBAC manager."""
 
     def rebac_check(self, subject, permission, object, zone_id):
         return False  # Always deny
-
 
 class MockAuditStore:
     """Mock audit store that captures all audit entries."""
@@ -38,7 +36,6 @@ class MockAuditStore:
     def log_bypass(self, entry):
         """Log a bypass attempt."""
         self.entries.append(entry)
-
 
 class TestAdminBypassAuditLogging:
     """Test audit logging for admin bypass operations."""
@@ -181,7 +178,6 @@ class TestAdminBypassAuditLogging:
         assert "admin:write:*" in entry.capabilities
         assert "admin:delete:*" in entry.capabilities
 
-
 class TestSystemBypassAuditLogging:
     """Test audit logging for system bypass operations."""
 
@@ -252,7 +248,6 @@ class TestSystemBypassAuditLogging:
         assert entry.permission == "write"
         assert entry.path == "/workspace/file.txt"
 
-
 class TestAuditLoggingWithoutAuditStore:
     """Test that operations work when audit store is None."""
 
@@ -298,7 +293,6 @@ class TestAuditLoggingWithoutAuditStore:
         # Should fall through to ReBAC without error
         result = enforcer.check("/file.txt", Permission.READ, ctx)
         assert result is False  # ReBAC denies
-
 
 class TestAuditEntryStructure:
     """Test the structure and content of audit log entries."""
@@ -373,7 +367,6 @@ class TestAuditEntryStructure:
 
         entry = audit_store.entries[0]
         assert entry.zone_id == "zone_alpha"
-
 
 class TestMultipleBypassAttempts:
     """Test audit logging for multiple bypass attempts."""

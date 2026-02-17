@@ -9,7 +9,6 @@ from nexus.core.exceptions import NexusError, NexusFileNotFoundError, NexusPermi
 from nexus.remote.client import RemoteNexusFS
 from nexus.server.protocol import RPCErrorCode
 
-
 class TestRemoteNexusFS:
     """Tests for RemoteNexusFS client."""
 
@@ -173,7 +172,6 @@ class TestRemoteNexusFS:
         """Test close method."""
         client.close()
         mock_client.close.assert_called_once()
-
 
 @pytest.mark.skip(
     reason="TODO: https://github.com/nexi-lab/nexus/issues/1702 — enable_load_extension unavailable on Python 3.13"

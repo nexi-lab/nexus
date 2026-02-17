@@ -10,8 +10,6 @@ Usage:
     uv run pytest tests/e2e/test_wildcard_public_access_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import json
 import uuid
 from pathlib import Path
@@ -22,7 +20,6 @@ from sqlalchemy import create_engine, text
 
 # JWT secret must match conftest.py
 JWT_SECRET = "test-secret-key-for-e2e-12345"
-
 
 def create_test_user(db_path: Path, zone_id: str = "root") -> dict:
     """Create a test user and return auth info."""
@@ -49,7 +46,6 @@ def create_test_user(db_path: Path, zone_id: str = "root") -> dict:
         "token": token,
         "headers": {"Authorization": f"Bearer {token}"},
     }
-
 
 def write_rebac_tuple(
     db_path: Path,
@@ -92,7 +88,6 @@ def write_rebac_tuple(
         conn.commit()
 
     return tuple_id
-
 
 class TestWildcardPublicAccessE2E:
     """E2E tests for wildcard public access."""
@@ -156,7 +151,6 @@ class TestWildcardPublicAccessE2E:
         # User B (different zone) should also have access via wildcard
         result_b = rpc("read", {"path": test_file}, headers=user_b["headers"])
         assert "error" not in result_b, f"User B should have access via wildcard: {result_b}"
-
 
 class TestWildcardDirectDB:
     """Direct database tests for wildcard - doesn't require full server."""
@@ -335,7 +329,6 @@ class TestWildcardDirectDB:
             zone_id="root",
         )
         assert result is False, "Wildcard reader should not grant write permission"
-
 
 class TestWildcardPerformance:
     """Performance tests to verify wildcard check doesn't impact performance."""

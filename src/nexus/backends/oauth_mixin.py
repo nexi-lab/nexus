@@ -10,12 +10,9 @@ Usage:
             ...
 """
 
-from __future__ import annotations
-
 import logging
 
 logger = logging.getLogger(__name__)
-
 
 class OAuthConnectorMixin:
     """Shared OAuth setup for connector backends.

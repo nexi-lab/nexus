@@ -6,25 +6,20 @@ import pytest
 
 from nexus.core.registry import BrickInfo, BrickRegistry
 
-
 @runtime_checkable
 class Greetable(Protocol):
     def greet(self) -> str: ...
-
 
 class HelloBrick:
     def greet(self) -> str:
         return "hello"
 
-
 class BadBrick:
     pass
-
 
 @pytest.fixture()
 def registry() -> BrickRegistry:
     return BrickRegistry()
-
 
 class TestRegisterBrick:
     def test_register_compliant(self, registry: BrickRegistry) -> None:
@@ -55,7 +50,6 @@ class TestRegisterBrick:
         )
         assert registry.get_or_raise("hello").metadata == {"v": "2"}
 
-
 class TestListByProtocol:
     def test_filter(self, registry: BrickRegistry) -> None:
         @runtime_checkable
@@ -73,7 +67,6 @@ class TestListByProtocol:
         assert len(greetables) == 1
         assert greetables[0].name == "h"
 
-
 class TestGetBrickClass:
     def test_get_brick_class(self, registry: BrickRegistry) -> None:
         registry.register_brick("hello", HelloBrick, Greetable)
@@ -82,7 +75,6 @@ class TestGetBrickClass:
     def test_get_brick_class_missing(self, registry: BrickRegistry) -> None:
         with pytest.raises(KeyError):
             registry.get_brick_class("nope")
-
 
 class TestBrickInfoFrozen:
     def test_frozen_attribute(self) -> None:

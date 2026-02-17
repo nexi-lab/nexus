@@ -6,8 +6,6 @@ Tests are skipped if the _nexus_wal Rust extension is not compiled.
 Issue #1397
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import pytest
@@ -24,7 +22,6 @@ try:
 except ImportError:
     pytest.skip("_nexus_wal extension not available", allow_module_level=True)
 
-
 def _make_event(
     path: str = "/test.txt",
     zone_id: str = "zone-1",
@@ -32,18 +29,15 @@ def _make_event(
 ) -> FileEvent:
     return FileEvent(type=event_type, path=path, zone_id=zone_id)
 
-
 @pytest.fixture()
 def wal_dir(tmp_path: Path) -> Path:
     d = tmp_path / "wal"
     d.mkdir()
     return d
 
-
 @pytest.fixture()
 def config(wal_dir: Path) -> EventLogConfig:
     return EventLogConfig(wal_dir=wal_dir, sync_mode="every")
-
 
 @pytest.fixture()
 def wal(config: EventLogConfig) -> WALEventLog:
@@ -54,7 +48,6 @@ def wal(config: EventLogConfig) -> WALEventLog:
         log._wal.close()
     except Exception:
         pass
-
 
 class TestAppend:
     @pytest.mark.asyncio()
@@ -74,7 +67,6 @@ class TestAppend:
         events = [_make_event(path=f"/batch-{i}.txt") for i in range(10)]
         seqs = await wal.append_batch(events)
         assert seqs == list(range(1, 11))
-
 
 class TestReadFrom:
     @pytest.mark.asyncio()
@@ -112,7 +104,6 @@ class TestReadFrom:
         events = await wal.read_from(1, limit=100)
         assert events == []
 
-
 class TestTruncate:
     @pytest.mark.asyncio()
     async def test_truncate(self, wal_dir: Path) -> None:
@@ -132,7 +123,6 @@ class TestTruncate:
         finally:
             await wal.close()
 
-
 class TestSyncAndClose:
     @pytest.mark.asyncio()
     async def test_sync_no_error(self, wal: WALEventLog) -> None:
@@ -149,7 +139,6 @@ class TestSyncAndClose:
     async def test_health_check_open(self, wal: WALEventLog) -> None:
         assert await wal.health_check()
 
-
 class TestContextManager:
     @pytest.mark.asyncio()
     async def test_async_context_manager(self, config: EventLogConfig) -> None:
@@ -159,7 +148,6 @@ class TestContextManager:
         # After exit, should be closed
         assert not await wal.health_check()
 
-
 class TestCurrentSequence:
     @pytest.mark.asyncio()
     async def test_current_sequence(self, wal: WALEventLog) -> None:
@@ -168,7 +156,6 @@ class TestCurrentSequence:
         assert wal.current_sequence() == 1
         await wal.append(_make_event())
         assert wal.current_sequence() == 2
-
 
 class TestEdgeCases:
     @pytest.mark.asyncio()

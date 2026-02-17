@@ -4,15 +4,12 @@ Implements lightweight named entity extraction inspired by SimpleMem's
 symbolic layer for improved multi-hop query performance.
 """
 
-from __future__ import annotations
-
 import re
 from dataclasses import dataclass
 from typing import Literal
 
 # Entity type definitions
 EntityType = Literal["PERSON", "ORG", "LOCATION", "DATE", "NUMBER", "EMAIL", "URL", "ENTITY"]
-
 
 @dataclass
 class ExtractedEntity:
@@ -31,7 +28,6 @@ class ExtractedEntity:
             "start": self.start,
             "end": self.end,
         }
-
 
 class EntityExtractor:
     """Extract named entities using lightweight NER.
@@ -396,10 +392,8 @@ class EntityExtractor:
         # Default to generic entity
         return "ENTITY"
 
-
 # Module-level convenience functions
 _default_extractor: EntityExtractor | None = None
-
 
 def get_default_extractor() -> EntityExtractor:
     """Get or create the default entity extractor.
@@ -412,7 +406,6 @@ def get_default_extractor() -> EntityExtractor:
         _default_extractor = EntityExtractor(use_spacy=False)
     return _default_extractor
 
-
 def extract_entities(text: str) -> list[ExtractedEntity]:
     """Extract entities from text using default extractor.
 
@@ -423,7 +416,6 @@ def extract_entities(text: str) -> list[ExtractedEntity]:
         List of extracted entities.
     """
     return get_default_extractor().extract(text)
-
 
 def extract_entities_as_dicts(text: str) -> list[dict[str, str | int]]:
     """Extract entities as dictionaries using default extractor.

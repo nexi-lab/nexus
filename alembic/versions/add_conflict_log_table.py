@@ -36,7 +36,6 @@ down_revision: Union[str, Sequence[str], None] = "add_sync_backlog"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Create conflict_log table + add conflict_strategy to mount_configs."""
     # --- conflict_log table ---
@@ -84,7 +83,6 @@ def upgrade() -> None:
         "mount_configs",
         sa.Column("conflict_strategy", sa.String(50), nullable=True),
     )
-
 
 def downgrade() -> None:
     """Drop conflict_log table and conflict_strategy column."""

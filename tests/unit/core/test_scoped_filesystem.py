@@ -3,14 +3,11 @@
 Tests path scoping/unscoping for multi-zone isolation.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, PropertyMock
 
 import pytest
 
 from nexus.core.scoped_filesystem import ScopedFilesystem
-
 
 @pytest.fixture
 def mock_fs() -> MagicMock:
@@ -21,12 +18,10 @@ def mock_fs() -> MagicMock:
     type(fs).zone_id = PropertyMock(return_value="test-zone")
     return fs
 
-
 @pytest.fixture
 def scoped_fs(mock_fs: MagicMock) -> ScopedFilesystem:
     """Create a ScopedFilesystem with a test root."""
     return ScopedFilesystem(mock_fs, root="/zones/team_12/users/user_1")
-
 
 class TestPathScoping:
     """Test path scoping and unscoping logic."""
@@ -82,7 +77,6 @@ class TestPathScoping:
         assert result["size"] == 100
         assert result["etag"] == "abc123"
 
-
 class TestRootNormalization:
     """Test root path normalization."""
 
@@ -108,7 +102,6 @@ class TestRootNormalization:
         assert fs.root == ""
         assert fs._scope_path("/workspace/file.txt") == "/workspace/file.txt"
 
-
 class TestProperties:
     """Test property delegation."""
 
@@ -127,7 +120,6 @@ class TestProperties:
     def test_wrapped_fs_property(self, scoped_fs: ScopedFilesystem, mock_fs: MagicMock) -> None:
         """Test wrapped_fs property."""
         assert scoped_fs.wrapped_fs is mock_fs
-
 
 class TestCoreFileOperations:
     """Test core file operation path scoping."""
@@ -254,7 +246,6 @@ class TestCoreFileOperations:
         mock_fs.exists.assert_called_once_with("/zones/team_12/users/user_1/workspace/file.txt")
         assert result is True
 
-
 class TestFileDiscoveryOperations:
     """Test file discovery operation path scoping."""
 
@@ -302,7 +293,6 @@ class TestFileDiscoveryOperations:
         mock_fs.grep.assert_called_once()
         assert result[0]["file"] == "/workspace/app.py"
 
-
 class TestDirectoryOperations:
     """Test directory operation path scoping."""
 
@@ -326,7 +316,6 @@ class TestDirectoryOperations:
             "/zones/team_12/users/user_1/workspace/dir", None
         )
         assert result is True
-
 
 class TestVersionOperations:
     """Test version operation path scoping."""
@@ -357,7 +346,6 @@ class TestVersionOperations:
         mock_fs.rollback.assert_called_once_with(
             "/zones/team_12/users/user_1/workspace/file.txt", 1, None
         )
-
 
 class TestWorkspaceOperations:
     """Test workspace operation path scoping."""
@@ -397,7 +385,6 @@ class TestWorkspaceOperations:
         )
         assert result["workspace_path"] == "/workspace"
 
-
 class TestMountOperations:
     """Test mount operation path scoping."""
 
@@ -422,7 +409,6 @@ class TestMountOperations:
         result = scoped_fs.list_mounts()
         assert result[0]["mount_point"] == "/external/gcs"
 
-
 class TestSandboxOperations:
     """Test that sandbox operations are passed through without path scoping."""
 
@@ -432,7 +418,6 @@ class TestSandboxOperations:
         result = scoped_fs.sandbox_create("test-sandbox")
         mock_fs.sandbox_create.assert_called_once_with("test-sandbox", 10, "e2b", None, None)
         assert result["sandbox_id"] == "sb-123"
-
 
 class TestLifecycleManagement:
     """Test lifecycle management."""

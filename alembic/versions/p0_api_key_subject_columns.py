@@ -21,7 +21,6 @@ down_revision: Union[str, Sequence[str], None] = "a5bf12f44bc8"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add subject_type and subject_id columns to api_keys table.
 
@@ -54,7 +53,6 @@ def upgrade() -> None:
         SET subject_id = user_id
         WHERE subject_id IS NULL
     """)
-
 
 def downgrade() -> None:
     """Remove subject_type and subject_id columns."""

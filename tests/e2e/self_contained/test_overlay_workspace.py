@@ -13,8 +13,6 @@ These tests use real WorkspaceManifest serialization and OverlayResolver,
 with mocked metadata store and backend for isolation.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest
@@ -25,7 +23,6 @@ from nexus.services.overlay_resolver import (
     OverlayConfig,
     OverlayResolver,
 )
-
 
 class InMemoryMetadata:
     """Simple in-memory metadata store for integration testing.
@@ -60,7 +57,6 @@ class InMemoryMetadata:
         for path in paths:
             self._store.pop(path, None)
 
-
 @pytest.fixture
 def base_manifest() -> WorkspaceManifest:
     """Shared base manifest representing a workspace snapshot."""
@@ -81,7 +77,6 @@ def base_manifest() -> WorkspaceManifest:
         }
     )
 
-
 @pytest.fixture
 def mock_backend(base_manifest: WorkspaceManifest) -> MagicMock:
     """Mock CAS backend that serves the base manifest."""
@@ -90,18 +85,15 @@ def mock_backend(base_manifest: WorkspaceManifest) -> MagicMock:
     backend.read_content.return_value = MagicMock(unwrap=MagicMock(return_value=manifest_json))
     return backend
 
-
 @pytest.fixture
 def agent_a_metadata() -> InMemoryMetadata:
     """In-memory metadata store for agent A (upper layer)."""
     return InMemoryMetadata()
 
-
 @pytest.fixture
 def agent_b_metadata() -> InMemoryMetadata:
     """In-memory metadata store for agent B (upper layer)."""
     return InMemoryMetadata()
-
 
 @pytest.fixture
 def overlay_config() -> OverlayConfig:
@@ -112,18 +104,15 @@ def overlay_config() -> OverlayConfig:
         agent_id="agent-a",
     )
 
-
 @pytest.fixture
 def resolver_a(agent_a_metadata: InMemoryMetadata, mock_backend: MagicMock) -> OverlayResolver:
     """OverlayResolver for agent A."""
     return OverlayResolver(metadata=agent_a_metadata, backend=mock_backend)
 
-
 @pytest.fixture
 def resolver_b(agent_b_metadata: InMemoryMetadata, mock_backend: MagicMock) -> OverlayResolver:
     """OverlayResolver for agent B."""
     return OverlayResolver(metadata=agent_b_metadata, backend=mock_backend)
-
 
 class TestOverlayWorkspaceLifecycle:
     """End-to-end overlay workspace lifecycle."""
@@ -294,7 +283,6 @@ class TestOverlayWorkspaceLifecycle:
         # Savings = sum of unmodified base file sizes
         assert stats.estimated_savings_bytes == 800 + 300 + 500  # utils + config + readme
 
-
 class TestTwoAgentsSharingBase:
     """Two agents sharing the same base snapshot with independent upper layers."""
 
@@ -372,7 +360,6 @@ class TestTwoAgentsSharingBase:
         # In production, both resolvers would share the same OverlayResolver instance
         # or the manifest would be cached at a higher level
 
-
 class TestNonOverlayWorkspaceUnaffected:
     """Non-overlay workspaces should behave exactly as before."""
 
@@ -406,7 +393,6 @@ class TestNonOverlayWorkspaceUnaffected:
         result = resolver_a.list_overlay("/regular/", config)
         assert len(result) == 1
         assert result[0].path == "/regular/file.txt"
-
 
 class TestManifestRoundTrip:
     """Integration test for manifest serialization through the full pipeline."""

@@ -9,8 +9,6 @@ Covers the security-critical Relationship-Based Access Control service:
 - Permission enforcement (share permission checks)
 """
 
-from __future__ import annotations
-
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock
 
@@ -22,7 +20,6 @@ from nexus.services.rebac_service import ReBACService
 # =========================================================================
 # Fixtures
 # =========================================================================
-
 
 @pytest.fixture
 def mock_rebac_manager():
@@ -55,7 +52,6 @@ def mock_rebac_manager():
     mock.cache_ttl_seconds = 300
     return mock
 
-
 @pytest.fixture
 def service(mock_rebac_manager):
     """Create ReBACService with mocked manager and permissions disabled."""
@@ -64,7 +60,6 @@ def service(mock_rebac_manager):
         enforce_permissions=False,
         enable_audit_logging=True,
     )
-
 
 @pytest.fixture
 def enforced_service(mock_rebac_manager):
@@ -75,7 +70,6 @@ def enforced_service(mock_rebac_manager):
         enable_audit_logging=True,
     )
 
-
 @pytest.fixture
 def no_manager_service():
     """Create ReBACService without a ReBAC manager."""
@@ -84,11 +78,9 @@ def no_manager_service():
         enforce_permissions=False,
     )
 
-
 # =========================================================================
 # Initialization Tests
 # =========================================================================
-
 
 class TestReBACServiceInit:
     """Test ReBACService initialization."""
@@ -116,11 +108,9 @@ class TestReBACServiceInit:
         assert svc._enforce_permissions is True
         assert svc._enable_audit_logging is True
 
-
 # =========================================================================
 # rebac_create Tests
 # =========================================================================
-
 
 class TestReBACCreate:
     """Test rebac_create - the core permission granting operation."""
@@ -334,11 +324,9 @@ class TestReBACCreate:
                 column_config={"hidden_columns": ["password"]},
             )
 
-
 # =========================================================================
 # rebac_check Tests
 # =========================================================================
-
 
 class TestReBACCheck:
     """Test rebac_check - the core permission checking operation."""
@@ -471,11 +459,9 @@ class TestReBACCheck:
         call_kwargs = mock_rebac_manager.rebac_check.call_args[1]
         assert call_kwargs["consistency"] is not None
 
-
 # =========================================================================
 # rebac_check_batch Tests
 # =========================================================================
-
 
 class TestReBACCheckBatch:
     """Test rebac_check_batch - efficient bulk permission checks."""
@@ -527,11 +513,9 @@ class TestReBACCheckBatch:
         results = await service.rebac_check_batch(checks=[])
         assert results == []
 
-
 # =========================================================================
 # rebac_expand Tests
 # =========================================================================
-
 
 class TestReBACExpand:
     """Test rebac_expand - find all subjects with a permission."""
@@ -563,11 +547,9 @@ class TestReBACExpand:
                 object="not-a-tuple",
             )
 
-
 # =========================================================================
 # rebac_explain Tests
 # =========================================================================
-
 
 class TestReBACExplain:
     """Test rebac_explain - debugging API for permission checks."""
@@ -630,11 +612,9 @@ class TestReBACExplain:
         call_kwargs = mock_rebac_manager.rebac_explain.call_args[1]
         assert call_kwargs["zone_id"] == "zone-acme"
 
-
 # =========================================================================
 # rebac_delete Tests
 # =========================================================================
-
 
 class TestReBACDelete:
     """Test rebac_delete - removing relationship tuples."""
@@ -660,11 +640,9 @@ class TestReBACDelete:
         with pytest.raises(RuntimeError, match="ReBAC manager is not available"):
             await no_manager_service.rebac_delete(tuple_id="tuple-123")
 
-
 # =========================================================================
 # Configuration Tests (set_rebac_option / get_rebac_option)
 # =========================================================================
-
 
 class TestReBACConfig:
     """Test ReBAC configuration management."""
@@ -723,11 +701,9 @@ class TestReBACConfig:
         with pytest.raises(RuntimeError, match="ReBAC manager is not available"):
             no_manager_service.get_rebac_option("max_depth")
 
-
 # =========================================================================
 # register_namespace Tests
 # =========================================================================
-
 
 class TestRegisterNamespace:
     """Test namespace registration for permission models."""
@@ -770,11 +746,9 @@ class TestRegisterNamespace:
                 }
             )
 
-
 # =========================================================================
 # _get_subject_from_context Tests
 # =========================================================================
-
 
 class TestGetSubjectFromContext:
     """Test the helper method that extracts subjects from various context formats."""
@@ -808,11 +782,9 @@ class TestGetSubjectFromContext:
         result = service._get_subject_from_context(None)
         assert result is None
 
-
 # =========================================================================
 # _check_share_permission Tests
 # =========================================================================
-
 
 class TestCheckSharePermission:
     """Test the permission guard used before sharing operations."""

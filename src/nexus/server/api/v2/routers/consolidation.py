@@ -7,8 +7,6 @@ Provides 4 endpoints for memory consolidation:
 - POST /api/v2/consolidate/decay        - Apply importance decay
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -34,11 +32,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/consolidate", tags=["consolidation"])
 
-
 # =============================================================================
 # Endpoints
 # =============================================================================
-
 
 @router.post("", response_model=ConsolidationResponse)
 async def consolidate_by_affinity(
@@ -75,7 +71,6 @@ async def consolidate_by_affinity(
     except Exception as e:
         logger.error(f"Consolidation error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to consolidate memories") from e
-
 
 @router.post("/hierarchy", response_model=HierarchyResponse)
 async def build_hierarchy(
@@ -126,7 +121,6 @@ async def build_hierarchy(
         logger.error(f"Hierarchy build error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to build hierarchy") from e
 
-
 @router.get("/hierarchy/{memory_id}")
 async def get_hierarchy_for_memory(
     memory_id: str,
@@ -147,7 +141,6 @@ async def get_hierarchy_for_memory(
     except Exception as e:
         logger.error(f"Hierarchy get error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to retrieve hierarchy") from e
-
 
 @router.post("/decay", response_model=DecayResponse)
 async def apply_decay(

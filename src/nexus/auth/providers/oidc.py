@@ -1,7 +1,5 @@
 """OAuth/OIDC authentication provider for SSO integration."""
 
-from __future__ import annotations
-
 import logging
 import time
 from typing import Any
@@ -17,7 +15,6 @@ logger = logging.getLogger(__name__)
 ALLOWED_ALGORITHMS = ["RS256", "RS384", "RS512", "ES256", "ES384", "ES512"]
 CLOCK_SKEW_SECONDS = 300  # +/- 5 minutes
 JWKS_CACHE_TTL = 3600  # 1 hour
-
 
 class OIDCAuth(AuthProvider):
     """OAuth/OIDC authentication provider.
@@ -258,7 +255,7 @@ class OIDCAuth(AuthProvider):
             return issuer.replace("https://", "").replace("http://", "").split("/")[0]
 
     @classmethod
-    def from_config(cls, config: dict[str, Any]) -> OIDCAuth:
+    def from_config(cls, config: dict[str, Any]) -> "OIDCAuth":
         """Create from configuration dictionary."""
         return cls(
             issuer=config["issuer"],
@@ -271,7 +268,6 @@ class OIDCAuth(AuthProvider):
             allow_default_zone=config.get("allow_default_zone", False),
             require_zone=config.get("require_zone", False),
         )
-
 
 class MultiOIDCAuth(AuthProvider):
     """Support multiple OIDC providers."""
@@ -301,7 +297,7 @@ class MultiOIDCAuth(AuthProvider):
             provider.close()
 
     @classmethod
-    def from_config(cls, config: dict[str, Any]) -> MultiOIDCAuth:
+    def from_config(cls, config: dict[str, Any]) -> "MultiOIDCAuth":
         """Create from configuration dictionary."""
         providers = {
             name: OIDCAuth.from_config(provider_config)

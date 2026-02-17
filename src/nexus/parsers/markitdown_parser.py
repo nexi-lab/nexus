@@ -11,7 +11,6 @@ from nexus.parsers.types import ParseResult, TextChunk
 
 logger = logging.getLogger(__name__)
 
-
 class MarkItDownParser(Parser):
     """Parser using Microsoft's MarkItDown library.
 

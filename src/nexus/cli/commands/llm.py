@@ -1,7 +1,5 @@
 """LLM-powered document reading commands."""
 
-from __future__ import annotations
-
 import asyncio
 import sys
 from typing import Any
@@ -16,11 +14,9 @@ from nexus.cli.utils import (
     handle_error,
 )
 
-
 def register_commands(cli: click.Group) -> None:
     """Register LLM commands."""
     cli.add_command(llm)
-
 
 @click.group()
 def llm() -> None:
@@ -29,7 +25,6 @@ def llm() -> None:
     Use AI to read, analyze, and answer questions about documents.
     """
     pass
-
 
 @llm.command()
 @click.argument("path", type=str)
@@ -176,7 +171,6 @@ def read(
     except Exception as e:
         handle_error(e)
 
-
 async def _read_simple(
     nx: Any,
     path: str,
@@ -204,7 +198,6 @@ async def _read_simple(
 
     console.print("[green]Answer:[/green]")
     console.print(answer)
-
 
 async def _read_detailed(
     nx: Any,
@@ -266,7 +259,6 @@ async def _read_detailed(
         console.print("  [green]Cached response[/green]")
         if result.cache_savings:
             console.print(f"  Cache savings: ${result.cache_savings:.4f}")
-
 
 async def _read_stream(
     nx: Any,

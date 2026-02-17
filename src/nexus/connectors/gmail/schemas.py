@@ -24,8 +24,6 @@ Example email composition:
     ```
 """
 
-from __future__ import annotations
-
 import re
 from typing import Annotated, Literal
 
@@ -33,7 +31,6 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 # Email address pattern (simplified RFC 5322)
 EMAIL_PATTERN = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
-
 
 class Recipient(BaseModel):
     """Email recipient with optional display name.
@@ -52,7 +49,6 @@ class Recipient(BaseModel):
             raise ValueError(f"Invalid email address format: {v}")
         return v.lower()
 
-
 class Attachment(BaseModel):
     """Email attachment reference.
 
@@ -67,7 +63,6 @@ class Attachment(BaseModel):
         str | None,
         Field(default=None, description="MIME type (auto-detected if not set)"),
     ]
-
 
 class SendEmailSchema(BaseModel):
     """Schema for composing and sending a new email.
@@ -152,7 +147,7 @@ class SendEmailSchema(BaseModel):
         return validated
 
     @model_validator(mode="after")
-    def validate_confirm_required(self) -> SendEmailSchema:
+    def validate_confirm_required(self) -> "SendEmailSchema":
         """Ensure confirm=true is set before sending."""
         if not self.confirm:
             raise ValueError(
@@ -160,7 +155,6 @@ class SendEmailSchema(BaseModel):
                 "This ensures the agent has explicit user approval."
             )
         return self
-
 
 class ReplyEmailSchema(BaseModel):
     """Schema for replying to an existing email thread.
@@ -219,7 +213,7 @@ class ReplyEmailSchema(BaseModel):
     ]
 
     @model_validator(mode="after")
-    def validate_confirm_required(self) -> ReplyEmailSchema:
+    def validate_confirm_required(self) -> "ReplyEmailSchema":
         """Ensure confirm=true is set before sending."""
         if not self.confirm:
             raise ValueError(
@@ -227,7 +221,6 @@ class ReplyEmailSchema(BaseModel):
                 "This ensures the agent has explicit user approval."
             )
         return self
-
 
 class ForwardEmailSchema(BaseModel):
     """Schema for forwarding an email.
@@ -290,7 +283,7 @@ class ForwardEmailSchema(BaseModel):
         return validated
 
     @model_validator(mode="after")
-    def validate_confirm_required(self) -> ForwardEmailSchema:
+    def validate_confirm_required(self) -> "ForwardEmailSchema":
         """Ensure confirm=true is set before forwarding."""
         if not self.confirm:
             raise ValueError(
@@ -298,7 +291,6 @@ class ForwardEmailSchema(BaseModel):
                 "This ensures the agent has explicit user approval."
             )
         return self
-
 
 class DraftEmailSchema(BaseModel):
     """Schema for creating an email draft (doesn't send).

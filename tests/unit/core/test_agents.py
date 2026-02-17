@@ -15,14 +15,12 @@ from nexus.core.agents import (
 from nexus.rebac.entity_registry import EntityRegistry
 from nexus.storage.models import Base
 
-
 @pytest.fixture
 def engine():
     """Create in-memory SQLite database for testing."""
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     return engine
-
 
 @pytest.fixture
 def session(engine):
@@ -33,12 +31,10 @@ def session(engine):
     session.rollback()
     session.close()
 
-
 @pytest.fixture
 def entity_registry(session):
     """Create entity registry."""
     return EntityRegistry(session)
-
 
 class TestRegisterAgent:
     """Test register_agent function."""
@@ -147,7 +143,6 @@ class TestRegisterAgent:
         children = entity_registry.get_children("user", "alice")
         assert len(children) == 2
 
-
 class TestCreateAgentWithAPIKey:
     """Test create_agent_with_api_key function."""
 
@@ -238,7 +233,6 @@ class TestCreateAgentWithAPIKey:
         assert agent["zone_id"] == "acme"
         assert agent["metadata"]["version"] == "1.0"
 
-
 class TestUnregisterAgent:
     """Test unregister_agent function."""
 
@@ -284,7 +278,6 @@ class TestUnregisterAgent:
         # Verify agent2 still exists
         entity = entity_registry.get_entity("agent", "agent2")
         assert entity is not None
-
 
 class TestValidateAgentOwnership:
     """Test validate_agent_ownership function."""
@@ -352,7 +345,6 @@ class TestValidateAgentOwnership:
 
         # Bob cannot access Alice's agent
         assert validate_agent_ownership("agent_alice", "bob", entity_registry) is False
-
 
 class TestAgentIntegration:
     """Integration tests for agent management."""
@@ -492,7 +484,6 @@ class TestAgentIntegration:
         # Note: Depending on implementation, this might create duplicate or update
         # Current implementation creates new entry each time
         # This test documents current behavior
-
 
 class TestAgentPermissionManagement:
     """Test agent permission management features (generate_api_key, inherit_permissions, zone_id)."""

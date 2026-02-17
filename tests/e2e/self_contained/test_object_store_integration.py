@@ -4,14 +4,11 @@ Validates that BackendObjectStore works correctly when wrapping a backend
 created by BackendFactory, matching the CacheStoreABC integration test pattern.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.backends.local import LocalBackend
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import BackendObjectStore, ObjectStoreABC
-
 
 class TestFactoryToAdapterIntegration:
     """Tests the full chain: BackendFactory → Backend → BackendObjectStore."""

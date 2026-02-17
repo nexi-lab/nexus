@@ -23,7 +23,6 @@ from sqlalchemy.orm import sessionmaker  # noqa: E402
 
 from nexus.auth.providers.database_key import DatabaseAPIKeyAuth  # noqa: E402
 
-
 def check_api_key(database_url: str, api_key: str) -> str:
     """
     Check if API key exists in database.
@@ -50,7 +49,6 @@ def check_api_key(database_url: str, api_key: str) -> str:
     except Exception:
         return "MISSING"
 
-
 def main() -> None:
     """Main entry point."""
     if len(sys.argv) < 3:
@@ -67,7 +65,6 @@ def main() -> None:
     result = check_api_key(database_url, api_key)
     print(result)
     sys.exit(0 if result == "EXISTS" else 1)
-
 
 if __name__ == "__main__":
     main()

@@ -6,8 +6,6 @@ Verifies that the auth brick:
 - Works with a mock session_factory (no real database needed)
 """
 
-from __future__ import annotations
-
 import contextlib
 import importlib
 import sys
@@ -27,13 +25,11 @@ _REQUIRED_MODULES = [
     "nexus.auth.providers.discriminator",
 ]
 
-
 def test_verify_imports_all_required():
     """verify_imports() returns True for all required auth modules."""
     result = verify_imports()
     for module in _REQUIRED_MODULES:
         assert result.get(module) is True, f"Required module {module} is not importable"
-
 
 def test_auth_brick_imports_without_server():
     """Auth brick can be imported without nexus.server.* dependencies.
@@ -70,7 +66,6 @@ def test_auth_brick_imports_without_server():
                 with contextlib.suppress(ImportError):
                     importlib.import_module(mod)
 
-
 def test_auth_brick_no_rebac_import():
     """Auth brick does not import from nexus.rebac."""
     modules_before = set(sys.modules.keys())
@@ -93,7 +88,6 @@ def test_auth_brick_no_rebac_import():
                 with contextlib.suppress(ImportError):
                     importlib.import_module(mod)
 
-
 def test_auth_brick_no_pay_import():
     """Auth brick does not import from nexus.pay."""
     modules_before = set(sys.modules.keys())
@@ -115,7 +109,6 @@ def test_auth_brick_no_pay_import():
                 with contextlib.suppress(ImportError):
                     importlib.import_module(mod)
 
-
 def test_auth_result_is_frozen():
     """AuthResult is a frozen dataclass (immutable)."""
     from nexus.auth.types import AuthResult
@@ -123,7 +116,6 @@ def test_auth_result_is_frozen():
     result = AuthResult(authenticated=True, subject_id="alice")
     with pytest.raises(AttributeError):
         result.subject_id = "bob"  # type: ignore[misc]
-
 
 def test_auth_result_defaults():
     """AuthResult defaults are sensible."""
@@ -137,7 +129,6 @@ def test_auth_result_defaults():
     assert result.metadata is None
     assert result.inherit_permissions is True
 
-
 def test_auth_cache_works_standalone():
     """AuthCache works without any database or server dependencies."""
     from nexus.auth.cache import AuthCache
@@ -147,7 +138,6 @@ def test_auth_cache_works_standalone():
     assert cache.get("tok") == {"user": "alice"}
     cache.invalidate("tok")
     assert cache.get("tok") is None
-
 
 def test_auth_constants_available():
     """Auth constants are accessible from the brick."""
@@ -166,7 +156,6 @@ def test_auth_constants_available():
     assert isinstance(RESERVED_ZONE_IDS, frozenset)
     assert "gmail.com" in PERSONAL_EMAIL_DOMAINS
     assert "admin" in RESERVED_ZONE_IDS
-
 
 @pytest.mark.asyncio
 async def test_auth_service_with_mock_provider():

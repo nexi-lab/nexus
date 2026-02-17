@@ -3,8 +3,6 @@
 Extracted from fastapi_server.py (#1602).
 """
 
-from __future__ import annotations
-
 import logging
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -17,7 +15,6 @@ from nexus.server.streaming import _verify_stream_token
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["streaming"])
-
 
 @router.get("/api/stream/{path:path}", response_model=None)
 async def stream_file(

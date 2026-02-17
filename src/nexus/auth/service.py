@@ -4,8 +4,6 @@ Extracts business logic from route handlers into a testable service.
 Route handlers become thin: validate input -> service.method() -> format response.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -18,7 +16,6 @@ from nexus.auth.zone_helpers import (
 )
 
 logger = logging.getLogger(__name__)
-
 
 class AuthService:
     """Core auth business logic, backed by an AuthProvider and AuthCache.

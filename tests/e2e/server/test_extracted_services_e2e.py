@@ -20,8 +20,6 @@ Permission enforcement:
 The server runs in open-access mode with X-Nexus-Subject identity.
 """
 
-from __future__ import annotations
-
 import base64
 
 HEADERS = {
@@ -29,10 +27,8 @@ HEADERS = {
     "X-Nexus-Zone-Id": "root",
 }
 
-
 def _b64(text: str) -> dict:
     return {"__type__": "bytes", "data": base64.b64encode(text.encode()).decode()}
-
 
 def rpc(client, method: str, params: dict | None = None) -> dict:
     body = {
@@ -44,7 +40,6 @@ def rpc(client, method: str, params: dict | None = None) -> dict:
     resp = client.post(f"/api/nfs/{method}", json=body, headers=HEADERS)
     return {"status": resp.status_code, "body": resp.json()}
 
-
 def rpc_result(client, method: str, params: dict | None = None):
     data = rpc(client, method, params)
     assert data["status"] == 200, f"Expected 200, got {data['status']}: {data['body']}"
@@ -54,13 +49,10 @@ def rpc_result(client, method: str, params: dict | None = None):
     )
     return body.get("result")
 
-
 def write_file(client, path: str, text: str):
     return rpc_result(client, "write", {"path": path, "content": _b64(text)})
 
-
 # ─── VersionService ───────────────────────────────────────────────────
-
 
 class TestVersionServiceE2E:
     """Version management through FastAPI → NexusFS → VersionService."""
@@ -101,9 +93,7 @@ class TestVersionServiceE2E:
         result = rpc_result(test_app, "diff_versions", {"path": path, "v1": 1, "v2": 2})
         assert isinstance(result, dict)
 
-
 # ─── SearchService ────────────────────────────────────────────────────
-
 
 class TestSearchServiceE2E:
     """Search operations through FastAPI → NexusFS → SearchService."""
@@ -156,9 +146,7 @@ class TestSearchServiceE2E:
         assert isinstance(results, list)
         assert len(results) >= 1
 
-
 # ─── OAuthService ────────────────────────────────────────────────────
-
 
 class TestOAuthServiceE2E:
     """OAuth endpoints through FastAPI → NexusFS → OAuthService."""
@@ -173,9 +161,7 @@ class TestOAuthServiceE2E:
         result = rpc_result(test_app, "oauth_list_credentials")
         assert isinstance(result, (list, dict))
 
-
 # ─── MCPService ───────────────────────────────────────────────────────
-
 
 class TestMCPServiceE2E:
     """MCP endpoints through FastAPI → NexusFS → MCPService."""
@@ -185,15 +171,12 @@ class TestMCPServiceE2E:
         result = rpc_result(test_app, "mcp_list_mounts")
         assert isinstance(result, (list, dict))
 
-
 # ─── ShareLinkService ────────────────────────────────────────────────
-
 
 ALICE_HEADERS = {
     "X-Nexus-Subject": "user:alice",
     "X-Nexus-Zone-Id": "root",
 }
-
 
 def rpc_with_headers(
     client, method: str, params: dict | None = None, headers: dict | None = None
@@ -207,7 +190,6 @@ def rpc_with_headers(
     }
     resp = client.post(f"/api/nfs/{method}", json=body, headers=headers or HEADERS)
     return {"status": resp.status_code, "body": resp.json()}
-
 
 class TestShareLinkServiceE2E:
     """Share link operations through FastAPI → NexusFS → ShareLinkService."""
@@ -315,9 +297,7 @@ class TestShareLinkServiceE2E:
         assert "link_id" in result
         assert result.get("expires_at") is not None
 
-
 # ─── EventsService (Lock/Unlock) ─────────────────────────────────────
-
 
 class TestEventsServiceE2E:
     """Lock/unlock operations through FastAPI REST API (/api/locks).
@@ -390,9 +370,7 @@ class TestEventsServiceE2E:
             headers=HEADERS,
         )
 
-
 # ─── Permission Enforcement ──────────────────────────────────────────
-
 
 class TestPermissionEnforcementE2E:
     """Verify permission checks work for non-admin users."""

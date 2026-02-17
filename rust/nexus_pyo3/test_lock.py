@@ -5,12 +5,9 @@ Run after building with: maturin develop --release
 Usage: python rust/nexus_pyo3/test_lock.py
 """
 
-from __future__ import annotations
-
 import sys
 import threading
 import time
-
 
 def main() -> int:
     try:
@@ -141,7 +138,6 @@ def main() -> int:
 
     print(f"\nResults: {passed} passed, {failed} failed")
     return 1 if failed > 0 else 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

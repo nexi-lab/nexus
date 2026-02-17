@@ -3,10 +3,7 @@
 Extracted from fastapi_server.py during monolith decomposition.
 """
 
-from __future__ import annotations
-
 from pydantic import BaseModel
-
 
 class HealthResponse(BaseModel):
     """Health check response."""
@@ -16,7 +13,6 @@ class HealthResponse(BaseModel):
     enforce_permissions: bool | None = None
     enforce_zone_isolation: bool | None = None
     has_auth: bool | None = None
-
 
 class WhoamiResponse(BaseModel):
     """Authentication info response."""

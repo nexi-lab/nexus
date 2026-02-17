@@ -6,8 +6,6 @@ when the real FastAPI application is wired with a WriteBuffer-enabled NexusFS.
 Uses an in-process TestClient (no subprocess) for speed and determinism.
 """
 
-from __future__ import annotations
-
 import os
 import time
 
@@ -31,7 +29,6 @@ _EXPECTED_WB_METRICS = [
     "nexus_write_buffer_flush_batch_size_sum",
     "nexus_write_buffer_flush_batch_size_count",
 ]
-
 
 @pytest.fixture()
 def app_and_key(tmp_path):
@@ -63,29 +60,24 @@ def app_and_key(tmp_path):
 
     return app, api_key, nx
 
-
 @pytest.fixture()
 def client(app_and_key):
     app, _, _ = app_and_key
     return TestClient(app)
-
 
 @pytest.fixture()
 def auth_headers(app_and_key):
     _, key, _ = app_and_key
     return {"Authorization": f"Bearer {key}"}
 
-
 @pytest.fixture()
 def nexus_fs(app_and_key):
     _, _, nx = app_and_key
     return nx
 
-
 # ---------------------------------------------------------------------------
 # WriteBuffer metrics in /metrics output
 # ---------------------------------------------------------------------------
-
 
 class TestWriteBufferMetricsPresent:
     """Verify all nexus_write_buffer_* metric families appear on /metrics."""
@@ -114,11 +106,9 @@ class TestWriteBufferMetricsPresent:
         assert "nexus_write_buffer_events_failed_total 0.0" in body
         assert "nexus_write_buffer_retries_total 0.0" in body
 
-
 # ---------------------------------------------------------------------------
 # WriteBuffer metrics update after writes
 # ---------------------------------------------------------------------------
-
 
 class TestWriteBufferMetricsAfterWrites:
     """After performing writes via the API, counters should increase."""
@@ -142,11 +132,9 @@ class TestWriteBufferMetricsAfterWrites:
         # Find the line: nexus_write_buffer_events_enqueued_total{event_type="write"} N
         assert "nexus_write_buffer_events_enqueued_total" in body
 
-
 # ---------------------------------------------------------------------------
 # No auth required for /metrics (even with permissions enabled)
 # ---------------------------------------------------------------------------
-
 
 class TestMetricsNoAuthRequired:
     """The /metrics endpoint should be accessible without authentication."""
@@ -156,11 +144,9 @@ class TestMetricsNoAuthRequired:
         assert resp.status_code == 200
         assert "nexus_write_buffer_events_flushed_total" in resp.text
 
-
 # ---------------------------------------------------------------------------
 # Performance: verify negligible overhead
 # ---------------------------------------------------------------------------
-
 
 class TestWriteBufferMetricsPerformance:
     """Verify that the WriteBuffer collector adds no measurable latency."""
@@ -195,11 +181,9 @@ class TestWriteBufferMetricsPerformance:
         per_call_us = (elapsed / n) * 1_000_000
         assert per_call_us < 100, f"metrics property: {per_call_us:.1f}us -- too slow"
 
-
 # ---------------------------------------------------------------------------
 # Existing metrics still present (co-existence)
 # ---------------------------------------------------------------------------
-
 
 class TestExistingMetricsCoexistence:
     """Existing HTTP and DB metrics should still appear alongside WB metrics."""

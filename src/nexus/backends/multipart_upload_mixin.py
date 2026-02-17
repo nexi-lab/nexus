@@ -8,11 +8,8 @@ tus.io resumable uploads with optimal performance.
 - S3ConnectorBackend: uses native S3 multipart upload API
 """
 
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from typing import Any
-
 
 class MultipartUploadMixin(ABC):
     """Opt-in mixin for backends that support multipart uploads.

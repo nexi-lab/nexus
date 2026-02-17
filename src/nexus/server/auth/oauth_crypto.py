@@ -31,7 +31,6 @@ logger = logging.getLogger(__name__)
 # Key name for storing OAuth encryption key in system_settings
 OAUTH_ENCRYPTION_KEY_NAME = "oauth_encryption_key"
 
-
 class OAuthCrypto:
     """OAuth token encryption service using Fernet.
 

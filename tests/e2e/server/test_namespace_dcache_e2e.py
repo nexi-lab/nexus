@@ -35,7 +35,6 @@ os.environ["NEXUS_SEARCH_DAEMON"] = "false"
 os.environ.pop("NEXUS_DATABASE_URL", None)
 os.environ.pop("NEXUS_URL", None)
 
-
 def _extract_tuple_id(result):
     """Extract tuple_id from rebac_create() result (dict or WriteResult)."""
     if isinstance(result, dict):
@@ -43,7 +42,6 @@ def _extract_tuple_id(result):
     if hasattr(result, "tuple_id"):
         return result.tuple_id
     return str(result)
-
 
 def main():
     passed = failed = 0
@@ -340,7 +338,6 @@ def main():
 
     finally:
         shutil.rmtree(DATA_DIR, ignore_errors=True)
-
 
 if __name__ == "__main__":
     import sys

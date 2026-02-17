@@ -7,8 +7,6 @@ Tests the GET /api/v2/agents/{agent_id}/trust-score endpoint:
 4. Returns 400 for invalid dimension
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -19,7 +17,6 @@ from nexus.server.api.v2.routers.reputation import (
     TrustScoreResponse,
     get_trust_score,
 )
-
 
 @dataclass(frozen=True)
 class FakeReputationScore:
@@ -46,7 +43,6 @@ class FakeReputationScore:
     updated_at: datetime = datetime(2025, 1, 1)
     zone_id: str = "default"
 
-
 class FakeReputationService:
     """Fake ReputationService for testing."""
 
@@ -55,7 +51,6 @@ class FakeReputationService:
 
     def get_reputation(self, agent_id: str, **kwargs) -> FakeReputationScore | None:
         return self._scores.get(agent_id)
-
 
 class TestGetTrustScore:
     """Tests for the get_trust_score endpoint function."""

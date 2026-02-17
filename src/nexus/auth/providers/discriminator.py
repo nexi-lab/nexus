@@ -5,8 +5,6 @@ Extracted from server/auth/factory.py. Routes tokens based on prefix:
 - JWT format   -> JWT/OIDC provider
 """
 
-from __future__ import annotations
-
 import base64
 import json
 import logging
@@ -16,7 +14,6 @@ from nexus.auth.constants import API_KEY_PREFIX
 from nexus.auth.providers.base import AuthProvider, AuthResult
 
 logger = logging.getLogger(__name__)
-
 
 class DiscriminatingAuthProvider(AuthProvider):
     """Auth provider with explicit token type discrimination.

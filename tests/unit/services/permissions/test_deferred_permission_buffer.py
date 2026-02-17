@@ -4,8 +4,6 @@ This module tests the deferred permission buffer that optimizes
 permission operations via batching and background flushing.
 """
 
-from __future__ import annotations
-
 import threading
 import time
 from unittest.mock import MagicMock
@@ -15,7 +13,6 @@ from nexus.services.permissions.deferred_permission_buffer import (
     get_default_buffer,
     set_default_buffer,
 )
-
 
 class TestInitialization:
     """Tests for DeferredPermissionBuffer initialization."""
@@ -74,7 +71,6 @@ class TestInitialization:
         assert stats["total_hierarchy_flushed"] == 0
         assert stats["total_grants_flushed"] == 0
         assert stats["flush_count"] == 0
-
 
 class TestLifecycle:
     """Tests for buffer lifecycle management (start/stop)."""
@@ -149,7 +145,6 @@ class TestLifecycle:
         # Should not raise
         buffer.stop()
         assert buffer._started is False
-
 
 class TestQueueOperations:
     """Tests for queue_hierarchy and queue_owner_grant operations."""
@@ -242,7 +237,6 @@ class TestQueueOperations:
             "object": ("file", "/my/file.txt"),
             "zone_id": "zone42",
         }
-
 
 class TestFlushBehavior:
     """Tests for flush behavior and batch processing."""
@@ -387,7 +381,6 @@ class TestFlushBehavior:
         assert stats["total_hierarchy_flushed"] == 1
         assert stats["total_grants_flushed"] == 0
 
-
 class TestErrorHandling:
     """Tests for error handling during flush operations."""
 
@@ -496,7 +489,6 @@ class TestErrorHandling:
         hierarchy.ensure_parent_tuples_batch.assert_called_once()
         assert stats["total_hierarchy_flushed"] == 1
 
-
 class TestMaxBatchSize:
     """Tests for max batch size triggering."""
 
@@ -559,7 +551,6 @@ class TestMaxBatchSize:
 
         # Total size is 3, should trigger
         assert len(trigger_called) == 1
-
 
 class TestThreadSafety:
     """Tests for thread safety of concurrent operations."""
@@ -686,7 +677,6 @@ class TestThreadSafety:
         for stats in stats_results:
             assert "pending_hierarchy" in stats
             assert "pending_grants" in stats
-
 
 class TestModuleLevelFunctions:
     """Tests for module-level singleton management functions."""

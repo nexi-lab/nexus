@@ -16,21 +16,19 @@ Usage:
 Related: Issue #1459 (decomposition), P0-1 (consistency levels)
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select, update
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
+from sqlalchemy.engine import Engine
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
 from nexus.storage.models.permissions import ReBACVersionSequenceModel as RBVS
 
 logger = logging.getLogger(__name__)
-
 
 def increment_version_token(
     engine: Engine,
@@ -100,7 +98,6 @@ def increment_version_token(
             version = row.current_version if row else 1
 
     return f"v{version}"
-
 
 def get_zone_revision_for_grant(engine: Engine, zone_id: str) -> int:
     """Get current zone revision for consistency during expansion.

@@ -40,7 +40,6 @@ from cachetools import TTLCache
 
 logger = logging.getLogger(__name__)
 
-
 class ReBACPermissionCache:
     """
     Thread-safe in-memory L1 cache for ReBAC permission checks.

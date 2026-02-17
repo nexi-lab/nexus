@@ -20,7 +20,6 @@ import asyncio
 # The actual MCP client SDK may have different APIs
 # This follows the general pattern from MCP documentation
 
-
 async def main() -> None:
     """Demonstrate basic MCP client operations."""
 
@@ -61,7 +60,6 @@ async def main() -> None:
 
     print("For Claude Desktop integration, use the stdio transport")
     print("and configure claude_desktop_config.json as shown in README.md")
-
 
 if __name__ == "__main__":
     asyncio.run(main())

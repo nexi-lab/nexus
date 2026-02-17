@@ -5,8 +5,6 @@ EntityRegistry (bridge) consistently. Validates the single-source-of-truth
 consolidation after deleting agents.py.
 """
 
-from __future__ import annotations
-
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -16,7 +14,6 @@ from nexus.services.agents.agent_record import AgentState
 from nexus.services.agents.agent_registry import AgentRegistry
 from nexus.services.permissions.entity_registry import EntityRegistry
 from nexus.storage.models import Base
-
 
 @pytest.fixture()
 def engine():
@@ -29,18 +26,15 @@ def engine():
     Base.metadata.create_all(eng)
     return eng
 
-
 @pytest.fixture()
 def session_factory(engine):
     """Create a session factory."""
     return sessionmaker(bind=engine, expire_on_commit=False)
 
-
 @pytest.fixture()
 def entity_registry(session_factory):
     """Create EntityRegistry backed by SQLite."""
     return EntityRegistry(session_factory)
-
 
 @pytest.fixture()
 def agent_registry(session_factory, entity_registry):
@@ -49,7 +43,6 @@ def agent_registry(session_factory, entity_registry):
         session_factory=session_factory,
         entity_registry=entity_registry,
     )
-
 
 class TestRegisterWritesBothStores:
     """Registration writes to both AgentRegistry and EntityRegistry."""
@@ -70,7 +63,6 @@ class TestRegisterWritesBothStores:
         assert entity is not None
         assert entity.parent_id == "alice"
 
-
 class TestUnregisterRemovesBothStores:
     """Unregistration removes from both AgentRegistry and EntityRegistry."""
 
@@ -87,7 +79,6 @@ class TestUnregisterRemovesBothStores:
 
         # Gone from EntityRegistry (bridge)
         assert entity_registry.get_entity("agent", "agent-1") is None
-
 
 class TestFullLifecycleIntegration:
     """Full lifecycle: register → transition → heartbeat → unregister."""

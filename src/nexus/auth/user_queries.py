@@ -4,13 +4,10 @@ Extracted from server/auth/database_local.py (lines 1-70).
 These are stateless query functions that only depend on SQLAlchemy.
 """
 
-from __future__ import annotations
-
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from nexus.storage.models import UserModel
-
 
 def get_user_by_email(session: Session, email: str) -> UserModel | None:
     """Get active user by email."""
@@ -22,7 +19,6 @@ def get_user_by_email(session: Session, email: str) -> UserModel | None:
         )
     )
 
-
 def get_user_by_username(session: Session, username: str) -> UserModel | None:
     """Get active user by username."""
     return session.scalar(
@@ -33,7 +29,6 @@ def get_user_by_username(session: Session, username: str) -> UserModel | None:
         )
     )
 
-
 def get_user_by_id(session: Session, user_id: str) -> UserModel | None:
     """Get active user by user ID."""
     return session.scalar(
@@ -43,7 +38,6 @@ def get_user_by_id(session: Session, user_id: str) -> UserModel | None:
             UserModel.deleted_at.is_(None),
         )
     )
-
 
 def check_email_available(session: Session, email: str) -> bool:
     """Check if email is available for registration."""
@@ -56,7 +50,6 @@ def check_email_available(session: Session, email: str) -> bool:
     )
     return existing is None
 
-
 def check_username_available(session: Session, username: str) -> bool:
     """Check if username is available for registration."""
     existing = session.scalar(
@@ -67,7 +60,6 @@ def check_username_available(session: Session, username: str) -> bool:
         )
     )
     return existing is None
-
 
 def validate_user_uniqueness(
     session: Session,

@@ -10,8 +10,6 @@ This mixin provides all content searching (grep) functionality:
 Extracted from: search_service.py (2,265 lines -> ~660 remaining)
 """
 
-from __future__ import annotations
-
 import asyncio
 import builtins
 import logging
@@ -30,7 +28,6 @@ logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     pass
-
 
 class SearchGrepMixin:
     """Mixin providing content search (grep) capabilities for SearchService.

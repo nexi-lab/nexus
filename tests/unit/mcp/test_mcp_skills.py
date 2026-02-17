@@ -20,7 +20,6 @@ from nexus.skills.models import SkillMetadata
 # MCPToolConfig Tests
 # =============================================================================
 
-
 def test_mcp_tool_config_initialization() -> None:
     """Test MCPToolConfig initialization with required fields."""
     config = MCPToolConfig(
@@ -37,7 +36,6 @@ def test_mcp_tool_config_initialization() -> None:
     assert config.related_tools == []
     assert config.examples == []
     assert config.category is None
-
 
 def test_mcp_tool_config_with_all_fields() -> None:
     """Test MCPToolConfig with all optional fields."""
@@ -69,7 +67,6 @@ def test_mcp_tool_config_with_all_fields() -> None:
     assert len(config.examples) == 1
     assert config.category == "search"
 
-
 def test_mcp_tool_config_to_dict() -> None:
     """Test MCPToolConfig serialization to dict."""
     config = MCPToolConfig(
@@ -85,7 +82,6 @@ def test_mcp_tool_config_to_dict() -> None:
     assert result["input_schema"] == {"type": "object"}
     assert result["when_to_use"] == "Search files"
     assert result["category"] == "search"
-
 
 def test_mcp_tool_config_from_dict() -> None:
     """Test MCPToolConfig deserialization from dict."""
@@ -109,11 +105,9 @@ def test_mcp_tool_config_from_dict() -> None:
     assert len(config.examples) == 1
     assert config.examples[0].use_case == "Test"
 
-
 # =============================================================================
 # MCPMount Tests
 # =============================================================================
-
 
 def test_mcp_mount_initialization() -> None:
     """Test MCPMount initialization with required fields."""
@@ -132,7 +126,6 @@ def test_mcp_mount_initialization() -> None:
     assert mount.env == {}
     assert mount.mounted is False
     assert mount.tool_count == 0
-
 
 def test_mcp_mount_with_all_fields() -> None:
     """Test MCPMount with all optional fields."""
@@ -163,7 +156,6 @@ def test_mcp_mount_with_all_fields() -> None:
     assert mount.tool_count == 15
     assert mount.tools == ["create_issue", "list_repos"]
 
-
 def test_mcp_mount_to_dict() -> None:
     """Test MCPMount serialization to dict."""
     mount = MCPMount(
@@ -181,7 +173,6 @@ def test_mcp_mount_to_dict() -> None:
     assert result["transport"] == "stdio"
     assert result["command"] == "npx"
     assert result["tool_count"] == 10
-
 
 def test_mcp_mount_from_dict() -> None:
     """Test MCPMount deserialization from dict."""
@@ -204,11 +195,9 @@ def test_mcp_mount_from_dict() -> None:
     assert mount.tool_count == 15
     assert mount.tools == ["create_issue"]
 
-
 # =============================================================================
 # MCPToolDefinition Tests
 # =============================================================================
-
 
 def test_mcp_tool_definition_initialization() -> None:
     """Test MCPToolDefinition initialization."""
@@ -228,7 +217,6 @@ def test_mcp_tool_definition_initialization() -> None:
     assert tool_def.version == "1.0.0"
     assert tool_def.skill_type == "mcp_tool"
     assert tool_def.mcp_config == config
-
 
 def test_mcp_tool_definition_to_dict() -> None:
     """Test MCPToolDefinition serialization."""
@@ -254,7 +242,6 @@ def test_mcp_tool_definition_to_dict() -> None:
     assert result["tags"] == ["search"]
     assert "mcp_config" in result
 
-
 def test_mcp_tool_definition_from_dict() -> None:
     """Test MCPToolDefinition deserialization."""
     data = {
@@ -277,11 +264,9 @@ def test_mcp_tool_definition_from_dict() -> None:
     assert tool_def.mcp_config is not None
     assert tool_def.mcp_config.endpoint == "nexus://tools/nexus_grep"
 
-
 # =============================================================================
 # SkillMetadata with MCP Tests
 # =============================================================================
-
 
 def test_skill_metadata_with_mcp_tool_type() -> None:
     """Test SkillMetadata with mcp_tool skill type."""
@@ -302,7 +287,6 @@ def test_skill_metadata_with_mcp_tool_type() -> None:
     # Validation should pass
     metadata.validate()
 
-
 def test_skill_metadata_mcp_tool_missing_config() -> None:
     """Test that validation fails when mcp_config is missing for mcp_tool type."""
     metadata = SkillMetadata(
@@ -314,7 +298,6 @@ def test_skill_metadata_mcp_tool_missing_config() -> None:
 
     with pytest.raises(SkillValidationError, match="mcp_config is required"):
         metadata.validate()
-
 
 def test_skill_metadata_hybrid_type() -> None:
     """Test SkillMetadata with hybrid skill type."""
@@ -333,7 +316,6 @@ def test_skill_metadata_hybrid_type() -> None:
     assert metadata.skill_type == "hybrid"
     metadata.validate()  # Should pass
 
-
 def test_skill_metadata_invalid_skill_type() -> None:
     """Test that validation fails with invalid skill_type."""
     metadata = SkillMetadata(
@@ -345,7 +327,6 @@ def test_skill_metadata_invalid_skill_type() -> None:
     with pytest.raises(SkillValidationError, match="skill_type must be one of"):
         metadata.validate()
 
-
 def test_skill_metadata_documentation_type_default() -> None:
     """Test that documentation is the default skill type."""
     metadata = SkillMetadata(
@@ -356,11 +337,9 @@ def test_skill_metadata_documentation_type_default() -> None:
     assert metadata.skill_type == "documentation"
     metadata.validate()  # Should pass without mcp_config
 
-
 # =============================================================================
 # MCPToolExporter Tests
 # =============================================================================
-
 
 def test_mcp_exporter_nexus_tools_defined() -> None:
     """Test that NEXUS_TOOLS contains expected tools."""
@@ -374,7 +353,6 @@ def test_mcp_exporter_nexus_tools_defined() -> None:
     assert "nexus_semantic_search" in tool_names
     assert "nexus_store_memory" in tool_names
     assert "nexus_python" in tool_names
-
 
 def test_mcp_exporter_tool_categories() -> None:
     """Test that tools have proper categories."""
@@ -394,7 +372,6 @@ def test_mcp_exporter_tool_categories() -> None:
     assert "nexus_grep" in categories["search"]
     assert "nexus_glob" in categories["search"]
 
-
 def test_mcp_exporter_tool_count() -> None:
     """Test tool count methods."""
     exporter = MCPToolExporter(filesystem=None)
@@ -404,7 +381,6 @@ def test_mcp_exporter_tool_count() -> None:
 
     # There should be sandbox tools
     assert total_count > no_sandbox_count
-
 
 def test_mcp_exporter_create_tool_definition() -> None:
     """Test creating tool definition from tool data."""
@@ -429,7 +405,6 @@ def test_mcp_exporter_create_tool_definition() -> None:
     assert tool_def.mcp_config is not None
     assert tool_def.mcp_config.endpoint == "nexus://tools/test_tool"
     assert tool_def.mcp_config.category == "test"
-
 
 def test_mcp_exporter_generate_skill_md() -> None:
     """Test SKILL.md generation from tool definition."""
@@ -466,11 +441,9 @@ def test_mcp_exporter_generate_skill_md() -> None:
     assert "## Examples" in skill_md
     assert "## Related Tools" in skill_md
 
-
 # =============================================================================
 # MCPMountManager Tests
 # =============================================================================
-
 
 def test_mcp_mount_manager_initialization() -> None:
     """Test MCPMountManager initialization."""
@@ -481,7 +454,6 @@ def test_mcp_mount_manager_initialization() -> None:
 
     assert manager._mounts == {}
     assert manager._clients == {}
-
 
 def test_mcp_mount_manager_add_mount_config() -> None:
     """Test adding mount configuration without connecting."""
@@ -502,7 +474,6 @@ def test_mcp_mount_manager_add_mount_config() -> None:
     assert "github" in manager._mounts
     assert manager._mounts["github"].tools_path == "/skills/system/mcp-tools/github/"
     assert manager._mounts["github"].mounted is False
-
 
 def test_mcp_mount_manager_list_mounts() -> None:
     """Test listing mount configurations."""
@@ -525,7 +496,6 @@ def test_mcp_mount_manager_list_mounts() -> None:
     mounted_only = manager.list_mounts(include_unmounted=False)
     assert len(mounted_only) == 0
 
-
 def test_mcp_mount_manager_get_mount() -> None:
     """Test getting mount by name."""
     mock_fs = MagicMock()
@@ -542,7 +512,6 @@ def test_mcp_mount_manager_get_mount() -> None:
 
     not_found = manager.get_mount("nonexistent")
     assert not_found is None
-
 
 def test_mcp_mount_manager_remove_mount() -> None:
     """Test removing mount configuration."""
@@ -561,7 +530,6 @@ def test_mcp_mount_manager_remove_mount() -> None:
     # Try to remove non-existent mount
     result = manager.remove_mount("nonexistent")
     assert result is False
-
 
 @pytest.mark.asyncio
 async def test_mcp_mount_manager_mount_validation() -> None:
@@ -591,7 +559,6 @@ async def test_mcp_mount_manager_mount_validation() -> None:
     with pytest.raises(MCPMountError, match="URL is required"):
         await manager.mount(mount)
 
-
 @pytest.mark.asyncio
 async def test_mcp_mount_manager_unmount_not_found() -> None:
     """Test unmounting non-existent mount."""
@@ -603,11 +570,9 @@ async def test_mcp_mount_manager_unmount_not_found() -> None:
     with pytest.raises(MCPMountError, match="Mount not found"):
         await manager.unmount("nonexistent")
 
-
 # =============================================================================
 # Integration Tests
 # =============================================================================
-
 
 @pytest.mark.asyncio
 async def test_mcp_exporter_export_nexus_tools() -> None:

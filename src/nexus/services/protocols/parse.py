@@ -10,10 +10,7 @@ References:
     - ops-scenario-matrix.md (parsing is a core service domain)
 """
 
-from __future__ import annotations
-
 from typing import Any, Protocol, runtime_checkable
-
 
 @runtime_checkable
 class ParseProtocol(Protocol):

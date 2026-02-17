@@ -15,8 +15,6 @@ Usage:
         app.add_route("/metrics", metrics_endpoint, methods=["GET"])
 """
 
-from __future__ import annotations
-
 import logging
 import time
 from typing import TYPE_CHECKING, Any
@@ -32,6 +30,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 from starlette.routing import Match
 
+from starlette.types import ASGIApp, Receive, Scope, Send
 if TYPE_CHECKING:
     from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -68,11 +67,9 @@ NEXUS_INFO = Info(
 # Paths excluded from metric recording (noisy, internal).
 _SKIP_PATHS: frozenset[str] = frozenset({"/health", "/metrics", "/favicon.ico"})
 
-
 def _status_group(status_code: int) -> str:
     """Return a low-cardinality status group like ``2xx``."""
     return f"{status_code // 100}xx"
-
 
 def _resolve_route_template(scope: Scope) -> str:
     """Resolve the route template from the ASGI scope.
@@ -94,11 +91,9 @@ def _resolve_route_template(scope: Scope) -> str:
 
     return fallback
 
-
 # ---------------------------------------------------------------------------
 # ASGI Middleware
 # ---------------------------------------------------------------------------
-
 
 class PrometheusMiddleware:
     """ASGI middleware that records Prometheus request metrics."""
@@ -144,13 +139,11 @@ class PrometheusMiddleware:
             REQUEST_COUNT.labels(method=method, status=status, endpoint=endpoint).inc()
             REQUESTS_IN_PROGRESS.labels(method=method).dec()
 
-
 # ---------------------------------------------------------------------------
 # /metrics endpoint
 # ---------------------------------------------------------------------------
 
 _METRICS_CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
-
 
 async def metrics_endpoint(request: Request) -> Response:  # noqa: ARG001
     """Serve Prometheus metrics in the exposition format."""
@@ -159,11 +152,9 @@ async def metrics_endpoint(request: Request) -> Response:  # noqa: ARG001
         media_type=_METRICS_CONTENT_TYPE,
     )
 
-
 # ---------------------------------------------------------------------------
 # Setup helper (called from lifespan)
 # ---------------------------------------------------------------------------
-
 
 def setup_prometheus() -> None:
     """Populate the nexus info metric with the current version."""

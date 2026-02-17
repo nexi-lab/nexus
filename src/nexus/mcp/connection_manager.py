@@ -17,8 +17,6 @@ Example:
     >>> connections = await manager.list_connections()
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import os
@@ -32,17 +30,16 @@ from nexus.mcp.models import MCPMount
 from nexus.mcp.mount import MCPMountManager
 from nexus.mcp.provider_registry import MCPProviderRegistry, ProviderConfig, ProviderType
 
+from nexus.skills.protocols import NexusFilesystem
 if TYPE_CHECKING:
     from nexus.skills.protocols import NexusFilesystem
 
 logger = logging.getLogger(__name__)
 
-
 class MCPConnectionError(Exception):
     """Error during MCP connection."""
 
     pass
-
 
 @dataclass
 class MCPConnection:
@@ -77,7 +74,7 @@ class MCPConnection:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> MCPConnection:
+    def from_dict(cls, data: dict[str, Any]) -> "MCPConnection":
         """Create from dictionary."""
         return cls(
             provider=data["provider"],
@@ -90,7 +87,6 @@ class MCPConnection:
             backend_type=data.get("backend_type"),
             backend_config=data.get("backend_config"),
         )
-
 
 class MCPConnectionManager:
     """Unified manager for MCP connections (Klavis + local).

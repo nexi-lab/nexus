@@ -9,8 +9,6 @@ Tests that run_sync() and fire_and_forget() work correctly in:
 Does NOT depend on pytest-asyncio — uses explicit event loop helper.
 """
 
-from __future__ import annotations
-
 import asyncio
 import concurrent.futures
 import time
@@ -29,7 +27,6 @@ from nexus.core.sync_bridge import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-
 def _run_async(coro):
     """Run a coroutine in a fresh event loop."""
     loop = asyncio.new_event_loop()
@@ -38,7 +35,6 @@ def _run_async(coro):
     finally:
         loop.close()
 
-
 @pytest.fixture
 def backend(tmp_path: Path) -> AsyncLocalBackend:
     """Create a temporary async local backend for testing."""
@@ -46,16 +42,13 @@ def backend(tmp_path: Path) -> AsyncLocalBackend:
     _run_async(b.initialize())
     return b
 
-
 @pytest.fixture(autouse=True)
 def _cleanup_bridge():
     """Ensure sync bridge is clean between tests."""
     yield
     shutdown_sync_bridge()
 
-
 # === E2E: run_sync with real backend ===
-
 
 class TestRunSyncWithBackend:
     """Test run_sync() with real AsyncLocalBackend operations."""
@@ -111,9 +104,7 @@ class TestRunSyncWithBackend:
         # Unique content should produce unique hashes
         assert len(set(hashes)) == 10
 
-
 # === E2E: fire_and_forget with real operations ===
-
 
 class TestFireAndForgetE2E:
     """Test fire_and_forget() in realistic scenarios."""
@@ -139,9 +130,7 @@ class TestFireAndForgetE2E:
         assert read_resp.success
         assert read_resp.data == content
 
-
 # === Lightweight CI concurrency test ===
-
 
 class TestConcurrencySmoke:
     """Lightweight concurrency tests suitable for CI."""

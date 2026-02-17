@@ -8,15 +8,13 @@ References:
     - Issue #1287: Extract NexusFS domain services from god object
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
 
+from nexus.core.permissions import OperationContext
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
-
 
 @runtime_checkable
 class OAuthProtocol(Protocol):

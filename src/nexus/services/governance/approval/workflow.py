@@ -7,8 +7,6 @@ Domain-specific logic (ReBAC checks, escrow, amount validation) belongs
 in the subclass, NOT here.
 """
 
-from __future__ import annotations
-
 import logging
 import uuid
 from dataclasses import dataclass
@@ -34,7 +32,6 @@ APPROVAL_TRANSITIONS: dict[str, frozenset[str]] = {
 
 _APPROVAL_STATE_MACHINE = StateMachine(APPROVAL_TRANSITIONS)
 
-
 @dataclass(frozen=True)
 class ApprovalRecord:
     """Generic approval record returned by the workflow."""
@@ -47,7 +44,6 @@ class ApprovalRecord:
     decided_by: str | None = None
     expires_at: datetime | None = None
     metadata: dict[str, object] | None = None
-
 
 class ApprovalWorkflow(Generic[T]):
     """Generic approval workflow with state machine enforcement.

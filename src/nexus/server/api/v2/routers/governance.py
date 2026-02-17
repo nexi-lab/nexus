@@ -9,8 +9,6 @@ Provides endpoints for:
 - Response Actions: Suspensions, appeals
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -22,11 +20,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/governance", tags=["governance"])
 
-
 # =============================================================================
 # Pydantic Request/Response Models
 # =============================================================================
-
 
 class AddConstraintRequest(BaseModel):
     """Request to add a governance constraint."""
@@ -37,7 +33,6 @@ class AddConstraintRequest(BaseModel):
     constraint_type: str = Field(default="block", description="block, require_approval, rate_limit")
     reason: str = Field(default="", description="Reason for constraint")
 
-
 class SuspendAgentRequest(BaseModel):
     """Request to suspend an agent."""
 
@@ -47,12 +42,10 @@ class SuspendAgentRequest(BaseModel):
     duration_hours: float = Field(default=24.0, description="Suspension duration in hours")
     severity: str = Field(default="high", description="Severity level")
 
-
 class AppealRequest(BaseModel):
     """Request to appeal a suspension."""
 
     reason: str = Field(..., description="Appeal reason")
-
 
 class DecideAppealRequest(BaseModel):
     """Request to decide on an appeal."""
@@ -60,17 +53,14 @@ class DecideAppealRequest(BaseModel):
     approved: bool = Field(..., description="Whether to approve the appeal")
     decided_by: str = Field(..., description="ID of the decision maker")
 
-
 class ResolveAlertRequest(BaseModel):
     """Request to resolve an alert."""
 
     resolved_by: str = Field(..., description="ID of the resolver")
 
-
 # =============================================================================
 # Helper: get services from app.state
 # =============================================================================
-
 
 def _get_anomaly_service(request: Request) -> Any:
     service = getattr(request.app.state, "governance_anomaly_service", None)
@@ -78,13 +68,11 @@ def _get_anomaly_service(request: Request) -> Any:
         raise HTTPException(status_code=503, detail="Governance anomaly service not available")
     return service
 
-
 def _get_collusion_service(request: Request) -> Any:
     service = getattr(request.app.state, "governance_collusion_service", None)
     if service is None:
         raise HTTPException(status_code=503, detail="Governance collusion service not available")
     return service
-
 
 def _get_graph_service(request: Request) -> Any:
     service = getattr(request.app.state, "governance_graph_service", None)
@@ -92,18 +80,15 @@ def _get_graph_service(request: Request) -> Any:
         raise HTTPException(status_code=503, detail="Governance graph service not available")
     return service
 
-
 def _get_response_service(request: Request) -> Any:
     service = getattr(request.app.state, "governance_response_service", None)
     if service is None:
         raise HTTPException(status_code=503, detail="Governance response service not available")
     return service
 
-
 # =============================================================================
 # Anomaly Detection Endpoints
 # =============================================================================
-
 
 @router.get("/alerts")
 async def list_alerts(
@@ -139,7 +124,6 @@ async def list_alerts(
         }
     )
 
-
 @router.post("/alerts/{alert_id}/resolve")
 async def resolve_alert(
     request: Request,
@@ -161,11 +145,9 @@ async def resolve_alert(
         }
     )
 
-
 # =============================================================================
 # Collusion Detection Endpoints
 # =============================================================================
-
 
 @router.get("/fraud-scores")
 async def list_fraud_scores(
@@ -192,7 +174,6 @@ async def list_fraud_scores(
         }
     )
 
-
 @router.get("/fraud-scores/{agent_id}")
 async def get_fraud_score(
     request: Request,
@@ -215,7 +196,6 @@ async def get_fraud_score(
             "computed_at": score.computed_at.isoformat() if score.computed_at else None,
         }
     )
-
 
 @router.get("/rings")
 async def list_fraud_rings(
@@ -244,11 +224,9 @@ async def list_fraud_rings(
         }
     )
 
-
 # =============================================================================
 # Governance Graph Endpoints
 # =============================================================================
-
 
 @router.post("/constraints")
 async def add_constraint(
@@ -286,7 +264,6 @@ async def add_constraint(
         },
     )
 
-
 @router.get("/constraints")
 async def list_constraints(
     request: Request,
@@ -314,7 +291,6 @@ async def list_constraints(
         }
     )
 
-
 @router.delete("/constraints/{edge_id}")
 async def remove_constraint(
     request: Request,
@@ -328,7 +304,6 @@ async def remove_constraint(
         raise HTTPException(status_code=404, detail=f"Constraint {edge_id} not found")
 
     return JSONResponse(content={"removed": True, "edge_id": edge_id})
-
 
 @router.get("/check/{from_agent}/{to_agent}")
 async def check_constraint(
@@ -354,11 +329,9 @@ async def check_constraint(
         }
     )
 
-
 # =============================================================================
 # Response Action Endpoints
 # =============================================================================
-
 
 @router.post("/suspensions")
 async def suspend_agent(
@@ -395,7 +368,6 @@ async def suspend_agent(
         },
     )
 
-
 @router.get("/suspensions")
 async def list_suspensions(
     request: Request,
@@ -425,7 +397,6 @@ async def list_suspensions(
         }
     )
 
-
 @router.post("/suspensions/{suspension_id}/appeal")
 async def appeal_suspension(
     request: Request,
@@ -454,7 +425,6 @@ async def appeal_suspension(
             "appeal_reason": record.appeal_reason,
         }
     )
-
 
 @router.post("/suspensions/{suspension_id}/decide")
 async def decide_appeal(

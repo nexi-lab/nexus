@@ -7,7 +7,6 @@ import pytest
 
 from nexus.server.rpc_server import NexusRPCServer, RPCRequestHandler
 
-
 class TestRPCRequestHandler:
     """Tests for RPCRequestHandler class."""
 
@@ -146,7 +145,6 @@ class TestRPCRequestHandler:
         with pytest.raises(ValueError, match="Unknown method"):
             mock_handler._dispatch_method("unknown", Mock())
 
-
 class TestNexusRPCServer:
     """Tests for NexusRPCServer class."""
 
@@ -191,7 +189,6 @@ class TestNexusRPCServer:
                 mock_shutdown.assert_called_once()
                 mock_close.assert_called_once()
                 mock_filesystem.close.assert_called_once()
-
 
 class TestRPCRequestHandlerHTTP:
     """Tests for HTTP methods in RPCRequestHandler."""
@@ -280,7 +277,6 @@ class TestRPCRequestHandlerHTTP:
         # Should get a response (either 404 or health/status)
         assert mock_handler.send_response.called
 
-
 class TestRPCValidation:
     """Tests for validation methods."""
 
@@ -294,7 +290,6 @@ class TestRPCValidation:
         handler._validate_auth = lambda: RPCRequestHandler._validate_auth(handler)
 
         assert handler._validate_auth() is False
-
 
 class TestRPCDispatchMethods:
     """Tests for additional method dispatch cases."""
@@ -416,7 +411,6 @@ class TestRPCDispatchMethods:
 
         assert result == {"namespaces": ["default"]}
 
-
 class TestRPCServerIntegration:
     """Integration tests for RPC server."""
 
@@ -448,9 +442,7 @@ class TestRPCServerIntegration:
             # Verify ThreadingHTTPServer was created with mocked instance
             assert mock_http_server.called
 
-
 """Tests for backend and metadata info extraction methods."""
-
 
 class TestBackendMetadataInfo:
     """Tests for _get_backend_info() and _get_metadata_info() methods."""

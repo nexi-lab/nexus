@@ -17,7 +17,6 @@ from sqlalchemy.orm import Session
 from nexus.rebac.entity_registry import EntityRegistry
 from nexus.storage.models import MemoryModel, VersionHistoryModel
 
-
 class MemoryViewRouter:
     """Router for resolving virtual paths to canonical memory IDs."""
 

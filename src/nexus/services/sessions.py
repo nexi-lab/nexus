@@ -9,11 +9,10 @@ Manages user sessions with support for:
 See: docs/design/AGENT_IDENTITY_AND_SESSIONS.md
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
+from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
@@ -23,7 +22,6 @@ from nexus.storage.models import (
     UserSessionModel,
     WorkspaceConfigModel,
 )
-
 
 def create_session(
     session: Session,
@@ -81,7 +79,6 @@ def create_session(
 
     return user_session
 
-
 def get_session(session: Session, session_id: str) -> UserSessionModel | None:
     """Get session by ID.
 
@@ -105,7 +102,6 @@ def get_session(session: Session, session_id: str) -> UserSessionModel | None:
 
     return user_session
 
-
 def update_session_activity(session: Session, session_id: str) -> bool:
     """Update last_activity timestamp.
 
@@ -128,7 +124,6 @@ def update_session_activity(session: Session, session_id: str) -> bool:
     user_session.last_activity = datetime.now(UTC)
     session.flush()
     return True
-
 
 def delete_session_resources(session: Session, session_id: str) -> dict[str, int]:
     """Delete all resources associated with a session.
@@ -166,7 +161,6 @@ def delete_session_resources(session: Session, session_id: str) -> dict[str, int
     session.flush()
     return counts
 
-
 def delete_session(session: Session, session_id: str) -> bool:
     """Delete session and all session-scoped resources.
 
@@ -187,7 +181,6 @@ def delete_session(session: Session, session_id: str) -> bool:
 
     session.flush()
     return result > 0
-
 
 def cleanup_expired_sessions(session: Session) -> dict[str, int | dict[str, int]]:
     """Background task: Clean up expired sessions.
@@ -230,7 +223,6 @@ def cleanup_expired_sessions(session: Session) -> dict[str, int | dict[str, int]
 
     return {"sessions": len(expired), "resources": total_resources}
 
-
 def list_user_sessions(
     session: Session, user_id: str, include_expired: bool = False
 ) -> list[UserSessionModel]:
@@ -254,7 +246,6 @@ def list_user_sessions(
         )
 
     return list(query.all())
-
 
 def cleanup_inactive_sessions(
     session: Session, inactive_threshold: timedelta = timedelta(days=30)

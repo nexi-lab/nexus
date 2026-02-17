@@ -5,10 +5,7 @@ When the VFS is backed by the real Nexus VFS Router, operations automatically
 gain ReBAC permission checks, EventLog auditing, and caching.
 """
 
-from __future__ import annotations
-
 from nexus.ipc.protocols import VFSOperations
-
 
 class VFSStorageDriver:
     """Delegates IPC storage to the Nexus VFS layer.

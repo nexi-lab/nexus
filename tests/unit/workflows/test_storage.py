@@ -16,7 +16,6 @@ from nexus.workflows.types import (
     WorkflowTrigger,
 )
 
-
 @pytest.fixture
 async def async_engine():
     """Create in-memory async SQLite database."""
@@ -26,12 +25,10 @@ async def async_engine():
     yield engine
     await engine.dispose()
 
-
 @pytest.fixture
 def async_session_factory(async_engine):
     """Create async session factory."""
     return async_sessionmaker(bind=async_engine, class_=AsyncSession, expire_on_commit=False)
-
 
 @pytest.fixture
 def workflow_store(async_session_factory):
@@ -42,7 +39,6 @@ def workflow_store(async_session_factory):
         execution_model=WorkflowExecutionModel,
         zone_id="test-zone",
     )
-
 
 class TestWorkflowStore:
     """Test WorkflowStore."""

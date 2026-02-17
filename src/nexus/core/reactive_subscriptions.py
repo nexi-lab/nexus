@@ -30,8 +30,6 @@ Example:
     >>> await manager.register(sub, read_set=rs)
 """
 
-from __future__ import annotations
-
 import asyncio
 import fnmatch
 import functools
@@ -43,12 +41,13 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.core.read_set import ReadSetRegistry
 
+from nexus.core.event_bus import FileEvent
+from nexus.core.read_set import ReadSet
 if TYPE_CHECKING:
     from nexus.core.event_bus import FileEvent
     from nexus.core.read_set import ReadSet
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass(slots=True, frozen=True)
 class Subscription:
@@ -71,7 +70,6 @@ class Subscription:
     query_id: str | None = None
     event_types: frozenset[str] = frozenset()
     created_at: float = field(default_factory=time.time)
-
 
 @functools.lru_cache(maxsize=256)
 def _compile_glob_pattern(pattern: str) -> re.Pattern[str] | None:
@@ -113,7 +111,6 @@ def _compile_glob_pattern(pattern: str) -> re.Pattern[str] | None:
     except re.error:
         return None
 
-
 def path_matches_pattern(path: str, pattern: str) -> bool:
     """Check if a path matches a glob pattern.
 
@@ -140,7 +137,6 @@ def path_matches_pattern(path: str, pattern: str) -> bool:
 
     # Simple patterns without ** use fnmatch
     return fnmatch.fnmatch(path, pattern)
-
 
 class ReactiveSubscriptionManager:
     """Manages subscriptions with read-set-based event matching.

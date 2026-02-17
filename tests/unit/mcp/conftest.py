@@ -1,9 +1,6 @@
 """Fixtures for MCP tests."""
 
-from __future__ import annotations
-
 import pytest
-
 
 @pytest.fixture(autouse=True)
 def isolate_mcp_tests(monkeypatch):

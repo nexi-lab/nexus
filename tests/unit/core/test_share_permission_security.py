@@ -7,8 +7,6 @@ Tests cover:
 - Permission level validation
 """
 
-from __future__ import annotations
-
 import tempfile
 from collections.abc import Generator
 from pathlib import Path
@@ -21,13 +19,11 @@ from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
-
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
     """Create a temporary directory for tests."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
-
 
 @pytest.fixture
 def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
@@ -52,12 +48,10 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     yield nx
     nx.close()
 
-
 @pytest.fixture
 def admin_context() -> dict:
     """Create an admin operation context."""
     return {"user": "admin", "groups": [], "is_admin": True, "is_system": False}
-
 
 class TestIssue817ShareWithUserSecurity:
     """Test Issue #817: Security checks in share_with_user()."""
@@ -169,7 +163,6 @@ class TestIssue817ShareWithUserSecurity:
             context=system_context,
         )
         assert share_id
-
 
 class TestIssue818ShareWithGroup:
     """Test Issue #818: share_with_group() functionality."""
@@ -302,7 +295,6 @@ class TestIssue818ShareWithGroup:
             object=("file", test_file),
         )
 
-
 class TestNonFileResourceSecurity:
     """Test security checks for non-file resources (groups, workspaces, etc.)."""
 
@@ -395,7 +387,6 @@ class TestNonFileResourceSecurity:
                 context=alice_context,
             )
 
-
 class TestHelperMethodIntegration:
     """Test the _check_share_permission helper method integration."""
 
@@ -478,7 +469,6 @@ class TestHelperMethodIntegration:
             assert share_id
         finally:
             nx.close()
-
 
 class TestCrossZoneSharing:
     """Test cross-zone sharing functionality."""

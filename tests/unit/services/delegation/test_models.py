@@ -4,8 +4,6 @@ Tests DelegationMode, DelegationStatus, DelegationScope, DelegationRecord,
 and DelegationResult frozen dataclasses.
 """
 
-from __future__ import annotations
-
 import dataclasses
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -23,7 +21,6 @@ from nexus.services.delegation.models import (
 # ---------------------------------------------------------------------------
 # DelegationMode enum
 # ---------------------------------------------------------------------------
-
 
 class TestDelegationMode:
     def test_values(self):
@@ -43,11 +40,9 @@ class TestDelegationMode:
     def test_all_modes(self):
         assert len(DelegationMode) == 3
 
-
 # ---------------------------------------------------------------------------
 # DelegationStatus enum (#1618)
 # ---------------------------------------------------------------------------
-
 
 class TestDelegationStatus:
     def test_values(self):
@@ -63,11 +58,9 @@ class TestDelegationStatus:
     def test_all_statuses(self):
         assert len(DelegationStatus) == 4
 
-
 # ---------------------------------------------------------------------------
 # DelegationScope frozen dataclass (#1618)
 # ---------------------------------------------------------------------------
-
 
 class TestDelegationScope:
     def test_defaults(self):
@@ -103,11 +96,9 @@ class TestDelegationScope:
         s2 = DelegationScope(max_depth=2)
         assert s1 != s2
 
-
 # ---------------------------------------------------------------------------
 # DelegationRecord frozen dataclass
 # ---------------------------------------------------------------------------
-
 
 class TestDelegationRecord:
     def test_required_fields(self):
@@ -199,11 +190,9 @@ class TestDelegationRecord:
         }
         assert DelegationRecord(**kwargs) == DelegationRecord(**kwargs)
 
-
 # ---------------------------------------------------------------------------
 # DelegationResult frozen dataclass
 # ---------------------------------------------------------------------------
-
 
 class TestDelegationResult:
     def test_fields(self):

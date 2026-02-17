@@ -27,8 +27,6 @@ Performance expectations:
 - Cache miss detection: O(1) via Bloom filter
 """
 
-from __future__ import annotations
-
 import contextlib
 import logging
 import os
@@ -55,7 +53,6 @@ DEFAULT_BLOOM_FP_RATE = 0.01
 # Metadata file format version
 METADATA_VERSION = 1
 
-
 @dataclass
 class CacheEntry:
     """Metadata for a cached content entry."""
@@ -74,7 +71,6 @@ class CacheEntry:
         self.access_count += 1
         self.clock_bit = True
 
-
 @dataclass
 class CacheStats:
     """Statistics for cache operations."""
@@ -90,7 +86,6 @@ class CacheStats:
     def hit_rate(self) -> float:
         total = self.hits + self.misses
         return self.hits / total if total > 0 else 0.0
-
 
 class LocalDiskCache:
     """
@@ -738,14 +733,12 @@ class LocalDiskCache:
         self.save_metadata()
         logger.info("LocalDiskCache closed")
 
-
 # =========================================================================
 # Global instance management
 # =========================================================================
 
 _default_cache: LocalDiskCache | None = None
 _cache_lock = threading.Lock()
-
 
 def get_local_disk_cache(
     cache_dir: str | Path | None = None,
@@ -780,13 +773,11 @@ def get_local_disk_cache(
 
     return _default_cache
 
-
 def set_local_disk_cache(cache: LocalDiskCache | None) -> None:
     """Set the global LocalDiskCache instance."""
     global _default_cache
     with _cache_lock:
         _default_cache = cache
-
 
 def close_local_disk_cache() -> None:
     """Close and clear the global LocalDiskCache instance."""

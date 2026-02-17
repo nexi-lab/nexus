@@ -18,8 +18,6 @@ Usage:
     # alice can now access /workspace/sales/report.pdf via parent_owner relation
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING
 
@@ -28,8 +26,7 @@ from nexus.core.path_utils import get_ancestors, get_parent, get_parent_chain
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from nexus.rebac.rebac_manager_enhanced import EnhancedReBACManager
-
+    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
 class HierarchyManager:
     """Manages directory hierarchy relationships for permission inheritance (P0-3).
@@ -47,7 +44,7 @@ class HierarchyManager:
 
     def __init__(
         self,
-        rebac_manager: EnhancedReBACManager,
+        rebac_manager: "EnhancedReBACManager",
         enable_inheritance: bool = True,
     ):
         """Initialize hierarchy manager.

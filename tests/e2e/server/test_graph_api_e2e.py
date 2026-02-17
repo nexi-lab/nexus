@@ -9,10 +9,7 @@ Run with:
     pytest tests/e2e/test_graph_api_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import pytest
-
 
 class TestGraphAPI:
     """End-to-end tests for Graph API endpoints."""
@@ -104,7 +101,6 @@ class TestGraphAPI:
             assert response.status_code == 200, (
                 f"{method} {endpoint} failed with {response.status_code}: {response.text}"
             )
-
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--log-cli-level=INFO"])

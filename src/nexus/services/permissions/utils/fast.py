@@ -12,19 +12,16 @@ Performance characteristics:
 The module automatically falls back to Python implementation if Rust is unavailable.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.core.rebac import NamespaceConfig as ReBACNamespaceConfig
 if TYPE_CHECKING:
     from nexus.core.rebac import Entity
     from nexus.core.rebac import NamespaceConfig as ReBACNamespaceConfig
 
-
 # Internal type for namespace config dict (not the NamespaceConfig class)
 NamespaceConfigDict = dict[str, Any]  # Contains 'relations' and 'permissions' keys
-
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +51,6 @@ except ImportError:
 if not RUST_AVAILABLE:
     logger.info("✗ Rust acceleration not available")
 
-
 def is_rust_available() -> bool:
     """Check if Rust acceleration is available.
 
@@ -62,7 +58,6 @@ def is_rust_available() -> bool:
         True if nexus_fast Rust extension is loaded, False otherwise
     """
     return RUST_AVAILABLE
-
 
 def check_permissions_bulk_rust(
     checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
@@ -140,7 +135,6 @@ def check_permissions_bulk_rust(
         logger.error(f"Rust permission check failed: {e}", exc_info=True)
         raise
 
-
 def check_permissions_bulk_with_fallback(
     checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
     tuples: list[dict[str, Any]],
@@ -193,7 +187,6 @@ def check_permissions_bulk_with_fallback(
     logger.debug(f"Computing {len(checks)} permissions in Python")
     return _check_permissions_bulk_python(checks, tuples, namespace_configs)
 
-
 def _check_permissions_bulk_python(
     checks: list[tuple[tuple[str, str], str, tuple[str, str]]],
     tuples: list[dict[str, Any]],
@@ -236,11 +229,10 @@ def _check_permissions_bulk_python(
 
     return results
 
-
 def _compute_permission_simple(
-    subject: Entity,
+    subject: "Entity",
     permission: str,
-    obj: Entity,
+    obj: "Entity",
     tuples: list[dict[str, Any]],
     namespaces: dict[str, ReBACNamespaceConfig],
 ) -> bool:
@@ -273,9 +265,7 @@ def _compute_permission_simple(
 
     return False
 
-
 # Convenience functions for integration with existing code
-
 
 def get_performance_stats() -> dict[str, Any]:
     """
@@ -289,7 +279,6 @@ def get_performance_stats() -> dict[str, Any]:
         "expected_speedup": "85x for bulk operations" if RUST_AVAILABLE else "N/A",
         "recommended_batch_size": "100-10000 checks" if RUST_AVAILABLE else "N/A",
     }
-
 
 def check_permission_single_rust(
     subject_type: str,
@@ -362,7 +351,6 @@ def check_permission_single_rust(
         logger.error(f"Rust single permission check failed: {e}", exc_info=True)
         raise
 
-
 def check_permission_single_with_fallback(
     subject_type: str,
     subject_id: str,
@@ -415,7 +403,6 @@ def check_permission_single_with_fallback(
     key = (subject_type, subject_id, permission, object_type, object_id)
     return results.get(key, False)
 
-
 def estimate_speedup(num_checks: int) -> float:
     """
     Estimate speedup factor for given number of checks.
@@ -436,7 +423,6 @@ def estimate_speedup(num_checks: int) -> float:
         return 50.0  # ~50x
     else:
         return 85.0  # ~85x for large batches
-
 
 def expand_subjects_rust(
     permission: str,
@@ -500,7 +486,6 @@ def expand_subjects_rust(
         logger.error(f"Rust expand_subjects failed: {e}", exc_info=True)
         raise
 
-
 def expand_subjects_with_fallback(
     permission: str,
     object_type: str,
@@ -546,7 +531,6 @@ def expand_subjects_with_fallback(
         "Python fallback for expand_subjects not implemented in rebac_fast.py. "
         "Use ReBACManager._expand_permission directly."
     )
-
 
 def list_objects_for_subject_rust(
     subject_type: str,
@@ -623,7 +607,6 @@ def list_objects_for_subject_rust(
     except (RuntimeError, ValueError) as e:
         logger.error(f"Rust list_objects_for_subject failed: {e}", exc_info=True)
         raise
-
 
 def list_objects_for_subject_with_fallback(
     subject_type: str,

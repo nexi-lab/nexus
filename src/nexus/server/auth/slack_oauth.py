@@ -28,7 +28,6 @@ import httpx
 
 from .oauth_provider import OAuthCredential, OAuthError, OAuthProvider
 
-
 class SlackOAuthProvider(OAuthProvider):
     """Slack OAuth 2.0 provider for Slack workspace integrations.
 

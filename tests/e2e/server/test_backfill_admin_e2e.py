@@ -8,8 +8,6 @@ Issue #1457: Validates that:
 Uses FastAPI TestClient with real create_app + API key auth.
 """
 
-from __future__ import annotations
-
 import logging
 from unittest.mock import MagicMock
 
@@ -17,7 +15,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 logger = logging.getLogger(__name__)
-
 
 class _FakeNexusFS:
     """Minimal NexusFS stub that exposes backfill_directory_index for RPC discovery.
@@ -50,7 +47,6 @@ class _FakeNexusFS:
 
         self.backfill_directory_index = backfill_directory_index
 
-
 def _save_app_state(monkeypatch):
     """Record _app_state attributes so monkeypatch auto-restores them at teardown."""
     from nexus.server import fastapi_server as fas
@@ -58,12 +54,10 @@ def _save_app_state(monkeypatch):
     for attr in ("nexus_fs", "api_key", "auth_provider"):
         monkeypatch.setattr(fas._app_state, attr, getattr(fas._app_state, attr))
 
-
 @pytest.fixture
 def mock_nexus_fs():
     """Create a fake NexusFS with backfill_directory_index exposed."""
     return _FakeNexusFS()
-
 
 @pytest.fixture
 def admin_client(mock_nexus_fs, monkeypatch):
@@ -73,7 +67,6 @@ def admin_client(mock_nexus_fs, monkeypatch):
     _save_app_state(monkeypatch)
     app = fas.create_app(mock_nexus_fs, api_key="admin-secret-key")
     yield TestClient(app)
-
 
 class TestBackfillAdminE2E:
     """E2E tests for backfill_directory_index admin enforcement."""

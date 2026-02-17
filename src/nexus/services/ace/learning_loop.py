@@ -1,7 +1,5 @@
 """Learning loop - main ACE integration."""
 
-from __future__ import annotations
-
 import asyncio
 import traceback
 from collections.abc import Callable
@@ -17,7 +15,6 @@ from nexus.services.ace.playbook import PlaybookManager
 from nexus.services.ace.reflection import Reflector
 from nexus.services.ace.trajectory import TrajectoryManager
 from nexus.services.protocols.llm_provider import LLMProviderProtocol
-
 
 class LearningLoop:
     """Main ACE learning loop integration.

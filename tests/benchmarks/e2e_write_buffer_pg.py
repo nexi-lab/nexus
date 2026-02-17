@@ -13,8 +13,6 @@ Usage:
     PYTHONPATH=src python3.13 tests/benchmarks/e2e_write_buffer_pg.py
 """
 
-from __future__ import annotations
-
 import base64
 import os
 import re
@@ -35,13 +33,11 @@ from sqlalchemy import create_engine, text
 PG_URL = "postgresql://nexus_test:nexus_test_password@localhost:5433/nexus_e2e_wb"
 SRC_PATH = str(Path(__file__).parent.parent.parent / "src")
 
-
 def find_free_port() -> int:
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
         s.bind(("", 0))
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         return int(s.getsockname()[1])
-
 
 def wait_for_server(url: str, timeout: float = 45.0) -> bool:
     start = time.time()
@@ -55,7 +51,6 @@ def wait_for_server(url: str, timeout: float = 45.0) -> bool:
         time.sleep(0.3)
     return False
 
-
 def rpc(client: httpx.Client, method: str, params: dict) -> dict:
     resp = client.post(
         f"/api/nfs/{method}",
@@ -63,13 +58,10 @@ def rpc(client: httpx.Client, method: str, params: dict) -> dict:
     )
     return resp.json()
 
-
 def encode_bytes(data: bytes) -> dict:
     return {"__type__": "bytes", "data": base64.b64encode(data).decode()}
 
-
 # ── Main ─────────────────────────────────────────────────────────────────
-
 
 def main():
     print("=" * 70)
@@ -323,7 +315,6 @@ def main():
         except subprocess.TimeoutExpired:
             process.kill()
 
-
 # Allow rpc to accept headers
 def rpc(client: httpx.Client, method: str, params: dict, headers: dict | None = None) -> dict:  # noqa: F811
     resp = client.post(
@@ -332,7 +323,6 @@ def rpc(client: httpx.Client, method: str, params: dict, headers: dict | None = 
         headers=headers,
     )
     return resp.json()
-
 
 if __name__ == "__main__":
     main()

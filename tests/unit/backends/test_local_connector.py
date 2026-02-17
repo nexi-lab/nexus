@@ -16,7 +16,6 @@ import pytest
 from nexus.backends.local_connector import LocalConnectorBackend
 from nexus.core.exceptions import BackendError
 
-
 class TestLocalConnectorInit:
     """Test LocalConnectorBackend initialization."""
 
@@ -48,7 +47,6 @@ class TestLocalConnectorInit:
         """Should return 'local_connector' as name."""
         connector = LocalConnectorBackend(tmp_path)
         assert connector.name == "local_connector"
-
 
 class TestPathTranslation:
     """Test path translation and security."""
@@ -96,7 +94,6 @@ class TestPathTranslation:
         """get_watch_root should return local_path."""
         connector = LocalConnectorBackend(tmp_path)
         assert connector.get_watch_root() == tmp_path
-
 
 class TestReadContent:
     """Test read_content with L1 caching."""
@@ -163,7 +160,6 @@ class TestReadContent:
             assert result.data == b"cached content"
             mock_cache.assert_called_once()
 
-
 class TestWriteContent:
     """Test write_content."""
 
@@ -206,7 +202,6 @@ class TestWriteContent:
 
         assert result.success is False
         assert "read-only" in result.error_message
-
 
 class TestDirectoryOperations:
     """Test directory operations."""
@@ -272,7 +267,6 @@ class TestDirectoryOperations:
         assert result.success is False
         assert "read-only" in result.error_message
 
-
 class TestBackendInterface:
     """Test Backend interface methods (for compatibility)."""
 
@@ -296,7 +290,6 @@ class TestBackendInterface:
         result = connector.delete_content("somehash")
         assert result.success is False
         assert "not supported" in result.error_message
-
 
 class TestCacheConfiguration:
     """Test cache configuration."""

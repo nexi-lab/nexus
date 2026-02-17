@@ -40,7 +40,6 @@ __all__ = [
     "list_skills",
 ]
 
-
 def list_skills(
     config: RunnableConfig,
     state: Annotated[Any, InjectedState] = None,
@@ -100,7 +99,6 @@ def list_skills(
     tier_filter = None if tier == "all" else tier
 
     return nx.skills_list(tier=tier_filter, include_metadata=include_metadata)
-
 
 def get_nexus_tools() -> list[BaseTool]:
     """

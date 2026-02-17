@@ -6,8 +6,6 @@ contain consistent data with matching fields.
 Phase 1.4 of #1246/#1330 consolidation plan.
 """
 
-from __future__ import annotations
-
 import tempfile
 from collections.abc import Generator
 from pathlib import Path
@@ -29,7 +27,6 @@ try:
 except Exception:
     _raft_available = False
 
-
 def _try_create_raft_store(path: str) -> object | None:
     """Try to create a RaftMetadataStore; return None if native module unavailable."""
     if not _raft_available:
@@ -39,19 +36,16 @@ def _try_create_raft_store(path: str) -> object | None:
     except RuntimeError:
         return None
 
-
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
-
 
 @pytest.fixture
 def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]:
     rs = SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db")
     yield rs
     rs.close()
-
 
 @pytest.fixture
 def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS, None, None]:
@@ -83,11 +77,9 @@ def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS
     yield nx
     nx.close()
 
-
 # =========================================================================
 # Write consistency
 # =========================================================================
-
 
 class TestWriteConsistency:
     """After write(), both Metastore and RecordStore should be consistent."""
@@ -177,11 +169,9 @@ class TestWriteConsistency:
             assert len(vhs) == 3
             assert [v.version_number for v in vhs] == [1, 2, 3]
 
-
 # =========================================================================
 # Delete consistency
 # =========================================================================
-
 
 class TestDeleteConsistency:
     """After delete(), Metastore entry is gone, RecordStore is soft-deleted."""
@@ -223,11 +213,9 @@ class TestDeleteConsistency:
             assert "write" in op_types
             assert "delete" in op_types
 
-
 # =========================================================================
 # Rename consistency
 # =========================================================================
-
 
 class TestRenameConsistency:
     """After rename(), Metastore reflects new path, RecordStore has audit trail."""
@@ -254,11 +242,9 @@ class TestRenameConsistency:
             assert len(rename_ops) == 1
             assert rename_ops[0].new_path == "/new.txt"
 
-
 # =========================================================================
 # Batch write consistency
 # =========================================================================
-
 
 class TestBatchWriteConsistency:
     """After write_batch(), all files exist in both stores."""

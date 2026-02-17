@@ -3,10 +3,7 @@
 Issue #997: Response models for the secrets audit log endpoints.
 """
 
-from __future__ import annotations
-
 from nexus.server.api.v2.models.base import ApiModel
-
 
 class SecretsAuditEventResponse(ApiModel):
     """Single secrets audit log entry."""
@@ -24,7 +21,6 @@ class SecretsAuditEventResponse(ApiModel):
     details: str | None = None
     metadata_hash: str | None = None
 
-
 class SecretsAuditEventListResponse(ApiModel):
     """Paginated list of secrets audit events."""
 
@@ -33,7 +29,6 @@ class SecretsAuditEventListResponse(ApiModel):
     has_more: bool = False
     total: int | None = None
     next_cursor: str | None = None
-
 
 class SecretsAuditIntegrityResponse(ApiModel):
     """Result of integrity verification for a single record."""

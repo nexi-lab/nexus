@@ -20,8 +20,6 @@ Run with:
     pytest tests/e2e/test_reputation_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket
@@ -46,14 +44,12 @@ _src_path = Path(__file__).parent.parent.parent / "src"
 if str(_src_path) not in sys.path:
     sys.path.insert(0, str(_src_path))
 
-
 def find_free_port() -> int:
     """Find a free port on localhost."""
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
         s.bind(("", 0))
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         return s.getsockname()[1]
-
 
 def wait_for_server(url: str, timeout: float = 30.0) -> bool:
     """Wait for server to be ready by polling /health endpoint."""
@@ -68,11 +64,9 @@ def wait_for_server(url: str, timeout: float = 30.0) -> bool:
         time.sleep(0.1)
     return False
 
-
 # ---------------------------------------------------------------------------
 # PostgreSQL fixtures
 # ---------------------------------------------------------------------------
-
 
 @pytest.fixture(scope="module")
 def pg_engine():
@@ -100,11 +94,9 @@ def pg_engine():
 
     engine.dispose()
 
-
 # ---------------------------------------------------------------------------
 # Server fixture
 # ---------------------------------------------------------------------------
-
 
 @pytest.fixture(scope="module")
 def nexus_server(tmp_path_factory, pg_engine):
@@ -177,20 +169,16 @@ def nexus_server(tmp_path_factory, pg_engine):
         process.kill()
         process.wait()
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-
 def _headers(api_key: str) -> dict[str, str]:
     return {"Authorization": f"Bearer {api_key}"}
-
 
 # ---------------------------------------------------------------------------
 # 1. Submit feedback — success
 # ---------------------------------------------------------------------------
-
 
 class TestSubmitFeedback:
     """E2E tests for POST /exchanges/{id}/feedback."""
@@ -275,11 +263,9 @@ class TestSubmitFeedback:
         )
         assert resp2.status_code == 409
 
-
 # ---------------------------------------------------------------------------
 # 2. Get reputation
 # ---------------------------------------------------------------------------
-
 
 class TestGetReputation:
     """E2E tests for GET /agents/{id}/reputation."""
@@ -332,11 +318,9 @@ class TestGetReputation:
         )
         assert response.status_code == 404
 
-
 # ---------------------------------------------------------------------------
 # 3. Leaderboard
 # ---------------------------------------------------------------------------
-
 
 class TestLeaderboard:
     """E2E tests for GET /reputation/leaderboard."""
@@ -375,11 +359,9 @@ class TestLeaderboard:
         assert "entries" in data
         assert len(data["entries"]) >= 1
 
-
 # ---------------------------------------------------------------------------
 # 4. Disputes
 # ---------------------------------------------------------------------------
-
 
 class TestDisputes:
     """E2E tests for dispute endpoints."""
@@ -496,11 +478,9 @@ class TestDisputes:
         assert get_resp.status_code == 200
         assert get_resp.json()["id"] == dispute_id
 
-
 # ---------------------------------------------------------------------------
 # 5. Get feedback for exchange
 # ---------------------------------------------------------------------------
-
 
 class TestGetFeedback:
     """E2E tests for GET /exchanges/{id}/feedback."""

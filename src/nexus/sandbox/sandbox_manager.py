@@ -7,8 +7,6 @@ Uses session-per-operation pattern: each DB operation gets a fresh session
 from the session_factory, preventing stale identity maps and connection leaks.
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
@@ -57,7 +55,6 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
-
 
 class SandboxManager:
     """Manages sandboxes across different providers with database persistence.

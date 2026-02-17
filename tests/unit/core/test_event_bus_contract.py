@@ -6,8 +6,6 @@ contract. Each test is run once per backend.
 Related: Issue #1331
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -24,7 +22,6 @@ from nexus.core.event_bus import (
 # ============================================================================
 # Fixtures
 # ============================================================================
-
 
 @pytest.fixture
 def mock_redis_client():
@@ -43,7 +40,6 @@ def mock_redis_client():
     client.client.publish = AsyncMock(return_value=1)
 
     return client
-
 
 @pytest.fixture
 def mock_nats_connect():
@@ -68,7 +64,6 @@ def mock_nats_connect():
         mock_connect.return_value = nc
         yield mock_connect, nc, js
 
-
 @pytest.fixture(params=["redis", "nats"])
 async def event_bus(request, mock_redis_client, mock_nats_connect):
     """Create and start an event bus for each backend."""
@@ -85,7 +80,6 @@ async def event_bus(request, mock_redis_client, mock_nats_connect):
         yield bus
         await bus.stop()
 
-
 @pytest.fixture
 def sample_event():
     return FileEvent(
@@ -95,11 +89,9 @@ def sample_event():
         event_id="evt-contract-1",
     )
 
-
 # ============================================================================
 # Contract Tests
 # ============================================================================
-
 
 class TestEventBusContract:
     """Tests that both backends satisfy the same contract."""

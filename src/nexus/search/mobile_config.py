@@ -24,8 +24,6 @@ References:
 - Snowflake Arctic-Embed: https://huggingface.co/Snowflake/snowflake-arctic-embed-xs
 """
 
-from __future__ import annotations
-
 import logging
 import platform
 from dataclasses import dataclass, field
@@ -34,11 +32,9 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-
 # =============================================================================
 # Enums
 # =============================================================================
-
 
 class DeviceTier(StrEnum):
     """Device capability tiers based on available RAM.
@@ -53,7 +49,6 @@ class DeviceTier(StrEnum):
     HIGH = "high"  # 12GB+ RAM - large embeddings + reranker
     SERVER = "server"  # Cloud/API providers
 
-
 class SearchMode(StrEnum):
     """Search mode determining which retrieval strategies to use.
 
@@ -64,7 +59,6 @@ class SearchMode(StrEnum):
     SEMANTIC_ONLY = "semantic"  # Dense vectors only
     HYBRID = "hybrid"  # BM25 + Dense with RRF fusion
     HYBRID_RERANKED = "hybrid_reranked"  # Hybrid + cross-encoder reranking
-
 
 class ModelProvider(StrEnum):
     """Model provider/runtime for loading and inference.
@@ -80,11 +74,9 @@ class ModelProvider(StrEnum):
     FASTEMBED = "fastembed"  # Qdrant's FastEmbed
     API = "api"  # Cloud API (OpenAI, Voyage, Cohere)
 
-
 # =============================================================================
 # Model Configuration Dataclasses
 # =============================================================================
-
 
 @dataclass
 class EmbeddingModelConfig:
@@ -135,7 +127,6 @@ class EmbeddingModelConfig:
                 return dim
         return max(valid_dims)
 
-
 @dataclass
 class RerankerModelConfig:
     """Configuration for a reranker (cross-encoder) model.
@@ -155,7 +146,6 @@ class RerankerModelConfig:
     max_length: int = 512
     batch_size: int = 16
     metadata: dict[str, Any] = field(default_factory=dict)
-
 
 @dataclass
 class MobileSearchConfig:
@@ -218,7 +208,6 @@ class MobileSearchConfig:
             SearchMode.HYBRID,
             SearchMode.HYBRID_RERANKED,
         )
-
 
 # =============================================================================
 # Model Registries
@@ -382,7 +371,6 @@ RERANKER_MODELS: dict[str, RerankerModelConfig] = {
     ),
 }
 
-
 # =============================================================================
 # Tier Presets
 # =============================================================================
@@ -431,11 +419,9 @@ TIER_PRESETS: dict[DeviceTier, MobileSearchConfig] = {
     ),
 }
 
-
 # =============================================================================
 # Device Detection
 # =============================================================================
-
 
 def get_system_memory_gb() -> float:
     """Get total system memory in gigabytes.
@@ -476,7 +462,6 @@ def get_system_memory_gb() -> float:
     # Conservative fallback
     return 4.0
 
-
 def get_available_memory_gb() -> float:
     """Get available (free) system memory in gigabytes.
 
@@ -492,7 +477,6 @@ def get_available_memory_gb() -> float:
 
     # Conservative fallback
     return 2.0
-
 
 def detect_device_tier(
     total_ram_gb: float | None = None,
@@ -549,7 +533,6 @@ def detect_device_tier(
     logger.info(f"Detected device tier: {base_tier}")
     return base_tier
 
-
 def get_config_for_tier(tier: DeviceTier) -> MobileSearchConfig:
     """Get the preset configuration for a device tier.
 
@@ -560,7 +543,6 @@ def get_config_for_tier(tier: DeviceTier) -> MobileSearchConfig:
         MobileSearchConfig for the specified tier
     """
     return TIER_PRESETS[tier]
-
 
 def auto_detect_config() -> MobileSearchConfig:
     """Auto-detect device tier and return appropriate configuration.
@@ -577,11 +559,9 @@ def auto_detect_config() -> MobileSearchConfig:
     tier = detect_device_tier()
     return get_config_for_tier(tier)
 
-
 # =============================================================================
 # Configuration Customization
 # =============================================================================
-
 
 def create_custom_config(
     tier: DeviceTier | None = None,
@@ -658,7 +638,6 @@ def create_custom_config(
         unload_after_seconds=kwargs.get("unload_after_seconds", base_config.unload_after_seconds),
         target_dimensions=kwargs.get("target_dimensions", base_config.target_dimensions),
     )
-
 
 def list_available_models() -> dict[str, dict[str, Any]]:
     """List all available embedding and reranker models.

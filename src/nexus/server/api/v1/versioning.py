@@ -7,18 +7,16 @@ Mirrors the v2 versioning pattern:
 Issue #1288: Decompose FastAPI server monolith into domain routers.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING
 
 from nexus.server.api.v2.versioning import RouterEntry, RouterRegistry
 
+from fastapi import FastAPI
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
-
 
 def build_v1_registry() -> RouterRegistry:
     """Import all v1 routers and return a populated registry.
@@ -111,7 +109,6 @@ def build_v1_registry() -> RouterRegistry:
         logger.warning("Failed to import events router: %s", e)
 
     return registry
-
 
 def register_v1_routers(app: FastAPI, registry: RouterRegistry) -> None:
     """Mount every router in *registry* onto *app*."""

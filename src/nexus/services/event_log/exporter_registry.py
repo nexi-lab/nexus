@@ -6,18 +6,17 @@ asyncio.gather(). Collects per-exporter failures for DLQ routing.
 Issue #1138: Event Stream Export.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from typing import TYPE_CHECKING
 
+from nexus.core.event_bus import FileEvent
+from nexus.services.event_log.exporter_protocol import EventStreamExporterProtocol
 if TYPE_CHECKING:
     from nexus.core.event_bus import FileEvent
     from nexus.services.event_log.exporter_protocol import EventStreamExporterProtocol
 
 logger = logging.getLogger(__name__)
-
 
 class ExporterRegistry:
     """Registry of event stream exporters with parallel dispatch."""

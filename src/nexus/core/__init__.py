@@ -32,7 +32,6 @@ from nexus.core.path_interner import (
     reset_global_interners,
 )
 
-
 def setup_uvloop() -> bool:
     """Install uvloop as the default asyncio event loop policy.
 
@@ -78,7 +77,6 @@ def setup_uvloop() -> bool:
         # uvloop not installed - fallback to default asyncio
         return False
 
-
 # =============================================================================
 # LAZY IMPORTS for performance optimization
 # =============================================================================
@@ -103,7 +101,6 @@ _LAZY_IMPORTS = {
     "ScopedFilesystem": ("nexus.core.scoped_filesystem", "ScopedFilesystem"),
 }
 
-
 def __getattr__(name: str) -> Any:
     """Lazy import for heavy dependencies."""
     # Check cache first
@@ -121,7 +118,6 @@ def __getattr__(name: str) -> Any:
         return value
 
     raise AttributeError(f"module 'nexus.core' has no attribute {name!r}")
-
 
 __all__ = [
     # Event loop optimization

@@ -10,8 +10,6 @@ lookups instead of O(depth) tree walks.
 Related: Issue #1459 Phase 13, Leopard pattern
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -19,6 +17,8 @@ from sqlalchemy.exc import OperationalError
 
 from nexus.rebac.consistency.revision import get_zone_revision_for_grant
 
+from nexus.rebac.cache.tiger.bitmap_cache import TigerCache
+from sqlalchemy.engine import Engine
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
@@ -99,7 +99,6 @@ _FILE_EXTENSIONS = frozenset(
         "lock",
     }
 )
-
 
 class DirectoryExpander:
     """Expands directory permission grants to descendant files.

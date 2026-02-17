@@ -22,7 +22,6 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
     from sqlalchemy.orm import sessionmaker
 
-
 class EntityRegistry:
     """Entity registry for managing identity relationships.
 

@@ -26,8 +26,6 @@ Requirements:
     - mcp package: pip install mcp
 """
 
-from __future__ import annotations
-
 import argparse
 import asyncio
 import os
@@ -63,14 +61,12 @@ except ImportError:
     print("Warning: mcp package not installed. Falling back to prompt-based evaluation.")
     print("For full MCP integration, run: pip install mcp")
 
-
 @dataclass
 class QAPair:
     """A question-answer pair for evaluation."""
 
     question: str
     answer: str
-
 
 @dataclass
 class EvaluationResult:
@@ -84,7 +80,6 @@ class EvaluationResult:
     tool_calls: int
     summary: str
     feedback: str = ""
-
 
 EVALUATION_PROMPT = """You are an AI assistant with access to tools.
 
@@ -120,13 +115,11 @@ Response Requirements:
 - For names or text, provide the exact text requested
 - Your response should go last"""
 
-
 def extract_xml_content(text: str, tag: str) -> str | None:
     """Extract content from XML tags."""
     pattern = rf"<{tag}>(.*?)</{tag}>"
     matches = re.findall(pattern, text, re.DOTALL)
     return matches[-1].strip() if matches else None
-
 
 def load_evaluation_file(path: Path) -> list[QAPair]:
     """Load QA pairs from an evaluation XML file."""
@@ -146,7 +139,6 @@ def load_evaluation_file(path: Path) -> list[QAPair]:
 
     return qa_pairs
 
-
 # ============================================================
 # Test Data Setup Functions
 # ============================================================
@@ -155,7 +147,6 @@ def load_evaluation_file(path: Path) -> list[QAPair]:
 EVAL_WORKSPACE_LOCAL = Path(__file__).parent / "eval_workspace"
 # Remote path in Nexus
 EVAL_WORKSPACE_REMOTE = "/eval_workspace"
-
 
 async def check_data_exists(session: ClientSession) -> bool:
     """Check if test data already exists in Nexus."""
@@ -174,7 +165,6 @@ async def check_data_exists(session: ClientSession) -> bool:
     except Exception:
         pass
     return False
-
 
 async def upload_test_data(session: ClientSession) -> tuple[int, int]:
     """Upload test data files to Nexus using MCP write_file.
@@ -234,7 +224,6 @@ async def upload_test_data(session: ClientSession) -> tuple[int, int]:
 
     print(f"\nUpload complete: {success} success, {failed} failed")
     return success, failed
-
 
 async def evaluate_question_with_mcp(
     client: anthropic.Anthropic,
@@ -334,7 +323,6 @@ async def evaluate_question_with_mcp(
 
     return answer, tool_call_count, summary, feedback
 
-
 def evaluate_question_prompt_based(
     client: anthropic.Anthropic,
     question: str,
@@ -389,7 +377,6 @@ SUMMARY: [brief explanation]"""
             tool_calls = len([t for t in tools_str.split(",") if t.strip()])
 
     return answer, tool_calls, summary, "Prompt-based evaluation (no feedback)"
-
 
 async def run_evaluation_async(
     eval_file: Path,
@@ -632,7 +619,6 @@ async def run_evaluation_async(
 
     return results
 
-
 def run_evaluation(
     eval_file: Path,
     model: str = "claude-opus-4-5-20251101",
@@ -645,7 +631,6 @@ def run_evaluation(
     return asyncio.run(
         run_evaluation_async(eval_file, model, output_file, transport, mcp_url, setup_data)
     )
-
 
 def generate_report(results: list[EvaluationResult], model: str) -> str:
     """Generate a markdown report from evaluation results."""
@@ -695,7 +680,6 @@ def generate_report(results: list[EvaluationResult], model: str) -> str:
 
     return "\n".join(lines)
 
-
 def main() -> None:
     """Main entry point."""
     parser = argparse.ArgumentParser(description="Run LLM-driven evaluations for Nexus MCP server")
@@ -744,7 +728,6 @@ def main() -> None:
     run_evaluation(
         args.eval_file, args.model, args.output, args.transport, args.mcp_url, args.setup
     )
-
 
 if __name__ == "__main__":
     main()

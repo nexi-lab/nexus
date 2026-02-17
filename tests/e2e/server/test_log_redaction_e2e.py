@@ -5,8 +5,6 @@ with secrets in headers/params, then captures server logs and
 verifies secrets are redacted.
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket
@@ -21,13 +19,11 @@ import pytest
 
 _src_path = Path(__file__).parent.parent.parent / "src"
 
-
 def _find_free_port() -> int:
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
         s.bind(("", 0))
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         return s.getsockname()[1]
-
 
 def _wait_for_server(url: str, timeout: float = 30.0) -> bool:
     start = time.time()
@@ -41,12 +37,10 @@ def _wait_for_server(url: str, timeout: float = 30.0) -> bool:
         time.sleep(0.1)
     return False
 
-
 # Secrets we'll inject into requests and check are NOT in logs
 _TEST_API_KEY = "sk-test_admin_550e8400-e29b-41d4-a716-446655440000_a1b2c3d4e5f6"
 _TEST_BEARER_TOKEN = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
 _TEST_DB_PASSWORD = "postgresql://admin:supersecret_p4ssw0rd@db.example.com:5432/production_db"
-
 
 @pytest.fixture(scope="function")
 def redaction_server(tmp_path, monkeypatch):
@@ -119,7 +113,6 @@ def redaction_server(tmp_path, monkeypatch):
         process.wait()
 
     log_fh.close()
-
 
 def test_log_redaction_e2e(redaction_server: dict) -> None:
     """E2E: Verify secrets in HTTP requests don't appear in server logs.
@@ -196,7 +189,6 @@ def test_log_redaction_e2e(redaction_server: dict) -> None:
     assert "supersecret_p4ssw0rd" not in log_content, (
         "Database password leaked in logs!\nFound in log output"
     )
-
 
 def test_log_redaction_disabled_e2e(tmp_path, monkeypatch) -> None:
     """E2E: Verify redaction can be disabled via config.

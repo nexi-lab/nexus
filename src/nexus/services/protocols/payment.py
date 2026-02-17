@@ -11,14 +11,11 @@ References:
     - Issue #1357: Extensible protocol dispatch for agent commerce
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from nexus.pay.audit_types import TransactionProtocol
 if TYPE_CHECKING:
-    from nexus.pay.audit_types import TransactionProtocol
     from nexus.pay.protocol import ProtocolTransferRequest, ProtocolTransferResult
-
 
 @runtime_checkable
 class PaymentProtocol(Protocol):
@@ -35,4 +32,4 @@ class PaymentProtocol(Protocol):
 
     def can_handle(self, to: str, metadata: dict[str, Any] | None = None) -> bool: ...
 
-    async def transfer(self, request: ProtocolTransferRequest) -> ProtocolTransferResult: ...
+    async def transfer(self, request: "ProtocolTransferRequest") -> "ProtocolTransferResult": ...

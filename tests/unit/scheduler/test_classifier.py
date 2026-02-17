@@ -3,14 +3,11 @@
 Tests tier-to-class mapping, cost demotion, IO promotion, and starvation.
 """
 
-from __future__ import annotations
-
 from nexus.scheduler.constants import PriorityClass, PriorityTier, RequestState
 from nexus.scheduler.policies.classifier import (
     classify_request,
     should_promote_for_starvation,
 )
-
 
 class TestTierToClassMapping:
     """Test base tier → PriorityClass mapping."""
@@ -29,7 +26,6 @@ class TestTierToClassMapping:
 
     def test_best_effort_maps_to_background(self):
         assert classify_request(PriorityTier.BEST_EFFORT) == PriorityClass.BACKGROUND
-
 
 class TestCostDemotion:
     """Test INTERACTIVE → BATCH demotion when cost exceeds threshold."""
@@ -59,7 +55,6 @@ class TestCostDemotion:
         )
         assert result == PriorityClass.BATCH  # Already BATCH, no change
 
-
 class TestIOPromotion:
     """Test BACKGROUND → BATCH promotion for IO_WAIT."""
 
@@ -81,7 +76,6 @@ class TestIOPromotion:
         """Accept string 'io_wait' as well as enum."""
         result = classify_request(PriorityTier.LOW, request_state="io_wait")
         assert result == PriorityClass.BATCH
-
 
 class TestStarvationPromotion:
     """Test starvation-based promotion."""

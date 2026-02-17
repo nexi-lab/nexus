@@ -23,11 +23,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from nexus.storage.local_disk_cache import LocalDiskCache
 
-
 def content_hash(content: bytes) -> str:
     """Compute SHA-256 hash of content."""
     return hashlib.sha256(content).hexdigest()
-
 
 def benchmark_native_ssd(tmp_dir: str, num_files: int = 100, file_size: int = 1024) -> dict:
     """Benchmark native Python file reads from SSD."""
@@ -60,7 +58,6 @@ def benchmark_native_ssd(tmp_dir: str, num_files: int = 100, file_size: int = 10
         "throughput_files_sec": num_files / (sum(times) / 1000),
         "throughput_mb_sec": (num_files * file_size) / (sum(times) / 1000) / (1024 * 1024),
     }
-
 
 def benchmark_local_disk_cache_hits(
     cache: LocalDiskCache, num_files: int = 100, file_size: int = 1024
@@ -97,7 +94,6 @@ def benchmark_local_disk_cache_hits(
         "throughput_mb_sec": (num_files * file_size) / (sum(times) / 1000) / (1024 * 1024),
     }
 
-
 def benchmark_local_disk_cache_misses(cache: LocalDiskCache, num_files: int = 100) -> dict:
     """Benchmark LocalDiskCache read misses (Bloom filter optimization)."""
     # Generate random hashes that don't exist in cache
@@ -120,7 +116,6 @@ def benchmark_local_disk_cache_misses(cache: LocalDiskCache, num_files: int = 10
         "p95_ms": sorted(times)[int(num_files * 0.95)],
         "throughput_files_sec": num_files / (sum(times) / 1000),
     }
-
 
 def benchmark_cache_write(
     cache: LocalDiskCache, num_files: int = 100, file_size: int = 1024
@@ -146,7 +141,6 @@ def benchmark_cache_write(
         "throughput_files_sec": num_files / (sum(times) / 1000),
         "throughput_mb_sec": (num_files * file_size) / (sum(times) / 1000) / (1024 * 1024),
     }
-
 
 def benchmark_large_files(
     cache: LocalDiskCache, file_sizes_kb: list[int] | None = None
@@ -184,7 +178,6 @@ def benchmark_large_files(
         cache.remove(hash_val)
 
     return results
-
 
 def run_benchmarks():
     """Run all benchmarks."""
@@ -291,7 +284,6 @@ def run_benchmarks():
         print(
             f"  {'Cache miss check':<30} {network_latency_ms:.1f}ms       {miss_results['avg_ms']:.4f}ms     {network_latency_ms / miss_results['avg_ms']:.0f}x"
         )
-
 
 if __name__ == "__main__":
     run_benchmarks()

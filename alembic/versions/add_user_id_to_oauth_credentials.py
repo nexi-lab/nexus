@@ -21,7 +21,6 @@ down_revision: Union[str, Sequence[str], None] = "3e3663b4e99a"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add user_id column to oauth_credentials table.
 
@@ -48,7 +47,6 @@ def upgrade() -> None:
     # 3. New credentials will have user_id set during storage via context
     # If needed, a data migration can be run separately to populate user_id
     # from other sources (e.g., api_keys table based on created_by field)
-
 
 def downgrade() -> None:
     """Remove user_id column and index from oauth_credentials table."""

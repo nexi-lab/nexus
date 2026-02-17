@@ -19,12 +19,9 @@ Usage::
 Parameterized tests for all 8 domain protocols are included below.
 """
 
-from __future__ import annotations
-
 import inspect
 
 import pytest
-
 
 def _get_protocol_methods(protocol: type) -> dict[str, inspect.Signature]:
     """Extract public method names and signatures from a Protocol class.
@@ -49,7 +46,6 @@ def _get_protocol_methods(protocol: type) -> dict[str, inspect.Signature]:
             # Some built-in methods can't be introspected
             continue
     return methods
-
 
 def assert_protocol_compliance(
     impl_class: type,
@@ -149,7 +145,6 @@ def assert_protocol_compliance(
             f"{impl_class.__name__} does not comply with {protocol.__name__}:\n  - {error_list}"
         )
 
-
 # =========================================================================
 # Parameterized compliance tests for all 8 domain protocols
 # =========================================================================
@@ -224,7 +219,6 @@ _PROTOCOL_IMPL_PAIRS: list[tuple[str, str, str, bool]] = [
     ),
 ]
 
-
 def _try_import(module_path: str, class_name: str) -> type | None:
     """Attempt to import a class, returning None on failure."""
     try:
@@ -234,7 +228,6 @@ def _try_import(module_path: str, class_name: str) -> type | None:
         return getattr(module, class_name)
     except (ImportError, AttributeError):
         return None
-
 
 @pytest.mark.parametrize(
     "protocol_name,protocol_module,impl_path,expect_pass",
@@ -263,7 +256,6 @@ def test_service_protocol_compliance(
         return
 
     assert_protocol_compliance(impl_cls, protocol_cls)
-
 
 # =========================================================================
 # Protocol file import cleanliness (Issue #1291)
@@ -294,7 +286,6 @@ _PROTOCOL_FILES: list[tuple[str, str]] = [
 
 # Leaf modules that are safe to import at module level in protocol files
 _ALLOWED_LEAF_MODULES = {"nexus.constants"}
-
 
 @pytest.mark.parametrize(
     "name,rel_path",

@@ -10,15 +10,12 @@ Private keys are encrypted at rest using Fernet (AES-128 + HMAC-SHA256),
 reusing the existing OAuthCrypto infrastructure.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Index, Integer, LargeBinary, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base, _generate_uuid
-
 
 class AgentKeyModel(Base):
     """Ed25519 signing keys for agent identity (Issue #1355).

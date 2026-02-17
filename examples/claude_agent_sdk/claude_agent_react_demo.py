@@ -42,7 +42,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 import nexus
 from claude_agent_sdk import ClaudeAgentOptions, create_sdk_mcp_server, query, tool
 
-
 def connect_to_nexus(tenant_id: str = "claude-agent-demo", agent_id: str = "react-agent"):
     """
     Connect to Nexus filesystem (local or remote).
@@ -76,7 +75,6 @@ def connect_to_nexus(tenant_id: str = "claude-agent-demo", agent_id: str = "reac
         print("✓ Connected to local Nexus")
 
     return nx
-
 
 def create_nexus_tools(nx):
     """
@@ -237,7 +235,6 @@ def create_nexus_tools(nx):
     )
 
     return server
-
 
 async def run_demo():
     """Run the Claude Agent SDK ReAct demo."""
@@ -435,7 +432,6 @@ async def run_demo():
         import traceback
 
         traceback.print_exc()
-
 
 if __name__ == "__main__":
     asyncio.run(run_demo())

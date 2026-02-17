@@ -1,7 +1,5 @@
 """Unit tests for AgentDiscovery."""
 
-from __future__ import annotations
-
 import json
 
 import pytest
@@ -12,7 +10,6 @@ from nexus.ipc.discovery import AgentDiscovery
 from .fakes import InMemoryVFS
 
 ZONE = "test-zone"
-
 
 async def _create_agent(
     vfs: InMemoryVFS,
@@ -34,7 +31,6 @@ async def _create_agent(
     }
     card_data = json.dumps(card).encode("utf-8")
     await vfs.write(agent_card_path(agent_id), card_data, ZONE)
-
 
 class TestAgentDiscovery:
     """Tests for discovering agents via filesystem."""

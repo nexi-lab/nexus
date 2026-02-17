@@ -6,8 +6,6 @@ SHA-256 self-hash per record for tamper detection, with SQLAlchemy
 event guards to reject UPDATE/DELETE at the ORM level.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from enum import StrEnum
 
@@ -15,7 +13,6 @@ from sqlalchemy import DateTime, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base, _generate_uuid, _get_uuid_server_default
-
 
 class SecretsAuditEventType(StrEnum):
     """Types of auditable secrets/credential events."""
@@ -29,7 +26,6 @@ class SecretsAuditEventType(StrEnum):
     FAMILY_INVALIDATED = "family_invalidated"
     KEY_ACCESSED = "key_accessed"
     KEY_ROTATED = "key_rotated"
-
 
 class SecretsAuditLogModel(Base):
     """Immutable audit log for secrets and credential operations.

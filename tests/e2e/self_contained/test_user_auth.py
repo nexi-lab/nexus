@@ -31,7 +31,6 @@ from nexus.storage.models import Base, UserModel, UserOAuthAccountModel
 # Test Fixtures
 # ==============================================================================
 
-
 @pytest.fixture
 def test_db():
     """Create an in-memory SQLite database for testing."""
@@ -50,7 +49,6 @@ def test_db():
     Base.metadata.drop_all(engine)
     engine.dispose()
 
-
 @pytest.fixture
 def auth_provider(test_db):
     """Create DatabaseLocalAuth provider for testing."""
@@ -59,7 +57,6 @@ def auth_provider(test_db):
         jwt_secret="test-secret-key",
         token_expiry=3600,
     )
-
 
 @pytest.fixture
 def oauth_provider(test_db):
@@ -74,17 +71,14 @@ def oauth_provider(test_db):
         oauth_crypto=oauth_crypto,
     )
 
-
 def _verify_user_email(auth_provider: DatabaseLocalAuth, user) -> None:
     """Helper to verify a user's email in tests (Issue #1434)."""
     token = auth_provider.create_email_verification_token(user.user_id, user.email)
     auth_provider.verify_email(user.user_id, token)
 
-
 # ==============================================================================
 # Password Authentication Tests
 # ==============================================================================
-
 
 def test_user_registration(auth_provider, test_db):
     """Test user registration with email/password."""
@@ -111,7 +105,6 @@ def test_user_registration(auth_provider, test_db):
         assert db_user is not None
         assert db_user.user_id == user.user_id
 
-
 def test_duplicate_email_registration(auth_provider):
     """Test that duplicate email registration fails."""
     # Register first user
@@ -129,7 +122,6 @@ def test_duplicate_email_registration(auth_provider):
             username="bob2",
         )
 
-
 def test_duplicate_username_registration(auth_provider):
     """Test that duplicate username registration fails."""
     # Register first user
@@ -146,7 +138,6 @@ def test_duplicate_username_registration(auth_provider):
             password="different-password",
             username="charlie",
         )
-
 
 def test_user_login(auth_provider):
     """Test user login with email/password."""
@@ -173,7 +164,6 @@ def test_user_login(auth_provider):
     token2 = auth_provider.login("dave", "securepassword123")
     assert token2 is not None
 
-
 def test_invalid_password_login(auth_provider):
     """Test that login fails with wrong password."""
     # Register user
@@ -187,12 +177,10 @@ def test_invalid_password_login(auth_provider):
     token = auth_provider.login("eve@example.com", "wrong-password")
     assert token is None
 
-
 def test_nonexistent_user_login(auth_provider):
     """Test that login fails for non-existent user."""
     token = auth_provider.login("nobody@example.com", "any-password")
     assert token is None
-
 
 def test_change_password(auth_provider):
     """Test password change."""
@@ -220,7 +208,6 @@ def test_change_password(auth_provider):
     token = auth_provider.login("frank@example.com", "oldpassword123")
     assert token is None
 
-
 def test_change_password_wrong_old_password(auth_provider):
     """Test that password change fails with wrong old password."""
     # Register user
@@ -237,7 +224,6 @@ def test_change_password_wrong_old_password(auth_provider):
             old_password="wrong-password",
             new_password="newpassword456",
         )
-
 
 def test_update_profile(auth_provider):
     """Test user profile update."""
@@ -260,7 +246,6 @@ def test_update_profile(auth_provider):
     assert updated_user.display_name == "Henry Smith"
     assert updated_user.avatar_url == "https://example.com/avatar.jpg"
 
-
 def test_get_user_info(auth_provider):
     """Test getting user information."""
     # Register user
@@ -282,11 +267,9 @@ def test_get_user_info(auth_provider):
     assert user_info["is_global_admin"] is False
     assert user_info["email_verified"] is False
 
-
 # ==============================================================================
 # User Helper Function Tests
 # ==============================================================================
-
 
 def test_check_email_available(auth_provider, test_db):
     """Test email availability checking."""
@@ -303,7 +286,6 @@ def test_check_email_available(auth_provider, test_db):
     # No longer available
     with test_db() as session:
         assert check_email_available(session, "test@example.com") is False
-
 
 def test_check_username_available(auth_provider, test_db):
     """Test username availability checking."""
@@ -322,7 +304,6 @@ def test_check_username_available(auth_provider, test_db):
     with test_db() as session:
         assert check_username_available(session, "testuser") is False
 
-
 def test_get_user_by_email(auth_provider, test_db):
     """Test getting user by email."""
     # Register user
@@ -336,7 +317,6 @@ def test_get_user_by_email(auth_provider, test_db):
         user = get_user_by_email(session, "lookup@example.com")
         assert user is not None
         assert user.user_id == registered_user.user_id
-
 
 def test_get_user_by_username(auth_provider, test_db):
     """Test getting user by username."""
@@ -353,11 +333,9 @@ def test_get_user_by_username(auth_provider, test_db):
         assert user is not None
         assert user.user_id == registered_user.user_id
 
-
 # ==============================================================================
 # OAuth Authentication Tests
 # ==============================================================================
-
 
 def test_get_google_auth_url(oauth_provider):
     """Test getting Google OAuth authorization URL."""
@@ -369,7 +347,6 @@ def test_get_google_auth_url(oauth_provider):
     assert "scope=openid" in auth_url
     assert state is not None
     assert len(state) > 0
-
 
 def test_get_user_oauth_accounts(oauth_provider, test_db):
     """Test getting user's OAuth accounts."""
@@ -408,7 +385,6 @@ def test_get_user_oauth_accounts(oauth_provider, test_db):
     assert accounts[0]["provider"] == "google"
     assert accounts[0]["provider_email"] == "oauth@example.com"
 
-
 def test_unlink_oauth_account(oauth_provider, test_db):
     """Test unlinking OAuth account from user."""
     # Create a test user with OAuth account
@@ -446,7 +422,6 @@ def test_unlink_oauth_account(oauth_provider, test_db):
     # Verify account is removed
     accounts = oauth_provider.get_user_oauth_accounts(user_id)
     assert len(accounts) == 0
-
 
 def test_unlink_wrong_user_oauth_account(oauth_provider, test_db):
     """Test that unlinking fails for wrong user."""
@@ -493,11 +468,9 @@ def test_unlink_wrong_user_oauth_account(oauth_provider, test_db):
     with pytest.raises(ValueError, match="does not belong to user"):
         oauth_provider.unlink_oauth_account(user_id_2, oauth_account_id)
 
-
 # ==============================================================================
 # Integration Tests
 # ==============================================================================
-
 
 def test_full_password_auth_flow(auth_provider):
     """Test complete password authentication flow."""
@@ -540,7 +513,6 @@ def test_full_password_auth_flow(auth_provider):
     # 7. Login with new password
     token2 = auth_provider.login("integration@example.com", "newpassword456")
     assert token2 is not None
-
 
 if __name__ == "__main__":
     # Run tests with pytest

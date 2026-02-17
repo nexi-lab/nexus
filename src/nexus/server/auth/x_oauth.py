@@ -27,7 +27,6 @@ import httpx
 
 from .oauth_provider import OAuthCredential, OAuthError, OAuthProvider
 
-
 class XOAuthProvider(OAuthProvider):
     """X (Twitter) OAuth 2.0 provider with PKCE support.
 

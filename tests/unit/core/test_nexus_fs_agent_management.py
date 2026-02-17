@@ -8,8 +8,6 @@ Tests cover:
 - API key expiration determination
 """
 
-from __future__ import annotations
-
 import tempfile
 from collections.abc import Generator
 from datetime import UTC, datetime, timedelta
@@ -25,13 +23,11 @@ from nexus.storage.models import APIKeyModel
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
-
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
     """Create a temporary directory for tests."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
-
 
 @pytest.fixture
 def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]:
@@ -39,7 +35,6 @@ def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]
     rs = SQLAlchemyRecordStore(db_path=temp_dir / "metadata.db")
     yield rs
     rs.close()
-
 
 @pytest.fixture
 def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS, None, None]:
@@ -53,7 +48,6 @@ def nx(temp_dir: Path, record_store: SQLAlchemyRecordStore) -> Generator[NexusFS
     )
     yield nx
     nx.close()
-
 
 class TestExtractZoneId:
     """Tests for _extract_zone_id helper method."""
@@ -90,7 +84,6 @@ class TestExtractZoneId:
         context = OperationContext(user="alice", groups=[])
         result = nx._extract_zone_id(context)
         assert result is None
-
 
 class TestExtractUserId:
     """Tests for _extract_user_id helper method."""
@@ -133,7 +126,6 @@ class TestExtractUserId:
         context = OperationContext(user="bob", groups=[])
         result = nx._extract_user_id(context)
         assert result == "bob"
-
 
 class TestCreateAgentConfigData:
     """Tests for _create_agent_config_data helper method."""
@@ -219,7 +211,6 @@ class TestCreateAgentConfigData:
         assert config["created_at"] == "2024-01-01T00:00:00Z"
         assert config["metadata"] == metadata
         assert config["api_key"] == "sk-test-key"
-
 
 class TestDetermineAgentKeyExpiration:
     """Tests for _determine_agent_key_expiration helper method."""
@@ -386,7 +377,6 @@ class TestDetermineAgentKeyExpiration:
             assert abs((expires_at - expected).total_seconds()) < 1
         finally:
             session.close()
-
 
 class TestDeleteAgentCleanup:
     """Tests for delete_agent cleanup logic."""

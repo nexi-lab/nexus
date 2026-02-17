@@ -8,8 +8,6 @@ Tests cover:
 - Edge cases (no subject, disabled middleware, empty grants)
 """
 
-from __future__ import annotations
-
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -24,13 +22,11 @@ from nexus.mcp.middleware import ToolNamespaceMiddleware
 # Test helpers
 # ---------------------------------------------------------------------------
 
-
 @dataclass
 class FakeTool:
     """Minimal tool object with a name attribute (mirrors fastmcp.tools.tool.Tool)."""
 
     name: str
-
 
 class FakeContext:
     """Fake FastMCP context with get_state/set_state support."""
@@ -46,7 +42,6 @@ class FakeContext:
     def set_state(self, key: str, value: Any) -> None:
         self._state[key] = value
 
-
 @dataclass
 class FakeMiddlewareContext:
     """Fake MiddlewareContext matching the FastMCP interface."""
@@ -55,14 +50,12 @@ class FakeMiddlewareContext:
     fastmcp_context: Any = None
     method: str | None = None
 
-
 @dataclass
 class FakeCallToolParams:
     """Fake CallToolRequestParams."""
 
     name: str
     arguments: dict[str, Any] | None = None
-
 
 def make_rebac_mock(
     granted_objects: list[tuple[str, str]] | None = None,
@@ -73,7 +66,6 @@ def make_rebac_mock(
     rebac.rebac_list_objects.return_value = granted_objects or []
     rebac.get_zone_revision.return_value = zone_revision
     return rebac
-
 
 def make_middleware(
     granted_tools: list[str] | None = None,
@@ -90,11 +82,9 @@ def make_middleware(
         enabled=enabled,
     )
 
-
 # ---------------------------------------------------------------------------
 # tools/list filtering
 # ---------------------------------------------------------------------------
-
 
 class TestOnListTools:
     @pytest.mark.asyncio
@@ -179,11 +169,9 @@ class TestOnListTools:
         result = await mw.on_list_tools(ctx, call_next)  # type: ignore[arg-type]
         assert len(result) == 2  # All tools, middleware disabled
 
-
 # ---------------------------------------------------------------------------
 # tools/call validation
 # ---------------------------------------------------------------------------
-
 
 class TestOnCallTool:
     @pytest.mark.asyncio
@@ -259,11 +247,9 @@ class TestOnCallTool:
         result = await mw.on_call_tool(ctx, call_next)  # type: ignore[arg-type]
         assert result is expected_result
 
-
 # ---------------------------------------------------------------------------
 # Cache behavior
 # ---------------------------------------------------------------------------
-
 
 class TestCacheBehavior:
     @pytest.mark.asyncio
@@ -334,11 +320,9 @@ class TestCacheBehavior:
         mw.invalidate()
         assert len(mw._tool_cache) == 0
 
-
 # ---------------------------------------------------------------------------
 # Subject extraction
 # ---------------------------------------------------------------------------
-
 
 class TestSubjectExtraction:
     def test_extract_from_state(self):
@@ -371,7 +355,6 @@ class TestSubjectExtraction:
         subject = mw._extract_subject(ctx)  # type: ignore[arg-type]
         assert subject is None
 
-
 class TestResolveVisibleTools:
     """Tests for the public resolve_visible_tools() API (#1A DRY fix)."""
 
@@ -402,11 +385,9 @@ class TestResolveVisibleTools:
         result = mw.resolve_visible_tools("not-a-context")  # type: ignore[arg-type]
         assert result is None
 
-
 # ---------------------------------------------------------------------------
 # Metrics
 # ---------------------------------------------------------------------------
-
 
 class TestMetrics:
     @pytest.mark.asyncio
@@ -436,11 +417,9 @@ class TestMetrics:
         assert metrics["calls_rejected"] == 0
         assert metrics["rebac_errors"] == 0
 
-
 # ---------------------------------------------------------------------------
 # Performance
 # ---------------------------------------------------------------------------
-
 
 class TestPerformance:
     @pytest.mark.asyncio
@@ -470,11 +449,9 @@ class TestPerformance:
         assert len(result) == 25
         assert elapsed_ms < 5.0, f"Filtering took {elapsed_ms:.2f}ms, expected <5ms"
 
-
 # ---------------------------------------------------------------------------
 # Error handling
 # ---------------------------------------------------------------------------
-
 
 class TestErrorHandling:
     @pytest.mark.asyncio

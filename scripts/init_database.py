@@ -26,7 +26,6 @@ from alembic import command  # noqa: E402
 # Path to alembic.ini (located in alembic/ directory)
 ALEMBIC_INI_PATH = PROJECT_ROOT / "alembic" / "alembic.ini"
 
-
 def init_database(database_url: str) -> None:
     """Initialize database schema and migrations.
 
@@ -93,7 +92,6 @@ def init_database(database_url: str) -> None:
 
     engine.dispose()
 
-
 def main() -> None:
     """Main entry point."""
     database_url = os.getenv("NEXUS_DATABASE_URL")
@@ -109,7 +107,6 @@ def main() -> None:
 
         traceback.print_exc()
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()

@@ -16,14 +16,12 @@ from nexus.workflows.actions import (
 )
 from nexus.workflows.types import TriggerType, WorkflowContext
 
-
 class MockAction(BaseAction):
     """Mock action for testing base class."""
 
     async def execute(self, context: WorkflowContext):
         """Execute mock action."""
         return {"success": True}
-
 
 class TestBaseAction:
     """Test BaseAction base class."""
@@ -107,7 +105,6 @@ class TestBaseAction:
         assert action.interpolate(123, context) == 123
         assert action.interpolate(True, context) is True
 
-
 class TestTagAction:
     """Test TagAction."""
 
@@ -133,7 +130,6 @@ class TestTagAction:
         result = await action.execute(context)
         assert result.success is False
         assert "not injected" in result.error or "not available" in result.error
-
 
 class TestMoveAction:
     """Test MoveAction."""
@@ -186,7 +182,6 @@ class TestMoveAction:
         assert result.success is False
         assert "not injected" in result.error or "not available" in result.error
 
-
 class TestMetadataAction:
     """Test MetadataAction."""
 
@@ -214,7 +209,6 @@ class TestMetadataAction:
         result = await action.execute(context)
         assert result.success is False
         assert "not injected" in result.error or "not available" in result.error
-
 
 class TestPythonAction:
     """Test PythonAction."""
@@ -258,7 +252,6 @@ class TestPythonAction:
         result = await action.execute(context)
         assert result.success is False
         assert "test error" in result.error
-
 
 class TestBashAction:
     """Test BashAction."""
@@ -314,7 +307,6 @@ class TestBashAction:
         assert result.success is True
         assert "hello" in result.output["stdout"]
 
-
 class TestWebhookAction:
     """Test WebhookAction."""
 
@@ -331,7 +323,6 @@ class TestWebhookAction:
         assert action.name == "notify"
         assert action.config["url"] == "https://example.com/webhook"
         assert action.config["method"] == "POST"
-
 
 class TestBuiltinActions:
     """Test built-in action registry."""

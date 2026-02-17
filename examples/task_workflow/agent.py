@@ -32,7 +32,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import nexus
 
-
 def parse_task(memory_dict):
     """Parse a task from memory storage format.
 
@@ -44,7 +43,6 @@ def parse_task(memory_dict):
     """
     task_data = json.loads(memory_dict["content"])
     return {"memory_id": memory_dict["memory_id"], "data": task_data}
-
 
 def find_ready_work(nx, limit=1):
     """Find tasks with no blockers.
@@ -68,7 +66,6 @@ def find_ready_work(nx, limit=1):
     ready.sort(key=lambda t: t["data"]["priority"])
     return ready[:limit]
 
-
 def update_task(nx, memory_id, task_data):
     """Update a task by deleting and recreating.
 
@@ -88,7 +85,6 @@ def update_task(nx, memory_id, task_data):
 
     return new_memory_id
 
-
 def claim_task(nx, memory_id, agent_id):
     """Claim a task by marking it as in_progress.
 
@@ -107,7 +103,6 @@ def claim_task(nx, memory_id, agent_id):
     task_data["agent_id"] = agent_id
 
     return update_task(nx, memory_id, task_data)
-
 
 def create_discovered_task(nx, parent_task):
     """Create a new task discovered during work.
@@ -137,7 +132,6 @@ def create_discovered_task(nx, parent_task):
 
     return new_id
 
-
 def execute_task(nx, task):
     """Execute task and maybe discover new work.
 
@@ -159,7 +153,6 @@ def execute_task(nx, task):
 
     return discovered
 
-
 def complete_task(nx, memory_id):
     """Mark task as completed.
 
@@ -177,7 +170,6 @@ def complete_task(nx, memory_id):
     task_data["completed_at"] = datetime.now().isoformat()
 
     return update_task(nx, memory_id, task_data)
-
 
 class TaskAgent:
     """Autonomous agent that processes tasks using Nexus memory system."""
@@ -286,12 +278,10 @@ class TaskAgent:
             for t in by_status["in_progress"]:
                 print(f"  - {t['data']['title']}")
 
-
 def main():
     """Main entry point."""
     agent = TaskAgent()
     agent.run(max_iterations=10)
-
 
 if __name__ == "__main__":
     main()

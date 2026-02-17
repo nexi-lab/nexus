@@ -16,8 +16,6 @@ so forcing them into ``BaseRegistry`` would *add* complexity.
 Design doc: NEXUS-LEGO-ARCHITECTURE.md S5.2, S12.5, S19.5.
 """
 
-from __future__ import annotations
-
 import importlib
 import inspect
 import logging
@@ -31,7 +29,6 @@ from typing import Any, Generic, TypeVar
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
-
 
 class BaseRegistry(Generic[T]):
     """Generic named-component registry.
@@ -177,11 +174,9 @@ class BaseRegistry(Generic[T]):
         with self._lock:
             return f"{type(self).__name__}(name={self._name!r}, items={sorted(self._items)})"
 
-
 # ---------------------------------------------------------------------------
 # BrickRegistry -- BaseRegistry + mandatory Protocol validation
 # ---------------------------------------------------------------------------
-
 
 @dataclass(frozen=True)
 class BrickInfo:
@@ -191,7 +186,6 @@ class BrickInfo:
     brick_cls: type
     protocol: type
     metadata: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
-
 
 class BrickRegistry(BaseRegistry[BrickInfo]):
     """Registry that enforces runtime Protocol compliance.
@@ -229,11 +223,9 @@ class BrickRegistry(BaseRegistry[BrickInfo]):
         """Convenience: get the class for *name* (raises ``KeyError``)."""
         return self.get_or_raise(name).brick_cls
 
-
 # ---------------------------------------------------------------------------
 # Protocol validation helper
 # ---------------------------------------------------------------------------
-
 
 def _validate_protocol_compliance(obj: Any, protocol: type) -> None:
     """Ensure *obj* (class or instance) satisfies *protocol*.

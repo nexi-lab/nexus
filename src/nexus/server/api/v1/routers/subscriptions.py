@@ -11,8 +11,6 @@ Provides webhook subscription CRUD endpoints:
 Extracted from ``fastapi_server.py`` during monolith decomposition (#1288).
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -25,7 +23,6 @@ from nexus.server.dependencies import require_auth
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["subscriptions"])
-
 
 @router.post("/api/subscriptions", status_code=201)
 async def create_subscription(
@@ -51,7 +48,6 @@ async def create_subscription(
     )
     return JSONResponse(content=subscription.model_dump(mode="json"), status_code=201)
 
-
 @router.get("/api/subscriptions")
 async def list_subscriptions(
     enabled_only: bool = False,
@@ -72,7 +68,6 @@ async def list_subscriptions(
         content={"subscriptions": [s.model_dump(mode="json") for s in subscriptions]}
     )
 
-
 @router.get("/api/subscriptions/{subscription_id}")
 async def get_subscription(
     subscription_id: str,
@@ -85,7 +80,6 @@ async def get_subscription(
     if subscription is None:
         raise HTTPException(status_code=404, detail="Subscription not found")
     return JSONResponse(content=subscription.model_dump(mode="json"))
-
 
 @router.patch("/api/subscriptions/{subscription_id}")
 async def update_subscription(
@@ -110,7 +104,6 @@ async def update_subscription(
         raise HTTPException(status_code=404, detail="Subscription not found")
     return JSONResponse(content=subscription.model_dump(mode="json"))
 
-
 @router.delete("/api/subscriptions/{subscription_id}")
 async def delete_subscription(
     subscription_id: str,
@@ -123,7 +116,6 @@ async def delete_subscription(
     if not deleted:
         raise HTTPException(status_code=404, detail="Subscription not found")
     return JSONResponse(content={"deleted": True})
-
 
 @router.post("/api/subscriptions/{subscription_id}/test")
 async def test_subscription(

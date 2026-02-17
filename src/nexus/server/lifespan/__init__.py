@@ -9,19 +9,17 @@ Each initializer function:
 - Returns a list of ``asyncio.Task`` references that must be cancelled on shutdown
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager, suppress
 from typing import TYPE_CHECKING, Any
 
+from fastapi import FastAPI
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:

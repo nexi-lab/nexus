@@ -14,8 +14,6 @@ Run:
     pytest tests/integration/test_memory_paging_postgres.py -v
 """
 
-from __future__ import annotations
-
 import shutil
 import tempfile
 from typing import Any
@@ -29,7 +27,6 @@ from sqlalchemy.orm import sessionmaker
 # ---------------------------------------------------------------------------
 
 POSTGRES_URL = "postgresql://nexus_test:nexus_test_password@localhost:5433/nexus_test"
-
 
 @pytest.fixture(scope="module")
 def pg_engine():
@@ -47,12 +44,10 @@ def pg_engine():
     yield engine
     engine.dispose()
 
-
 @pytest.fixture
 def pg_session_factory(pg_engine):
     """Session factory bound to test PostgreSQL."""
     return sessionmaker(bind=pg_engine)
-
 
 @pytest.fixture
 def pg_session(pg_session_factory):
@@ -61,13 +56,11 @@ def pg_session(pg_session_factory):
     yield sess
     sess.close()
 
-
 @pytest.fixture(autouse=True)
 def _set_env(monkeypatch):
     """Required env vars for server modules."""
     monkeypatch.setenv("NEXUS_JWT_SECRET", "test-secret-key-postgres-paging")
     monkeypatch.delenv("NEXUS_DATABASE_URL", raising=False)
-
 
 @pytest.fixture
 def api_keys(pg_session_factory):
@@ -105,7 +98,6 @@ def api_keys(pg_session_factory):
             {"a": admin_key_id, "b": normal_key_id},
         )
         session.commit()
-
 
 @pytest.fixture
 def app(tmp_path, pg_engine, pg_session_factory, api_keys):
@@ -211,28 +203,23 @@ def app(tmp_path, pg_engine, pg_session_factory, api_keys):
         )
         session.commit()
 
-
 @pytest.fixture
 def client(app):
     from fastapi.testclient import TestClient
 
     return TestClient(app)
 
-
 @pytest.fixture
 def admin_headers(api_keys):
     return {"Authorization": f"Bearer {api_keys['admin_key']}"}
-
 
 @pytest.fixture
 def normal_headers(api_keys):
     return {"Authorization": f"Bearer {api_keys['normal_key']}"}
 
-
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
-
 
 class TestPostgresPermissionsPaging:
     """Full production-equivalent: PostgreSQL + permissions + database auth + paging."""

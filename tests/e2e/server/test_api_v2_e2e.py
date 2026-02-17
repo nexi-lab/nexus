@@ -7,13 +7,10 @@ Note: Some ACE endpoints require sklearn. Tests will check for sklearn-related
 errors and pass if the error indicates sklearn is not installed.
 """
 
-from __future__ import annotations
-
 import uuid
 
 import httpx
 import pytest
-
 
 def _is_sklearn_error(response: httpx.Response) -> bool:
     """Check if a 500 error is due to missing sklearn."""
@@ -24,7 +21,6 @@ def _is_sklearn_error(response: httpx.Response) -> bool:
         return "sklearn" in detail.lower() or "scikit-learn" in detail.lower()
     except Exception:
         return False
-
 
 class TestMemoriesApiV2:
     """E2E tests for /api/v2/memories endpoints (7 endpoints)."""
@@ -175,7 +171,6 @@ class TestMemoriesApiV2:
         assert data["memory_id"] == memory_id
         assert "versions" in data
 
-
 class TestTrajectoriesApiV2:
     """E2E tests for /api/v2/trajectories endpoints (5 endpoints).
 
@@ -294,7 +289,6 @@ class TestTrajectoriesApiV2:
         assert "trajectory" in data
         assert data["trajectory"]["trajectory_id"] == trajectory_id
 
-
 class TestFeedbackApiV2:
     """E2E tests for /api/v2/feedback endpoints (5 endpoints)."""
 
@@ -392,7 +386,6 @@ class TestFeedbackApiV2:
         data = response.json()
         assert "queue" in data
         assert "total" in data
-
 
 class TestPlaybooksApiV2:
     """E2E tests for /api/v2/playbooks endpoints (6 endpoints)."""
@@ -495,7 +488,6 @@ class TestPlaybooksApiV2:
         assert usage_resp.status_code == 200, f"Failed: {usage_resp.text}"
         assert usage_resp.json()["recorded"] is True
 
-
 class TestReflectionApiV2:
     """E2E tests for /api/v2/reflect and /api/v2/curate endpoints (3 endpoints).
 
@@ -577,7 +569,6 @@ class TestReflectionApiV2:
         assert "processed" in data
         assert "failed" in data
 
-
 class TestConsolidationApiV2:
     """E2E tests for /api/v2/consolidate endpoints (4 endpoints)."""
 
@@ -644,7 +635,6 @@ class TestConsolidationApiV2:
         assert "success" in data
         assert "updated" in data
         assert "processed" in data
-
 
 class TestApiV2Authentication:
     """Test authentication requirements for v2 endpoints."""

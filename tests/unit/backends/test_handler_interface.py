@@ -14,7 +14,6 @@ import pytest
 from nexus.backends.backend import HandlerStatusResponse
 from nexus.backends.local import LocalBackend
 
-
 class TestHandlerStatusResponse:
     """Tests for HandlerStatusResponse dataclass."""
 
@@ -75,7 +74,6 @@ class TestHandlerStatusResponse:
         assert "details" not in result
         assert result == {"success": True, "latency_ms": 5.0}
 
-
 class TestBackendHandlerInterface:
     """Tests for Backend base class handler interface."""
 
@@ -130,7 +128,6 @@ class TestBackendHandlerInterface:
         assert "user_scoped" in result.details
         assert result.details["user_scoped"] is False
 
-
 class TestHandlerStatusResponseEdgeCases:
     """Edge case tests for HandlerStatusResponse."""
 
@@ -155,7 +152,6 @@ class TestHandlerStatusResponseEdgeCases:
 
         # Empty string is falsy, so it should not be included
         assert "error_message" not in result
-
 
 class TestBackendHandlerInterfaceInheritance:
     """Test that handler interface is properly inherited."""

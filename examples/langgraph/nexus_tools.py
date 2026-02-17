@@ -36,7 +36,6 @@ from nexus.tools.langgraph.nexus_tools import get_nexus_tools as get_official_ne
 
 logger = logging.getLogger(__name__)
 
-
 def get_nexus_tools():
     """
     Create LangGraph tools that connect to Nexus server with per-request authentication.

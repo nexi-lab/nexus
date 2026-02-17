@@ -12,13 +12,11 @@ from nexus.core.hash_fast import hash_content
 
 NUM_THREADS = 50
 
-
 @pytest.fixture
 def store(tmp_path):
     cas_root = tmp_path / "cas"
     cas_root.mkdir()
     return CASBlobStore(cas_root)
-
 
 class TestConcurrentSameHash:
     """50 threads writing the same content simultaneously."""
@@ -72,7 +70,6 @@ class TestConcurrentSameHash:
         meta = store.read_meta(h)
         assert meta.ref_count == 1
 
-
 class TestConcurrentDifferentHash:
     """50 threads writing different content simultaneously."""
 
@@ -95,7 +92,6 @@ class TestConcurrentDifferentHash:
             assert store.blob_exists(h)
             meta = store.read_meta(h)
             assert meta.ref_count == 1
-
 
 class TestConcurrentStoreRelease:
     """Concurrent store + release stress test."""
@@ -127,7 +123,6 @@ class TestConcurrentStoreRelease:
         # 50 initial + 25 stores - 25 releases = 50
         meta = store.read_meta(h)
         assert meta.ref_count == NUM_THREADS
-
 
 class TestIdempotentDoubleWrite:
     """Verify that bypassing exists check still produces correct results."""

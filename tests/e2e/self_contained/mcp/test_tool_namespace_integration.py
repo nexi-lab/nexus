@@ -11,8 +11,6 @@ These tests verify:
     5. Performance: filtering 30 tools under 10ms
 """
 
-from __future__ import annotations
-
 import json
 import time
 from unittest.mock import Mock
@@ -35,7 +33,6 @@ from nexus.storage.models import Base
 # Fixtures
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture
 def rebac_engine():
     """In-memory SQLite engine with ReBAC tables."""
@@ -43,12 +40,10 @@ def rebac_engine():
     Base.metadata.create_all(engine)
     return engine
 
-
 @pytest.fixture
 def rebac_manager(rebac_engine):
     """Real EnhancedReBACManager on in-memory SQLite."""
     return EnhancedReBACManager(engine=rebac_engine, cache_ttl_seconds=1)
-
 
 @pytest.fixture
 def middleware(rebac_manager):
@@ -59,7 +54,6 @@ def middleware(rebac_manager):
         cache_ttl=60,
         revision_window=1,  # Fine-grained for testing
     )
-
 
 @pytest.fixture
 def mock_nx():
@@ -79,7 +73,6 @@ def mock_nx():
         return_value={"success": True, "diff": "", "applied_count": 0, "matches": [], "errors": []}
     )
     return nx
-
 
 @pytest.fixture
 def profiles():
@@ -101,15 +94,12 @@ def profiles():
         }
     )
 
-
 def _get_tool(server, name):
     return server._tool_manager._tools[name]
-
 
 # ---------------------------------------------------------------------------
 # Integration tests
 # ---------------------------------------------------------------------------
-
 
 class TestTwoAgentsDifferentProfiles:
     """Two agents with different profiles see different tools."""
@@ -174,7 +164,6 @@ class TestTwoAgentsDifferentProfiles:
         assert "nexus_write_file" not in visible_a
         assert "nexus_write_file" in visible_b
 
-
 class TestGrantRevocation:
     """Tool grant revocation → tool disappears from visible set."""
 
@@ -201,7 +190,6 @@ class TestGrantRevocation:
         visible_after = middleware._get_visible_tools(("agent", "agent-revoke-test"))
         assert "nexus_write_file" not in visible_after
         assert len(visible_after) == 0
-
 
 class TestDiscoveryEndToEnd:
     """Full flow: grant profile → discovery tools filter correctly."""
@@ -264,7 +252,6 @@ class TestDiscoveryEndToEnd:
         result = json.loads(tool_fn.fn(tool_name="nexus_python", ctx=ctx))
         assert result["found"] is False
         assert "not found" in result["error"]
-
 
 class TestPerformance:
     """Performance validation for tool namespace filtering."""

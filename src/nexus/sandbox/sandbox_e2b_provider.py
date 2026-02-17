@@ -4,8 +4,6 @@ Implements SandboxProvider interface using E2B (https://e2b.dev) as the backend.
 E2B provides cloud-based code execution sandboxes with fast startup times.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import os
@@ -50,7 +48,6 @@ except ImportError:
         "e2b_code_interpreter package not installed. E2BSandboxProvider will not work. "
         "Install with: pip install e2b-code-interpreter"
     )
-
 
 class E2BSandboxProvider(SandboxProvider):
     """E2B sandbox provider implementation.
@@ -793,7 +790,6 @@ except Exception as e:
         except Exception as e:
             logger.error(f"Failed to connect to sandbox {sandbox_id}: {e}")
             raise SandboxNotFoundError(f"Sandbox {sandbox_id} not found") from e
-
 
 def _quote(s: str) -> str:
     """Quote string for shell execution.

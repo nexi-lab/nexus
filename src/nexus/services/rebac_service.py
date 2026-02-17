@@ -15,8 +15,6 @@ Security Note: This service handles all permission and access control logic.
 Changes require security review before deployment.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from collections.abc import Callable
@@ -31,10 +29,11 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
+from nexus.rebac.circuit_breaker import AsyncCircuitBreaker
+from nexus.rebac.manager import ReBACManager
 if TYPE_CHECKING:
     from nexus.rebac.circuit_breaker import AsyncCircuitBreaker
     from nexus.rebac.manager import ReBACManager
-
 
 class ReBACService(ReBACShareMixin):
     """Independent ReBAC service extracted from NexusFS.

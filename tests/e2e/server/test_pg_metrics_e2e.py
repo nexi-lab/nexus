@@ -9,8 +9,6 @@ Validates the complete metrics pipeline end-to-end:
 6. Verify collector doesn't leak sensitive data
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket
@@ -31,12 +29,10 @@ for _key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
     os.environ.pop(_key, None)
 os.environ["NO_PROXY"] = "*"
 
-
 def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
-
 
 def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> None:
     deadline = time.monotonic() + timeout
@@ -50,7 +46,6 @@ def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> 
                 pass
             time.sleep(0.3)
     raise TimeoutError(f"Server did not start within {timeout}s at {base_url}")
-
 
 @pytest.fixture(scope="module")
 def server(tmp_path_factory):
@@ -114,22 +109,18 @@ def server(tmp_path_factory):
         proc.kill()
         proc.wait()
 
-
 @pytest.fixture()
 def client(server):
     with httpx.Client(base_url=server["base_url"], timeout=30.0, trust_env=False) as c:
         yield c
 
-
 @pytest.fixture()
 def admin_headers(server):
     return {"Authorization": f"Bearer {server['api_key']}"}
 
-
 # ---------------------------------------------------------------------------
 # /metrics availability
 # ---------------------------------------------------------------------------
-
 
 class TestMetricsEndpointAvailability:
     """The /metrics endpoint should be publicly accessible (no auth)."""
@@ -148,11 +139,9 @@ class TestMetricsEndpointAvailability:
         assert resp.status_code == 200
         assert "nexus_info" in resp.text
 
-
 # ---------------------------------------------------------------------------
 # QueryObserver metrics in /metrics output
 # ---------------------------------------------------------------------------
-
 
 class TestQueryObserverMetrics:
     """Verify app-level DB metrics appear after DB-hitting requests."""
@@ -209,11 +198,9 @@ class TestQueryObserverMetrics:
         for metric in expected:
             assert metric in resp.text, f"Missing metric: {metric}"
 
-
 # ---------------------------------------------------------------------------
 # Non-admin user access to /metrics
 # ---------------------------------------------------------------------------
-
 
 class TestNonAdminMetricsAccess:
     """Non-admin users (and unauthenticated requests) can read /metrics."""
@@ -234,11 +221,9 @@ class TestNonAdminMetricsAccess:
         assert "SELECT" not in body or "select" not in body.lower().split("nexus")[0]
         assert "pg_stat_statements" not in body
 
-
 # ---------------------------------------------------------------------------
 # Performance
 # ---------------------------------------------------------------------------
-
 
 class TestMetricsPerformanceE2E:
     """Verify /metrics endpoint has acceptable latency under real server."""
@@ -274,11 +259,9 @@ class TestMetricsPerformanceE2E:
         # With collector overhead, each request should still be <100ms
         assert per_req_ms < 100, f"DB request: {per_req_ms:.1f}ms per request — regression"
 
-
 # ---------------------------------------------------------------------------
 # HTTP metrics co-existence
 # ---------------------------------------------------------------------------
-
 
 class TestHTTPMetricsCoexistence:
     """Existing HTTP metrics should still work alongside new DB metrics."""

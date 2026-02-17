@@ -20,14 +20,12 @@ from nexus.rebac.manager import (
 from nexus.services.permissions.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 from nexus.storage.models import Base
 
-
 @pytest.fixture
 def engine():
     """Create in-memory SQLite database for testing."""
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     return engine
-
 
 @pytest.fixture
 def zone_aware_manager(engine):
@@ -43,7 +41,6 @@ def zone_aware_manager(engine):
     )
     yield manager
     manager.close()
-
 
 class TestCrossZoneAllowedRelations:
     """Tests for CROSS_ZONE_ALLOWED_RELATIONS configuration."""
@@ -66,7 +63,6 @@ class TestCrossZoneAllowedRelations:
         assert "editor" not in CROSS_ZONE_ALLOWED_RELATIONS
         assert "owner" not in CROSS_ZONE_ALLOWED_RELATIONS
         assert "member-of" not in CROSS_ZONE_ALLOWED_RELATIONS
-
 
 class TestCrossZoneSharingWrite:
     """Tests for creating cross-zone shares."""
@@ -144,7 +140,6 @@ class TestCrossZoneSharingWrite:
         )
         assert result is True
 
-
 class TestCrossZoneSharingPermissionCheck:
     """Tests for permission checks with cross-zone shares."""
 
@@ -179,7 +174,6 @@ class TestCrossZoneSharingPermissionCheck:
             zone_id="acme-zone",
         )
         assert result is False
-
 
 class TestCrossZoneMultipleShares:
     """Tests for multiple cross-zone shares."""
@@ -260,7 +254,6 @@ class TestCrossZoneMultipleShares:
         assert result_acme is True
         assert result_xyz is True
 
-
 class TestCrossZoneSharingRevoke:
     """Tests for revoking cross-zone shares."""
 
@@ -299,7 +292,6 @@ class TestCrossZoneSharingRevoke:
             zone_id="acme-zone",
         )
         assert result is False
-
 
 class TestCrossZoneSharingWithExpiration:
     """Tests for cross-zone shares with expiration."""
@@ -347,7 +339,6 @@ class TestCrossZoneSharingWithExpiration:
             zone_id="acme-zone",
         )
         assert result is True
-
 
 class TestCrossZoneRustPathFix:
     """Tests for cross-zone sharing in Rust acceleration path.
@@ -420,7 +411,6 @@ class TestCrossZoneRustPathFix:
             if t["relation"] == "shared-editor" and t["subject_id"] == "bob@partner.com"
         ]
         assert len(cross_zone_tuples) == 0
-
 
 class TestCrossZonePermissionExpansion:
     """Tests for permission expansion with cross-zone shares.

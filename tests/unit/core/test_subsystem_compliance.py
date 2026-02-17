@@ -3,12 +3,9 @@
 Issue #1287: Extract NexusFS Domain Services from God Object (Phase A).
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.core.types import ContextIdentity, extract_context_identity
-
 
 class TestContextIdentity:
     """Tests for ContextIdentity dataclass."""
@@ -27,7 +24,6 @@ class TestContextIdentity:
         a = ContextIdentity(zone_id="z1", user_id="u1", is_admin=True)
         b = ContextIdentity(zone_id="z2", user_id="u1", is_admin=True)
         assert a != b
-
 
 class TestExtractContextIdentity:
     """Tests for extract_context_identity() helper."""

@@ -11,8 +11,6 @@ FastAPI auto-dispatches them to a threadpool. This prevents blocking
 the asyncio event loop during synchronous SQLAlchemy I/O.
 """
 
-from __future__ import annotations
-
 import csv
 import io
 import json
@@ -35,7 +33,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/secrets-audit", tags=["secrets-audit"])
 
-
 def _row_to_dict(row: Any) -> dict[str, Any]:
     """Convert ORM row to plain dict (avoid DetachedInstanceError)."""
     return {
@@ -53,10 +50,8 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
         "metadata_hash": row.metadata_hash,
     }
 
-
 def _dict_to_response(d: dict[str, Any]) -> SecretsAuditEventResponse:
     return SecretsAuditEventResponse(**d)
-
 
 def _build_filters(
     zone_id: str,
@@ -80,21 +75,17 @@ def _build_filters(
         "until": until,
     }
 
-
 # --------------------------------------------------------------------------
 # Dependency — injected by fastapi_server.py
 # --------------------------------------------------------------------------
-
 
 def get_secrets_audit_logger() -> tuple[SecretsAuditLogger, str]:
     """Placeholder dependency — overridden by fastapi_server.py."""
     raise HTTPException(status_code=500, detail="Secrets audit not configured")
 
-
 # --------------------------------------------------------------------------
 # List events
 # --------------------------------------------------------------------------
-
 
 @router.get("/events")
 def list_events(
@@ -143,11 +134,9 @@ def list_events(
         logger.error("Secrets audit query error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to query secrets audit events") from e
 
-
 # --------------------------------------------------------------------------
 # Export (CSV / JSON)
 # --------------------------------------------------------------------------
-
 
 @router.get("/events/export")
 def export_events(
@@ -184,7 +173,6 @@ def export_events(
         return _csv_response(dicts)
     return _json_response(dicts)
 
-
 def _csv_stream(rows: list[dict[str, Any]]) -> Iterator[str]:
     output = io.StringIO()
     writer = csv.writer(output)
@@ -212,14 +200,12 @@ def _csv_stream(rows: list[dict[str, Any]]) -> Iterator[str]:
         output.seek(0)
         output.truncate()
 
-
 def _csv_response(rows: list[dict[str, Any]]) -> StreamingResponse:
     return StreamingResponse(
         _csv_stream(rows),
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=secrets_audit_events.csv"},
     )
-
 
 def _json_response(rows: list[dict[str, Any]]) -> StreamingResponse:
     content = json.dumps({"events": rows})
@@ -229,11 +215,9 @@ def _json_response(rows: list[dict[str, Any]]) -> StreamingResponse:
         headers={"Content-Disposition": "attachment; filename=secrets_audit_events.json"},
     )
 
-
 # --------------------------------------------------------------------------
 # Single event
 # --------------------------------------------------------------------------
-
 
 @router.get("/events/{record_id}")
 def get_event(
@@ -248,11 +232,9 @@ def get_event(
         raise HTTPException(status_code=404, detail="Audit event not found")
     return _dict_to_response(_row_to_dict(row))
 
-
 # --------------------------------------------------------------------------
 # Integrity verification
 # --------------------------------------------------------------------------
-
 
 @router.get("/integrity/{record_id}")
 def verify_integrity(

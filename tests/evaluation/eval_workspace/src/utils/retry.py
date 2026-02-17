@@ -32,14 +32,12 @@ DEFAULT_BASE_DELAY = 1.0
 DEFAULT_MAX_DELAY = 30.0
 DEFAULT_JITTER_MAX = 0.5
 
-
 class RetryError(Exception):
     """Raised when all retry attempts are exhausted."""
 
     def __init__(self, message: str, last_exception: Exception):
         super().__init__(message)
         self.last_exception = last_exception
-
 
 def calculate_exponential_delay(
     attempt: int,
@@ -54,7 +52,6 @@ def calculate_exponential_delay(
     delay = min(base_delay * (2**attempt), max_delay)
     jitter = random.uniform(0, jitter_max)
     return delay + jitter
-
 
 def retry(
     max_retries: int = DEFAULT_MAX_RETRIES,
@@ -95,7 +92,6 @@ def retry(
         return wrapper
 
     return decorator
-
 
 def async_retry(
     max_retries: int = DEFAULT_MAX_RETRIES,

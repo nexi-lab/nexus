@@ -1,7 +1,5 @@
 """Workspace snapshot and versioning commands."""
 
-from __future__ import annotations
-
 import re
 from datetime import timedelta
 
@@ -12,7 +10,6 @@ from rich.table import Table
 from nexus.cli.utils import BackendConfig, add_backend_options, get_filesystem, handle_error
 
 console = Console()
-
 
 @click.group(name="workspace")
 def workspace_group() -> None:
@@ -44,7 +41,6 @@ def workspace_group() -> None:
         nexus workspace unregister /my-workspace
     """
     pass
-
 
 @workspace_group.command(name="register")
 @click.argument("path", type=str)
@@ -116,7 +112,6 @@ def register_cmd(
     except Exception as e:
         handle_error(e)
 
-
 @workspace_group.command(name="list")
 @add_backend_options
 def list_cmd(
@@ -159,7 +154,6 @@ def list_cmd(
 
     except Exception as e:
         handle_error(e)
-
 
 @workspace_group.command(name="unregister")
 @click.argument("path", type=str)
@@ -217,7 +211,6 @@ def unregister_cmd(
     except Exception as e:
         handle_error(e)
 
-
 @workspace_group.command(name="info")
 @click.argument("path", type=str)
 @add_backend_options
@@ -254,7 +247,6 @@ def info_cmd(
 
     except Exception as e:
         handle_error(e)
-
 
 @workspace_group.command(name="snapshot")
 @click.argument("path", type=str)
@@ -301,7 +293,6 @@ def snapshot_cmd(
 
     except Exception as e:
         handle_error(e)
-
 
 @workspace_group.command(name="log")
 @click.argument("path", type=str)
@@ -359,7 +350,6 @@ def log_cmd(
 
     except Exception as e:
         handle_error(e)
-
 
 @workspace_group.command(name="restore")
 @click.argument("path", type=str)
@@ -424,7 +414,6 @@ def restore_cmd(
 
     except Exception as e:
         handle_error(e)
-
 
 @workspace_group.command(name="diff")
 @click.argument("path", type=str)
@@ -506,7 +495,6 @@ def diff_cmd(
     except Exception as e:
         handle_error(e)
 
-
 def _format_size(size_bytes: int) -> str:
     """Format size in bytes to human-readable format."""
     size = float(size_bytes)
@@ -515,7 +503,6 @@ def _format_size(size_bytes: int) -> str:
             return f"{size:.1f} {unit}"
         size /= 1024
     return f"{size:.1f} TB"
-
 
 def _parse_ttl(ttl_str: str) -> timedelta:
     """Parse TTL string to timedelta.
@@ -553,7 +540,6 @@ def _parse_ttl(ttl_str: str) -> timedelta:
         return timedelta(weeks=value)
     else:
         raise ValueError(f"Invalid time unit: '{unit}'")
-
 
 def register_commands(cli: click.Group) -> None:
     """Register workspace commands to CLI."""

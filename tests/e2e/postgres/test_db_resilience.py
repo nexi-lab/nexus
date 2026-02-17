@@ -4,8 +4,6 @@ Tests simulate database outages and verify that the application recovers
 gracefully. Requires a running PostgreSQL instance for DB tests.
 """
 
-from __future__ import annotations
-
 import asyncio
 import os
 
@@ -16,7 +14,6 @@ _requires_pg = pytest.mark.skipif(
     not _db_url.startswith("postgresql"),
     reason="Requires PostgreSQL (set NEXUS_DATABASE_URL)",
 )
-
 
 @_requires_pg
 @pytest.mark.integration
@@ -47,7 +44,6 @@ class TestDatabaseResilience:
         assert result2 == 1
         session2.close()
         store.close()
-
 
 @pytest.mark.integration
 class TestCircuitBreakerResilience:

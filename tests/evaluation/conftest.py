@@ -6,12 +6,9 @@ Evaluation tests require:
 - Manual trigger with: pytest tests/evaluation -m evaluation
 """
 
-from __future__ import annotations
-
 import os
 
 import pytest
-
 
 def pytest_configure(config: pytest.Config) -> None:
     """Register the evaluation marker."""
@@ -20,7 +17,6 @@ def pytest_configure(config: pytest.Config) -> None:
         "evaluation: marks tests as LLM evaluation tests (requires ANTHROPIC_API_KEY, "
         "deselect with '-m \"not evaluation\"')",
     )
-
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Skip evaluation tests unless explicitly requested.

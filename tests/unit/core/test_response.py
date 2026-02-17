@@ -8,7 +8,6 @@ import pytest
 from nexus.core.exceptions import BackendError, ConflictError, NexusFileNotFoundError
 from nexus.core.response import HandlerResponse, ResponseType, timed_response
 
-
 class TestResponseType:
     """Tests for ResponseType enum."""
 
@@ -18,7 +17,6 @@ class TestResponseType:
         assert ResponseType.ERROR.value == "error"
         assert ResponseType.NOT_FOUND.value == "not_found"
         assert ResponseType.CONFLICT.value == "conflict"
-
 
 class TestHandlerResponseOk:
     """Tests for HandlerResponse.ok() factory method."""
@@ -73,7 +71,6 @@ class TestHandlerResponseOk:
         assert response.path == "/test/file.txt"
         assert response.affected_rows == 1
 
-
 class TestHandlerResponseError:
     """Tests for HandlerResponse.error() factory method."""
 
@@ -114,7 +111,6 @@ class TestHandlerResponseError:
         assert response.path == "/bucket/file.txt"
         assert response.execution_time_ms == 10.2
 
-
 class TestHandlerResponseNotFound:
     """Tests for HandlerResponse.not_found() factory method."""
 
@@ -146,7 +142,6 @@ class TestHandlerResponseNotFound:
         assert response.execution_time_ms == 5.0
         assert response.backend_name == "s3"
 
-
 class TestHandlerResponseConflict:
     """Tests for HandlerResponse.conflict() factory method."""
 
@@ -165,7 +160,6 @@ class TestHandlerResponseConflict:
         assert "Conflict detected" in response.error_message
         assert "abc123def456abc1" in response.error_message  # First 16 chars
         assert "xyz789xyz789xyz7" in response.error_message
-
 
 class TestHandlerResponseFromException:
     """Tests for HandlerResponse.from_exception() factory method."""
@@ -232,7 +226,6 @@ class TestHandlerResponseFromException:
         response = HandlerResponse.from_exception(exc)
         assert response.is_expected_error is False
 
-
 class TestHandlerResponseUnwrap:
     """Tests for HandlerResponse.unwrap() method."""
 
@@ -277,7 +270,6 @@ class TestHandlerResponseUnwrap:
             response.unwrap()
         assert "Backend failed" in str(exc_info.value)
 
-
 class TestHandlerResponseUnwrapOr:
     """Tests for HandlerResponse.unwrap_or() method."""
 
@@ -298,7 +290,6 @@ class TestHandlerResponseUnwrapOr:
         response = HandlerResponse.not_found(path="/missing.txt")
         result = response.unwrap_or(b"default content")
         assert result == b"default content"
-
 
 class TestHandlerResponseToDict:
     """Tests for HandlerResponse.to_dict() method."""
@@ -350,7 +341,6 @@ class TestHandlerResponseToDict:
         assert result["resp_type"] == "not_found"
         assert result["error_code"] == 404
         assert result["is_expected_error"] is True
-
 
 class TestTimedResponseDecorator:
     """Tests for the timed_response decorator."""
@@ -408,7 +398,6 @@ class TestTimedResponseDecorator:
         # Actually, the decorator only sets if execution_time_ms == 0
         assert response.execution_time_ms == 42.0
 
-
 class TestHandlerResponseTypeHints:
     """Tests for type hint correctness with HandlerResponse generic."""
 
@@ -441,7 +430,6 @@ class TestHandlerResponseTypeHints:
         response: HandlerResponse[None] = HandlerResponse.ok(data=None)
         result: None = response.unwrap()
         assert result is None
-
 
 class TestHandlerResponseEdgeCases:
     """Tests for edge cases and boundary conditions."""

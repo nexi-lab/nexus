@@ -12,8 +12,6 @@ If wait > MAX_WAIT_SECONDS: effective_tier = min(effective_tier, HIGH)
 Related: Issue #1212
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -25,7 +23,6 @@ from nexus.scheduler.constants import (
     PriorityTier,
 )
 from nexus.scheduler.models import TaskSubmission
-
 
 def compute_boost_tiers(boost_amount: Decimal) -> int:
     """Compute tier boost from payment amount.
@@ -40,7 +37,6 @@ def compute_boost_tiers(boost_amount: Decimal) -> int:
         return 0
     raw_tiers = int(boost_amount / BOOST_COST_PER_TIER)
     return min(raw_tiers, MAX_BOOST_TIERS)
-
 
 def compute_effective_tier(
     task: TaskSubmission,
@@ -79,7 +75,6 @@ def compute_effective_tier(
 
     # Floor at 0 (CRITICAL)
     return max(0, effective)
-
 
 def validate_submission(task: TaskSubmission) -> None:
     """Validate a task submission.

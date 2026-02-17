@@ -11,8 +11,6 @@ Tests the conflict management endpoints end-to-end:
 3. Conflict log store is wired and accessible via REST
 """
 
-from __future__ import annotations
-
 import os
 import shutil
 import signal
@@ -40,16 +38,13 @@ for _key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
     os.environ.pop(_key, None)
 os.environ["NO_PROXY"] = "*"
 
-
 def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
 
-
 def _make_client() -> httpx.Client:
     return httpx.Client(timeout=10)
-
 
 def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> None:
     deadline = time.monotonic() + timeout
@@ -63,7 +58,6 @@ def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> 
                 pass
             time.sleep(0.3)
     raise TimeoutError(f"Server did not start within {timeout}s at {base_url}")
-
 
 def _build_startup_script(port: int, data_dir: str) -> str:
     return textwrap.dedent(f"""\
@@ -114,9 +108,7 @@ def _build_startup_script(port: int, data_dir: str) -> str:
         ])
     """)
 
-
 # === Fixtures ===
-
 
 @pytest.fixture(scope="module")
 def server():
@@ -197,32 +189,26 @@ def server():
                 proc.wait(timeout=5)
         shutil.rmtree(data_dir, ignore_errors=True)
 
-
 @pytest.fixture(scope="module")
 def client(server: dict) -> httpx.Client:
     with _make_client() as c:
         yield c
 
-
 @pytest.fixture()
 def base_url(server: dict) -> str:
     return server["base_url"]
-
 
 @pytest.fixture()
 def admin_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {ADMIN_API_KEY}"}
 
-
 @pytest.fixture()
 def alice_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {ALICE_API_KEY}"}
 
-
 # =============================================================================
 # Tests: Health check with conflict store wired
 # =============================================================================
-
 
 def test_health(base_url: str, client: httpx.Client) -> None:
     """Server is healthy with write-back + permissions enabled."""
@@ -230,23 +216,19 @@ def test_health(base_url: str, client: httpx.Client) -> None:
     assert resp.status_code == 200
     assert resp.json()["status"] == "healthy"
 
-
 # =============================================================================
 # Tests: Auth enforcement on conflict endpoints
 # =============================================================================
-
 
 def test_list_conflicts_unauthenticated_returns_401(base_url: str, client: httpx.Client) -> None:
     """GET /api/v2/sync/conflicts without auth -> 401."""
     resp = client.get(f"{base_url}/api/v2/sync/conflicts")
     assert resp.status_code == 401
 
-
 def test_get_conflict_unauthenticated_returns_401(base_url: str, client: httpx.Client) -> None:
     """GET /api/v2/sync/conflicts/{id} without auth -> 401."""
     resp = client.get(f"{base_url}/api/v2/sync/conflicts/some-id")
     assert resp.status_code == 401
-
 
 def test_resolve_conflict_unauthenticated_returns_401(base_url: str, client: httpx.Client) -> None:
     """POST /api/v2/sync/conflicts/{id}/resolve without auth -> 401."""
@@ -256,11 +238,9 @@ def test_resolve_conflict_unauthenticated_returns_401(base_url: str, client: htt
     )
     assert resp.status_code == 401
 
-
 # =============================================================================
 # Tests: Authenticated access to conflict endpoints
 # =============================================================================
-
 
 def test_list_conflicts_authenticated_returns_200(
     base_url: str, client: httpx.Client, admin_headers: dict
@@ -273,7 +253,6 @@ def test_list_conflicts_authenticated_returns_200(
     assert "total" in body
     assert isinstance(body["conflicts"], list)
 
-
 def test_get_nonexistent_conflict_returns_404(
     base_url: str, client: httpx.Client, admin_headers: dict
 ) -> None:
@@ -283,7 +262,6 @@ def test_get_nonexistent_conflict_returns_404(
         headers=admin_headers,
     )
     assert resp.status_code == 404
-
 
 def test_resolve_nonexistent_conflict_returns_404(
     base_url: str, client: httpx.Client, admin_headers: dict
@@ -295,7 +273,6 @@ def test_resolve_nonexistent_conflict_returns_404(
         headers=admin_headers,
     )
     assert resp.status_code == 404
-
 
 def test_list_conflicts_with_filters(
     base_url: str, client: httpx.Client, admin_headers: dict
@@ -311,7 +288,6 @@ def test_list_conflicts_with_filters(
     assert body["total"] == 0
     assert body["conflicts"] == []
 
-
 def test_non_admin_list_conflicts_returns_403(
     base_url: str, client: httpx.Client, alice_headers: dict
 ) -> None:
@@ -320,14 +296,12 @@ def test_non_admin_list_conflicts_returns_403(
     assert resp.status_code == 403
     assert "Admin role required" in resp.json()["detail"]
 
-
 def test_non_admin_get_conflict_returns_403(
     base_url: str, client: httpx.Client, alice_headers: dict
 ) -> None:
     """Non-admin authenticated user gets 403 on get conflict."""
     resp = client.get(f"{base_url}/api/v2/sync/conflicts/some-id", headers=alice_headers)
     assert resp.status_code == 403
-
 
 def test_non_admin_resolve_conflict_returns_403(
     base_url: str, client: httpx.Client, alice_headers: dict
@@ -339,7 +313,6 @@ def test_non_admin_resolve_conflict_returns_403(
         headers=alice_headers,
     )
     assert resp.status_code == 403
-
 
 def test_resolve_invalid_outcome_returns_422(
     base_url: str, client: httpx.Client, admin_headers: dict

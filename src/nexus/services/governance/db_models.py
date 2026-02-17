@@ -7,8 +7,6 @@ These are the persistence layer. Domain models live in models.py.
 Services convert between these and domain models at the boundary.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from sqlalchemy import Boolean, DateTime, Float, Index, Integer, String, Text
@@ -19,7 +17,6 @@ from nexus.storage.models._base import Base, TimestampMixin, ZoneIsolationMixin,
 # =============================================================================
 # Phase 1: Anomaly Detection Tables
 # =============================================================================
-
 
 class AnomalyAlertModel(Base, TimestampMixin, ZoneIsolationMixin):
     """Anomaly alert records."""
@@ -41,7 +38,6 @@ class AnomalyAlertModel(Base, TimestampMixin, ZoneIsolationMixin):
         Index("ix_gov_alerts_zone_severity_resolved", "zone_id", "severity", "resolved"),
     )
 
-
 class AgentBaselineModel(Base, ZoneIsolationMixin):
     """Agent transaction baselines for anomaly detection."""
 
@@ -55,11 +51,9 @@ class AgentBaselineModel(Base, ZoneIsolationMixin):
     )
     observation_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
 
-
 # =============================================================================
 # Phase 2: Collusion Detection Tables
 # =============================================================================
-
 
 class GovernanceNodeModel(Base, TimestampMixin, ZoneIsolationMixin):
     """Governance graph nodes."""
@@ -72,7 +66,6 @@ class GovernanceNodeModel(Base, TimestampMixin, ZoneIsolationMixin):
     metadata_json: Mapped[str | None] = mapped_column("metadata", Text, nullable=True)
 
     __table_args__ = (Index("ix_gov_nodes_zone_agent", "zone_id", "agent_id", unique=True),)
-
 
 class GovernanceEdgeModel(Base, TimestampMixin, ZoneIsolationMixin):
     """Governance graph edges."""
@@ -91,7 +84,6 @@ class GovernanceEdgeModel(Base, TimestampMixin, ZoneIsolationMixin):
         Index("ix_gov_edges_zone_type", "zone_id", "edge_type"),
     )
 
-
 class FraudRingModel(Base, ZoneIsolationMixin):
     """Detected fraud rings."""
 
@@ -106,7 +98,6 @@ class FraudRingModel(Base, ZoneIsolationMixin):
         DateTime, nullable=False, default=lambda: datetime.now(UTC)
     )
 
-
 class FraudScoreModel(Base, ZoneIsolationMixin):
     """Per-agent composite fraud scores."""
 
@@ -120,11 +111,9 @@ class FraudScoreModel(Base, ZoneIsolationMixin):
         DateTime, nullable=False, default=lambda: datetime.now(UTC)
     )
 
-
 # =============================================================================
 # Phase 4: Response Action Tables
 # =============================================================================
-
 
 class SuspensionModel(Base, TimestampMixin, ZoneIsolationMixin):
     """Agent suspension records."""
@@ -146,7 +135,6 @@ class SuspensionModel(Base, TimestampMixin, ZoneIsolationMixin):
     decided_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     __table_args__ = (Index("ix_gov_suspensions_zone_agent", "zone_id", "agent_id"),)
-
 
 class ThrottleModel(Base, TimestampMixin, ZoneIsolationMixin):
     """Agent throttle configurations."""

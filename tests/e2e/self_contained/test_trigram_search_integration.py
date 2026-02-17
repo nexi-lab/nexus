@@ -4,8 +4,6 @@ Tests the SearchService.grep() method with the trigram strategy,
 including strategy selection, fallback behavior, and index management.
 """
 
-from __future__ import annotations
-
 import os
 from unittest.mock import patch
 
@@ -17,12 +15,10 @@ from nexus.search.strategies import (
     SearchStrategy,
 )
 
-
 @pytest.fixture
 def corpus_dir():
     """Path to test corpus."""
     return os.path.join(os.path.dirname(__file__), "..", "..", "fixtures", "trigram_corpus")
-
 
 @pytest.fixture
 def corpus_files(corpus_dir):
@@ -33,14 +29,12 @@ def corpus_files(corpus_dir):
         if os.path.isfile(os.path.join(corpus_dir, name))
     )
 
-
 @pytest.fixture
 def built_index(tmp_path, corpus_files):
     """Build a trigram index and return its path."""
     idx_path = str(tmp_path / "test.trgm")
     trigram_fast.build_index(corpus_files, idx_path)
     return idx_path
-
 
 class TestStrategySelection:
     """Test that _select_grep_strategy picks TRIGRAM_INDEX correctly."""
@@ -122,7 +116,6 @@ class TestStrategySelection:
         )
         assert strategy == SearchStrategy.CACHED_TEXT
 
-
 class TestTrigramFallback:
     """Test fallback behavior when trigram search fails."""
 
@@ -167,7 +160,6 @@ class TestTrigramFallback:
             )
         assert result is not None
         assert len(result) > 0
-
 
 class TestIndexManagement:
     """Test index build/status/invalidate lifecycle."""

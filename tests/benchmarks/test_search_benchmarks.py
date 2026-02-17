@@ -6,12 +6,9 @@ These benchmarks compare Python regex vs Rust grep implementation.
 See issue #570 for context.
 """
 
-from __future__ import annotations
-
 import re
 
 import pytest
-
 
 def generate_log_content(num_lines: int) -> bytes:
     """Generate realistic log file content for grep benchmarks."""
@@ -24,7 +21,6 @@ def generate_log_content(num_lines: int) -> bytes:
         else:
             lines.append(f"[INFO] 2024-01-15 10:30:{i:02d} - Request processed successfully")
     return "\n".join(lines).encode("utf-8")
-
 
 def generate_code_content(num_lines: int) -> bytes:
     """Generate Python-like code content for grep benchmarks."""
@@ -40,11 +36,9 @@ def generate_code_content(num_lines: int) -> bytes:
             lines.append(f"        return {i}")
     return "\n".join(lines).encode("utf-8")
 
-
 # =============================================================================
 # PYTHON REGEX BENCHMARKS (baseline)
 # =============================================================================
-
 
 @pytest.mark.benchmark_hash
 class TestPythonRegexBenchmarks:
@@ -116,11 +110,9 @@ class TestPythonRegexBenchmarks:
         result = benchmark(search)
         assert len(result) == 500
 
-
 # =============================================================================
 # RUST GREP BENCHMARKS
 # =============================================================================
-
 
 @pytest.mark.benchmark_hash
 class TestRustGrepBenchmarks:
@@ -252,11 +244,9 @@ class TestRustGrepBenchmarks:
         result = benchmark(search)
         assert len(result) == 500
 
-
 # =============================================================================
 # RUST MMAP GREP BENCHMARKS (Issue #893)
 # =============================================================================
-
 
 @pytest.mark.benchmark_hash
 class TestRustMmapGrepBenchmarks:
@@ -422,11 +412,9 @@ class TestRustMmapGrepBenchmarks:
         result = benchmark(search)
         assert len(result) > 0
 
-
 # =============================================================================
 # GLOB PATTERN MATCHING BENCHMARKS
 # =============================================================================
-
 
 @pytest.mark.benchmark_glob
 class TestGlobPatternBenchmarks:
@@ -523,11 +511,9 @@ class TestGlobPatternBenchmarks:
         result = benchmark(match)
         assert len(result) == 1000
 
-
 # =============================================================================
 # HYBRID SEARCH FUSION BENCHMARKS (Issue #798)
 # =============================================================================
-
 
 @pytest.mark.benchmark_fusion
 class TestHybridSearchFusionBenchmarks:
@@ -675,11 +661,9 @@ class TestHybridSearchFusionBenchmarks:
         result = benchmark(fuse)
         assert len(result) == 100
 
-
 # =============================================================================
 # TRIGRAM INDEX BENCHMARKS (Issue #954)
 # =============================================================================
-
 
 @pytest.mark.benchmark_hash
 class TestTrigramBenchmarks:

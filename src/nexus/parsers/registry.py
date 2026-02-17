@@ -12,7 +12,6 @@ from nexus.parsers.base import Parser
 
 logger = logging.getLogger(__name__)
 
-
 class ParserRegistry(BaseRegistry[Parser]):
     """Registry for managing document parsers.
 

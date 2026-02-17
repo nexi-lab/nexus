@@ -4,8 +4,6 @@ Tests the export/import workflow with enforce_permissions=True to ensure
 the portability module works correctly with the permission system.
 """
 
-from __future__ import annotations
-
 import tempfile
 from pathlib import Path
 
@@ -24,13 +22,11 @@ from nexus.portability import (
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
-
 @pytest.fixture
 def temp_dir():
     """Create temporary directory for tests."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
-
 
 @pytest.fixture
 def source_nexus_fs_with_permissions(temp_dir):
@@ -57,7 +53,6 @@ def source_nexus_fs_with_permissions(temp_dir):
     yield fs
     fs.close()
 
-
 @pytest.fixture
 def target_nexus_fs_with_permissions(temp_dir):
     """Create target NexusFS with permissions enabled."""
@@ -75,7 +70,6 @@ def target_nexus_fs_with_permissions(temp_dir):
     yield fs
     fs.close()
 
-
 @pytest.fixture
 def exported_bundle_with_permissions(source_nexus_fs_with_permissions, temp_dir):
     """Create an exported bundle from permission-enabled source."""
@@ -90,7 +84,6 @@ def exported_bundle_with_permissions(source_nexus_fs_with_permissions, temp_dir)
     )
 
     return output_path
-
 
 class TestExportWithPermissions:
     """Tests for export with permissions enabled."""
@@ -129,7 +122,6 @@ class TestExportWithPermissions:
 
         # Should only export workspace files
         assert manifest.file_count == 2
-
 
 class TestImportWithPermissions:
     """Tests for import with permissions enabled."""
@@ -216,7 +208,6 @@ class TestImportWithPermissions:
             "/workspace/readme.md", context=admin_context
         )
         assert b"Permissions test" in content
-
 
 class TestRoundTripWithPermissions:
     """Tests for export -> import round trip with permissions."""

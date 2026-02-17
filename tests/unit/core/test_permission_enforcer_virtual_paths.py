@@ -20,14 +20,12 @@ The fix:
 from nexus.core.permissions import OperationContext, Permission
 from nexus.services.permissions.enforcer import PermissionEnforcer
 
-
 class MockRoute:
     """Mock route object returned by router."""
 
     def __init__(self, backend_path: str, backend=None):
         self.backend_path = backend_path
         self.backend = backend or MockBackend()
-
 
 class MockBackend:
     """Mock backend for testing."""
@@ -42,7 +40,6 @@ class MockBackend:
 
     def get_object_id(self, backend_path: str) -> str:
         return self._object_id or backend_path
-
 
 class MockRouter:
     """Mock router that simulates mount point stripping."""
@@ -60,7 +57,6 @@ class MockRouter:
             backend_path = path.lstrip("/")
 
         return MockRoute(backend_path)
-
 
 class MockReBACManager:
     """Mock ReBAC manager for testing permission checks."""
@@ -95,7 +91,6 @@ class MockReBACManager:
             subject, permission, obj = check
             results[check] = self.rebac_check(subject, permission, obj, zone_id)
         return results
-
 
 class TestVirtualPathPermissionChecks:
     """Test that permission checks use virtual paths, not backend paths."""
@@ -211,7 +206,6 @@ class TestVirtualPathPermissionChecks:
         # Bob cannot read from his mount (no permission granted)
         assert enforcer_bob.check("/mnt/bob/file.txt", Permission.READ, ctx_bob) is False
 
-
 class TestNonFileBackendObjectId:
     """Test that non-file backends still use backend-provided object IDs."""
 
@@ -259,7 +253,6 @@ class TestNonFileBackendObjectId:
         assert checked["object_type"] == "redis:key"
         assert checked["object_id"] == "session:abc123"
 
-
 class TestRouterFailureFallback:
     """Test graceful handling when router fails."""
 
@@ -297,7 +290,6 @@ class TestRouterFailureFallback:
         checked = rebac.checks[0]
         assert checked["object_type"] == "file"
         assert checked["object_id"] == "/workspace/file.txt"
-
 
 class TestRegressionPrevention:
     """Tests to ensure the bug doesn't reoccur."""

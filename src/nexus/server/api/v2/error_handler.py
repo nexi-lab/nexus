@@ -14,8 +14,6 @@ Usage:
     )
 """
 
-from __future__ import annotations
-
 import enum
 import logging
 import uuid
@@ -26,7 +24,6 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 logger = logging.getLogger(__name__)
-
 
 class NexusErrorCode(enum.IntEnum):
     """Domain-specific error codes for the Nexus Exchange protocol.
@@ -74,7 +71,6 @@ class NexusErrorCode(enum.IntEnum):
     BID_REJECTED = 4001
     SETTLEMENT_FAILED = 4002
 
-
 # Map error codes to HTTP status codes
 _CODE_TO_HTTP_STATUS: dict[NexusErrorCode, int] = {
     NexusErrorCode.UNSPECIFIED: 500,
@@ -103,7 +99,6 @@ _CODE_TO_HTTP_STATUS: dict[NexusErrorCode, int] = {
     NexusErrorCode.BID_REJECTED: 409,
     NexusErrorCode.SETTLEMENT_FAILED: 500,
 }
-
 
 @dataclass(frozen=True)
 class NexusExchangeError(Exception):
@@ -137,7 +132,6 @@ class NexusExchangeError(Exception):
             }
         }
 
-
 async def _nexus_exchange_error_handler(
     _request: Request,
     exc: Exception,
@@ -165,7 +159,6 @@ async def _nexus_exchange_error_handler(
         status_code=exc.http_status,
         content=exc.to_dict(),
     )
-
 
 def register_exchange_error_handler(app: FastAPI) -> None:
     """Register the Exchange error handler on a FastAPI application.

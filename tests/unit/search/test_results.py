@@ -5,8 +5,6 @@ Tests cover:
 - BaseSearchResult: consolidated type produces identical output to subclasses
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.search.results import BaseSearchResult, detect_matched_field
@@ -14,7 +12,6 @@ from nexus.search.results import BaseSearchResult, detect_matched_field
 # =============================================================================
 # detect_matched_field tests
 # =============================================================================
-
 
 class TestDetectMatchedField:
     """Test detect_matched_field from results.py."""
@@ -143,11 +140,9 @@ class TestDetectMatchedField:
         result = detect_matched_field("  auth  ", "/src/auth.py")
         assert result == "filename"
 
-
 # =============================================================================
 # BaseSearchResult migration tests
 # =============================================================================
-
 
 class TestBaseSearchResultMigration:
     """Test that BaseSearchResult can replace all search result subclasses."""

@@ -4,8 +4,6 @@ These tests require a running PostgreSQL instance. Skip automatically when
 NEXUS_DATABASE_URL is not set or points to SQLite.
 """
 
-from __future__ import annotations
-
 import os
 import threading
 from typing import TYPE_CHECKING, Any
@@ -20,7 +18,6 @@ _requires_pg = pytest.mark.skipif(
     not _db_url.startswith("postgresql"),
     reason="Requires PostgreSQL (set NEXUS_DATABASE_URL)",
 )
-
 
 @_requires_pg
 @pytest.mark.integration
@@ -108,7 +105,6 @@ class TestConnectionPool:
         # Verify the engine pool has the recycle setting
         assert store.engine.pool._recycle == 60
         store.close()
-
 
 @_requires_pg
 @pytest.mark.integration

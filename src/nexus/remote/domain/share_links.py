@@ -3,10 +3,7 @@
 Issue #1603: Decompose remote/client.py into domain clients.
 """
 
-from __future__ import annotations
-
 from typing import Any
-
 
 class ShareLinksClient:
     """Share links domain client (sync)."""
@@ -79,7 +76,6 @@ class ShareLinksClient:
         return self._call_rpc(  # type: ignore[no-any-return]
             "get_share_link_access_logs", {"link_id": link_id, "limit": limit}
         )
-
 
 class AsyncShareLinksClient:
     """Share links domain client (async)."""

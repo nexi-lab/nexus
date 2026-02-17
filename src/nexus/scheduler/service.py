@@ -12,8 +12,6 @@ The SchedulerService is the main entry point for task scheduling. It:
 Related: Issue #1212, #1274
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -38,13 +36,14 @@ from nexus.scheduler.priority import (
 )
 from nexus.scheduler.queue import TaskQueue
 
+from nexus.pay.credits import CreditsService
+from nexus.scheduler.events import AgentStateEmitter, AgentStateEvent
 if TYPE_CHECKING:
     from nexus.pay.credits import CreditsService
     from nexus.scheduler.events import AgentStateEmitter, AgentStateEvent
     from nexus.services.protocols.scheduler import AgentRequest
 
 logger = logging.getLogger(__name__)
-
 
 class SchedulerService:
     """High-level scheduler service implementing SchedulerProtocol.

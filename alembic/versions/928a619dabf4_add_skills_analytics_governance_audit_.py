@@ -19,7 +19,6 @@ down_revision: Union[str, Sequence[str], None] = "a16e1db56def"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Upgrade schema."""
     # Create skill_usage table for analytics
@@ -84,7 +83,6 @@ def upgrade() -> None:
     op.create_index("idx_skill_audit_action", "skill_audit_log", ["action"], unique=False)
     op.create_index("idx_skill_audit_agent_id", "skill_audit_log", ["agent_id"], unique=False)
     op.create_index("idx_skill_audit_timestamp", "skill_audit_log", ["timestamp"], unique=False)
-
 
 def downgrade() -> None:
     """Downgrade schema."""

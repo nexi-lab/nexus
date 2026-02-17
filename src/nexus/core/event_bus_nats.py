@@ -11,8 +11,6 @@ Issue #1331: Replace Dragonfly pub/sub with NATS JetStream.
 Keep Dragonfly for caching only.
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging
@@ -46,11 +44,11 @@ from nexus.core.event_bus import (
     FileEventType,
 )
 
+from nats.aio.msg import Msg
 if TYPE_CHECKING:
     from nats.aio.msg import Msg
 
 logger = logging.getLogger(__name__)
-
 
 def _deliver_policy_from_str(policy: str) -> DeliverPolicy:
     """Convert string deliver policy to NATS DeliverPolicy enum."""
@@ -63,7 +61,6 @@ def _deliver_policy_from_str(policy: str) -> DeliverPolicy:
     if result is None:
         raise ValueError(f"Unknown deliver_policy: {policy!r}. Use 'all', 'last', or 'new'.")
     return result
-
 
 class NatsEventBus(EventBusBase):
     """NATS JetStream implementation of EventBusBase.

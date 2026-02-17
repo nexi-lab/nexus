@@ -7,8 +7,6 @@ and security validation to eliminate DRY violations across the codebase
 All functions are pure and return immutable results (tuples).
 """
 
-from __future__ import annotations
-
 import re
 
 from nexus.core.exceptions import InvalidPathError
@@ -18,7 +16,6 @@ _MULTI_SLASH = re.compile(r"/+")
 
 # Characters that must never appear in paths (security)
 _INVALID_CHARS = ("\0", "\n", "\r", "\t")
-
 
 def split_path(path: str) -> tuple[str, ...]:
     """Split a virtual path into its component parts.
@@ -33,7 +30,6 @@ def split_path(path: str) -> tuple[str, ...]:
     if not path or path == "/":
         return ()
     return tuple(path.strip("/").split("/"))
-
 
 def get_parent(path: str) -> str | None:
     """Get the parent directory path.
@@ -59,7 +55,6 @@ def get_parent(path: str) -> str | None:
         return "/"
     return "/" + "/".join(parts[:-1])
 
-
 def get_ancestors(path: str) -> tuple[str, ...]:
     """Get all ancestor paths from the path itself down to the shallowest.
 
@@ -82,7 +77,6 @@ def get_ancestors(path: str) -> tuple[str, ...]:
     if not parts:
         return ()
     return tuple("/" + "/".join(parts[:i]) for i in range(len(parts), 0, -1))
-
 
 def get_parent_chain(path: str) -> tuple[tuple[str, str], ...]:
     """Get (child_path, parent_path) tuples for the full hierarchy.
@@ -110,9 +104,7 @@ def get_parent_chain(path: str) -> tuple[tuple[str, str], ...]:
         for i in range(len(parts), 1, -1)
     )
 
-
 # ── Security-enhanced validation (Issue #1287, Decision 5) ─────────────────
-
 
 def validate_path(path: str, *, allow_root: bool = False) -> str:
     """Validate and normalize a virtual path with security checks.
@@ -184,7 +176,6 @@ def validate_path(path: str, *, allow_root: bool = False) -> str:
         raise InvalidPathError(path, "Path contains '..' segments")
 
     return path
-
 
 def normalize_path(path: str) -> str:
     """Lightweight path normalization without security checks.

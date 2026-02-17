@@ -9,8 +9,6 @@ This module provides opt-in mixins that connectors can use to add:
 Each connector configures these mixins via class attributes.
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -21,16 +19,15 @@ from pydantic import ValidationError as PydanticValidationError
 
 from nexus.core.exceptions import ValidationError as CoreValidationError
 
+from nexus.skills.registry import SkillRegistry
 if TYPE_CHECKING:
     from nexus.skills.registry import SkillRegistry
 
 logger = logging.getLogger(__name__)
 
-
 # =============================================================================
 # Enums & Data Classes
 # =============================================================================
-
 
 class Reversibility(StrEnum):
     """How reversible an operation is."""
@@ -38,7 +35,6 @@ class Reversibility(StrEnum):
     FULL = "full"  # Can undo completely (e.g., delete created event)
     PARTIAL = "partial"  # Can undo with limitations (e.g., restore from trash)
     NONE = "none"  # Cannot undo (e.g., send email)
-
 
 class ConfirmLevel(StrEnum):
     """Required confirmation level for an operation.
@@ -84,7 +80,6 @@ class ConfirmLevel(StrEnum):
             return self.level < other.level
         return NotImplemented
 
-
 @dataclass
 class OpTraits:
     """Operation traits defining behavior and requirements.
@@ -112,7 +107,6 @@ class OpTraits:
     intent_min_length: int = 10
     warnings: list[str] = field(default_factory=list)
 
-
 @dataclass
 class ErrorDef:
     """Error definition with self-correcting information.
@@ -134,7 +128,6 @@ class ErrorDef:
     skill_section: str  # SKILL.md section anchor
     fix_example: str | None = None
     details: dict[str, Any] = field(default_factory=dict)
-
 
 class ValidationError(CoreValidationError):
     """Validation error with self-correcting information.
@@ -183,11 +176,9 @@ class ValidationError(CoreValidationError):
 
         return "\n".join(lines)
 
-
 # =============================================================================
 # SkillDocMixin - SKILL.md Integration
 # =============================================================================
-
 
 class SkillDocMixin:
     """Mixin for SKILL.md integration with auto-generation.
@@ -584,11 +575,9 @@ class SkillDocMixin:
             fix_example=fix_example,
         )
 
-
 # =============================================================================
 # ValidatedMixin - Pydantic Schema Validation
 # =============================================================================
-
 
 class ValidatedMixin:
     """Mixin for Pydantic schema validation.
@@ -644,11 +633,9 @@ class ValidatedMixin:
                 field_errors=field_errors,
             ) from e
 
-
 # =============================================================================
 # TraitBasedMixin - Operation Traits Validation
 # =============================================================================
-
 
 class TraitBasedMixin:
     """Mixin for operation trait validation.
@@ -750,11 +737,9 @@ class TraitBasedMixin:
         """Get traits for an operation."""
         return self.OPERATION_TRAITS.get(operation)
 
-
 # =============================================================================
 # CheckpointMixin - Rollback Support
 # =============================================================================
-
 
 @dataclass
 class Checkpoint:
@@ -769,7 +754,6 @@ class Checkpoint:
     previous_state: dict[str, Any] | None
     created_state: dict[str, Any] | None
     metadata: dict[str, Any] = field(default_factory=dict)
-
 
 class CheckpointMixin:
     """Mixin for checkpoint/rollback support.

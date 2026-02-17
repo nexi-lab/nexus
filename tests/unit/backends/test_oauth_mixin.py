@@ -4,18 +4,14 @@ Tests for the shared _init_oauth() method that extracts duplicated
 TokenManager initialization boilerplate from connector backends.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, patch
 
 from nexus.backends.oauth_mixin import OAuthConnectorMixin
-
 
 class _TestOAuthBackend(OAuthConnectorMixin):
     """Concrete class for testing the mixin."""
 
     pass
-
 
 class TestInitOAuth:
     """Tests for OAuthConnectorMixin._init_oauth()."""

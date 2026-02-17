@@ -27,7 +27,6 @@ down_revision: Union[str, Sequence[str], None] = "add_rebac_indexes"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add sync_jobs table."""
     op.create_table(
@@ -52,7 +51,6 @@ def upgrade() -> None:
     op.create_index("idx_sync_jobs_status", "sync_jobs", ["status"])
     op.create_index("idx_sync_jobs_created_at", "sync_jobs", ["created_at"])
     op.create_index("idx_sync_jobs_created_by", "sync_jobs", ["created_by"])
-
 
 def downgrade() -> None:
     """Remove sync_jobs table."""

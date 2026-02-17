@@ -10,7 +10,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 # Import OAuthConfig - required for OAuth configuration
 from nexus.server.auth.oauth_config import OAuthConfig
 
-
 class DockerImageTemplate(BaseModel):
     """Configuration for a single Docker image template."""
 
@@ -31,7 +30,6 @@ class DockerImageTemplate(BaseModel):
         description="Docker build context directory",
     )
 
-
 class DockerTemplateConfig(BaseModel):
     """Configuration for Docker sandbox images.
 
@@ -46,7 +44,6 @@ class DockerTemplateConfig(BaseModel):
         default="nexus-sandbox:latest",
         description="Default image if no template specified",
     )
-
 
 class FeaturesConfig(BaseModel):
     """Feature flags for optional Nexus functionality."""
@@ -77,7 +74,6 @@ class FeaturesConfig(BaseModel):
     )
 
     model_config = ConfigDict(extra="forbid")
-
 
 class NexusConfig(BaseModel):
     """
@@ -353,7 +349,6 @@ class NexusConfig(BaseModel):
         frozen=False,  # Allow modifications after creation
     )
 
-
 def load_config(
     config: str | Path | dict[str, Any] | NexusConfig | None = None,
 ) -> NexusConfig:
@@ -389,7 +384,6 @@ def load_config(
     # Auto-discover
     return _auto_discover()
 
-
 def _load_from_dict(config_dict: dict[str, Any]) -> NexusConfig:
     """Load configuration from dictionary."""
     # Merge with environment variables
@@ -405,7 +399,6 @@ def _load_from_dict(config_dict: dict[str, Any]) -> NexusConfig:
 
     return NexusConfig(**merged_dict)
 
-
 def _load_from_file(path: Path) -> NexusConfig:
     """Load configuration from file."""
     if not path.exists():
@@ -418,7 +411,6 @@ def _load_from_file(path: Path) -> NexusConfig:
             raise ValueError(f"Unsupported config file format: {path.suffix}")
 
     return _load_from_dict(config_dict)
-
 
 def _load_from_environment() -> NexusConfig:
     """Load configuration from environment variables."""
@@ -556,7 +548,6 @@ def _load_from_environment() -> NexusConfig:
         env_config["parse_providers"] = parse_providers
 
     return NexusConfig(**env_config)
-
 
 def _auto_discover() -> NexusConfig:
     """

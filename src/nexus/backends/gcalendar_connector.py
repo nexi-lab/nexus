@@ -28,8 +28,6 @@ Authentication:
     - Automatic refresh when expired
 """
 
-from __future__ import annotations
-
 import logging
 from contextlib import suppress
 from datetime import UTC, datetime
@@ -63,13 +61,14 @@ from nexus.core.response import HandlerResponse, timed_response
 # Suppress annoying googleapiclient discovery cache warnings
 logging.getLogger("googleapiclient.discovery_cache").setLevel(logging.ERROR)
 
+from googleapiclient.discovery import Resource
+from nexus.core.permissions import OperationContext
 if TYPE_CHECKING:
     from googleapiclient.discovery import Resource
 
     from nexus.core.permissions import OperationContext
 
 logger = logging.getLogger(__name__)
-
 
 @register_connector(
     "gcalendar_connector",

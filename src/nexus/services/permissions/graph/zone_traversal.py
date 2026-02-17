@@ -12,8 +12,6 @@ Functions:
 Related: Issue #1459 Phase 15+, performance optimization
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import time
@@ -31,6 +29,10 @@ from nexus.services.permissions.types import (
 )
 from nexus.storage.models.permissions import ReBACTupleModel as RT
 
+from collections.abc import Callable
+from nexus.core.rebac import NamespaceConfig
+from nexus.services.permissions.consistency.zone_manager import ZoneManager
+from sqlalchemy.engine import Engine
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -40,7 +42,6 @@ if TYPE_CHECKING:
     from nexus.services.permissions.consistency.zone_manager import ZoneManager
 
 logger = logging.getLogger(__name__)
-
 
 class ZoneAwareTraversal:
     """Zone-aware permission graph traversal with P0-5 limits.

@@ -29,7 +29,6 @@ try:
 except ImportError:
     pass
 
-
 def glob_match_bulk(
     patterns: list[str],
     paths: list[str],
@@ -62,11 +61,9 @@ def glob_match_bulk(
         # If Rust glob fails for any reason, return None to fallback to Python
         return None
 
-
 def is_available() -> bool:
     """Check if Rust glob is available."""
     return RUST_AVAILABLE
-
 
 def glob_match(path: str, patterns: list[str]) -> bool:
     """
@@ -100,7 +97,6 @@ def glob_match(path: str, patterns: list[str]) -> bool:
 
     # Python fallback
     return any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
-
 
 def glob_filter(
     paths: list[str],
@@ -165,10 +161,8 @@ def glob_filter(
 
     return result
 
-
 # Glob special characters that indicate a non-static part of the pattern
 _GLOB_SPECIAL_CHARS = re.compile(r"[*?\[\]{}]")
-
 
 def extract_static_prefix(pattern: str) -> str:
     """
@@ -247,7 +241,6 @@ def extract_static_prefix(pattern: str) -> str:
         prefix += "/"
 
     return prefix
-
 
 def is_simple_pattern(pattern: str) -> bool:
     """Check if a glob pattern is simple (no ** recursive matching).

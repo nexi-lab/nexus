@@ -9,13 +9,11 @@ References:
     - Issue #227: Document Sharing & Access Links
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from nexus.core.permissions import OperationContext
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
-
 
 @runtime_checkable
 class ShareLinkProtocol(Protocol):

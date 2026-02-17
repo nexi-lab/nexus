@@ -11,8 +11,6 @@ Key Concepts:
 - Permissions: Handled separately via ReBAC
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from dataclasses import dataclass, field
@@ -21,9 +19,9 @@ from typing import TYPE_CHECKING, Any
 
 logger = logging.getLogger(__name__)
 
+from nexus.core._metadata_generated import FileMetadataProtocol
 if TYPE_CHECKING:
     from nexus.core._metadata_generated import FileMetadataProtocol
-
 
 @dataclass
 class WorkspaceConfig:
@@ -60,7 +58,6 @@ class WorkspaceConfig:
             "created_by": self.created_by,
             "metadata": self.metadata,
         }
-
 
 @dataclass
 class MemoryConfig:
@@ -99,7 +96,6 @@ class MemoryConfig:
             "created_by": self.created_by,
             "metadata": self.metadata,
         }
-
 
 class WorkspaceRegistry:
     """Registry for workspace and memory directories.

@@ -4,10 +4,7 @@ Tests that the snapshot service is correctly called from the write path
 when a transaction is active.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
-
 
 class TestWritePathTracking:
     """Tests for auto-tracking in _write_internal()."""
@@ -55,7 +52,6 @@ class TestWritePathTracking:
         # This should not raise
         if _snapshot_svc is not None:
             _snapshot_svc.is_tracked("/file.txt")
-
 
 class TestDeletePathTracking:
     """Tests for auto-tracking in delete()."""

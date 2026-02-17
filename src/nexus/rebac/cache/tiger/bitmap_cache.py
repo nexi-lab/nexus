@@ -22,12 +22,13 @@ from typing import TYPE_CHECKING, Any
 
 from pyroaring import BitMap as RoaringBitmap
 
+from nexus.cache.base import TigerCacheProtocol
+from nexus.rebac.cache.tiger.resource_map import TigerResourceMap
+from sqlalchemy.engine import Connection, Engine
 if TYPE_CHECKING:
-    from sqlalchemy.engine import Connection, Engine
-
     from nexus.cache.base import TigerCacheProtocol
     from nexus.rebac.cache.tiger.resource_map import TigerResourceMap
-    from nexus.rebac.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
 
@@ -77,7 +78,7 @@ class TigerCache:
         self,
         engine: Engine,
         resource_map: TigerResourceMap | None = None,
-        rebac_manager: EnhancedReBACManager | None = None,
+        rebac_manager: "EnhancedReBACManager | None" = None,
         dragonfly_cache: TigerCacheProtocol | None = None,
     ):
         """Initialize Tiger Cache.
@@ -248,7 +249,7 @@ class TigerCache:
             logger.warning(f"[TIGER] L2 Dragonfly error: {e}")
             return None
 
-    def set_rebac_manager(self, manager: EnhancedReBACManager) -> None:
+    def set_rebac_manager(self, manager: "EnhancedReBACManager") -> None:
         """Set the ReBAC manager for permission computation."""
         self._rebac_manager = manager
 

@@ -16,8 +16,6 @@ Usage:
   uv run pytest tests/conformance/test_exchange_openapi.py -v -o "addopts="
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +30,6 @@ SPEC_PATH = (
     Path(__file__).parent.parent.parent / "docs" / "protocol" / "nexus-exchange-v1.openapi.yaml"
 )
 
-
 @pytest.fixture(scope="module")
 def spec() -> dict[str, Any]:
     """Load and parse the OpenAPI spec."""
@@ -40,11 +37,9 @@ def spec() -> dict[str, Any]:
         pytest.skip(f"OpenAPI spec not found at {SPEC_PATH}")
     return yaml.safe_load(SPEC_PATH.read_text())
 
-
 def test_openapi_spec_version(spec: dict[str, Any]) -> None:
     """Spec declares OpenAPI 3.1.0."""
     assert spec["openapi"] == "3.1.0"
-
 
 def test_openapi_spec_info(spec: dict[str, Any]) -> None:
     """Spec has required info fields."""
@@ -53,11 +48,9 @@ def test_openapi_spec_info(spec: dict[str, Any]) -> None:
     assert info["version"] == "2026.1"
     assert "description" in info
 
-
 def test_openapi_spec_servers(spec: dict[str, Any]) -> None:
     """Spec defines at least one server."""
     assert len(spec["servers"]) >= 1
-
 
 def test_openapi_spec_security(spec: dict[str, Any]) -> None:
     """Spec defines security schemes."""
@@ -65,11 +58,9 @@ def test_openapi_spec_security(spec: dict[str, Any]) -> None:
     assert "apiKey" in schemes
     assert "bearerAuth" in schemes
 
-
 def test_openapi_spec_paths_not_empty(spec: dict[str, Any]) -> None:
     """Spec defines API paths."""
     assert len(spec["paths"]) > 0
-
 
 def test_openapi_spec_identity_endpoints(spec: dict[str, Any]) -> None:
     """Spec defines all identity endpoints."""
@@ -78,7 +69,6 @@ def test_openapi_spec_identity_endpoints(spec: dict[str, Any]) -> None:
     assert "/api/v2/agents/{agent_id}/keys" in paths
     assert "/api/v2/agents/{agent_id}/keys/rotate" in paths
     assert "/api/v2/agents/{agent_id}/keys/{key_id}" in paths
-
 
 def test_openapi_spec_payment_endpoints(spec: dict[str, Any]) -> None:
     """Spec defines all payment endpoints."""
@@ -92,7 +82,6 @@ def test_openapi_spec_payment_endpoints(spec: dict[str, Any]) -> None:
     assert "/api/v2/pay/reserve/{reservation_id}/release" in paths
     assert "/api/v2/pay/meter" in paths
 
-
 def test_openapi_spec_audit_endpoints(spec: dict[str, Any]) -> None:
     """Spec defines all audit endpoints."""
     paths = spec["paths"]
@@ -101,7 +90,6 @@ def test_openapi_spec_audit_endpoints(spec: dict[str, Any]) -> None:
     assert "/api/v2/audit/transactions/export" in paths
     assert "/api/v2/audit/transactions/{record_id}" in paths
     assert "/api/v2/audit/integrity/{record_id}" in paths
-
 
 def test_openapi_spec_error_schema(spec: dict[str, Any]) -> None:
     """Spec defines the NexusError schema."""
@@ -114,7 +102,6 @@ def test_openapi_spec_error_schema(spec: dict[str, Any]) -> None:
     assert "details" in error_props
     assert "trace_id" in error_props
 
-
 def test_openapi_spec_protocol_version_header(spec: dict[str, Any]) -> None:
     """Spec defines the Nexus-Protocol-Version header parameter."""
     params = spec["components"]["parameters"]
@@ -122,7 +109,6 @@ def test_openapi_spec_protocol_version_header(spec: dict[str, Any]) -> None:
     pv = params["ProtocolVersion"]
     assert pv["name"] == "Nexus-Protocol-Version"
     assert pv["in"] == "header"
-
 
 def test_openapi_spec_all_paths_have_tags(spec: dict[str, Any]) -> None:
     """Every endpoint has at least one tag."""
@@ -132,7 +118,6 @@ def test_openapi_spec_all_paths_have_tags(spec: dict[str, Any]) -> None:
                 assert "tags" in details, f"{method.upper()} {path} missing tags"
                 assert len(details["tags"]) > 0
 
-
 def test_openapi_spec_all_paths_have_operation_id(spec: dict[str, Any]) -> None:
     """Every endpoint has an operationId."""
     for path, methods in spec["paths"].items():
@@ -140,11 +125,9 @@ def test_openapi_spec_all_paths_have_operation_id(spec: dict[str, Any]) -> None:
             if method in ("get", "post", "put", "delete", "patch"):
                 assert "operationId" in details, f"{method.upper()} {path} missing operationId"
 
-
 # ---------------------------------------------------------------------------
 # Schema completeness tests
 # ---------------------------------------------------------------------------
-
 
 def test_openapi_spec_required_schemas_exist(spec: dict[str, Any]) -> None:
     """Spec defines all required schemas."""
@@ -170,7 +153,6 @@ def test_openapi_spec_required_schemas_exist(spec: dict[str, Any]) -> None:
     for schema_name in required:
         assert schema_name in schemas, f"Missing schema: {schema_name}"
 
-
 def test_openapi_spec_error_responses_exist(spec: dict[str, Any]) -> None:
     """Spec defines standard error responses."""
     responses = spec["components"]["responses"]
@@ -184,11 +166,9 @@ def test_openapi_spec_error_responses_exist(spec: dict[str, Any]) -> None:
     for resp_name in required:
         assert resp_name in responses, f"Missing response: {resp_name}"
 
-
 # ---------------------------------------------------------------------------
 # Schemathesis conformance tests (requires live server)
 # ---------------------------------------------------------------------------
-
 
 @pytest.fixture(scope="module")
 def schemathesis_schema(spec: dict[str, Any], base_url: str, auth_token: str | None):
@@ -207,7 +187,6 @@ def schemathesis_schema(spec: dict[str, Any], base_url: str, auth_token: str | N
         schema.set_auth(("X-API-Key", auth_token))
 
     return schema
-
 
 @pytest.mark.skipif(
     not __import__("os").environ.get("NEXUS_CONFORMANCE_URL"),

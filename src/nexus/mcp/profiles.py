@@ -21,13 +21,12 @@ References:
     - Cerbos: config is policy, PDP is enforcement
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from nexus.rebac.manager import EnhancedReBACManager, WriteResult
 if TYPE_CHECKING:
     from nexus.rebac.manager import (
         EnhancedReBACManager,
@@ -42,7 +41,6 @@ logger = logging.getLogger(__name__)
 
 TOOL_PATH_PREFIX = "/tools/"
 """Namespace prefix for MCP tools. Tools live at /tools/{tool_name}."""
-
 
 @dataclass(frozen=True, slots=True)
 class ToolProfile:
@@ -63,7 +61,6 @@ class ToolProfile:
     def tool_paths(self) -> frozenset[str]:
         """Return tool names as namespace paths (e.g., '/tools/nexus_read_file')."""
         return frozenset(f"{TOOL_PATH_PREFIX}{t}" for t in self.tools)
-
 
 @dataclass(frozen=True, slots=True)
 class ToolProfileConfig:
@@ -90,19 +87,15 @@ class ToolProfileConfig:
         """Sorted list of profile names."""
         return sorted(self.profiles)
 
-
 # ---------------------------------------------------------------------------
 # Inheritance resolution
 # ---------------------------------------------------------------------------
 
-
 class ProfileCycleError(ValueError):
     """Raised when profile inheritance contains a cycle."""
 
-
 class ProfileNotFoundError(KeyError):
     """Raised when a profile references a non-existent parent."""
-
 
 def resolve_inheritance(
     raw_profiles: dict[str, dict[str, Any]],
@@ -173,11 +166,9 @@ def resolve_inheritance(
 
     return resolved
 
-
 # ---------------------------------------------------------------------------
 # YAML loading
 # ---------------------------------------------------------------------------
-
 
 def load_profiles(config_path: Path) -> ToolProfileConfig:
     """Load tool profiles from a YAML config file.
@@ -223,7 +214,6 @@ def load_profiles(config_path: Path) -> ToolProfileConfig:
 
     return ToolProfileConfig(profiles=profiles, default_profile=default_profile)
 
-
 def load_profiles_from_dict(raw: dict[str, Any]) -> ToolProfileConfig:
     """Load tool profiles from an already-parsed dict (for testing/embedding).
 
@@ -242,11 +232,9 @@ def load_profiles_from_dict(raw: dict[str, Any]) -> ToolProfileConfig:
     profiles = resolve_inheritance(raw_profiles)
     return ToolProfileConfig(profiles=profiles, default_profile=default_profile)
 
-
 # ---------------------------------------------------------------------------
 # ReBAC grant generation
 # ---------------------------------------------------------------------------
-
 
 def grant_tools_for_profile(
     rebac_manager: EnhancedReBACManager,
@@ -289,7 +277,6 @@ def grant_tools_for_profile(
     )
 
     return results
-
 
 def revoke_tools_by_tuple_ids(
     rebac_manager: EnhancedReBACManager,

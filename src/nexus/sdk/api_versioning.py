@@ -26,7 +26,6 @@ from typing import Any, TypeVar
 
 F = TypeVar("F")
 
-
 def stable_api(since: str) -> Any:
     """Mark a function/class as stable public API.
 
@@ -53,7 +52,6 @@ def stable_api(since: str) -> Any:
 
     return decorator
 
-
 def experimental(obj: F) -> F:
     """Mark a function/class as experimental API.
 
@@ -74,21 +72,17 @@ def experimental(obj: F) -> F:
     obj.__experimental__ = True  # type: ignore[attr-defined]
     return obj
 
-
 def is_stable_api(obj: Any) -> bool:
     """Check if an object is marked as stable API."""
     return getattr(obj, "__stable_api__", False) is True
-
 
 def is_experimental(obj: Any) -> bool:
     """Check if an object is marked as experimental."""
     return getattr(obj, "__experimental__", False) is True
 
-
 def get_stable_since(obj: Any) -> str | None:
     """Get the version when an API became stable."""
     return getattr(obj, "__stable_since__", None)
-
 
 def collect_api_surface(module: types.ModuleType) -> list[dict[str, Any]]:
     """Collect all decorated API items from a module.
@@ -139,7 +133,6 @@ def collect_api_surface(module: types.ModuleType) -> list[dict[str, Any]]:
 
     return surface
 
-
 def _inspect_object(name: str, obj: Any) -> dict[str, Any] | None:
     """Inspect a single object for API markers.
 
@@ -169,7 +162,6 @@ def _inspect_object(name: str, obj: Any) -> dict[str, Any] | None:
 
     return None
 
-
 def export_api_surface(module: types.ModuleType, path: Path) -> int:
     """Export the API surface of a module to a JSON file.
 
@@ -196,7 +188,6 @@ def export_api_surface(module: types.ModuleType, path: Path) -> int:
         )
     return len(surface)
 
-
 def load_api_surface(path: Path) -> list[dict[str, Any]]:
     """Load a previously exported API surface for comparison.
 
@@ -213,7 +204,6 @@ def load_api_surface(path: Path) -> list[dict[str, Any]]:
         data = json.load(f)
     entries: list[dict[str, Any]] = data.get("entries", [])
     return entries
-
 
 def diff_api_surfaces(
     old: list[dict[str, Any]], new: list[dict[str, Any]]

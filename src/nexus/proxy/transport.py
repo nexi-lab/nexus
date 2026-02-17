@@ -4,8 +4,6 @@ Wraps ``httpx.AsyncClient`` with connection pooling, HTTP/2, and
 per-call retry via ``tenacity``.
 """
 
-from __future__ import annotations
-
 import logging
 import time
 import uuid
@@ -25,7 +23,6 @@ from nexus.proxy.config import ProxyBrickConfig
 from nexus.proxy.errors import RemoteCallError
 
 logger = logging.getLogger(__name__)
-
 
 class HttpTransport:
     """HTTP transport for forwarding proxy calls to a remote kernel.
@@ -180,7 +177,6 @@ class HttpTransport:
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         return headers
-
 
 def _safe_json(params: dict[str, Any] | None) -> str:
     """Encode params to a JSON string safe for use in a header."""

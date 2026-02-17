@@ -11,21 +11,19 @@ Extracted from PermissionEnforcer to enable reuse across
 _check_rebac_batched() and filter_list() code paths.
 """
 
-from __future__ import annotations
-
 import logging
 import os
 from typing import TYPE_CHECKING, Any
 
 from cachetools import TTLCache
 
+from nexus.rebac.manager import ReBACManager
 if TYPE_CHECKING:
     from nexus.rebac.manager import ReBACManager
     from nexus.services.permissions.hotspot_detector import HotspotDetector
     from nexus.services.permissions.permission_boundary_cache import PermissionBoundaryCache
 
 logger = logging.getLogger(__name__)
-
 
 class PermissionCacheCoordinator:
     """Owns all permission caching for the permission enforcer.

@@ -9,7 +9,6 @@ from nexus.skills.governance import (
     SkillGovernance,
 )
 
-
 @pytest.mark.asyncio
 async def test_submit_for_approval() -> None:
     """Test submitting a skill for approval."""
@@ -32,7 +31,6 @@ async def test_submit_for_approval() -> None:
     assert approval.reviewers == ["bob", "charlie"]
     assert approval.comments == "Ready for org-wide use"
 
-
 @pytest.mark.asyncio
 async def test_submit_duplicate_approval() -> None:
     """Test submitting duplicate approval raises error."""
@@ -44,7 +42,6 @@ async def test_submit_duplicate_approval() -> None:
     # Second submission should fail
     with pytest.raises(GovernanceError, match="already has a pending approval"):
         await gov.submit_for_approval("test-skill", submitted_by="bob")
-
 
 @pytest.mark.asyncio
 async def test_approve_skill() -> None:
@@ -63,7 +60,6 @@ async def test_approve_skill() -> None:
     assert approval.comments == "Looks great!"
     assert approval.reviewed_at is not None
 
-
 @pytest.mark.asyncio
 async def test_approve_nonexistent() -> None:
     """Test approving non-existent approval raises error."""
@@ -71,7 +67,6 @@ async def test_approve_nonexistent() -> None:
 
     with pytest.raises(GovernanceError, match="Approval not found"):
         await gov.approve_skill("nonexistent", reviewed_by="bob")
-
 
 @pytest.mark.asyncio
 async def test_approve_already_approved() -> None:
@@ -85,7 +80,6 @@ async def test_approve_already_approved() -> None:
     # Try to approve again
     with pytest.raises(GovernanceError, match="already approved"):
         await gov.approve_skill(approval_id, reviewed_by="charlie")
-
 
 @pytest.mark.asyncio
 async def test_reject_skill() -> None:
@@ -104,7 +98,6 @@ async def test_reject_skill() -> None:
     assert approval.comments == "Needs more documentation"
     assert approval.reviewed_at is not None
 
-
 @pytest.mark.asyncio
 async def test_reject_already_rejected() -> None:
     """Test rejecting already-rejected skill raises error."""
@@ -117,7 +110,6 @@ async def test_reject_already_rejected() -> None:
     # Try to reject again
     with pytest.raises(GovernanceError, match="already rejected"):
         await gov.reject_skill(approval_id, reviewed_by="charlie")
-
 
 @pytest.mark.asyncio
 async def test_is_approved() -> None:
@@ -134,7 +126,6 @@ async def test_is_approved() -> None:
     # Should be approved now
     assert await gov.is_approved("test-skill") is True
 
-
 @pytest.mark.asyncio
 async def test_is_approved_after_rejection() -> None:
     """Test that rejected skill is not approved."""
@@ -146,7 +137,6 @@ async def test_is_approved_after_rejection() -> None:
 
     # Should not be approved
     assert await gov.is_approved("test-skill") is False
-
 
 @pytest.mark.asyncio
 async def test_get_pending_approvals() -> None:
@@ -170,7 +160,6 @@ async def test_get_pending_approvals() -> None:
     assert "skill2" in skill_names
     assert "skill3" not in skill_names  # Already approved
 
-
 @pytest.mark.asyncio
 async def test_get_pending_approvals_by_reviewer() -> None:
     """Test getting pending approvals filtered by reviewer."""
@@ -188,7 +177,6 @@ async def test_get_pending_approvals_by_reviewer() -> None:
     skill_names = [a.skill_name for a in bob_approvals]
     assert "skill1" in skill_names
     assert "skill3" in skill_names
-
 
 @pytest.mark.asyncio
 async def test_get_approval_history() -> None:
@@ -218,7 +206,6 @@ async def test_get_approval_history() -> None:
 
     assert history[1].approval_id == approval_id1
     assert history[1].status == ApprovalStatus.APPROVED
-
 
 @pytest.mark.asyncio
 async def test_approval_validation() -> None:

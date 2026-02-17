@@ -6,8 +6,6 @@ This module contains server-related CLI commands for:
 - Starting the Nexus RPC server
 """
 
-from __future__ import annotations
-
 import logging
 import sys
 import time
@@ -25,7 +23,6 @@ from nexus.cli.utils import (
 )
 
 logger = logging.getLogger(__name__)
-
 
 def start_background_mount_sync(nx: NexusFilesystem) -> None:
     """Start background thread to sync connector mounts after server is ready.
@@ -89,13 +86,11 @@ def start_background_mount_sync(nx: NexusFilesystem) -> None:
         name="mount-sync-thread",
     ).start()
 
-
 def _is_federation_syntax(source: str, target: str | None) -> bool:
     """Detect federation mount: 2 args with at least one containing ':'."""
     if target is None:
         return False
     return ":" in source or ":" in target
-
 
 @click.command(name="mount")
 @click.argument("source", type=str)
@@ -209,7 +204,6 @@ def mount(
     else:
         _mount_fuse(source, mode, daemon, allow_other, debug, agent_id, backend_config)
 
-
 def _mount_federation(
     source: str,
     target: str | None,
@@ -279,7 +273,6 @@ def _mount_federation(
         sys.exit(1)
     except Exception as e:
         handle_error(e)
-
 
 def _mount_fuse(
     mount_point: str,
@@ -443,7 +436,6 @@ def _mount_fuse(
     except Exception as e:
         handle_error(e)
 
-
 @click.command(name="unmount")
 @click.argument("mount_point", type=click.Path(exists=True))
 def unmount(mount_point: str) -> None:
@@ -485,7 +477,6 @@ def unmount(mount_point: str) -> None:
 
     except Exception as e:
         handle_error(e)
-
 
 @click.command(name="serve")
 @click.option("--host", default="0.0.0.0", help="Server host (default: 0.0.0.0)")
@@ -1509,7 +1500,6 @@ def serve(
         console.print("\n[yellow]Server stopped by user[/yellow]")
     except Exception as e:
         handle_error(e)
-
 
 def register_commands(cli: click.Group) -> None:
     """Register server commands with the CLI.

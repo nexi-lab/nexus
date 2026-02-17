@@ -14,8 +14,6 @@ Design principles:
 Issue #1039: Graph storage layer for entities and relationships
 """
 
-from __future__ import annotations
-
 import contextlib
 import json
 import logging
@@ -34,24 +32,22 @@ from nexus.search.models import (
     RelationshipModel,
 )
 
-
 def _utcnow_naive() -> datetime:
     """Return current UTC time as naive datetime for asyncpg compatibility."""
     return datetime.now(UTC).replace(tzinfo=None)
 
-
 logger = logging.getLogger(__name__)
 
+from nexus.search.embeddings import EmbeddingProvider
+from sqlalchemy.ext.asyncio import AsyncSession
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from nexus.search.embeddings import EmbeddingProvider
 
-
 # =============================================================================
 # Data Classes
 # =============================================================================
-
 
 @dataclass
 class Entity:
@@ -69,7 +65,7 @@ class Entity:
     updated_at: datetime | None = None
 
     @classmethod
-    def from_model(cls, model: EntityModel) -> Entity:
+    def from_model(cls, model: EntityModel) -> "Entity":
         """Create Entity from SQLAlchemy model."""
         aliases = []
         if model.aliases:
@@ -110,7 +106,6 @@ class Entity:
             "metadata": self.metadata,
         }
 
-
 @dataclass
 class Relationship:
     """Represents a directed edge in the knowledge graph."""
@@ -134,7 +129,7 @@ class Relationship:
         model: RelationshipModel,
         source: EntityModel | None = None,
         target: EntityModel | None = None,
-    ) -> Relationship:
+    ) -> "Relationship":
         """Create Relationship from SQLAlchemy model."""
         metadata = {}
         if model.metadata_json:
@@ -155,7 +150,6 @@ class Relationship:
             target_entity=Entity.from_model(target) if target else None,
         )
 
-
 @dataclass
 class EntityMention:
     """Represents a mention of an entity in a source document."""
@@ -171,7 +165,7 @@ class EntityMention:
     created_at: datetime | None = None
 
     @classmethod
-    def from_model(cls, model: EntityMentionModel) -> EntityMention:
+    def from_model(cls, model: EntityMentionModel) -> "EntityMention":
         """Create EntityMention from SQLAlchemy model."""
         return cls(
             mention_id=model.mention_id,
@@ -184,7 +178,6 @@ class EntityMention:
             char_offset_end=model.char_offset_end,
             created_at=model.created_at,
         )
-
 
 @dataclass
 class Graph:
@@ -219,7 +212,6 @@ class Graph:
             ],
         }
 
-
 @dataclass
 class NeighborResult:
     """Result of N-hop neighbor traversal."""
@@ -228,11 +220,9 @@ class NeighborResult:
     depth: int
     path: list[str]  # Entity IDs in the path from source
 
-
 # =============================================================================
 # GraphStore Class
 # =============================================================================
-
 
 class GraphStore:
     """PostgreSQL-native graph storage with entity resolution.

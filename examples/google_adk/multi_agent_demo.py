@@ -33,7 +33,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 import nexus
 
-
 def connect_to_nexus():
     """Connect to Nexus filesystem."""
     server_url = os.getenv("NEXUS_URL")
@@ -47,7 +46,6 @@ def connect_to_nexus():
     else:
         print("✓ Connected to local Nexus")
         return nexus.connect()
-
 
 def create_multi_agent_system(nx):
     """
@@ -219,7 +217,6 @@ Work systematically through the task!""",
 
     return coordinator
 
-
 def run_demo():
     """Run multi-agent demo."""
     print("=" * 70)
@@ -339,7 +336,6 @@ Make it useful for new developers!""",
         import traceback
 
         traceback.print_exc()
-
 
 if __name__ == "__main__":
     run_demo()

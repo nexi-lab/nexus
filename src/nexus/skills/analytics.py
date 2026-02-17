@@ -1,7 +1,5 @@
 """Skill analytics and usage tracking."""
 
-from __future__ import annotations
-
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -10,7 +8,6 @@ from datetime import UTC, datetime
 from nexus.skills.exceptions import SkillValidationError
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass
 class SkillUsageRecord:
@@ -42,7 +39,6 @@ class SkillUsageRecord:
                 f"execution_time cannot be negative, got {self.execution_time}"
             )
 
-
 @dataclass
 class SkillAnalytics:
     """Analytics data for a skill."""
@@ -65,7 +61,6 @@ class SkillAnalytics:
         else:
             self.success_rate = 0.0
 
-
 @dataclass
 class DashboardMetrics:
     """Dashboard metrics for organization-wide analytics."""
@@ -77,7 +72,6 @@ class DashboardMetrics:
     top_contributors: list[tuple[str, int]] = field(default_factory=list)
     success_rates: dict[str, float] = field(default_factory=dict)
     avg_execution_times: dict[str, float] = field(default_factory=dict)
-
 
 class SkillAnalyticsTracker:
     """Tracker for skill usage analytics.

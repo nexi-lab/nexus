@@ -39,7 +39,6 @@ EXCEPTIONS = [
     "src/nexus/services/memory/memory_api.py",  # 3,012 lines - moved from core/, split tracked
 ]
 
-
 def count_lines(file_path: Path) -> int:
     """Count non-empty lines in a file."""
     try:
@@ -48,7 +47,6 @@ def count_lines(file_path: Path) -> int:
     except Exception as e:
         print(f"Warning: Could not read {file_path}: {e}")
         return 0
-
 
 def check_file_size(file_path: Path) -> tuple[bool, int]:
     """
@@ -68,7 +66,6 @@ def check_file_size(file_path: Path) -> tuple[bool, int]:
     passes = line_count <= MAX_LINES
 
     return passes, line_count
-
 
 def main() -> int:
     """Main entry point for pre-commit hook."""
@@ -111,7 +108,6 @@ def main() -> int:
         return 1
 
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

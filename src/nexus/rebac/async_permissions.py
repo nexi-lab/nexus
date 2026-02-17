@@ -14,8 +14,6 @@ Example:
         content = await fs.read("/path/to/file")
 """
 
-from __future__ import annotations
-
 import logging
 import time
 from typing import TYPE_CHECKING, Any
@@ -23,12 +21,13 @@ from typing import TYPE_CHECKING, Any
 from nexus.core.permissions import OperationContext, Permission, check_stale_session
 from nexus.rebac.utils.zone import normalize_zone_id
 
+from nexus.rebac.async_manager import AsyncReBACManager
+from nexus.rebac.namespace_manager import NamespaceManager
 if TYPE_CHECKING:
     from nexus.rebac.async_manager import AsyncReBACManager
     from nexus.rebac.namespace_manager import NamespaceManager
 
 logger = logging.getLogger(__name__)
-
 
 class AsyncPermissionEnforcer:
     """Async permission enforcement using ReBAC.

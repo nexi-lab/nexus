@@ -18,8 +18,6 @@ NOTE: These are SERVICE-LEVEL domain caches, NOT kernel code.
       consume these domain caches.
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 import logging
@@ -29,7 +27,6 @@ from collections.abc import Awaitable, Callable
 from nexus.core.cache_store import CacheStoreABC
 
 logger = logging.getLogger(__name__)
-
 
 class PermissionCache:
     """Driver-agnostic permission cache using CacheStoreABC primitives.
@@ -136,7 +133,6 @@ class PermissionCache:
             "ttl_denials": self._denial_ttl,
         }
 
-
 class TigerCache:
     """Driver-agnostic Tiger cache using CacheStoreABC primitives.
 
@@ -220,7 +216,6 @@ class TigerCache:
     async def health_check(self) -> bool:
         return await self._store.health_check()
 
-
 class ResourceMapCache:
     """Driver-agnostic resource map cache using CacheStoreABC primitives.
 
@@ -293,7 +288,6 @@ class ResourceMapCache:
             for (rt, rid, zid), int_id in mappings.items()
         }
         await self._store.set_many(kv)
-
 
 class EmbeddingCache:
     """Driver-agnostic embedding cache using CacheStoreABC primitives.

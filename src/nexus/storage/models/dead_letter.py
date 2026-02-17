@@ -6,15 +6,12 @@ exhausting retries, enabling manual inspection and replay.
 Issue #1138: Event Stream Export.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base
-
 
 class DeadLetterModel(Base):
     """Dead letter queue entry for failed event stream exports."""

@@ -4,13 +4,10 @@ Defines the UploadSession frozen dataclass and UploadStatus enum
 for tus.io v1.0.0 compliant resumable upload protocol.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Any
-
 
 class UploadStatus(StrEnum):
     """Status of a chunked upload session."""
@@ -20,7 +17,6 @@ class UploadStatus(StrEnum):
     COMPLETED = "completed"
     TERMINATED = "terminated"
     EXPIRED = "expired"
-
 
 @dataclass(frozen=True)
 class UploadSession:
@@ -81,7 +77,7 @@ class UploadSession:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> UploadSession:
+    def from_dict(cls, data: dict[str, Any]) -> "UploadSession":
         """Deserialize from a plain dict."""
         created_at = data.get("created_at")
         if isinstance(created_at, str):

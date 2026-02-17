@@ -4,12 +4,9 @@ Issue #1359 Phase 0: Superset of statuses from SpendingApproval,
 SkillApproval, and DisputeRecord.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
-
 
 class ApprovalStatus(StrEnum):
     """Universal approval status (superset of all 3 existing workflows).
@@ -25,7 +22,6 @@ class ApprovalStatus(StrEnum):
     REJECTED = "rejected"
     EXPIRED = "expired"
 
-
 @dataclass(frozen=True)
 class ApprovalTimestamps:
     """Immutable timestamps for approval lifecycle events."""
@@ -33,7 +29,6 @@ class ApprovalTimestamps:
     created_at: datetime
     decided_at: datetime | None = None
     decided_by: str | None = None
-
 
 @dataclass(frozen=True)
 class ExpiryPolicy:

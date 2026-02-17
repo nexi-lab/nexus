@@ -16,13 +16,10 @@ Usage::
         results = executor.submit(search_chunk, chunk)
 """
 
-from __future__ import annotations
-
 import logging
 import time
 from collections.abc import Generator
 from contextlib import contextmanager
-
 
 class Timer:
     """Lightweight timing context manager.
@@ -34,7 +31,7 @@ class Timer:
 
     __slots__ = ("_start", "elapsed", "ms")
 
-    def __enter__(self) -> Timer:
+    def __enter__(self) -> "Timer":
         self._start = time.monotonic()
         self.elapsed = 0.0
         self.ms = 0.0

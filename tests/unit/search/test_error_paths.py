@@ -7,8 +7,6 @@ Validates error handling at brick boundaries:
 - SemanticSearch.search when embedding_provider is None
 """
 
-from __future__ import annotations
-
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -17,7 +15,6 @@ import pytest
 # =============================================================================
 # VectorDatabase error paths
 # =============================================================================
-
 
 class TestVectorDatabaseErrors:
     """Test VectorDatabase error conditions."""
@@ -64,11 +61,9 @@ class TestVectorDatabaseErrors:
         ):
             vdb.keyword_search(session, "test", limit=5)
 
-
 # =============================================================================
 # SearchDaemon error paths
 # =============================================================================
-
 
 class TestSearchDaemonErrors:
     """Test SearchDaemon error conditions."""
@@ -117,11 +112,9 @@ class TestSearchDaemonErrors:
         await daemon.shutdown()
         await daemon.shutdown()  # Should not raise
 
-
 # =============================================================================
 # verify_imports error paths
 # =============================================================================
-
 
 class TestVerifyImportsErrors:
     """Test verify_imports with missing modules."""
@@ -173,11 +166,9 @@ class TestVerifyImportsErrors:
             result = verify_imports()
             assert result["nexus.search.async_search"] is False
 
-
 # =============================================================================
 # SemanticSearch error paths
 # =============================================================================
-
 
 class TestSemanticSearchErrors:
     """Test SemanticSearch error conditions."""
@@ -234,11 +225,9 @@ class TestSemanticSearchErrors:
         with pytest.raises(ValueError, match="requires vector database extension"):
             await ss.search("test", search_mode="hybrid")
 
-
 # =============================================================================
 # SearchBrickManifest validation
 # =============================================================================
-
 
 class TestSearchBrickManifest:
     """Test SearchBrickManifest dataclass."""

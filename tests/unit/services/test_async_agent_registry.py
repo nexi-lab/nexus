@@ -1,7 +1,5 @@
 """Tests for AsyncAgentRegistry wrapper (Issue #1440)."""
 
-from __future__ import annotations
-
 import types
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
@@ -16,7 +14,6 @@ from tests.unit.core.protocols.test_conformance import assert_protocol_conforman
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
 
 def _make_record(**overrides: object) -> AgentRecord:
     """Create a test AgentRecord with sensible defaults."""
@@ -35,21 +32,17 @@ def _make_record(**overrides: object) -> AgentRecord:
     defaults.update(overrides)
     return AgentRecord(**defaults)
 
-
 @pytest.fixture()
 def mock_inner() -> MagicMock:
     return MagicMock()
-
 
 @pytest.fixture()
 def wrapper(mock_inner: MagicMock) -> AsyncAgentRegistry:
     return AsyncAgentRegistry(mock_inner)
 
-
 # ---------------------------------------------------------------------------
 # Protocol conformance
 # ---------------------------------------------------------------------------
-
 
 class TestConformance:
     def test_assert_protocol_conformance(self) -> None:
@@ -58,11 +51,9 @@ class TestConformance:
     def test_isinstance_check(self, wrapper: AsyncAgentRegistry) -> None:
         assert isinstance(wrapper, AgentRegistryProtocol)
 
-
 # ---------------------------------------------------------------------------
 # AgentRecord -> AgentInfo conversion
 # ---------------------------------------------------------------------------
-
 
 class TestToAgentInfo:
     def test_basic_conversion(self) -> None:
@@ -88,11 +79,9 @@ class TestToAgentInfo:
             info = _to_agent_info(record)
             assert info.state == state.value
 
-
 # ---------------------------------------------------------------------------
 # Async method delegation
 # ---------------------------------------------------------------------------
-
 
 class TestRegister:
     @pytest.mark.asyncio()
@@ -113,7 +102,6 @@ class TestRegister:
         assert isinstance(info, AgentInfo)
         assert info.agent_id == "agent-1"
 
-
 class TestGet:
     @pytest.mark.asyncio()
     async def test_found(self, wrapper: AsyncAgentRegistry, mock_inner: MagicMock) -> None:
@@ -127,7 +115,6 @@ class TestGet:
         mock_inner.get.return_value = None
         info = await wrapper.get("missing")
         assert info is None
-
 
 class TestTransition:
     @pytest.mark.asyncio()
@@ -163,14 +150,12 @@ class TestTransition:
         with pytest.raises(InvalidTransitionError):
             await wrapper.transition("agent-1", "IDLE")
 
-
 class TestHeartbeat:
     @pytest.mark.asyncio()
     async def test_delegates(self, wrapper: AsyncAgentRegistry, mock_inner: MagicMock) -> None:
         mock_inner.heartbeat.return_value = None
         await wrapper.heartbeat("agent-1")
         mock_inner.heartbeat.assert_called_once_with("agent-1")
-
 
 class TestListByZone:
     @pytest.mark.asyncio()
@@ -190,7 +175,6 @@ class TestListByZone:
         mock_inner.list_by_zone.return_value = []
         result = await wrapper.list_by_zone("empty-zone")
         assert result == []
-
 
 class TestUnregister:
     @pytest.mark.asyncio()

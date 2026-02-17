@@ -21,8 +21,6 @@ References:
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
-from __future__ import annotations
-
 import asyncio
 import uuid
 from collections.abc import Awaitable, Callable
@@ -36,9 +34,9 @@ from nexus.services.protocols.hook_engine import (
     HookSpec,
 )
 
+from nexus.plugins.hooks import PluginHooks
 if TYPE_CHECKING:
     from nexus.plugins.hooks import PluginHooks
-
 
 # ---------------------------------------------------------------------------
 # Phase name translation: Protocol ↔ PluginHooks
@@ -57,7 +55,6 @@ _PHASE_TO_HOOK_TYPE: dict[str, HookType] = {
     "post_copy": HookType.AFTER_COPY,
 }
 
-
 def _phase_to_hook_type(phase: str) -> HookType:
     """Map a protocol phase string to the corresponding ``HookType``.
 
@@ -69,11 +66,9 @@ def _phase_to_hook_type(phase: str) -> HookType:
     except KeyError:
         raise ValueError(f"Unknown hook phase: {phase!r}") from None
 
-
 # ---------------------------------------------------------------------------
 # Adapter
 # ---------------------------------------------------------------------------
-
 
 class AsyncHookEngine:
     """Async adapter for ``PluginHooks`` conforming to ``HookEngineProtocol``.

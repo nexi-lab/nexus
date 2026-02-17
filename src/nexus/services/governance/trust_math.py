@@ -12,12 +12,9 @@ Algorithm:
         Convergence when ||t(k+1) - t(k)||_1 < epsilon
 """
 
-from __future__ import annotations
-
 import numpy as np
 
 from nexus.services.governance.models import GovernanceEdge
-
 
 def eigentrust(
     local_trust: np.ndarray,
@@ -80,7 +77,6 @@ def eigentrust(
     final: np.ndarray = t
     return final
 
-
 def build_local_trust_matrix(
     edges: list[GovernanceEdge],
     node_ids: list[str],
@@ -107,7 +103,6 @@ def build_local_trust_matrix(
 
     return matrix
 
-
 def detect_sybil_cluster(
     trust_scores: dict[str, float],
     threshold: float = 0.1,
@@ -132,7 +127,6 @@ def detect_sybil_cluster(
     # Simple: return all low-trust agents as one cluster
     # Future: use graph connectivity for finer clustering
     return [suspicious]
-
 
 def _row_normalize(matrix: np.ndarray) -> np.ndarray:
     """Row-normalize a matrix (each row sums to 1, or 0 if all zeros)."""

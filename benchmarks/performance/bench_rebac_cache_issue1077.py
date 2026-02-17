@@ -19,7 +19,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from nexus.services.permissions.rebac_cache import ReBACPermissionCache
 
-
 def benchmark_invalidation_modes():
     """Compare targeted vs tenant-wide invalidation performance."""
     print("\n" + "=" * 70)
@@ -127,7 +126,6 @@ def benchmark_invalidation_modes():
 
     return results
 
-
 def benchmark_tiered_ttl():
     """Benchmark tiered TTL configuration."""
     print("\n" + "=" * 70)
@@ -177,7 +175,6 @@ def benchmark_tiered_ttl():
 
         print(f"{rel_name:<20} {str(result):<10} {expected:<15} {actual_ttl:<15.0f} {status}")
 
-
 def benchmark_index_overhead():
     """Benchmark the overhead of maintaining secondary indexes."""
     print("\n" + "=" * 70)
@@ -213,7 +210,6 @@ def benchmark_index_overhead():
     ) * 100
     print(f"\nIndex overhead: {overhead:.1f}%")
 
-
 def benchmark_deep_hierarchy():
     """Benchmark invalidation with deep directory hierarchies."""
     print("\n" + "=" * 70)
@@ -247,7 +243,6 @@ def benchmark_deep_hierarchy():
         elapsed = time.perf_counter() - start
 
         print(f"  Depth {depth}: invalidated {count} entries in {elapsed * 1000:.3f}ms")
-
 
 if __name__ == "__main__":
     print("=" * 70)

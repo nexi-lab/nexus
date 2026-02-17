@@ -7,8 +7,6 @@ Hot path: analyze_transaction() — Z-score vs cached baseline (<1ms).
 Background: recompute_baselines() — batch job for baseline refresh.
 """
 
-from __future__ import annotations
-
 import contextlib
 import json
 import logging
@@ -28,13 +26,14 @@ from nexus.services.governance.models import (
 )
 from nexus.services.governance.protocols import AnomalyDetectorProtocol
 
+from collections.abc import Callable
+from sqlalchemy.ext.asyncio import AsyncSession
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
-
 
 class StatisticalAnomalyDetector:
     """Default anomaly detector using Z-score and IQR methods.
@@ -88,7 +87,6 @@ class StatisticalAnomalyDetector:
                 alerts.append(cp_alert)
 
         return alerts
-
 
 class AnomalyService:
     """Manages anomaly detection lifecycle.
@@ -213,7 +211,6 @@ class AnomalyService:
                     session.add(model)
         except Exception:
             logger.exception("Failed to persist anomaly alerts")
-
 
 def _alert_model_to_domain(model: Any) -> AnomalyAlert:
     """Convert AnomalyAlertModel to domain AnomalyAlert."""

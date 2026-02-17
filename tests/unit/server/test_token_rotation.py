@@ -26,7 +26,6 @@ from nexus.core.exceptions import AuthenticationError
 from nexus.server.auth.oauth_provider import OAuthCredential
 from nexus.server.auth.token_manager import TokenManager, _hash_token
 
-
 class TestTokenRotation:
     """Token rotation tests — TDD (Issue #997)."""
 
@@ -389,7 +388,6 @@ class TestTokenRotation:
         assert family1 != family2
         assert creds2[0]["rotation_counter"] == 0
 
-
 class TestConcurrentRefresh:
     """Tests for per-credential asyncio lock (Fix 1)."""
 
@@ -446,7 +444,6 @@ class TestConcurrentRefresh:
 
         # Provider refresh should be called at most once (lock + cache)
         assert mock_provider.refresh_token.call_count == 1
-
 
 class TestReuseDetectionDuringRefresh:
     """Tests for reuse detection integrated into refresh flow (Fix 2)."""
@@ -563,7 +560,6 @@ class TestReuseDetectionDuringRefresh:
         creds = await manager.list_credentials()
         assert creds[0]["rotation_counter"] == 1
 
-
 class TestAuditIPAddress:
     """Tests for IP address capture in audit events (Fix 3)."""
 
@@ -625,7 +621,6 @@ class TestAuditIPAddress:
         finally:
             manager.close()
             gc.collect()
-
 
 class TestHashToken:
     """Unit tests for _hash_token helper."""

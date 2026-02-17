@@ -14,8 +14,6 @@ Tests cover:
 7. Zone isolation: different zones cannot see each other's files
 """
 
-from __future__ import annotations
-
 import base64
 import json
 import time
@@ -29,10 +27,8 @@ ADMIN_HEADERS = {
     "X-Nexus-Zone-Id": "root",
 }
 
-
 def _b64(text: str) -> dict:
     return {"__type__": "bytes", "data": base64.b64encode(text.encode()).decode()}
-
 
 def _rpc(
     client: httpx.Client, method: str, params: dict | None = None, headers: dict | None = None
@@ -53,7 +49,6 @@ def _rpc(
     )
     return {"status": resp.status_code, "body": resp.json()}
 
-
 def _rpc_result(
     client: httpx.Client, method: str, params: dict | None = None, headers: dict | None = None
 ):
@@ -66,11 +61,9 @@ def _rpc_result(
     )
     return body.get("result")
 
-
 def _write_file(client: httpx.Client, path: str, text: str, headers: dict | None = None):
     """Write a file via RPC."""
     return _rpc_result(client, "write", {"path": path, "content": _b64(text)}, headers)
-
 
 @pytest.mark.e2e
 class TestTrigramGrepE2E:

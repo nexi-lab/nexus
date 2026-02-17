@@ -3,8 +3,6 @@
 Commands for viewing file information, exporting/importing metadata, and calculating sizes.
 """
 
-from __future__ import annotations
-
 import sys
 from typing import Any, cast
 
@@ -19,7 +17,6 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
-
 
 @click.command()
 @click.argument("path", type=str)
@@ -84,7 +81,6 @@ def info(
     except Exception as e:
         handle_error(e)
 
-
 @click.command()
 @add_backend_options
 def version(
@@ -93,7 +89,6 @@ def version(
     """Show Nexus version information."""
     console.print(f"[cyan]Nexus[/cyan] version [green]{nexus.__version__}[/green]")
     console.print(f"Data directory: [cyan]{backend_config.data_dir}[/cyan]")
-
 
 @click.command(name="export")
 @click.argument("output", type=click.Path())
@@ -185,7 +180,6 @@ def export_metadata(
         console.print(f"  Output: [cyan]{output}[/cyan]")
     except Exception as e:
         handle_error(e)
-
 
 @click.command(name="import")
 @click.argument("input_file", type=click.Path(exists=True))
@@ -325,7 +319,6 @@ def import_metadata(
     except Exception as e:
         handle_error(e)
 
-
 @click.command(name="size")
 @click.argument("path", default="/", type=str)
 @click.option("--human", "-h", is_flag=True, help="Human-readable output")
@@ -400,7 +393,6 @@ def size(
 
     except Exception as e:
         handle_error(e)
-
 
 def register_commands(cli: click.Group) -> None:
     """Register all metadata commands to the CLI group.

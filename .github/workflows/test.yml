@@ -22,7 +22,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -31,7 +31,7 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
-        run: uv venv --python 3.13
+        run: uv venv --python 3.14
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
@@ -52,7 +52,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]  # windows-latest disabled - takes too much time
-        python-version: ["3.13"]
+        python-version: ["3.14"]
 
     steps:
       - name: Checkout code
@@ -146,7 +146,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -155,7 +155,7 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
-        run: uv venv --python 3.13
+        run: uv venv --python 3.14
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -201,7 +201,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -210,7 +210,7 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
-        run: uv venv --python 3.13
+        run: uv venv --python 3.14
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -254,7 +254,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -263,7 +263,7 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
-        run: uv venv --python 3.13
+        run: uv venv --python 3.14
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -293,7 +293,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -302,7 +302,7 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
-        run: uv venv --python 3.13
+        run: uv venv --python 3.14
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -339,7 +339,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -348,7 +348,7 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
-        run: uv venv --python 3.13
+        run: uv venv --python 3.14
 
       - name: Install Rust toolchain
         uses: actions-rust-lang/setup-rust-toolchain@v1
@@ -378,7 +378,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -387,7 +387,7 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
-        run: uv venv --python 3.13
+        run: uv venv --python 3.14
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test]"
@@ -422,7 +422,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
+          python-version: "3.14"
 
       - name: Install uv
         uses: astral-sh/setup-uv@v3
@@ -431,7 +431,7 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
 
       - name: Create virtual environment
-        run: uv venv --python 3.13
+        run: uv venv --python 3.14
 
       - name: Install dependencies
         run: uv pip install -e ".[dev,test,postgres]"

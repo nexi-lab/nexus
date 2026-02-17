@@ -3,8 +3,6 @@
 Tests that zone admins can share resources within their zone.
 """
 
-from __future__ import annotations
-
 import tempfile
 from collections.abc import Generator
 from pathlib import Path
@@ -18,13 +16,11 @@ from nexus.server.auth.user_helpers import add_user_to_zone
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
-
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
     """Create a temporary directory for tests."""
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmpdir:
         yield Path(tmpdir)
-
 
 @pytest.fixture
 def nx(temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[NexusFS, None, None]:
@@ -56,7 +52,6 @@ def nx(temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Generator[NexusFS, No
 
     yield nx
     nx.close()
-
 
 class TestZoneAdminSharing:
     """Test that zone admins can share resources within their zone."""
@@ -310,7 +305,6 @@ class TestZoneAdminSharing:
             permission="read",
             object=("file", file_path),
         )
-
 
 class TestBackwardCompatibility:
     """Test that existing owner-based sharing still works."""

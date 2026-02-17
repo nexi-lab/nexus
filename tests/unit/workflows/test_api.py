@@ -18,7 +18,6 @@ from nexus.workflows.types import (
     WorkflowTrigger,
 )
 
-
 @pytest.fixture
 def mock_engine():
     """Create a mock workflow engine."""
@@ -30,12 +29,10 @@ def mock_engine():
     engine.unload_workflow.return_value = True
     return engine
 
-
 @pytest.fixture
 def workflow_api(mock_engine):
     """Create a workflow API instance with mock engine."""
     return WorkflowAPI(engine=mock_engine)
-
 
 @pytest.fixture
 def sample_workflow():
@@ -49,7 +46,6 @@ def sample_workflow():
         variables={"env": "test"},
     )
 
-
 class TestWorkflowAPIInit:
     """Test WorkflowAPI initialization."""
 
@@ -62,7 +58,6 @@ class TestWorkflowAPIInit:
         """Test initializing without engine raises TypeError."""
         with pytest.raises(TypeError):
             WorkflowAPI()
-
 
 class TestLoad:
     """Test loading workflows."""
@@ -108,7 +103,6 @@ class TestLoad:
 
         mock_engine.load_workflow.assert_called_once_with(sample_workflow, enabled=False)
 
-
 class TestList:
     """Test listing workflows."""
 
@@ -149,7 +143,6 @@ class TestList:
         assert workflows[0]["name"] == "workflow1"
         assert workflows[1]["name"] == "workflow2"
 
-
 class TestGet:
     """Test getting workflow by name."""
 
@@ -168,7 +161,6 @@ class TestGet:
         result = workflow_api.get("nonexistent")
 
         assert result is None
-
 
 class TestExecute:
     """Test executing workflows."""
@@ -243,7 +235,6 @@ class TestExecute:
 
         assert result is None
 
-
 class TestEnable:
     """Test enabling workflows."""
 
@@ -264,7 +255,6 @@ class TestEnable:
 
         assert result is False
         mock_engine.enable_workflow.assert_not_called()
-
 
 class TestDisable:
     """Test disabling workflows."""
@@ -287,7 +277,6 @@ class TestDisable:
         assert result is False
         mock_engine.disable_workflow.assert_not_called()
 
-
 class TestUnload:
     """Test unloading workflows."""
 
@@ -299,7 +288,6 @@ class TestUnload:
 
         assert result is True
         mock_engine.unload_workflow.assert_called_once_with("test_workflow")
-
 
 class TestDiscover:
     """Test discovering workflows."""
@@ -332,7 +320,6 @@ class TestDiscover:
         mock_engine.load_workflow.assert_any_call(sample_workflow, enabled=True)
         mock_engine.load_workflow.assert_any_call(workflow2, enabled=True)
 
-
 class TestFireEvent:
     """Test firing events."""
 
@@ -357,7 +344,6 @@ class TestFireEvent:
 
         assert count == 1
         mock_engine.fire_event.assert_called_once_with("file_write", event_context)
-
 
 class TestIsEnabled:
     """Test checking if workflow is enabled."""
@@ -385,7 +371,6 @@ class TestIsEnabled:
         result = workflow_api.is_enabled("nonexistent")
 
         assert result is False
-
 
 class TestGetStatus:
     """Test getting workflow status."""

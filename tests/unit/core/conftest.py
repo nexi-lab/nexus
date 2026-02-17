@@ -9,14 +9,11 @@ Provides standard fixtures used across all subsystem test modules:
 - mock_permission_enforcer: Mock PermissionEnforcer
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest
 
 from nexus.core.permissions import OperationContext
-
 
 @pytest.fixture
 def operation_context() -> OperationContext:
@@ -28,7 +25,6 @@ def operation_context() -> OperationContext:
         is_admin=False,
     )
 
-
 @pytest.fixture
 def admin_context() -> OperationContext:
     """Admin OperationContext for subsystem tests."""
@@ -38,7 +34,6 @@ def admin_context() -> OperationContext:
         zone_id="test_zone",
         is_admin=True,
     )
-
 
 @pytest.fixture
 def mock_metadata_store() -> MagicMock:
@@ -50,7 +45,6 @@ def mock_metadata_store() -> MagicMock:
     store.engine = MagicMock()
     store.engine.url = "sqlite:///test.db"
     return store
-
 
 @pytest.fixture
 def mock_session_factory() -> MagicMock:
@@ -64,7 +58,6 @@ def mock_session_factory() -> MagicMock:
     session.__exit__ = MagicMock(return_value=False)
     factory = MagicMock(return_value=session)
     return factory
-
 
 @pytest.fixture
 def mock_permission_enforcer() -> MagicMock:

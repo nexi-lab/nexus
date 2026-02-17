@@ -10,19 +10,15 @@ Issue #1138: Event Stream Export
 Issue #1139: Event Replay
 """
 
-from __future__ import annotations
-
 import base64
 import time
 from typing import Any
 
 import httpx
 
-
 def _encode_bytes(data: bytes) -> dict:
     """Encode bytes for JSON-RPC transport."""
     return {"__type__": "bytes", "data": base64.b64encode(data).decode()}
-
 
 def _rpc(client: httpx.Client, method: str, params: dict[str, Any], api_key: str) -> dict:
     """Send a JSON-RPC request to the nexus server."""
@@ -32,7 +28,6 @@ def _rpc(client: httpx.Client, method: str, params: dict[str, Any], api_key: str
         headers={"Authorization": f"Bearer {api_key}"},
     )
     return resp.json()
-
 
 def _write_file(
     client: httpx.Client,
@@ -51,9 +46,7 @@ def _write_file(
         api_key,
     )
 
-
 API_KEY = "test-e2e-api-key-12345"
-
 
 class TestEventReplayE2E:
     """E2E tests for the v2 events replay REST endpoint."""
@@ -189,7 +182,6 @@ class TestEventReplayE2E:
         ]
         assert seq_nums == sorted(seq_nums), "Events not in sequence order"
 
-
 class TestEventStreamSSEE2E:
     """E2E tests for SSE streaming endpoint."""
 
@@ -211,7 +203,6 @@ class TestEventStreamSSEE2E:
             assert "text/event-stream" in content_type
             assert resp.headers.get("x-accel-buffering") == "no"
             assert resp.headers.get("cache-control") == "no-cache"
-
 
 class TestEventReplayPerformance:
     """Performance validation for replay queries."""
@@ -245,7 +236,6 @@ class TestEventReplayPerformance:
 
         # E2E latency should be under 500ms (generous for full server roundtrip)
         assert elapsed_ms < 500, f"Replay query took {elapsed_ms:.0f}ms (target <500ms)"
-
 
 class TestEventHealthEndpoint:
     """Verify health endpoint includes event system status."""

@@ -4,8 +4,6 @@ This module provides HMAC-SHA256 based token generation and verification
 for secure, time-limited file streaming access via the local backend.
 """
 
-from __future__ import annotations
-
 import hmac
 import os
 import secrets
@@ -13,7 +11,6 @@ import time
 
 # Secret key for signing stream tokens (persistent across restarts if set via env)
 _STREAM_SECRET: bytes | None = None
-
 
 def _get_stream_secret() -> bytes:
     """Get or generate the stream token signing secret."""
@@ -23,7 +20,6 @@ def _get_stream_secret() -> bytes:
         # Use env var if set, otherwise generate random secret (changes on restart)
         _STREAM_SECRET = env_secret.encode() if env_secret else secrets.token_bytes(32)
     return _STREAM_SECRET
-
 
 def _sign_stream_token(path: str, expires_in: int, zone_id: str = "root") -> str:
     """Generate a signed token for streaming access to a file.
@@ -43,7 +39,6 @@ def _sign_stream_token(path: str, expires_in: int, zone_id: str = "root") -> str
     payload = f"{path}:{expires_at}:{zone_id}"
     signature = hmac.new(_get_stream_secret(), payload.encode(), "sha256").hexdigest()[:16]
     return f"{expires_at}.{signature}"
-
 
 def _verify_stream_token(token: str, path: str, zone_id: str = "root") -> bool:
     """Verify a stream token is valid and not expired.
@@ -75,7 +70,6 @@ def _verify_stream_token(token: str, path: str, zone_id: str = "root") -> bool:
         return hmac.compare_digest(signature, expected_sig)
     except (ValueError, TypeError):
         return False
-
 
 def _reset_stream_secret() -> None:
     """Reset the stream secret. Used by tests for isolation."""

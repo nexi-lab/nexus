@@ -14,8 +14,6 @@ References:
     - Issue #1341: Context manifest with deterministic pre-execution
 """
 
-from __future__ import annotations
-
 import re
 
 # ---------------------------------------------------------------------------
@@ -36,7 +34,6 @@ ALLOWED_VARIABLES: frozenset[str] = frozenset(
 
 # Regex to find all {{variable}} references in a template string.
 _TEMPLATE_PATTERN = re.compile(r"\{\{([^}]+)\}\}")
-
 
 def resolve_template(template: str, variables: dict[str, str]) -> str:
     """Replace ``{{var}}`` placeholders with values from *variables*.

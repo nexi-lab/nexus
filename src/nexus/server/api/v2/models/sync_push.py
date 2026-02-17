@@ -1,13 +1,10 @@
 """Sync push request/response models for API v2 (Issue #1129)."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from pydantic import Field
 
 from nexus.server.api.v2.models.base import ApiModel
-
 
 class SyncPushResponse(ApiModel):
     """Response for POST /api/v2/sync/mounts/{mount_point}/push."""

@@ -6,8 +6,6 @@ No ORM or service dependencies — pure functions only.
 Pattern follows: nexus.services.reputation.reputation_math
 """
 
-from __future__ import annotations
-
 import math
 import uuid
 from collections.abc import Sequence
@@ -20,7 +18,6 @@ from nexus.services.governance.models import (
     AnomalySeverity,
     TransactionSummary,
 )
-
 
 def compute_z_score(value: float, mean: float, std: float) -> float:
     """Compute the Z-score of a value relative to a distribution.
@@ -38,7 +35,6 @@ def compute_z_score(value: float, mean: float, std: float) -> float:
     if std <= 0.0:
         return 0.0
     return (value - mean) / std
-
 
 def compute_iqr_bounds(values: Sequence[float]) -> tuple[float, float]:
     """Compute IQR-based anomaly bounds.
@@ -72,7 +68,6 @@ def compute_iqr_bounds(values: Sequence[float]) -> tuple[float, float]:
 
     return lower, upper
 
-
 def _interpolate(sorted_vals: list[float], idx: float) -> float:
     """Linear interpolation for percentile calculation."""
     lower_idx = int(math.floor(idx))
@@ -83,7 +78,6 @@ def _interpolate(sorted_vals: list[float], idx: float) -> float:
 
     fraction = idx - lower_idx
     return sorted_vals[lower_idx] + fraction * (sorted_vals[upper_idx] - sorted_vals[lower_idx])
-
 
 def compute_baseline(
     transactions: Sequence[TransactionSummary],
@@ -139,7 +133,6 @@ def compute_baseline(
         observation_count=len(transactions),
     )
 
-
 def detect_amount_anomaly(
     amount: float,
     baseline: AgentBaseline,
@@ -177,7 +170,6 @@ def detect_amount_anomaly(
         },
         created_at=datetime.now(UTC),
     )
-
 
 def detect_frequency_anomaly(
     recent_count: int,
@@ -222,7 +214,6 @@ def detect_frequency_anomaly(
         created_at=datetime.now(UTC),
     )
 
-
 def detect_counterparty_anomaly(
     counterparty: str,
     known_counterparties: set[str],
@@ -249,7 +240,6 @@ def detect_counterparty_anomaly(
         },
         created_at=datetime.now(UTC),
     )
-
 
 def _z_to_severity(abs_z: float, threshold: float) -> AnomalySeverity:
     """Map absolute Z-score to severity level."""

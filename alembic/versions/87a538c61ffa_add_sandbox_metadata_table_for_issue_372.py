@@ -19,7 +19,6 @@ down_revision: Union[str, Sequence[str], None] = "196bdb53b12d"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Upgrade schema."""
     # Create sandbox_metadata table
@@ -52,7 +51,6 @@ def upgrade() -> None:
     op.create_index("idx_sandbox_status", "sandbox_metadata", ["status"])
     op.create_index("idx_sandbox_expires", "sandbox_metadata", ["expires_at"])
     op.create_index("idx_sandbox_created", "sandbox_metadata", ["created_at"])
-
 
 def downgrade() -> None:
     """Downgrade schema."""

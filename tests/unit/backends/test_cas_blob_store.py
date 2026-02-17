@@ -9,7 +9,6 @@ from nexus.core.hash_fast import hash_content
 
 # === CASMeta Tests ===
 
-
 class TestCASMeta:
     """Tests for CASMeta frozen dataclass."""
 
@@ -89,9 +88,7 @@ class TestCASMeta:
         meta = CASMeta(ref_count=0, size=100)
         assert meta.dec_ref().ref_count == 0
 
-
 # === cas_retry Tests ===
-
 
 class TestCasRetry:
     """Tests for the cas_retry utility."""
@@ -145,9 +142,7 @@ class TestCasRetry:
         )
         assert result == "parsed"
 
-
 # === CASBlobStore Tests ===
-
 
 class TestCASBlobStore:
     """Tests for CASBlobStore operations."""
@@ -399,7 +394,6 @@ class TestCASBlobStore:
         store_nofsync.write_blob(h, content)
 
         assert store_nofsync.read_blob(h) == content
-
 
 class TestCASBlobStoreHoldReference:
     """Tests for hold_reference() (Issue #1752)."""

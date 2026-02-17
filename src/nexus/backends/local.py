@@ -30,7 +30,6 @@ logger = logging.getLogger(__name__)
 DEFAULT_CAS_BLOOM_CAPACITY = 100_000
 DEFAULT_CAS_BLOOM_FP_RATE = 0.01  # 1% false positive rate
 
-
 @register_connector(
     "local",
     description="Local filesystem with CAS deduplication",

@@ -8,8 +8,6 @@ Validates that the decorator correctly:
 - Handles None data in responses
 """
 
-from __future__ import annotations
-
 import time
 
 import pytest
@@ -18,7 +16,6 @@ from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.response import HandlerResponse, ResponseType, timed_response
 
 # === Fixtures ===
-
 
 class FakeBackend:
     """Minimal backend-like object for testing @timed_response."""
@@ -54,14 +51,11 @@ class FakeBackend:
     def fail_with_backend_error(self) -> HandlerResponse[str]:
         raise BackendError(message="disk full", backend="fake", path="/data")
 
-
 @pytest.fixture
 def backend() -> FakeBackend:
     return FakeBackend()
 
-
 # === Happy Path Tests ===
-
 
 class TestTimedResponseHappyPath:
     def test_sets_execution_time_on_success(self, backend: FakeBackend) -> None:
@@ -78,9 +72,7 @@ class TestTimedResponseHappyPath:
         response = backend.succeed("test")
         assert response.backend_name == "fake"
 
-
 # === Error Path Tests ===
-
 
 class TestTimedResponseErrorPath:
     def test_exception_caught_returns_error_response(self, backend: FakeBackend) -> None:
@@ -107,9 +99,7 @@ class TestTimedResponseErrorPath:
         assert response.resp_type == ResponseType.ERROR
         assert response.execution_time_ms > 0
 
-
 # === Edge Cases ===
-
 
 class TestTimedResponseEdgeCases:
     def test_none_data_gets_timing(self, backend: FakeBackend) -> None:

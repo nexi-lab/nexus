@@ -7,8 +7,6 @@ Provides CRUD operations for BackendChangeLogModel to support delta sync.
 Uses SyncStoreBase for shared session management and dialect detection.
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -19,7 +17,6 @@ from nexus.core.exceptions import DatabaseError
 from nexus.storage.sync_store_base import SyncStoreBase
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass
 class ChangeLogEntry:
@@ -32,7 +29,6 @@ class ChangeLogEntry:
     backend_version: str | None = None
     content_hash: str | None = None
     synced_at: datetime | None = None
-
 
 class ChangeLogStore(SyncStoreBase):
     """Lightweight store for change log operations (Issue #1127).

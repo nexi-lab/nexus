@@ -4,8 +4,6 @@ Processes ReBAC changelog entries and updates affected Tiger Cache
 entries incrementally via a queue-based approach.
 """
 
-from __future__ import annotations
-
 import logging
 import sqlite3
 from typing import TYPE_CHECKING
@@ -13,14 +11,13 @@ from typing import TYPE_CHECKING
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 
+from nexus.rebac.cache.tiger.bitmap_cache import TigerCache
+from sqlalchemy.engine import Connection, Engine
 if TYPE_CHECKING:
-    from sqlalchemy.engine import Connection, Engine
-
     from nexus.rebac.cache.tiger.bitmap_cache import TigerCache
-    from nexus.rebac.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
-
 
 class TigerCacheUpdater:
     """Background worker for updating Tiger Cache from changelog.
@@ -33,7 +30,7 @@ class TigerCacheUpdater:
         self,
         engine: Engine,
         tiger_cache: TigerCache,
-        rebac_manager: EnhancedReBACManager | None = None,
+        rebac_manager: "EnhancedReBACManager | None" = None,
     ):
         """Initialize the updater.
 
@@ -48,7 +45,7 @@ class TigerCacheUpdater:
         self._is_postgresql = "postgresql" in str(engine.url)
         self._last_processed_revision = 0
 
-    def set_rebac_manager(self, manager: EnhancedReBACManager) -> None:
+    def set_rebac_manager(self, manager: "EnhancedReBACManager") -> None:
         """Set the ReBAC manager for permission computation."""
         self._rebac_manager = manager
         self._tiger_cache.set_rebac_manager(manager)

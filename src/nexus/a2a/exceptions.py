@@ -4,10 +4,7 @@ Maps A2A-specific error conditions to JSON-RPC error codes
 per the A2A specification.
 """
 
-from __future__ import annotations
-
 from typing import Any
-
 
 class A2AError(Exception):
     """Base exception for A2A protocol errors."""
@@ -34,13 +31,11 @@ class A2AError(Exception):
             error["data"] = self.data
         return error
 
-
 class TaskNotFoundError(A2AError):
     """Referenced task does not exist or is not accessible."""
 
     code = -32001
     message = "Task not found"
-
 
 class TaskNotCancelableError(A2AError):
     """Task is in a terminal state and cannot be canceled."""
@@ -48,13 +43,11 @@ class TaskNotCancelableError(A2AError):
     code = -32002
     message = "Task is not cancelable"
 
-
 class InvalidStateTransitionError(A2AError):
     """Attempted an invalid task state transition."""
 
     code = -32003
     message = "Invalid state transition"
-
 
 class UnsupportedOperationError(A2AError):
     """Requested operation is not supported."""
@@ -62,13 +55,11 @@ class UnsupportedOperationError(A2AError):
     code = -32004
     message = "Unsupported operation"
 
-
 class ContentTypeNotSupportedError(A2AError):
     """Content type not accepted by the agent."""
 
     code = -32005
     message = "Content type not supported"
-
 
 class PushNotificationNotSupportedError(A2AError):
     """Push notification operations are not available."""
@@ -76,9 +67,7 @@ class PushNotificationNotSupportedError(A2AError):
     code = -32006
     message = "Push notifications not supported"
 
-
 # Standard JSON-RPC errors (used by the A2A router)
-
 
 class InvalidRequestError(A2AError):
     """Invalid JSON-RPC request."""
@@ -86,20 +75,17 @@ class InvalidRequestError(A2AError):
     code = -32600
     message = "Invalid request"
 
-
 class MethodNotFoundError(A2AError):
     """JSON-RPC method not found."""
 
     code = -32601
     message = "Method not found"
 
-
 class InvalidParamsError(A2AError):
     """Invalid method parameters."""
 
     code = -32602
     message = "Invalid params"
-
 
 class InternalError(A2AError):
     """Internal server error."""

@@ -16,8 +16,6 @@ Design decisions:
     - Metrics as class attributes (Decision 16A)
 """
 
-from __future__ import annotations
-
 import asyncio
 import time
 from collections import deque
@@ -41,14 +39,12 @@ INFRASTRUCTURE_EXCEPTIONS: tuple[type[BaseException], ...] = (
     OSError,  # builtin — low-level I/O failure
 )
 
-
 class CircuitState(Enum):
     """Circuit breaker states."""
 
     CLOSED = "closed"
     OPEN = "open"
     HALF_OPEN = "half_open"
-
 
 @dataclass(frozen=True)
 class CircuitBreakerConfig:
@@ -78,7 +74,6 @@ class CircuitBreakerConfig:
             raise ValueError("reset_timeout must be > 0")
         if self.failure_window <= 0:
             raise ValueError("failure_window must be > 0")
-
 
 class AsyncCircuitBreaker:
     """Async circuit breaker with lock-free reads and sliding failure window.

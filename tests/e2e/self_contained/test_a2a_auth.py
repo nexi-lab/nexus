@@ -7,8 +7,6 @@ LangSmith, etc.) which require auth for all operational endpoints.
 Reference: https://a2a-protocol.org/latest/topics/enterprise-ready/
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 import pytest
@@ -21,7 +19,6 @@ from nexus.a2a.router import build_router
 # Fixtures
 # ======================================================================
 
-
 @pytest.fixture
 def app_with_auth() -> FastAPI:
     """Create a FastAPI app with auth_required=True."""
@@ -30,7 +27,6 @@ def app_with_auth() -> FastAPI:
     app.include_router(router)
     return app
 
-
 @pytest.fixture
 def app_no_auth() -> FastAPI:
     """Create a FastAPI app without auth (open mode)."""
@@ -38,7 +34,6 @@ def app_no_auth() -> FastAPI:
     router = build_router(base_url="http://testserver", auth_required=False)
     app.include_router(router)
     return app
-
 
 def _rpc_body(
     method: str,
@@ -54,11 +49,9 @@ def _rpc_body(
         body["params"] = params
     return body
 
-
 # ======================================================================
 # Authentication Enforcement Tests
 # ======================================================================
-
 
 class TestAuthEnforcement:
     def test_agent_card_always_public(self, app_with_auth: FastAPI) -> None:
@@ -166,7 +159,6 @@ class TestAuthEnforcement:
             assert response.status_code == 401, f"Method {method} should require auth"
             data = response.json()
             assert data["error"] == "Unauthorized"
-
 
 class TestAuthCallback:
     """Tests for the injected auth_fn callback mechanism."""
@@ -314,7 +306,6 @@ class TestAuthCallback:
         data = response.json()
         assert data["error"] == "Unauthorized"
 
-
 class TestAuthProgrammingErrorPropagation:
     """Verify that programming errors in auth_fn propagate (not silently swallowed).
 
@@ -419,7 +410,6 @@ class TestAuthProgrammingErrorPropagation:
         assert response.status_code == 200
         data = response.json()
         assert data["result"]["id"]
-
 
 class TestAuthBestPractices:
     def test_www_authenticate_header_present(self, app_with_auth: FastAPI) -> None:

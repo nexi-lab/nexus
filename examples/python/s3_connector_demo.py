@@ -39,28 +39,23 @@ import os
 import sys
 import tempfile
 
-
 def print_section(title: str) -> None:
     """Print a section header."""
     print("\n" + "=" * 70)
     print(f"  {title}")
     print("=" * 70 + "\n")
 
-
 def print_success(message: str) -> None:
     """Print success message."""
     print(f"✓ {message}")
-
 
 def print_info(message: str) -> None:
     """Print info message."""
     print(f"ℹ {message}")
 
-
 def print_error(message: str) -> None:
     """Print error message."""
     print(f"✗ {message}")
-
 
 def check_aws_cli() -> bool:
     """Check if AWS CLI is available."""
@@ -71,7 +66,6 @@ def check_aws_cli() -> bool:
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
-
 
 def verify_s3_files(bucket_name: str, prefix: str) -> None:
     """Verify files exist in S3 bucket at actual paths."""
@@ -105,7 +99,6 @@ def verify_s3_files(bucket_name: str, prefix: str) -> None:
 
     except subprocess.CalledProcessError as e:
         print_error(f"Failed to verify S3 files: {e}")
-
 
 def demo_with_server():
     """Run demo with Nexus server."""
@@ -233,7 +226,6 @@ def demo_with_server():
     nx.remove_mount(mount_point)
     print_success(f"Unmounted {mount_point}")
 
-
 def demo_local():
     """Run demo locally (no server)."""
     from nexus.backends.s3_connector import S3ConnectorBackend
@@ -330,7 +322,6 @@ def demo_local():
         print_info("\nS3 bucket cleanup (optional):")
         print(f"  aws s3 rm s3://{bucket_name}/nexus-demo/ --recursive")
 
-
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(description="Nexus S3 Connector Demo")
@@ -365,7 +356,6 @@ def main():
     print("│ External Browsable │ No (hash-based)      │ Yes (path-based)    │")
     print("│ Use Case           │ Nexus-managed        │ External buckets    │")
     print("└" + "─" * 68 + "┘")
-
 
 if __name__ == "__main__":
     main()

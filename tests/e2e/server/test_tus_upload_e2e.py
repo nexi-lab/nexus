@@ -7,8 +7,6 @@ Uses the nexus_server fixture from conftest.py which starts
 `nexus serve` as a subprocess with NEXUS_API_KEY auth.
 """
 
-from __future__ import annotations
-
 import base64
 import hashlib
 
@@ -17,7 +15,6 @@ import httpx
 # Auth header matching the API key from conftest.py
 AUTH_HEADERS = {"Authorization": "Bearer test-e2e-api-key-12345"}
 TUS_HEADERS = {**AUTH_HEADERS, "Tus-Resumable": "1.0.0"}
-
 
 class TestTusOptionsE2E:
     """OPTIONS endpoint should return server capabilities."""
@@ -30,7 +27,6 @@ class TestTusOptionsE2E:
             assert resp.headers.get("Tus-Version") == "1.0.0"
             assert "creation" in resp.headers.get("Tus-Extension", "")
             assert resp.headers.get("Tus-Max-Size")
-
 
 class TestTusCreateE2E:
     """POST endpoint — create upload sessions."""
@@ -61,7 +57,6 @@ class TestTusCreateE2E:
         with httpx.Client(base_url=nexus_server["base_url"], timeout=10, trust_env=False) as c:
             resp = c.post("/api/v2/uploads", headers=TUS_HEADERS)
             assert resp.status_code == 400
-
 
 class TestTusFullLifecycleE2E:
     """Full upload lifecycle: POST → PATCH → HEAD → verify."""
@@ -145,7 +140,6 @@ class TestTusFullLifecycleE2E:
             assert p2.status_code == 204
             assert p2.headers["Upload-Offset"] == str(total)
 
-
 class TestTusResumeE2E:
     """Resume after simulated disconnect: PATCH partial → HEAD → PATCH rest."""
 
@@ -191,7 +185,6 @@ class TestTusResumeE2E:
             )
             assert p2.status_code == 204
             assert p2.headers["Upload-Offset"] == str(len(full_content))
-
 
 class TestTusChecksumE2E:
     """Checksum verification over real HTTP."""
@@ -242,7 +235,6 @@ class TestTusChecksumE2E:
             )
             assert patch_resp.status_code == 460
 
-
 class TestTusErrorHandlingE2E:
     """Error cases over real HTTP."""
 
@@ -289,7 +281,6 @@ class TestTusErrorHandlingE2E:
             resp = c.head("/api/v2/uploads/nonexistent-id", headers=TUS_HEADERS)
             assert resp.status_code == 404
 
-
 class TestTusTerminateE2E:
     """DELETE endpoint for upload termination."""
 
@@ -313,7 +304,6 @@ class TestTusTerminateE2E:
         with httpx.Client(base_url=nexus_server["base_url"], timeout=10, trust_env=False) as c:
             resp = c.delete("/api/v2/uploads/nonexistent-id", headers=TUS_HEADERS)
             assert resp.status_code == 404
-
 
 class TestTusZeroByteE2E:
     """Zero-byte file upload."""

@@ -4,8 +4,6 @@ Pydantic models for structured validation results, errors, and configuration.
 All models are immutable (frozen) to prevent accidental mutation.
 """
 
-from __future__ import annotations
-
 import re
 from typing import Literal
 
@@ -13,7 +11,6 @@ from pydantic import BaseModel, Field, field_validator
 
 # Validator names must be alphanumeric with dashes/underscores only.
 _VALIDATOR_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9_-]*$")
-
 
 class ValidationError(BaseModel, frozen=True):
     """A single validation finding from a linter/checker."""
@@ -26,7 +23,6 @@ class ValidationError(BaseModel, frozen=True):
     rule: str | None = None
     fix_available: bool = False
 
-
 class ValidationResult(BaseModel, frozen=True):
     """Result from running a single validator."""
 
@@ -34,7 +30,6 @@ class ValidationResult(BaseModel, frozen=True):
     passed: bool
     errors: list[ValidationError] = Field(default_factory=list)
     duration_ms: int = 0
-
 
 class ValidatorConfig(BaseModel, frozen=True):
     """Configuration for a single validator tool."""
@@ -59,7 +54,6 @@ class ValidatorConfig(BaseModel, frozen=True):
         if v < 1 or v > 300:
             raise ValueError(f"Timeout must be between 1 and 300 seconds, got {v}")
         return v
-
 
 class ValidationPipelineConfig(BaseModel, frozen=True):
     """Top-level pipeline configuration."""

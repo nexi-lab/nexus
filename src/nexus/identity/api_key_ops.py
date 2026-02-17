@@ -4,8 +4,6 @@ Extracted from server.auth.database_key to allow services layer
 to manage API keys without importing from the server layer.
 """
 
-from __future__ import annotations
-
 import hashlib
 import hmac
 import logging
@@ -13,6 +11,7 @@ import secrets
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
@@ -22,7 +21,6 @@ logger = logging.getLogger(__name__)
 API_KEY_PREFIX = "sk-"
 API_KEY_MIN_LENGTH = 32
 HMAC_SALT = "nexus-api-key-v1"
-
 
 def hash_api_key(key: str) -> str:
     """Hash API key using HMAC-SHA256 with versioned salt.
@@ -39,7 +37,6 @@ def hash_api_key(key: str) -> str:
         hashlib.sha256,
     ).hexdigest()
 
-
 def validate_key_format(key: str) -> bool:
     """Validate API key format (prefix + minimum length).
 
@@ -52,7 +49,6 @@ def validate_key_format(key: str) -> bool:
     if not key.startswith(API_KEY_PREFIX):
         return False
     return len(key) >= API_KEY_MIN_LENGTH
-
 
 def create_api_key(
     session: Session,
@@ -113,7 +109,6 @@ def create_api_key(
     session.flush()
 
     return (api_key.key_id, raw_key)
-
 
 def revoke_api_key(session: Session, key_id: str) -> bool:
     """Revoke an API key by key_id.

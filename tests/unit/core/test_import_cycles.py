@@ -5,8 +5,6 @@ Parses all ``src/nexus/**/*.py`` files, extracts top-level import statements
 directed graph, and asserts the graph is acyclic (topological sort succeeds).
 """
 
-from __future__ import annotations
-
 import ast
 import os
 from collections import defaultdict
@@ -15,7 +13,6 @@ from pathlib import Path
 import pytest
 
 _SRC_ROOT = Path(__file__).resolve().parents[3] / "src" / "nexus"
-
 
 def _is_inside_type_checking(node: ast.AST, tree: ast.Module) -> bool:
     """Check if an import node is inside an ``if TYPE_CHECKING:`` block."""
@@ -35,7 +32,6 @@ def _is_inside_type_checking(node: ast.AST, tree: ast.Module) -> bool:
                 return True
     return False
 
-
 def _is_inside_function(node: ast.AST, tree: ast.Module) -> bool:
     """Check if an import node is inside a function or method body."""
     for top_node in ast.walk(tree):
@@ -45,7 +41,6 @@ def _is_inside_function(node: ast.AST, tree: ast.Module) -> bool:
             if child is node:
                 return True
     return False
-
 
 def _extract_imports(filepath: Path) -> list[str]:
     """Extract runtime nexus.* imports from a Python file.
@@ -99,7 +94,6 @@ def _extract_imports(filepath: Path) -> list[str]:
 
     return imports
 
-
 def _filepath_to_module(filepath: Path) -> str:
     """Convert file path to module name: src/nexus/core/types.py -> nexus.core.types."""
     src_root = _SRC_ROOT.parent  # src/
@@ -110,7 +104,6 @@ def _filepath_to_module(filepath: Path) -> str:
     else:
         parts[-1] = parts[-1].removesuffix(".py")
     return ".".join(parts)
-
 
 def _build_import_graph() -> dict[str, set[str]]:
     """Build directed graph of runtime imports across all nexus modules."""
@@ -128,7 +121,6 @@ def _build_import_graph() -> dict[str, set[str]]:
                     graph[module_name].add(imp)
 
     return dict(graph)
-
 
 def _find_cycles(graph: dict[str, set[str]]) -> list[list[str]]:
     """Find all cycles in a directed graph using DFS."""
@@ -160,7 +152,6 @@ def _find_cycles(graph: dict[str, set[str]]) -> list[list[str]]:
             dfs(node)
 
     return cycles
-
 
 class TestImportCycles:
     """Verify no runtime import cycles exist in the nexus package."""

@@ -5,13 +5,10 @@ Writers call notify_revision() after a successful write, and readers call
 wait_for_revision() to block until the desired revision is available.
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 
 logger = logging.getLogger(__name__)
-
 
 class RevisionNotifier:
     """Thread-safe revision notification using per-zone Condition variables.
@@ -63,7 +60,6 @@ class RevisionNotifier:
                 lambda: self._revisions.get(zone_id, 0) >= min_revision,
                 timeout=timeout_s,
             )
-
 
 class NullRevisionNotifier:
     """No-op fallback used when RevisionNotifier construction fails."""

@@ -1,7 +1,5 @@
 """Unit tests for AuthService (Decision #7)."""
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -14,7 +12,6 @@ from nexus.auth.service import AuthService
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
 
 class StubProvider(AuthProvider):
     """Stub provider returning configurable results."""
@@ -37,26 +34,21 @@ class StubProvider(AuthProvider):
     def close(self) -> None:
         pass
 
-
 @pytest.fixture
 def provider():
     return StubProvider()
-
 
 @pytest.fixture
 def cache():
     return AuthCache(ttl=60, max_size=100)
 
-
 @pytest.fixture
 def service(provider, cache):
     return AuthService(provider=provider, cache=cache)
 
-
 # ---------------------------------------------------------------------------
 # authenticate() tests
 # ---------------------------------------------------------------------------
-
 
 @pytest.mark.asyncio
 async def test_authenticate_success(service):
@@ -66,13 +58,11 @@ async def test_authenticate_success(service):
     assert result.subject_id == "alice"
     assert result.zone_id == "org_acme"
 
-
 @pytest.mark.asyncio
 async def test_authenticate_empty_token(service):
     """Empty token returns unauthenticated without hitting provider."""
     result = await service.authenticate("")
     assert result.authenticated is False
-
 
 @pytest.mark.asyncio
 async def test_authenticate_caches_result(service, cache):
@@ -83,7 +73,6 @@ async def test_authenticate_caches_result(service, cache):
     assert cached is not None
     assert cached["subject_id"] == "alice"
     assert cached["authenticated"] is True
-
 
 @pytest.mark.asyncio
 async def test_authenticate_cache_hit_skips_provider():
@@ -113,7 +102,6 @@ async def test_authenticate_cache_hit_skips_provider():
     assert result.subject_id == "cached_user"
     mock_provider.authenticate.assert_not_called()
 
-
 @pytest.mark.asyncio
 async def test_authenticate_failed_not_cached():
     """Failed authentication is NOT cached."""
@@ -125,17 +113,14 @@ async def test_authenticate_failed_not_cached():
 
     assert cache.get("sk-bad-token") is None
 
-
 # ---------------------------------------------------------------------------
 # validate_token() tests
 # ---------------------------------------------------------------------------
-
 
 @pytest.mark.asyncio
 async def test_validate_token_delegates(service):
     """validate_token delegates to provider."""
     assert await service.validate_token("sk-any-token") is True
-
 
 @pytest.mark.asyncio
 async def test_validate_token_rejected():
@@ -144,11 +129,9 @@ async def test_validate_token_rejected():
     svc = AuthService(provider=provider)
     assert await svc.validate_token("sk-bad") is False
 
-
 # ---------------------------------------------------------------------------
 # invalidate_cached_token() tests
 # ---------------------------------------------------------------------------
-
 
 @pytest.mark.asyncio
 async def test_invalidate_cached_token(service, cache):
@@ -159,16 +142,13 @@ async def test_invalidate_cached_token(service, cache):
     service.invalidate_cached_token("sk-to-revoke")
     assert cache.get("sk-to-revoke") is None
 
-
 def test_invalidate_nonexistent_token(service):
     """invalidate_cached_token on missing key does not raise."""
     service.invalidate_cached_token("sk-ghost")
 
-
 # ---------------------------------------------------------------------------
 # setup_zone() tests
 # ---------------------------------------------------------------------------
-
 
 def test_setup_zone_personal_email(monkeypatch):
     """setup_zone with personal email creates a personal zone."""
@@ -201,7 +181,6 @@ def test_setup_zone_personal_email(monkeypatch):
     assert result["domain"] == "gmail.com"
     assert len(create_calls) == 1
 
-
 def test_setup_zone_work_email(monkeypatch):
     """setup_zone with work email creates a company zone."""
     provider = StubProvider()
@@ -226,7 +205,6 @@ def test_setup_zone_work_email(monkeypatch):
     assert result["zone_name"] == "Acme Corp"
     assert result["is_personal"] is False
     assert result["domain"] == "acme.com"
-
 
 def test_setup_zone_with_overrides(monkeypatch):
     """setup_zone respects zone_id and zone_name overrides."""
@@ -263,11 +241,9 @@ def test_setup_zone_with_overrides(monkeypatch):
     # suggest_zone_id should NOT be called when override is provided
     assert len(suggest_calls) == 0
 
-
 # ---------------------------------------------------------------------------
 # close() tests
 # ---------------------------------------------------------------------------
-
 
 def test_close_clears_cache_and_provider():
     """close() cleans up provider and cache."""
@@ -281,14 +257,12 @@ def test_close_clears_cache_and_provider():
     mock_provider.close.assert_called_once()
     assert cache.size == 0
 
-
 def test_default_cache_created():
     """AuthService creates a default cache if none provided."""
     provider = StubProvider()
     svc = AuthService(provider=provider)
     assert svc.cache is not None
     assert isinstance(svc.cache, AuthCache)
-
 
 def test_provider_property(service, provider):
     """provider property returns the underlying provider."""

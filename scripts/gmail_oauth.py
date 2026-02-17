@@ -10,7 +10,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from nexus.server.auth.oauth_factory import OAuthProviderFactory
 from nexus.server.auth.token_manager import TokenManager
 
-
 async def main():
     if len(sys.argv) < 2:
         print("Usage: python scripts/gmail_oauth.py <code>")
@@ -36,6 +35,5 @@ async def main():
         expires_at=cred.expires_at,
     )
     print(f"Saved tokens for: {cred.user_id}")
-
 
 asyncio.run(main())

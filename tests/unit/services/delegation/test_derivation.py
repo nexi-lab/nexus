@@ -4,8 +4,6 @@ Tests derive_grants(), validate_scope_prefix(), and helper functions.
 All functions are pure (no I/O), so these tests are fast and isolated.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.services.delegation.derivation import (
@@ -24,7 +22,6 @@ from nexus.services.delegation.models import DelegationMode
 # ---------------------------------------------------------------------------
 # validate_scope_prefix
 # ---------------------------------------------------------------------------
-
 
 class TestValidateScopePrefix:
     """Issue 16A: scope_prefix boundary validation."""
@@ -65,11 +62,9 @@ class TestValidateScopePrefix:
         with pytest.raises(InvalidPrefixError, match="\\.\\."):
             validate_scope_prefix("/workspace/../secret")
 
-
 # ---------------------------------------------------------------------------
 # derive_grants — COPY mode
 # ---------------------------------------------------------------------------
-
 
 class TestDeriveCopy:
     """derive_grants with DelegationMode.COPY."""
@@ -138,11 +133,9 @@ class TestDeriveCopy:
         result = derive_grants(grants, DelegationMode.COPY, remove_grants=["/a.py"])
         assert result == []
 
-
 # ---------------------------------------------------------------------------
 # derive_grants — CLEAN mode
 # ---------------------------------------------------------------------------
-
 
 class TestDeriveClean:
     """derive_grants with DelegationMode.CLEAN."""
@@ -191,11 +184,9 @@ class TestDeriveClean:
         ids = {g.object_id for g in result}
         assert ids == {"/workspace/proj/a.py"}
 
-
 # ---------------------------------------------------------------------------
 # derive_grants — SHARED mode
 # ---------------------------------------------------------------------------
-
 
 class TestDeriveShared:
     """derive_grants with DelegationMode.SHARED."""
@@ -222,11 +213,9 @@ class TestDeriveShared:
         result = derive_grants([], DelegationMode.SHARED)
         assert result == []
 
-
 # ---------------------------------------------------------------------------
 # derive_grants — edge cases
 # ---------------------------------------------------------------------------
-
 
 class TestDeriveEdgeCases:
     """Edge cases and invariants."""

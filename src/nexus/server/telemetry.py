@@ -31,14 +31,13 @@ Example with SigNoz:
     OTEL_EXPORTER_OTLP_ENDPOINT=http://signoz:4317
 """
 
-from __future__ import annotations
-
 import logging
 import os
 from typing import TYPE_CHECKING
 
 from nexus.constants import DEFAULT_OTEL_ENDPOINT
 
+from opentelemetry.trace import Tracer
 if TYPE_CHECKING:
     from opentelemetry.trace import Tracer
 
@@ -48,11 +47,9 @@ logger = logging.getLogger(__name__)
 _initialized = False
 _tracer: Tracer | None = None
 
-
 def is_telemetry_enabled() -> bool:
     """Check if telemetry is enabled via environment variable."""
     return os.environ.get("OTEL_ENABLED", "false").lower() in ("true", "1", "yes")
-
 
 def setup_telemetry(
     service_name: str | None = None,
@@ -166,7 +163,6 @@ def setup_telemetry(
         logger.error(f"Failed to initialize OpenTelemetry: {e}")
         return False
 
-
 def _instrument_libraries() -> None:
     """Auto-instrument supported libraries."""
     # FastAPI (will be instrumented when app is created)
@@ -219,7 +215,6 @@ def _instrument_libraries() -> None:
     except Exception as e:
         logger.warning(f"Failed to instrument aiohttp: {e}")
 
-
 def instrument_fastapi_app(app: object) -> bool:
     """Instrument a FastAPI application.
 
@@ -251,7 +246,6 @@ def instrument_fastapi_app(app: object) -> bool:
         logger.warning(f"Failed to instrument FastAPI: {e}")
         return False
 
-
 def get_tracer(name: str | None = None) -> Tracer | None:
     """Get a tracer for creating custom spans.
 
@@ -278,7 +272,6 @@ def get_tracer(name: str | None = None) -> Tracer | None:
     except Exception:
         return None
 
-
 def add_span_attribute(key: str, value: str | int | float | bool) -> None:
     """Add an attribute to the current span.
 
@@ -301,7 +294,6 @@ def add_span_attribute(key: str, value: str | int | float | bool) -> None:
     except Exception:
         pass
 
-
 def record_exception(exception: Exception) -> None:
     """Record an exception in the current span.
 
@@ -320,7 +312,6 @@ def record_exception(exception: Exception) -> None:
             span.set_status(trace.Status(trace.StatusCode.ERROR, str(exception)))
     except Exception:
         pass
-
 
 def shutdown_telemetry() -> None:
     """Shutdown telemetry and flush pending spans.

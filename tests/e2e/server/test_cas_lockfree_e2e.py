@@ -8,15 +8,12 @@ Run with:
     pytest tests/e2e/test_cas_lockfree_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import base64
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import pytest
 
 NUM_CONCURRENT = 50
-
 
 def rpc_write(client, content: bytes, path: str, timeout: float = 30.0):
     """Write content via RPC API."""
@@ -32,7 +29,6 @@ def rpc_write(client, content: bytes, path: str, timeout: float = 30.0):
     )
     return response
 
-
 def rpc_read(client, path: str, timeout: float = 30.0):
     """Read content via RPC API."""
     response = client.post(
@@ -45,7 +41,6 @@ def rpc_read(client, path: str, timeout: float = 30.0):
         timeout=timeout,
     )
     return response
-
 
 class TestCASLockfreeE2E:
     """Concurrent HTTP writes to verify lock-free CAS through full stack."""

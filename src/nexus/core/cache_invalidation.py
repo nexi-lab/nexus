@@ -8,16 +8,14 @@ used by ``_write_observer`` / ``_notify_observer`` in the kernel.
 Issue #1169 / #1519.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from nexus.core._metadata_generated import FileMetadata
 if TYPE_CHECKING:
     from nexus.core._metadata_generated import FileMetadata
 
 logger = logging.getLogger(__name__)
-
 
 @runtime_checkable
 class CacheInvalidationObserver(Protocol):
@@ -41,7 +39,6 @@ class CacheInvalidationObserver(Protocol):
         zone_id: str,
         resource_type: str = "file",
     ) -> None: ...
-
 
 class ReadSetCacheObserver:
     """Bridges kernel mutation/read events to ReadSetAwareCache.

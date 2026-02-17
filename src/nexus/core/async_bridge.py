@@ -21,8 +21,6 @@ Usage:
     bridge.stop()
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import threading
@@ -33,7 +31,6 @@ if TYPE_CHECKING:
     from nexus.rebac.async_manager import AsyncReBACManager
 
 logger = logging.getLogger(__name__)
-
 
 class AsyncReBACBridge:
     """Bridge sync code to async ReBAC operations.
@@ -279,10 +276,8 @@ class AsyncReBACBridge:
             return {}
         return self._manager.get_l1_cache_stats()
 
-
 # Global bridge instance (optional singleton pattern)
 _global_bridge: AsyncReBACBridge | None = None
-
 
 def get_async_rebac_bridge(database_url: str | None = None, **kwargs: Any) -> AsyncReBACBridge:
     """Get or create the global async ReBAC bridge.
@@ -303,7 +298,6 @@ def get_async_rebac_bridge(database_url: str | None = None, **kwargs: Any) -> As
         _global_bridge.start()
 
     return _global_bridge
-
 
 def shutdown_async_rebac_bridge() -> None:
     """Shutdown the global async ReBAC bridge."""

@@ -37,7 +37,6 @@ down_revision: Union[str, Sequence[str], None] = "add_backend_change_log"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Create sync_backlog table with indexes."""
     op.create_table(
@@ -80,7 +79,6 @@ def upgrade() -> None:
         conn.execute(
             text("CREATE INDEX idx_sb_created_brin ON sync_backlog USING brin (created_at)")
         )
-
 
 def downgrade() -> None:
     """Drop sync_backlog table and its indexes."""

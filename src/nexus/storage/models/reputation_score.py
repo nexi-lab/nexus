@@ -11,15 +11,12 @@ Design decisions:
 - Interaction counts for quick summary stats.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Float, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base
-
 
 class ReputationScoreModel(Base):
     """Materialized reputation score aggregate for an agent.

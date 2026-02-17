@@ -1,7 +1,5 @@
 """Tests for AgentRegistryProtocol and AgentInfo (Issue #1383)."""
 
-from __future__ import annotations
-
 import dataclasses
 
 import pytest
@@ -11,7 +9,6 @@ from nexus.services.protocols.agent_registry import AgentInfo, AgentRegistryProt
 # ---------------------------------------------------------------------------
 # AgentInfo frozen dataclass tests
 # ---------------------------------------------------------------------------
-
 
 class TestAgentInfo:
     """Verify AgentInfo is a proper frozen, slots dataclass."""
@@ -76,11 +73,9 @@ class TestAgentInfo:
         )
         assert info.agent_id == ""
 
-
 # ---------------------------------------------------------------------------
 # Protocol structural tests
 # ---------------------------------------------------------------------------
-
 
 class TestAgentRegistryProtocol:
     """Verify the protocol is runtime-checkable and has expected methods."""
@@ -99,11 +94,9 @@ class TestAgentRegistryProtocol:
         }
         assert expected <= actual
 
-
 # ---------------------------------------------------------------------------
 # Conformance test against existing AgentRegistry
 # ---------------------------------------------------------------------------
-
 
 class TestAgentRegistryConformance:
     """Verify existing AgentRegistry has the methods the protocol expects."""

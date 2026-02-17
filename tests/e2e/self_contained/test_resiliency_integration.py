@@ -4,8 +4,6 @@ Verifies the full pipeline: config → manager → decorator → CB state transi
 → health check reporting — using fast timings suitable for CI.
 """
 
-from __future__ import annotations
-
 import asyncio
 
 import pytest
@@ -21,7 +19,6 @@ from nexus.core.resiliency import (
     TimeoutPolicy,
     with_resiliency,
 )
-
 
 @pytest.fixture()
 def fast_manager() -> ResiliencyManager:
@@ -50,7 +47,6 @@ def fast_manager() -> ResiliencyManager:
         },
     )
     return ResiliencyManager(config=config)
-
 
 class TestFullPipeline:
     @pytest.mark.asyncio

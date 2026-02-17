@@ -14,7 +14,6 @@ from nexus.core.exceptions import BackendError
 
 logger = logging.getLogger(__name__)
 
-
 class RateLimitError(BackendError):
     """Rate limit exceeded error."""
 
@@ -29,7 +28,6 @@ class RateLimitError(BackendError):
         self.endpoint = endpoint
         self.reset_at = reset_at
         self.wait_seconds = wait_seconds
-
 
 class XAPIClient:
     """X (Twitter) API v2 client.

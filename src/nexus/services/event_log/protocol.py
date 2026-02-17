@@ -12,15 +12,13 @@ Note: PGEventLog was removed in Issue #1241.  Event delivery from
 Tracked by: #1397 (Rust-Accelerated Event Log WAL)
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, Protocol, Self, runtime_checkable
 
+from nexus.core.event_bus import FileEvent
 if TYPE_CHECKING:
     from nexus.core.event_bus import FileEvent
-
 
 @dataclass(frozen=True)
 class EventLogConfig:
@@ -35,7 +33,6 @@ class EventLogConfig:
     wal_dir: Path = field(default_factory=lambda: Path(".nexus-data/wal"))
     segment_size_bytes: int = 4 * 1024 * 1024  # 4 MB
     sync_mode: Literal["every", "none"] = "every"
-
 
 @runtime_checkable
 class EventLogProtocol(Protocol):

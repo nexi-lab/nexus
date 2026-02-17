@@ -13,8 +13,6 @@ Run with:
     pytest tests/e2e/test_agent_wallet_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket
@@ -38,13 +36,11 @@ _src_path = Path(__file__).parent.parent.parent / "src"
 if str(_src_path) not in sys.path:
     sys.path.insert(0, str(_src_path))
 
-
 def find_free_port() -> int:
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
         s.bind(("", 0))
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         return s.getsockname()[1]
-
 
 def wait_for_server(url: str, timeout: float = 30.0) -> bool:
     start = time.time()
@@ -58,11 +54,9 @@ def wait_for_server(url: str, timeout: float = 30.0) -> bool:
         time.sleep(0.1)
     return False
 
-
 # ---------------------------------------------------------------------------
 # Skip conditions
 # ---------------------------------------------------------------------------
-
 
 def _postgres_available() -> bool:
     try:
@@ -76,7 +70,6 @@ def _postgres_available() -> bool:
     except Exception:
         return False
 
-
 def _tigerbeetle_available() -> bool:
     try:
         import tigerbeetle as tb
@@ -88,7 +81,6 @@ def _tigerbeetle_available() -> bool:
     except Exception:
         return False
 
-
 skip_no_postgres = pytest.mark.skipif(
     not _postgres_available(), reason=f"PostgreSQL not available at {POSTGRES_URL}"
 )
@@ -97,11 +89,9 @@ skip_no_tigerbeetle = pytest.mark.skipif(
     reason=f"TigerBeetle not available at {TIGERBEETLE_ADDRESS}",
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
 
 @pytest.fixture(scope="module")
 def pg_engine():
@@ -116,7 +106,6 @@ def pg_engine():
     yield engine
     engine.dispose()
 
-
 @pytest.fixture
 def tb_client():
     """Create a TigerBeetle sync client for verification."""
@@ -125,11 +114,9 @@ def tb_client():
     client = tb.ClientSync(cluster_id=0, replica_addresses=TIGERBEETLE_ADDRESS)
     yield client
 
-
 # ---------------------------------------------------------------------------
 # Server fixture with NEXUS_PAY_ENABLED
 # ---------------------------------------------------------------------------
-
 
 @pytest.fixture
 def nexus_server_with_pay(tmp_path, pg_engine):
@@ -204,7 +191,6 @@ def nexus_server_with_pay(tmp_path, pg_engine):
         process.kill()
         process.wait()
 
-
 def _rpc_call(base_url: str, api_key: str, method: str, params: dict) -> dict:
     """Make an RPC call and return the response JSON."""
     response = httpx.post(
@@ -221,11 +207,9 @@ def _rpc_call(base_url: str, api_key: str, method: str, params: dict) -> dict:
     )
     return response.json()
 
-
 # ---------------------------------------------------------------------------
 # E2E Tests
 # ---------------------------------------------------------------------------
-
 
 @skip_no_postgres
 @skip_no_tigerbeetle
@@ -405,14 +389,12 @@ class TestWalletProvisioningE2E:
         assert account.credits_pending == 0
         assert account.debits_pending == 0
 
-
 # ---------------------------------------------------------------------------
 # Permissions-enabled server fixture (StaticAPIKeyAuth: admin + non-admin)
 # ---------------------------------------------------------------------------
 
 ADMIN_KEY = "sk-admin-wallet-e2e"
 ALICE_KEY = "sk-alice-wallet-e2e"
-
 
 def _build_permissions_startup_script(port: int, data_dir: str) -> str:
     """Build startup script with StaticAPIKeyAuth (admin + alice) and permissions ON."""
@@ -455,7 +437,6 @@ def _build_permissions_startup_script(port: int, data_dir: str) -> str:
             '--auth-type', 'static', '--api-key', '{ADMIN_KEY}',
         ])
     """)
-
 
 @pytest.fixture
 def nexus_server_permissions(tmp_path, pg_engine):
@@ -514,11 +495,9 @@ def nexus_server_permissions(tmp_path, pg_engine):
         process.kill()
         process.wait()
 
-
 # ---------------------------------------------------------------------------
 # E2E Tests — Permissions Enabled + Non-Admin User
 # ---------------------------------------------------------------------------
-
 
 @skip_no_postgres
 @skip_no_tigerbeetle

@@ -1,7 +1,5 @@
 """Reflection system for analyzing trajectories and extracting learnings."""
 
-from __future__ import annotations
-
 import json
 import uuid
 from datetime import UTC, datetime
@@ -13,7 +11,6 @@ from nexus.llm.message import Message, MessageRole
 from nexus.services.ace.trajectory import TrajectoryManager
 from nexus.services.protocols.llm_provider import LLMProviderProtocol
 from nexus.storage.models import MemoryModel
-
 
 class Reflector:
     """Analyze execution trajectories to extract learnings.

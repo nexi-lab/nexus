@@ -3,11 +3,8 @@
 Issue #1603: Decompose remote/client.py into domain clients.
 """
 
-from __future__ import annotations
-
 import builtins
 from typing import Any
-
 
 class SkillsClient:
     """Skills management domain client (sync)."""
@@ -265,7 +262,6 @@ class SkillsClient:
 
     def load(self, skill_path: str) -> dict[str, Any]:
         return self._call_rpc("skills_load", {"skill_path": skill_path})  # type: ignore[no-any-return]
-
 
 class AsyncSkillsClient:
     """Skills management domain client (async)."""

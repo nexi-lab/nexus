@@ -6,8 +6,6 @@ Verifies:
 - NexusFS initialization creates the lock manager attribute.
 """
 
-from __future__ import annotations
-
 from unittest.mock import patch
 
 import pytest
@@ -22,7 +20,6 @@ from nexus.core.lock_fast import (
 # Identical-behaviour verification
 # ---------------------------------------------------------------------------
 
-
 def _implementations() -> list[type]:
     impls: list[type] = [PythonVFSLockManager]
     try:
@@ -32,7 +29,6 @@ def _implementations() -> list[type]:
     except (ImportError, Exception):
         pass
     return impls
-
 
 def _run_sequence(mgr: VFSLockManagerProtocol) -> list:
     """Execute a deterministic sequence of operations and return results."""
@@ -74,7 +70,6 @@ def _run_sequence(mgr: VFSLockManagerProtocol) -> list:
 
     return results
 
-
 class TestIdenticalBehaviour:
     def test_rust_and_python_produce_same_results(self) -> None:
         impls = _implementations()
@@ -90,11 +85,9 @@ class TestIdenticalBehaviour:
                 f"{results[i]} != {results[0]}"
             )
 
-
 # ---------------------------------------------------------------------------
 # Fallback when nexus_fast unavailable
 # ---------------------------------------------------------------------------
-
 
 class TestFallback:
     def test_fallback_returns_python_impl(self) -> None:
@@ -109,11 +102,9 @@ class TestFallback:
             assert h > 0
             assert mgr.release(h)
 
-
 # ---------------------------------------------------------------------------
 # NexusFS integration
 # ---------------------------------------------------------------------------
-
 
 class TestNexusFSIntegration:
     def test_nexus_fs_has_vfs_lock_manager_attr(self) -> None:

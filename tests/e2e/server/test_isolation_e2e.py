@@ -13,8 +13,6 @@ Tests cover:
 - Concurrent operations through the isolation boundary
 """
 
-from __future__ import annotations
-
 import os
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -25,7 +23,6 @@ import httpx
 from nexus.isolation import IsolatedBackend, IsolationConfig
 
 # ── Helper: IsolatedBackend wrapping a real LocalBackend ──────────────
-
 
 def _make_isolated_local_backend(storage_dir: str) -> IsolatedBackend:
     """Create IsolatedBackend wrapping a real LocalBackend."""
@@ -40,7 +37,6 @@ def _make_isolated_local_backend(storage_dir: str) -> IsolatedBackend:
     )
     return IsolatedBackend(cfg)
 
-
 def _make_isolated_mock_backend() -> IsolatedBackend:
     """Create IsolatedBackend wrapping MockBackend (fast, in-memory)."""
     cfg = IsolationConfig(
@@ -53,9 +49,7 @@ def _make_isolated_mock_backend() -> IsolatedBackend:
     )
     return IsolatedBackend(cfg)
 
-
 # ── Helper: Real FastAPI app with IsolatedBackend ─────────────────────
-
 
 def _create_test_app_with_isolated_backend(tmp_path: Path, enforce_permissions: bool = True):
     """Create a FastAPI app using IsolatedBackend as the storage backend."""
@@ -92,11 +86,9 @@ def _create_test_app_with_isolated_backend(tmp_path: Path, enforce_permissions: 
     app = create_app(nexus_fs=nx, api_key=api_key, database_url=db_url)
     return app, api_key, backend
 
-
 # ═══════════════════════════════════════════════════════════════════════
 # 1. Real FastAPI server with IsolatedBackend + permissions
 # ═══════════════════════════════════════════════════════════════════════
-
 
 class TestIsolatedBackendWithFastAPI:
     """IsolatedBackend → NexusFS → FastAPI with enforce_permissions=True."""
@@ -180,11 +172,9 @@ class TestIsolatedBackendWithFastAPI:
             assert resp.status_code == 200
         backend.disconnect()
 
-
 # ═══════════════════════════════════════════════════════════════════════
 # 2. Permission enforcement — 401 for unauthorized requests
 # ═══════════════════════════════════════════════════════════════════════
-
 
 class TestIsolatedBackendPermissions:
     """Verify permissions are enforced with IsolatedBackend."""
@@ -233,11 +223,9 @@ class TestIsolatedBackendPermissions:
             assert resp.status_code == 401
         backend.disconnect()
 
-
 # ═══════════════════════════════════════════════════════════════════════
 # 3. Direct IsolatedBackend lifecycle (no server)
 # ═══════════════════════════════════════════════════════════════════════
-
 
 class TestIsolatedBackendDirect:
     """Direct Backend method calls through isolation boundary."""
@@ -281,11 +269,9 @@ class TestIsolatedBackendDirect:
         finally:
             backend.disconnect()
 
-
 # ═══════════════════════════════════════════════════════════════════════
 # 4. Performance validation
 # ═══════════════════════════════════════════════════════════════════════
-
 
 class TestIsolatedBackendPerformance:
     """Verify no critical performance issues."""

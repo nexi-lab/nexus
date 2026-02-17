@@ -11,8 +11,6 @@ Usage:
     result = await async_manager.rebac_check(subject, permission, obj)
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from typing import Any
@@ -20,7 +18,6 @@ from typing import Any
 from nexus.rebac.types import WriteResult
 
 logger = logging.getLogger(__name__)
-
 
 class AsyncReBACManager:
     """Async facade over the synchronous ReBACManager.
@@ -247,9 +244,7 @@ class AsyncReBACManager:
         """Delegate to sync manager's zone isolation setting."""
         return self._sync.enforce_zone_isolation  # type: ignore[no-any-return]
 
-
 # ── Utility ─────────────────────────────────────────────────────────
-
 
 def create_async_engine_from_url(
     database_url: str,

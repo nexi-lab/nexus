@@ -10,8 +10,6 @@ Phases:
     4. DSL rules (recipient, time window, metadata, amount range)
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from decimal import Decimal
@@ -21,12 +19,13 @@ from nexus.pay.audit_types import TransactionProtocol
 from nexus.pay.protocol import ProtocolTransferRequest, ProtocolTransferResult
 from nexus.pay.spending_policy import ApprovalRequiredError, PolicyDeniedError
 
+from nexus.pay.spending_policy_service import SpendingPolicyService
+from nexus.services.protocols.payment import PaymentProtocol
 if TYPE_CHECKING:
     from nexus.pay.spending_policy_service import SpendingPolicyService
     from nexus.services.protocols.payment import PaymentProtocol
 
 logger = logging.getLogger(__name__)
-
 
 class PolicyEnforcedPayment:
     """Wraps a PaymentProtocol with spending policy enforcement.

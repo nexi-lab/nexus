@@ -14,8 +14,6 @@ Example:
     pytest tests/integration/test_temporal_queries.py
 """
 
-from __future__ import annotations
-
 import logging
 import os
 from datetime import UTC, datetime, timedelta
@@ -36,7 +34,6 @@ logger = logging.getLogger(__name__)
 # Use PostgreSQL if TEST_DATABASE_URL is set, otherwise SQLite
 DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "sqlite:///:memory:")
 
-
 @pytest.fixture
 def engine():
     """Create database for testing (PostgreSQL or SQLite)."""
@@ -48,7 +45,6 @@ def engine():
         Base.metadata.drop_all(engine)  # Cleanup for PostgreSQL
     engine.dispose()
 
-
 @pytest.fixture
 def session(engine):
     """Create database session."""
@@ -57,12 +53,10 @@ def session(engine):
     yield session
     session.close()
 
-
 @pytest.fixture
 def backend(tmp_path):
     """Create local backend for content storage."""
     return LocalBackend(root_path=tmp_path)
-
 
 @pytest.fixture
 def entity_registry(session):
@@ -72,7 +66,6 @@ def entity_registry(session):
     registry.register_entity("user", "alice", parent_type="zone", parent_id="acme")
     registry.register_entity("agent", "agent1", parent_type="user", parent_id="alice")
     return registry
-
 
 @pytest.fixture
 def memory_api(session, backend, entity_registry):
@@ -85,7 +78,6 @@ def memory_api(session, backend, entity_registry):
         agent_id="agent1",
         entity_registry=entity_registry,
     )
-
 
 @pytest.fixture
 def memories_with_timestamps(memory_api, session):
@@ -143,7 +135,6 @@ def memories_with_timestamps(memory_api, session):
 
     return {"memories": memories, "now": now}
 
-
 class TestTemporalQueryAfter:
     """Tests for the 'after' temporal operator."""
 
@@ -186,7 +177,6 @@ class TestTemporalQueryAfter:
         assert len(results) >= 2
         logger.info(f"[TEST] after='{after_str}' returned {len(results)} memories")
 
-
 class TestTemporalQueryBefore:
     """Tests for the 'before' temporal operator."""
 
@@ -216,7 +206,6 @@ class TestTemporalQueryBefore:
 
         assert len(results) == 2
         logger.info(f"[TEST] before='{before_str}' returned {len(results)} memories")
-
 
 class TestTemporalQueryDuring:
     """Tests for the 'during' temporal operator."""
@@ -255,7 +244,6 @@ class TestTemporalQueryDuring:
         with pytest.raises(ValueError, match="Cannot use 'during' with"):
             memory_api.query(during="2025", before="2025-12-31")
 
-
 class TestTemporalQueryCombined:
     """Tests for combining after and before operators."""
 
@@ -281,7 +269,6 @@ class TestTemporalQueryCombined:
         with pytest.raises(ValueError, match="must be before"):
             memory_api.query(after="2025-12-31", before="2025-01-01")
 
-
 class TestTemporalQueryList:
     """Tests for temporal operators in list() method."""
 
@@ -304,7 +291,6 @@ class TestTemporalQueryList:
 
         assert len(results) >= 1
         logger.info(f"[TEST] list(during='{during_str}') returned {len(results)} memories")
-
 
 class TestTemporalQuerySearch:
     """Tests for temporal operators in search() method."""
@@ -332,7 +318,6 @@ class TestTemporalQuerySearch:
         assert len(results) >= 0  # May be 0 if keyword search doesn't match
         logger.info(f"[TEST] search with during='{during_str}' returned {len(results)} results")
 
-
 class TestTemporalQueryOrdering:
     """Tests for result ordering with temporal queries."""
 
@@ -352,7 +337,6 @@ class TestTemporalQueryOrdering:
         assert "today" in results[0]["content"]
 
         logger.info("[TEST] Results correctly ordered by created_at DESC")
-
 
 class TestPostgreSQLTimestampPrecision:
     """PostgreSQL-specific tests for timestamp precision."""
@@ -400,7 +384,6 @@ class TestPostgreSQLTimestampPrecision:
         assert micro_results[0].content_hash == "hash_micro2"
 
         logger.info("[TEST] PostgreSQL microsecond precision verified")
-
 
 # Standalone test runner
 if __name__ == "__main__":

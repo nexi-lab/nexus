@@ -1,7 +1,5 @@
 """Static API key authentication provider."""
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -9,7 +7,6 @@ from nexus.auth.constants import API_KEY_PREFIX
 from nexus.auth.providers.base import AuthProvider, AuthResult
 
 logger = logging.getLogger(__name__)
-
 
 class StaticAPIKeyAuth(AuthProvider):
     """Static API key authentication using configuration file.
@@ -59,7 +56,7 @@ class StaticAPIKeyAuth(AuthProvider):
         pass
 
     @classmethod
-    def from_config(cls, config: dict[str, Any]) -> StaticAPIKeyAuth:
+    def from_config(cls, config: dict[str, Any]) -> "StaticAPIKeyAuth":
         """Create from configuration dictionary."""
         api_keys = config.get("api_keys", {})
         if not api_keys:

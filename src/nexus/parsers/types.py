@@ -3,7 +3,6 @@
 from dataclasses import dataclass, field
 from typing import Any
 
-
 @dataclass
 class TextChunk:
     """Represents a semantic chunk of text from a document."""
@@ -12,7 +11,6 @@ class TextChunk:
     metadata: dict[str, Any] = field(default_factory=dict)
     start_index: int = 0
     end_index: int = 0
-
 
 @dataclass
 class ImageData:
@@ -23,7 +21,6 @@ class ImageData:
     metadata: dict[str, Any] = field(default_factory=dict)
     width: int | None = None
     height: int | None = None
-
 
 @dataclass
 class ParseResult:

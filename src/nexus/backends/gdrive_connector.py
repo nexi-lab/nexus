@@ -49,7 +49,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 # Google Drive MIME types
 GOOGLE_MIME_TYPES = {
     "application/vnd.google-apps.document": "Google Docs",
@@ -84,7 +83,6 @@ EXPORT_FORMATS = {
         "txt": "text/plain",
     },
 }
-
 
 @register_connector(
     "gdrive_connector",

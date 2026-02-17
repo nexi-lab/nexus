@@ -3,8 +3,6 @@
 Extracted from fastapi_server.py (#1602).
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from typing import Any
@@ -18,7 +16,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-
 class WhoamiResponse(BaseModel):
     """Authentication info response."""
 
@@ -29,7 +26,6 @@ class WhoamiResponse(BaseModel):
     is_admin: bool = False
     inherit_permissions: bool = True
     user: str | None = None
-
 
 @router.get("/debug/asyncio", tags=["debug"])
 async def debug_asyncio() -> dict[str, Any]:
@@ -68,7 +64,6 @@ async def debug_asyncio() -> dict[str, Any]:
 
     return result
 
-
 @router.get("/api/auth/whoami", response_model=WhoamiResponse)
 async def whoami(
     auth_result: dict[str, Any] | None = Depends(get_auth_result),
@@ -86,7 +81,6 @@ async def whoami(
         inherit_permissions=auth_result.get("inherit_permissions", True),
         user=auth_result.get("subject_id"),
     )
-
 
 @router.get("/api/nfs/status")
 async def status(request: Request) -> dict[str, Any]:

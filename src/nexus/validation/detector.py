@@ -4,12 +4,11 @@ Detects which validators to run based on project files present in
 the workspace. Uses a single batch `ls` command for efficiency.
 """
 
-from __future__ import annotations
-
 import logging
 import shlex
 from typing import TYPE_CHECKING
 
+from nexus.sandbox.sandbox_provider import SandboxProvider
 if TYPE_CHECKING:
     from nexus.sandbox.sandbox_provider import SandboxProvider
 
@@ -34,7 +33,6 @@ DETECTION_RULES: list[tuple[frozenset[str], list[str]]] = [
 _ALL_MARKER_FILES: frozenset[str] = frozenset(
     f for rule_files, _ in DETECTION_RULES for f in rule_files
 )
-
 
 async def detect_project_validators(
     sandbox_id: str,

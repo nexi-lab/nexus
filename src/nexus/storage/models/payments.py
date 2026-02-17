@@ -3,8 +3,6 @@
 Issue #1286: Extracted from monolithic __init__.py.
 """
 
-from __future__ import annotations
-
 import json
 from datetime import UTC, datetime
 from typing import Any
@@ -13,7 +11,6 @@ from sqlalchemy import BigInteger, Boolean, DateTime, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base, uuid_pk
-
 
 class AgentWalletMeta(Base):
     """Wallet metadata for Nexus Pay. Balances in TigerBeetle, settings here.
@@ -42,7 +39,6 @@ class AgentWalletMeta(Base):
         Index("idx_wallet_meta_zone", "zone_id"),
         Index("idx_wallet_meta_tb_id", "tigerbeetle_account_id"),
     )
-
 
 class PaymentTransactionMeta(Base):
     """Transaction metadata for Nexus Pay. Amounts in TigerBeetle, context here."""
@@ -74,7 +70,6 @@ class PaymentTransactionMeta(Base):
         Index("idx_tx_meta_x402_hash", "x402_tx_hash"),
     )
 
-
 class CreditReservationMeta(Base):
     """Credit reservation metadata for two-phase transfers."""
 
@@ -100,7 +95,6 @@ class CreditReservationMeta(Base):
         Index("idx_reservation_task", "task_id"),
         Index("idx_reservation_zone", "zone_id", "status"),
     )
-
 
 class UsageEvent(Base):
     """Usage events for API metering and analytics."""

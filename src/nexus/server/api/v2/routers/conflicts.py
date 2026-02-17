@@ -6,8 +6,6 @@ Provides 3 endpoints for conflict audit and manual resolution:
 - POST /api/v2/sync/conflicts/{id}/resolve - Manually resolve conflict
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -29,7 +27,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/sync/conflicts", tags=["sync-conflicts"])
 
-
 async def _require_admin(
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
 ) -> dict[str, Any]:
@@ -37,7 +34,6 @@ async def _require_admin(
     if not auth_result.get("is_admin", False):
         raise HTTPException(status_code=403, detail="Admin role required for conflict management")
     return auth_result
-
 
 def _record_to_response(record: Any) -> ConflictDetailResponse:
     """Convert a ConflictRecord to API response model."""
@@ -58,7 +54,6 @@ def _record_to_response(record: Any) -> ConflictDetailResponse:
         status=record.status,
         resolved_at=record.resolved_at.isoformat() if record.resolved_at else None,
     )
-
 
 @router.get("", response_model=ConflictListResponse)
 async def list_conflicts(
@@ -93,7 +88,6 @@ async def list_conflicts(
         logger.error(f"List conflicts error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to list conflicts") from e
 
-
 @router.get("/{conflict_id}", response_model=ConflictDetailResponse)
 async def get_conflict(
     conflict_id: str,
@@ -111,7 +105,6 @@ async def get_conflict(
     except Exception as e:
         logger.error(f"Get conflict error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to get conflict") from e
-
 
 @router.post("/{conflict_id}/resolve", response_model=ConflictResolveResponse)
 async def resolve_conflict(

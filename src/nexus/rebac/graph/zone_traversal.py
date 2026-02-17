@@ -12,8 +12,6 @@ Functions:
 Related: Issue #1459 Phase 15+, performance optimization
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import time
@@ -28,6 +26,10 @@ from nexus.rebac.types import (
     TraversalStats,
 )
 
+from collections.abc import Callable
+from contextlib import AbstractContextManager
+from nexus.core.rebac import NamespaceConfig
+from nexus.rebac.consistency.zone_manager import ZoneManager
 if TYPE_CHECKING:
     from collections.abc import Callable
     from contextlib import AbstractContextManager
@@ -36,7 +38,6 @@ if TYPE_CHECKING:
     from nexus.rebac.consistency.zone_manager import ZoneManager
 
 logger = logging.getLogger(__name__)
-
 
 class ZoneAwareTraversal:
     """Zone-aware permission graph traversal with P0-5 limits.

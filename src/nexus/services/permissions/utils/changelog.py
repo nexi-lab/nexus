@@ -4,8 +4,6 @@ Replaces 7+ duplicated ``INSERT INTO rebac_changelog`` SQL blocks with a
 single reusable constant and helper functions.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from typing import Any
 
@@ -19,7 +17,6 @@ INSERT INTO rebac_changelog (
 )
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
-
 
 def changelog_params(
     *,
@@ -50,7 +47,6 @@ def changelog_params(
         normalize_zone_id(zone_id),
         created_at or datetime.now(UTC).isoformat(),
     )
-
 
 def insert_changelog_entry(
     cursor: Any,
@@ -85,7 +81,6 @@ def insert_changelog_entry(
             created_at=created_at,
         ),
     )
-
 
 def insert_changelog_entries_batch(
     cursor: Any,

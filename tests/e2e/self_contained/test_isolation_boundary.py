@@ -5,15 +5,12 @@ the host process's state.  All tests use ``ProcessPoolExecutor``
 (``force_process=True``) which is available on every Python version.
 """
 
-from __future__ import annotations
-
 import sys
 
 from nexus.isolation import IsolatedBackend, IsolationConfig
 
 # Path to helpers defined in this file (importable by child processes).
 _HELPER_MOD = "tests.e2e.self_contained.test_isolation_boundary"
-
 
 def _cfg(
     module: str = "tests.e2e.self_contained.isolation_helpers",
@@ -31,9 +28,7 @@ def _cfg(
     defaults.update(kw)
     return IsolationConfig(**defaults)
 
-
 # ── Helper backends for boundary tests (must be top-level for pickle) ──
-
 
 class SysModulesMutator:
     """Backend that injects a key into sys.modules."""
@@ -103,7 +98,6 @@ class SysModulesMutator:
 
         return HandlerResponse.ok(data=False, backend_name=self.name)
 
-
 class GlobalMutator(SysModulesMutator):
     """Backend that sets a global variable in the worker."""
 
@@ -124,7 +118,6 @@ class GlobalMutator(SysModulesMutator):
 
         return HandlerStatusResponse(success=GlobalMutator._GLOBAL_FLAG)
 
-
 class CrashingBackend(SysModulesMutator):
     """Backend whose check_connection raises SystemExit."""
 
@@ -135,11 +128,9 @@ class CrashingBackend(SysModulesMutator):
     def check_connection(self, context=None):
         raise SystemExit(1)
 
-
 # ═══════════════════════════════════════════════════════════════════════
 # Boundary tests
 # ═══════════════════════════════════════════════════════════════════════
-
 
 class TestSysModulesIsolation:
     def test_worker_mutation_does_not_leak(self) -> None:
@@ -156,7 +147,6 @@ class TestSysModulesIsolation:
         finally:
             backend.disconnect()
 
-
 class TestGlobalStateIsolation:
     def test_worker_global_does_not_leak(self) -> None:
         """Backend sets a class variable in the worker → host copy is unchanged."""
@@ -169,7 +159,6 @@ class TestGlobalStateIsolation:
         finally:
             backend.disconnect()
 
-
 class TestCrashContainment:
     def test_system_exit_in_worker_does_not_crash_host(self) -> None:
         """Backend raises SystemExit → IsolationCallError, host continues."""
@@ -181,7 +170,6 @@ class TestCrashContainment:
         finally:
             backend.disconnect()
 
-
 class TestImportFailure:
     def test_nonexistent_module_graceful_error(self) -> None:
         """Bad module path → IsolationStartupError (not host crash)."""
@@ -190,7 +178,6 @@ class TestImportFailure:
         assert status.success is False
         assert "no.such.module.at.all" in (status.error_message or "")
         backend.disconnect()
-
 
 class TestCrossBrickIsolation:
     def test_two_backends_isolated(self) -> None:

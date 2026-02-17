@@ -1,19 +1,15 @@
 """Cancellation handling utilities for async LLM operations."""
 
-from __future__ import annotations
-
 import signal
 from collections.abc import Awaitable, Callable
 
 # Global shutdown flag
 _shutdown_requested = False
 
-
 def _signal_handler(_signum: int, _frame: object) -> None:
     """Handle shutdown signals."""
     global _shutdown_requested
     _shutdown_requested = True
-
 
 def should_continue() -> bool:
     """Check if operations should continue.
@@ -23,24 +19,20 @@ def should_continue() -> bool:
     """
     return not _shutdown_requested
 
-
 def request_shutdown() -> None:
     """Request a graceful shutdown."""
     global _shutdown_requested
     _shutdown_requested = True
-
 
 def reset_shutdown_flag() -> None:
     """Reset the shutdown flag (useful for testing)."""
     global _shutdown_requested
     _shutdown_requested = False
 
-
 def install_signal_handlers() -> None:
     """Install signal handlers for graceful shutdown."""
     signal.signal(signal.SIGINT, _signal_handler)
     signal.signal(signal.SIGTERM, _signal_handler)
-
 
 class CancellationToken:
     """Token for tracking and coordinating cancellation across async operations."""
@@ -77,7 +69,6 @@ class CancellationToken:
     def cancel(self) -> None:
         """Request cancellation."""
         self._cancelled = True
-
 
 class AsyncCancellationToken(CancellationToken):
     """Async version of cancellation token supporting async callbacks."""

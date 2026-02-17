@@ -12,12 +12,9 @@ References:
     - Issue #1274: Astraea-style state-aware scheduler
 """
 
-from __future__ import annotations
-
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
-
 
 @dataclass(frozen=True, slots=True)
 class AgentRequest:
@@ -52,7 +49,6 @@ class AgentRequest:
     boost_amount: str = "0"
     estimated_service_time: float = 30.0
 
-
 @runtime_checkable
 class SchedulerProtocol(Protocol):
     """Service contract for agent work-request scheduling.
@@ -76,11 +72,9 @@ class SchedulerProtocol(Protocol):
 
     async def metrics(self, *, zone_id: str | None = None) -> dict[str, Any]: ...
 
-
 # ---------------------------------------------------------------------------
 # InMemoryScheduler — test / development stub
 # ---------------------------------------------------------------------------
-
 
 class InMemoryScheduler:
     """Priority-aware scheduler backed by a sorted list.

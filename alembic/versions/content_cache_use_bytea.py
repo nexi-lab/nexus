@@ -30,7 +30,6 @@ down_revision: Union[str, Sequence[str], None] = "d5ed2f68c1bc"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Change content_binary from TEXT to BYTEA (PostgreSQL) or BLOB (SQLite)."""
     conn = op.get_bind()
@@ -54,7 +53,6 @@ def upgrade() -> None:
         conn.execute(text("DELETE FROM content_cache"))
         # SQLite doesn't require ALTER COLUMN for type changes
         # The column will accept bytes directly
-
 
 def downgrade() -> None:
     """Revert content_binary from BYTEA to TEXT."""

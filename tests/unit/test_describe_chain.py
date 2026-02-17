@@ -7,8 +7,6 @@ Design reference:
     - NEXUS-LEGO-ARCHITECTURE.md PART 16, Recursive Wrapping Rule #3
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest
@@ -22,14 +20,12 @@ from nexus.cache.backend_wrapper import (
 )
 from nexus.core.protocols.describable import Describable
 
-
 def _make_leaf(name: str = "local") -> Backend:
     """Create a mock leaf backend with the given name."""
     mock = MagicMock(spec=Backend)
     mock.name = name
     mock.describe.return_value = name
     return mock
-
 
 class TestLeafBackendDescribe:
     """Leaf backends should return their name from describe()."""
@@ -41,7 +37,6 @@ class TestLeafBackendDescribe:
     def test_leaf_returns_local(self) -> None:
         leaf = _make_leaf("local")
         assert leaf.describe() == "local"
-
 
 class TestSingleWrapperDescribe:
     """Single wrapper should prepend its layer name."""
@@ -56,7 +51,6 @@ class TestSingleWrapperDescribe:
         leaf = _make_leaf("s3")
         wrapper = LoggingBackendWrapper(inner=leaf)
         assert wrapper.describe() == "logging → s3"
-
 
 class TestTwoDeepChainDescribe:
     """2-deep chain should show all layers in order."""
@@ -76,7 +70,6 @@ class TestTwoDeepChainDescribe:
         logged = LoggingBackendWrapper(inner=cached)
         assert logged.describe() == "logging → cache → gcs"
 
-
 class TestDeepChainDescribe:
     """3+ deep chains should compose recursively."""
 
@@ -95,7 +88,6 @@ class TestDeepChainDescribe:
         inner_cache = CachingBackendWrapper(inner=leaf, config=config)
         outer_cache = CachingBackendWrapper(inner=inner_cache, config=config)
         assert outer_cache.describe() == "cache → cache → s3"
-
 
 class TestDescribableProtocol:
     """Verify structural subtyping with Describable protocol."""
@@ -119,7 +111,6 @@ class TestDescribableProtocol:
         leaf = _make_leaf("local")
         wrapper = DelegatingBackend(inner=leaf)
         assert isinstance(wrapper, Describable)
-
 
 class TestDescribeUnicodeArrow:
     """Verify the unicode arrow separator convention."""

@@ -9,19 +9,17 @@ Uses Nats-Msg-Id header for server-side deduplication.
 Optional dependency: ``pip install nexus-ai-fs[nats-export]``
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.event_bus import FileEvent
 
+from nexus.services.event_log.exporters.config import NatsExporterConfig
 if TYPE_CHECKING:
     from nexus.services.event_log.exporters.config import NatsExporterConfig
 
 logger = logging.getLogger(__name__)
-
 
 class NatsExporter:
     """NATS JetStream event stream exporter implementing EventStreamExporterProtocol."""

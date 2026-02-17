@@ -12,8 +12,6 @@ Invariants checked after every rule:
   3. Zone isolation: zone-filtered results only include matching zones
 """
 
-from __future__ import annotations
-
 import os
 
 from hypothesis import settings
@@ -47,11 +45,9 @@ _PATHS = st.sampled_from(
     ]
 )
 
-
 # ---------------------------------------------------------------------------
 # State Machine
 # ---------------------------------------------------------------------------
-
 
 class ReadSetRegistryStateMachine(RuleBasedStateMachine):
     """Stateful test for ReadSetRegistry lifecycle operations."""
@@ -187,7 +183,6 @@ class ReadSetRegistryStateMachine(RuleBasedStateMachine):
         """Registry stats should not show more read sets than the model."""
         stats = self.registry.get_stats()
         assert stats["read_sets_count"] == len(self.model)
-
 
 # ---------------------------------------------------------------------------
 # Expose to pytest

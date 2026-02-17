@@ -28,7 +28,6 @@ down_revision: Union[str, Sequence[str], None] = "820f721c6e38"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add trajectory feedback support."""
 
@@ -74,7 +73,6 @@ def upgrade() -> None:
     op.create_index(
         "idx_traj_relearning", "trajectories", ["needs_relearning", "relearning_priority"]
     )
-
 
 def downgrade() -> None:
     """Remove trajectory feedback support."""

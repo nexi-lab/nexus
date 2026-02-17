@@ -9,8 +9,6 @@ Phase 2: Core Refactoring (Issue #988, Task 2.8)
 Extracted from: nexus_fs_mcp.py (379 lines)
 """
 
-from __future__ import annotations
-
 import builtins
 import logging
 from typing import TYPE_CHECKING, Any
@@ -19,9 +17,9 @@ from nexus.core.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
 
+from nexus.core.permissions import OperationContext
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
-
 
 class MCPService:
     """Independent MCP service extracted from NexusFS.
@@ -497,7 +495,6 @@ class MCPService:
             raise RuntimeError("NexusFS not configured for MCPService")
 
         return MCPMountManager(cast(NexusFilesystem, self.nexus_fs))
-
 
 # =============================================================================
 # Phase 2 Extraction Progress

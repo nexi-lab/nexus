@@ -32,7 +32,6 @@ SCOPES = [
 ]
 REDIRECT_URI = "http://localhost:8085"
 
-
 class OAuthCallbackHandler(BaseHTTPRequestHandler):
     """Handle OAuth callback."""
 
@@ -61,7 +60,6 @@ class OAuthCallbackHandler(BaseHTTPRequestHandler):
 
     def log_message(self, format, *args):
         pass  # Suppress logging
-
 
 def main():
     print("=" * 60)
@@ -154,7 +152,6 @@ def main():
     print("You can now run the E2E tests:")
     print(f"  python scripts/test_gcalendar_e2e.py --user {user_email}")
     print()
-
 
 if __name__ == "__main__":
     main()

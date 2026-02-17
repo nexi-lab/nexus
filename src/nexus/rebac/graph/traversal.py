@@ -9,8 +9,6 @@ Contains:
 - Permission explanation with path tracking
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from datetime import UTC, datetime
@@ -18,6 +16,8 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.core.rebac import WILDCARD_SUBJECT, Entity
 
+from collections.abc import Callable
+from nexus.core.rebac import NamespaceConfig
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -25,7 +25,6 @@ if TYPE_CHECKING:
     from nexus.rebac.tuples.repository import TupleRepository
 
 logger = logging.getLogger(__name__)
-
 
 class PermissionComputer:
     """Computes permissions via Zanzibar-style graph traversal.
@@ -46,7 +45,7 @@ class PermissionComputer:
 
     def __init__(
         self,
-        repo: TupleRepository,
+        repo: "TupleRepository",
         namespace_resolver: Callable[[str], NamespaceConfig | None],
         max_depth: int = 10,
     ) -> None:

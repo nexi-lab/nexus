@@ -28,7 +28,6 @@ depends_on: Union[str, Sequence[str], None] = None
 # Using a fixed timestamp so the migration is reproducible.
 CUTOFF = "2026-02-13T00:00:00"
 
-
 def upgrade() -> None:
     """Set email_verified=1 for existing password users created before cutoff."""
     op.execute(
@@ -42,7 +41,6 @@ def upgrade() -> None:
             """
         ).bindparams(cutoff=CUTOFF)
     )
-
 
 def downgrade() -> None:
     """Revert: set email_verified back to 0 for grandfathered users.

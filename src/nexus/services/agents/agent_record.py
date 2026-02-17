@@ -21,14 +21,11 @@ References:
     - Issue #1240: AgentRecord with session generation counter and state machine
 """
 
-from __future__ import annotations
-
 import types
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import Any
-
 
 class AgentState(Enum):
     """Agent lifecycle states (external-agent philosophy).
@@ -52,7 +49,6 @@ class AgentState(Enum):
     IDLE = "IDLE"
     SUSPENDED = "SUSPENDED"
 
-
 # Strict allowlist for valid state transitions (Decision #8A).
 # Any transition not in this table is invalid. No self-transitions allowed.
 VALID_TRANSITIONS: dict[AgentState, frozenset[AgentState]] = {
@@ -64,7 +60,6 @@ VALID_TRANSITIONS: dict[AgentState, frozenset[AgentState]] = {
 
 # States that trigger generation increment when transitioning TO CONNECTED
 _NEW_SESSION_SOURCES = frozenset({AgentState.UNKNOWN, AgentState.IDLE, AgentState.SUSPENDED})
-
 
 def validate_transition(current: AgentState, target: AgentState) -> bool:
     """Check if a state transition is valid according to the allowlist.
@@ -89,7 +84,6 @@ def validate_transition(current: AgentState, target: AgentState) -> bool:
     allowed = VALID_TRANSITIONS.get(current, frozenset())
     return target in allowed
 
-
 def is_new_session(current: AgentState, target: AgentState) -> bool:
     """Check if a transition represents a new session (generation should increment).
 
@@ -104,7 +98,6 @@ def is_new_session(current: AgentState, target: AgentState) -> bool:
         True if this transition starts a new session.
     """
     return target is AgentState.CONNECTED and current in _NEW_SESSION_SOURCES
-
 
 @dataclass(frozen=True)
 class AgentRecord:

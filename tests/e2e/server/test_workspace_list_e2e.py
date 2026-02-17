@@ -10,8 +10,6 @@ Verifies:
 - Unauthenticated list_workspaces is rejected (401)
 """
 
-from __future__ import annotations
-
 import os
 import shutil
 import signal
@@ -36,12 +34,10 @@ for _key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
     os.environ.pop(_key, None)
 os.environ["NO_PROXY"] = "*"
 
-
 def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
-
 
 def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> None:
     deadline = time.monotonic() + timeout
@@ -55,7 +51,6 @@ def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> 
                 pass
             time.sleep(0.3)
     raise TimeoutError(f"Server did not start within {timeout}s at {base_url}")
-
 
 def _rpc_call(
     client: httpx.Client,
@@ -76,9 +71,7 @@ def _rpc_call(
         headers=headers or {},
     )
 
-
 # === Fixtures ===
-
 
 @pytest.fixture(scope="module")
 def server():
@@ -189,17 +182,14 @@ uvicorn.run(app, host='127.0.0.1', port={port}, log_level='warning')
 
         shutil.rmtree(data_dir, ignore_errors=True)
 
-
 @pytest.fixture(scope="module")
 def client(server: dict) -> httpx.Client:
     with httpx.Client(timeout=10) as c:
         yield c
 
-
 @pytest.fixture()
 def base_url(server: dict) -> str:
     return server["base_url"]
-
 
 @pytest.fixture()
 def alice_headers() -> dict[str, str]:
@@ -209,7 +199,6 @@ def alice_headers() -> dict[str, str]:
         "X-Nexus-Zone-ID": "test",
     }
 
-
 @pytest.fixture()
 def bob_headers() -> dict[str, str]:
     """Headers for bob: identity hint (open-access mode)."""
@@ -218,11 +207,9 @@ def bob_headers() -> dict[str, str]:
         "X-Nexus-Zone-ID": "test",
     }
 
-
 # =============================================================================
 # E2E Tests: Workspace Registration + Listing (Issue #1201)
 # =============================================================================
-
 
 @pytest.mark.e2e
 class TestWorkspaceListE2E:

@@ -14,13 +14,11 @@ References:
     - Issue #1287: Extract NexusFS Domain Services from God Object
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from nexus.core.permissions import OperationContext
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
-
 
 @runtime_checkable
 class ContentServiceProtocol(Protocol):

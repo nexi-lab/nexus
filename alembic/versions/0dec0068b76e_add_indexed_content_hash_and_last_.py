@@ -19,7 +19,6 @@ down_revision: Union[str, Sequence[str], None] = "add_chunk_line_numbers"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add indexed_content_hash and last_indexed_at columns to file_paths.
 
@@ -29,7 +28,6 @@ def upgrade() -> None:
     """
     op.add_column("file_paths", sa.Column("indexed_content_hash", sa.String(64), nullable=True))
     op.add_column("file_paths", sa.Column("last_indexed_at", sa.DateTime(), nullable=True))
-
 
 def downgrade() -> None:
     """Remove indexed_content_hash and last_indexed_at columns."""

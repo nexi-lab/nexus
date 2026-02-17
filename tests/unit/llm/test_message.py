@@ -1,7 +1,5 @@
 """Tests for Message types (src/nexus/llm/message.py)."""
 
-from __future__ import annotations
-
 from nexus.llm.message import (
     ContentType,
     ImageContent,
@@ -12,7 +10,6 @@ from nexus.llm.message import (
     ToolCall,
     ToolFunction,
 )
-
 
 class TestMessageRole:
     """Tests for the MessageRole enum."""
@@ -31,7 +28,6 @@ class TestMessageRole:
         assert MessageRole("assistant") == MessageRole.ASSISTANT
         assert MessageRole("tool") == MessageRole.TOOL
 
-
 class TestContentType:
     """Tests for the ContentType enum."""
 
@@ -41,7 +37,6 @@ class TestContentType:
         assert ContentType.IMAGE_URL == "image_url"
         assert ContentType.IMAGE_FILE == "image_file"
 
-
 class TestImageDetail:
     """Tests for the ImageDetail enum."""
 
@@ -50,7 +45,6 @@ class TestImageDetail:
         assert ImageDetail.AUTO == "auto"
         assert ImageDetail.LOW == "low"
         assert ImageDetail.HIGH == "high"
-
 
 class TestTextContent:
     """Tests for the TextContent model."""
@@ -68,7 +62,6 @@ class TestTextContent:
         dumped = content.model_dump()
 
         assert dumped == {"type": "text", "text": "Hello, world!"}
-
 
 class TestImageContent:
     """Tests for the ImageContent model."""
@@ -125,7 +118,6 @@ class TestImageContent:
             "image_url": {"url": "data:image/png;base64,abc123", "detail": "high"},
         }
 
-
 class TestToolFunction:
     """Tests for the ToolFunction model."""
 
@@ -135,7 +127,6 @@ class TestToolFunction:
 
         assert func.name == "get_weather"
         assert func.arguments == '{"location": "SF"}'
-
 
 class TestToolCall:
     """Tests for the ToolCall model."""
@@ -149,7 +140,6 @@ class TestToolCall:
         assert tool_call.type == "function"
         assert tool_call.function.name == "get_weather"
         assert tool_call.function.arguments == '{"location": "SF"}'
-
 
 class TestMessage:
     """Tests for the Message model."""

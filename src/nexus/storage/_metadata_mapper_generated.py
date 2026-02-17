@@ -7,8 +7,6 @@ Central metadata mapping between FileMetadata and serialization formats.
 Proto/JSON methods are auto-generated. SQL methods are manual (different schema).
 """
 
-from __future__ import annotations
-
 import logging
 from contextlib import suppress
 from datetime import datetime
@@ -19,20 +17,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 def _to_naive(dt: datetime | None) -> datetime | None:
     """Strip timezone from datetime (SQLite stores naive UTC)."""
     if dt is None:
         return None
     return dt.replace(tzinfo=None) if dt.tzinfo else dt
 
-
 def _utcnow_naive() -> datetime:
     """Return current UTC time as naive datetime (for SQLite compat)."""
     from datetime import UTC
 
     return datetime.now(UTC).replace(tzinfo=None)
-
 
 # ---------------------------------------------------------------------------
 # Field name mapping: proto field -> SQLAlchemy column (manual, not generated)
@@ -55,7 +50,6 @@ PROTO_TO_SQL: dict[str, str | None] = {
     "owner_id": "posix_uid",
     "i_links_count": None,  # Metastore-only (mount ref count), not in SQL
 }
-
 
 class MetadataMapper:
     """Centralized mapping between FileMetadata and other representations.

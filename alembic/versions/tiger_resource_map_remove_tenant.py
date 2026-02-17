@@ -35,7 +35,6 @@ down_revision: Union[str, Sequence[str], None] = "tiger_cache_remove_tenant"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Remove tenant_id from Tiger Resource Map."""
     bind = op.get_bind()
@@ -89,7 +88,6 @@ def upgrade() -> None:
                 "idx_tiger_resource_lookup",
                 ["resource_type", "resource_id"],
             )
-
 
 def downgrade() -> None:
     """Restore tenant_id to Tiger Resource Map."""

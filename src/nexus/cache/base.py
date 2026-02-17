@@ -7,7 +7,6 @@ Using Protocol allows for structural subtyping without requiring inheritance.
 from collections.abc import Awaitable, Callable
 from typing import Protocol, runtime_checkable
 
-
 @runtime_checkable
 class PermissionCacheProtocol(Protocol):
     """Protocol for permission cache backends.
@@ -165,7 +164,6 @@ class PermissionCacheProtocol(Protocol):
         """
         ...
 
-
 @runtime_checkable
 class TigerCacheProtocol(Protocol):
     """Protocol for Tiger cache backends.
@@ -260,7 +258,6 @@ class TigerCacheProtocol(Protocol):
         """
         ...
 
-
 @runtime_checkable
 class ResourceMapCacheProtocol(Protocol):
     """Protocol for resource map cache (UUID -> int64 mappings).
@@ -328,7 +325,6 @@ class ResourceMapCacheProtocol(Protocol):
             mappings: Dict mapping (resource_type, resource_id, zone_id) to integer IDs
         """
         ...
-
 
 @runtime_checkable
 class EmbeddingCacheProtocol(Protocol):

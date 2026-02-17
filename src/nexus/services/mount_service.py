@@ -15,8 +15,6 @@ as passthrough methods that delegate to the parent NexusFS instance.
 Full extraction of sync logic will be completed in Phase 3.
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging
@@ -27,7 +25,6 @@ from nexus.core.context_utils import get_database_url, get_user_identity, get_zo
 from nexus.core.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
-
 
 def _needs_token_manager_db(backend_type: str, config: dict[str, Any]) -> bool:
     """Check if backend needs token_manager_db auto-injection."""
@@ -41,16 +38,14 @@ def _needs_token_manager_db(backend_type: str, config: dict[str, Any]) -> bool:
         return False
     return info.user_scoped and "token_manager_db" in info.connection_args
 
-
 # Type alias for progress callback: (files_scanned: int, current_path: str) -> None
 ProgressCallback = Callable[[int, str], None]
 
+from nexus.core.permissions import OperationContext
+from nexus.core.router import PathRouter
+from nexus.services.mount_manager import MountManager
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFilesystem
-    from nexus.core.permissions import OperationContext
-    from nexus.core.router import PathRouter
-    from nexus.services.mount_manager import MountManager
-
 
 class MountService:
     """Independent mount service extracted from NexusFS.
@@ -96,7 +91,7 @@ class MountService:
         self,
         router: PathRouter,
         mount_manager: MountManager | None = None,
-        nexus_fs: NexusFilesystem | None = None,
+        nexus_fs: "NexusFilesystem | None" = None,
     ):
         """Initialize mount service.
 
@@ -1104,7 +1099,6 @@ Use sync_mount() to refresh metadata from the backend.
         except Exception as e:
             logger.warning(f"Failed to generate SKILL.md for {mount_point}: {e}")
             return False
-
 
 # =============================================================================
 # Phase 2 Extraction Progress

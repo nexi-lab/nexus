@@ -6,8 +6,6 @@ FUSE filesystem, including mount mode management and lifecycle control.
 Issue #1076: Added automatic cache warmup on mount for faster first access.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import threading
@@ -17,13 +15,13 @@ from typing import TYPE_CHECKING, Any
 
 from fuse import FUSE
 
+from nexus.core.filesystem import NexusFilesystem
 if TYPE_CHECKING:
     from nexus.core.filesystem import NexusFilesystem
 
 from nexus.fuse.operations import NexusFUSEOperations
 
 logger = logging.getLogger(__name__)
-
 
 class MountMode(Enum):
     """Mount mode for FUSE filesystem.
@@ -36,7 +34,6 @@ class MountMode(Enum):
     BINARY = "binary"
     TEXT = "text"
     SMART = "smart"
-
 
 class NexusFUSE:
     """FUSE mount manager for Nexus filesystem.
@@ -396,7 +393,7 @@ class NexusFUSE:
         if self._mount_thread and self._mount_thread.is_alive():
             self._mount_thread.join()
 
-    def __enter__(self) -> NexusFUSE:
+    def __enter__(self) -> "NexusFUSE":
         """Context manager entry."""
         return self
 
@@ -407,7 +404,6 @@ class NexusFUSE:
                 self.unmount()
             except Exception as e:
                 logger.error(f"Error unmounting in context manager: {e}")
-
 
 def mount_nexus(
     nexus_fs: NexusFilesystem,

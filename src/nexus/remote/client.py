@@ -24,8 +24,6 @@ Example:
     nx.skills_create("my-skill", "A skill", template="basic")
 """
 
-from __future__ import annotations
-
 import builtins
 import logging
 import time
@@ -35,6 +33,12 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin
 
+from nexus.remote.domain.mcp import MCPClient
+from nexus.remote.domain.memory import MemoryClient
+from nexus.remote.domain.oauth import OAuthClient
+from nexus.remote.domain.sandbox import SandboxClient
+from nexus.remote.domain.share_links import ShareLinksClient
+from nexus.remote.domain.skills import SkillsClient
 if TYPE_CHECKING:
     from nexus.remote.domain.mcp import MCPClient
     from nexus.remote.domain.memory import MemoryClient
@@ -64,7 +68,6 @@ from nexus.remote.rpc_proxy import RPCProxyBase
 from nexus.server.protocol import RPCRequest, RPCResponse
 
 logger = logging.getLogger(__name__)
-
 
 # ============================================================
 # Backwards-compat: flat method → domain delegation map
@@ -130,11 +133,9 @@ _DOMAIN_METHOD_MAP: dict[str, tuple[str, str]] = {
     "get_share_link_access_logs": ("share_links", "get_access_logs"),
 }
 
-
 # ============================================================
 # RemoteNexusFS — Sync RPC Proxy Client
 # ============================================================
-
 
 class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
     """Remote Nexus filesystem client.
@@ -748,7 +749,7 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
             self._memory_api = _MemoryClient(lambda *a, **kw: self._call_rpc(*a, **kw))
         return self._memory_api
 
-    def __enter__(self) -> RemoteNexusFS:
+    def __enter__(self) -> "RemoteNexusFS":
         return self
 
     def __exit__(self, *args: Any) -> None:
@@ -756,7 +757,6 @@ class RemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
 
     def close(self) -> None:
         self.session.close()
-
 
 # Register as virtual subclass of NexusFilesystem so isinstance() works at runtime
 # without putting abstract methods in MRO (which would shadow __getattr__ dispatch).

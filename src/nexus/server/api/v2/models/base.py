@@ -8,10 +8,7 @@ unknown fields in requests are silently ignored, enabling forward
 compatibility when clients send fields added in newer versions.
 """
 
-from __future__ import annotations
-
 from pydantic import BaseModel, ConfigDict
-
 
 class ApiModel(BaseModel):
     """Base model for all API v2 request and response types.

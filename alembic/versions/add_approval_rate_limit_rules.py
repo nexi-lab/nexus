@@ -23,7 +23,6 @@ down_revision: Union[str, Sequence[str], None] = "add_spending_policy_tables"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add Phase 2-4 schema changes."""
     # --- Phase 2: spending_approvals table ---
@@ -62,7 +61,6 @@ def upgrade() -> None:
         batch_op.add_column(sa.Column("max_tx_per_day", sa.Integer, nullable=True))
         # --- Phase 4: rules JSON column ---
         batch_op.add_column(sa.Column("rules", sa.Text, nullable=True))
-
 
 def downgrade() -> None:
     """Reverse Phase 2-4 schema changes."""

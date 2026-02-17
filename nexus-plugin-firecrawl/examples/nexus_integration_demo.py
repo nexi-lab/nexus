@@ -33,13 +33,11 @@ except ImportError:
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 from nexus_firecrawl import FirecrawlPlugin
 
-
 def print_section(title: str) -> None:
     """Print a section header."""
     print("\n" + "=" * 70)
     print(f"  {title}")
     print("=" * 70 + "\n")
-
 
 async def demo_plugin_discovery() -> None:
     """Demo 1: How Nexus discovers the Firecrawl plugin."""
@@ -88,7 +86,6 @@ async def demo_plugin_discovery() -> None:
             print("\n⚠️  Firecrawl plugin not found in registry")
             print("   Make sure to install it: pip install -e .")
 
-
 async def demo_cli_execution() -> None:
     """Demo 2: How CLI commands execute through the plugin."""
     print_section("DEMO 2: CLI Command Execution Flow")
@@ -110,7 +107,6 @@ async def demo_cli_execution() -> None:
     print("  9. Plugin displays result to user")
 
     print("\n📝 This is handled automatically by Nexus!")
-
 
 async def demo_nexusfs_integration() -> None:
     """Demo 3: How content is saved to NexusFS."""
@@ -184,7 +180,6 @@ async def demo_nexusfs_integration() -> None:
         else:
             print("\n💡 Set FIRECRAWL_API_KEY to run real scraping demo")
 
-
 async def demo_programmatic_usage() -> None:
     """Demo 4: Using the plugin programmatically."""
     print_section("DEMO 4: Programmatic Usage")
@@ -251,7 +246,6 @@ async def demo_programmatic_usage() -> None:
         except Exception as e:
             print(f"❌ Error: {e}")
 
-
 async def demo_full_workflow() -> None:
     """Demo 5: Complete workflow with multiple plugins."""
     print_section("DEMO 5: Multi-Plugin Workflow")
@@ -273,7 +267,6 @@ async def demo_full_workflow() -> None:
     print("```")
 
     print("\n🔗 All plugins work together through NexusFS!")
-
 
 async def main() -> None:
     """Run all demos."""
@@ -317,7 +310,6 @@ async def main() -> None:
     print("   • EXAMPLES.md - Code examples")
 
     print("\n" + "=" * 70)
-
 
 if __name__ == "__main__":
     asyncio.run(main())

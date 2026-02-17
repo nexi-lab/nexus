@@ -5,8 +5,6 @@ Tests the full flow: Nexus write event -> backlog enqueue -> backend write-back
 and mock backend. Includes conflict resolution integration tests.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock
@@ -27,7 +25,6 @@ from nexus.storage.models import Base
 # Fixtures
 # =============================================================================
 
-
 @dataclass
 class FakeFileInfo:
     """Minimal FileInfo for integration tests."""
@@ -37,14 +34,12 @@ class FakeFileInfo:
     backend_version: str | None = None
     content_hash: str | None = None
 
-
 @pytest.fixture
 def db_session_factory():
     """In-memory SQLite with all tables."""
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine)
-
 
 @pytest.fixture
 def mock_gateway(db_session_factory):
@@ -81,7 +76,6 @@ def mock_gateway(db_session_factory):
     gw.read.return_value = b"hello world"
     return gw
 
-
 @pytest.fixture
 def mock_event_bus():
     """In-memory event bus that tracks published events."""
@@ -97,16 +91,13 @@ def mock_event_bus():
     bus._published = published
     return bus
 
-
 async def _empty_async_iter():
     return
     yield  # pragma: no cover
 
-
 # =============================================================================
 # Integration Test
 # =============================================================================
-
 
 class TestWriteBackIntegration:
     """Full pipeline integration test."""
@@ -205,11 +196,9 @@ class TestWriteBackIntegration:
         assert len(entries) == 1
         assert entries[0].content_hash == "v3"  # Latest wins
 
-
 # =============================================================================
 # Conflict Integration Tests (Issue #1130)
 # =============================================================================
-
 
 class TestConflictIntegration:
     """Conflict resolution integration tests with real SQLite stores."""
@@ -465,11 +454,9 @@ class TestConflictIntegration:
         stats = conflict_log_store.get_stats()
         assert stats["total"] >= 1
 
-
 # =============================================================================
 # Multi-Zone Integration Tests (#9A)
 # =============================================================================
-
 
 class TestMultiZoneIntegration:
     """Multi-zone write-back integration tests."""

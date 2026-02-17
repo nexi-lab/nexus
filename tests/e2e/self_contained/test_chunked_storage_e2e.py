@@ -4,7 +4,6 @@ import os
 
 from nexus.backends.chunked_storage import CDC_THRESHOLD_BYTES
 
-
 class TestChunkedStorageE2E:
     """End-to-end tests for chunked storage through NexusFS."""
 
@@ -126,7 +125,6 @@ class TestChunkedStorageE2E:
         nexus_fs.delete("/dedup_a.bin")
         assert nexus_fs.read("/dedup_b.bin") == large_content
 
-
 class TestChunkedStorageBackwardCompatibility:
     """Test backward compatibility with existing single-blob storage."""
 
@@ -202,7 +200,6 @@ class TestChunkedStorageBackwardCompatibility:
 
         assert not backend._is_chunked_content(etag2)
         assert nexus_fs.read("/overwrite2.bin") == small_content
-
 
 class TestChunkedStorageCDCBehavior:
     """Tests for CDC-specific behavior."""

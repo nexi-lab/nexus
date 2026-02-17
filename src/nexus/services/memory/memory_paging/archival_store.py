@@ -6,8 +6,6 @@ Optimized for knowledge queries: "What do I know about X?", "Find similar to Y"
 Thread-safe: Each operation creates its own session from the session factory.
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable
 from datetime import datetime
@@ -15,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.services.memory.memory_paging.namespace_util import strip_tier_prefix
 
+from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
@@ -22,11 +21,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 # Max memories to load for Python-side similarity search.
 # Prevents O(n) full-table scan when pgvector is unavailable.
 _PYTHON_SEARCH_CAP = 1000
-
 
 class ArchivalStore:
     """Manages archival storage (tertiary memory tier).

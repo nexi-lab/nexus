@@ -8,8 +8,6 @@ Architecture:
     Services operate on these; never pass ORM models outside service boundaries.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
@@ -17,7 +15,6 @@ from enum import StrEnum
 # =============================================================================
 # Enums
 # =============================================================================
-
 
 class AnomalySeverity(StrEnum):
     """Alert severity levels."""
@@ -27,13 +24,11 @@ class AnomalySeverity(StrEnum):
     HIGH = "high"
     CRITICAL = "critical"
 
-
 class NodeType(StrEnum):
     """Governance graph node types."""
 
     AGENT = "agent"
     PRINCIPAL = "principal"
-
 
 class EdgeType(StrEnum):
     """Governance graph edge types."""
@@ -42,14 +37,12 @@ class EdgeType(StrEnum):
     DELEGATION = "delegation"
     CONSTRAINT = "constraint"
 
-
 class ConstraintType(StrEnum):
     """Types of governance constraints between agents."""
 
     BLOCK = "block"
     REQUIRE_APPROVAL = "require_approval"
     RATE_LIMIT = "rate_limit"
-
 
 class RingType(StrEnum):
     """Types of detected fraud rings."""
@@ -58,11 +51,9 @@ class RingType(StrEnum):
     COMPLEX_CYCLE = "complex_cycle"
     SYBIL_CLUSTER = "sybil_cluster"
 
-
 # =============================================================================
 # Phase 1: Anomaly Detection Models
 # =============================================================================
-
 
 @dataclass(frozen=True)
 class TransactionSummary:
@@ -73,7 +64,6 @@ class TransactionSummary:
     amount: float
     counterparty: str
     timestamp: datetime
-
 
 @dataclass(frozen=True)
 class AgentBaseline:
@@ -87,7 +77,6 @@ class AgentBaseline:
     counterparty_count: int
     computed_at: datetime
     observation_count: int = 0
-
 
 @dataclass(frozen=True)
 class AnomalyAlert:
@@ -105,7 +94,6 @@ class AnomalyAlert:
     resolved_at: datetime | None = None
     resolved_by: str | None = None
 
-
 @dataclass(frozen=True)
 class AnomalyDetectionConfig:
     """Configuration for statistical anomaly detection."""
@@ -114,11 +102,9 @@ class AnomalyDetectionConfig:
     iqr_multiplier: float = 1.5
     min_observations: int = 10
 
-
 # =============================================================================
 # Phase 2: Collusion Detection Models
 # =============================================================================
-
 
 @dataclass(frozen=True)
 class GovernanceNode:
@@ -130,7 +116,6 @@ class GovernanceNode:
     node_type: NodeType = NodeType.AGENT
     metadata: dict[str, object] = field(default_factory=dict)
     created_at: datetime | None = None
-
 
 @dataclass(frozen=True)
 class GovernanceEdge:
@@ -145,7 +130,6 @@ class GovernanceEdge:
     metadata: dict[str, object] = field(default_factory=dict)
     created_at: datetime | None = None
 
-
 @dataclass(frozen=True)
 class FraudRing:
     """Detected fraud ring (cycle of colluding agents)."""
@@ -158,7 +142,6 @@ class FraudRing:
     total_volume: float = 0.0
     detected_at: datetime | None = None
 
-
 @dataclass(frozen=True)
 class FraudScore:
     """Composite fraud score for an agent."""
@@ -169,11 +152,9 @@ class FraudScore:
     components: dict[str, float] = field(default_factory=dict)
     computed_at: datetime | None = None
 
-
 # =============================================================================
 # Phase 3: Governance Graph Models
 # =============================================================================
-
 
 @dataclass(frozen=True)
 class ConstraintCheckResult:
@@ -184,11 +165,9 @@ class ConstraintCheckResult:
     reason: str | None = None
     edge_id: str | None = None
 
-
 # =============================================================================
 # Phase 4: Response Action Models
 # =============================================================================
-
 
 @dataclass(frozen=True)
 class SuspensionRecord:
@@ -206,7 +185,6 @@ class SuspensionRecord:
     appealed_at: datetime | None = None
     decided_by: str | None = None
     decided_at: datetime | None = None
-
 
 @dataclass(frozen=True)
 class ThrottleConfig:

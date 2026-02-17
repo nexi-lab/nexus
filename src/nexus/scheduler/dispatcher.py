@@ -9,8 +9,6 @@ Uses asyncio.TaskGroup for structured concurrency (Issue #1274).
 Related: Issue #1212, #1274
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import logging
@@ -21,6 +19,7 @@ from nexus.scheduler.constants import (
     STARVATION_PROMOTION_THRESHOLD_SECS,
 )
 
+from nexus.scheduler.service import SchedulerService
 if TYPE_CHECKING:
     from nexus.scheduler.service import SchedulerService
 
@@ -28,7 +27,6 @@ logger = logging.getLogger(__name__)
 
 # Starvation promotion runs every 5 minutes
 _STARVATION_CHECK_INTERVAL = 300
-
 
 class TaskDispatcher:
     """Background task dispatcher.

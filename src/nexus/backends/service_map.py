@@ -30,13 +30,10 @@ Example:
     'gdrive_connector'
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass
 class ServiceInfo:
@@ -49,7 +46,6 @@ class ServiceInfo:
     oauth_provider: str | None  # OAuth provider name (e.g., "google")
     capabilities: list[str]  # ["read", "write", "list", "delete", "tools"]
     description: str = ""
-
 
 # Unified service registry
 # Key: unified service name
@@ -188,7 +184,6 @@ _CONNECTOR_TO_SERVICE: dict[str, str] = {}
 _MCP_TO_SERVICE: dict[str, str] = {}
 _synced = False
 
-
 def _sync_from_connector_registry() -> None:
     """Auto-derive connector fields from ConnectorRegistry.
 
@@ -233,7 +228,6 @@ def _sync_from_connector_registry() -> None:
             _CONNECTOR_TO_SERVICE[service_info.connector] = service_name
         if service_info.klavis_mcp:
             _MCP_TO_SERVICE[service_info.klavis_mcp] = service_name
-
 
 class ServiceMap:
     """Helper class for service name lookups.

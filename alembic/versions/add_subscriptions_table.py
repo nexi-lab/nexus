@@ -18,7 +18,6 @@ down_revision: tuple[str, ...] = ("eb7fb97cf314", "add_inherit_perms")  # Merge 
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-
 def upgrade() -> None:
     """Create subscriptions table for webhook event notifications."""
     op.create_table(
@@ -50,7 +49,6 @@ def upgrade() -> None:
     op.create_index("idx_subscriptions_tenant", "subscriptions", ["tenant_id"])
     op.create_index("idx_subscriptions_enabled", "subscriptions", ["enabled"])
     op.create_index("idx_subscriptions_url", "subscriptions", ["url"])
-
 
 def downgrade() -> None:
     """Drop subscriptions table."""

@@ -8,15 +8,12 @@ executing migrations between Nexus versions. It supports:
 - Destructive operation warnings
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from nexus.migrations.version_manager import MigrationContext, MigrationResult
-
 
 @dataclass
 class MigrationStep:
@@ -38,12 +35,11 @@ class MigrationStep:
     to_version: str
     name: str
     description: str
-    migrate_fn: Callable[[MigrationContext], MigrationResult]
-    rollback_fn: Callable[[MigrationContext], MigrationResult] | None = None
+    migrate_fn: Callable[["MigrationContext"], "MigrationResult"]
+    rollback_fn: Callable[["MigrationContext"], "MigrationResult"] | None = None
     requires_backup: bool = True
     is_destructive: bool = False
     alembic_revision: str | None = None
-
 
 @dataclass
 class MigrationPath:
@@ -75,7 +71,6 @@ class MigrationPath:
     def all_rollbackable(self) -> bool:
         """Check if all steps have rollback functions."""
         return all(step.rollback_fn is not None for step in self.steps)
-
 
 class MigrationRegistry:
     """Registry for all available migrations.
@@ -233,7 +228,6 @@ class MigrationRegistry:
                 result.append(src)
         return result
 
-
 def _parse_version(version: str) -> tuple[int, ...]:
     """Parse version string into comparable tuple.
 
@@ -250,10 +244,8 @@ def _parse_version(version: str) -> tuple[int, ...]:
     except ValueError:
         return (0, 0, 0)
 
-
 # Global registry instance
 _global_registry: MigrationRegistry | None = None
-
 
 def get_registry() -> MigrationRegistry:
     """Get the global migration registry.
@@ -268,7 +260,6 @@ def get_registry() -> MigrationRegistry:
         _global_registry = MigrationRegistry()
         _register_builtin_migrations(_global_registry)
     return _global_registry
-
 
 def _register_builtin_migrations(registry: MigrationRegistry) -> None:
     """Register all built-in migrations.

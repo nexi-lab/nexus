@@ -31,7 +31,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 @register_connector(
     "gcs",
     description="Google Cloud Storage with CAS deduplication",

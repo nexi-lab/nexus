@@ -24,8 +24,6 @@ Example:
     >>> manager.cancel_job(job_id)
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging
@@ -40,17 +38,16 @@ from sqlalchemy import desc, select
 
 from nexus.storage.models import SyncJobModel
 
+from nexus.core.nexus_fs import NexusFS
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
 
-
 class SyncCancelled(Exception):
     """Raised when a sync job is cancelled."""
 
     pass
-
 
 @dataclass
 class ProgressState:
@@ -74,7 +71,6 @@ class ProgressState:
             self.last_update_files = files_scanned
             return True
         return False
-
 
 class SyncJobManager:
     """Manages async sync job lifecycle.

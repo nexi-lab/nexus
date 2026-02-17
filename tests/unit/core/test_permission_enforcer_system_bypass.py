@@ -13,7 +13,6 @@ import pytest
 from nexus.core.permissions import OperationContext, Permission
 from nexus.services.permissions.enforcer import PermissionEnforcer
 
-
 class MockReBACManager:
     """Mock ReBAC manager."""
 
@@ -24,7 +23,6 @@ class MockReBACManager:
         self.checks.append({"subject": subject, "permission": permission, "object": object})
         return False  # Always deny (system should bypass)
 
-
 class MockAuditStore:
     """Mock audit store."""
 
@@ -33,7 +31,6 @@ class MockAuditStore:
 
     def log_bypass(self, entry):
         self.entries.append(entry)
-
 
 class TestSystemBypassReadOperations:
     """Test system bypass for READ operations."""
@@ -59,7 +56,6 @@ class TestSystemBypassReadOperations:
 
         # ReBAC should not be called (bypassed)
         assert len(rebac.checks) == 0
-
 
 class TestSystemBypassWriteOperations:
     """Test system bypass for WRITE operations (scoped to /system/*)."""
@@ -103,7 +99,6 @@ class TestSystemBypassWriteOperations:
             # Root level, not under /system
             enforcer.check("/file.txt", Permission.WRITE, ctx)
 
-
 class TestSystemBypassExecuteOperations:
     """Test system bypass for EXECUTE operations (scoped to /system/*)."""
 
@@ -125,7 +120,6 @@ class TestSystemBypassExecuteOperations:
 
         with pytest.raises(PermissionError, match="System bypass not allowed"):
             enforcer.check("/user/alice/malicious.py", Permission.EXECUTE, ctx)
-
 
 class TestSystemBypassKillSwitch:
     """Test the allow_system_bypass kill-switch."""
@@ -159,7 +153,6 @@ class TestSystemBypassKillSwitch:
 
         # WRITE on /system/* should work
         assert enforcer.check("/system/config.yaml", Permission.WRITE, ctx) is True
-
 
 class TestSystemBypassAuditLogging:
     """Test audit logging for system bypass operations."""
@@ -221,7 +214,6 @@ class TestSystemBypassAuditLogging:
         assert entry.allowed is False
         assert entry.denial_reason == "scope_limit"
 
-
 class TestSystemVsAdminBypass:
     """Test interaction between system and admin bypass."""
 
@@ -260,7 +252,6 @@ class TestSystemVsAdminBypass:
 
         # Should use admin bypass (requires capabilities)
         assert enforcer.check("/file.txt", Permission.READ, ctx) is True
-
 
 class TestSystemBypassEdgeCases:
     """Test edge cases for system bypass."""

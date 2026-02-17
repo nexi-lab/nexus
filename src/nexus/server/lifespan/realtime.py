@@ -3,19 +3,17 @@
 Extracted from fastapi_server.py (#1602).
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from fastapi import FastAPI
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
-
 
 async def startup_realtime(app: FastAPI) -> list[asyncio.Task]:
     """Initialize realtime infrastructure and return background tasks.
@@ -38,7 +36,6 @@ async def startup_realtime(app: FastAPI) -> list[asyncio.Task]:
     await _startup_lock_manager(app)
 
     return bg_tasks
-
 
 async def shutdown_realtime(app: FastAPI) -> None:
     """Shutdown realtime infrastructure in reverse order."""
@@ -101,11 +98,9 @@ async def shutdown_realtime(app: FastAPI) -> None:
 
         set_subscription_manager(None)
 
-
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
 
 def _startup_event_log(app: FastAPI) -> None:
     """Event Log WAL for durable event persistence (Issue #1397)."""
@@ -127,7 +122,6 @@ def _startup_event_log(app: FastAPI) -> None:
             logger.info(f"Event log initialized (wal_dir={wal_dir}, sync_mode={sync_mode})")
     except Exception as e:
         logger.warning(f"Failed to initialize event log: {e}")
-
 
 async def _startup_event_bus(app: FastAPI) -> None:
     """Start event bus and wire event log for WAL-first persistence (Issue #1397)."""
@@ -162,7 +156,6 @@ async def _startup_event_bus(app: FastAPI) -> None:
         event_bus_ref.set_event_log(app.state.event_log)
         logger.info("Event log wired into EventBus (WAL-first before pub/sub)")
 
-
 async def _startup_websocket(app: FastAPI) -> None:
     """Initialize WebSocket Manager for real-time events (Issue #1116)."""
     try:
@@ -180,7 +173,6 @@ async def _startup_websocket(app: FastAPI) -> None:
         logger.info("WebSocket manager started for real-time events")
     except Exception as e:
         logger.warning(f"Failed to start WebSocket manager: {e}")
-
 
 async def _startup_writeback(app: FastAPI) -> None:
     """Initialize WriteBack Service for bidirectional sync (Issue #1129/#1130)."""
@@ -235,7 +227,6 @@ async def _startup_writeback(app: FastAPI) -> None:
     except Exception as e:
         logger.warning(f"Failed to start WriteBack service: {e}")
 
-
 async def _startup_lock_manager(app: FastAPI) -> None:
     """Connect Lock Manager coordination client (Issue #1186)."""
     if not (app.state.nexus_fs and hasattr(app.state.nexus_fs, "_coordination_client")):
@@ -248,7 +239,6 @@ async def _startup_lock_manager(app: FastAPI) -> None:
             logger.info("Lock manager coordination client connected")
         except Exception as e:
             logger.warning(f"Failed to connect lock manager coordination client: {e}")
-
 
 def _startup_exporter_registry(app: FastAPI) -> None:
     """Initialize ExporterRegistry and configured exporters (Issue #1138)."""

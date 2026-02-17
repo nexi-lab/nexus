@@ -18,8 +18,6 @@ Example:
     pytest tests/integration/test_graph_store.py -v
 """
 
-from __future__ import annotations
-
 import json
 import logging
 
@@ -32,7 +30,6 @@ from nexus.storage.models import Base
 # Configure logging
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
-
 
 @pytest.fixture
 async def async_engine(tmp_path):
@@ -50,7 +47,6 @@ async def async_engine(tmp_path):
     yield engine
     await engine.dispose()
 
-
 @pytest.fixture
 async def session(async_engine):
     """Create async database session."""
@@ -60,12 +56,10 @@ async def session(async_engine):
     async with async_session_factory() as session:
         yield session
 
-
 @pytest.fixture
 async def graph_store(session):
     """Create GraphStore instance."""
     return GraphStore(session, zone_id="test-zone")
-
 
 class TestGraphStoreE2E:
     """End-to-end tests for GraphStore."""
@@ -409,7 +403,6 @@ class TestGraphStoreE2E:
         logger.info(f"With min_confidence=0.75: {len(high_conf_rels)} relationships")
         assert len(high_conf_rels) == 1
         assert high_conf_rels[0].target_entity_id == b_id
-
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--log-cli-level=INFO"])

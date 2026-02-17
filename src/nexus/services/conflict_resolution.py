@@ -17,17 +17,16 @@ Resolution Strategies (Issue #1130):
 - RENAME_CONFLICT: Create .sync-conflict copy preserving both versions
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
+from nexus.backends.backend import FileInfo
+from nexus.services.change_log_store import ChangeLogEntry
 if TYPE_CHECKING:
     from nexus.backends.backend import FileInfo
     from nexus.services.change_log_store import ChangeLogEntry
-
 
 class ConflictStrategy(StrEnum):
     """Configurable conflict resolution strategy."""
@@ -39,7 +38,6 @@ class ConflictStrategy(StrEnum):
     KEEP_LARGER = "keep_larger"
     RENAME_CONFLICT = "rename_conflict"
 
-
 class ResolutionOutcome(StrEnum):
     """Result of applying a conflict resolution strategy."""
 
@@ -48,14 +46,12 @@ class ResolutionOutcome(StrEnum):
     ABORT = "abort"
     RENAME_CONFLICT = "rename_conflict"
 
-
 class ConflictStatus(StrEnum):
     """Status of a conflict record in the audit log."""
 
     AUTO_RESOLVED = "auto_resolved"
     MANUAL_PENDING = "manual_pending"
     MANUALLY_RESOLVED = "manually_resolved"
-
 
 @dataclass(frozen=True)
 class ConflictContext:
@@ -70,7 +66,6 @@ class ConflictContext:
     path: str
     backend_name: str
     zone_id: str
-
 
 @dataclass(frozen=True)
 class ConflictRecord:
@@ -92,10 +87,8 @@ class ConflictRecord:
     status: ConflictStatus
     resolved_at: datetime
 
-
 class ConflictAbortError(Exception):
     """Raised when ABORT strategy is applied to a conflict."""
-
 
 def resolve_conflict(
     ctx: ConflictContext,
@@ -124,7 +117,6 @@ def resolve_conflict(
         case ConflictStrategy.RENAME_CONFLICT:
             return ResolutionOutcome.RENAME_CONFLICT
 
-
 def detect_conflict(
     nexus_mtime: datetime | None,
     nexus_content_hash: str | None,
@@ -151,11 +143,9 @@ def detect_conflict(
 
     return nexus_changed and backend_changed
 
-
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
 
 def _resolve_by_mtime(
     nexus_mtime: datetime | None,
@@ -172,7 +162,6 @@ def _resolve_by_mtime(
         return ResolutionOutcome.NEXUS_WINS
     return ResolutionOutcome.BACKEND_WINS
 
-
 def _resolve_by_size(
     nexus_size: int | None,
     backend_size: int | None,
@@ -183,7 +172,6 @@ def _resolve_by_size(
     if n >= b:
         return ResolutionOutcome.NEXUS_WINS
     return ResolutionOutcome.BACKEND_WINS
-
 
 def _nexus_changed(
     nexus_mtime: datetime | None,
@@ -201,7 +189,6 @@ def _nexus_changed(
 
     # Cannot determine — assume changed to be safe
     return True
-
 
 def _backend_changed(
     backend_file_info: FileInfo,

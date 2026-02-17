@@ -16,7 +16,6 @@ allowing them to search, read, analyze, and persist data across agent runs.
 
 from agents import function_tool
 
-
 def get_nexus_tools(nx):
     """
     Create OpenAI Agent SDK tools from a Nexus filesystem instance.

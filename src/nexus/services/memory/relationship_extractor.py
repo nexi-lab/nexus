@@ -15,8 +15,6 @@ Example:
     "Task X blocks Task Y" -> (Task X, BLOCKS, Task Y, 0.90)
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import re
@@ -73,7 +71,6 @@ DEFAULT_RELATIONSHIP_TYPES: list[str] = [
     "DERIVES",
 ]
 
-
 @dataclass
 class ExtractedRelationship:
     """Extracted relationship triplet with metadata."""
@@ -94,7 +91,6 @@ class ExtractedRelationship:
             "source_text": self.source_text,
         }
 
-
 @dataclass
 class RelationshipExtractionResult:
     """Result of relationship extraction."""
@@ -107,7 +103,6 @@ class RelationshipExtractionResult:
     def to_dicts(self) -> list[dict[str, Any]]:
         """Convert relationships to list of dictionaries."""
         return [r.to_dict() for r in self.relationships]
-
 
 class RelationshipExtractor(ABC):
     """Abstract base class for relationship extractors."""
@@ -150,7 +145,6 @@ class RelationshipExtractor(ABC):
             RelationshipExtractionResult with extracted relationships.
         """
         pass
-
 
 class LLMRelationshipExtractor(RelationshipExtractor):
     """LLM-based relationship extractor (recommended approach).
@@ -507,7 +501,6 @@ Output:"""
 
         return None
 
-
 class HeuristicRelationshipExtractor(RelationshipExtractor):
     """Simple heuristic-based relationship extractor (fallback only).
 
@@ -697,11 +690,9 @@ class HeuristicRelationshipExtractor(RelationshipExtractor):
 
         return None
 
-
 # Convenience functions
 
 _default_extractor: LLMRelationshipExtractor | None = None
-
 
 def get_extractor(
     llm_provider: Any = None,
@@ -724,7 +715,6 @@ def get_extractor(
         _default_extractor = LLMRelationshipExtractor(model=model)
     return _default_extractor
 
-
 def extract_relationships(
     text: str,
     entities: list[dict[str, Any]] | None = None,
@@ -746,7 +736,6 @@ def extract_relationships(
     result = extractor.extract(text, entities, relationship_types)
     return result.relationships
 
-
 def extract_relationships_as_dicts(
     text: str,
     entities: list[dict[str, Any]] | None = None,
@@ -766,7 +755,6 @@ def extract_relationships_as_dicts(
     """
     relationships = extract_relationships(text, entities, relationship_types, llm_provider)
     return [r.to_dict() for r in relationships]
-
 
 async def extract_relationships_async(
     text: str,

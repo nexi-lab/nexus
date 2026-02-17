@@ -4,8 +4,6 @@ Implements SandboxProvider interface using Docker containers for local code exec
 Designed for development and testing environments.
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import logging
@@ -42,7 +40,6 @@ except ImportError:
     DOCKER_AVAILABLE = False
     logger.warning("docker package not installed. DockerSandboxProvider will not work.")
 
-
 @dataclass
 class ContainerInfo:
     """Internal container tracking information."""
@@ -54,7 +51,6 @@ class ContainerInfo:
     template_id: str | None
     metadata: dict[str, Any]
     status: str  # "active", "paused", "stopped"
-
 
 class DockerSandboxProvider(SandboxProvider):
     """Docker-based local sandbox provider.

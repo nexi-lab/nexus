@@ -34,7 +34,6 @@ from nexus.storage.record_store import SQLAlchemyRecordStore
 # Add src to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-
 @dataclass
 class RequestResult:
     """Result of a single request."""
@@ -46,7 +45,6 @@ class RequestResult:
     success: bool
     error: str | None = None
     thread_name: str = ""
-
 
 @dataclass
 class TestResults:
@@ -113,11 +111,9 @@ class TestResults:
         lines.append("=" * 60)
         return "\n".join(lines)
 
-
 # =============================================================================
 # HTTP Client Test (against running server)
 # =============================================================================
-
 
 @pytest.fixture
 def base_url():
@@ -126,7 +122,6 @@ def base_url():
     if not url:
         pytest.skip("NEXUS_BASE_URL not set — no running server for HTTP test")
     return url
-
 
 def test_http_concurrent_requests(
     base_url: str,
@@ -215,11 +210,9 @@ def test_http_concurrent_requests(
 
     return results
 
-
 # =============================================================================
 # In-Process Test (direct NexusFS calls)
 # =============================================================================
-
 
 def test_in_process_thread_exhaustion(
     num_requests: int = 20,
@@ -333,11 +326,9 @@ def test_in_process_thread_exhaustion(
 
     return results
 
-
 # =============================================================================
 # Async simulation (matching FastAPI server behavior)
 # =============================================================================
-
 
 async def test_async_thread_exhaustion(
     num_requests: int = 20,
@@ -479,11 +470,9 @@ async def test_async_thread_exhaustion(
 
     return results
 
-
 # =============================================================================
 # Main
 # =============================================================================
-
 
 def main():
     parser = argparse.ArgumentParser(description="Test thread pool exhaustion in Nexus server")
@@ -567,7 +556,6 @@ def main():
     else:
         print("\n*** No exhaustion detected in this test run ***")
         sys.exit(0)
-
 
 if __name__ == "__main__":
     main()

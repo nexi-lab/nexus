@@ -11,8 +11,6 @@ Bearer token authentication enabled, covering:
 Run with: python -m pytest tests/e2e/test_memory_paging_fastapi_e2e.py -v
 """
 
-from __future__ import annotations
-
 import shutil
 import tempfile
 from collections.abc import Sequence
@@ -32,7 +30,6 @@ from nexus.storage.models import Base
 # ==============================================================================
 # In-memory metadata store stub (avoids LocalRaft dependency)
 # ==============================================================================
-
 
 class InMemoryMetadataStore(FileMetadataProtocol):
     """Minimal in-memory metadata store for tests that don't need file ops."""
@@ -82,11 +79,9 @@ class InMemoryMetadataStore(FileMetadataProtocol):
     def close(self) -> None:
         self._store.clear()
 
-
 # ==============================================================================
 # Fixtures
 # ==============================================================================
-
 
 @pytest.fixture(autouse=True)
 def _set_env(monkeypatch):
@@ -94,7 +89,6 @@ def _set_env(monkeypatch):
     monkeypatch.setenv("NEXUS_JWT_SECRET", "test-secret-key-12345")
     # Remove NEXUS_DATABASE_URL so RecordStore uses explicit db_path, not env override
     monkeypatch.delenv("NEXUS_DATABASE_URL", raising=False)
-
 
 @pytest.fixture
 def db_engine(tmp_path):
@@ -118,12 +112,10 @@ def db_engine(tmp_path):
     Base.metadata.drop_all(engine)
     engine.dispose()
 
-
 @pytest.fixture
 def db_session_factory(db_engine):
     """Create a session factory bound to the shared engine."""
     return sessionmaker(bind=db_engine)
-
 
 @pytest.fixture
 def api_keys(db_session_factory):
@@ -155,7 +147,6 @@ def api_keys(db_session_factory):
         "normal_key": normal_raw,
         "normal_key_id": normal_key_id,
     }
-
 
 @pytest.fixture
 def app_with_db_auth(tmp_path, db_session_factory, api_keys):
@@ -202,29 +193,24 @@ def app_with_db_auth(tmp_path, db_session_factory, api_keys):
     record_store.close()
     shutil.rmtree(tmpdir, ignore_errors=True)
 
-
 @pytest.fixture
 def client(app_with_db_auth):
     """Create TestClient."""
     return TestClient(app_with_db_auth)
-
 
 @pytest.fixture
 def admin_headers(api_keys):
     """Auth headers for admin user."""
     return {"Authorization": f"Bearer {api_keys['admin_key']}"}
 
-
 @pytest.fixture
 def normal_headers(api_keys):
     """Auth headers for normal (non-admin) user."""
     return {"Authorization": f"Bearer {api_keys['normal_key']}"}
 
-
 # ==============================================================================
 # Tests: Unauthenticated
 # ==============================================================================
-
 
 class TestUnauthenticated:
     """Unauthenticated requests should be rejected."""
@@ -264,11 +250,9 @@ class TestUnauthenticated:
         )
         assert response.status_code == 401
 
-
 # ==============================================================================
 # Tests: Admin User
 # ==============================================================================
-
 
 class TestAdminUser:
     """Admin user (is_admin=True) operations."""
@@ -363,11 +347,9 @@ class TestAdminUser:
         assert delete_resp.status_code == 200
         assert delete_resp.json()["deleted"] is True
 
-
 # ==============================================================================
 # Tests: Normal User
 # ==============================================================================
-
 
 class TestNormalUser:
     """Normal user (is_admin=False) operations."""
@@ -457,11 +439,9 @@ class TestNormalUser:
         assert delete_resp.status_code == 200
         assert delete_resp.json()["deleted"] is True
 
-
 # ==============================================================================
 # Tests: Revoked Key
 # ==============================================================================
-
 
 class TestRevokedKey:
     """Revoked API keys should be rejected."""
@@ -479,11 +459,9 @@ class TestRevokedKey:
         )
         assert response.status_code == 401
 
-
 # ==============================================================================
 # Tests: Paging with Auth
 # ==============================================================================
-
 
 class TestPagingWithAuth:
     """Memory paging behavior through authenticated HTTP endpoints."""

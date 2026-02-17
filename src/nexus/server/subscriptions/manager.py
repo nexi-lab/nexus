@@ -1,7 +1,5 @@
 """Subscription manager for webhook event notifications."""
 
-from __future__ import annotations
-
 import asyncio
 import hashlib
 import hmac
@@ -21,6 +19,8 @@ from nexus.server.subscriptions.models import (
     WebhookPayload,
 )
 
+from collections.abc import Callable
+from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -33,7 +33,6 @@ MAX_RETRIES = 3
 RETRY_DELAYS = [1, 5, 30]  # seconds
 WEBHOOK_TIMEOUT = 10.0  # seconds
 MAX_CONSECUTIVE_FAILURES = 10  # Disable after this many failures
-
 
 class SubscriptionManager:
     """Manages webhook subscriptions and event delivery."""

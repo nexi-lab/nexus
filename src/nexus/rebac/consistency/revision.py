@@ -16,19 +16,17 @@ Usage:
 Related: Issue #1459 (decomposition), P0-1 (consistency levels)
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Protocol
 
 from sqlalchemy.exc import OperationalError, ProgrammingError
 
+from sqlalchemy.engine import Engine
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
 logger = logging.getLogger(__name__)
-
 
 class ConnectionHelper(Protocol):
     """Protocol for database connection helpers.
@@ -47,7 +45,6 @@ class ConnectionHelper(Protocol):
     def fix_sql_placeholders(self, sql: str) -> str:
         """Convert ? placeholders to %s for PostgreSQL."""
         ...
-
 
 def increment_version_token(
     engine: Engine,
@@ -126,7 +123,6 @@ def increment_version_token(
 
         conn.commit()
         return f"v{version}"
-
 
 def get_zone_revision_for_grant(engine: Engine, zone_id: str) -> int:
     """Get current zone revision for consistency during expansion.

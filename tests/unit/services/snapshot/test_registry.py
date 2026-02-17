@@ -3,13 +3,10 @@
 Tests: Register, TrackPath, FastPath, Unregister, Concurrent.
 """
 
-from __future__ import annotations
-
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
 from nexus.services.snapshot.registry import TransactionRegistry
-
 
 class TestRegister:
     """Tests for register()."""
@@ -28,7 +25,6 @@ class TestRegister:
         registry.register("txn-1")
         registry.register("txn-2")
         assert registry.active_count == 2
-
 
 class TestTrackPath:
     """Tests for track_path()."""
@@ -63,7 +59,6 @@ class TestTrackPath:
         assert result is True
         assert registry.get_transaction_for_path("/file.txt") == "unknown-txn"
 
-
 class TestFastPath:
     """Tests for has_active_transactions() fast-path."""
 
@@ -78,7 +73,6 @@ class TestFastPath:
         registry.register("txn-1")
         registry.unregister("txn-1")
         assert registry.has_active_transactions() is False
-
 
 class TestGetPaths:
     """Tests for get_paths()."""
@@ -95,7 +89,6 @@ class TestGetPaths:
         registry.track_path("txn-1", "/file.txt")
         paths = registry.get_paths("txn-1")
         assert isinstance(paths, frozenset)
-
 
 class TestUnregister:
     """Tests for unregister()."""
@@ -124,7 +117,6 @@ class TestUnregister:
         # Path should now be available for another transaction
         registry.register("txn-2")
         assert registry.track_path("txn-2", "/file.txt") is True
-
 
 class TestConcurrent:
     """Thread-safety tests for TransactionRegistry."""

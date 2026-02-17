@@ -5,13 +5,10 @@ module path string (e.g. ``tests.e2e.self_contained.isolation_helpers``).
 They must be picklable and importable from a fresh interpreter.
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 import tempfile
 from pathlib import Path
-
 
 class MockBackend:
     """Filesystem-backed mock backend for isolation integration tests.

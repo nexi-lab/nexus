@@ -9,8 +9,6 @@ Tests cover:
 - Pre-computed mount_paths: stored in cache, used by is_visible
 """
 
-from __future__ import annotations
-
 import threading
 import time
 from unittest.mock import patch
@@ -25,14 +23,12 @@ from nexus.storage.models import Base
 # Fixtures
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture
 def engine():
     """Create in-memory SQLite database for testing."""
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     return engine
-
 
 @pytest.fixture
 def enhanced_rebac_manager(engine):
@@ -47,7 +43,6 @@ def enhanced_rebac_manager(engine):
     yield manager
     manager.close()
 
-
 @pytest.fixture
 def namespace_manager(enhanced_rebac_manager):
     """Create a NamespaceManager with dcache enabled and short TTLs for test speed."""
@@ -61,7 +56,6 @@ def namespace_manager(enhanced_rebac_manager):
         dcache_negative_ttl=60,
     )
 
-
 def _grant_file(rebac_manager, subject, path, zone_id="test_zone"):
     """Helper to grant read access to a file via ReBAC."""
     rebac_manager.rebac_write(
@@ -71,11 +65,9 @@ def _grant_file(rebac_manager, subject, path, zone_id="test_zone"):
         zone_id=zone_id,
     )
 
-
 # ---------------------------------------------------------------------------
 # TestDCacheLookup — basic cache behavior
 # ---------------------------------------------------------------------------
-
 
 class TestDCacheLookup:
     """Tests for dcache miss/hit/eviction behavior."""
@@ -186,11 +178,9 @@ class TestDCacheLookup:
         # Positive cache should be capped at maxsize
         assert ns.metrics["dcache_positive_size"] <= 5
 
-
 # ---------------------------------------------------------------------------
 # TestDCacheNegativeEntries — security-critical negative caching
 # ---------------------------------------------------------------------------
-
 
 class TestDCacheNegativeEntries:
     """Tests for negative (invisible path) caching behavior."""
@@ -322,11 +312,9 @@ class TestDCacheNegativeEntries:
             result = namespace_manager.is_visible(alice, "/workspace/proj/a.txt", zone)
             assert result is False  # No grants → invisible (fail-closed)
 
-
 # ---------------------------------------------------------------------------
 # TestDCacheRevisionQuantization — key-based invalidation
 # ---------------------------------------------------------------------------
-
 
 class TestDCacheRevisionQuantization:
     """Tests for revision-bucket-based dcache key invalidation."""
@@ -386,11 +374,9 @@ class TestDCacheRevisionQuantization:
             bucket = namespace_manager._get_current_revision_bucket("test_zone")
             assert bucket == 0
 
-
 # ---------------------------------------------------------------------------
 # TestFilterVisible — batch method
 # ---------------------------------------------------------------------------
-
 
 class TestFilterVisible:
     """Tests for filter_visible() batch method."""
@@ -537,11 +523,9 @@ class TestFilterVisible:
         assert m["dcache_positive_size"] >= 1
         assert m["dcache_negative_size"] >= 1
 
-
 # ---------------------------------------------------------------------------
 # TestDCacheThreadSafety — concurrent access
 # ---------------------------------------------------------------------------
-
 
 class TestDCacheThreadSafety:
     """Tests for thread-safe dcache operations."""
@@ -635,11 +619,9 @@ class TestDCacheThreadSafety:
 
         assert errors == [], f"Thread errors: {errors}"
 
-
 # ---------------------------------------------------------------------------
 # TestPreComputedMountPaths — mount_paths optimization (Issue #1244)
 # ---------------------------------------------------------------------------
-
 
 class TestPreComputedMountPaths:
     """Tests for pre-computed mount_paths stored in cache."""
@@ -696,11 +678,9 @@ class TestPreComputedMountPaths:
         assert mount_paths == sorted(mount_paths)
         assert len(mount_paths) == len(entries)
 
-
 # ---------------------------------------------------------------------------
 # TestInvalidateDcache — dcache invalidation
 # ---------------------------------------------------------------------------
-
 
 class TestInvalidateDcache:
     """Tests for invalidate_dcache() safety valve."""

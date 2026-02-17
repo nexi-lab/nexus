@@ -25,7 +25,6 @@ down_revision: Union[str, Sequence[str], None] = "add_content_cache"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add composite indexes for ReBAC permission checks."""
     # 1. Direct permission check (most common query pattern)
@@ -54,7 +53,6 @@ def upgrade() -> None:
         "rebac_tuples",
         ["object_type", "object_id", "relation", "zone_id"],
     )
-
 
 def downgrade() -> None:
     """Remove composite indexes."""

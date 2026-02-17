@@ -7,7 +7,6 @@ Provides:
 
 All endpoints are authenticated via existing auth middleware.
 
-Note: This module intentionally does NOT use ``from __future__ import annotations``
 because FastAPI uses ``eval_str=True`` on dependency signatures at import time.
 """
 
@@ -30,11 +29,9 @@ router = APIRouter(tags=["manifest"])
 
 MAX_SOURCES_PER_MANIFEST = 20
 
-
 # ---------------------------------------------------------------------------
 # Request / Response models
 # ---------------------------------------------------------------------------
-
 
 class ManifestRequest(BaseModel):
     """Request body for setting a context manifest."""
@@ -45,14 +42,12 @@ class ManifestRequest(BaseModel):
         description="List of context source definitions (max 20).",
     )
 
-
 class ManifestResponse(BaseModel):
     """Response body for manifest retrieval/update."""
 
     agent_id: str
     sources: list[dict[str, Any]]
     source_count: int
-
 
 class ResolveResponse(BaseModel):
     """Response body after manifest resolution."""
@@ -63,11 +58,9 @@ class ResolveResponse(BaseModel):
     sources: list[dict[str, Any]]
     data: list[dict[str, Any]] | None = None
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
 
 def _get_agent_registry(nexus_fs: Any) -> Any:
     """Extract AgentRegistry from NexusFS instance."""
@@ -76,14 +69,12 @@ def _get_agent_registry(nexus_fs: Any) -> Any:
         raise HTTPException(status_code=503, detail="Agent registry not initialized")
     return registry
 
-
 def _get_manifest_resolver(nexus_fs: Any) -> Any:
     """Extract ManifestResolver from NexusFS server extras."""
     resolver = getattr(nexus_fs, "_service_extras", {}).get("manifest_resolver")
     if resolver is None:
         raise HTTPException(status_code=503, detail="Manifest resolver not initialized")
     return resolver
-
 
 def _validate_sources(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Validate source dicts against Pydantic ContextSource union.
@@ -108,11 +99,9 @@ def _validate_sources(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
             ) from exc
     return validated
 
-
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
-
 
 @router.get("/api/v2/agents/{agent_id}/manifest")
 def get_manifest(
@@ -138,7 +127,6 @@ def get_manifest(
         sources=list(record.context_manifest),
         source_count=len(record.context_manifest),
     )
-
 
 @router.put("/api/v2/agents/{agent_id}/manifest")
 def set_manifest(
@@ -171,7 +159,6 @@ def set_manifest(
         sources=list(updated.context_manifest),
         source_count=len(updated.context_manifest),
     )
-
 
 @router.post("/api/v2/agents/{agent_id}/manifest/resolve")
 async def resolve_manifest(

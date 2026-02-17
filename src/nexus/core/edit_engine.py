@@ -24,8 +24,6 @@ References:
 - https://fabianhertwig.com/blog/coding-assistants-file-edits/
 """
 
-from __future__ import annotations
-
 import difflib
 import re
 from dataclasses import dataclass, field
@@ -42,7 +40,6 @@ except ImportError:
 
 if TYPE_CHECKING:
     pass
-
 
 @dataclass(slots=True)
 class EditOperation:
@@ -61,7 +58,6 @@ class EditOperation:
     new_str: str
     hint_line: int | None = None
     allow_multiple: bool = False
-
 
 @dataclass(slots=True)
 class MatchInfo:
@@ -94,7 +90,6 @@ class MatchInfo:
     search_strategy: Literal["direct", "middle_out"] = "direct"
     match_count: int = 1
 
-
 @dataclass(slots=True)
 class EditResult:
     """Result of applying edits to content.
@@ -114,7 +109,6 @@ class EditResult:
     errors: list[str] = field(default_factory=list)
     matches: list[MatchInfo] = field(default_factory=list)
     applied_count: int = 0
-
 
 class EditEngine:
     """Core engine for applying surgical file edits.
@@ -596,7 +590,6 @@ class EditEngine:
             EditResult with preview information.
         """
         return self.apply_edits(content, edits, validate_uniqueness=True)
-
 
 def create_edit_operation(
     old_str: str,

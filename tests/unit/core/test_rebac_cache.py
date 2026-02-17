@@ -6,7 +6,6 @@ import pytest
 
 from nexus.rebac.rebac_cache import ReBACPermissionCache
 
-
 class TestReBACPermissionCache:
     """Test suite for in-memory L1 permission cache."""
 
@@ -214,7 +213,6 @@ class TestReBACPermissionCache:
         # Cache entries should still exist
         assert cache.get("agent", "alice", "read", "file", "/doc.txt") is True
 
-
 class TestRevisionQuantization:
     """Test revision-based cache key quantization (Issue #909)."""
 
@@ -349,7 +347,6 @@ class TestRevisionQuantization:
         stats = cache.get_stats()
         assert stats["revision_quantization_window"] == 15
         assert stats["enable_revision_quantization"] is True
-
 
 class TestXFetchAlgorithm:
     """Test XFetch probabilistic early expiration algorithm (Issue #718).
@@ -619,7 +616,6 @@ class TestXFetchAlgorithm:
         # Higher beta should trigger more refreshes
         assert refresh_beta_high >= refresh_beta_low
 
-
 class TestIssue1077TieredTTL:
     """Test suite for Issue #1077: Tiered TTL by relation type."""
 
@@ -734,7 +730,6 @@ class TestIssue1077TieredTTL:
         _, jittered_ttl, _, _ = cache._entry_metadata[key]
         # TTL should be around 300 (inherited), not 3600 (owner)
         assert 240 <= jittered_ttl <= 360  # 300 ± 20%
-
 
 class TestIssue1077TargetedInvalidation:
     """Test suite for Issue #1077: Targeted invalidation using secondary indexes."""

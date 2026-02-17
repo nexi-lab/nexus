@@ -23,7 +23,6 @@ down_revision: Union[str, Sequence[str], None] = "merge_all_heads_for_test_harne
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Create spending policy tables and clean up dead columns."""
     # --- spending_policies table ---
@@ -103,7 +102,6 @@ def upgrade() -> None:
         batch_op.drop_column("monthly_spent")
         batch_op.drop_column("daily_reset_at")
         batch_op.drop_column("monthly_reset_at")
-
 
 def downgrade() -> None:
     """Reverse: restore columns, drop tables."""

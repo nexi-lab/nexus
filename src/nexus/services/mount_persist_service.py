@@ -25,14 +25,15 @@ Example:
     ```
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.context_utils import get_user_identity, get_zone_id
 
+from nexus.services.mount_core_service import MountCoreService
+from nexus.services.mount_manager import MountManager
+from nexus.services.sync_service import SyncService
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.services.mount_core_service import MountCoreService
@@ -40,7 +41,6 @@ if TYPE_CHECKING:
     from nexus.services.sync_service import SyncService
 
 logger = logging.getLogger(__name__)
-
 
 class MountPersistService:
     """Handles mount configuration persistence (SYNC).

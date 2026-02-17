@@ -22,7 +22,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from nexus_firecrawl import FirecrawlClient
 
-
 async def test_scrape() -> bool:
     """Test 1: Scrape a single URL."""
     print("\n" + "=" * 60)
@@ -53,7 +52,6 @@ async def test_scrape() -> bool:
     except Exception as e:
         print(f"❌ Error: {e}")
         return False
-
 
 async def test_map() -> bool:
     """Test 2: Map URLs on a website."""
@@ -87,7 +85,6 @@ async def test_map() -> bool:
     except Exception as e:
         print(f"❌ Error: {e}")
         return False
-
 
 async def test_crawl() -> bool:
     """Test 3: Crawl a website (small scale)."""
@@ -132,7 +129,6 @@ async def test_crawl() -> bool:
         print(f"❌ Error: {e}")
         return False
 
-
 async def test_json_output() -> bool:
     """Test 4: JSON output format (for piping)."""
     print("\n" + "=" * 60)
@@ -169,7 +165,6 @@ async def test_json_output() -> bool:
     except Exception as e:
         print(f"❌ Error: {e}")
         return False
-
 
 async def main() -> None:
     """Run all SDK tests."""
@@ -208,7 +203,6 @@ async def main() -> None:
     else:
         print("❌ Some tests failed")
         sys.exit(1)
-
 
 if __name__ == "__main__":
     asyncio.run(main())

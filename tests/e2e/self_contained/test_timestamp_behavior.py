@@ -6,8 +6,6 @@ These tests verify:
 2. modified_at only updates on real changes (writes), NOT on reads
 """
 
-from __future__ import annotations
-
 import time
 import uuid
 from datetime import UTC, datetime
@@ -17,7 +15,6 @@ import pytest
 from nexus import LocalBackend, NexusFS
 from nexus.core.config import PermissionConfig
 from nexus.storage.raft_metadata_store import RaftMetadataStore
-
 
 @pytest.fixture
 def nexus_fs(isolated_db, tmp_path):
@@ -30,11 +27,9 @@ def nexus_fs(isolated_db, tmp_path):
     yield nx
     nx.close()
 
-
 def get_metadata(nexus_fs, path):
     """Get full metadata including created_at from metadata store."""
     return nexus_fs.metadata.get(path)
-
 
 class TestCreatedAtStability:
     """Tests to verify created_at is stable and never changes after creation."""
@@ -94,7 +89,6 @@ class TestCreatedAtStability:
 
         assert meta_final.created_at == original_created_at
         print(f"✓ created_at stable after 5 updates: {original_created_at}")
-
 
 class TestModifiedAtOnReads:
     """Tests to verify modified_at does NOT change on read operations."""
@@ -180,7 +174,6 @@ class TestModifiedAtOnReads:
         assert meta_final.modified_at == original_modified_at
         print(f"✓ modified_at unchanged after list calls: {original_modified_at}")
 
-
 class TestModifiedAtOnWrites:
     """Tests to verify modified_at DOES change on write operations."""
 
@@ -224,7 +217,6 @@ class TestModifiedAtOnWrites:
 
         print(f"✓ modified_at updated on each write: {timestamps}")
 
-
 class TestTimestampsCombined:
     """Combined tests verifying both created_at and modified_at behavior."""
 
@@ -263,7 +255,6 @@ class TestTimestampsCombined:
         assert meta2.created_at == meta1.created_at, "created_at should NOT change"
         assert meta2.modified_at > meta1.modified_at, "modified_at SHOULD change"
         print("✓ Write correctly updates only modified_at")
-
 
 class TestCacheDoesNotAffectTimestamps:
     """Tests to verify caching doesn't cause timestamp issues."""
@@ -304,7 +295,6 @@ class TestCacheDoesNotAffectTimestamps:
         assert meta2.modified_at > meta1.modified_at, "modified_at should be updated"
         print("✓ Timestamps correct after cache invalidation")
 
-
 class TestDatabaseDirectAccess:
     """Tests to verify timestamps at database level to rule out any caching issues."""
 
@@ -340,7 +330,6 @@ class TestDatabaseDirectAccess:
         assert meta2.created_at == original_created, "created_at changed after reads!"
         assert meta2.modified_at == original_modified, "modified_at changed after reads!"
         print("✓ Database timestamps unchanged after reads (no cache)")
-
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])

@@ -7,8 +7,6 @@ Provides admin endpoints for permission hotspot monitoring:
 Extracted from ``fastapi_server.py`` during monolith decomposition (#1288).
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -20,7 +18,6 @@ from nexus.server.dependencies import require_auth
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["admin"])
-
 
 @router.get("/api/v1/admin/hotspot-stats")
 async def get_hotspot_stats(
@@ -38,7 +35,6 @@ async def get_hotspot_stats(
 
     stats: dict[str, Any] = hotspot_detector.get_stats()
     return stats
-
 
 @router.get("/api/v1/admin/hot-entries")
 async def get_hot_entries(

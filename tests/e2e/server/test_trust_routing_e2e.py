@@ -8,8 +8,6 @@ Full integration test with real services (SQLite in-memory):
 5. Query reputation again — verify score updated
 """
 
-from __future__ import annotations
-
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -32,7 +30,6 @@ from nexus.storage.models import Base
 # Fixtures
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture()
 def engine():
     """Shared SQLite in-memory engine."""
@@ -44,11 +41,9 @@ def engine():
     Base.metadata.create_all(eng)
     return eng
 
-
 @pytest.fixture()
 def session_factory(engine):
     return sessionmaker(bind=engine, expire_on_commit=False)
-
 
 @pytest.fixture()
 def rebac_manager(engine):
@@ -60,11 +55,9 @@ def rebac_manager(engine):
     yield manager
     manager.close()
 
-
 @pytest.fixture()
 def entity_registry(engine):
     return EntityRegistry(engine)
-
 
 @pytest.fixture()
 def agent_registry(session_factory, entity_registry):
@@ -73,7 +66,6 @@ def agent_registry(session_factory, entity_registry):
         entity_registry=entity_registry,
     )
 
-
 @pytest.fixture()
 def reputation_service(session_factory):
     return ReputationService(
@@ -81,7 +73,6 @@ def reputation_service(session_factory):
         cache_maxsize=100,
         cache_ttl=0,  # no caching for test determinism
     )
-
 
 @pytest.fixture()
 def delegation_service(
@@ -94,7 +85,6 @@ def delegation_service(
         agent_registry=agent_registry,
         reputation_service=reputation_service,
     )
-
 
 def _setup_coordinator(entity_registry, rebac_manager, agent_id="coordinator_agent"):
     """Register a coordinator agent with file grants."""
@@ -122,11 +112,9 @@ def _setup_coordinator(entity_registry, rebac_manager, agent_id="coordinator_age
         ]
     )
 
-
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
-
 
 class TestTrustRoutingE2E:
     """Full trust-based routing integration test."""

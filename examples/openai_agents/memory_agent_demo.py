@@ -42,7 +42,6 @@ from agents import Agent, Runner, function_tool
 
 from nexus.remote import RemoteNexusFS
 
-
 def connect_to_nexus(tenant_id: str = "openai-memory-demo", agent_id: str = "memory-agent"):
     """
     Connect to Nexus filesystem with memory support.
@@ -95,7 +94,6 @@ def connect_to_nexus(tenant_id: str = "openai-memory-demo", agent_id: str = "mem
         )
         print(f"✓ Using local filesystem at {data_dir}")
         return nx
-
 
 def create_memory_tools(nx):
     """
@@ -210,7 +208,6 @@ def create_memory_tools(nx):
 
     return [store_memory, recall_memory, list_all_memories]
 
-
 def run_demo():
     """Run the memory agent demo."""
     print("=" * 70)
@@ -296,7 +293,6 @@ Always proactively store useful information and recall relevant memories.""",
     print("=" * 70)
     print("\nThe agent's memories persist across Python sessions.")
     print("Run this script again to see how it remembers your preferences!")
-
 
 if __name__ == "__main__":
     run_demo()

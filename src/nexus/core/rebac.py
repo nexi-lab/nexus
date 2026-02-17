@@ -29,8 +29,6 @@ Example:
     )  # Returns True (alice is member of eng_team, which owns file)
 """
 
-from __future__ import annotations
-
 import json
 import uuid
 from dataclasses import dataclass, field
@@ -41,7 +39,6 @@ from typing import Any
 # Wildcard subject for public access
 WILDCARD_SUBJECT = ("*", "*")
 
-
 class RelationType(StrEnum):
     """Standard relationship types in ReBAC."""
 
@@ -50,7 +47,6 @@ class RelationType(StrEnum):
     VIEWER_OF = "viewer-of"
     EDITOR_OF = "editor-of"
     PARENT_OF = "parent-of"
-
 
 class EntityType(StrEnum):
     """Types of entities in ReBAC system.
@@ -72,7 +68,6 @@ class EntityType(StrEnum):
     PLAYBOOK = "playbook"  # v0.5.0 ACE
     TRAJECTORY = "trajectory"  # v0.5.0 ACE
     SKILL = "skill"  # v0.5.0 Skills System
-
 
 @dataclass(slots=True)
 class Entity:
@@ -98,13 +93,12 @@ class Entity:
         return (self.entity_type, self.entity_id)
 
     @classmethod
-    def from_tuple(cls, tup: tuple[str, str]) -> Entity:
+    def from_tuple(cls, tup: tuple[str, str]) -> "Entity":
         """Create entity from (type, id) tuple."""
         return cls(entity_type=tup[0], entity_id=tup[1])
 
     def __str__(self) -> str:
         return f"{self.entity_type}:{self.entity_id}"
-
 
 @dataclass(slots=True)
 class ReBACTuple:
@@ -166,7 +160,7 @@ class ReBACTuple:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ReBACTuple:
+    def from_dict(cls, data: dict[str, Any]) -> "ReBACTuple":
         """Create tuple from dictionary."""
         return cls(
             tuple_id=data["tuple_id"],
@@ -188,7 +182,6 @@ class ReBACTuple:
         if self.expires_at:
             s += f" (expires: {self.expires_at})"
         return s
-
 
 @dataclass
 class NamespaceConfig:
@@ -402,7 +395,7 @@ class NamespaceConfig:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> NamespaceConfig:
+    def from_dict(cls, data: dict[str, Any]) -> "NamespaceConfig":
         """Create from dictionary."""
         return cls(
             namespace_id=data["namespace_id"],
@@ -413,7 +406,6 @@ class NamespaceConfig:
             created_at=datetime.fromisoformat(data["created_at"]),
             updated_at=datetime.fromisoformat(data["updated_at"]),
         )
-
 
 @dataclass(slots=True)
 class CheckCacheEntry:
@@ -467,7 +459,7 @@ class CheckCacheEntry:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> CheckCacheEntry:
+    def from_dict(cls, data: dict[str, Any]) -> "CheckCacheEntry":
         """Create from dictionary."""
         return cls(
             cache_id=data["cache_id"],
@@ -478,7 +470,6 @@ class CheckCacheEntry:
             computed_at=datetime.fromisoformat(data["computed_at"]),
             expires_at=datetime.fromisoformat(data["expires_at"]),
         )
-
 
 @dataclass(slots=True)
 class ChangelogEntry:
@@ -528,7 +519,7 @@ class ChangelogEntry:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ChangelogEntry:
+    def from_dict(cls, data: dict[str, Any]) -> "ChangelogEntry":
         """Create from dictionary."""
         return cls(
             change_id=data["change_id"],

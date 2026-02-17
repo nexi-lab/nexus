@@ -1,13 +1,10 @@
 """Tests for BrickContainer DI container (Issue #1393)."""
 
-from __future__ import annotations
-
 from typing import Protocol, runtime_checkable
 
 import pytest
 
 from nexus.core.brick_container import BrickContainer
-
 
 @runtime_checkable
 class FakeProtocol(Protocol):
@@ -15,13 +12,11 @@ class FakeProtocol(Protocol):
 
     def do_something(self) -> str: ...
 
-
 @runtime_checkable
 class OtherProtocol(Protocol):
     """Another test protocol."""
 
     def other_method(self) -> int: ...
-
 
 class FakeImpl:
     """Implementation satisfying FakeProtocol."""
@@ -29,19 +24,16 @@ class FakeImpl:
     def do_something(self) -> str:
         return "done"
 
-
 class OtherImpl:
     """Implementation satisfying OtherProtocol."""
 
     def other_method(self) -> int:
         return 42
 
-
 class BadImpl:
     """Implementation that does NOT satisfy FakeProtocol."""
 
     pass
-
 
 class TestBrickContainer:
     """Tests for the BrickContainer class."""

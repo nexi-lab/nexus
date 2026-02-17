@@ -10,16 +10,14 @@ Bug fixes applied:
 Part of: #1628 (Split CacheConnectorMixin into focused units)
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.core.permissions import OperationContext
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
 
 logger = logging.getLogger(__name__)
-
 
 class BackendIOService:
     """Backend I/O operations for connector content.

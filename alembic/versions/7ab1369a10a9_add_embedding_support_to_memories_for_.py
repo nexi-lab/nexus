@@ -19,7 +19,6 @@ down_revision: Union[str, Sequence[str], None] = "1181bd287cc1"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Upgrade schema.
 
@@ -55,7 +54,6 @@ def upgrade() -> None:
 
     # Add index on embedding_model for filtering
     op.create_index("idx_memory_embedding_model", "memories", ["embedding_model"])
-
 
 def downgrade() -> None:
     """Downgrade schema."""

@@ -14,8 +14,6 @@ References:
     - Decision 5: Shared utilities
 """
 
-from __future__ import annotations
-
 import asyncio
 import concurrent.futures
 import logging
@@ -31,7 +29,6 @@ _executor: concurrent.futures.ThreadPoolExecutor | None = None
 _executor_lock = threading.Lock()
 _POOL_SIZE = 16
 
-
 def _get_executor() -> concurrent.futures.ThreadPoolExecutor:
     """Get or create the shared thread pool executor.
 
@@ -46,7 +43,6 @@ def _get_executor() -> concurrent.futures.ThreadPoolExecutor:
                     thread_name_prefix="nexus-async-bridge",
                 )
     return _executor
-
 
 def run_async(coro: Any) -> Any:
     """Run an async coroutine from a synchronous context.
@@ -81,7 +77,6 @@ def run_async(coro: Any) -> Any:
     future = executor.submit(asyncio.run, coro)
     return future.result()
 
-
 def run_async_safe(coro: Any) -> Any:
     """Run an async coroutine safely in a threaded server context.
 
@@ -104,7 +99,6 @@ def run_async_safe(coro: Any) -> Any:
     executor = _get_executor()
     future = executor.submit(asyncio.run, coro)
     return future.result()
-
 
 def shutdown_executor() -> None:
     """Shut down the shared thread pool executor.

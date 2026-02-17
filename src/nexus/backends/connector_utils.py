@@ -3,10 +3,7 @@
 Extracted from Backend ABC to decouple OAuth/database concerns from storage.
 """
 
-from __future__ import annotations
-
 import os
-
 
 def resolve_database_url(db_param: str) -> str:
     """Resolve database URL with TOKEN_MANAGER_DB environment variable priority.

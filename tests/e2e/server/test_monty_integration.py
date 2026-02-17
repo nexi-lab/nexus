@@ -8,8 +8,6 @@ Tests cover:
 - Performance benchmarks for Monty vs baseline
 """
 
-from __future__ import annotations
-
 import statistics
 import time
 
@@ -36,7 +34,6 @@ from nexus.storage.models import Base  # noqa: E402
 # Fixtures
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture
 def engine():
     """In-memory SQLite DB for testing."""
@@ -48,16 +45,13 @@ def engine():
     Base.metadata.create_all(engine)
     return engine
 
-
 @pytest.fixture
 def session_factory(engine):
     return sessionmaker(bind=engine, expire_on_commit=False)
 
-
 @pytest.fixture
 def monty_provider() -> MontySandboxProvider:
     return MontySandboxProvider(resource_profile="standard", enable_type_checking=False)
-
 
 @pytest.fixture
 def manager(session_factory, monty_provider) -> SandboxManager:
@@ -66,11 +60,9 @@ def manager(session_factory, monty_provider) -> SandboxManager:
     mgr.providers["monty"] = monty_provider
     return mgr
 
-
 # ---------------------------------------------------------------------------
 # SandboxManager Integration
 # ---------------------------------------------------------------------------
-
 
 class TestManagerIntegration:
     """Tests for Monty provider through SandboxManager."""
@@ -162,11 +154,9 @@ class TestManagerIntegration:
         names = [s["name"] for s in sandboxes]
         assert "monty-sb" in names
 
-
 # ---------------------------------------------------------------------------
 # Host Function Permission Tests (Decision #11C)
 # ---------------------------------------------------------------------------
-
 
 class TestHostFunctionPermissions:
     """Verify host functions enforce proper access boundaries."""
@@ -327,11 +317,9 @@ except Exception as e:
         assert result.exit_code == 0
         assert "error:" in result.stdout
 
-
 # ---------------------------------------------------------------------------
 # Performance Benchmarks
 # ---------------------------------------------------------------------------
-
 
 class TestMontyPerformance:
     """Performance benchmarks for Monty provider."""

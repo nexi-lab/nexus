@@ -19,7 +19,6 @@ from nexus.core.hash_fast import hash_content
 
 # === Fixtures ===
 
-
 @pytest_asyncio.fixture
 async def temp_backend(tmp_path: Path) -> AsyncGenerator[AsyncLocalBackend, None]:
     """Create a temporary async local backend for testing."""
@@ -27,7 +26,6 @@ async def temp_backend(tmp_path: Path) -> AsyncGenerator[AsyncLocalBackend, None
     await backend.initialize()
     yield backend
     await backend.close()
-
 
 @pytest_asyncio.fixture
 async def backend_with_cache(tmp_path: Path) -> AsyncGenerator[AsyncLocalBackend, None]:
@@ -40,9 +38,7 @@ async def backend_with_cache(tmp_path: Path) -> AsyncGenerator[AsyncLocalBackend
     yield backend
     await backend.close()
 
-
 # === Initialization Tests ===
-
 
 @pytest.mark.asyncio
 async def test_initialization(tmp_path: Path) -> None:
@@ -59,15 +55,12 @@ async def test_initialization(tmp_path: Path) -> None:
 
     await backend.close()
 
-
 @pytest.mark.asyncio
 async def test_backend_name(temp_backend: AsyncLocalBackend) -> None:
     """Test that backend name property returns correct value."""
     assert temp_backend.name == "local"
 
-
 # === Content Write/Read Tests ===
-
 
 @pytest.mark.asyncio
 async def test_write_and_read_content(temp_backend: AsyncLocalBackend) -> None:
@@ -84,7 +77,6 @@ async def test_write_and_read_content(temp_backend: AsyncLocalBackend) -> None:
     read_result = await temp_backend.read_content(content_hash)
     retrieved = read_result.unwrap()
     assert retrieved == content
-
 
 @pytest.mark.asyncio
 async def test_write_duplicate_content(temp_backend: AsyncLocalBackend) -> None:
@@ -108,7 +100,6 @@ async def test_write_duplicate_content(temp_backend: AsyncLocalBackend) -> None:
     ref_count = ref_result.unwrap()
     assert ref_count == 2
 
-
 @pytest.mark.asyncio
 async def test_read_nonexistent_content(temp_backend: AsyncLocalBackend) -> None:
     """Test reading non-existent content raises error."""
@@ -117,7 +108,6 @@ async def test_read_nonexistent_content(temp_backend: AsyncLocalBackend) -> None
     with pytest.raises(NexusFileNotFoundError):
         result = await temp_backend.read_content(fake_hash)
         result.unwrap()
-
 
 @pytest.mark.asyncio
 async def test_write_empty_content(temp_backend: AsyncLocalBackend) -> None:
@@ -135,7 +125,6 @@ async def test_write_empty_content(temp_backend: AsyncLocalBackend) -> None:
     retrieved = read_result.unwrap()
     assert retrieved == b""
 
-
 @pytest.mark.asyncio
 async def test_write_large_content(temp_backend: AsyncLocalBackend) -> None:
     """Test writing large content (below CDC threshold)."""
@@ -150,7 +139,6 @@ async def test_write_large_content(temp_backend: AsyncLocalBackend) -> None:
     assert len(retrieved) == len(content)
     assert retrieved == content
 
-
 @pytest.mark.asyncio
 async def test_binary_content(temp_backend: AsyncLocalBackend) -> None:
     """Test handling of binary content with all byte values."""
@@ -162,9 +150,7 @@ async def test_binary_content(temp_backend: AsyncLocalBackend) -> None:
     retrieved = read_result.unwrap()
     assert retrieved == content
 
-
 # === Delete Tests ===
-
 
 @pytest.mark.asyncio
 async def test_delete_content(temp_backend: AsyncLocalBackend) -> None:
@@ -186,7 +172,6 @@ async def test_delete_content(temp_backend: AsyncLocalBackend) -> None:
     with pytest.raises(NexusFileNotFoundError):
         read_result = await temp_backend.read_content(content_hash)
         read_result.unwrap()
-
 
 @pytest.mark.asyncio
 async def test_delete_with_multiple_references(temp_backend: AsyncLocalBackend) -> None:
@@ -219,7 +204,6 @@ async def test_delete_with_multiple_references(temp_backend: AsyncLocalBackend) 
         result = await temp_backend.read_content(hash1)
         result.unwrap()
 
-
 @pytest.mark.asyncio
 async def test_delete_nonexistent_content(temp_backend: AsyncLocalBackend) -> None:
     """Test deleting non-existent content returns not found."""
@@ -228,9 +212,7 @@ async def test_delete_nonexistent_content(temp_backend: AsyncLocalBackend) -> No
     result = await temp_backend.delete_content(fake_hash)
     assert not result.success
 
-
 # === Content Exists Tests ===
-
 
 @pytest.mark.asyncio
 async def test_content_exists(temp_backend: AsyncLocalBackend) -> None:
@@ -245,7 +227,6 @@ async def test_content_exists(temp_backend: AsyncLocalBackend) -> None:
     fake_hash = "c" * 64
     exists_result = await temp_backend.content_exists(fake_hash)
     assert exists_result.unwrap() is False
-
 
 @pytest.mark.asyncio
 async def test_content_exists_after_delete(temp_backend: AsyncLocalBackend) -> None:
@@ -265,9 +246,7 @@ async def test_content_exists_after_delete(temp_backend: AsyncLocalBackend) -> N
     exists_result = await temp_backend.content_exists(content_hash)
     assert exists_result.unwrap() is False
 
-
 # === Content Size Tests ===
-
 
 @pytest.mark.asyncio
 async def test_get_content_size(temp_backend: AsyncLocalBackend) -> None:
@@ -280,7 +259,6 @@ async def test_get_content_size(temp_backend: AsyncLocalBackend) -> None:
     size = size_result.unwrap()
     assert size == len(content)
 
-
 @pytest.mark.asyncio
 async def test_get_content_size_nonexistent(temp_backend: AsyncLocalBackend) -> None:
     """Test getting size of non-existent content."""
@@ -289,9 +267,7 @@ async def test_get_content_size_nonexistent(temp_backend: AsyncLocalBackend) -> 
     result = await temp_backend.get_content_size(fake_hash)
     assert not result.success
 
-
 # === Reference Count Tests ===
-
 
 @pytest.mark.asyncio
 async def test_get_ref_count(temp_backend: AsyncLocalBackend) -> None:
@@ -309,7 +285,6 @@ async def test_get_ref_count(temp_backend: AsyncLocalBackend) -> None:
     ref_result = await temp_backend.get_ref_count(content_hash)
     assert ref_result.unwrap() == 2
 
-
 @pytest.mark.asyncio
 async def test_get_ref_count_nonexistent(temp_backend: AsyncLocalBackend) -> None:
     """Test getting ref count of non-existent content."""
@@ -318,9 +293,7 @@ async def test_get_ref_count_nonexistent(temp_backend: AsyncLocalBackend) -> Non
     result = await temp_backend.get_ref_count(fake_hash)
     assert not result.success
 
-
 # === Streaming Tests ===
-
 
 @pytest.mark.asyncio
 async def test_stream_content_small_file(temp_backend: AsyncLocalBackend) -> None:
@@ -340,7 +313,6 @@ async def test_stream_content_small_file(temp_backend: AsyncLocalBackend) -> Non
 
     # Verify streaming produced multiple chunks
     assert len(chunks) > 1
-
 
 @pytest.mark.asyncio
 async def test_stream_content_large_file(temp_backend: AsyncLocalBackend) -> None:
@@ -363,7 +335,6 @@ async def test_stream_content_large_file(temp_backend: AsyncLocalBackend) -> Non
     # Verify chunk count (should be ~16 chunks for 1MB / 64KB)
     assert len(chunks) == 16
 
-
 @pytest.mark.asyncio
 async def test_stream_content_missing_file(temp_backend: AsyncLocalBackend) -> None:
     """Test that streaming non-existent content raises error."""
@@ -373,9 +344,7 @@ async def test_stream_content_missing_file(temp_backend: AsyncLocalBackend) -> N
         async for _ in temp_backend.stream_content(fake_hash):
             pass
 
-
 # === Write Stream Tests ===
-
 
 @pytest.mark.asyncio
 async def test_write_stream_basic(temp_backend: AsyncLocalBackend) -> None:
@@ -398,7 +367,6 @@ async def test_write_stream_basic(temp_backend: AsyncLocalBackend) -> None:
     read_result = await temp_backend.read_content(content_hash)
     assert read_result.unwrap() == expected_content
 
-
 @pytest.mark.asyncio
 async def test_write_stream_large_content(temp_backend: AsyncLocalBackend) -> None:
     """Test writing large content through stream."""
@@ -419,9 +387,7 @@ async def test_write_stream_large_content(temp_backend: AsyncLocalBackend) -> No
     size_result = await temp_backend.get_content_size(content_hash)
     assert size_result.unwrap() == total_size
 
-
 # === Batch Read Tests ===
-
 
 @pytest.mark.asyncio
 async def test_batch_read_content_basic(temp_backend: AsyncLocalBackend) -> None:
@@ -443,7 +409,6 @@ async def test_batch_read_content_basic(temp_backend: AsyncLocalBackend) -> None
     assert result[hash2] == content2
     assert result[hash3] == content3
 
-
 @pytest.mark.asyncio
 async def test_batch_read_content_missing_hashes(temp_backend: AsyncLocalBackend) -> None:
     """Test batch read with some missing content hashes."""
@@ -463,13 +428,11 @@ async def test_batch_read_content_missing_hashes(temp_backend: AsyncLocalBackend
     assert result[fake_hash1] is None  # Missing content returns None
     assert result[fake_hash2] is None
 
-
 @pytest.mark.asyncio
 async def test_batch_read_content_empty_list(temp_backend: AsyncLocalBackend) -> None:
     """Test batch read with empty list."""
     result = await temp_backend.batch_read_content([])
     assert result == {}
-
 
 @pytest.mark.asyncio
 async def test_batch_read_content_concurrent(temp_backend: AsyncLocalBackend) -> None:
@@ -489,9 +452,7 @@ async def test_batch_read_content_concurrent(temp_backend: AsyncLocalBackend) ->
     for i, h in enumerate(hashes):
         assert result[h] == contents[i]
 
-
 # === Directory Operations ===
-
 
 @pytest.mark.asyncio
 async def test_mkdir(temp_backend: AsyncLocalBackend) -> None:
@@ -505,7 +466,6 @@ async def test_mkdir(temp_backend: AsyncLocalBackend) -> None:
     assert physical_path.exists()
     assert physical_path.is_dir()
 
-
 @pytest.mark.asyncio
 async def test_mkdir_existing(temp_backend: AsyncLocalBackend) -> None:
     """Test creating directory that already exists with exist_ok=True."""
@@ -517,7 +477,6 @@ async def test_mkdir_existing(temp_backend: AsyncLocalBackend) -> None:
     result2 = await temp_backend.mkdir(dir_path, exist_ok=True)
     result2.unwrap()
 
-
 @pytest.mark.asyncio
 async def test_is_directory(temp_backend: AsyncLocalBackend) -> None:
     """Test checking if path is a directory."""
@@ -526,7 +485,6 @@ async def test_is_directory(temp_backend: AsyncLocalBackend) -> None:
 
     result = await temp_backend.is_directory(dir_path)
     assert result.unwrap() is True
-
 
 @pytest.mark.asyncio
 async def test_list_directory(temp_backend: AsyncLocalBackend) -> None:
@@ -542,9 +500,7 @@ async def test_list_directory(temp_backend: AsyncLocalBackend) -> None:
     assert "sub1/" in items
     assert "sub2/" in items
 
-
 # === Concurrent Write Tests ===
-
 
 @pytest.mark.asyncio
 async def test_concurrent_writes_same_content(temp_backend: AsyncLocalBackend) -> None:
@@ -567,7 +523,6 @@ async def test_concurrent_writes_same_content(temp_backend: AsyncLocalBackend) -
     read_result = await temp_backend.read_content(hashes[0])
     assert read_result.unwrap() == content
 
-
 @pytest.mark.asyncio
 async def test_concurrent_writes_different_content(temp_backend: AsyncLocalBackend) -> None:
     """Test concurrent writes of different content."""
@@ -585,7 +540,6 @@ async def test_concurrent_writes_different_content(temp_backend: AsyncLocalBacke
     for content, h in zip(contents, hashes):
         read_result = await temp_backend.read_content(h)
         assert read_result.unwrap() == content
-
 
 @pytest.mark.asyncio
 async def test_concurrent_read_write(temp_backend: AsyncLocalBackend) -> None:
@@ -614,9 +568,7 @@ async def test_concurrent_read_write(temp_backend: AsyncLocalBackend) -> None:
     for result in results[10:]:
         assert result == content_hash
 
-
 # === Cache Tests ===
-
 
 @pytest.mark.asyncio
 async def test_cache_hit_on_read(backend_with_cache: AsyncLocalBackend) -> None:
@@ -635,7 +587,6 @@ async def test_cache_hit_on_read(backend_with_cache: AsyncLocalBackend) -> None:
     # Second read - should hit cache
     read_result = await backend_with_cache.read_content(content_hash)
     assert read_result.unwrap() == content
-
 
 @pytest.mark.asyncio
 async def test_batch_read_uses_cache(backend_with_cache: AsyncLocalBackend) -> None:
@@ -659,9 +610,7 @@ async def test_batch_read_uses_cache(backend_with_cache: AsyncLocalBackend) -> N
     assert result2[hash1] == content1
     assert result2[hash2] == content2
 
-
 # === Hash/Path Utility Tests ===
-
 
 @pytest.mark.asyncio
 async def test_hash_to_path(temp_backend: AsyncLocalBackend) -> None:
@@ -675,16 +624,13 @@ async def test_hash_to_path(temp_backend: AsyncLocalBackend) -> None:
     assert path.parent.parent.name == "ab"
     assert path.name == content_hash
 
-
 @pytest.mark.asyncio
 async def test_hash_to_path_invalid(temp_backend: AsyncLocalBackend) -> None:
     """Test hash to path with invalid hash length."""
     with pytest.raises(ValueError, match="Invalid hash length"):
         temp_backend._hash_to_path("abc")
 
-
 # === Multiple Backend Instances ===
-
 
 @pytest.mark.asyncio
 async def test_multiple_backends_same_root(tmp_path: Path) -> None:
@@ -710,9 +656,7 @@ async def test_multiple_backends_same_root(tmp_path: Path) -> None:
         await backend1.close()
         await backend2.close()
 
-
 # === Error Handling Tests ===
-
 
 @pytest.mark.asyncio
 async def test_backend_error_on_invalid_root(tmp_path: Path) -> None:

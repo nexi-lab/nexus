@@ -19,7 +19,6 @@ from nexus.services.memory.memory_api import Memory
 from nexus.services.memory.memory_paging import MemoryPager
 from nexus.storage.models import Base
 
-
 def demo_memory_paging():
     """Demonstrate 3-tier memory paging."""
 
@@ -116,7 +115,6 @@ def demo_memory_paging():
     print("=" * 60)
 
     session.close()
-
 
 if __name__ == "__main__":
     demo_memory_paging()

@@ -26,7 +26,6 @@ down_revision: Union[str, Sequence[str], None] = "add_bitemporal_validity"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Create Nexus Pay tables and indexes."""
     bind = op.get_bind()
@@ -169,7 +168,6 @@ def upgrade() -> None:
             ["created_at"],
             postgresql_using="brin",
         )
-
 
 def downgrade() -> None:
     """Drop Nexus Pay tables."""

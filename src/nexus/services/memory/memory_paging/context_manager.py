@@ -6,8 +6,6 @@ when capacity is exceeded. Uses hybrid LRU + importance scoring for eviction.
 Thread-safe: All public methods are guarded by a threading.Lock.
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 from collections import deque
@@ -17,6 +15,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy.orm.exc import DetachedInstanceError
 
+from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
@@ -33,7 +32,6 @@ EVICTION_RATIO = 0.2
 # Max age in seconds for recency scoring (24 hours)
 MAX_AGE_SECONDS = 86400
 
-
 @dataclass
 class EvictionScore:
     """Score for eviction priority (lower = evict first)."""
@@ -42,7 +40,6 @@ class EvictionScore:
     score: float
     recency_factor: float
     importance_factor: float
-
 
 class ContextManager:
     """Manages main context (primary memory tier).

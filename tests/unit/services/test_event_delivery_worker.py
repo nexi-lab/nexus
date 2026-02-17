@@ -10,8 +10,6 @@ Tests cover:
 - Event type mapping: operation_type → FileEventType
 """
 
-from __future__ import annotations
-
 import tempfile
 import time
 from collections.abc import Generator
@@ -25,19 +23,16 @@ from nexus.core.event_bus import FileEventType
 from nexus.storage.models import OperationLogModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
-
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
-
 
 @pytest.fixture
 def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]:
     rs = SQLAlchemyRecordStore(db_path=temp_dir / "delivery_test.db")
     yield rs
     rs.close()
-
 
 def _insert_undelivered(
     session_factory,
@@ -67,11 +62,9 @@ def _insert_undelivered(
         session.commit()
     return op_id
 
-
 # =========================================================================
 # Event type mapping
 # =========================================================================
-
 
 class TestBuildFileEvent:
     """Test _build_file_event() mapping from operation_log to FileEvent."""
@@ -147,11 +140,9 @@ class TestBuildFileEvent:
 
         assert event.type == FileEventType.METADATA_CHANGE
 
-
 # =========================================================================
 # Happy path: poll → dispatch → mark delivered
 # =========================================================================
-
 
 class TestPollAndDispatch:
     """Test the core poll-dispatch-mark cycle."""
@@ -232,11 +223,9 @@ class TestPollAndDispatch:
         count2 = worker._poll_and_dispatch()
         assert count2 == 3
 
-
 # =========================================================================
 # Failure handling
 # =========================================================================
-
 
 class TestDispatchFailure:
     """Test behavior when event dispatch fails."""
@@ -312,11 +301,9 @@ class TestDispatchFailure:
             record = session.get(OperationLogModel, op_id)
             assert record.delivered is True
 
-
 # =========================================================================
 # Backoff behavior
 # =========================================================================
-
 
 class TestBackoff:
     """Test exponential backoff on empty polls.
@@ -364,11 +351,9 @@ class TestBackoff:
             worker._consecutive_empty = 0
         assert worker._consecutive_empty == 0
 
-
 # =========================================================================
 # Start / Stop lifecycle
 # =========================================================================
-
 
 class TestLifecycle:
     """Test start() and stop() lifecycle."""
@@ -437,11 +422,9 @@ class TestLifecycle:
         worker.stop(timeout=2.0)
         assert delivered, "Worker did not deliver event within timeout"
 
-
 # =========================================================================
 # No-bus graceful degradation
 # =========================================================================
-
 
 class TestNoBus:
     """Test that worker works even without an event bus."""

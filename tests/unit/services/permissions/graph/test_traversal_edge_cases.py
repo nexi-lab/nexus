@@ -20,8 +20,6 @@ were NOT covered by existing tests:
 Tested against SQLite in-memory via ReBACManager (composition root).
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 import pytest
@@ -34,14 +32,12 @@ from nexus.storage.models import Base
 
 # ── Fixtures ──────────────────────────────────────────────────────────
 
-
 @pytest.fixture
 def engine():
     """In-memory SQLite database."""
     eng = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(eng)
     return eng
-
 
 @pytest.fixture
 def mgr(engine):
@@ -50,7 +46,6 @@ def mgr(engine):
     yield m
     m.close()
 
-
 @pytest.fixture
 def mgr_shallow(engine):
     """ReBACManager with max_depth=3 for depth limit testing."""
@@ -58,9 +53,7 @@ def mgr_shallow(engine):
     yield m
     m.close()
 
-
 # ── Helpers ───────────────────────────────────────────────────────────
-
 
 def _register_file_ns(
     mgr: ReBACManager, *, with_intersection: bool = False, with_exclusion: bool = False
@@ -99,7 +92,6 @@ def _register_file_ns(
         )
     )
 
-
 def _register_group_ns(mgr: ReBACManager) -> None:
     """Register a 'group' namespace with member-of relation."""
     mgr.create_namespace(
@@ -115,7 +107,6 @@ def _register_group_ns(mgr: ReBACManager) -> None:
             },
         )
     )
-
 
 def _register_folder_ns(mgr: ReBACManager) -> None:
     """Register a 'folder' namespace with parent-based inheritance."""
@@ -143,11 +134,9 @@ def _register_folder_ns(mgr: ReBACManager) -> None:
         )
     )
 
-
 # =====================================================================
 # 1. WILDCARD PERMISSIONS (*:* subject)
 # =====================================================================
-
 
 class TestWildcardPermissions:
     """Wildcard subject grants give access to any user."""
@@ -291,11 +280,9 @@ class TestWildcardPermissions:
         # Should match on the direct concrete check (step 1)
         assert result is True
 
-
 # =====================================================================
 # 2. INTERSECTION (AND) PERMISSIONS
 # =====================================================================
-
 
 class TestIntersectionPermissions:
     """Intersection requires ALL relations to be true."""
@@ -371,11 +358,9 @@ class TestIntersectionPermissions:
             is False
         )
 
-
 # =====================================================================
 # 3. EXCLUSION (NOT) PERMISSIONS
 # =====================================================================
-
 
 class TestExclusionPermissions:
     """Exclusion denies access when the excluded relation exists."""
@@ -466,11 +451,9 @@ class TestExclusionPermissions:
             is True
         )
 
-
 # =====================================================================
 # 4. MULTI-LEVEL NESTED GROUP INHERITANCE
 # =====================================================================
-
 
 class TestNestedGroupInheritance:
     """Permission inheritance through deeply nested group chains."""
@@ -630,11 +613,9 @@ class TestNestedGroupInheritance:
             is True
         )
 
-
 # =====================================================================
 # 5. USER-TO-USER DELEGATION (non-admin sharing)
 # =====================================================================
-
 
 class TestUserToUserDelegation:
     """Non-admin user grants permission to another non-admin user."""
@@ -759,11 +740,9 @@ class TestUserToUserDelegation:
             is False
         )
 
-
 # =====================================================================
 # 6. CYCLE DETECTION (complex graph shapes)
 # =====================================================================
-
 
 class TestCycleDetectionComplex:
     """Cycle detection in various graph topologies."""
@@ -862,11 +841,9 @@ class TestCycleDetectionComplex:
             is False
         )
 
-
 # =====================================================================
 # 7. CONDITION EVALUATION (ABAC)
 # =====================================================================
-
 
 class TestConditionEvaluation:
     """ABAC condition evaluation on tuples."""
@@ -970,11 +947,9 @@ class TestConditionEvaluation:
             is True
         )
 
-
 # =====================================================================
 # 8. TUPLE-TO-USERSET (parent/child inheritance)
 # =====================================================================
-
 
 class TestTupleToUserset:
     """Permission inheritance via tupleToUserset expansion."""
@@ -1029,11 +1004,9 @@ class TestTupleToUserset:
             is True
         )
 
-
 # =====================================================================
 # 9. DEPTH LIMIT BOUNDARY CONDITIONS
 # =====================================================================
-
 
 class TestDepthLimitBoundary:
     """Exact boundary of max_depth enforcement."""
@@ -1097,11 +1070,9 @@ class TestDepthLimitBoundary:
             is False
         )
 
-
 # =====================================================================
 # 10. NO-NAMESPACE FALLBACK
 # =====================================================================
-
 
 class TestNoNamespaceFallback:
     """When no namespace is registered, only direct relations work."""
@@ -1139,11 +1110,9 @@ class TestNoNamespaceFallback:
             is False
         )
 
-
 # =====================================================================
 # 11. EXPAND API EDGE CASES
 # =====================================================================
-
 
 class TestExpandEdgeCases:
     """Edge cases for the Expand API (finding all subjects with permission)."""
@@ -1198,11 +1167,9 @@ class TestExpandEdgeCases:
         assert ("agent", "alice") in subjects
         assert ("agent", "bob") in subjects
 
-
 # =====================================================================
 # 12. EXPIRATION EDGE CASES
 # =====================================================================
-
 
 class TestExpirationEdgeCases:
     """Edge cases around tuple expiration."""
@@ -1255,11 +1222,9 @@ class TestExpirationEdgeCases:
             is False
         )
 
-
 # =====================================================================
 # 13. MIXED SCENARIOS
 # =====================================================================
-
 
 class TestMixedScenarios:
     """Complex real-world scenarios combining multiple features."""

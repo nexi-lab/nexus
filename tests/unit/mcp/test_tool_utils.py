@@ -7,8 +7,6 @@ Tests cover:
 - Path extraction from arguments
 """
 
-from __future__ import annotations
-
 import inspect
 import logging
 from typing import Any
@@ -22,7 +20,6 @@ from nexus.mcp.tool_utils import (
 # ---------------------------------------------------------------------------
 # tool_error()
 # ---------------------------------------------------------------------------
-
 
 class TestToolError:
     def test_returns_error_prefix(self):
@@ -59,11 +56,9 @@ class TestToolError:
         assert "not_found" in caplog.text
         assert "File not found" in caplog.text
 
-
 # ---------------------------------------------------------------------------
 # handle_tool_errors()
 # ---------------------------------------------------------------------------
-
 
 class TestHandleToolErrors:
     def test_passes_through_on_success(self):
@@ -160,11 +155,9 @@ class TestHandleToolErrors:
             async def my_async_tool(path: str) -> str:
                 return "ok"
 
-
 # ---------------------------------------------------------------------------
 # _extract_path_hint()
 # ---------------------------------------------------------------------------
-
 
 class TestExtractPathHint:
     def test_extracts_from_kwargs(self):

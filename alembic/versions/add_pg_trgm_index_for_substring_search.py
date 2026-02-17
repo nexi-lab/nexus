@@ -38,7 +38,6 @@ down_revision: Union[str, Sequence[str], None] = "update_file_namespace_shared"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add pg_trgm extension and GIN trigram index (PostgreSQL only)."""
     conn = op.get_bind()
@@ -56,7 +55,6 @@ def upgrade() -> None:
             ON file_paths USING GIN (virtual_path gin_trgm_ops)
         """)
         )
-
 
 def downgrade() -> None:
     """Remove pg_trgm index (extension left in place as other things may use it)."""

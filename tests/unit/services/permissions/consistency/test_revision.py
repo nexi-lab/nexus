@@ -10,8 +10,6 @@ Covers:
 Related: Issue #1459 (decomposition), P0-1 (consistency levels)
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest
@@ -21,7 +19,6 @@ from nexus.services.permissions.consistency.revision import (
     get_zone_revision_for_grant,
     increment_version_token,
 )
-
 
 @pytest.fixture
 def sqlite_engine():
@@ -39,7 +36,6 @@ def sqlite_engine():
         )
         conn.commit()
     return engine
-
 
 class TestIncrementVersionToken:
     """Test increment_version_token function."""
@@ -70,7 +66,6 @@ class TestIncrementVersionToken:
     def test_default_zone_id(self, sqlite_engine):
         token = increment_version_token(sqlite_engine)
         assert token == "v1"
-
 
 class TestIncrementVersionTokenPostgres:
     """Test increment_version_token with PostgreSQL dialect (mocked).
@@ -152,7 +147,6 @@ class TestIncrementVersionTokenPostgres:
 
         # Verify execute was called with a compiled statement
         assert mock_conn.execute.call_count == 1
-
 
 class TestGetZoneRevisionForGrant:
     """Test get_zone_revision_for_grant function."""

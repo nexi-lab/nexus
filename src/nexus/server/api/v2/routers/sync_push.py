@@ -6,8 +6,6 @@ flushing pending backlog entries to the source backend.
     POST /api/v2/sync/mounts/{mount_point}/push
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 from urllib.parse import unquote
@@ -24,7 +22,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/sync", tags=["sync"])
 
-
 async def _require_admin(
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
 ) -> dict[str, Any]:
@@ -32,7 +29,6 @@ async def _require_admin(
     if not auth_result.get("is_admin", False):
         raise HTTPException(status_code=403, detail="Admin role required for sync push")
     return auth_result
-
 
 @router.post("/mounts/{mount_point:path}/push", response_model=SyncPushResponse)
 async def push_mount(

@@ -4,14 +4,11 @@ Extracted from fastapi_server.py (#1602). Admin handlers accept both
 ``nexus_fs`` and ``auth_provider`` as explicit parameters.
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import UTC, datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
-
 
 def require_admin(context: Any) -> None:
     """Require admin privileges for admin operations."""
@@ -19,7 +16,6 @@ def require_admin(context: Any) -> None:
 
     if not context or not getattr(context, "is_admin", False):
         raise NexusPermissionError("Admin privileges required for this operation")
-
 
 def handle_admin_create_key(auth_provider: Any, params: Any, context: Any) -> dict[str, Any]:
     """Handle admin_create_key method."""
@@ -75,7 +71,6 @@ def handle_admin_create_key(auth_provider: Any, params: Any, context: Any) -> di
             "is_admin": params.is_admin,
             "expires_at": expires_at.isoformat() if expires_at else None,
         }
-
 
 def handle_admin_list_keys(auth_provider: Any, params: Any, context: Any) -> dict[str, Any]:
     """Handle admin_list_keys method.
@@ -140,7 +135,6 @@ def handle_admin_list_keys(auth_provider: Any, params: Any, context: Any) -> dic
 
         return {"keys": keys, "total": total}
 
-
 def handle_admin_get_key(auth_provider: Any, params: Any, context: Any) -> dict[str, Any]:
     """Handle admin_get_key method."""
     from sqlalchemy import select
@@ -175,7 +169,6 @@ def handle_admin_get_key(auth_provider: Any, params: Any, context: Any) -> dict[
             "last_used_at": (api_key.last_used_at.isoformat() if api_key.last_used_at else None),
         }
 
-
 def handle_admin_revoke_key(auth_provider: Any, params: Any, context: Any) -> dict[str, Any]:
     """Handle admin_revoke_key method."""
     from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
@@ -193,7 +186,6 @@ def handle_admin_revoke_key(auth_provider: Any, params: Any, context: Any) -> di
 
         session.commit()
         return {"success": True, "key_id": params.key_id}
-
 
 def handle_admin_update_key(auth_provider: Any, params: Any, context: Any) -> dict[str, Any]:
     """Handle admin_update_key method."""

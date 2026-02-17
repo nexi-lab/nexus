@@ -1,13 +1,10 @@
 """Consolidation request/response models for API v2."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from pydantic import Field
 
 from nexus.server.api.v2.models.base import ApiModel
-
 
 class ConsolidateRequest(ApiModel):
     """Request for POST /api/v2/consolidate."""
@@ -26,7 +23,6 @@ class ConsolidateRequest(ApiModel):
         description=("Max memories to process. Consolidation is O(n^2) on this value."),
     )
 
-
 class HierarchyBuildRequest(ApiModel):
     """Request for POST /api/v2/consolidate/hierarchy."""
 
@@ -37,14 +33,12 @@ class HierarchyBuildRequest(ApiModel):
     lambda_decay: float = Field(0.1, ge=0.0, description="Temporal decay rate")
     time_unit_hours: float = Field(24.0, description="Time unit for decay calculation")
 
-
 class DecayRequest(ApiModel):
     """Request for POST /api/v2/consolidate/decay."""
 
     decay_factor: float = Field(0.95, ge=0.0, le=1.0, description="Decay factor per period")
     min_importance: float = Field(0.1, ge=0.0, le=1.0, description="Minimum importance floor")
     batch_size: int = Field(1000, ge=1, le=10000, description="Batch size for processing")
-
 
 class ConsolidationResponse(ApiModel):
     """Response for consolidation operations."""
@@ -54,7 +48,6 @@ class ConsolidationResponse(ApiModel):
     archived_count: int = 0
     results: list[dict[str, Any]]
 
-
 class HierarchyResponse(ApiModel):
     """Response for hierarchy operations."""
 
@@ -63,7 +56,6 @@ class HierarchyResponse(ApiModel):
     max_level_reached: int
     levels: dict[str, Any]
     statistics: dict[str, Any] | None = None
-
 
 class DecayResponse(ApiModel):
     """Response for decay operations."""

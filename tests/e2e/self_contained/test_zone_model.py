@@ -12,8 +12,6 @@ Testing approach:
 - Uses raw SQL for CHECK constraint tests (ORM may bypass CHECK)
 """
 
-from __future__ import annotations
-
 import json
 
 import pytest
@@ -28,7 +26,6 @@ from nexus.storage.models._base import Base
 pytestmark = pytest.mark.skip(
     reason="TODO: https://github.com/nexi-lab/nexus/issues/1702 — requires consistency_mode column on ZoneModel"
 )
-
 
 @pytest.fixture
 def engine():
@@ -48,13 +45,11 @@ def engine():
     Base.metadata.create_all(engine)
     return engine
 
-
 @pytest.fixture
 def session(engine):
     """Create a database session scoped to each test."""
     with Session(engine) as sess:
         yield sess
-
 
 def _make_zone(
     zone_id: str = "zone-1",
@@ -65,7 +60,6 @@ def _make_zone(
     kwargs = {"zone_id": zone_id, "name": name}
     kwargs.update(overrides)
     return ZoneModel(**kwargs)
-
 
 class TestConsistencyModeColumnExists:
     """Verify the consistency_mode column is present in the zones table schema."""
@@ -96,7 +90,6 @@ class TestConsistencyModeColumnExists:
         col = columns["consistency_mode"]
         assert col["nullable"] is False, "consistency_mode column must be NOT NULL"
 
-
 class TestConsistencyModeDefault:
     """Verify that the default value for consistency_mode is 'SC'."""
 
@@ -125,7 +118,6 @@ class TestConsistencyModeDefault:
         assert row is not None
         assert row[0] == "SC"
 
-
 class TestValidConsistencyModes:
     """Verify that valid consistency mode values are accepted."""
 
@@ -146,7 +138,6 @@ class TestValidConsistencyModes:
 
         session.refresh(zone)
         assert zone.consistency_mode == "EC"
-
 
 class TestInvalidConsistencyModeRejected:
     """Verify that the CHECK constraint rejects invalid consistency_mode values.
@@ -207,7 +198,6 @@ class TestInvalidConsistencyModeRejected:
             )
             conn.commit()
 
-
 class TestExistingZoneDataPreserved:
     """Verify that existing zone data is not corrupted by the new column."""
 
@@ -249,7 +239,6 @@ class TestExistingZoneDataPreserved:
         # The new column should coexist without affecting settings
         assert fetched.consistency_mode == "SC"
 
-
 class TestQueryByConsistencyMode:
     """Verify that zones can be filtered by consistency_mode."""
 
@@ -277,7 +266,6 @@ class TestQueryByConsistencyMode:
         sc_ids = {z.zone_id for z in sc_results}
         assert sc_ids == {"sc-1", "sc-2"}
 
-
 class TestZoneRepr:
     """Verify that the __repr__ method includes consistency_mode."""
 
@@ -292,7 +280,6 @@ class TestZoneRepr:
             f"__repr__ should include consistency_mode. Got: {repr_str}"
         )
         assert "EC" in repr_str, f"__repr__ should show the actual mode value 'EC'. Got: {repr_str}"
-
 
 class TestConsistencyModeUpdate:
     """Verify that consistency_mode can be updated on an existing zone."""

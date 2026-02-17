@@ -43,7 +43,6 @@ from nexus_tools import get_nexus_tools
 # Import official system prompt from Nexus tools
 from nexus.tools import CODING_AGENT_SYSTEM_PROMPT
 
-
 # Backtest tool for qlib strategies
 @tool
 def run_backtest(
@@ -138,7 +137,6 @@ Strategy outperformed benchmark by {(strategy_return - benchmark_return):.2%}
         return f"Error: Failed to connect to backtest API: {str(e)}"
     except Exception as e:
         return f"Error running backtest: {str(e)}"
-
 
 # Create tools (no API key needed - will be passed per-request)
 # Only include search and read tools - no write/execution tools
@@ -245,7 +243,6 @@ Here's an example of a well-structured qlib strategy:
 Be analytical, rigorous, and return clean, executable code in every response!"""
 )
 
-
 def build_prompt(state: dict, config: RunnableConfig) -> list:  # noqa: ARG001
     """Build prompt with optional opened file context from metadata.
 
@@ -258,7 +255,6 @@ def build_prompt(state: dict, config: RunnableConfig) -> list:  # noqa: ARG001
     # Return system message + user messages
     return [SystemMessage(content=system_content)] + state["messages"]
 
-
 # Create a runnable that wraps the prompt builder
 prompt_runnable = RunnableLambda(build_prompt)
 
@@ -268,7 +264,6 @@ agent = create_react_agent(
     tools=tools,
     prompt=prompt_runnable,
 )
-
 
 if __name__ == "__main__":
     # Example usage - Note: requires NEXUS_API_KEY to be set for testing

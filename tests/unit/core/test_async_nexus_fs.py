@@ -19,9 +19,7 @@ pytestmark = [
     pytest.mark.xdist_group("async_nexus_fs"),
 ]
 
-
 # === Fixtures ===
-
 
 @pytest.fixture
 def metadata_store(tmp_path: Path) -> RaftMetadataStore:
@@ -29,7 +27,6 @@ def metadata_store(tmp_path: Path) -> RaftMetadataStore:
     store = RaftMetadataStore.embedded(str(tmp_path / "raft"))
     yield store
     store.close()
-
 
 @pytest_asyncio.fixture
 async def async_fs(
@@ -45,9 +42,7 @@ async def async_fs(
     yield fs
     await fs.close()
 
-
 # === Initialization Tests ===
-
 
 @pytest.mark.asyncio
 async def test_initialization(tmp_path: Path, metadata_store: RaftMetadataStore) -> None:
@@ -65,9 +60,7 @@ async def test_initialization(tmp_path: Path, metadata_store: RaftMetadataStore)
 
     await fs.close()
 
-
 # === Basic Read/Write Tests ===
-
 
 @pytest.mark.asyncio
 async def test_write_and_read(async_fs: AsyncNexusFS) -> None:
@@ -86,7 +79,6 @@ async def test_write_and_read(async_fs: AsyncNexusFS) -> None:
     read_content = await async_fs.read(path)
     assert read_content == content
 
-
 @pytest.mark.asyncio
 async def test_write_string_content(async_fs: AsyncNexusFS) -> None:
     """Test writing string content (auto-converts to bytes)."""
@@ -97,7 +89,6 @@ async def test_write_string_content(async_fs: AsyncNexusFS) -> None:
 
     read_content = await async_fs.read(path)
     assert read_content == content.encode("utf-8")
-
 
 @pytest.mark.asyncio
 async def test_write_creates_parent_directories(async_fs: AsyncNexusFS) -> None:
@@ -115,7 +106,6 @@ async def test_write_creates_parent_directories(async_fs: AsyncNexusFS) -> None:
     assert await async_fs.exists("/deeply")
     assert await async_fs.exists("/deeply/nested")
     assert await async_fs.exists("/deeply/nested/path")
-
 
 @pytest.mark.asyncio
 async def test_write_overwrites_existing(async_fs: AsyncNexusFS) -> None:
@@ -137,13 +127,11 @@ async def test_write_overwrites_existing(async_fs: AsyncNexusFS) -> None:
     read_content = await async_fs.read(path)
     assert read_content == content2
 
-
 @pytest.mark.asyncio
 async def test_read_nonexistent_file(async_fs: AsyncNexusFS) -> None:
     """Test reading non-existent file raises error."""
     with pytest.raises(NexusFileNotFoundError):
         await async_fs.read("/does/not/exist.txt")
-
 
 @pytest.mark.asyncio
 async def test_read_with_metadata(async_fs: AsyncNexusFS) -> None:
@@ -162,9 +150,7 @@ async def test_read_with_metadata(async_fs: AsyncNexusFS) -> None:
     assert "modified_at" in result
     assert result["size"] == len(content)
 
-
 # === Optimistic Concurrency Control Tests ===
-
 
 @pytest.mark.asyncio
 async def test_write_with_if_match_success(async_fs: AsyncNexusFS) -> None:
@@ -181,7 +167,6 @@ async def test_write_with_if_match_success(async_fs: AsyncNexusFS) -> None:
     result2 = await async_fs.write(path, content2, if_match=etag)
     assert result2["version"] == 2
 
-
 @pytest.mark.asyncio
 async def test_write_with_if_match_conflict(async_fs: AsyncNexusFS) -> None:
     """Test optimistic concurrency control with mismatched etag."""
@@ -193,7 +178,6 @@ async def test_write_with_if_match_conflict(async_fs: AsyncNexusFS) -> None:
     # Try to write with wrong etag
     with pytest.raises(ConflictError):
         await async_fs.write(path, b"New content", if_match="wrong-etag")
-
 
 @pytest.mark.asyncio
 async def test_write_with_if_none_match(async_fs: AsyncNexusFS) -> None:
@@ -209,9 +193,7 @@ async def test_write_with_if_none_match(async_fs: AsyncNexusFS) -> None:
     with pytest.raises(FileExistsError):
         await async_fs.write(path, b"Should fail", if_none_match=True)
 
-
 # === Delete Tests ===
-
 
 @pytest.mark.asyncio
 async def test_delete(async_fs: AsyncNexusFS) -> None:
@@ -235,16 +217,13 @@ async def test_delete(async_fs: AsyncNexusFS) -> None:
     with pytest.raises(NexusFileNotFoundError):
         await async_fs.read(path)
 
-
 @pytest.mark.asyncio
 async def test_delete_nonexistent(async_fs: AsyncNexusFS) -> None:
     """Test deleting non-existent file raises error."""
     with pytest.raises(NexusFileNotFoundError):
         await async_fs.delete("/does/not/exist.txt")
 
-
 # === Exists Tests ===
-
 
 @pytest.mark.asyncio
 async def test_exists(async_fs: AsyncNexusFS) -> None:
@@ -266,9 +245,7 @@ async def test_exists(async_fs: AsyncNexusFS) -> None:
     # No longer exists
     assert not await async_fs.exists(path)
 
-
 # === Directory Operations ===
-
 
 @pytest.mark.asyncio
 async def test_mkdir(async_fs: AsyncNexusFS) -> None:
@@ -280,7 +257,6 @@ async def test_mkdir(async_fs: AsyncNexusFS) -> None:
 
     assert await async_fs.exists(path)
 
-
 @pytest.mark.asyncio
 async def test_mkdir_parents(async_fs: AsyncNexusFS) -> None:
     """Test creating nested directories with parents=True."""
@@ -291,7 +267,6 @@ async def test_mkdir_parents(async_fs: AsyncNexusFS) -> None:
     assert await async_fs.exists(path)
     assert await async_fs.exists("/test/nested/deep")
     assert await async_fs.exists("/test/nested")
-
 
 @pytest.mark.asyncio
 async def test_list_dir(async_fs: AsyncNexusFS) -> None:
@@ -308,7 +283,6 @@ async def test_list_dir(async_fs: AsyncNexusFS) -> None:
     assert "file2.txt" in items
     assert "subdir/" in items or "subdir" in items
 
-
 @pytest.mark.asyncio
 async def test_list_dir_empty(async_fs: AsyncNexusFS) -> None:
     """Test listing empty directory."""
@@ -317,9 +291,7 @@ async def test_list_dir_empty(async_fs: AsyncNexusFS) -> None:
     items = await async_fs.list_dir("/empty_dir")
     assert items == []
 
-
 # === Concurrent Operations ===
-
 
 @pytest.mark.asyncio
 async def test_concurrent_writes_different_files(async_fs: AsyncNexusFS) -> None:
@@ -343,7 +315,6 @@ async def test_concurrent_writes_different_files(async_fs: AsyncNexusFS) -> None
         content = await async_fs.read(path)
         assert content == f"Content for file {i}".encode()
 
-
 @pytest.mark.asyncio
 async def test_concurrent_read_write(async_fs: AsyncNexusFS) -> None:
     """Test concurrent reads and writes don't interfere."""
@@ -366,9 +337,7 @@ async def test_concurrent_read_write(async_fs: AsyncNexusFS) -> None:
     for result in results[:5]:
         assert result == content
 
-
 # === Content Deduplication Tests ===
-
 
 @pytest.mark.asyncio
 async def test_content_deduplication(async_fs: AsyncNexusFS) -> None:
@@ -388,7 +357,6 @@ async def test_content_deduplication(async_fs: AsyncNexusFS) -> None:
     assert await async_fs.read("/dedup/file2.txt") == content
     assert await async_fs.read("/dedup/file3.txt") == content
 
-
 @pytest.mark.asyncio
 async def test_delete_with_deduplication(async_fs: AsyncNexusFS) -> None:
     """Test that deleting one file doesn't affect others with same content."""
@@ -403,9 +371,7 @@ async def test_delete_with_deduplication(async_fs: AsyncNexusFS) -> None:
     # Second file should still work
     assert await async_fs.read("/shared/file2.txt") == content
 
-
 # === Large File Tests ===
-
 
 @pytest.mark.asyncio
 async def test_write_large_content(async_fs: AsyncNexusFS) -> None:
@@ -420,9 +386,7 @@ async def test_write_large_content(async_fs: AsyncNexusFS) -> None:
     read_content = await async_fs.read("/large/big_file.bin")
     assert read_content == content
 
-
 # === Empty Content Tests ===
-
 
 @pytest.mark.asyncio
 async def test_write_empty_content(async_fs: AsyncNexusFS) -> None:
@@ -436,9 +400,7 @@ async def test_write_empty_content(async_fs: AsyncNexusFS) -> None:
     read_content = await async_fs.read(path)
     assert read_content == b""
 
-
 # === Binary Content Tests ===
-
 
 @pytest.mark.asyncio
 async def test_binary_content(async_fs: AsyncNexusFS) -> None:
@@ -451,9 +413,7 @@ async def test_binary_content(async_fs: AsyncNexusFS) -> None:
     read_content = await async_fs.read(path)
     assert read_content == content
 
-
 # === Streaming Tests ===
-
 
 @pytest.mark.asyncio
 async def test_stream_read(async_fs: AsyncNexusFS) -> None:
@@ -472,7 +432,6 @@ async def test_stream_read(async_fs: AsyncNexusFS) -> None:
     assert b"".join(chunks) == content
     assert len(chunks) == 16  # 1MB / 64KB = 16 chunks
 
-
 @pytest.mark.asyncio
 async def test_stream_write(async_fs: AsyncNexusFS) -> None:
     """Test streaming write from async iterator."""
@@ -490,9 +449,7 @@ async def test_stream_write(async_fs: AsyncNexusFS) -> None:
     read_content = await async_fs.read(path)
     assert read_content == expected_content
 
-
 # === Metadata Query Tests ===
-
 
 @pytest.mark.asyncio
 async def test_get_metadata(async_fs: AsyncNexusFS) -> None:
@@ -509,16 +466,13 @@ async def test_get_metadata(async_fs: AsyncNexusFS) -> None:
     assert meta.etag is not None
     assert meta.version == 1
 
-
 @pytest.mark.asyncio
 async def test_get_metadata_nonexistent(async_fs: AsyncNexusFS) -> None:
     """Test getting metadata for non-existent file."""
     meta = await async_fs.get_metadata("/does/not/exist.txt")
     assert meta is None
 
-
 # === Batch Operations ===
-
 
 @pytest.mark.asyncio
 async def test_batch_read(async_fs: AsyncNexusFS) -> None:
@@ -540,7 +494,6 @@ async def test_batch_read(async_fs: AsyncNexusFS) -> None:
     for path, content in paths_content.items():
         assert results[path] == content
 
-
 @pytest.mark.asyncio
 async def test_batch_read_with_missing(async_fs: AsyncNexusFS) -> None:
     """Test batch read with some missing files."""
@@ -555,7 +508,6 @@ async def test_batch_read_with_missing(async_fs: AsyncNexusFS) -> None:
 
     assert results["/batch/exists.txt"] == b"Content"
     assert results["/batch/missing.txt"] is None
-
 
 @pytest.mark.asyncio
 async def test_batch_read_permission_filter(tmp_path: Path) -> None:
@@ -617,7 +569,6 @@ async def test_batch_read_permission_filter(tmp_path: Path) -> None:
     # Verify filter was called once (batch, not per-path)
     mock_enforcer.filter_paths_by_permission.assert_called_once()
 
-
 @pytest.mark.asyncio
 async def test_batch_read_all_denied(tmp_path: Path) -> None:
     """Test batch_read when all paths are denied returns all None, no exception."""
@@ -645,7 +596,6 @@ async def test_batch_read_all_denied(tmp_path: Path) -> None:
 
     assert results["/secret/a.txt"] is None
     assert results["/secret/b.txt"] is None
-
 
 @pytest.mark.asyncio
 async def test_batch_read_permissions_disabled(tmp_path: Path) -> None:
@@ -691,9 +641,7 @@ async def test_batch_read_permissions_disabled(tmp_path: Path) -> None:
     assert results["/open/file1.txt"] is not None
     assert results["/open/file2.txt"] is not None
 
-
 # === Path Validation Tests ===
-
 
 @pytest.mark.asyncio
 async def test_path_must_be_absolute(async_fs: AsyncNexusFS) -> None:
@@ -702,7 +650,6 @@ async def test_path_must_be_absolute(async_fs: AsyncNexusFS) -> None:
 
     with pytest.raises(InvalidPathError):
         await async_fs.write("relative/path.txt", b"Content")
-
 
 @pytest.mark.asyncio
 async def test_path_normalization(async_fs: AsyncNexusFS) -> None:

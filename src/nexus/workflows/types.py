@@ -8,7 +8,6 @@ from uuid import UUID
 
 from nexus.raft.zone_manager import ROOT_ZONE_ID
 
-
 class WorkflowStatus(StrEnum):
     """Status of a workflow execution."""
 
@@ -17,7 +16,6 @@ class WorkflowStatus(StrEnum):
     SUCCEEDED = "succeeded"
     FAILED = "failed"
     CANCELLED = "cancelled"
-
 
 class TriggerType(StrEnum):
     """Types of workflow triggers."""
@@ -30,7 +28,6 @@ class TriggerType(StrEnum):
     WEBHOOK = "webhook"
     MANUAL = "manual"
 
-
 @dataclass
 class WorkflowAction:
     """Definition of a single workflow action."""
@@ -39,14 +36,12 @@ class WorkflowAction:
     type: str
     config: dict[str, Any] = field(default_factory=dict)
 
-
 @dataclass
 class WorkflowTrigger:
     """Definition of a workflow trigger."""
 
     type: TriggerType
     config: dict[str, Any] = field(default_factory=dict)
-
 
 @dataclass
 class WorkflowDefinition:
@@ -58,7 +53,6 @@ class WorkflowDefinition:
     triggers: list[WorkflowTrigger] = field(default_factory=list)
     actions: list[WorkflowAction] = field(default_factory=list)
     variables: dict[str, Any] = field(default_factory=dict)
-
 
 @dataclass
 class WorkflowContext:
@@ -74,7 +68,6 @@ class WorkflowContext:
     file_metadata: dict[str, Any] | None = None
     services: Any | None = None
 
-
 @dataclass
 class ActionResult:
     """Result of an action execution."""
@@ -84,7 +77,6 @@ class ActionResult:
     output: Any | None = None
     error: str | None = None
     duration_ms: float = 0.0
-
 
 @dataclass
 class WorkflowExecution:

@@ -114,7 +114,6 @@ _LAZY_IMPORTS: dict[str, str] = {
     "MCPToolExporter": "nexus.mcp.exporter",
 }
 
-
 # TYPE_CHECKING imports — lets mypy resolve lazy types without runtime cost
 if TYPE_CHECKING:
     from nexus.mcp.exporter import MCPToolExporter
@@ -142,13 +141,11 @@ if TYPE_CHECKING:
         list_templates,
     )
 
-
 def __getattr__(name: str) -> object:
     if name in _LAZY_IMPORTS:
         module = importlib.import_module(_LAZY_IMPORTS[name])
         return getattr(module, name)
     raise AttributeError(f"module 'nexus.skills' has no attribute {name}")
-
 
 __all__ = [
     # Models

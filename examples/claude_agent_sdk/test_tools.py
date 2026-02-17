@@ -8,12 +8,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
 from claude_agent_sdk import ClaudeAgentOptions, create_sdk_mcp_server, tool
 
-
 # Test tool definition
 @tool("test_tool", "A test tool", {"message": str})
 async def test_tool(args):
     return {"content": [{"type": "text", "text": f"Hello {args.get('message', 'world')}"}]}
-
 
 # Test server creation
 try:

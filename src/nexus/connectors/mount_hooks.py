@@ -14,17 +14,16 @@ Usage:
     >>> on_mount(calendar_backend, "/mnt/calendar", filesystem=nx)
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.connectors.base import SkillDocMixin
+from nexus.core.protocols.connector import ConnectorProtocol
 if TYPE_CHECKING:
     from nexus.connectors.base import SkillDocMixin
     from nexus.core.protocols.connector import ConnectorProtocol
 
 logger = logging.getLogger(__name__)
-
 
 def on_mount(
     backend: ConnectorProtocol,
@@ -92,7 +91,6 @@ def on_mount(
                 result["skill_registered"] = True
 
     return result
-
 
 def generate_all_skill_docs(
     router: Any,

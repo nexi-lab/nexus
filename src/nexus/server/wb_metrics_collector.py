@@ -13,15 +13,13 @@ Usage:
         REGISTRY.register(WriteBufferCollector(write_observer))
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from prometheus_client.core import GaugeMetricFamily
 
+from collections.abc import Iterable
 if TYPE_CHECKING:
     from collections.abc import Iterable
-
 
 @runtime_checkable
 class MetricsProvider(Protocol):
@@ -29,7 +27,6 @@ class MetricsProvider(Protocol):
 
     @property
     def metrics(self) -> dict[str, Any]: ...
-
 
 class WriteBufferCollector:
     """Prometheus custom collector for WriteBuffer metrics.

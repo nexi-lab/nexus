@@ -4,8 +4,6 @@ Tests the full task queue lifecycle through the actual HTTP API
 with --auth-type database enabled.
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket
@@ -36,14 +34,12 @@ pytestmark = [
 # Source path for PYTHONPATH
 _src_path = Path(__file__).parent.parent.parent / "src"
 
-
 def find_free_port() -> int:
     """Find a free port on localhost."""
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
         s.bind(("", 0))
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         return s.getsockname()[1]
-
 
 def wait_for_server(url: str, timeout: float = 60.0) -> bool:
     """Wait for server to be ready by polling /health endpoint."""
@@ -57,7 +53,6 @@ def wait_for_server(url: str, timeout: float = 60.0) -> bool:
             pass
         time.sleep(0.1)
     return False
-
 
 def _rpc_call(
     client: httpx.Client, method: str, params: dict, token: str | None = None
@@ -77,7 +72,6 @@ def _rpc_call(
         headers=headers,
     )
     return response
-
 
 @pytest.fixture(scope="function")
 def auth_server(tmp_path):
@@ -174,7 +168,6 @@ def auth_server(tmp_path):
         process.kill()
         process.wait()
 
-
 @pytest.fixture(scope="function")
 def auth_client(auth_server):
     """Create httpx client for auth server."""
@@ -184,7 +177,6 @@ def auth_client(auth_server):
         trust_env=False,
     ) as client:
         yield {"client": client, "api_key": auth_server["api_key"]}
-
 
 class TestTaskQueueAuth:
     """Test task queue operations require authentication."""

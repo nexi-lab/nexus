@@ -7,13 +7,11 @@ include in-memory (testing), VFS-backed (file-based), and database-backed
 Follows the same pattern as Google's ``a2a-python`` SDK ``TaskStore``.
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from nexus.a2a.models import Task, TaskState
 if TYPE_CHECKING:
     from nexus.a2a.models import Task, TaskState
-
 
 @runtime_checkable
 class TaskStoreProtocol(Protocol):

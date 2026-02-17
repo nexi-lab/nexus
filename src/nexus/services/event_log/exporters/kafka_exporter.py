@@ -7,19 +7,17 @@ idempotent producer for exactly-once semantics.
 Optional dependency: ``pip install nexus-ai-fs[kafka]``
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.event_bus import FileEvent
 
+from nexus.services.event_log.exporters.config import KafkaExporterConfig
 if TYPE_CHECKING:
     from nexus.services.event_log.exporters.config import KafkaExporterConfig
 
 logger = logging.getLogger(__name__)
-
 
 class KafkaExporter:
     """Kafka event stream exporter implementing EventStreamExporterProtocol."""

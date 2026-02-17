@@ -3,18 +3,14 @@
 States: CLOSED -> OPEN -> HALF_OPEN -> CLOSED (on success) or OPEN (on failure).
 """
 
-from __future__ import annotations
-
 import asyncio
 import time
 from enum import Enum
-
 
 class CircuitState(Enum):
     CLOSED = "closed"
     OPEN = "open"
     HALF_OPEN = "half_open"
-
 
 class AsyncCircuitBreaker:
     """Async-safe circuit breaker for remote call protection.

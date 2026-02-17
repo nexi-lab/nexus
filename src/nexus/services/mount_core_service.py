@@ -24,26 +24,24 @@ Example:
     ```
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.context_utils import get_user_identity, get_zone_id
 from nexus.services.permission_utils import check_permission
 
+from nexus.core.permissions import OperationContext
+from nexus.services.gateway import NexusFSGateway
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.services.gateway import NexusFSGateway
 
 logger = logging.getLogger(__name__)
 
-
 def _record_error(result: dict, msg: str) -> None:
     """Append an error message to result["errors"] and log a warning."""
     result["errors"].append(msg)
     logger.warning(msg)
-
 
 class MountCoreService:
     """Core mount management operations (SYNC).

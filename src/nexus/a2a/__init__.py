@@ -7,16 +7,13 @@ surfaces (alongside VFS and MCP).
 See: https://a2a-protocol.org/latest/specification/
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any
 
+from fastapi import APIRouter
 if TYPE_CHECKING:
     from fastapi import APIRouter
 
-
 __all__ = ["create_a2a_router"]
-
 
 def create_a2a_router(
     *,

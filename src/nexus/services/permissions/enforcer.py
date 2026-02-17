@@ -9,8 +9,6 @@ Kernel-level types (Permission, OperationContext, check_stale_session) remain
 in core/permissions.py.
 """
 
-from __future__ import annotations
-
 import logging
 import os
 import time
@@ -19,6 +17,10 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.core.permissions import OperationContext, Permission, check_stale_session
 
+from nexus.rebac.manager import ReBACManager
+from nexus.services.permissions.hotspot_detector import HotspotDetector
+from nexus.services.permissions.namespace_manager import NamespaceManager
+from nexus.services.permissions.permission_boundary_cache import PermissionBoundaryCache
 if TYPE_CHECKING:
     from nexus.rebac.manager import ReBACManager
     from nexus.services.permissions.hotspot_detector import HotspotDetector
@@ -27,7 +29,6 @@ if TYPE_CHECKING:
     from nexus.services.permissions.permissions_enhanced import AuditStore
 
 logger = logging.getLogger(__name__)
-
 
 class PermissionEnforcer:
     """Pure ReBAC permission enforcement for Nexus filesystem (v0.6.0+).
@@ -62,7 +63,7 @@ class PermissionEnforcer:
         # P0-4: Enhanced features
         allow_admin_bypass: bool = False,  # P0-4: Kill-switch DEFAULT OFF for production security
         allow_system_bypass: bool = True,  # P0-4: System bypass still enabled (for service operations)
-        audit_store: AuditStore | None = None,  # P0-4: Audit logging
+        audit_store: "AuditStore | None" = None,  # P0-4: Audit logging
         admin_bypass_paths: list[str] | None = None,  # P0-4: Scoped bypass (allowlist)
         # Issue #922: Permission boundary cache for O(1) inheritance checks
         boundary_cache: PermissionBoundaryCache | None = None,

@@ -28,7 +28,6 @@ from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
-
 def main() -> None:
     """Test deprovision_user with configurable database backend."""
     # Parse command line arguments
@@ -286,7 +285,6 @@ def main() -> None:
         sys.exit(1)
     finally:
         nx.close()
-
 
 if __name__ == "__main__":
     try:

@@ -15,8 +15,6 @@ Usage:
     manager = ReBACManager(engine)
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import threading
@@ -85,6 +83,7 @@ from nexus.rebac.types import (
 from nexus.rebac.utils.changelog import insert_changelog_entry
 from nexus.rebac.utils.zone import normalize_zone_id
 
+from sqlalchemy.engine import Engine
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
@@ -94,11 +93,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 # ============================================================================
 # Flattened ReBAC Manager (Issue #1385)
 # ============================================================================
-
 
 class ReBACManager:
     """Unified ReBAC Manager — flattened from ReBACManager + EnhancedReBACManager.
@@ -6156,7 +6153,6 @@ class ReBACManager:
         Connections are closed immediately after each operation.
         """
         pass
-
 
 # ====================================================================================
 # Backward Compatibility Alias

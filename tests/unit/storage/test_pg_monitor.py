@@ -4,14 +4,11 @@ PgMonitor methods that rely on pg_stat_statements should return empty /
 false values when running against a non-PostgreSQL backend (e.g. SQLite).
 """
 
-from __future__ import annotations
-
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 from nexus.storage.pg_monitor import PgMonitor
-
 
 @pytest.fixture()
 def sqlite_session():
@@ -19,7 +16,6 @@ def sqlite_session():
     engine = create_engine("sqlite:///:memory:")
     with Session(engine) as session:
         yield session
-
 
 class TestPgMonitorSQLiteDegradation:
     """PgMonitor should degrade gracefully when backed by SQLite."""

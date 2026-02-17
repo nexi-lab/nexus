@@ -5,8 +5,6 @@ goes through a pluggable ``TaskStoreProtocol``; active SSE streams are
 managed by a ``StreamRegistry`` (injected via DI).
 """
 
-from __future__ import annotations
-
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -29,6 +27,8 @@ from nexus.a2a.models import (
     is_valid_transition,
 )
 
+from nexus.a2a.stream_registry import StreamRegistry
+from nexus.a2a.task_store import TaskStoreProtocol
 if TYPE_CHECKING:
     import asyncio
 
@@ -36,7 +36,6 @@ if TYPE_CHECKING:
     from nexus.a2a.task_store import TaskStoreProtocol
 
 logger = logging.getLogger(__name__)
-
 
 class TaskManager:
     """Manages A2A task lifecycle and persistence.

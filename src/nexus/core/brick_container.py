@@ -11,15 +11,12 @@ Usage:
     auth = container.resolve(AuthBrickProtocol)
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TypeVar
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
-
 
 class BrickContainer:
     """DI container mapping Protocol types to brick implementations.

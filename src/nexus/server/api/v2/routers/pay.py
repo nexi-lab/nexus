@@ -13,8 +13,6 @@ Provides 8 endpoints for agent payment operations:
 Related: Issue #1209
 """
 
-from __future__ import annotations
-
 import logging
 from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any
@@ -40,7 +38,6 @@ MAX_BATCH_SIZE = 1000
 # Pydantic Request/Response Models
 # =============================================================================
 
-
 def _validate_amount(v: str) -> str:
     """Validate a monetary amount string: positive, <=6 decimal places."""
     try:
@@ -55,7 +52,6 @@ def _validate_amount(v: str) -> str:
     ):
         raise ValueError(f"Amount must have at most {MAX_DECIMAL_PLACES} decimal places")
     return v
-
 
 class TransferRequestModel(BaseModel):
     """Request to transfer credits."""
@@ -80,7 +76,6 @@ class TransferRequestModel(BaseModel):
             raise ValueError("method must be 'auto', 'credits', or 'x402'")
         return v
 
-
 class BatchTransferItemModel(BaseModel):
     """A single transfer in a batch."""
 
@@ -93,7 +88,6 @@ class BatchTransferItemModel(BaseModel):
     def validate_amount(cls, v: str) -> str:
         return _validate_amount(v)
 
-
 class BatchTransferRequestModel(BaseModel):
     """Request for atomic batch transfer."""
 
@@ -102,7 +96,6 @@ class BatchTransferRequestModel(BaseModel):
         description="List of transfers to execute atomically",
         max_length=MAX_BATCH_SIZE,
     )
-
 
 class ReserveRequestModel(BaseModel):
     """Request to reserve credits."""
@@ -119,7 +112,6 @@ class ReserveRequestModel(BaseModel):
     def validate_amount(cls, v: str) -> str:
         return _validate_amount(v)
 
-
 class CommitRequestModel(BaseModel):
     """Request to commit a reservation."""
 
@@ -135,7 +127,6 @@ class CommitRequestModel(BaseModel):
             return _validate_amount(v)
         return v
 
-
 class MeterRequestModel(BaseModel):
     """Request to record metered usage."""
 
@@ -147,9 +138,7 @@ class MeterRequestModel(BaseModel):
     def validate_amount(cls, v: str) -> str:
         return _validate_amount(v)
 
-
 # --- Response Models ---
-
 
 class BalanceResponse(BaseModel):
     """Agent balance information."""
@@ -157,7 +146,6 @@ class BalanceResponse(BaseModel):
     available: str = Field(..., description="Available balance")
     reserved: str = Field(..., description="Reserved (pending) balance")
     total: str = Field(..., description="Total balance (available + reserved)")
-
 
 class ReceiptResponse(BaseModel):
     """Receipt for a completed payment."""
@@ -171,7 +159,6 @@ class ReceiptResponse(BaseModel):
     timestamp: str | None = Field(default=None, description="ISO 8601 timestamp")
     tx_hash: str | None = Field(default=None, description="Blockchain tx hash (x402 only)")
 
-
 class ReservationResponse(BaseModel):
     """A pending credit reservation."""
 
@@ -181,19 +168,16 @@ class ReservationResponse(BaseModel):
     expires_at: str | None = Field(default=None, description="Auto-release time (ISO 8601)")
     status: str = Field(..., description="Status: 'pending', 'committed', or 'released'")
 
-
 class CanAffordResponse(BaseModel):
     """Affordability check result."""
 
     can_afford: bool = Field(..., description="Whether agent can afford the amount")
     amount: str = Field(..., description="Amount checked")
 
-
 class MeterResponse(BaseModel):
     """Metering result."""
 
     success: bool = Field(..., description="Whether deduction succeeded")
-
 
 class ErrorResponse(BaseModel):
     """Error response."""
@@ -201,18 +185,15 @@ class ErrorResponse(BaseModel):
     detail: str = Field(..., description="Error message")
     error_code: str = Field(..., description="Error code for programmatic handling")
 
-
 # =============================================================================
 # Dependencies
 # =============================================================================
-
 
 def _get_require_auth() -> Any:
     """Lazy import to avoid circular imports."""
     from nexus.server.fastapi_server import require_auth
 
     return require_auth
-
 
 def _get_credits_service(request: Request) -> Any:
     """Get CreditsService from app state."""
@@ -224,11 +205,9 @@ def _get_credits_service(request: Request) -> Any:
         )
     return service
 
-
 def _get_x402_client(request: Request) -> Any:
     """Get X402Client from app state (may be None)."""
     return getattr(request.app.state, "x402_client", None)
-
 
 def _extract_agent_id(auth_result: dict[str, Any]) -> str:
     """Extract agent_id from auth result.
@@ -239,7 +218,6 @@ def _extract_agent_id(auth_result: dict[str, Any]) -> str:
     if x_agent_id:
         return str(x_agent_id)
     return str(auth_result.get("subject_id", "anonymous"))
-
 
 async def get_nexuspay(
     request: Request,
@@ -258,11 +236,9 @@ async def get_nexuspay(
         zone_id=zone_id,
     )
 
-
 # =============================================================================
 # Exception Handling
 # =============================================================================
-
 
 def _register_pay_exception_handlers(app: Any) -> None:
     """Register centralized exception handlers for NexusPay errors.
@@ -312,11 +288,9 @@ def _register_pay_exception_handlers(app: Any) -> None:
 
         app.add_exception_handler(exc_type, _handler)
 
-
 # =============================================================================
 # Response Converters
 # =============================================================================
-
 
 def _receipt_to_response(receipt: Any) -> ReceiptResponse:
     """Convert SDK Receipt dataclass to Pydantic response."""
@@ -331,7 +305,6 @@ def _receipt_to_response(receipt: Any) -> ReceiptResponse:
         tx_hash=receipt.tx_hash,
     )
 
-
 def _reservation_to_response(reservation: Any) -> ReservationResponse:
     """Convert SDK Reservation dataclass to Pydantic response."""
     return ReservationResponse(
@@ -342,11 +315,9 @@ def _reservation_to_response(reservation: Any) -> ReservationResponse:
         status=reservation.status,
     )
 
-
 # =============================================================================
 # Endpoints
 # =============================================================================
-
 
 @router.get("/balance", response_model=BalanceResponse)
 async def get_balance(
@@ -362,7 +333,6 @@ async def get_balance(
         reserved=str(balance.reserved),
         total=str(balance.total),
     )
-
 
 @router.get("/can-afford", response_model=CanAffordResponse)
 async def can_afford(
@@ -383,7 +353,6 @@ async def can_afford(
     result = await nexuspay.can_afford(Decimal(amount))
     return CanAffordResponse(can_afford=result, amount=amount)
 
-
 @router.post("/transfer", response_model=ReceiptResponse, status_code=201)
 async def transfer(
     request: TransferRequestModel,
@@ -402,7 +371,6 @@ async def transfer(
         method=request.method,
     )
     return _receipt_to_response(receipt)
-
 
 @router.post("/transfer/batch", response_model=list[ReceiptResponse], status_code=201)
 async def transfer_batch(
@@ -428,7 +396,6 @@ async def transfer_batch(
     receipts = await nexuspay.transfer_batch(transfer_requests)
     return [_receipt_to_response(r) for r in receipts]
 
-
 @router.post("/reserve", response_model=ReservationResponse, status_code=201)
 async def reserve(
     request: ReserveRequestModel,
@@ -447,7 +414,6 @@ async def reserve(
     )
     return _reservation_to_response(reservation)
 
-
 @router.post("/reserve/{reservation_id}/commit", status_code=204)
 async def commit_reservation(
     reservation_id: str,
@@ -463,7 +429,6 @@ async def commit_reservation(
     actual_amount = Decimal(request.actual_amount) if request and request.actual_amount else None
     await nexuspay.commit(reservation_id, actual_amount=actual_amount)
 
-
 @router.post("/reserve/{reservation_id}/release", status_code=204)
 async def release_reservation(
     reservation_id: str,
@@ -474,7 +439,6 @@ async def release_reservation(
     The reserved credits are returned to the agent's available balance.
     """
     await nexuspay.release(reservation_id)
-
 
 @router.post("/meter", response_model=MeterResponse)
 async def meter(
@@ -492,11 +456,9 @@ async def meter(
     )
     return MeterResponse(success=success)
 
-
 # =============================================================================
 # Spending Policy Endpoints (#1358)
 # =============================================================================
-
 
 class BudgetSummaryResponse(BaseModel):
     """Agent budget summary."""
@@ -510,7 +472,6 @@ class BudgetSummaryResponse(BaseModel):
     )
     rate_limits: dict[str, int] = Field(default_factory=dict, description="Rate limit settings")
     has_rules: bool = Field(default=False, description="Whether DSL rules are configured")
-
 
 class CreatePolicyRequest(BaseModel):
     """Request to create a spending policy."""
@@ -533,7 +494,6 @@ class CreatePolicyRequest(BaseModel):
     priority: int = Field(default=0, description="Priority (higher overrides lower)")
     enabled: bool = Field(default=True, description="Whether policy is active")
 
-
 class PolicyResponse(BaseModel):
     """Spending policy details."""
 
@@ -551,7 +511,6 @@ class PolicyResponse(BaseModel):
     priority: int = 0
     enabled: bool = True
 
-
 class ApprovalResponse(BaseModel):
     """Approval request details."""
 
@@ -568,7 +527,6 @@ class ApprovalResponse(BaseModel):
     decided_by: str | None = None
     expires_at: str | None = None
 
-
 def _get_policy_service(request: Request) -> Any:
     """Get SpendingPolicyService from app state."""
     service = getattr(request.app.state, "spending_policy_service", None)
@@ -578,7 +536,6 @@ def _get_policy_service(request: Request) -> Any:
             detail="Spending policy service not available",
         )
     return service
-
 
 @router.get("/budget", response_model=BudgetSummaryResponse)
 async def get_budget(
@@ -596,7 +553,6 @@ async def get_budget(
 
     summary = await policy_service.get_budget_summary(agent_id, zone_id)
     return BudgetSummaryResponse(**summary)
-
 
 @router.post("/policies", response_model=PolicyResponse, status_code=201)
 async def create_policy(
@@ -633,7 +589,6 @@ async def create_policy(
 
     return _policy_to_response(policy)
 
-
 @router.get("/policies", response_model=list[PolicyResponse])
 async def list_policies(
     request: Request,
@@ -651,7 +606,6 @@ async def list_policies(
 
     policies = await policy_service.list_policies(zone_id)
     return [_policy_to_response(p) for p in policies]
-
 
 @router.delete("/policies/{policy_id}", status_code=204)
 async def delete_policy(
@@ -671,11 +625,9 @@ async def delete_policy(
     if not deleted:
         raise HTTPException(status_code=404, detail="Policy not found")
 
-
 # =============================================================================
 # Approval Endpoints (Phase 2)
 # =============================================================================
-
 
 class RequestApprovalBody(BaseModel):
     """Request body for creating an approval request."""
@@ -688,7 +640,6 @@ class RequestApprovalBody(BaseModel):
     @classmethod
     def validate_amount(cls, v: str) -> str:
         return _validate_amount(v)
-
 
 @router.post("/approvals", response_model=ApprovalResponse, status_code=201)
 async def request_approval(
@@ -721,7 +672,6 @@ async def request_approval(
     )
     return _approval_to_response(approval)
 
-
 @router.get("/approvals", response_model=list[ApprovalResponse])
 async def list_approvals(
     request: Request,
@@ -738,7 +688,6 @@ async def list_approvals(
     policy_service = _get_policy_service(request)
     approvals = await policy_service.list_pending_approvals(zone_id)
     return [_approval_to_response(a) for a in approvals]
-
 
 @router.post("/approvals/{approval_id}/approve", response_model=ApprovalResponse)
 async def approve(
@@ -760,7 +709,6 @@ async def approve(
         raise HTTPException(status_code=404, detail="Approval not found or already decided")
     return _approval_to_response(result)
 
-
 @router.post("/approvals/{approval_id}/reject", response_model=ApprovalResponse)
 async def reject(
     approval_id: str,
@@ -781,11 +729,9 @@ async def reject(
         raise HTTPException(status_code=404, detail="Approval not found or already decided")
     return _approval_to_response(result)
 
-
 # =============================================================================
 # Response Helpers
 # =============================================================================
-
 
 def _policy_to_response(p: Any) -> PolicyResponse:
     """Convert SpendingPolicy to PolicyResponse."""
@@ -805,7 +751,6 @@ def _policy_to_response(p: Any) -> PolicyResponse:
         enabled=p.enabled,
     )
 
-
 def _approval_to_response(a: Any) -> ApprovalResponse:
     """Convert SpendingApproval to ApprovalResponse."""
     return ApprovalResponse(
@@ -822,7 +767,6 @@ def _approval_to_response(a: Any) -> ApprovalResponse:
         decided_by=a.decided_by,
         expires_at=a.expires_at.isoformat() if a.expires_at else None,
     )
-
 
 # =============================================================================
 # Module Exports

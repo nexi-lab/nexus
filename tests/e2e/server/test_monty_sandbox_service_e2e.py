@@ -13,8 +13,6 @@ Validates:
 - No performance regressions
 """
 
-from __future__ import annotations
-
 import logging
 import statistics
 import time
@@ -45,11 +43,9 @@ from nexus.storage.models import Base  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
 
 @pytest.fixture
 def engine():
@@ -62,11 +58,9 @@ def engine():
     Base.metadata.create_all(engine)
     return engine
 
-
 @pytest.fixture
 def session_factory(engine):
     return sessionmaker(bind=engine, expire_on_commit=False)
-
 
 @pytest.fixture
 def agent_registry(session_factory) -> AgentRegistry:
@@ -80,7 +74,6 @@ def agent_registry(session_factory) -> AgentRegistry:
     )
     return registry
 
-
 @pytest.fixture
 def sandbox_manager(session_factory) -> SandboxManager:
     """SandboxManager with Monty provider."""
@@ -90,7 +83,6 @@ def sandbox_manager(session_factory) -> SandboxManager:
         enable_type_checking=False,
     )
     return mgr
-
 
 @pytest.fixture
 def auth_service(
@@ -104,11 +96,9 @@ def auth_service(
         budget_enforcement=False,
     )
 
-
 # ---------------------------------------------------------------------------
 # Auth Pipeline Tests
 # ---------------------------------------------------------------------------
-
 
 class TestAuthPipeline:
     """Test the full auth pipeline with Monty."""
@@ -173,11 +163,9 @@ class TestAuthPipeline:
                 provider="monty",
             )
 
-
 # ---------------------------------------------------------------------------
 # Host Function Permission Tests (with auth)
 # ---------------------------------------------------------------------------
-
 
 class TestHostFunctionPermissionsWithAuth:
     """Permission enforcement through the full auth + execution pipeline."""
@@ -247,11 +235,9 @@ except ValueError as e:
         assert "blocked:" in exec_result.stdout
         assert "BREACH" not in exec_result.stdout
 
-
 # ---------------------------------------------------------------------------
 # Log Validation
 # ---------------------------------------------------------------------------
-
 
 class TestLogValidation:
     """Verify correct logging through the full pipeline."""
@@ -281,11 +267,9 @@ class TestLogValidation:
         assert "Created Monty sandbox" in log_text or "monty" in log_text.lower()
         assert "sandbox.created" in log_text or sandbox_id in log_text
 
-
 # ---------------------------------------------------------------------------
 # Performance (with full stack overhead)
 # ---------------------------------------------------------------------------
-
 
 class TestPerformanceWithAuth:
     """Performance benchmarks through the full auth + execution pipeline."""

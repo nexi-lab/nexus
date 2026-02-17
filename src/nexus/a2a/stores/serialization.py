@@ -5,8 +5,6 @@ conversions.  Extracted from ``database.py`` and ``in_memory.py``
 to eliminate duplicated serialization logic (Decision 3 / #1586).
 """
 
-from __future__ import annotations
-
 import json
 from typing import Any
 
@@ -18,16 +16,13 @@ from nexus.a2a.models import (
     TaskStatus,
 )
 
-
 def task_to_dict(task: Task) -> dict[str, Any]:
     """Serialize a Task to a plain dict (JSON-safe)."""
     return task.model_dump(mode="json")
 
-
 def task_from_dict(data: dict[str, Any]) -> Task:
     """Deserialize a plain dict into a Task model."""
     return Task.model_validate(data)
-
 
 def task_to_db_columns(task: Task) -> dict[str, Any]:
     """Convert a Task to DB column values.
@@ -41,7 +36,6 @@ def task_to_db_columns(task: Task) -> dict[str, Any]:
         "artifacts_json": json.dumps([a.model_dump(mode="json") for a in task.artifacts]),
         "metadata_json": json.dumps(task.metadata) if task.metadata else None,
     }
-
 
 def task_from_db_row(row: Any) -> Task:
     """Convert a database row to a Task model."""

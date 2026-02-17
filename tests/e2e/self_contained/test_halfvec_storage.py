@@ -22,19 +22,16 @@ pytestmark = pytest.mark.skipif(
     reason="HALFVEC_TEST_DATABASE_URL not set",
 )
 
-
 @pytest.fixture(scope="module")
 def engine():
     """Create test database engine."""
     db_url = os.getenv("HALFVEC_TEST_DATABASE_URL")
     return create_engine(db_url)
 
-
 @pytest.fixture(scope="module")
 def session_factory(engine):
     """Create session factory."""
     return sessionmaker(bind=engine)
-
 
 @pytest.fixture(scope="function")
 def session(session_factory):
@@ -42,7 +39,6 @@ def session(session_factory):
     sess = session_factory()
     yield sess
     sess.close()
-
 
 @pytest.fixture(scope="module", autouse=True)
 def setup_database(engine):
@@ -66,7 +62,6 @@ def setup_database(engine):
 
     # Cleanup
     Base.metadata.drop_all(engine)
-
 
 class TestHalfvecColumn:
     """Test that embedding column is halfvec type."""
@@ -99,7 +94,6 @@ class TestHalfvecColumn:
         row = result.fetchone()
         assert row is not None, "HNSW index not found"
         assert row[0] == "halfvec_cosine_ops", f"Expected halfvec_cosine_ops, got {row[0]}"
-
 
 class TestHalfvecStorage:
     """Test storing and retrieving halfvec embeddings."""
@@ -231,7 +225,6 @@ class TestHalfvecStorage:
         # Scores should be in descending order
         assert results[0]["score"] >= results[1]["score"] >= results[2]["score"]
 
-
 class TestHalfvecStorageSize:
     """Test storage size reduction with halfvec."""
 
@@ -308,7 +301,6 @@ class TestHalfvecStorageSize:
         savings_percent = (1 - row.avg_bytes / expected_vector_size) * 100
         print(f"  - Storage savings vs float32: {savings_percent:.1f}%")
         assert savings_percent > 40, f"Expected >40% savings, got {savings_percent:.1f}%"
-
 
 if __name__ == "__main__":
     # Quick test runner for manual testing

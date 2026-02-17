@@ -8,8 +8,6 @@ Provides 5 endpoints for trajectory tracking:
 - GET  /api/v2/trajectories/{id}         - Get trajectory
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -28,11 +26,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/trajectories", tags=["trajectories"])
 
-
 # =============================================================================
 # Endpoints
 # =============================================================================
-
 
 @router.post("", response_model=TrajectoryStartResponse, status_code=status.HTTP_201_CREATED)
 async def start_trajectory(
@@ -54,7 +50,6 @@ async def start_trajectory(
     except Exception as e:
         logger.error(f"Trajectory start error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to start trajectory") from e
-
 
 @router.post("/{trajectory_id}/steps")
 async def log_trajectory_step(
@@ -79,7 +74,6 @@ async def log_trajectory_step(
     except Exception as e:
         logger.error(f"Trajectory step error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to log trajectory step") from e
-
 
 @router.post("/{trajectory_id}/complete")
 async def complete_trajectory(
@@ -108,7 +102,6 @@ async def complete_trajectory(
     except Exception as e:
         logger.error(f"Trajectory complete error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to complete trajectory") from e
-
 
 @router.get("")
 async def query_trajectories(
@@ -144,7 +137,6 @@ async def query_trajectories(
     except Exception as e:
         logger.error(f"Trajectory query error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to query trajectories") from e
-
 
 @router.get("/{trajectory_id}", response_model=TrajectoryGetResponse)
 async def get_trajectory(

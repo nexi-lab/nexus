@@ -5,8 +5,6 @@ blocking the event loop (Decision 14).  Serialization logic is delegated
 to ``serialization.py`` (Decision 3).
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -16,13 +14,13 @@ from sqlalchemy.exc import SQLAlchemyError
 from nexus.a2a.models import Task, TaskState
 from nexus.a2a.stores.serialization import task_from_db_row, task_to_db_columns
 
+from nexus.storage.record_store import RecordStoreABC
 if TYPE_CHECKING:
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 
 _T = TypeVar("_T")
-
 
 class DatabaseTaskStore:
     """SQLAlchemy-backed task store.

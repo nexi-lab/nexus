@@ -13,17 +13,16 @@ Usage:
         REGISTRY.register(QueryObserverCollector(observer))
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING
 
 from prometheus_client.core import GaugeMetricFamily
 
+from collections.abc import Iterable
+from nexus.services.subsystems.observability_subsystem import QueryObserver
 if TYPE_CHECKING:
     from collections.abc import Iterable
 
     from nexus.services.subsystems.observability_subsystem import QueryObserver
-
 
 class QueryObserverCollector:
     """Prometheus custom collector that reads from a QueryObserver.

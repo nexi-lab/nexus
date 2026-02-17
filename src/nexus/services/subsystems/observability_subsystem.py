@@ -12,8 +12,6 @@ Provides:
 Constructor takes explicit deps — no ``self`` god-reference to NexusFS.
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 import time
@@ -26,11 +24,11 @@ from sqlalchemy import event
 from nexus.core.config import ObservabilityConfig
 from nexus.services.subsystem import Subsystem
 
+from sqlalchemy.engine import Engine
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass(frozen=True)
 class QueryEvent:
@@ -41,7 +39,6 @@ class QueryEvent:
     is_slow: bool
     timestamp: float
     connection_id: str | None = None
-
 
 class QueryObserver:
     """Attaches SQLAlchemy event listeners for query timing and pool metrics.
@@ -276,7 +273,6 @@ class QueryObserver:
                     "ObservabilitySubsystem auto-disabled after %d listener errors",
                     self._error_count,
                 )
-
 
 class ObservabilitySubsystem(Subsystem):
     """Lifecycle wrapper for QueryObserver.

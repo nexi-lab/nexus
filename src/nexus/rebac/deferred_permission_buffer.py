@@ -17,20 +17,19 @@ No WAL or crash recovery needed because:
 - Worst case: file exists but can't be shared until reconciliation
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 import time
 from collections import deque
 from typing import TYPE_CHECKING, Any
 
+from nexus.rebac.hierarchy_manager import HierarchyManager
+from nexus.rebac.rebac_manager import ReBACManager
 if TYPE_CHECKING:
     from nexus.rebac.hierarchy_manager import HierarchyManager
     from nexus.rebac.rebac_manager import ReBACManager
 
 logger = logging.getLogger(__name__)
-
 
 class DeferredPermissionBuffer:
     """
@@ -265,15 +264,12 @@ class DeferredPermissionBuffer:
                 f"grants={grants_count}, elapsed={elapsed_ms:.1f}ms"
             )
 
-
 # Singleton instance for easy access
 _default_buffer: DeferredPermissionBuffer | None = None
-
 
 def get_default_buffer() -> DeferredPermissionBuffer | None:
     """Get the default deferred permission buffer instance."""
     return _default_buffer
-
 
 def set_default_buffer(buffer: DeferredPermissionBuffer | None) -> None:
     """Set the default deferred permission buffer instance."""

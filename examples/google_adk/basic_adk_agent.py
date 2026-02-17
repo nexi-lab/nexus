@@ -46,7 +46,6 @@ from google.genai import types as genai_types
 
 import nexus
 
-
 def connect_to_nexus(tenant_id: str = "adk-demo", agent_id: str = "file-agent"):
     """
     Connect to Nexus filesystem (local or remote).
@@ -80,7 +79,6 @@ def connect_to_nexus(tenant_id: str = "adk-demo", agent_id: str = "file-agent"):
         print("✓ Connected to local Nexus")
 
     return nx
-
 
 def create_nexus_tools(nx):
     """
@@ -238,7 +236,6 @@ def create_nexus_tools(nx):
     # Return all tools as a list
     return [grep_files, glob_files, read_file, write_file]
 
-
 def setup_test_data(nx):
     """Set up test data in Nexus for the demo."""
     print("\n" + "=" * 70)
@@ -317,7 +314,6 @@ class DataProcessor:
     print("  - 1 file with synchronous code (for comparison)")
     return test_files
 
-
 def cleanup_test_data(nx, test_files):
     """Clean up test data from Nexus."""
     if os.getenv("KEEP") == "1":
@@ -349,7 +345,6 @@ def cleanup_test_data(nx, test_files):
         print("✓ Deleted: /reports/async-patterns.md")
     except Exception:
         pass
-
 
 def run_demo():
     """Run the Google ADK demo with Nexus."""
@@ -553,7 +548,6 @@ Always be thorough but concise in your analysis.""",
     finally:
         # Clean up test data
         cleanup_test_data(nx, test_files)
-
 
 if __name__ == "__main__":
     run_demo()

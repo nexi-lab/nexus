@@ -8,8 +8,6 @@ These constants map to TigerBeetle's fixed schema fields:
 Related: Issue #1199 (Nexus Pay hybrid architecture)
 """
 
-from __future__ import annotations
-
 import hashlib
 from decimal import Decimal
 
@@ -48,7 +46,6 @@ ESCROW_ACCOUNT_TB_ID = 2
 # Example: 1.0 credit = 1_000_000 micro-credits
 MICRO_UNIT_SCALE = 1_000_000
 
-
 def credits_to_micro(credits: Decimal | float | int) -> int:
     """Convert credits to micro-credits (internal storage format).
 
@@ -62,7 +59,6 @@ def credits_to_micro(credits: Decimal | float | int) -> int:
     """
     return int(Decimal(str(credits)) * MICRO_UNIT_SCALE)
 
-
 def micro_to_credits(micro: int) -> Decimal:
     """Convert micro-credits to credits (display format).
 
@@ -74,23 +70,19 @@ def micro_to_credits(micro: int) -> Decimal:
     """
     return Decimal(str(micro)) / MICRO_UNIT_SCALE
 
-
 # =============================================================================
 # ID Conversion Utilities
 # =============================================================================
-
 
 def agent_id_to_tb_id(agent_id: str) -> int:
     """Convert string agent_id to TigerBeetle-compatible 64-bit integer."""
     hash_bytes = hashlib.md5(agent_id.encode()).digest()
     return int.from_bytes(hash_bytes[:8], byteorder="big") % (2**63)
 
-
 def zone_to_tb_prefix(zone_id: str) -> int:
     """Convert zone_id to upper 64-bit prefix for TigerBeetle ID."""
     hash_bytes = hashlib.md5(zone_id.encode()).digest()
     return int.from_bytes(hash_bytes[8:16], byteorder="big") % (2**63)
-
 
 def make_tb_account_id(zone_id: str, agent_id: str) -> int:
     """Create full 128-bit TigerBeetle account ID."""

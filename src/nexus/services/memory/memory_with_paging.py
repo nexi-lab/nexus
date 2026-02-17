@@ -12,8 +12,6 @@ Usage:
     >>> results = memory.search_with_paging("query about fact")
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
@@ -21,6 +19,9 @@ from typing import TYPE_CHECKING, Any
 from nexus.services.memory.memory_api import Memory
 from nexus.services.memory.memory_paging import MemoryPager
 
+from nexus.backends.base import Backend
+from nexus.storage.models import MemoryModel
+from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
@@ -31,7 +32,6 @@ logger = logging.getLogger(__name__)
 
 # Default embedding dimension (OpenAI ada-002)
 _EMBEDDING_DIM = 1536
-
 
 class MemoryWithPaging(Memory):
     """Memory API with MemGPT 3-tier paging.

@@ -25,8 +25,6 @@ Example event creation:
     ```
 """
 
-from __future__ import annotations
-
 import re
 from typing import Annotated
 
@@ -35,7 +33,6 @@ from pydantic import BaseModel, Field, field_validator
 # ISO 8601 datetime pattern with timezone offset
 # Examples: 2024-01-15T09:00:00-08:00, 2024-01-15T09:00:00Z, 2024-01-15T09:00:00+05:30
 ISO8601_PATTERN = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}([+-]\d{2}:\d{2}|Z)$")
-
 
 class TimeSlot(BaseModel):
     """Time slot with datetime and timezone.
@@ -69,7 +66,6 @@ class TimeSlot(BaseModel):
             )
         return v
 
-
 class Attendee(BaseModel):
     """Event attendee."""
 
@@ -84,13 +80,11 @@ class Attendee(BaseModel):
         ),
     ]
 
-
 class Reminder(BaseModel):
     """Event reminder."""
 
     method: Annotated[str, Field(description="Reminder method: email or popup")]
     minutes: Annotated[int, Field(ge=0, le=40320, description="Minutes before event (0-40320)")]
-
 
 class Recurrence(BaseModel):
     """Recurrence rule (RFC 5545 RRULE format)."""
@@ -99,7 +93,6 @@ class Recurrence(BaseModel):
         str,
         Field(description="RRULE string (e.g., RRULE:FREQ=WEEKLY;BYDAY=MO,WE,FR)"),
     ]
-
 
 class CreateEventSchema(BaseModel):
     """Schema for creating a new calendar event.
@@ -176,7 +169,6 @@ class CreateEventSchema(BaseModel):
         Field(default=None, description="Color ID (1-11)"),
     ]
 
-
 class UpdateEventSchema(BaseModel):
     """Schema for updating an existing calendar event.
 
@@ -236,7 +228,6 @@ class UpdateEventSchema(BaseModel):
         str | None,
         Field(default=None, description="Color ID"),
     ]
-
 
 class DeleteEventSchema(BaseModel):
     """Schema for deleting a calendar event.

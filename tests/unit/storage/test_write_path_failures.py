@@ -4,8 +4,6 @@ Tests what happens when Raft succeeds but PostgreSQL fails,
 and verifies audit_strict_mode behavior for single and batch writes.
 """
 
-from __future__ import annotations
-
 import contextlib
 from datetime import datetime
 from unittest.mock import MagicMock, patch
@@ -21,7 +19,6 @@ from nexus.storage.record_store_syncer import RecordStoreSyncer
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
 
 def _make_metadata(
     path: str = "/test/file.txt",
@@ -55,7 +52,6 @@ def _make_metadata(
         modified_at=modified_at or now,
     )
 
-
 @pytest.fixture
 def engine():
     eng = create_engine("sqlite:///:memory:")
@@ -69,17 +65,14 @@ def engine():
     Base.metadata.create_all(eng)
     return eng
 
-
 @pytest.fixture
 def session_factory(engine):
     factory = sessionmaker(bind=engine)
     return factory
 
-
 # ---------------------------------------------------------------------------
 # Test: RecordStoreSyncer raises on failure (caller decides policy)
 # ---------------------------------------------------------------------------
-
 
 class TestSyncerRaisesOnFailure:
     """RecordStoreSyncer should raise exceptions — caller (kernel) decides policy."""
@@ -131,11 +124,9 @@ class TestSyncerRaisesOnFailure:
         ):
             syncer.on_delete(path="/test/file.txt")
 
-
 # ---------------------------------------------------------------------------
 # Test: Batch write error handling (currently uses contextlib.suppress!)
 # ---------------------------------------------------------------------------
-
 
 class TestBatchWriteErrorHandling:
     """Tests that document the CURRENT batch error handling behavior.
@@ -213,11 +204,9 @@ class TestBatchWriteErrorHandling:
 
         assert error_logged is True
 
-
 # ---------------------------------------------------------------------------
 # Test: VersionRecorder handles edge cases
 # ---------------------------------------------------------------------------
-
 
 class TestVersionRecorderEdgeCases:
     """Edge cases in VersionRecorder that could cause data corruption."""

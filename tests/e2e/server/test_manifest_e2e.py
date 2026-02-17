@@ -13,8 +13,6 @@ Run with:
     pytest tests/e2e/test_manifest_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import time
 
 import httpx
@@ -22,7 +20,6 @@ import pytest
 
 # Auth header for the default static API key used in conftest.py
 AUTH_HEADERS = {"Authorization": "Bearer test-e2e-api-key-12345"}
-
 
 def _register_agent(client: httpx.Client, agent_id: str) -> dict:
     """Register an agent via RPC and return the result."""
@@ -46,11 +43,9 @@ def _register_agent(client: httpx.Client, agent_id: str) -> dict:
     assert data.get("error") is None, f"RPC error: {data.get('error')}"
     return data.get("result", {})
 
-
 # ---------------------------------------------------------------------------
 # Test 1: PUT + GET manifest round-trip
 # ---------------------------------------------------------------------------
-
 
 @pytest.mark.e2e
 class TestManifestRoundTrip:
@@ -86,11 +81,9 @@ class TestManifestRoundTrip:
         assert get_data["source_count"] == 1
         assert get_data["sources"][0]["pattern"] == "*.py"
 
-
 # ---------------------------------------------------------------------------
 # Test 2: GET manifest — empty (new agent)
 # ---------------------------------------------------------------------------
-
 
 @pytest.mark.e2e
 class TestManifestEmpty:
@@ -109,11 +102,9 @@ class TestManifestEmpty:
         assert data["sources"] == []
         assert data["source_count"] == 0
 
-
 # ---------------------------------------------------------------------------
 # Test 3: PUT manifest — validation error
 # ---------------------------------------------------------------------------
-
 
 @pytest.mark.e2e
 class TestManifestValidationError:
@@ -130,11 +121,9 @@ class TestManifestValidationError:
         )
         assert resp.status_code == 422, f"Expected 422, got {resp.status_code}: {resp.text}"
 
-
 # ---------------------------------------------------------------------------
 # Test 4: PUT manifest — agent not found
 # ---------------------------------------------------------------------------
-
 
 @pytest.mark.e2e
 class TestManifestAgentNotFound:
@@ -155,11 +144,9 @@ class TestManifestAgentNotFound:
         )
         assert resp.status_code == 404
 
-
 # ---------------------------------------------------------------------------
 # Test 5: POST resolve — empty manifest
 # ---------------------------------------------------------------------------
-
 
 @pytest.mark.e2e
 class TestResolveEmptyManifest:
@@ -179,11 +166,9 @@ class TestResolveEmptyManifest:
         assert data["sources"] == []
         assert data["total_ms"] == 0.0
 
-
 # ---------------------------------------------------------------------------
 # Test 6: POST resolve — with file_glob source
 # ---------------------------------------------------------------------------
-
 
 @pytest.mark.e2e
 class TestResolveWithFileGlob:
@@ -215,11 +200,9 @@ class TestResolveWithFileGlob:
         assert data["sources"][0]["status"] == "ok"
         assert data["sources"][0]["source_type"] == "file_glob"
 
-
 # ---------------------------------------------------------------------------
 # Test 7: PUT manifest — replace (update) existing
 # ---------------------------------------------------------------------------
-
 
 @pytest.mark.e2e
 class TestManifestReplace:
@@ -263,11 +246,9 @@ class TestManifestReplace:
         assert data["source_count"] == 1
         assert data["sources"][0]["pattern"] == "*.md"
 
-
 # ---------------------------------------------------------------------------
 # Test 8: Performance — PUT + GET latency
 # ---------------------------------------------------------------------------
-
 
 @pytest.mark.e2e
 class TestManifestPerformance:

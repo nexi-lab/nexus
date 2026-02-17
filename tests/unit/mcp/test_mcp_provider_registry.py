@@ -20,11 +20,9 @@ from nexus.mcp.provider_registry import (
 # Fixtures
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture()
 def registry() -> MCPProviderRegistry:
     return MCPProviderRegistry()
-
 
 @pytest.fixture()
 def sample_providers() -> dict[str, ProviderConfig]:
@@ -46,11 +44,9 @@ def sample_providers() -> dict[str, ProviderConfig]:
         ),
     }
 
-
 # ---------------------------------------------------------------------------
 # Construction
 # ---------------------------------------------------------------------------
-
 
 class TestInit:
     def test_empty_init(self, registry: MCPProviderRegistry) -> None:
@@ -63,11 +59,9 @@ class TestInit:
         assert reg.get("github") is not None
         assert reg.get("local_tool") is not None
 
-
 # ---------------------------------------------------------------------------
 # get / add / remove
 # ---------------------------------------------------------------------------
-
 
 class TestGetAddRemove:
     def test_get_existing(self, sample_providers: dict) -> None:
@@ -93,11 +87,9 @@ class TestGetAddRemove:
     def test_remove_missing(self, registry: MCPProviderRegistry) -> None:
         assert registry.remove_provider("nope") is False
 
-
 # ---------------------------------------------------------------------------
 # Listing / filtering
 # ---------------------------------------------------------------------------
-
 
 class TestListing:
     def test_list_providers(self, sample_providers: dict) -> None:
@@ -119,11 +111,9 @@ class TestListing:
         assert len(local) == 1
         assert local[0][0] == "local_tool"
 
-
 # ---------------------------------------------------------------------------
 # Builtin defaults
 # ---------------------------------------------------------------------------
-
 
 class TestBuiltinDefaults:
     def test_with_builtin_defaults(self) -> None:
@@ -135,11 +125,9 @@ class TestBuiltinDefaults:
         assert "linear" in names
         assert len(names) == 4
 
-
 # ---------------------------------------------------------------------------
 # YAML round-trip
 # ---------------------------------------------------------------------------
-
 
 class TestYaml:
     def test_from_yaml(self, tmp_path: Path) -> None:
@@ -209,11 +197,9 @@ class TestYaml:
         assert p.oauth.client_id_env == "GOOGLE_ID"
         assert p.oauth.scopes == ["drive.readonly"]
 
-
 # ---------------------------------------------------------------------------
 # load_default fallback chain
 # ---------------------------------------------------------------------------
-
 
 class TestLoadDefault:
     def test_load_default_returns_registry(self) -> None:
@@ -238,11 +224,9 @@ class TestLoadDefault:
             reg = MCPProviderRegistry.load_default()
             assert reg.get("env_test") is not None
 
-
 # ---------------------------------------------------------------------------
 # Dataclass construction
 # ---------------------------------------------------------------------------
-
 
 class TestDataclasses:
     def test_provider_config_from_dict(self) -> None:

@@ -17,7 +17,6 @@ PLUGIN_TYPES = {
     "parser": "Content parser plugin (implements ParserProvider protocol)",
 }
 
-
 def scaffold_plugin(
     name: str,
     output_dir: Path,
@@ -110,12 +109,10 @@ def scaffold_plugin(
         "plugin_type": plugin_type,
     }
 
-
 def _write(path: Path, content: str, tracker: list[str]) -> None:
     """Write content to file and track it."""
     path.write_text(content)
     tracker.append(str(path))
-
 
 def _generate_pyproject(
     package_name: str,
@@ -174,7 +171,6 @@ target-version = "py311"
 select = ["E", "F", "I", "N", "W"]
 '''
 
-
 def _generate_plugin_class(
     _module_name: str,  # reserved for future use (e.g., intra-package imports)
     class_name: str,
@@ -188,7 +184,6 @@ def _generate_plugin_class(
 from typing import Callable
 
 from nexus.plugins import NexusPlugin, PluginMetadata
-
 
 class {class_name}(NexusPlugin):
     """{description}."""
@@ -248,14 +243,12 @@ class {class_name}(NexusPlugin):
 
     return base
 
-
 def _generate_test_file(module_name: str, class_name: str, name: str) -> str:
     return f'''"""Tests for {name} plugin."""
 
 import pytest
 
 from {module_name}.plugin import {class_name}
-
 
 class TestPluginMetadata:
     """Test plugin metadata."""
@@ -270,7 +263,6 @@ class TestPluginMetadata:
         meta = plugin.metadata()
         assert meta.version == "0.1.0"
 
-
 class TestPluginCommands:
     """Test plugin commands."""
 
@@ -283,7 +275,6 @@ class TestPluginCommands:
     async def test_hello_command(self) -> None:
         plugin = {class_name}()
         await plugin.hello_command("Test")
-
 
 class TestPluginLifecycle:
     """Test plugin lifecycle."""
@@ -300,7 +291,6 @@ class TestPluginLifecycle:
         await plugin.initialize({{}})
         await plugin.shutdown()
 '''
-
 
 def _generate_readme(package_name: str, name: str, description: str, plugin_type: str) -> str:
     return f"""# {package_name}

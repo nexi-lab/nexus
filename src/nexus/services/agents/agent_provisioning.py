@@ -14,7 +14,6 @@ logger = logging.getLogger(__name__)
 _DEFAULT_NEXUS_URL = "http://localhost:2026"
 _DEFAULT_LANGGRAPH_URL = "http://localhost:2024"
 
-
 # Default agent configuration metadata
 def get_default_agent_metadata() -> dict[str, Any]:
     """Get default agent metadata with configurable URLs from environment."""
@@ -25,7 +24,6 @@ def get_default_agent_metadata() -> dict[str, Any]:
         or os.getenv("NEXUS_URL", _DEFAULT_NEXUS_URL),
         "agent_id": "agent",
     }
-
 
 def create_impersonated_user_agent(
     nx: Any, user_id: str, context: Any, metadata: dict[str, Any] | None = None
@@ -69,7 +67,6 @@ def create_impersonated_user_agent(
         logger.error(f"Failed to create ImpersonatedUser agent: {e}")
         return None
 
-
 def create_untrusted_agent(
     nx: Any, user_id: str, context: Any, metadata: dict[str, Any] | None = None
 ) -> dict[str, Any] | None:
@@ -111,7 +108,6 @@ def create_untrusted_agent(
     except Exception as e:
         logger.error(f"Failed to create UntrustedAgent agent: {e}")
         return None
-
 
 def create_skill_builder_agent(
     nx: Any, user_id: str, context: Any, metadata: dict[str, Any] | None = None
@@ -156,7 +152,6 @@ def create_skill_builder_agent(
         logger.error(f"Failed to create SkillBuilder agent: {e}")
         return None
 
-
 def create_standard_agents(
     nx: Any, user_id: str, context: Any, metadata: dict[str, Any] | None = None
 ) -> dict[str, dict[str, Any] | None]:
@@ -187,7 +182,6 @@ def create_standard_agents(
         "untrusted": create_untrusted_agent(nx, user_id, context, metadata),
         "skill_builder": create_skill_builder_agent(nx, user_id, context, metadata),
     }
-
 
 def grant_agent_resource_access(
     nx: Any,
@@ -234,7 +228,6 @@ def grant_agent_resource_access(
             logger.warning(f"Failed to grant permission on {folder_path}: {e}")
 
     return granted_count
-
 
 def grant_skill_builder_permissions(
     nx: Any,

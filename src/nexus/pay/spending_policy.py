@@ -16,8 +16,6 @@ Architecture:
 Default behavior: open by default (no policy = allow all transactions).
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from decimal import Decimal
@@ -29,10 +27,8 @@ from nexus.pay.sdk import NexusPayError
 # Exceptions
 # =============================================================================
 
-
 class PolicyError(NexusPayError):
     """Base exception for all spending policy violations."""
-
 
 class PolicyDeniedError(PolicyError):
     """Transaction denied by a spending policy rule.
@@ -46,7 +42,6 @@ class PolicyDeniedError(PolicyError):
         super().__init__(message)
         self.policy_id = policy_id
         self.denied_reason = message
-
 
 class ApprovalRequiredError(PolicyError):
     """Transaction requires approval before execution (Phase 2).
@@ -70,7 +65,6 @@ class ApprovalRequiredError(PolicyError):
         self.approval_id = approval_id
         self.policy_id = policy_id
 
-
 class SpendingRateLimitError(PolicyError):
     """Transaction rate limit exceeded (Phase 3).
 
@@ -92,11 +86,9 @@ class SpendingRateLimitError(PolicyError):
         self.policy_id = policy_id
         self.limit_type = limit_type
 
-
 # =============================================================================
 # Data Classes
 # =============================================================================
-
 
 @dataclass(frozen=True)
 class SpendingPolicy:
@@ -124,7 +116,6 @@ class SpendingPolicy:
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
-
 @dataclass(frozen=True)
 class SpendingLedgerEntry:
     """Period-based spending counter for an agent.
@@ -139,7 +130,6 @@ class SpendingLedgerEntry:
     period_start: date
     amount_spent: Decimal = Decimal("0")
     tx_count: int = 0
-
 
 @dataclass(frozen=True)
 class SpendingApproval:
@@ -161,7 +151,6 @@ class SpendingApproval:
     decided_at: datetime | None = None
     decided_by: str | None = None
     expires_at: datetime | None = None
-
 
 @dataclass(frozen=True)
 class PolicyEvaluation:

@@ -4,16 +4,14 @@ Extracted from fastapi_server.py (#1602). All handlers accept ``nexus_fs``
 as an explicit parameter.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.core.nexus_fs import NexusFS
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
-
 
 def _get_memory_api_with_context(nexus_fs: NexusFS, context: Any) -> Any:
     """Get Memory API instance with authenticated context.
@@ -38,7 +36,6 @@ def _get_memory_api_with_context(nexus_fs: NexusFS, context: Any) -> Any:
 
     return nexus_fs._get_memory_api(context_dict if context_dict else None)
 
-
 def handle_store_memory(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     """Handle store_memory RPC method."""
     memory_api = _get_memory_api_with_context(nexus_fs, context)
@@ -53,7 +50,6 @@ def handle_store_memory(nexus_fs: NexusFS, params: Any, context: Any) -> dict[st
     )
     return {"memory_id": memory_id}
 
-
 def handle_list_memories(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     """Handle list_memories RPC method."""
     memory_api = _get_memory_api_with_context(nexus_fs, context)
@@ -66,7 +62,6 @@ def handle_list_memories(nexus_fs: NexusFS, params: Any, context: Any) -> dict[s
         limit=params.limit,
     )
     return {"memories": memories}
-
 
 def handle_query_memories(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     """Handle query_memories RPC method."""
@@ -104,7 +99,6 @@ def handle_query_memories(nexus_fs: NexusFS, params: Any, context: Any) -> dict[
         )
     return {"memories": memories}
 
-
 def handle_retrieve_memory(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     """Handle retrieve_memory RPC method."""
     memory_api = _get_memory_api_with_context(nexus_fs, context)
@@ -115,13 +109,11 @@ def handle_retrieve_memory(nexus_fs: NexusFS, params: Any, context: Any) -> dict
     )
     return {"memory": memory}
 
-
 def handle_delete_memory(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     """Handle delete_memory RPC method."""
     memory_api = _get_memory_api_with_context(nexus_fs, context)
     deleted = memory_api.delete(params.memory_id)
     return {"deleted": deleted}
-
 
 def handle_approve_memory(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     """Handle approve_memory RPC method."""
@@ -129,13 +121,11 @@ def handle_approve_memory(nexus_fs: NexusFS, params: Any, context: Any) -> dict[
     approved = memory_api.approve(params.memory_id)
     return {"approved": approved}
 
-
 def handle_deactivate_memory(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     """Handle deactivate_memory RPC method."""
     memory_api = _get_memory_api_with_context(nexus_fs, context)
     deactivated = memory_api.deactivate(params.memory_id)
     return {"deactivated": deactivated}
-
 
 def handle_approve_memory_batch(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     """Handle approve_memory_batch RPC method."""
@@ -143,13 +133,11 @@ def handle_approve_memory_batch(nexus_fs: NexusFS, params: Any, context: Any) ->
     result: dict[str, Any] = memory_api.approve_batch(params.memory_ids)
     return result
 
-
 def handle_deactivate_memory_batch(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     """Handle deactivate_memory_batch RPC method."""
     memory_api = _get_memory_api_with_context(nexus_fs, context)
     result: dict[str, Any] = memory_api.deactivate_batch(params.memory_ids)
     return result
-
 
 def handle_delete_memory_batch(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     """Handle delete_memory_batch RPC method."""

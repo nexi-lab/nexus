@@ -4,8 +4,6 @@ This module defines the common interface that all Nexus filesystem modes
 (Standalone, Remote, Federation) must implement.
 """
 
-from __future__ import annotations
-
 import builtins
 from abc import ABC, abstractmethod
 
@@ -13,9 +11,9 @@ from abc import ABC, abstractmethod
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
+from nexus.core.permissions import OperationContext
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
-
 
 class NexusFilesystem(ABC):
     """
@@ -1104,7 +1102,7 @@ class NexusFilesystem(ABC):
         """Close the filesystem and release resources."""
         ...
 
-    def __enter__(self) -> NexusFilesystem:
+    def __enter__(self) -> "NexusFilesystem":
         """Context manager entry."""
         return self
 

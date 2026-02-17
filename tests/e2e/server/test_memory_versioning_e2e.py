@@ -12,7 +12,6 @@ nexus server process for true e2e testing.
 
 import httpx
 
-
 class TestMemoryVersioningE2E:
     """E2E tests for memory versioning endpoints (#1184)."""
 

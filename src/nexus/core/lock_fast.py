@@ -9,8 +9,6 @@ Fallback chain:
     2. Python ``PythonVFSLockManager`` (threading-based) — ~500ns-1us
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 import time
@@ -21,7 +19,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Protocol
 # ---------------------------------------------------------------------------
-
 
 @runtime_checkable
 class VFSLockManagerProtocol(Protocol):
@@ -40,11 +37,9 @@ class VFSLockManagerProtocol(Protocol):
     @property
     def active_locks(self) -> int: ...
 
-
 # ---------------------------------------------------------------------------
 # Python fallback
 # ---------------------------------------------------------------------------
-
 
 class _LockEntry:
     __slots__ = ("readers", "writer")
@@ -55,7 +50,6 @@ class _LockEntry:
 
     def is_idle(self) -> bool:
         return self.readers == 0 and self.writer is None
-
 
 def _normalize_path(path: str) -> str:
     """Normalize a path: collapse repeated slashes, remove trailing slash (except root)."""
@@ -69,7 +63,6 @@ def _normalize_path(path: str) -> str:
     if len(result) > 1 and result.endswith("/"):
         result = result[:-1]
     return result
-
 
 def _ancestors(path: str) -> list[str]:
     """Return strict ancestors of *path* (deepest first). Assumes normalized input."""
@@ -87,7 +80,6 @@ def _ancestors(path: str) -> list[str]:
         result.append(path[:pos])
         end = pos
     return result
-
 
 class PythonVFSLockManager:
     """Pure-Python fallback using ``threading.RLock`` + dict."""
@@ -261,11 +253,9 @@ class PythonVFSLockManager:
         with self._mu:
             return len(self._locks)
 
-
 # ---------------------------------------------------------------------------
 # Rust wrapper
 # ---------------------------------------------------------------------------
-
 
 class RustVFSLockManager:
     """Thin wrapper around ``nexus_fast.VFSLockManager``."""
@@ -294,11 +284,9 @@ class RustVFSLockManager:
     def active_locks(self) -> int:
         return self._inner.active_locks  # type: ignore[no-any-return]  # allowed: untyped Rust ext
 
-
 # ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
-
 
 def create_vfs_lock_manager() -> VFSLockManagerProtocol:
     """Return the best available VFS lock manager.

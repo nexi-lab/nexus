@@ -10,7 +10,6 @@ from unittest.mock import patch
 
 from nexus.backends.cache_mixin import CacheConnectorMixin
 
-
 class MockBackend(CacheConnectorMixin):
     """Mock backend for testing cache mixin."""
 
@@ -37,7 +36,6 @@ class MockBackend(CacheConnectorMixin):
 
     def _list_files_recursive(self, path, context=None):
         return list(self.files.keys())
-
 
 class TestCacheMixinBulkOperations:
     """Test bulk cache operations for performance."""

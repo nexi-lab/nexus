@@ -4,8 +4,6 @@ Covers failure scenarios, cache fallback, write operation behavior,
 circuit recovery, and business exception pass-through.
 """
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import MagicMock
 
@@ -23,7 +21,6 @@ from nexus.services.rebac_service import ReBACService
 # =========================================================================
 # Fixtures
 # =========================================================================
-
 
 @pytest.fixture
 def mock_rebac_manager():
@@ -44,7 +41,6 @@ def mock_rebac_manager():
     mock.rebac_delete.return_value = True
     return mock
 
-
 @pytest.fixture
 def circuit_breaker():
     """Create a circuit breaker with fast test-friendly config."""
@@ -58,7 +54,6 @@ def circuit_breaker():
         ),
     )
 
-
 @pytest.fixture
 def service(mock_rebac_manager, circuit_breaker):
     """Create ReBACService with circuit breaker."""
@@ -68,11 +63,9 @@ def service(mock_rebac_manager, circuit_breaker):
         circuit_breaker=circuit_breaker,
     )
 
-
 # =========================================================================
 # Tests
 # =========================================================================
-
 
 class TestCircuitOpensAfterDBFailures:
     """Test 1: Circuit opens after repeated DB failures."""
@@ -98,7 +91,6 @@ class TestCircuitOpensAfterDBFailures:
                 permission="read",
                 object=("file", "/doc.txt"),
             )
-
 
 class TestFallbackReturnsCachedPermission:
     """Test 2: Circuit open + cache hit returns cached permission."""
@@ -127,7 +119,6 @@ class TestFallbackReturnsCachedPermission:
         assert result is True
         mock_rebac_manager.get_cached_permission.assert_called_once()
 
-
 class TestCircuitOpenCacheMissRaises:
     """Test 3: Circuit open + cache miss raises CircuitOpenError."""
 
@@ -152,7 +143,6 @@ class TestCircuitOpenCacheMissRaises:
                 permission="read",
                 object=("file", "/doc.txt"),
             )
-
 
 class TestWriteOperationsNoFallback:
     """Test 4: Write operations raise CircuitOpenError without cache fallback."""
@@ -179,7 +169,6 @@ class TestWriteOperationsNoFallback:
 
         # get_cached_permission should NOT be called for writes
         mock_rebac_manager.get_cached_permission.assert_not_called()
-
 
 class TestCircuitRecovery:
     """Test 5: Full recovery cycle — failures → open → timeout → half-open → success → closed."""
@@ -219,7 +208,6 @@ class TestCircuitRecovery:
         assert result2 is True
 
         assert circuit_breaker.state == CircuitState.CLOSED
-
 
 class TestBusinessExceptionsPassThrough:
     """Test 6: Business exceptions (ValueError) don't trip the circuit."""

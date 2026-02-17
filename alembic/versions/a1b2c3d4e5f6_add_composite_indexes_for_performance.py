@@ -22,7 +22,6 @@ down_revision: Union[str, Sequence[str], None] = "87a538c61ffa"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add composite indexes for performance optimization."""
     # Note: idx_tenant_path_prefix is very similar to existing idx_file_paths_tenant_path
@@ -46,7 +45,6 @@ def upgrade() -> None:
         ["content_hash", "tenant_id"],
         unique=False,
     )
-
 
 def downgrade() -> None:
     """Remove composite indexes."""

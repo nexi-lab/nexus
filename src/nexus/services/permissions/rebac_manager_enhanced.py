@@ -24,8 +24,6 @@ Usage:
     # Automatically enforces timeout, fan-out, and memory limits
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import threading
@@ -82,6 +80,7 @@ from nexus.services.permissions.utils.changelog import insert_changelog_entry
 from nexus.services.permissions.utils.zone import normalize_zone_id
 from nexus.storage.models.permissions import ReBACTupleModel as RT
 
+from sqlalchemy.engine import Engine
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
@@ -91,11 +90,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 # ============================================================================
 # Enhanced ReBAC Manager (All P0 Fixes Integrated)
 # ============================================================================
-
 
 class EnhancedReBACManager(ReBACManager):
     """ReBAC Manager with all P0 fixes integrated.

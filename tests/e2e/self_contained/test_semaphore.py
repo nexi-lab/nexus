@@ -24,7 +24,6 @@ import time
 
 import pytest
 
-
 # Skip all tests if Redis is not available
 def is_redis_available():
     """Check if Redis/Dragonfly is available."""
@@ -43,7 +42,6 @@ def is_redis_available():
     except Exception:
         return False
 
-
 def is_linux_container_available():
     """Check if the Linux test container is running."""
     try:
@@ -57,7 +55,6 @@ def is_linux_container_available():
     except Exception:
         return False
 
-
 # Conditional skip markers
 requires_redis = pytest.mark.skipif(
     not is_redis_available(),
@@ -69,7 +66,6 @@ requires_linux_container = pytest.mark.skipif(
     reason="Linux container not running",
 )
 
-
 def get_redis_url():
     """Get Redis URL from environment."""
     return os.environ.get(
@@ -77,11 +73,9 @@ def get_redis_url():
         os.environ.get("NEXUS_REDIS_URL", "redis://localhost:6379"),
     )
 
-
 # =============================================================================
 # Basic Semaphore Tests (single platform)
 # =============================================================================
-
 
 @requires_redis
 class TestSemaphoreBasic:
@@ -349,11 +343,9 @@ class TestSemaphoreBasic:
         finally:
             await client.disconnect()
 
-
 # =============================================================================
 # Concurrent Semaphore Tests (multi-threaded)
 # =============================================================================
-
 
 @requires_redis
 class TestSemaphoreConcurrent:
@@ -510,11 +502,9 @@ class TestSemaphoreConcurrent:
             f"Max holders exceeded! Observed: {max_observed['value']}, Max: {max_holders}"
         )
 
-
 # =============================================================================
 # Cross-Platform Semaphore Tests
 # =============================================================================
-
 
 @requires_redis
 @requires_linux_container
@@ -790,11 +780,9 @@ asyncio.run(wait_for_slot())
                 await win_lock_mgr.release(lock_id, zone_id, path)
             await win_client.disconnect()
 
-
 # =============================================================================
 # Edge Cases and Error Handling
 # =============================================================================
-
 
 @requires_redis
 class TestSemaphoreEdgeCases:
@@ -926,11 +914,9 @@ class TestSemaphoreEdgeCases:
         finally:
             await client.disconnect()
 
-
 # =============================================================================
 # Network Partition and Recovery Tests
 # =============================================================================
-
 
 @requires_redis
 class TestNetworkPartitionRecovery:
@@ -1112,11 +1098,9 @@ class TestNetworkPartitionRecovery:
             await client_a.disconnect()
             await client_b.disconnect()
 
-
 # =============================================================================
 # Redis Restart Tests
 # =============================================================================
-
 
 @requires_redis
 class TestRedisRestart:
@@ -1223,11 +1207,9 @@ class TestRedisRestart:
         finally:
             await client.disconnect()
 
-
 # =============================================================================
 # Performance and Stress Tests
 # =============================================================================
-
 
 @requires_redis
 class TestSemaphorePerformance:
@@ -1343,11 +1325,9 @@ class TestSemaphorePerformance:
         finally:
             await client.disconnect()
 
-
 # =============================================================================
 # Heartbeat and Extend Failure Tests
 # =============================================================================
-
 
 @requires_redis
 class TestHeartbeatAndExtendFailure:

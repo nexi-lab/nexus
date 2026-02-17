@@ -47,10 +47,8 @@ except ImportError:
         def is_enabled(self) -> bool:
             return self._enabled
 
-
 console = Console()
 console_err = Console(stderr=True)
-
 
 class FirecrawlPlugin(NexusPlugin):
     """Plugin for Firecrawl integration.

@@ -7,15 +7,12 @@ Extracted from ``TaskManager`` following the Single Responsibility
 Principle (mirrors the HeartbeatBuffer extraction pattern).
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from contextlib import suppress as _suppress
 from typing import Any
 
 logger = logging.getLogger(__name__)
-
 
 class StreamRegistry:
     """Registry of active SSE stream queues per task.

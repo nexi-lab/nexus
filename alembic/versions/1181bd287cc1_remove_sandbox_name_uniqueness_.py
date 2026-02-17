@@ -17,7 +17,6 @@ down_revision: Union[str, Sequence[str], None] = "a1b2c3d4e5f6"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Remove unique constraint on (user_id, name) to allow name reuse for stopped sandboxes.
 
@@ -28,7 +27,6 @@ def upgrade() -> None:
     # batch_alter_table needed for SQLite (no native ALTER of constraints)
     with op.batch_alter_table("sandbox_metadata") as batch_op:
         batch_op.drop_constraint("uq_sandbox_user_name", type_="unique")
-
 
 def downgrade() -> None:
     """Restore unique constraint on (user_id, name)."""

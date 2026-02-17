@@ -12,8 +12,6 @@ because FastAPI ``Depends()`` is not supported on WebSocket routes.
 Extracted from ``fastapi_server.py`` during monolith decomposition (#1288).
 """
 
-from __future__ import annotations
-
 import logging
 import uuid
 from datetime import datetime
@@ -38,11 +36,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["events"])
 
-
 # =============================================================================
 # WebSocket endpoints (no Depends — use websocket.app.state directly)
 # =============================================================================
-
 
 @router.websocket("/ws/events/{subscription_id}")
 async def websocket_events(
@@ -121,7 +117,6 @@ async def websocket_events(
     finally:
         await app_state.websocket_manager.disconnect(connection_id)
 
-
 @router.websocket("/ws/events")
 async def websocket_events_all(
     websocket: WebSocket,
@@ -130,11 +125,9 @@ async def websocket_events_all(
     """WebSocket endpoint for all zone events (no subscription filter)."""
     await websocket_events(websocket, "all", token)
 
-
 # =============================================================================
 # Long-polling watch endpoint
 # =============================================================================
-
 
 @router.get("/api/watch", tags=["watch"])
 async def watch_for_changes(
@@ -170,11 +163,9 @@ async def watch_for_changes(
         logger.error("Watch error for %s: %s", path, e, exc_info=True)
         raise HTTPException(status_code=500, detail=f"Watch error: {e}") from e
 
-
 # =============================================================================
 # Event log query endpoint (Issue #1241 — Transactional Outbox)
 # =============================================================================
-
 
 @router.get("/api/v1/events", tags=["events"])
 async def list_events(

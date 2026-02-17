@@ -6,13 +6,10 @@ terminates.  This is the default store when no persistent backend is
 configured.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 from nexus.a2a.models import Task, TaskState
-
 
 @dataclass(slots=True)
 class _TaskRecord:
@@ -22,7 +19,6 @@ class _TaskRecord:
     zone_id: str
     agent_id: str | None = None
     created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
-
 
 class InMemoryTaskStore:
     """Dict-backed task store using direct Task objects."""

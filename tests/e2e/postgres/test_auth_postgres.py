@@ -28,7 +28,6 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 # Define minimal SQLAlchemy models without importing nexus
 Base = declarative_base()
 
-
 class UserModel(Base):
     """Minimal User model for testing."""
 
@@ -47,7 +46,6 @@ class UserModel(Base):
     is_global_admin = Column(Integer, nullable=False, default=0)
     is_active = Column(Integer, nullable=False, default=1)
     email_verified = Column(Integer, nullable=False, default=0)
-
 
 class APIKeyModel(Base):
     """Minimal API Key model for testing."""
@@ -68,7 +66,6 @@ class APIKeyModel(Base):
     revoked = Column(Integer, nullable=False, default=0)
     revoked_at = Column(DateTime, nullable=True)
     last_used_at = Column(DateTime, nullable=True)
-
 
 @pytest.fixture
 def postgres_engine():
@@ -98,13 +95,11 @@ def postgres_engine():
     # Cleanup is handled per-test
     engine.dispose()
 
-
 @pytest.fixture
 def postgres_session(postgres_engine):
     """Create a PostgreSQL session factory for testing."""
     SessionLocal = sessionmaker(bind=postgres_engine)
     yield SessionLocal
-
 
 def test_oauth_race_condition_postgres(postgres_session):
     """Test that PostgreSQL prevents duplicate API keys during concurrent OAuth callbacks.
@@ -257,7 +252,6 @@ def test_oauth_race_condition_postgres(postgres_session):
         )
         session.commit()
 
-
 def test_user_registration_postgres(postgres_session):
     """Test basic user registration with PostgreSQL.
 
@@ -297,7 +291,6 @@ def test_user_registration_postgres(postgres_session):
             text("DELETE FROM users WHERE user_id = :user_id"), {"user_id": test_user_id}
         )
         session.commit()
-
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

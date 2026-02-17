@@ -15,8 +15,6 @@ so it can route traffic out while agents cannot bypass the proxy.
 Issue #1000: Enhance agent sandboxing with network isolation.
 """
 
-from __future__ import annotations
-
 import logging
 import os
 import re
@@ -29,7 +27,6 @@ logger = logging.getLogger(__name__)
 _DOMAIN_PATTERN = re.compile(
     r"^[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]*[a-zA-Z0-9])?)*$"
 )
-
 
 def validate_domain(domain: str) -> str:
     """Validate a domain name against injection attacks.
@@ -49,7 +46,6 @@ def validate_domain(domain: str) -> str:
         raise ValueError(f"Invalid egress domain: {domain!r}")
     return domain
 
-
 # Default proxy image (lightweight Squid)
 DEFAULT_PROXY_IMAGE = "ubuntu/squid:latest"
 
@@ -62,7 +58,6 @@ PROXY_PORT = 3128
 
 # Environment variable for custom egress allowlist
 EGRESS_ALLOWLIST_ENV = "NEXUS_SANDBOX_EGRESS_ALLOWLIST"
-
 
 def build_squid_config(allowed_domains: tuple[str, ...]) -> str:
     """Build Squid configuration with domain allowlist.
@@ -141,7 +136,6 @@ def build_squid_config(allowed_domains: tuple[str, ...]) -> str:
 
     return "\n".join(lines) + "\n"
 
-
 def get_allowlist_from_env() -> tuple[str, ...] | None:
     """Read egress allowlist override from environment.
 
@@ -161,7 +155,6 @@ def get_allowlist_from_env() -> tuple[str, ...] | None:
             ", ".join(domains),
         )
     return domains
-
 
 class EgressProxyManager:
     """Manages a shared egress proxy container for sandbox network isolation.

@@ -9,8 +9,6 @@ Service-layer e2e tests that verify the complete routing pipeline:
 - Log validation via caplog
 """
 
-from __future__ import annotations
-
 import logging
 import statistics
 import time
@@ -43,7 +41,6 @@ from nexus.storage.models import Base  # noqa: E402
 # Fixtures
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture
 def engine():
     eng = create_engine(
@@ -54,11 +51,9 @@ def engine():
     Base.metadata.create_all(eng)
     return eng
 
-
 @pytest.fixture
 def session_factory(engine):
     return sessionmaker(bind=engine, expire_on_commit=False)
-
 
 @pytest.fixture
 def mock_docker() -> SandboxProvider:
@@ -75,7 +70,6 @@ def mock_docker() -> SandboxProvider:
     mock.destroy.return_value = None
     return mock
 
-
 @pytest.fixture
 def mock_e2b() -> SandboxProvider:
     mock = AsyncMock(spec=SandboxProvider)
@@ -91,7 +85,6 @@ def mock_e2b() -> SandboxProvider:
     mock.destroy.return_value = None
     return mock
 
-
 @pytest.fixture
 def full_stack(session_factory, mock_docker, mock_e2b):
     """Full SandboxManager + Router + all providers."""
@@ -104,11 +97,9 @@ def full_stack(session_factory, mock_docker, mock_e2b):
     mgr.wire_router()
     return mgr, mgr._router
 
-
 # ---------------------------------------------------------------------------
 # TestRoutingE2E
 # ---------------------------------------------------------------------------
-
 
 class TestRoutingE2E:
     """End-to-end routing pipeline tests."""
@@ -172,11 +163,9 @@ class TestRoutingE2E:
         assert snap["escalation_count"] == 1
         assert "monty->docker" in snap["escalations_by_path"]
 
-
 # ---------------------------------------------------------------------------
 # TestLogValidation
 # ---------------------------------------------------------------------------
-
 
 class TestLogValidation:
     """Verify routing decisions are logged."""
@@ -204,11 +193,9 @@ class TestLogValidation:
 
         assert any("escalation" in r.message.lower() for r in caplog.records)
 
-
 # ---------------------------------------------------------------------------
 # TestPerformance
 # ---------------------------------------------------------------------------
-
 
 class TestPerformance:
     """Performance benchmarks for routing overhead."""

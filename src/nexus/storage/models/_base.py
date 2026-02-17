@@ -5,15 +5,12 @@ Issue #1286: Added mixins (TimestampMixin, ZoneIsolationMixin, ResourceConfigMix
              uuid_pk() helper, and _get_uuid_server_default.
 """
 
-from __future__ import annotations
-
 import os
 import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, String, Text, TextClause, text
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
-
 
 def _generate_uuid() -> str:
     """Generate a UUID string (UUIDv4).
@@ -22,7 +19,6 @@ def _generate_uuid() -> str:
     PostgreSQL uses gen_random_uuid() via server_default.
     """
     return str(uuid.uuid4())
-
 
 def _get_uuid_server_default() -> TextClause | None:
     """Get PostgreSQL server_default for UUID generation.
@@ -37,17 +33,14 @@ def _get_uuid_server_default() -> TextClause | None:
         return text("gen_random_uuid()::text")
     return None
 
-
 class Base(DeclarativeBase):
     """Base class for all SQLAlchemy models."""
 
     pass
 
-
 # ---------------------------------------------------------------------------
 # Shared Mixins (Issue #1286)
 # ---------------------------------------------------------------------------
-
 
 class TimestampMixin:
     """Mixin providing created_at and updated_at timestamp columns."""
@@ -62,12 +55,10 @@ class TimestampMixin:
         onupdate=lambda: datetime.now(UTC),
     )
 
-
 class ZoneIsolationMixin:
     """Mixin providing a zone_id column for multi-zone isolation."""
 
     zone_id: Mapped[str] = mapped_column(String(255), nullable=False, default="root")
-
 
 class ResourceConfigMixin:
     """Mixin for shared fields between WorkspaceConfigModel and MemoryConfigModel."""
@@ -81,7 +72,6 @@ class ResourceConfigMixin:
     session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     extra_metadata: Mapped[str | None] = mapped_column("metadata", Text, nullable=True)
-
 
 def uuid_pk() -> Mapped[str]:
     """Create a standard UUID primary key column.

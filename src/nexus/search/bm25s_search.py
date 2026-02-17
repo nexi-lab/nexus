@@ -29,8 +29,6 @@ References:
     - BM25S GitHub: https://github.com/xhluca/bm25s
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging
@@ -55,7 +53,6 @@ try:
 except ImportError:
     bm25s_module = None
     BM25S_AVAILABLE = False
-
 
 # Common programming stopwords (keywords that appear frequently but aren't discriminating)
 CODE_STOPWORDS = frozenset(
@@ -170,7 +167,6 @@ CODE_STOPWORDS = frozenset(
     }
 )
 
-
 @dataclass
 class BM25SSearchResult:
     """BM25S search result with metadata."""
@@ -182,7 +178,6 @@ class BM25SSearchResult:
     matched_field: str = (
         "content"  # Issue #1092: Track which field matched (filename, path, content)
     )
-
 
 @dataclass
 class CodeTokenizer:
@@ -295,7 +290,6 @@ class CodeTokenizer:
             List of token lists
         """
         return [self.tokenize(text) for text in texts]
-
 
 class BM25SIndex:
     """BM25S index for fast ranked text search.
@@ -814,11 +808,9 @@ class BM25SIndex:
                 logger.error(f"Failed to clear index: {e}")
                 return False
 
-
 # Global singleton for shared index access
 _global_index: BM25SIndex | None = None
 _global_lock = threading.Lock()
-
 
 def get_bm25s_index(index_dir: str | Path = ".nexus-data/bm25s") -> BM25SIndex:
     """Get or create global BM25S index.
@@ -835,7 +827,6 @@ def get_bm25s_index(index_dir: str | Path = ".nexus-data/bm25s") -> BM25SIndex:
         if _global_index is None:
             _global_index = BM25SIndex(index_dir=index_dir)
         return _global_index
-
 
 def is_bm25s_available() -> bool:
     """Check if BM25S is available.

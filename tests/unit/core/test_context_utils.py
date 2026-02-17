@@ -7,8 +7,6 @@ Tests cover utility functions for extracting and resolving context information:
 - resolve_skill_base_path: Determine skill base path based on context
 """
 
-from __future__ import annotations
-
 from unittest.mock import Mock
 
 import pytest
@@ -19,7 +17,6 @@ from nexus.core.context_utils import (
     get_zone_id,
     resolve_skill_base_path,
 )
-
 
 class TestGetZoneId:
     """Tests for get_zone_id function."""
@@ -63,7 +60,6 @@ class TestGetZoneId:
 
         result = get_zone_id(context)
         assert result == "root"
-
 
 class TestGetUserIdentity:
     """Tests for get_user_identity function."""
@@ -151,7 +147,6 @@ class TestGetUserIdentity:
         subject_type, subject_id = get_user_identity(context)
         assert subject_type == "user"
         assert subject_id is None
-
 
 class TestGetDatabaseUrl:
     """Tests for get_database_url function."""
@@ -257,7 +252,6 @@ class TestGetDatabaseUrl:
             m.delenv("TOKEN_MANAGER_DB", raising=False)
             with pytest.raises(RuntimeError, match="No database path configured"):
                 get_database_url(obj)
-
 
 class TestResolveSkillBasePath:
     """Tests for resolve_skill_base_path function."""

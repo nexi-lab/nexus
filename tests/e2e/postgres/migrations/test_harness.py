@@ -16,8 +16,6 @@ Plus custom structural tests:
 9. Fast single-head pre-check (no alembic_runner needed)
 """
 
-from __future__ import annotations
-
 import importlib
 import importlib.util
 import pkgutil
@@ -42,9 +40,7 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
 _VERSIONS_DIR = _PROJECT_ROOT / "alembic" / "versions"
 _ALEMBIC_INI = str(_PROJECT_ROOT / "alembic" / "alembic.ini")
 
-
 # --- Fast pre-checks (no alembic_runner, no DB needed) ---
-
 
 class TestMigrationPreChecks:
     """Fast structural checks that run without a database.
@@ -72,9 +68,7 @@ class TestMigrationPreChecks:
             "alembic merge heads -m 'merge_<description>'"
         )
 
-
 # --- Built-in pytest-alembic tests (4 standard) ---
-
 
 class TestBuiltInMigrationChecks:
     """Standard pytest-alembic tests covering the core migration invariants."""
@@ -125,9 +119,7 @@ class TestBuiltInMigrationChecks:
         """
         _test_model_ddl(alembic_runner)
 
-
 # --- Custom replacements for experimental tests ---
-
 
 class TestExperimentalMigrationChecks:
     """Custom replacements for pytest-alembic experimental tests.
@@ -203,9 +195,7 @@ class TestExperimentalMigrationChecks:
             f"behind:\n" + "\n".join(f"  - {t}" for t in sorted(remaining))
         )
 
-
 # --- Custom structural tests ---
-
 
 def _is_merge_revision(module, path: Path | None = None) -> bool:
     """Check if a migration module is a merge revision.
@@ -221,7 +211,6 @@ def _is_merge_revision(module, path: Path | None = None) -> bool:
     # Detect linearized merges by filename convention
     return path is not None and "merge" in path.stem.lower()
 
-
 def _load_migration_module(path: Path):
     """Dynamically import a migration .py file."""
     spec = importlib.util.spec_from_file_location(path.stem, path)
@@ -230,7 +219,6 @@ def _load_migration_module(path: Path):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
-
 
 def _is_empty_function(func) -> bool:
     """Check if a function body is effectively empty (pass or docstring-only)."""
@@ -260,7 +248,6 @@ def _is_empty_function(func) -> bool:
     ]
     # Only pass statements remain
     return all(isinstance(stmt, ast.Pass) for stmt in meaningful)
-
 
 class TestMigrationStructure:
     """Custom structural checks on migration files."""

@@ -32,13 +32,11 @@ from nexus.core.exceptions import (
 )
 from nexus.server.error_handlers import nexus_error_handler
 
-
 def _call_handler(exc: Exception) -> tuple[int, dict]:
     """Helper to call nexus_error_handler and return (status_code, content)."""
     request = MagicMock()
     response = nexus_error_handler(request, exc)
     return response.status_code, response.body
-
 
 class TestExpectedErrors:
     """Test HTTP mappings for expected (user) errors."""
@@ -79,7 +77,6 @@ class TestExpectedErrors:
         resp = nexus_error_handler(MagicMock(), ParserError("Cannot parse"))
         assert resp.status_code == 422
 
-
 class TestUnexpectedErrors:
     """Test HTTP mappings for unexpected (system) errors."""
 
@@ -106,7 +103,6 @@ class TestUnexpectedErrors:
     def test_unknown_exception_returns_500(self) -> None:
         resp = nexus_error_handler(MagicMock(), RuntimeError("unknown"))
         assert resp.status_code == 500
-
 
 class TestNewExceptionTypes:
     """Test HTTP mappings for new Database/Connector exception types (Issue #1254)."""
@@ -142,7 +138,6 @@ class TestNewExceptionTypes:
     def test_connector_quota_error_returns_502(self) -> None:
         resp = nexus_error_handler(MagicMock(), ConnectorQuotaError("Quota exceeded"))
         assert resp.status_code == 502
-
 
 class TestResponseContent:
     """Test response content structure."""

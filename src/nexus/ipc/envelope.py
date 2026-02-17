@@ -8,8 +8,6 @@ doc), while Python code uses ``sender`` and ``recipient`` to avoid
 clashing with the ``from`` keyword.
 """
 
-from __future__ import annotations
-
 import json
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -18,7 +16,6 @@ from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-
 class MessageType(StrEnum):
     """Types of inter-agent messages."""
 
@@ -26,7 +23,6 @@ class MessageType(StrEnum):
     RESPONSE = "response"
     EVENT = "event"
     CANCEL = "cancel"
-
 
 class MessageEnvelope(BaseModel):
     """Immutable message envelope for agent-to-agent communication.
@@ -103,7 +99,7 @@ class MessageEnvelope(BaseModel):
         return self.model_dump_json(by_alias=True).encode("utf-8")
 
     @classmethod
-    def from_bytes(cls, data: bytes) -> MessageEnvelope:
+    def from_bytes(cls, data: bytes) -> "MessageEnvelope":
         """Deserialize from JSON bytes read from VFS.
 
         Raises:

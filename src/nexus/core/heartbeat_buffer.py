@@ -16,8 +16,6 @@ Design decisions:
     - Single _lock for all mutable state
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 import time
@@ -26,7 +24,6 @@ from datetime import UTC, datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
-
 
 class HeartbeatBuffer:
     """In-memory heartbeat buffer with batch flush.

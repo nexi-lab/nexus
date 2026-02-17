@@ -14,8 +14,6 @@ AsyncMock Docker/E2B to simulate the production server environment
 without needing external Docker daemon or E2B API keys.
 """
 
-from __future__ import annotations
-
 import logging
 import statistics
 import time
@@ -47,7 +45,6 @@ from nexus.storage.models import Base  # noqa: E402
 # Fixtures — mirror server startup logic
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture
 def engine():
     eng = create_engine(
@@ -58,11 +55,9 @@ def engine():
     Base.metadata.create_all(eng)
     return eng
 
-
 @pytest.fixture
 def session_factory(engine):
     return sessionmaker(bind=engine, expire_on_commit=False)
-
 
 @pytest.fixture
 def mock_docker() -> SandboxProvider:
@@ -80,7 +75,6 @@ def mock_docker() -> SandboxProvider:
     mock.destroy.return_value = None
     return mock
 
-
 @pytest.fixture
 def mock_e2b() -> SandboxProvider:
     """Mock E2B provider."""
@@ -96,7 +90,6 @@ def mock_e2b() -> SandboxProvider:
     mock.is_available.return_value = True
     mock.destroy.return_value = None
     return mock
-
 
 @pytest.fixture
 def server_stack(session_factory, mock_docker, mock_e2b):
@@ -120,11 +113,9 @@ def server_stack(session_factory, mock_docker, mock_e2b):
 
     return mgr, mgr._router, monty, mock_docker, mock_e2b
 
-
 # ---------------------------------------------------------------------------
 # Test: Full routing pipeline as server would execute
 # ---------------------------------------------------------------------------
-
 
 class TestServerRoutingPipeline:
     """Validate routing as it runs in production server."""
@@ -348,11 +339,9 @@ class TestServerRoutingPipeline:
         )
         assert sandbox["provider"] == "docker"
 
-
 # ---------------------------------------------------------------------------
 # Test: Metrics accumulation over session
 # ---------------------------------------------------------------------------
-
 
 class TestServerMetrics:
     """Validate metrics accumulate correctly over a server session."""
@@ -412,11 +401,9 @@ class TestServerMetrics:
         snap2 = router.metrics.snapshot()
         assert snap2["tier_selections"]["monty"] == 1
 
-
 # ---------------------------------------------------------------------------
 # Test: Sticky session history
 # ---------------------------------------------------------------------------
-
 
 class TestServerStickySession:
     """Validate per-agent sticky session learning."""
@@ -453,11 +440,9 @@ class TestServerStickySession:
         tier = router.select_provider("x = 1", "python", agent_id="agent-A")
         assert tier == "docker"
 
-
 # ---------------------------------------------------------------------------
 # Test: Performance validation
 # ---------------------------------------------------------------------------
-
 
 class TestServerPerformance:
     """Ensure no performance regression with routing enabled."""
@@ -539,11 +524,9 @@ print(f"Total: {total}")
         median_ms = statistics.median(times) / 1_000_000
         assert median_ms < 1.0, f"analyze_code median {median_ms:.3f}ms > 1ms"
 
-
 # ---------------------------------------------------------------------------
 # Test: Edge cases in routing
 # ---------------------------------------------------------------------------
-
 
 class TestServerEdgeCases:
     """Edge cases that could occur in production."""

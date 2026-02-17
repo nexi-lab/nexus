@@ -11,8 +11,6 @@ permissions enabled. Specifically tests:
 5. Memory behavior: server doesn't OOM on moderately-sized files
 """
 
-from __future__ import annotations
-
 import base64
 import hashlib
 import os
@@ -37,12 +35,10 @@ SERVER_STARTUP_TIMEOUT = 30
 ADMIN_API_KEY = "sk-stream-admin-key"
 ALICE_API_KEY = "sk-stream-alice-key"
 
-
 def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
-
 
 def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> None:
     deadline = time.monotonic() + timeout
@@ -56,7 +52,6 @@ def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> 
                 pass
             time.sleep(0.3)
     raise TimeoutError(f"Server did not start within {timeout}s at {base_url}")
-
 
 def _build_startup_script(port: int, data_dir: str) -> str:
     return textwrap.dedent(f"""\
@@ -107,9 +102,7 @@ def _build_startup_script(port: int, data_dir: str) -> str:
         ])
     """)
 
-
 # === Fixtures ===
-
 
 @pytest.fixture(scope="module")
 def server():
@@ -187,22 +180,18 @@ def server():
                 proc.wait(timeout=5)
         shutil.rmtree(data_dir, ignore_errors=True)
 
-
 @pytest.fixture(scope="module")
 def client(server: dict) -> httpx.Client:
     with httpx.Client(timeout=30, trust_env=False) as c:
         yield c
 
-
 @pytest.fixture()
 def admin_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {ADMIN_API_KEY}"}
 
-
 @pytest.fixture()
 def alice_headers() -> dict[str, str]:
     return {"Authorization": f"Bearer {ALICE_API_KEY}"}
-
 
 def _grant(
     client: httpx.Client,
@@ -228,15 +217,12 @@ def _grant(
     )
     assert resp.status_code == 200, f"Grant failed: {resp.text}"
 
-
 # === Tests ===
-
 
 def test_health(server: dict, client: httpx.Client) -> None:
     """Server is healthy with streaming-capable config."""
     resp = client.get(f"{server['base_url']}/health")
     assert resp.status_code == 200
-
 
 def test_write_then_stream_roundtrip(
     server: dict,
@@ -275,7 +261,6 @@ def test_write_then_stream_roundtrip(
     assert len(resp.content) == len(content)
     actual_sha256 = hashlib.sha256(resp.content).hexdigest()
     assert actual_sha256 == expected_sha256, "Content corrupted during stream roundtrip"
-
 
 def test_stream_with_range_header(
     server: dict,
@@ -332,7 +317,6 @@ def test_stream_with_range_header(
     assert len(resp.content) == 1024
     assert resp.content == content[-1024:]
 
-
 def test_stream_permission_denied_without_grant(
     server: dict,
     client: httpx.Client,
@@ -361,7 +345,6 @@ def test_stream_permission_denied_without_grant(
         headers=alice_headers,
     )
     assert resp.status_code in (403, 404), f"Expected 403/404, got {resp.status_code}"
-
 
 def test_stream_with_permission_grant(
     server: dict,
@@ -407,7 +390,6 @@ def test_stream_with_permission_grant(
     )
     assert resp.status_code == 200, f"Stream failed for alice: {resp.text}"
     assert resp.content == content
-
 
 def test_large_file_streaming_integrity(
     server: dict,
@@ -458,7 +440,6 @@ def test_large_file_streaming_integrity(
     )
     assert resp.status_code == 206
     assert resp.content == content[-65536:]
-
 
 def test_multiple_files_streaming(
     server: dict,

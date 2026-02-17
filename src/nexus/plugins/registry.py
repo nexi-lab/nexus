@@ -15,7 +15,6 @@ from nexus.plugins.hooks import HookType, PluginHooks
 
 logger = logging.getLogger(__name__)
 
-
 @dataclass
 class PluginInfo:
     """Lightweight plugin descriptor for lazy loading.
@@ -30,7 +29,6 @@ class PluginInfo:
     loaded: bool = False
     metadata: PluginMetadata | None = None
     _entry_point: Any = field(default=None, repr=False)
-
 
 class PluginRegistry(BaseRegistry[NexusPlugin]):
     """Registry for discovering and managing Nexus plugins.

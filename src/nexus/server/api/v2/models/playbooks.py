@@ -1,13 +1,10 @@
 """Playbook request/response models for API v2."""
 
-from __future__ import annotations
-
 from typing import Any, Literal
 
 from pydantic import Field
 
 from nexus.server.api.v2.models.base import ApiModel
-
 
 class PlaybookCreateRequest(ApiModel):
     """Request for POST /api/v2/playbooks."""
@@ -20,7 +17,6 @@ class PlaybookCreateRequest(ApiModel):
     )
     initial_strategies: list[dict[str, Any]] | None = Field(None, description="Initial strategies")
 
-
 class PlaybookUpdateRequest(ApiModel):
     """Request for PUT /api/v2/playbooks/{id}."""
 
@@ -28,13 +24,11 @@ class PlaybookUpdateRequest(ApiModel):
     metadata: dict[str, Any] | None = Field(None, description="Updated metadata")
     increment_version: bool = Field(True, description="Increment version number")
 
-
 class PlaybookUsageRequest(ApiModel):
     """Request for POST /api/v2/playbooks/{id}/usage."""
 
     success: bool = Field(..., description="Whether the usage was successful")
     improvement_score: float | None = Field(None, ge=0.0, le=1.0, description="Improvement score")
-
 
 class PlaybookResponse(ApiModel):
     """Response model for playbook objects."""
@@ -51,12 +45,10 @@ class PlaybookResponse(ApiModel):
     created_at: str | None = None
     updated_at: str | None = None
 
-
 class PlaybookGetResponse(ApiModel):
     """Response for GET /api/v2/playbooks/{id}."""
 
     playbook: dict[str, Any]
-
 
 class PlaybookCreateResponse(ApiModel):
     """Response for POST /api/v2/playbooks."""

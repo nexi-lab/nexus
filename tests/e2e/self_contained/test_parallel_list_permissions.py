@@ -6,8 +6,6 @@ to verify that parallel directory traversal works correctly with ReBAC permissio
 Uses mock backends and rebac_manager to isolate the parallel listing + permission pipeline.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 from nexus.core.permissions import OperationContext
@@ -17,7 +15,6 @@ from nexus.services.search_service import SearchService
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
 
 def _make_backend(tree: dict[str, list[str]]) -> MagicMock:
     """Create a mock backend with a directory tree.
@@ -37,7 +34,6 @@ def _make_backend(tree: dict[str, list[str]]) -> MagicMock:
     backend.list_dir = MagicMock(side_effect=list_dir)
     return backend
 
-
 def _make_context(
     user: str = "alice",
     zone_id: str = "root",
@@ -50,7 +46,6 @@ def _make_context(
         zone_id=zone_id,
         is_admin=is_admin,
     )
-
 
 def _make_enforcer(
     allowed_paths: set[str] | None = None,
@@ -95,7 +90,6 @@ def _make_enforcer(
     )
     return enforcer
 
-
 def _make_search_service(
     enforcer: PermissionEnforcer,
     rebac_manager: MagicMock | None = None,
@@ -116,11 +110,9 @@ def _make_search_service(
     )
     return svc
 
-
 # ===========================================================================
 # Test 1: Parallel list with permission filtering
 # ===========================================================================
-
 
 class TestParallelListWithPermissionFiltering:
     """Verify that parallel listing + filter_list returns only allowed paths."""
@@ -222,11 +214,9 @@ class TestParallelListWithPermissionFiltering:
         assert len(filtered) == 10
         assert set(filtered) == allowed
 
-
 # ===========================================================================
 # Test 2: Error handling during parallel listing
 # ===========================================================================
-
 
 class TestParallelListErrorHandling:
     """Verify graceful degradation when subdirectory listing fails."""
@@ -318,11 +308,9 @@ class TestParallelListErrorHandling:
         # Total: 3 dirs + 2 files = 5
         assert len(result) == 5
 
-
 # ===========================================================================
 # Test 3: Non-recursive listing
 # ===========================================================================
-
 
 class TestNonRecursiveListing:
     """Verify non-recursive listing with permission filtering."""
@@ -387,11 +375,9 @@ class TestNonRecursiveListing:
         filtered = enforcer.filter_list(listed, ctx)
         assert set(filtered) == allowed
 
-
 # ===========================================================================
 # Test 4: filter_list with empty paths
 # ===========================================================================
-
 
 class TestFilterListEmptyPaths:
     """Verify filter_list handles edge case of empty input."""
@@ -417,11 +403,9 @@ class TestFilterListEmptyPaths:
 
         assert result == []
 
-
 # ===========================================================================
 # Test 5: Admin bypass in filter_list
 # ===========================================================================
-
 
 class TestFilterListAdminBypass:
     """Verify admin context bypasses permission checks in filter_list."""

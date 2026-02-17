@@ -11,8 +11,6 @@ References:
     - Issue #1499: Audit and cleanup
 """
 
-from __future__ import annotations
-
 import logging
 import time
 from dataclasses import asdict, dataclass, field
@@ -64,7 +62,6 @@ DEFAULT_THRESHOLDS = {
     "complex_max": 0.8,
 }
 
-
 @dataclass
 class RoutingConfig:
     """Configuration for query routing thresholds and behavior."""
@@ -83,7 +80,6 @@ class RoutingConfig:
                 "Must satisfy: 0 < simple_max < moderate_max < complex_max <= 1.0"
             )
 
-
 @dataclass
 class RoutedQuery:
     """Result of query routing with strategy decisions."""
@@ -101,7 +97,6 @@ class RoutedQuery:
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for API response."""
         return asdict(self)
-
 
 @dataclass
 class QueryRouter:

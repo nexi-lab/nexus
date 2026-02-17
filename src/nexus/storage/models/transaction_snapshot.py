@@ -7,15 +7,12 @@ Two-table design:
 Follows patterns from operation_log.py.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base, _generate_uuid, _get_uuid_server_default
-
 
 class TransactionSnapshotModel(Base):
     """Parent record for a transactional filesystem snapshot.
@@ -66,7 +63,6 @@ class TransactionSnapshotModel(Base):
             f"status={self.status}, "
             f"entry_count={self.entry_count})>"
         )
-
 
 class SnapshotEntryModel(Base):
     """Per-file record within a transactional snapshot.

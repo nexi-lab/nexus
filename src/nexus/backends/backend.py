@@ -16,7 +16,6 @@ if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.rebac.permissions_enhanced import EnhancedOperationContext
 
-
 @dataclass
 class FileInfo:
     """File metadata for delta sync change detection (Issue #1127).
@@ -38,7 +37,6 @@ class FileInfo:
     mtime: datetime | None = None
     backend_version: str | None = None
     content_hash: str | None = None
-
 
 @dataclass
 class HandlerStatusResponse:
@@ -69,7 +67,6 @@ class HandlerStatusResponse:
         if self.details:
             result["details"] = self.details
         return result
-
 
 class Backend(ABC):
     """
@@ -821,7 +818,6 @@ class Backend(ABC):
             Backends can override to return more appropriate identifiers.
         """
         return backend_path
-
 
 @runtime_checkable
 class AsyncBackend(Protocol):

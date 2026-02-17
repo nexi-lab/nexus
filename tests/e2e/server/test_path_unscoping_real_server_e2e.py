@@ -7,14 +7,11 @@ This is the most production-like test — real HTTP server, real network
 requests, real NexusFS with RaftMetadataStore.
 """
 
-from __future__ import annotations
-
 import json
 import uuid
 
 import httpx
 import pytest
-
 
 def _rpc_call(client: httpx.Client, method: str, params: dict | None = None) -> dict:
     """Make a real HTTP RPC call and return the result."""
@@ -35,7 +32,6 @@ def _rpc_call(client: httpx.Client, method: str, params: dict | None = None) -> 
     data = resp.json()
     assert "result" in data, f"No result in RPC response: {data}"
     return data["result"]
-
 
 @pytest.mark.e2e
 class TestPathUnscopingRealServer:

@@ -4,8 +4,6 @@ These tests use real NexusFS instances with LocalBackend to test
 end-to-end skill management workflows.
 """
 
-from __future__ import annotations
-
 import base64
 import io
 import zipfile
@@ -21,7 +19,6 @@ from nexus.storage.record_store import SQLAlchemyRecordStore
 # ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
-
 
 def create_test_skill_zip(skill_name: str, description: str = "Test skill") -> bytes:
     """Create a test skill ZIP package.
@@ -83,11 +80,9 @@ This skill demonstrates the import/export lifecycle.
 
     return zip_buffer.getvalue()
 
-
 # ============================================================================
 # FIXTURES
 # ============================================================================
-
 
 @pytest.fixture
 def nexus_fs(isolated_db, tmp_path):
@@ -106,7 +101,6 @@ def nexus_fs(isolated_db, tmp_path):
     yield nx
     nx.close()
 
-
 @pytest.fixture
 def admin_context():
     """Create an admin operation context."""
@@ -123,7 +117,6 @@ def admin_context():
         admin_capabilities=set(),
         request_id="test-integration",
     )
-
 
 @pytest.fixture
 def user_context():
@@ -142,11 +135,9 @@ def user_context():
         request_id="test-integration",
     )
 
-
 # ============================================================================
 # INTEGRATION TESTS
 # ============================================================================
-
 
 class TestSkillLifecycleIntegration:
     """Integration tests for complete skill lifecycle."""
@@ -365,7 +356,6 @@ Content for skill {i}.
                     assert f"name: {skill_name}" in content
                     assert "Lifecycle test" in content
 
-
 class TestSkillValidationIntegration:
     """Integration tests for skill validation."""
 
@@ -435,7 +425,6 @@ Missing description field.
         # Current behavior: validation checks file existence, not content fields
         assert result["valid"] is True
         assert "incomplete-skill" in result["skills_found"]
-
 
 class TestSkillPermissionsIntegration:
     """Integration tests for skill permission checks.

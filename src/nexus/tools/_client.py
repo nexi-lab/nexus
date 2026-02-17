@@ -10,7 +10,6 @@ from langchain_core.runnables import RunnableConfig
 
 from nexus.remote import RemoteNexusFS
 
-
 def _get_nexus_client(config: RunnableConfig, state: dict[str, Any] | None = None) -> RemoteNexusFS:
     """Create authenticated RemoteNexusFS from config or state.
 

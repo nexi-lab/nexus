@@ -464,12 +464,10 @@ def fetch_all_pages(api_url):
 """,
 }
 
-
 class TemplateError(Exception):
     """Raised when template operations fail."""
 
     pass
-
 
 def get_template(template_name: str, **kwargs: Any) -> str:
     """Get a skill template with variables substituted.
@@ -504,7 +502,6 @@ def get_template(template_name: str, **kwargs: Any) -> str:
     except KeyError as e:
         raise TemplateError(f"Missing required variable {e} for template '{template_name}'") from e
 
-
 def list_templates() -> list[str]:
     """List available template names.
 
@@ -517,7 +514,6 @@ def list_templates() -> list[str]:
         ['basic', 'data-analysis', 'code-generation', ...]
     """
     return list(TEMPLATES.keys())
-
 
 def get_template_description(template_name: str) -> str:
     """Get a brief description of a template.

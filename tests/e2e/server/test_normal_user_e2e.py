@@ -19,8 +19,6 @@ This exercises the changes from the comprehensive review:
 Issue #1293: Comprehensive codebase review
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket
@@ -41,12 +39,10 @@ os.environ["NO_PROXY"] = "*"
 PYTHON = sys.executable
 SERVER_STARTUP_TIMEOUT = 30
 
-
 def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
-
 
 def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> None:
     deadline = time.monotonic() + timeout
@@ -60,7 +56,6 @@ def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> 
                 pass
             time.sleep(0.3)
     raise TimeoutError(f"Server did not start within {timeout}s at {base_url}")
-
 
 def _rpc_call(
     client: httpx.Client,
@@ -85,7 +80,6 @@ def _rpc_call(
         raise RuntimeError(f"RPC error in {method}: {data['error']}")
     return data.get("result")
 
-
 def _rpc_call_raw(
     client: httpx.Client,
     base_url: str,
@@ -106,11 +100,9 @@ def _rpc_call_raw(
     )
     return resp.json()
 
-
 # =============================================================================
 # Fixture: Start server with database auth + permissions
 # =============================================================================
-
 
 @pytest.fixture(scope="module")
 def e2e_server():
@@ -258,11 +250,9 @@ def e2e_server():
                     proc.kill()
                     proc.wait(timeout=5)
 
-
 # =============================================================================
 # Tests
 # =============================================================================
-
 
 class TestServerHealth:
     """Basic server health and admin auth."""
@@ -302,7 +292,6 @@ class TestServerHealth:
                 return  # Expected
             data = resp.json()
             assert "error" in data or "detail" in data, f"Expected auth rejection, got: {data}"
-
 
 class TestNormalUserLifecycle:
     """Create a normal user and test their permissions."""
@@ -373,7 +362,6 @@ class TestNormalUserLifecycle:
             if resp.status_code == 200:
                 data = resp.json()
                 assert data["authenticated"] is False
-
 
 class TestPermissionEnforcement:
     """Test ReBAC permission enforcement for normal users.

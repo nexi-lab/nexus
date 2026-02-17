@@ -40,8 +40,6 @@ References:
     - Linux VFS dcache: https://docs.kernel.org/filesystems/path-lookup.html
 """
 
-from __future__ import annotations
-
 import bisect
 import hashlib
 import logging
@@ -53,12 +51,11 @@ from typing import TYPE_CHECKING, Any
 
 from cachetools import TTLCache
 
+from nexus.core.persistent_view_store import PersistentViewStore
 if TYPE_CHECKING:
-    from nexus.core.persistent_view_store import PersistentViewStore
-    from nexus.rebac.rebac_manager_enhanced import EnhancedReBACManager
+    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass(frozen=True)
 class MountEntry:
@@ -72,7 +69,6 @@ class MountEntry:
     """
 
     virtual_path: str
-
 
 @dataclass(frozen=True, slots=True)
 class NamespaceMount:
@@ -92,7 +88,6 @@ class NamespaceMount:
     subject_type: str
     subject_id: str
     zone_id: str | None
-
 
 def build_mount_entries(object_paths: list[tuple[str, str]]) -> list[MountEntry]:
     """Build mount entries from ReBAC-granted object paths.
@@ -158,7 +153,6 @@ def build_mount_entries(object_paths: list[tuple[str, str]]) -> list[MountEntry]
 
     return [MountEntry(virtual_path=d) for d in deduplicated]
 
-
 class NamespaceManager:
     """Per-subject namespace manager — builds and caches mount tables from ReBAC grants.
 
@@ -190,7 +184,7 @@ class NamespaceManager:
 
     def __init__(
         self,
-        rebac_manager: EnhancedReBACManager,
+        rebac_manager: "EnhancedReBACManager",
         cache_maxsize: int = 10_000,
         cache_ttl: int = 300,
         revision_window: int = 10,

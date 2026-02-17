@@ -10,8 +10,6 @@ Phase 2: Core Refactoring (Issue #1287)
 Extracted from: nexus_fs_events.py (836 lines)
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import logging
@@ -24,13 +22,16 @@ from nexus.core.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
 
+from nexus.core.distributed_lock import LockManagerBase
+from nexus.core.event_bus import EventBusBase
+from nexus.core.permissions import OperationContext
+from nexus.core.protocols.connector import ConnectorProtocol
 if TYPE_CHECKING:
     from nexus.core.distributed_lock import LockManagerBase
     from nexus.core.event_bus import EventBusBase
     from nexus.core.file_watcher import FileWatcher
     from nexus.core.permissions import OperationContext
     from nexus.core.protocols.connector import ConnectorProtocol
-
 
 class EventsService:
     """Independent events service extracted from NexusFS.

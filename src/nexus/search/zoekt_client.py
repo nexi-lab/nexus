@@ -25,8 +25,6 @@ References:
     - https://sourcegraph.com/blog/sourcegraph-accepting-zoekt-maintainership
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import os
@@ -48,7 +46,6 @@ ZOEKT_URL = os.getenv("ZOEKT_URL", DEFAULT_ZOEKT_URL)
 ZOEKT_ENABLED = os.getenv("ZOEKT_ENABLED", "false").lower() == "true"
 ZOEKT_TIMEOUT = float(os.getenv("ZOEKT_TIMEOUT", "10.0"))  # seconds
 
-
 @dataclass
 class ZoektMatch:
     """A single match from Zoekt search."""
@@ -58,7 +55,6 @@ class ZoektMatch:
     content: str
     match: str
     score: float = 0.0
-
 
 class ZoektClient:
     """Client for Zoekt code search server.
@@ -245,10 +241,8 @@ class ZoektClient:
             logger.warning(f"Failed to get Zoekt stats: {e}")
             return {"available": False, "error": str(e)}
 
-
 # Global client instance
 _client: ZoektClient | None = None
-
 
 def get_zoekt_client() -> ZoektClient:
     """Get the global Zoekt client instance."""
@@ -257,11 +251,9 @@ def get_zoekt_client() -> ZoektClient:
         _client = ZoektClient()
     return _client
 
-
 async def is_zoekt_available() -> bool:
     """Check if Zoekt is available."""
     return await get_zoekt_client().is_available()
-
 
 async def zoekt_search(
     query: str,
@@ -270,7 +262,6 @@ async def zoekt_search(
 ) -> list[ZoektMatch]:
     """Search using Zoekt (convenience function)."""
     return await get_zoekt_client().search(query, num, repos)
-
 
 # =============================================================================
 # Zoekt Index Manager - Auto-reindexing with debouncing
@@ -281,7 +272,6 @@ ZOEKT_INDEX_DIR = os.getenv("ZOEKT_INDEX_DIR", "/app/data/.zoekt-index")
 ZOEKT_DATA_DIR = os.getenv("ZOEKT_DATA_DIR", "/app/data")
 ZOEKT_DEBOUNCE_SECONDS = float(os.getenv("ZOEKT_DEBOUNCE_SECONDS", "5.0"))
 ZOEKT_INDEX_BINARY = os.getenv("ZOEKT_INDEX_BINARY", "zoekt-index")
-
 
 class ZoektIndexManager:
     """Manages Zoekt index updates with debouncing.
@@ -520,10 +510,8 @@ class ZoektIndexManager:
             logger.error(f"Zoekt: async reindex failed: {e}")
             return False
 
-
 # Global index manager instance
 _index_manager: ZoektIndexManager | None = None
-
 
 def get_zoekt_index_manager() -> ZoektIndexManager:
     """Get the global Zoekt index manager instance."""
@@ -532,11 +520,9 @@ def get_zoekt_index_manager() -> ZoektIndexManager:
         _index_manager = ZoektIndexManager()
     return _index_manager
 
-
 def notify_zoekt_write(path: str) -> None:
     """Convenience function to notify Zoekt of a file write."""
     get_zoekt_index_manager().notify_write(path)
-
 
 def notify_zoekt_sync_complete(files_synced: int = 0) -> None:
     """Convenience function to notify Zoekt of sync completion."""

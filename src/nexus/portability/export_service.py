@@ -12,8 +12,6 @@ References:
 - Epic #1161: Zone Data Portability
 """
 
-from __future__ import annotations
-
 import logging
 import os
 import tarfile
@@ -32,6 +30,9 @@ from nexus.portability.models import (
     ZoneExportOptions,
 )
 
+from nexus.backends.backend import Backend
+from nexus.core._metadata_generated import FileMetadataProtocol
+from nexus.core.nexus_fs import NexusFS
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
     from nexus.core._metadata_generated import FileMetadataProtocol
@@ -41,7 +42,6 @@ logger = logging.getLogger(__name__)
 
 # Progress callback type: (current, total) -> None
 ProgressCallback = Callable[[int, int], None]
-
 
 class ZoneExportService:
     """Service for exporting zone data to .nexus bundles.
@@ -401,7 +401,6 @@ class ZoneExportService:
                     tar.add(item, arcname=str(arcname))
 
         logger.info(f"Created bundle: {output_path} ({output_path.stat().st_size} bytes)")
-
 
 # Convenience function for CLI usage
 def export_zone_bundle(

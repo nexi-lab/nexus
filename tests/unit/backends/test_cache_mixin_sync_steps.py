@@ -32,7 +32,6 @@ from nexus.core.permissions import OperationContext
 from nexus.storage.file_cache import FileContentCache
 from nexus.storage.models import Base, FilePathModel
 
-
 class MockConnector(CacheConnectorMixin):
     """Mock connector for testing cache mixin."""
 
@@ -70,7 +69,6 @@ class MockConnector(CacheConnectorMixin):
         """Batch version fetch (10-25x faster than sequential)."""
         return {path: self.versions.get(path) for path in paths}
 
-
 @pytest.fixture
 def db_session(tmp_path: Path):
     """Create test database session."""
@@ -80,18 +78,15 @@ def db_session(tmp_path: Path):
     SessionLocal = sessionmaker(bind=engine)
     return SessionLocal
 
-
 @pytest.fixture
 def connector(db_session):
     """Create mock connector with test database."""
     return MockConnector(db_session)
 
-
 @pytest.fixture
 def pipeline(connector):
     """Create sync pipeline for testing."""
     return SyncPipelineService(connector)
-
 
 @pytest.fixture
 def test_context():
@@ -102,7 +97,6 @@ def test_context():
         zone_id="test_zone",
         is_system=True,
     )
-
 
 class TestStep1DiscoverFiles:
     """Test Step 1: File discovery and filtering."""
@@ -234,7 +228,6 @@ class TestStep1DiscoverFiles:
             assert len(result.errors) == 1
             assert "Failed to list files" in result.errors[0]
 
-
 class TestStep2LoadCache:
     """Test Step 2: Bulk cache loading."""
 
@@ -314,7 +307,6 @@ class TestStep2LoadCache:
 
             # Should use single bulk disk read, not 100 individual reads
             assert mock_bulk.call_count == 1
-
 
 class TestStep3CheckVersions:
     """Test Step 3: Version checking and filtering."""
@@ -438,7 +430,6 @@ class TestStep3CheckVersions:
             # Should use single batch call, not 10 individual calls
             assert mock_batch.call_count == 1
 
-
 class TestStep4ReadBackend:
     """Test Step 4: Batch backend reads."""
 
@@ -470,7 +461,6 @@ class TestStep4ReadBackend:
         assert len(backend_contents) == 1
         assert backend_contents["file1.txt"] == b"content1"
         assert "file2.txt" not in backend_contents
-
 
 class TestStep5ProcessContent:
     """Test Step 5: Content processing and parsing."""
@@ -575,7 +565,6 @@ class TestStep5ProcessContent:
         assert result.files_synced == 0
         assert result.files_skipped == 1
 
-
 class TestStep6WriteCache:
     """Test Step 6: Batch cache writing."""
 
@@ -644,7 +633,6 @@ class TestStep6WriteCache:
         # The batch write skips paths not found in file_paths and logs warning
         assert len(result.errors) == 0  # No errors - just skips the entry
 
-
 class TestStep7GenerateEmbeddings:
     """Test Step 7: Embedding generation."""
 
@@ -674,7 +662,6 @@ class TestStep7GenerateEmbeddings:
             assert result.embeddings_generated == 0
             assert len(result.errors) == 1
             assert "Failed to generate embeddings" in result.errors[0]
-
 
 class TestSyncIntegration:
     """Integration test for full sync flow."""

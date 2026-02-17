@@ -6,8 +6,6 @@ This module provides functionality for mounting external MCP servers
 Based on: https://www.anthropic.com/engineering/code-execution-with-mcp
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from datetime import UTC, datetime
@@ -16,12 +14,13 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.mcp.models import MCPMount, MCPToolConfig, MCPToolDefinition
 
+from nexus.core.permissions import OperationContext
+from nexus.skills.protocols import NexusFilesystem
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.skills.protocols import NexusFilesystem
 
 logger = logging.getLogger(__name__)
-
 
 class MCPMountError(Exception):
     """Raised when MCP mount operations fail."""
@@ -32,7 +31,6 @@ class MCPMountError(Exception):
         self.message = message
         self.path = path
         super().__init__(message)
-
 
 class MCPMountManager:
     """Manager for mounting and interacting with external MCP servers.

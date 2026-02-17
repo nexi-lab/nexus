@@ -15,13 +15,10 @@ Reference:
 Issue: #798
 """
 
-from __future__ import annotations
-
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any
-
 
 class FusionMethod(StrEnum):
     """Fusion method for combining keyword and vector search results."""
@@ -29,7 +26,6 @@ class FusionMethod(StrEnum):
     RRF = "rrf"  # Reciprocal Rank Fusion (default, recommended)
     WEIGHTED = "weighted"  # Simple weighted linear combination
     RRF_WEIGHTED = "rrf_weighted"  # RRF with alpha weighting
-
 
 @dataclass
 class FusionConfig:
@@ -48,7 +44,6 @@ class FusionConfig:
     rrf_k: int = 60
     normalize_scores: bool = True
     over_fetch_factor: float = 3.0
-
 
 def normalize_scores_minmax(scores: list[float]) -> list[float]:
     """Apply min-max normalization to scores.
@@ -72,7 +67,6 @@ def normalize_scores_minmax(scores: list[float]) -> list[float]:
 
     return [(s - min_score) / (max_score - min_score) for s in scores]
 
-
 def _to_dict(result: Any) -> dict[str, Any]:
     """Convert a result (dict or dataclass) to dict.
 
@@ -84,7 +78,6 @@ def _to_dict(result: Any) -> dict[str, Any]:
     if fields is not None:
         return {f: getattr(result, f) for f in fields}
     return dict(result) if hasattr(result, "__iter__") else {"value": result}
-
 
 def _get_result_key(result: dict[str, Any], id_key: str | None) -> str:
     """Get unique key for a result.
@@ -99,7 +92,6 @@ def _get_result_key(result: dict[str, Any], id_key: str | None) -> str:
     if id_key and id_key in result:
         return str(result[id_key])
     return f"{result.get('path', '')}:{result.get('chunk_index', 0)}"
-
 
 def rrf_fusion(
     keyword_results: Sequence[dict[str, Any] | Any],
@@ -159,7 +151,6 @@ def rrf_fusion(
         item["result"]["score"] = item["rrf_score"]
 
     return [item["result"] for item in sorted_results]
-
 
 def weighted_fusion(
     keyword_results: Sequence[dict[str, Any] | Any],
@@ -241,7 +232,6 @@ def weighted_fusion(
     # Sort and return
     return sorted(results_map.values(), key=lambda x: x["score"], reverse=True)[:limit]
 
-
 def rrf_weighted_fusion(
     keyword_results: Sequence[dict[str, Any] | Any],
     vector_results: Sequence[dict[str, Any] | Any],
@@ -300,7 +290,6 @@ def rrf_weighted_fusion(
         item["result"]["score"] = item["rrf_score"]
 
     return [item["result"] for item in sorted_results]
-
 
 def fuse_results(
     keyword_results: Sequence[dict[str, Any] | Any],

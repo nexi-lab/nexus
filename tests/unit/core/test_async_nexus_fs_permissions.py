@@ -26,14 +26,12 @@ from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 # === Fixtures ===
 
-
 @pytest.fixture
 def metadata_store(tmp_path: Path) -> RaftMetadataStore:
     """Create a local RaftMetadataStore for isolated tests."""
     store = RaftMetadataStore.embedded(str(tmp_path / "raft"))
     yield store
     store.close()
-
 
 @pytest_asyncio.fixture
 async def mock_rebac_manager() -> AsyncMock:
@@ -44,12 +42,10 @@ async def mock_rebac_manager() -> AsyncMock:
     mock.rebac_check_bulk.return_value = {}
     return mock
 
-
 @pytest_asyncio.fixture
 async def permission_enforcer(mock_rebac_manager: AsyncMock) -> AsyncPermissionEnforcer:
     """Create an AsyncPermissionEnforcer with mock ReBAC manager."""
     return AsyncPermissionEnforcer(rebac_manager=mock_rebac_manager)
-
 
 @pytest_asyncio.fixture
 async def async_fs_with_permissions(
@@ -69,7 +65,6 @@ async def async_fs_with_permissions(
     yield fs
     await fs.close()
 
-
 @pytest_asyncio.fixture
 async def async_fs_no_permissions(
     tmp_path: Path,
@@ -86,11 +81,9 @@ async def async_fs_no_permissions(
     yield fs
     await fs.close()
 
-
 # =============================================================================
 # TEST: Permission Denied on Read
 # =============================================================================
-
 
 @pytest.mark.asyncio
 async def test_read_permission_denied(
@@ -120,7 +113,6 @@ async def test_read_permission_denied(
     with pytest.raises(NexusPermissionError):
         await async_fs_with_permissions.read(path, context=context)
 
-
 @pytest.mark.asyncio
 async def test_read_permission_allowed(
     async_fs_with_permissions: AsyncNexusFS,
@@ -145,11 +137,9 @@ async def test_read_permission_allowed(
     result = await async_fs_with_permissions.read(path, context=context)
     assert result == content
 
-
 # =============================================================================
 # TEST: Permission Denied on Write
 # =============================================================================
-
 
 @pytest.mark.asyncio
 async def test_write_permission_denied(
@@ -172,7 +162,6 @@ async def test_write_permission_denied(
     # This should raise NexusPermissionError
     with pytest.raises(NexusPermissionError):
         await async_fs_with_permissions.write(path, content, context=context)
-
 
 @pytest.mark.asyncio
 async def test_write_permission_allowed(
@@ -197,11 +186,9 @@ async def test_write_permission_allowed(
     assert "etag" in result
     assert result["size"] == len(content)
 
-
 # =============================================================================
 # TEST: Permission Denied on Delete
 # =============================================================================
-
 
 @pytest.mark.asyncio
 async def test_delete_permission_denied(
@@ -229,7 +216,6 @@ async def test_delete_permission_denied(
     with pytest.raises(NexusPermissionError):
         await async_fs_with_permissions.delete(path, context=context)
 
-
 @pytest.mark.asyncio
 async def test_delete_permission_allowed(
     async_fs_with_permissions: AsyncNexusFS,
@@ -254,11 +240,9 @@ async def test_delete_permission_allowed(
     result = await async_fs_with_permissions.delete(path, context=context)
     assert result["deleted"] is True
 
-
 # =============================================================================
 # TEST: List Filtering by Permissions
 # =============================================================================
-
 
 @pytest.mark.asyncio
 async def test_list_dir_filters_by_permission(
@@ -301,11 +285,9 @@ async def test_list_dir_filters_by_permission(
     assert "file3.txt" in items
     assert "file2.txt" not in items
 
-
 # =============================================================================
 # TEST: Admin Bypass
 # =============================================================================
-
 
 @pytest.mark.asyncio
 async def test_admin_bypasses_read_permission(
@@ -335,7 +317,6 @@ async def test_admin_bypasses_read_permission(
     result = await async_fs_with_permissions.read(path, context=admin_context)
     assert result == content
 
-
 @pytest.mark.asyncio
 async def test_admin_bypasses_write_permission(
     async_fs_with_permissions: AsyncNexusFS,
@@ -358,7 +339,6 @@ async def test_admin_bypasses_write_permission(
     # This should succeed despite ReBAC denial
     result = await async_fs_with_permissions.write(path, content, context=admin_context)
     assert "etag" in result
-
 
 @pytest.mark.asyncio
 async def test_admin_bypasses_delete_permission(
@@ -386,11 +366,9 @@ async def test_admin_bypasses_delete_permission(
     result = await async_fs_with_permissions.delete(path, context=admin_context)
     assert result["deleted"] is True
 
-
 # =============================================================================
 # TEST: System Bypass
 # =============================================================================
-
 
 @pytest.mark.asyncio
 async def test_system_bypasses_permission_check(
@@ -423,11 +401,9 @@ async def test_system_bypasses_permission_check(
     delete_result = await async_fs_with_permissions.delete(path, context=system_context)
     assert delete_result["deleted"] is True
 
-
 # =============================================================================
 # TEST: enforce_permissions=False
 # =============================================================================
-
 
 @pytest.mark.asyncio
 async def test_no_permission_check_when_disabled(
@@ -454,11 +430,9 @@ async def test_no_permission_check_when_disabled(
     delete_result = await async_fs_no_permissions.delete(path, context=context)
     assert delete_result["deleted"] is True
 
-
 # =============================================================================
 # TEST: Default Context Behavior
 # =============================================================================
-
 
 @pytest.mark.asyncio
 async def test_default_context_is_system_and_bypasses_permission_check(
@@ -486,11 +460,9 @@ async def test_default_context_is_system_and_bypasses_permission_check(
     # Verify permission check was NOT called (system context bypasses)
     mock_rebac_manager.rebac_check.assert_not_called()
 
-
 # =============================================================================
 # TEST: Permission Check with Correct Parameters
 # =============================================================================
-
 
 @pytest.mark.asyncio
 async def test_read_checks_read_permission(
@@ -521,7 +493,6 @@ async def test_read_checks_read_permission(
     )
     assert read_call_found, "READ permission should be checked during read operation"
 
-
 @pytest.mark.asyncio
 async def test_write_checks_write_permission(
     async_fs_with_permissions: AsyncNexusFS,
@@ -548,7 +519,6 @@ async def test_write_checks_write_permission(
         for call in calls
     )
     assert write_call_found, "WRITE permission should be checked during write operation"
-
 
 @pytest.mark.asyncio
 async def test_delete_checks_write_permission(
@@ -578,11 +548,9 @@ async def test_delete_checks_write_permission(
     )
     assert write_call_found, "WRITE permission should be checked during delete operation"
 
-
 # =============================================================================
 # TEST: Context with Tenant ID
 # =============================================================================
-
 
 @pytest.mark.asyncio
 async def test_permission_check_uses_zone_id(
@@ -608,11 +576,9 @@ async def test_permission_check_uses_zone_id(
     tenant_check_found = any(call.kwargs.get("zone_id") == "custom-tenant-123" for call in calls)
     assert tenant_check_found, "Tenant ID should be passed to permission check"
 
-
 # =============================================================================
 # TEST: Nested Path Permission
 # =============================================================================
-
 
 @pytest.mark.asyncio
 async def test_write_to_nested_path_checks_parent_permission(
@@ -643,11 +609,9 @@ async def test_write_to_nested_path_checks_parent_permission(
     # Permission was checked (exact path or parent - implementation dependent)
     assert len(check_calls) > 0, "Permission should be checked for nested path write"
 
-
 # =============================================================================
 # EDGE CASE TESTS: Additional scenarios
 # =============================================================================
-
 
 @pytest.mark.asyncio
 async def test_permission_error_message_contains_details(
@@ -674,7 +638,6 @@ async def test_permission_error_message_contains_details(
     assert "bob" in error_message or "permission" in error_message.lower()
     assert path in error_message
 
-
 @pytest.mark.asyncio
 async def test_read_permission_denied_before_file_check(
     async_fs_with_permissions: AsyncNexusFS,
@@ -696,7 +659,6 @@ async def test_read_permission_denied_before_file_check(
     # This prevents information leak about file existence
     with pytest.raises(NexusPermissionError):
         await async_fs_with_permissions.read(path, context=context)
-
 
 @pytest.mark.asyncio
 async def test_different_users_different_permissions(
@@ -729,7 +691,6 @@ async def test_different_users_different_permissions(
     with pytest.raises(NexusPermissionError):
         await async_fs_with_permissions.read(path, context=bob_context)
 
-
 @pytest.mark.asyncio
 async def test_empty_list_dir_with_no_permissions(
     async_fs_with_permissions: AsyncNexusFS,
@@ -750,7 +711,6 @@ async def test_empty_list_dir_with_no_permissions(
     # List should return empty since user has no READ permission on any files
     items = await async_fs_with_permissions.list_dir("/secure", context=context)
     assert items == []
-
 
 @pytest.mark.asyncio
 async def test_selective_permission_enforcement(
@@ -785,7 +745,6 @@ async def test_selective_permission_enforcement(
     with pytest.raises(NexusPermissionError):
         await async_fs_with_permissions.read("/allowed/file1.txt", context=context)
 
-
 @pytest.mark.asyncio
 async def test_permission_enforcer_none_is_permissive(
     tmp_path: Path,
@@ -812,7 +771,6 @@ async def test_permission_enforcer_none_is_permissive(
         assert content == b"Content"
     finally:
         await fs.close()
-
 
 @pytest.mark.asyncio
 async def test_stream_read_checks_permission(

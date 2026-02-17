@@ -28,12 +28,11 @@ Note:
     application startup (e.g., in the FastAPI lifespan handler).
 """
 
-from __future__ import annotations
-
 import logging
 import os
 from typing import TYPE_CHECKING, Any
 
+from sentry_sdk.types import Event, Hint
 if TYPE_CHECKING:
     from sentry_sdk.types import Event, Hint
 
@@ -52,14 +51,12 @@ _FAILED_STATUS_CODES: frozenset[int] = frozenset(range(500, 600))
 # Endpoints to exclude from performance traces.
 _SKIP_TRACE_PREFIXES = ("/health", "/metrics", "/favicon")
 
-
 def is_sentry_enabled() -> bool:
     """Check if Sentry is enabled via SENTRY_DSN environment variable.
 
     Sentry is enabled if and only if a non-empty SENTRY_DSN is set.
     """
     return bool(os.environ.get("SENTRY_DSN", "").strip())
-
 
 def _parse_sample_rate(env_var: str, default: float = 0.0) -> float:
     """Parse a sample rate from an environment variable, clamping to [0.0, 1.0].
@@ -78,7 +75,6 @@ def _parse_sample_rate(env_var: str, default: float = 0.0) -> float:
         logger.warning("Invalid sample rate %r for %s, using default %s", raw, env_var, default)
         return default
     return max(0.0, min(1.0, rate))
-
 
 def sentry_before_send(event: Event, hint: Hint) -> Event | None:
     """Filter events before sending to Sentry.
@@ -113,7 +109,6 @@ def sentry_before_send(event: Event, hint: Hint) -> Event | None:
         logger.debug("CorrelationMiddleware not available; skipping correlation_id tag")
 
     return event
-
 
 def _sentry_traces_sampler(sampling_context: dict[str, Any]) -> float:
     """Custom traces sampler that filters out noisy endpoints.
@@ -153,7 +148,6 @@ def _sentry_traces_sampler(sampling_context: dict[str, Any]) -> float:
         return 0.0
 
     return _resolved_traces_rate
-
 
 def setup_sentry(
     dsn: str | None = None,
@@ -264,7 +258,6 @@ def setup_sentry(
     except Exception as e:
         logger.error("Failed to initialize Sentry: %s", e)
         return False
-
 
 def shutdown_sentry() -> None:
     """Flush pending events and shutdown Sentry.

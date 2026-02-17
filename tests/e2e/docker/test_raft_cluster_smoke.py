@@ -11,8 +11,6 @@ The tests are marked with @pytest.mark.docker so they can be skipped in CI
 environments without Docker.
 """
 
-from __future__ import annotations
-
 import time
 import uuid
 
@@ -30,7 +28,6 @@ HEALTH_TIMEOUT = 60  # seconds to wait for cluster to be healthy
 # The entrypoint registers this key in the database on startup — no runtime creation needed.
 E2E_ADMIN_API_KEY = "sk-test-federation-e2e-admin-key"
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -46,7 +43,6 @@ def _jsonrpc(url: str, method: str, params: dict, *, api_key: str, timeout: floa
     )
     return resp.json()
 
-
 def _health(url: str) -> dict | None:
     """Check /health endpoint. Returns None if unreachable."""
     try:
@@ -56,7 +52,6 @@ def _health(url: str) -> dict | None:
     except httpx.ConnectError:
         pass
     return None
-
 
 def _wait_healthy(urls: list[str], timeout: float = HEALTH_TIMEOUT) -> None:
     """Wait until all URLs return healthy."""
@@ -69,7 +64,6 @@ def _wait_healthy(urls: list[str], timeout: float = HEALTH_TIMEOUT) -> None:
             time.sleep(2)
         else:
             pytest.fail(f"Timed out waiting for {url} to become healthy")
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -87,12 +81,10 @@ def cluster():
     _wait_healthy([NODE1_URL, NODE2_URL])
     return {"node1": NODE1_URL, "node2": NODE2_URL}
 
-
 @pytest.fixture(scope="module")
 def api_key(cluster):
     """Admin API key pre-registered via NEXUS_API_KEY in docker-compose."""
     return E2E_ADMIN_API_KEY
-
 
 # ---------------------------------------------------------------------------
 # Tests
@@ -114,7 +106,6 @@ class TestRaftClusterHealth:
         for url in [cluster["node1"], cluster["node2"]]:
             h = _health(url)
             assert h["has_auth"] is True
-
 
 class TestRaftWriteRead:
     """Write and read operations through Raft consensus."""
@@ -161,7 +152,6 @@ class TestRaftWriteRead:
         assert "error" not in r, f"Read failed: {r}"
         assert "result" in r
 
-
 class TestRaftMetadataReplication:
     """Verify metadata is replicated across Raft nodes."""
 
@@ -191,7 +181,6 @@ class TestRaftMetadataReplication:
         assert "error" not in r, f"List failed: {r}"
         files = r["result"]["files"]
         assert path in files, f"File {path} not replicated to follower. Files: {files}"
-
 
 class TestRaftLeaderElection:
     """Verify leader election correctness (witness must not be leader)."""

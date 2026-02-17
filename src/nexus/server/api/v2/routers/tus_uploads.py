@@ -10,21 +10,19 @@ Endpoints:
 Every endpoint (except OPTIONS) validates the Tus-Resumable header.
 """
 
-from __future__ import annotations
-
 import base64
 import logging
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, Response
 
+from nexus.services.chunked_upload_service import ChunkedUploadService
 if TYPE_CHECKING:
     from nexus.services.chunked_upload_service import ChunkedUploadService
 
 logger = logging.getLogger(__name__)
 
 TUS_RESUMABLE = "1.0.0"
-
 
 def _validate_tus_resumable(tus_resumable: str | None = Header(None, alias="Tus-Resumable")) -> str:
     """Validate the Tus-Resumable header is present and correct."""
@@ -41,7 +39,6 @@ def _validate_tus_resumable(tus_resumable: str | None = Header(None, alias="Tus-
             headers={"Tus-Version": TUS_RESUMABLE},
         )
     return tus_resumable
-
 
 def _parse_upload_metadata(raw: str | None) -> dict[str, str]:
     """Parse tus Upload-Metadata header.
@@ -68,7 +65,6 @@ def _parse_upload_metadata(raw: str | None) -> dict[str, str]:
             value = ""
         result[key] = value
     return result
-
 
 def create_tus_uploads_router(
     get_upload_service: object,

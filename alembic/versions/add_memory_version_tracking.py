@@ -29,7 +29,6 @@ down_revision: Union[str, Sequence[str], None] = "add_nexus_pay_models"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add current_version column to memories table."""
     # Add current_version column (defaults to 1 for new memories)
@@ -49,7 +48,6 @@ def upgrade() -> None:
         "memories",
         ["current_version"],
     )
-
 
 def downgrade() -> None:
     """Remove current_version column from memories table."""

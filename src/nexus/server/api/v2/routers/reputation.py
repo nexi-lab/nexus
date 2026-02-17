@@ -12,7 +12,6 @@ Provides:
 All endpoints are authenticated via existing auth middleware.
 All endpoints use sync ``def`` for threadpool dispatch (no async DB).
 
-Note: This module intentionally does NOT use ``from __future__ import annotations``
 because FastAPI uses ``eval_str=True`` on dependency signatures at import time.
 """
 
@@ -29,11 +28,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["reputation"])
 
-
 # ---------------------------------------------------------------------------
 # Request / Response models
 # ---------------------------------------------------------------------------
-
 
 class ReputationScoreResponse(BaseModel):
     """Reputation score for an agent."""
@@ -59,7 +56,6 @@ class ReputationScoreResponse(BaseModel):
     zone_id: str
     updated_at: datetime
 
-
 class TrustScoreResponse(BaseModel):
     """Lightweight trust score for routing decisions (#1619)."""
 
@@ -69,12 +65,10 @@ class TrustScoreResponse(BaseModel):
     confidence: float
     zone_id: str | None
 
-
 class ReputationLeaderboardResponse(BaseModel):
     """Leaderboard of agents ranked by reputation."""
 
     entries: list[ReputationScoreResponse]
-
 
 class FeedbackSubmitRequest(BaseModel):
     """Request to submit feedback for an exchange."""
@@ -88,7 +82,6 @@ class FeedbackSubmitRequest(BaseModel):
     fairness_score: float | None = None
     evidence_hash: str | None = None
     context: str = "general"
-
 
 class FeedbackEventResponse(BaseModel):
     """A single feedback event."""
@@ -110,18 +103,15 @@ class FeedbackEventResponse(BaseModel):
     record_hash: str
     created_at: datetime
 
-
 class FeedbackSubmitResponse(BaseModel):
     """Response after submitting feedback."""
 
     event: FeedbackEventResponse
 
-
 class FeedbackListResponse(BaseModel):
     """List of feedback events for an exchange."""
 
     feedback: list[FeedbackEventResponse]
-
 
 class DisputeFileRequest(BaseModel):
     """Request to file a dispute."""
@@ -130,7 +120,6 @@ class DisputeFileRequest(BaseModel):
     respondent_agent_id: str
     reason: str
     evidence_hash: str | None = None
-
 
 class DisputeResponse(BaseModel):
     """Dispute details."""
@@ -151,18 +140,15 @@ class DisputeResponse(BaseModel):
     resolved_at: datetime | None = None
     appeal_deadline: datetime | None = None
 
-
 class DisputeResolveRequest(BaseModel):
     """Request to resolve a dispute."""
 
     resolution: str
     evidence_hash: str | None = None
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
 
 def _score_to_response(score: Any) -> ReputationScoreResponse:
     """Convert ReputationScore record to response model."""
@@ -189,7 +175,6 @@ def _score_to_response(score: Any) -> ReputationScoreResponse:
         updated_at=score.updated_at,
     )
 
-
 def _event_to_response(event: Any) -> FeedbackEventResponse:
     """Convert ReputationEvent record to response model."""
     return FeedbackEventResponse(
@@ -211,7 +196,6 @@ def _event_to_response(event: Any) -> FeedbackEventResponse:
         created_at=event.created_at,
     )
 
-
 def _dispute_to_response(dispute: Any) -> DisputeResponse:
     """Convert DisputeRecord to response model."""
     return DisputeResponse(
@@ -232,11 +216,9 @@ def _dispute_to_response(dispute: Any) -> DisputeResponse:
         appeal_deadline=dispute.appeal_deadline,
     )
 
-
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
-
 
 @router.get("/api/v2/agents/{agent_id}/reputation")
 def get_agent_reputation(
@@ -254,9 +236,7 @@ def get_agent_reputation(
 
     return _score_to_response(score)
 
-
 _VALID_DIMENSIONS = {"composite", "reliability", "quality", "timeliness", "fairness"}
-
 
 @router.get("/api/v2/agents/{agent_id}/trust-score")
 def get_trust_score(
@@ -302,7 +282,6 @@ def get_trust_score(
         zone_id=zone_id,
     )
 
-
 @router.get("/api/v2/reputation/leaderboard")
 def get_leaderboard(
     zone_id: str = "root",
@@ -315,7 +294,6 @@ def get_leaderboard(
 
     entries = reputation_service.get_leaderboard(zone_id=zone_id, context=context, limit=limit)
     return ReputationLeaderboardResponse(entries=[_score_to_response(e) for e in entries])
-
 
 @router.post("/api/v2/exchanges/{exchange_id}/feedback")
 def submit_feedback(
@@ -350,7 +328,6 @@ def submit_feedback(
 
     return FeedbackSubmitResponse(event=_event_to_response(event))
 
-
 @router.get("/api/v2/exchanges/{exchange_id}/feedback")
 def get_exchange_feedback(
     exchange_id: str,
@@ -361,7 +338,6 @@ def get_exchange_feedback(
 
     events = reputation_service.get_feedback_for_exchange(exchange_id)
     return FeedbackListResponse(feedback=[_event_to_response(e) for e in events])
-
 
 @router.post("/api/v2/exchanges/{exchange_id}/dispute")
 def file_dispute(
@@ -391,7 +367,6 @@ def file_dispute(
 
     return _dispute_to_response(dispute)
 
-
 @router.get("/api/v2/disputes/{dispute_id}")
 def get_dispute(
     dispute_id: str,
@@ -405,7 +380,6 @@ def get_dispute(
         raise HTTPException(status_code=404, detail="Dispute not found")
 
     return _dispute_to_response(dispute)
-
 
 @router.post("/api/v2/disputes/{dispute_id}/resolve")
 def resolve_dispute(

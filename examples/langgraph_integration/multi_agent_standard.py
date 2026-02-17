@@ -17,7 +17,6 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 
-
 # State definition for the multi-agent workflow
 class AgentState(TypedDict):
     task: str
@@ -27,7 +26,6 @@ class AgentState(TypedDict):
     review_file: str
     iteration: int
     max_iterations: int
-
 
 def researcher_node(state: AgentState) -> AgentState:
     """Researcher agent: analyzes task and writes requirements."""
@@ -57,7 +55,6 @@ def researcher_node(state: AgentState) -> AgentState:
     print(f"✓ Requirements written to {research_file}")
 
     return {**state, "research_file": research_file, "current_agent": "coder"}
-
 
 def coder_node(state: AgentState) -> AgentState:
     """Coder agent: reads requirements and writes code."""
@@ -91,7 +88,6 @@ def coder_node(state: AgentState) -> AgentState:
     print(f"✓ Code written to {code_file}")
 
     return {**state, "code_file": code_file, "current_agent": "reviewer"}
-
 
 def reviewer_node(state: AgentState) -> AgentState:
     """Reviewer agent: reviews code and provides feedback."""
@@ -129,7 +125,6 @@ def reviewer_node(state: AgentState) -> AgentState:
         "iteration": state["iteration"] + 1,
     }
 
-
 def route_agent(state: AgentState) -> Literal["researcher", "coder", "reviewer", END]:
     """Router function to determine next agent."""
     current = state["current_agent"]
@@ -141,7 +136,6 @@ def route_agent(state: AgentState) -> Literal["researcher", "coder", "reviewer",
         "done": END,
     }
     return routing_map.get(current, END)
-
 
 def build_graph():
     """Build the multi-agent workflow graph."""
@@ -159,7 +153,6 @@ def build_graph():
     workflow.add_edge("reviewer", END)
 
     return workflow.compile()
-
 
 def main():
     """Main function to run the multi-agent workflow."""
@@ -200,7 +193,6 @@ def main():
     print(f"  - Review: {result['review_file']}")
     print("\nNote: All agents have full read/write access to all files.")
     print("No permission control in this standard implementation.")
-
 
 if __name__ == "__main__":
     main()

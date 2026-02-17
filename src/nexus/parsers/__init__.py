@@ -22,8 +22,6 @@ Example usage:
     >>> print(result.text)
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable
 
 from nexus.parsers.base import Parser
@@ -37,7 +35,6 @@ from nexus.parsers.detection import (
 from nexus.parsers.markitdown_parser import MarkItDownParser
 from nexus.parsers.registry import ParserRegistry
 from nexus.parsers.types import ImageData, ParseResult, TextChunk
-
 
 def create_default_parse_fn() -> Callable[[bytes, str], bytes | None]:
     """Create a parse callback using MarkItDownParser.
@@ -67,7 +64,6 @@ def create_default_parse_fn() -> Callable[[bytes, str], bytes | None]:
         return None
 
     return _parse
-
 
 __all__ = [
     "Parser",

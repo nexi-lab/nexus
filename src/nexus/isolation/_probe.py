@@ -6,10 +6,7 @@ multi-phase initialisation.  This module tests the import *before* creating
 the full pool so that we can auto-fallback to ``ProcessPoolExecutor``.
 """
 
-from __future__ import annotations
-
 import sys
-
 
 def _try_import(module_path: str) -> bool:
     """Import *module_path* inside the current interpreter.
@@ -21,7 +18,6 @@ def _try_import(module_path: str) -> bool:
 
     _imp.import_module(module_path)
     return True
-
 
 def probe_subinterpreter_compat(module_path: str) -> bool:
     """Test whether *module_path* can be imported in a sub-interpreter.

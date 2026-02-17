@@ -15,8 +15,6 @@ It is then:
 - Set as the ``X-Request-ID`` response header
 """
 
-from __future__ import annotations
-
 import re
 import time
 import uuid
@@ -44,7 +42,6 @@ _log = structlog.get_logger(__name__)
 
 # Public ContextVars for use by other modules (e.g., audit logging)
 correlation_id_var: ContextVar[str | None] = ContextVar("correlation_id", default=None)
-
 
 class CorrelationMiddleware:
     """ASGI middleware that generates/propagates correlation IDs.

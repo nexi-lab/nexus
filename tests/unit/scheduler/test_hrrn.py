@@ -3,14 +3,11 @@
 Tests score computation, edge cases, ranking, and property-based tests.
 """
 
-from __future__ import annotations
-
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
 from nexus.scheduler.policies.hrrn import compute_hrrn_score, rank_by_hrrn
-
 
 class TestComputeHrrnScore:
     """Test HRRN score computation."""
@@ -44,7 +41,6 @@ class TestComputeHrrnScore:
         for wait in [0, 1, 10, 100, 1000, 10000]:
             for svc in [0.001, 1, 10, 30, 100]:
                 assert compute_hrrn_score(float(wait), svc) >= 1.0
-
 
 class TestRankByHrrn:
     """Test HRRN ranking."""
@@ -84,7 +80,6 @@ class TestRankByHrrn:
         original_order = [t["id"] for t in tasks]
         rank_by_hrrn(tasks, 1000.0)
         assert [t["id"] for t in tasks] == original_order
-
 
 class TestHrrnHypothesis:
     """Property-based tests for HRRN scoring."""

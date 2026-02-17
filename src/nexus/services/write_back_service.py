@@ -11,8 +11,6 @@ Architecture:
 - Conflict-aware: 6 configurable strategies via ConflictStrategy (Issue #1130)
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import dataclasses
@@ -36,6 +34,11 @@ from nexus.services.conflict_resolution import (
 )
 from nexus.services.write_back_metrics import WriteBackMetrics
 
+from nexus.core.event_bus import EventBusBase
+from nexus.services.change_log_store import ChangeLogStore
+from nexus.services.conflict_log_store import ConflictLogStore
+from nexus.services.gateway import NexusFSGateway
+from nexus.services.sync_backlog_store import SyncBacklogEntry, SyncBacklogStore
 if TYPE_CHECKING:
     from nexus.core.event_bus import EventBusBase
     from nexus.services.change_log_store import ChangeLogStore
@@ -55,7 +58,6 @@ _WRITE_BACK_EVENT_TYPES = frozenset(
         FileEventType.DIR_DELETE,
     }
 )
-
 
 class WriteBackService:
     """Orchestrates bidirectional sync from Nexus to source backends.

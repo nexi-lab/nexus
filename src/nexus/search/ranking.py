@@ -11,8 +11,6 @@ Industry references:
 Issue: #1092, #1499
 """
 
-from __future__ import annotations
-
 import logging
 import os
 import re
@@ -22,7 +20,6 @@ from typing import Any
 from nexus.search.results import detect_matched_field
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass
 class AttributeWeights:
@@ -61,7 +58,6 @@ class AttributeWeights:
         """
         return getattr(self, field_name, 1.0)
 
-
 @dataclass
 class RankingConfig:
     """Full ranking configuration for search results.
@@ -75,7 +71,6 @@ class RankingConfig:
     attribute_weights: AttributeWeights = field(default_factory=AttributeWeights)
     enable_attribute_boosting: bool = True
     enable_exactness_boost: bool = True
-
 
 def get_ranking_config_from_env() -> RankingConfig:
     """Load ranking configuration from environment variables.
@@ -111,7 +106,6 @@ def get_ranking_config_from_env() -> RankingConfig:
         == "true",
     )
 
-
 def check_exact_match(query: str, text: str) -> bool:
     """Check if query appears as an exact phrase in text.
 
@@ -132,7 +126,6 @@ def check_exact_match(query: str, text: str) -> bool:
     pattern = r"\b" + re.escape(query_lower) + r"\b"
     return bool(re.search(pattern, text_lower))
 
-
 def check_prefix_match(query: str, text: str) -> bool:
     """Check if query is a prefix of any word in text.
 
@@ -152,7 +145,6 @@ def check_prefix_match(query: str, text: str) -> bool:
     # Check if query is a prefix of any word
     words = re.findall(r"\b\w+", text_lower)
     return any(word.startswith(query_lower) for word in words)
-
 
 def apply_attribute_boosting(
     results: list[dict[str, Any]],

@@ -30,7 +30,6 @@ from sqlalchemy.sql.elements import TextClause
 # Valid zone_id pattern (alphanumeric, hyphens, underscores) for SQL injection prevention
 _ZONE_ID_RE = re.compile(r"^[a-zA-Z0-9_-]+$")
 
-
 def _zone_filter(zone_id: str | None) -> str:
     """Generate optional zone_id WHERE clause fragment.
 
@@ -45,7 +44,6 @@ def _zone_filter(zone_id: str | None) -> str:
     if not _ZONE_ID_RE.match(zone_id):
         raise ValueError(f"Invalid zone_id: {zone_id!r}")
     return f"\n  AND fp.zone_id = '{zone_id}'"
-
 
 def _json_extract(field: str, db_type: str = "sqlite") -> str:
     """Generate database-specific JSON extraction expression.
@@ -64,14 +62,12 @@ def _json_extract(field: str, db_type: str = "sqlite") -> str:
         # SQLite: Use json_extract with '$' path
         return f"json_extract({field}, '$')"
 
-
 def _now(db_type: str = "sqlite") -> str:
     """Generate database-specific current timestamp expression."""
     if db_type == "postgresql":
         return "NOW()"
     else:
         return "datetime('now')"
-
 
 def _interval_ago(interval: str, db_type: str = "sqlite") -> str:
     """Generate database-specific timestamp interval expression.
@@ -92,7 +88,6 @@ def _interval_ago(interval: str, db_type: str = "sqlite") -> str:
             count, unit = parts
             return f"datetime('now', '-{count} {unit}')"
         return "datetime('now')"
-
 
 def get_ready_work_view(db_type: str = "sqlite", zone_id: str | None = None) -> TextClause:
     """SQL View: ready_work_items - files ready for processing (status='ready', no blockers)."""
@@ -152,7 +147,6 @@ ORDER BY
     fp.created_at ASC;
 """)
 
-
 def get_pending_work_view(db_type: str = "sqlite", zone_id: str | None = None) -> TextClause:
     """SQL View: pending_work_items - files with status='pending' ordered by priority."""
     je = lambda f: _json_extract(f, db_type)  # noqa: E731
@@ -194,7 +188,6 @@ ORDER BY
     CAST({je(priority_subquery)} AS INTEGER) ASC NULLS LAST,
     fp.created_at ASC;
 """)
-
 
 def get_blocked_work_view(db_type: str = "sqlite", zone_id: str | None = None) -> TextClause:
     """SQL View: blocked_work_items - files that are blocked by dependencies."""
@@ -256,7 +249,6 @@ ORDER BY
     fp.created_at ASC;
 """)
 
-
 def get_work_by_priority_view(db_type: str = "sqlite", zone_id: str | None = None) -> TextClause:
     """SQL View: work_by_priority - all work items ordered by priority and age."""
     je = lambda f: _json_extract(f, db_type)  # noqa: E731
@@ -299,7 +291,6 @@ ORDER BY
     CAST({je(priority_subquery)} AS INTEGER) ASC NULLS LAST,
     fp.created_at ASC;
 """)
-
 
 def get_in_progress_work_view(db_type: str = "sqlite", zone_id: str | None = None) -> TextClause:
     """SQL View: in_progress_work - files currently being processed."""
@@ -345,7 +336,6 @@ WHERE fp.deleted_at IS NULL{_zone_filter(zone_id)}
 ORDER BY
     {order_expr} DESC;
 """)
-
 
 def get_ready_for_indexing_view(db_type: str = "sqlite", zone_id: str | None = None) -> TextClause:
     """SQL View: ready_for_indexing - files queued for semantic indexing with no pending dependencies."""
@@ -395,7 +385,6 @@ WHERE fp.deleted_at IS NULL{_zone_filter(zone_id)}
 ORDER BY fp.size_bytes ASC, fp.created_at ASC;
 """)
 
-
 def get_hot_tier_eviction_view(db_type: str = "sqlite", zone_id: str | None = None) -> TextClause:
     """SQL View: hot_tier_eviction_candidates - files accessed long ago (cache eviction candidates)."""
     create_stmt = (
@@ -435,7 +424,6 @@ WHERE fp.deleted_at IS NULL{_zone_filter(zone_id)}
 ORDER BY fp.accessed_at ASC
 LIMIT 1000;
 """)
-
 
 def get_orphaned_content_view(db_type: str = "sqlite", _zone_id: str | None = None) -> TextClause:
     """SQL View: orphaned_content_objects - content chunks with no references (GC targets).
@@ -478,7 +466,6 @@ WHERE cc.ref_count = 0
 ORDER BY cc.last_accessed_at ASC NULLS FIRST;
 """)
 
-
 # List of view names and their generator functions
 VIEW_GENERATORS = [
     ("ready_work_items", get_ready_work_view),
@@ -501,7 +488,6 @@ DROP_VIEWS = [text(f"DROP VIEW IF EXISTS {name};") for name in VIEW_NAMES]
 # Allowlist of valid view names for SQL injection prevention
 ALLOWED_VIEW_NAMES = frozenset(name for name, _ in VIEW_GENERATORS)
 
-
 def get_all_views(db_type: str = "sqlite") -> list[tuple[str, TextClause]]:
     """Get all view definitions for a specific database type.
 
@@ -512,7 +498,6 @@ def get_all_views(db_type: str = "sqlite") -> list[tuple[str, TextClause]]:
         List of (view_name, view_sql) tuples
     """
     return [(name, func(db_type)) for name, func in VIEW_GENERATORS]
-
 
 def create_views(engine: Any, db_type: str = "sqlite") -> None:  # noqa: ANN401
     """Create all SQL views for work detection.
@@ -526,7 +511,6 @@ def create_views(engine: Any, db_type: str = "sqlite") -> None:  # noqa: ANN401
         for _name, view_sql in views:
             conn.execute(view_sql)
             conn.commit()
-
 
 def drop_views(engine: Any) -> None:  # noqa: ANN401
     """Drop all SQL views.

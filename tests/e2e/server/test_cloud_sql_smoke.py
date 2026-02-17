@@ -9,8 +9,6 @@ Required environment variables:
     CLOUD_SQL_DB:       Database name (default: "nexus")
 """
 
-from __future__ import annotations
-
 import os
 from typing import Any
 
@@ -30,7 +28,6 @@ _skip = pytest.mark.skipif(
     reason="Cloud SQL not configured",
 )
 
-
 def _sync_session_factory() -> sessionmaker[Session]:
     """Build a sync sessionmaker using the Cloud SQL creator."""
     from sqlalchemy import create_engine
@@ -39,12 +36,10 @@ def _sync_session_factory() -> sessionmaker[Session]:
     engine = create_engine("postgresql+pg8000://", creator=sync_creator)
     return sessionmaker(bind=engine)
 
-
 def _async_engine() -> Any:
     """Build an async engine using the Cloud SQL creator."""
     _, async_creator = create_cloud_sql_creators(_INSTANCE, _USER, _DB)
     return create_async_engine("postgresql+asyncpg://", async_creator=async_creator)
-
 
 @_skip
 class TestCloudSQLSmoke:

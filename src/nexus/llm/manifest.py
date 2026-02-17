@@ -4,14 +4,11 @@ Declares the LLM brick's metadata and provides verify_imports()
 for validating required and optional modules at startup.
 """
 
-from __future__ import annotations
-
 import importlib
 import logging
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass(frozen=True)
 class LLMBrickManifest:
@@ -30,7 +27,6 @@ class LLMBrickManifest:
         }
     )
     dependencies: list[str] = field(default_factory=list)
-
 
 def verify_imports() -> dict[str, bool]:
     """Validate required and optional LLM imports at startup.

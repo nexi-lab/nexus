@@ -9,15 +9,13 @@ This module provides utilities for validating:
 Issue #165: Migration Tools & Upgrade Paths
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from nexus.core.nexus_fs import NexusFilesystem
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFilesystem
-
 
 @dataclass
 class ValidationResult:
@@ -51,7 +49,7 @@ class ValidationResult:
             f"warnings={len(self.warnings)})"
         )
 
-    def merge(self, other: ValidationResult) -> ValidationResult:
+    def merge(self, other: "ValidationResult") -> "ValidationResult":
         """Merge another validation result into this one.
 
         Args:
@@ -68,7 +66,6 @@ class ValidationResult:
         self.orphaned_content += other.orphaned_content
         self.missing_content += other.missing_content
         return self
-
 
 class IntegrityValidator:
     """Validates data integrity during and after migration.

@@ -10,8 +10,6 @@ Reports:
     - Hierarchical path lock (3-level deep)
 """
 
-from __future__ import annotations
-
 import statistics
 import threading
 import time
@@ -25,7 +23,6 @@ try:
     HAS_RUST = True
 except (ImportError, Exception):
     HAS_RUST = False
-
 
 def _bench_uncontended(cls: type, ops: int = 10_000) -> dict:
     """Single-thread uncontended acquire + release."""
@@ -47,7 +44,6 @@ def _bench_uncontended(cls: type, ops: int = 10_000) -> dict:
         "p99_ns": latencies_ns[int(len(latencies_ns) * 0.99)],
         "ops_per_sec": int(ops / (sum(latencies_ns) / 1e9)),
     }
-
 
 def _bench_contended_reads(cls: type, threads: int = 10, ops_per_thread: int = 1_000) -> dict:
     """Multi-thread contended read acquire + release on same path."""
@@ -88,7 +84,6 @@ def _bench_contended_reads(cls: type, threads: int = 10, ops_per_thread: int = 1
         "ops_per_sec": int(total_ops / wall_elapsed),
     }
 
-
 def _bench_hierarchical(cls: type, ops: int = 5_000) -> dict:
     """Hierarchical path lock — acquire deep paths, release in order."""
     mgr = cls()
@@ -110,7 +105,6 @@ def _bench_hierarchical(cls: type, ops: int = 5_000) -> dict:
         "ops_per_sec": int(ops / (sum(latencies_ns) / 1e9)),
     }
 
-
 def _print_result(name: str, result: dict) -> None:
     print(f"  {name}:")
     for k, v in result.items():
@@ -120,7 +114,6 @@ def _print_result(name: str, result: dict) -> None:
             print(f"    {k}: {v:,}")
         else:
             print(f"    {k}: {v}")
-
 
 def main() -> None:
     print("=" * 60)
@@ -148,7 +141,6 @@ def main() -> None:
         print(f"  Uncontended avg: Python={py_unc['avg_ns']:.0f}ns, Rust={rs_unc['avg_ns']:.0f}ns, Speedup={speedup:.1f}x")
 
     print()
-
 
 if __name__ == "__main__":
     main()

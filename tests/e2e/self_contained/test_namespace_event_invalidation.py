@@ -9,8 +9,6 @@ Tests the CacheCoordinator → NamespaceManager wiring:
 This validates the full invalidation pipeline without needing a running FastAPI server.
 """
 
-from __future__ import annotations
-
 import pytest
 from sqlalchemy import create_engine
 
@@ -21,14 +19,12 @@ from nexus.storage.models import Base
 # Fixtures
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture
 def engine():
     """Create in-memory SQLite database for testing."""
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     return engine
-
 
 @pytest.fixture
 def rebac_manager(engine):
@@ -42,7 +38,6 @@ def rebac_manager(engine):
     )
     yield manager
     manager.close()
-
 
 @pytest.fixture
 def namespace_manager(rebac_manager):
@@ -65,11 +60,9 @@ def namespace_manager(rebac_manager):
 
     return ns
 
-
 # ---------------------------------------------------------------------------
 # Tests: Event-Driven Invalidation
 # ---------------------------------------------------------------------------
-
 
 class TestEventDrivenInvalidation:
     """Tests for CacheCoordinator → NamespaceManager invalidation pipeline."""

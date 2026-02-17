@@ -8,14 +8,11 @@ the transactional outbox pattern (``EventDeliveryWorker``).
 Tracked by: #1397, #1241
 """
 
-from __future__ import annotations
-
 import logging
 
 from nexus.services.event_log.protocol import EventLogConfig, EventLogProtocol
 
 logger = logging.getLogger(__name__)
-
 
 def create_event_log(
     config: EventLogConfig,

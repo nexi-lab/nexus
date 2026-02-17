@@ -18,15 +18,12 @@ Example:
     "Call back in 3 days" -> "Call back on 2025-01-13"
 """
 
-from __future__ import annotations
-
 import calendar
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Any
-
 
 @dataclass
 class TemporalResult:
@@ -37,7 +34,6 @@ class TemporalResult:
     replacements: list[dict[str, Any]] = field(default_factory=list)
     reference_time: datetime | None = None
     method: str = "none"  # "llm", "heuristic", "none"
-
 
 class TemporalResolver(ABC):
     """Abstract base class for temporal expression resolvers."""
@@ -61,7 +57,6 @@ class TemporalResolver(ABC):
             TemporalResult with resolved text and replacement details.
         """
         pass
-
 
 class LLMTemporalResolver(TemporalResolver):
     """LLM-based temporal expression resolver (recommended approach).
@@ -341,7 +336,6 @@ Resolved:"""
                     )
 
         return replacements
-
 
 class HeuristicTemporalResolver(TemporalResolver):
     """Regex-based temporal expression resolver (fallback only).
@@ -693,11 +687,9 @@ class HeuristicTemporalResolver(TemporalResolver):
         result = re.sub(r"\blast\s+month\b", replace, text, flags=re.IGNORECASE)
         return result, replacements
 
-
 # Convenience functions
 
 _default_resolver: TemporalResolver | None = None
-
 
 def get_temporal_resolver(llm_provider: Any = None) -> TemporalResolver:
     """Get a temporal expression resolver.
@@ -716,7 +708,6 @@ def get_temporal_resolver(llm_provider: Any = None) -> TemporalResolver:
     if _default_resolver is None:
         _default_resolver = LLMTemporalResolver()
     return _default_resolver
-
 
 def resolve_temporal(
     text: str,
@@ -743,7 +734,6 @@ def resolve_temporal(
     resolver = get_temporal_resolver(llm_provider)
     result = resolver.resolve(text, reference_time, context)
     return result.resolved_text
-
 
 def extract_temporal_metadata(
     text: str,
@@ -808,7 +798,6 @@ def extract_temporal_metadata(
         "earliest_date": earliest_date,
         "latest_date": latest_date,
     }
-
 
 def _parse_date_from_resolved(
     resolved: str, _reference_time: datetime | None = None

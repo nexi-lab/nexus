@@ -5,8 +5,6 @@ This is a low-level utility, not a user-facing API. Used internally by:
 - NexusFilesystem (P2P federation forwarding)
 """
 
-from __future__ import annotations
-
 import logging
 import uuid
 from typing import TYPE_CHECKING, Any
@@ -20,12 +18,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 class TransportError(Exception):
     """Transport-level error (connection, timeout, HTTP)."""
 
     pass
-
 
 class RPCError(Exception):
     """RPC-level error (server returned error response)."""
@@ -35,7 +31,6 @@ class RPCError(Exception):
         self.message = message
         self.data = data
         super().__init__(f"RPC error {code}: {message}")
-
 
 class NexusRPCTransport:
     """Low-level RPC transport for Nexus communication.
@@ -201,7 +196,7 @@ class NexusRPCTransport:
         """Close the HTTP client and release resources."""
         self._client.close()
 
-    def __enter__(self) -> NexusRPCTransport:
+    def __enter__(self) -> "NexusRPCTransport":
         return self
 
     def __exit__(self, *args: Any) -> None:

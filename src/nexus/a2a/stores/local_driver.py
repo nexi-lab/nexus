@@ -8,14 +8,11 @@ File operations are wrapped in ``asyncio.to_thread()`` to prevent
 blocking the event loop.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
-
 
 class LocalStorageDriver:
     """Local-filesystem ``IPCStorageDriver`` implementation.

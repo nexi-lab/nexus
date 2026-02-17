@@ -20,8 +20,6 @@ Usage:
     )
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import re
@@ -46,7 +44,6 @@ DEFAULT_SIMILARITY_THRESHOLD = 0.3
 DEFAULT_MAX_CANDIDATES = 10
 DEFAULT_TIMEOUT_MS = 200.0
 
-
 @dataclass(frozen=True)
 class EvolutionResult:
     """Result of a single evolution relationship detection.
@@ -67,7 +64,6 @@ class EvolutionResult:
     signals: list[str] = field(default_factory=list)
     elapsed_ms: float = 0.0
 
-
 @dataclass(frozen=True)
 class EvolutionDetectionResult:
     """Aggregate result of evolution detection across all candidates.
@@ -81,7 +77,6 @@ class EvolutionDetectionResult:
     relationships: tuple[EvolutionResult, ...] = ()
     candidates_evaluated: int = 0
     elapsed_ms: float = 0.0
-
 
 # Pre-compiled regex patterns for heuristic classification
 UPDATES_MARKERS = re.compile(
@@ -105,7 +100,6 @@ DERIVES_MARKERS = re.compile(
     re.IGNORECASE,
 )
 
-
 def _compute_cosine_similarity_pure(vec_a: list[float], vec_b: list[float]) -> float:
     """Compute cosine similarity between two vectors (pure Python fallback).
 
@@ -123,7 +117,6 @@ def _compute_cosine_similarity_pure(vec_a: list[float], vec_b: list[float]) -> f
     if norm_a == 0 or norm_b == 0:
         return 0.0
     return float(np.dot(a, b) / (norm_a * norm_b))
-
 
 def _compute_entity_overlap(
     new_entities: list[dict[str, Any]],
@@ -164,7 +157,6 @@ def _compute_entity_overlap(
             overlap_count += 0.5
 
     return min(1.0, overlap_count / max(1, total_count))
-
 
 class MemoryEvolutionDetector:
     """Hybrid heuristic+LLM detector for memory evolution relationships.
@@ -652,7 +644,6 @@ class MemoryEvolutionDetector:
                 pass
         return "; ".join(parts) if parts else "<no entity info>"
 
-
 def apply_evolution_results(
     session: Session,
     new_memory_id: str,
@@ -714,7 +705,6 @@ def apply_evolution_results(
                 setattr(new_memory, key, value)
             session.commit()
 
-
 def _apply_updates_relationship(
     session: Session,
     new_memory_id: str,
@@ -745,7 +735,6 @@ def _apply_updates_relationship(
     target_memory.superseded_by_id = new_memory_id
     target_memory.invalid_at = datetime.now(UTC)
     session.commit()
-
 
 def _append_to_json_array(
     session: Session,

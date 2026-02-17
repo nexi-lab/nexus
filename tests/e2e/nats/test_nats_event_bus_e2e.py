@@ -11,8 +11,6 @@ Requires: NATS JetStream server (port 4222)
 Related: Issue #1331
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import os
@@ -27,7 +25,6 @@ import pytest
 # Skip conditions
 # ============================================================================
 
-
 def _is_port_open(host: str, port: int) -> bool:
     try:
         sock = socket.create_connection((host, port), timeout=2)
@@ -35,7 +32,6 @@ def _is_port_open(host: str, port: int) -> bool:
         return True
     except OSError:
         return False
-
 
 NATS_URL = os.environ.get("NEXUS_NATS_URL", "nats://localhost:4222")
 nats_available = _is_port_open("localhost", 4222)
@@ -48,11 +44,9 @@ pytestmark = [
     pytest.mark.skipif(not nats_available, reason="NATS not available on :4222"),
 ]
 
-
 # ============================================================================
 # Helpers
 # ============================================================================
-
 
 def _rpc_call(
     client: Any, method: str, params: dict, api_key: str | None = None
@@ -75,7 +69,6 @@ def _rpc_call(
     response = client.post(f"/api/nfs/{method}", json=payload, headers=headers)
     return response.status_code, response.json()
 
-
 def _run_async(coro: Any) -> Any:
     """Run an async coroutine from sync test code."""
     loop = asyncio.new_event_loop()
@@ -83,7 +76,6 @@ def _run_async(coro: Any) -> Any:
         return loop.run_until_complete(coro)
     finally:
         loop.close()
-
 
 async def _find_event_in_nats(
     path: str, event_type: str | None = None, timeout: float = 5.0
@@ -115,11 +107,9 @@ async def _find_event_in_nats(
 
     return found
 
-
 # ============================================================================
 # Fixtures
 # ============================================================================
-
 
 @pytest.fixture(scope="module")
 def server_app():
@@ -192,7 +182,6 @@ def server_app():
     os.environ.pop("NEXUS_EVENT_BUS_BACKEND", None)
     os.environ.pop("NEXUS_NATS_URL", None)
 
-
 @pytest.fixture(scope="module")
 def client(server_app):
     """Create test client — triggers lifespan which starts event bus + creates stream."""
@@ -202,22 +191,18 @@ def client(server_app):
     with TestClient(app, raise_server_exceptions=False) as c:
         yield c
 
-
 @pytest.fixture(scope="module")
 def nexus_fs(server_app):
     _, nfs = server_app
     return nfs
 
-
 @pytest.fixture(scope="module")
 def api_key():
     return "test-e2e-key-1331"
 
-
 # ============================================================================
 # Test: Server starts with NATS event bus
 # ============================================================================
-
 
 class TestServerStartup:
     """Verify the server initializes NATS event bus correctly."""
@@ -248,11 +233,9 @@ class TestServerStartup:
         assert nexus_fs._main_event_loop is not None
         assert nexus_fs._main_event_loop.is_running()
 
-
 # ============================================================================
 # Test: Direct event bus publish (bypasses threading complexity)
 # ============================================================================
-
 
 class TestDirectPublish:
     """Test direct event bus publish → NATS receive."""
@@ -281,11 +264,9 @@ class TestDirectPublish:
         found = _run_async(_find_event_in_nats(unique_path, "file_write"))
         assert found, f"Direct publish event for {unique_path} not found in NATS"
 
-
 # ============================================================================
 # Test: File writes via RPC trigger NATS events
 # ============================================================================
-
 
 class TestFileWriteEvents:
     """Test that RPC file operations produce events in NATS JetStream."""
@@ -368,11 +349,9 @@ class TestFileWriteEvents:
         found = _run_async(_find_event_in_nats(unique_path, "file_delete"))
         assert found, f"file_delete event for {unique_path} not found in NATS"
 
-
 # ============================================================================
 # Test: Durable consumer receives events
 # ============================================================================
-
 
 class TestDurableSubscriber:
     """Test durable consumer subscription via NATS JetStream."""
@@ -439,11 +418,9 @@ class TestDurableSubscriber:
         found = _run_async(_test())
         assert found, f"Durable consumer did not receive event for {unique_path}"
 
-
 # ============================================================================
 # Test: Permission enforcement
 # ============================================================================
-
 
 class TestPermissionEnforcement:
     """Test that auth is enforced and unauthorized writes produce no events."""
@@ -498,11 +475,9 @@ class TestPermissionEnforcement:
         found = _run_async(_find_event_in_nats(unique_path, timeout=3.0))
         assert not found, f"Unexpected event for rejected write to {unique_path}"
 
-
 # ============================================================================
 # Test: Event bus stats
 # ============================================================================
-
 
 class TestEventBusStats:
     """Test NATS event bus statistics."""
@@ -521,11 +496,9 @@ class TestEventBusStats:
         assert stats["stream"]["messages"] >= 0
         assert stats["nats_url"] == NATS_URL
 
-
 # ============================================================================
 # Test: Event deduplication
 # ============================================================================
-
 
 class TestDeduplication:
     """Test JetStream message deduplication end-to-end."""

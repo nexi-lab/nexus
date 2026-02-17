@@ -32,7 +32,6 @@ from nexus.services.permissions.rebac_manager_enhanced import (
 from nexus.services.permissions.types import ConsistencyMode
 from nexus.storage.models import Base
 
-
 @pytest.fixture
 def engine():
     """Create in-memory SQLite database."""
@@ -62,7 +61,6 @@ def engine():
         )
     return engine
 
-
 @pytest.fixture
 def manager(engine):
     """Create EnhancedReBACManager for testing."""
@@ -77,7 +75,6 @@ def manager(engine):
     )
     yield mgr
     mgr.close()
-
 
 class TestWriteCheckRoundTrip:
     """Test write + check round-trip operations."""
@@ -167,7 +164,6 @@ class TestWriteCheckRoundTrip:
 
         assert allowed is False
 
-
 class TestBatchWrite:
     """Test batch write operations."""
 
@@ -225,7 +221,6 @@ class TestBatchWrite:
 
         assert count == 0
 
-
 class TestDelete:
     """Test delete operations."""
 
@@ -272,7 +267,6 @@ class TestDelete:
         deleted = manager.rebac_delete("non-existent-tuple-id")
 
         assert deleted is False
-
 
 class TestGraphTraversal:
     """Test graph traversal for inherited permissions."""
@@ -447,7 +441,6 @@ class TestGraphTraversal:
             object=("file", "/workspace"),
         )
 
-
 class TestExpandAPI:
     """Test expand API for finding all subjects with permission."""
 
@@ -521,7 +514,6 @@ class TestExpandAPI:
 
         # Should return team-x (direct) and possibly alice (via group)
         assert ("group", "team-x") in subjects
-
 
 class TestConsistencyLevels:
     """Test consistency levels for cache control."""
@@ -597,7 +589,6 @@ class TestConsistencyLevels:
 
         assert result is True
 
-
 class TestBulkCheck:
     """Test bulk check operations."""
 
@@ -642,7 +633,6 @@ class TestBulkCheck:
 
         assert isinstance(results, dict)
         assert len(results) == 0
-
 
 class TestCacheBehavior:
     """Test cache behavior and invalidation."""
@@ -739,7 +729,6 @@ class TestCacheBehavior:
             zone_id="org_123",
         )
         assert result2 is False
-
 
 class TestConsistencyModuleIntegration:
     """Integration tests verifying delegation to consistency module (Issue #1459 Phase 9)."""

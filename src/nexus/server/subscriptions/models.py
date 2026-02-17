@@ -1,12 +1,9 @@
 """Pydantic models for subscription API."""
 
-from __future__ import annotations
-
 from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
-
 
 class SubscriptionCreate(BaseModel):
     """Request model for creating a subscription."""
@@ -54,7 +51,6 @@ class SubscriptionCreate(BaseModel):
                 raise ValueError(f"Invalid event type: {event}. Valid: {valid_events}")
         return v
 
-
 class SubscriptionUpdate(BaseModel):
     """Request model for updating a subscription."""
 
@@ -91,7 +87,6 @@ class SubscriptionUpdate(BaseModel):
                     raise ValueError(f"Invalid event type: {event}. Valid: {valid_events}")
         return v
 
-
 class Subscription(BaseModel):
     """Response model for a subscription."""
 
@@ -113,7 +108,6 @@ class Subscription(BaseModel):
 
     model_config = {"from_attributes": True}
 
-
 class WebhookPayload(BaseModel):
     """Payload sent to webhook endpoints."""
 
@@ -123,13 +117,11 @@ class WebhookPayload(BaseModel):
     data: dict[str, Any] = Field(..., description="Event data")
     subscription: SubscriptionInfo = Field(..., description="Subscription info")
 
-
 class SubscriptionInfo(BaseModel):
     """Subscription info included in webhook payloads."""
 
     id: str
     metadata: dict[str, Any] | None = None
-
 
 class WebhookDelivery(BaseModel):
     """Record of a webhook delivery attempt."""

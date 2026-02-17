@@ -8,8 +8,6 @@ Canonical location: ``nexus.rebac.types``
 Backward-compat shim: ``nexus.services.permissions.types``
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -25,11 +23,9 @@ __all__ = [
     "GraphLimitExceeded",
 ]
 
-
 # ============================================================================
 # P0-1: Consistency Levels and Version Tokens
 # ============================================================================
-
 
 class ConsistencyLevel(Enum):
     """Consistency levels for permission checks.
@@ -46,7 +42,6 @@ class ConsistencyLevel(Enum):
     EVENTUAL = "eventual"  # Use cache (5min staleness)
     BOUNDED = "bounded"  # Max 1s staleness
     STRONG = "strong"  # Bypass cache, fresh read
-
 
 class ConsistencyMode(Enum):
     """Per-request consistency modes aligned with SpiceDB/Zanzibar (Issue #1081).
@@ -67,7 +62,6 @@ class ConsistencyMode(Enum):
     MINIMIZE_LATENCY = "minimize_latency"  # Default: use cache, fastest
     AT_LEAST_AS_FRESH = "at_least_as_fresh"  # Cache if revision >= min_revision
     FULLY_CONSISTENT = "fully_consistent"  # Bypass cache, slowest but freshest
-
 
 @dataclass(slots=True)
 class ConsistencyRequirement:
@@ -114,7 +108,6 @@ class ConsistencyRequirement:
         else:
             return ConsistencyLevel.EVENTUAL
 
-
 @dataclass(slots=True)
 class WriteResult:
     """Result of a permission write with consistency metadata (Issue #1081).
@@ -147,7 +140,6 @@ class WriteResult:
     consistency_token: str
     written_at_ms: float
 
-
 @dataclass(slots=True)
 class TraversalStats:
     """Statistics from graph traversal (P0-5).
@@ -161,7 +153,6 @@ class TraversalStats:
     cache_hits: int = 0
     cache_misses: int = 0
     duration_ms: float = 0.0
-
 
 @dataclass(slots=True)
 class CheckResult:
@@ -185,13 +176,11 @@ class CheckResult:
     cache_age_ms: float | None = None
     traversal_stats: TraversalStats | None = None
     indeterminate: bool = False  # BUGFIX (Issue #5): Track limit-driven denials
-    limit_exceeded: GraphLimitExceeded | None = None  # BUGFIX (Issue #5): Which limit was hit
-
+    limit_exceeded: "GraphLimitExceeded | None" = None  # BUGFIX (Issue #5): Which limit was hit
 
 # ============================================================================
 # P0-5: Graph Limits and DoS Protection
 # ============================================================================
-
 
 class GraphLimits:
     """Hard limits for graph traversal to prevent DoS attacks.
@@ -205,7 +194,6 @@ class GraphLimits:
     MAX_EXECUTION_TIME_MS = 1000  # 1 second timeout for permission computation
     MAX_VISITED_NODES = 10000  # Memory bound
     MAX_TUPLE_QUERIES = 100  # DB query limit
-
 
 class GraphLimitExceeded(Exception):
     """Raised when graph traversal exceeds limits.

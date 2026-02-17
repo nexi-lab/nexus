@@ -12,15 +12,12 @@ Covers:
 Related: Issue #1459 (decomposition), Issue #773 (zone isolation)
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.services.permissions.consistency.zone_manager import (
     ZoneIsolationError,
     ZoneManager,
 )
-
 
 class TestZoneManagerDefaults:
     """Test zone_id default resolution."""
@@ -67,7 +64,6 @@ class TestZoneManagerDefaults:
             zone_id="org_x", subject_zone_id=None, object_zone_id=None, relation="member"
         )
         assert obj_z == "org_x"
-
 
 class TestZoneIsolationEnforcement:
     """Test cross-zone blocking and allowing."""
@@ -140,7 +136,6 @@ class TestZoneIsolationEnforcement:
                 relation="editor",
             )
 
-
 class TestZoneIsolationErrorAttributes:
     """Test ZoneIsolationError exception attributes."""
 
@@ -154,7 +149,6 @@ class TestZoneIsolationErrorAttributes:
         err = ZoneIsolationError("msg", None, None)
         assert err.subject_zone is None
         assert err.object_zone is None
-
 
 class TestZoneManagerKillSwitch:
     """Test enforce=False bypasses validation — functional tests."""
@@ -210,7 +204,6 @@ class TestZoneManagerKillSwitch:
         assert subj_z == "root"
         assert obj_z == "root"
         assert cross is False
-
 
 class TestIsCrossZoneReadable:
     """Test is_cross_zone_readable() policy check."""

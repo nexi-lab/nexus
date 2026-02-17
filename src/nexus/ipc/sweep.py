@@ -4,8 +4,6 @@ Background task that periodically scans all agent inboxes for expired
 messages and moves them to dead_letter/.
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import logging
@@ -19,7 +17,6 @@ logger = logging.getLogger(__name__)
 
 # Default sweep interval in seconds
 DEFAULT_SWEEP_INTERVAL = 60
-
 
 class TTLSweeper:
     """Background sweeper that moves expired messages to dead_letter/.

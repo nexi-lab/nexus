@@ -15,12 +15,9 @@ Note: Auth enforcement is tested in integration tests
 in open-access mode per the shared conftest fixture.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 import httpx
-
 
 def _rpc_body(
     method: str,
@@ -36,11 +33,9 @@ def _rpc_body(
         body["params"] = params
     return body
 
-
 # ======================================================================
 # Agent Card Discovery
 # ======================================================================
-
 
 class TestAgentCardE2E:
     """Agent Card discovery via /.well-known/agent.json."""
@@ -63,11 +58,9 @@ class TestAgentCardE2E:
         assert data.get("capabilities", {}).get("streaming") is True
         assert data.get("capabilities", {}).get("pushNotifications") is False
 
-
 # ======================================================================
 # Task Lifecycle
 # ======================================================================
-
 
 class TestTaskLifecycleE2E:
     """Full task lifecycle: create -> get -> cancel."""
@@ -159,11 +152,9 @@ class TestTaskLifecycleE2E:
         data = resp.json()
         assert "error" in data  # TaskNotCancelableError
 
-
 # ======================================================================
 # Error Handling
 # ======================================================================
-
 
 class TestErrorHandlingE2E:
     def test_unknown_method(self, test_app: httpx.Client) -> None:
@@ -195,11 +186,9 @@ class TestErrorHandlingE2E:
         resp = test_app.post("/a2a", json=body)
         assert resp.json()["id"] == "echo-id-42"
 
-
 # ======================================================================
 # Streaming
 # ======================================================================
-
 
 class TestStreamingE2E:
     def test_send_streaming_returns_sse(self, test_app: httpx.Client) -> None:

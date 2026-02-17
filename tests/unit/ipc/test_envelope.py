@@ -1,7 +1,5 @@
 """Unit tests for MessageEnvelope — validation, serialization, TTL."""
 
-from __future__ import annotations
-
 import json
 from datetime import UTC, datetime, timedelta
 
@@ -10,7 +8,6 @@ from pydantic import ValidationError
 
 from nexus.ipc.envelope import MessageEnvelope, MessageType
 from nexus.ipc.exceptions import EnvelopeValidationError
-
 
 class TestEnvelopeCreation:
     """Tests for creating valid envelopes."""
@@ -67,7 +64,6 @@ class TestEnvelopeCreation:
         assert env.sender == "agent:alice"
         assert env.recipient == "agent:bob"
 
-
 class TestEnvelopeValidation:
     """Tests for envelope field validation."""
 
@@ -121,7 +117,6 @@ class TestEnvelopeValidation:
                 type="invalid_type",  # type: ignore[arg-type]
             )
 
-
 class TestEnvelopeSerialization:
     """Tests for to_bytes/from_bytes round-trip."""
 
@@ -163,7 +158,6 @@ class TestEnvelopeSerialization:
     def test_from_bytes_missing_fields(self) -> None:
         with pytest.raises(EnvelopeValidationError):
             MessageEnvelope.from_bytes(json.dumps({"nexus_message": "1.0"}).encode())
-
 
 class TestEnvelopeTTL:
     """Tests for TTL expiry logic."""

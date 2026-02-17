@@ -10,8 +10,6 @@ Phase 2: Core Refactoring (Issue #988, Task 2.5)
 Extracted from: nexus_fs_versions.py (300 lines)
 """
 
-from __future__ import annotations
-
 import asyncio
 import builtins
 import difflib
@@ -22,6 +20,12 @@ from nexus.core.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
 
+from collections.abc import Callable
+from nexus.core._metadata_generated import FileMetadataProtocol
+from nexus.core.permissions import OperationContext
+from nexus.core.router import PathRouter
+from nexus.rebac.async_permissions import AsyncPermissionEnforcer
+from nexus.rebac.manager import EnhancedReBACManager
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -30,7 +34,6 @@ if TYPE_CHECKING:
     from nexus.core.router import PathRouter
     from nexus.rebac.async_permissions import AsyncPermissionEnforcer
     from nexus.rebac.manager import EnhancedReBACManager
-
 
 class VersionService:
     """Independent version service extracted from NexusFS.
@@ -554,7 +557,6 @@ class VersionService:
         from nexus.core.path_utils import validate_path
 
         return validate_path(path, allow_root=True)
-
 
 # =============================================================================
 # Phase 2 Extraction: Complete ✅

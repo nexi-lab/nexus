@@ -15,8 +15,6 @@ This package contains all CLI commands organized by functionality:
 - workflows: Workflow automation system
 """
 
-from __future__ import annotations
-
 import click
 
 # Import all command registration functions
@@ -50,7 +48,6 @@ from nexus.cli.commands import (
     zone as zone_mod,  # zone.py (federation + portability CLI commands)
 )
 
-
 def register_all_commands(cli: click.Group) -> None:
     """Register all commands from all modules to the main CLI group.
 
@@ -83,7 +80,6 @@ def register_all_commands(cli: click.Group) -> None:
     cli.add_command(oauth.oauth)  # v0.7.0: OAuth credential management (Issue #137)
     cli.add_command(zone_mod.zone)  # v0.8.0: Zone federation + portability (Issue #1161, #1326)
     migrate.register_commands(cli)  # v1.0.0: Migration tools (Issue #165)
-
 
 __all__ = [
     "register_all_commands",

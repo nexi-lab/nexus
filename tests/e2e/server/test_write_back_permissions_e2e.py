@@ -13,8 +13,6 @@ Tests the full file CRUD pipeline as a normal (non-admin) user:
 5. Write-back service active during all operations
 """
 
-from __future__ import annotations
-
 import os
 import shutil
 import signal
@@ -44,18 +42,15 @@ for _key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
     os.environ.pop(_key, None)
 os.environ["NO_PROXY"] = "*"
 
-
 def _find_free_port() -> int:
     """Find a free TCP port on localhost."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
 
-
 def _make_client() -> httpx.Client:
     """Create httpx client for localhost connections."""
     return httpx.Client(timeout=10)
-
 
 def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> None:
     """Poll /health until the server responds or timeout."""
@@ -70,7 +65,6 @@ def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> 
                 pass
             time.sleep(0.3)
     raise TimeoutError(f"Server did not start within {timeout}s at {base_url}")
-
 
 def _build_startup_script(port: int, data_dir: str) -> str:
     """Build a Python startup script that creates the app with multi-key auth.
@@ -145,9 +139,7 @@ def _build_startup_script(port: int, data_dir: str) -> str:
         ])
     """)
 
-
 # === Fixtures ===
-
 
 @pytest.fixture(scope="module")
 def server():
@@ -245,19 +237,16 @@ def server():
                 proc.wait(timeout=5)
         shutil.rmtree(data_dir, ignore_errors=True)
 
-
 @pytest.fixture(scope="module")
 def client(server: dict) -> httpx.Client:
     """Shared httpx client."""
     with _make_client() as c:
         yield c
 
-
 @pytest.fixture()
 def base_url(server: dict) -> str:
     """Get the base URL of the running server."""
     return server["base_url"]
-
 
 @pytest.fixture()
 def alice_headers() -> dict[str, str]:
@@ -266,7 +255,6 @@ def alice_headers() -> dict[str, str]:
         "Authorization": f"Bearer {ALICE_API_KEY}",
     }
 
-
 @pytest.fixture()
 def bob_headers() -> dict[str, str]:
     """Headers for normal user bob (authenticated via API key)."""
@@ -274,14 +262,12 @@ def bob_headers() -> dict[str, str]:
         "Authorization": f"Bearer {BOB_API_KEY}",
     }
 
-
 @pytest.fixture()
 def admin_headers() -> dict[str, str]:
     """Headers for admin user (authenticated via API key, is_admin=True)."""
     return {
         "Authorization": f"Bearer {ADMIN_API_KEY}",
     }
-
 
 def _grant_permission(
     client: httpx.Client,
@@ -316,18 +302,15 @@ def _grant_permission(
         return result["result"].get("tuple_id", "")
     return result.get("tuple_id", "")
 
-
 # =============================================================================
 # Tests: Normal User Write with Permissions
 # =============================================================================
-
 
 def test_health_with_write_back(base_url: str, client: httpx.Client) -> None:
     """Server is healthy with write-back and permissions enabled."""
     resp = client.get(f"{base_url}/health")
     assert resp.status_code == 200
     assert resp.json()["status"] == "healthy"
-
 
 def test_normal_user_no_grant_gets_404(
     base_url: str, client: httpx.Client, alice_headers: dict
@@ -339,7 +322,6 @@ def test_normal_user_no_grant_gets_404(
         headers=alice_headers,
     )
     assert resp.status_code == 404
-
 
 def test_editor_can_write_read_delete(
     base_url: str, client: httpx.Client, alice_headers: dict, admin_headers: dict
@@ -409,7 +391,6 @@ def test_editor_can_write_read_delete(
     assert resp.status_code == 200, f"Alice delete failed: {resp.text}"
     assert resp.json()["deleted"] is True
 
-
 def test_viewer_can_read_but_not_write(
     base_url: str, client: httpx.Client, alice_headers: dict, admin_headers: dict
 ) -> None:
@@ -454,7 +435,6 @@ def test_viewer_can_read_but_not_write(
         headers=alice_headers,
     )
     assert resp.status_code == 403, f"Expected 403, got {resp.status_code}: {resp.text}"
-
 
 def test_owner_has_full_control(
     base_url: str, client: httpx.Client, alice_headers: dict, admin_headers: dict
@@ -529,7 +509,6 @@ def test_owner_has_full_control(
     )
     assert resp.status_code == 200
     assert resp.json()["deleted"] is True
-
 
 def test_cross_user_isolation(
     base_url: str,
@@ -623,7 +602,6 @@ def test_cross_user_isolation(
     )
     assert resp.status_code == 200
 
-
 def test_editor_write_then_version_increments(
     base_url: str, client: httpx.Client, alice_headers: dict, admin_headers: dict
 ) -> None:
@@ -671,7 +649,6 @@ def test_editor_write_then_version_increments(
     )
     assert resp.status_code == 200
     assert resp.json()["content"] == "v3"
-
 
 def test_batch_read_with_permission(
     base_url: str, client: httpx.Client, alice_headers: dict, admin_headers: dict

@@ -6,8 +6,6 @@ Optimized for recency queries: "What happened recently?", "Show last 50 messages
 Thread-safe: Each operation creates its own session from the session factory.
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable
 from datetime import datetime
@@ -15,13 +13,13 @@ from typing import TYPE_CHECKING
 
 from nexus.services.memory.memory_paging.namespace_util import strip_tier_prefix
 
+from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from nexus.storage.models import MemoryModel
 
 logger = logging.getLogger(__name__)
-
 
 class RecallStore:
     """Manages recall storage (secondary memory tier).

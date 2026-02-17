@@ -61,7 +61,6 @@ llm = ChatAnthropic(
     max_tokens=10000,
 )
 
-
 def build_prompt(state: dict, config: RunnableConfig) -> list:
     """Build prompt with optional opened file context from metadata.
 
@@ -74,7 +73,6 @@ def build_prompt(state: dict, config: RunnableConfig) -> list:
 
     # Return system message + user messages
     return [SystemMessage(content=system_content)] + state["messages"]
-
 
 # Create a runnable that wraps the prompt builder
 prompt_runnable = RunnableLambda(build_prompt)

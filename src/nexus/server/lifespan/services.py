@@ -3,19 +3,17 @@
 Extracted from fastapi_server.py (#1602).
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import os
 from contextlib import suppress
 from typing import TYPE_CHECKING, cast
 
+from fastapi import FastAPI
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
-
 
 async def startup_services(app: FastAPI) -> list[asyncio.Task]:
     """Initialize application services and return background tasks.
@@ -47,7 +45,6 @@ async def startup_services(app: FastAPI) -> list[asyncio.Task]:
     await _startup_workflow_engine(app)
 
     return bg_tasks
-
 
 async def shutdown_services(app: FastAPI) -> None:
     """Shutdown services in reverse order."""
@@ -128,11 +125,9 @@ async def shutdown_services(app: FastAPI) -> None:
                 await asyncio.gather(*event_tasks, return_exceptions=True)
             logger.info(f"Cancelled {len(event_tasks)} pending event tasks")
 
-
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
 
 def _startup_agent_registry(app: FastAPI) -> None:
     """Initialize AgentRegistry for agent lifecycle tracking (Issue #1240)."""
@@ -166,7 +161,6 @@ def _startup_agent_registry(app: FastAPI) -> None:
     else:
         app.state.agent_registry = None
         app.state.async_agent_registry = None
-
 
 def _startup_key_service(app: FastAPI) -> None:
     """Initialize KeyService for agent identity (Issue #1355)."""
@@ -206,7 +200,6 @@ def _startup_key_service(app: FastAPI) -> None:
     else:
         app.state.key_service = None
 
-
 def _startup_reputation_service(app: FastAPI) -> None:
     """Initialize ReputationService singleton for trust routing (#1619)."""
     if not (app.state.nexus_fs and getattr(app.state.nexus_fs, "SessionLocal", None)):
@@ -225,7 +218,6 @@ def _startup_reputation_service(app: FastAPI) -> None:
     except Exception as e:
         logger.warning("[REPUTATION] Failed to initialize: %s", e, exc_info=True)
         app.state.reputation_service = None
-
 
 def _startup_delegation_service(app: FastAPI) -> None:
     """Initialize DelegationService for agent delegation (Issue #1618)."""
@@ -258,7 +250,6 @@ def _startup_delegation_service(app: FastAPI) -> None:
     except Exception as e:
         logger.warning("[DELEGATION] Failed to initialize DelegationService: %s", e, exc_info=True)
         app.state.delegation_service = None
-
 
 def _startup_sandbox_auth(app: FastAPI) -> None:
     """Initialize SandboxAuthService for authenticated sandbox creation (Issue #1307)."""
@@ -333,7 +324,6 @@ def _startup_sandbox_auth(app: FastAPI) -> None:
             "[SANDBOX-AUTH] Failed to initialize SandboxAuthService: %s", e, exc_info=True
         )
 
-
 def _startup_agent_tasks(app: FastAPI) -> list[asyncio.Task]:
     """Start agent heartbeat and stale detection background tasks (Issue #1240)."""
     if not app.state.agent_registry:
@@ -353,7 +343,6 @@ def _startup_agent_tasks(app: FastAPI) -> list[asyncio.Task]:
     logger.info("[AGENT-REG] Background heartbeat flush and stale detection tasks started")
 
     return [app.state._heartbeat_task, app.state._stale_detection_task]
-
 
 async def _startup_scheduler(app: FastAPI) -> None:
     """Initialize SchedulerService if PostgreSQL database is available (Issue #1212)."""
@@ -447,7 +436,6 @@ async def _startup_scheduler(app: FastAPI) -> None:
     except Exception as e:
         logger.warning("Failed to initialize Scheduler service: %s", e, exc_info=True)
 
-
 def _startup_task_queue(app: FastAPI) -> asyncio.Task | None:
     """Start Task Queue Engine background worker (Issue #574)."""
     if not app.state.nexus_fs:
@@ -474,7 +462,6 @@ def _startup_task_queue(app: FastAPI) -> asyncio.Task | None:
         logger.warning("Task Queue runner not started: %s", e, exc_info=True)
 
     return None
-
 
 async def _startup_workflow_engine(app: FastAPI) -> None:
     """Load workflows from persistent storage (Issue #1522)."""

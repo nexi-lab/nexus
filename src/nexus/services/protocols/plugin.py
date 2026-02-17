@@ -12,10 +12,7 @@ References:
     - Issue #1287: Extract NexusFS domain services from god object
 """
 
-from __future__ import annotations
-
 from typing import Any, Protocol, runtime_checkable
-
 
 @runtime_checkable
 class PluginProtocol(Protocol):

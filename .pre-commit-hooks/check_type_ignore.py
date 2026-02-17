@@ -20,7 +20,6 @@ from pathlib import Path
 # Only matches when it appears as an actual comment, not in string literals
 TYPE_IGNORE_PATTERN = re.compile(r"#\s*type:\s*ignore(?!\s*comments)")
 
-
 def _get_head_type_ignores(file_path: Path) -> set[str]:
     """Get all type: ignore lines from the HEAD version of a file.
 
@@ -39,7 +38,6 @@ def _get_head_type_ignores(file_path: Path) -> set[str]:
     except (subprocess.CalledProcessError, Exception):
         # File is new or git command failed — no pre-existing ignores
         return set()
-
 
 def get_git_diff_added_lines(file_path: Path) -> list[tuple[int, str]]:
     """
@@ -88,7 +86,6 @@ def get_git_diff_added_lines(file_path: Path) -> list[tuple[int, str]]:
     except Exception:
         return []
 
-
 def check_file_for_new_type_ignores(file_path: Path) -> list[tuple[int, str]]:
     """
     Check if file has new type: ignore comments in added lines.
@@ -119,7 +116,6 @@ def check_file_for_new_type_ignores(file_path: Path) -> list[tuple[int, str]]:
         violations.append((line_num, line_content.strip()))
 
     return violations
-
 
 def main() -> int:
     """Main entry point for pre-commit hook."""
@@ -164,7 +160,6 @@ def main() -> int:
         return 1
 
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

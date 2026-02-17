@@ -9,13 +9,10 @@ Usage:
     return model.model_dump()
 """
 
-from __future__ import annotations
-
 from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
-
 
 class MemoryBaseResponse(BaseModel):
     """Base fields shared by all memory response shapes."""
@@ -41,12 +38,10 @@ class MemoryBaseResponse(BaseModel):
     def _iso_or_none(cls, dt: datetime | None) -> str | None:
         return dt.isoformat() if dt else None
 
-
 class MemoryListResponse(MemoryBaseResponse):
     """Lightweight response for list() — no content, no enrichment fields."""
 
     pass
-
 
 class MemoryDetailResponse(MemoryBaseResponse):
     """Full response for get() — includes content, enrichment, decay, evolution."""
@@ -75,7 +70,7 @@ class MemoryDetailResponse(MemoryBaseResponse):
         content: str | dict[str, Any] | None = None,
         importance_effective: float | None = None,
         content_hash_override: str | None = None,
-    ) -> MemoryDetailResponse:
+    ) -> "MemoryDetailResponse":
         """Build from a MemoryModel ORM instance.
 
         Args:
@@ -117,7 +112,6 @@ class MemoryDetailResponse(MemoryBaseResponse):
             derived_from_ids=memory.derived_from_ids,
         )
 
-
 class MemoryQueryResponse(MemoryBaseResponse):
     """Full response for query() — includes enrichment metadata + temporal fields."""
 
@@ -147,7 +141,7 @@ class MemoryQueryResponse(MemoryBaseResponse):
         content: str | dict[str, Any] | None = None,
         importance_effective: float | None = None,
         content_hash_override: str | None = None,
-    ) -> MemoryQueryResponse:
+    ) -> "MemoryQueryResponse":
         """Build from a MemoryModel ORM instance."""
         return cls(
             memory_id=memory.memory_id,
@@ -184,7 +178,6 @@ class MemoryQueryResponse(MemoryBaseResponse):
             is_current=memory.invalid_at is None,
         )
 
-
 class MemorySearchResponse(MemoryBaseResponse):
     """Response for search() — includes relevance scores."""
 
@@ -201,7 +194,7 @@ class MemorySearchResponse(MemoryBaseResponse):
         score: float = 0.0,
         semantic_score: float | None = None,
         keyword_score: float | None = None,
-    ) -> MemorySearchResponse:
+    ) -> "MemorySearchResponse":
         """Build from a MemoryModel ORM instance with search scores."""
         return cls(
             memory_id=memory.memory_id,
@@ -224,7 +217,6 @@ class MemorySearchResponse(MemoryBaseResponse):
             keyword_score=keyword_score,
         )
 
-
 class MemoryRetrieveResponse(MemoryBaseResponse):
     """Response for retrieve() — includes parsed content."""
 
@@ -235,7 +227,7 @@ class MemoryRetrieveResponse(MemoryBaseResponse):
         cls,
         memory: Any,
         content: str | dict[str, Any] | None = None,
-    ) -> MemoryRetrieveResponse:
+    ) -> "MemoryRetrieveResponse":
         """Build from a MemoryModel ORM instance."""
         return cls(
             memory_id=memory.memory_id,
@@ -254,7 +246,6 @@ class MemoryRetrieveResponse(MemoryBaseResponse):
             created_at=cls._iso_or_none(memory.created_at),
             updated_at=cls._iso_or_none(memory.updated_at),
         )
-
 
 class BatchOperationResult(BaseModel):
     """Generic result for batch operations."""

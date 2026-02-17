@@ -12,8 +12,6 @@ Issue #1197: Add Event Replay API for Agent Mesh support.
 Issue #1198: Add Agent Activity Summary endpoint.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from datetime import UTC, datetime, timedelta
@@ -35,7 +33,6 @@ DEFAULT_ACTIVITY_WINDOW_HOURS = 24
 
 router = APIRouter(prefix="/api/v2/operations", tags=["operations"])
 
-
 def _to_operation_response(op: Any) -> OperationResponse:
     """Convert an OperationLogModel to an OperationResponse."""
     metadata = None
@@ -55,7 +52,6 @@ def _to_operation_response(op: Any) -> OperationResponse:
         timestamp=op.created_at.isoformat() if op.created_at else "",
         metadata=metadata,
     )
-
 
 @router.get("")
 async def list_operations(
@@ -132,7 +128,6 @@ async def list_operations(
     except Exception as e:
         logger.error("Operations query error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to query operations") from e
-
 
 @router.get("/agents/{agent_id}/activity", response_model=AgentActivityResponse)
 async def get_agent_activity(

@@ -13,7 +13,6 @@ import pytest
 
 from nexus.core.permissions import OperationContext
 
-
 class TestAdminCapabilitiesField:
     """Test the admin_capabilities field in OperationContext."""
 
@@ -74,7 +73,6 @@ class TestAdminCapabilitiesField:
         assert ctx.is_admin is False
         assert "admin:read:*" in ctx.admin_capabilities
 
-
 class TestRequestIdField:
     """Test the request_id field in OperationContext."""
 
@@ -126,7 +124,6 @@ class TestRequestIdField:
         # Request ID should be preserved for audit logging
         assert ctx.request_id == request_id
 
-
 class TestOperationContextP04Fields:
     """Test interaction of P0-4 fields with other context fields."""
 
@@ -171,7 +168,6 @@ class TestOperationContextP04Fields:
         assert ctx.request_id is not None
         assert isinstance(ctx.request_id, str)
 
-
 class TestOperationContextBackwardCompatibility:
     """Test that P0-4 changes don't break existing code."""
 
@@ -205,7 +201,6 @@ class TestOperationContextBackwardCompatibility:
         )
 
         assert ctx.get_subject() == ("user", "alice")
-
 
 class TestOperationContextValidation:
     """Test validation of P0-4 fields."""

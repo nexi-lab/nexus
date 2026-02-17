@@ -8,8 +8,6 @@ This module provides utilities for importing data from:
 Issue #165: Migration Tools & Upgrade Paths
 """
 
-from __future__ import annotations
-
 import hashlib
 import importlib
 import os
@@ -18,9 +16,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
+from nexus.core.nexus_fs import NexusFilesystem
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFilesystem
-
 
 @dataclass
 class ImportOptions:
@@ -47,7 +45,6 @@ class ImportOptions:
     max_workers: int = 10
     include_patterns: list[str] = field(default_factory=list)
     exclude_patterns: list[str] = field(default_factory=list)
-
 
 @dataclass
 class ImportResult:
@@ -82,7 +79,6 @@ class ImportResult:
             f"bytes={self.bytes_transferred:,}, duration={self.duration_seconds:.2f}s)"
         )
 
-
 @dataclass
 class FileInfo:
     """Information about a file to import.
@@ -98,7 +94,6 @@ class FileInfo:
     target_path: str
     size: int = 0
     checksum: str | None = None
-
 
 class DataMigrator:
     """Handles bulk data migration from external sources.

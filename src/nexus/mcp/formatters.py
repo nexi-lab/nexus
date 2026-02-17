@@ -4,11 +4,8 @@ This module provides utilities for formatting MCP tool responses in different
 formats (JSON, Markdown) to optimize for token usage and readability.
 """
 
-from __future__ import annotations
-
 import json
 from typing import Any
-
 
 def format_response(data: Any, response_format: str = "json") -> str:
     """Format data as JSON or Markdown.
@@ -35,7 +32,6 @@ def format_response(data: Any, response_format: str = "json") -> str:
     if response_format == "markdown":
         return format_as_markdown(data)
     return json.dumps(data, indent=2, default=str)
-
 
 def format_as_markdown(data: Any) -> str:
     """Convert data to readable Markdown format.
@@ -82,7 +78,6 @@ def format_as_markdown(data: Any) -> str:
     else:
         return str(data)
 
-
 def _format_paginated_response(data: dict) -> str:
     """Format a paginated response with metadata header.
 
@@ -116,7 +111,6 @@ def _format_paginated_response(data: dict) -> str:
 
     return "\n".join(lines)
 
-
 def _format_dict(data: dict) -> str:
     """Format a dictionary as Markdown key-value pairs.
 
@@ -127,7 +121,6 @@ def _format_dict(data: dict) -> str:
         Markdown-formatted string
     """
     return "\n".join([f"**{k}**: {v}" for k, v in data.items()])
-
 
 def _format_list(data: list) -> str:
     """Format a list as Markdown.
@@ -144,7 +137,6 @@ def _format_list(data: list) -> str:
     if isinstance(data[0], dict):
         return "\n\n".join(_format_list_of_dicts(data))
     return "\n".join([f"- {item}" for item in data])
-
 
 def _format_list_of_dicts(items: list[dict]) -> list[str]:
     """Format a list of dictionaries as numbered Markdown entries.

@@ -22,7 +22,6 @@ from sqlalchemy import create_engine, text
 from nexus.rebac.manager import ReBACManager
 from nexus.storage.models import Base
 
-
 def _check_postgres_available():
     """Check if PostgreSQL is available for testing."""
     db_url = os.getenv("NEXUS_DATABASE_URL", "postgresql://postgres:nexus@localhost:5432/nexus")
@@ -35,12 +34,10 @@ def _check_postgres_available():
     except Exception:
         return False
 
-
 # Skip all tests in this module if PostgreSQL is not available
 pytestmark = pytest.mark.skipif(
     not _check_postgres_available(), reason="PostgreSQL not available at localhost:5432"
 )
-
 
 @pytest.fixture
 def engine():
@@ -70,12 +67,10 @@ def engine():
     Base.metadata.create_all(engine)
     return engine
 
-
 @pytest.fixture
 def test_zone():
     """Generate unique zone ID for test isolation."""
     return f"test_rev_{uuid.uuid4().hex[:8]}"
-
 
 @pytest.fixture
 def manager(engine, test_zone):
@@ -96,7 +91,6 @@ def manager(engine, test_zone):
         conn.commit()
 
     manager.close()
-
 
 class TestRevisionCacheIntegration:
     """Integration tests for revision-based cache quantization."""

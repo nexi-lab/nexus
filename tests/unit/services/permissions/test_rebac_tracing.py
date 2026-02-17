@@ -15,8 +15,6 @@ Tests cover:
 - Consistency level attribute
 """
 
-from __future__ import annotations
-
 from contextlib import contextmanager
 from unittest.mock import MagicMock, patch
 
@@ -63,14 +61,12 @@ from nexus.rebac.rebac_tracing import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture(autouse=True)
 def _reset_tracer():
     """Reset the module-level cached tracer before each test."""
     rebac_tracing.reset_tracer()
     yield
     rebac_tracing.reset_tracer()
-
 
 def _make_mock_tracer():
     """Create a mock tracer whose start_as_current_span returns a mock span."""
@@ -84,11 +80,9 @@ def _make_mock_tracer():
     mock_tracer.start_as_current_span = MagicMock(side_effect=_ctx_manager)
     return mock_tracer, mock_span
 
-
 # ---------------------------------------------------------------------------
 # TestStartCheckSpan
 # ---------------------------------------------------------------------------
-
 
 class TestStartCheckSpan:
     """Test root rebac.check span creation."""
@@ -159,11 +153,9 @@ class TestStartCheckSpan:
         ):
             assert span is None
 
-
 # ---------------------------------------------------------------------------
 # TestRecordCheckResult
 # ---------------------------------------------------------------------------
-
 
 class TestRecordCheckResult:
     """Test recording final check decision on a span."""
@@ -197,11 +189,9 @@ class TestRecordCheckResult:
         attr_keys = {c[0][0] for c in mock_span.set_attribute.call_args_list}
         assert ATTR_ENGINE not in attr_keys
 
-
 # ---------------------------------------------------------------------------
 # TestCacheLookupSpan
 # ---------------------------------------------------------------------------
-
 
 class TestCacheLookupSpan:
     """Test cache lookup child span."""
@@ -249,11 +239,9 @@ class TestCacheLookupSpan:
     def test_record_noop_when_span_none(self):
         record_cache_result(None, hit=True)
 
-
 # ---------------------------------------------------------------------------
 # TestGraphTraversalSpan
 # ---------------------------------------------------------------------------
-
 
 class TestGraphTraversalSpan:
     """Test graph traversal child span."""
@@ -320,11 +308,9 @@ class TestGraphTraversalSpan:
         ):
             assert span is None
 
-
 # ---------------------------------------------------------------------------
 # TestBatchCheckSpan
 # ---------------------------------------------------------------------------
-
 
 class TestBatchCheckSpan:
     """Test batch permission check span."""
@@ -365,11 +351,9 @@ class TestBatchCheckSpan:
     def test_record_batch_noop_when_none(self):
         record_batch_result(None, allowed_count=1, denied_count=0, duration_ms=1.0)
 
-
 # ---------------------------------------------------------------------------
 # TestZeroOverhead
 # ---------------------------------------------------------------------------
-
 
 class TestZeroOverhead:
     """Verify zero overhead when OTel is disabled."""
@@ -400,11 +384,9 @@ class TestZeroOverhead:
         record_graph_limit_exceeded(None, limit_type="depth")
         record_batch_result(None, allowed_count=0, denied_count=0, duration_ms=0.0)
 
-
 # ---------------------------------------------------------------------------
 # TestContextPropagation
 # ---------------------------------------------------------------------------
-
 
 class TestContextPropagation:
     """Test OTel context propagation for asyncio.to_thread()."""
@@ -498,11 +480,9 @@ class TestContextPropagation:
         except ImportError:
             pytest.skip("opentelemetry not installed")
 
-
 # ---------------------------------------------------------------------------
 # TestConsistencyAttribute
 # ---------------------------------------------------------------------------
-
 
 class TestConsistencyAttribute:
     """Test consistency level recording in spans."""
@@ -527,11 +507,9 @@ class TestConsistencyAttribute:
         calls = {c[0][0]: c[0][1] for c in mock_span.set_attribute.call_args_list}
         assert calls[ATTR_CONSISTENCY] == consistency_name
 
-
 # ---------------------------------------------------------------------------
 # TestEngineAttribute
 # ---------------------------------------------------------------------------
-
 
 class TestEngineAttribute:
     """Test Rust vs Python engine attribute."""
@@ -554,11 +532,9 @@ class TestEngineAttribute:
         calls = {c[0][0]: c[0][1] for c in mock_span.set_attribute.call_args_list}
         assert calls[ATTR_ENGINE] == "python"
 
-
 # ---------------------------------------------------------------------------
 # TestTracerCaching
 # ---------------------------------------------------------------------------
-
 
 class TestTracerInjection:
     """Test set_tracer / _get_tracer / reset_tracer lifecycle."""

@@ -7,14 +7,11 @@ Uses the BM25S library (arXiv:2407.03618) for 500x faster search.
 Issue: #484
 """
 
-from __future__ import annotations
-
 import re
 from dataclasses import dataclass, field
 from typing import Any
 
 import bm25s
-
 
 @dataclass
 class ToolInfo:
@@ -34,7 +31,6 @@ class ToolInfo:
             "input_schema": self.input_schema,
         }
 
-
 @dataclass
 class ToolMatch:
     """A tool search result with relevance score."""
@@ -48,7 +44,6 @@ class ToolMatch:
             **self.tool.to_dict(),
             "score": round(self.score, 4),
         }
-
 
 class ToolIndex:
     """BM25S-based search index for MCP tools.

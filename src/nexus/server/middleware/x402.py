@@ -16,8 +16,6 @@ Usage:
 Related: Issue #1206 (x402 protocol integration)
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable
 from decimal import Decimal
@@ -27,11 +25,11 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
+from nexus.pay.x402 import X402Client
 if TYPE_CHECKING:
     from nexus.pay.x402 import X402Client
 
 logger = logging.getLogger(__name__)
-
 
 class X402PaymentMiddleware(BaseHTTPMiddleware):
     """Middleware for x402 payment verification on protected endpoints.
@@ -161,7 +159,6 @@ class X402PaymentMiddleware(BaseHTTPMiddleware):
         response = await call_next(request)
         return response
 
-
 def requires_payment(
     amount: Decimal,
     description: str = "API access",
@@ -249,6 +246,5 @@ def requires_payment(
         return wrapper
 
     return decorator
-
 
 __all__ = ["X402PaymentMiddleware", "requires_payment"]

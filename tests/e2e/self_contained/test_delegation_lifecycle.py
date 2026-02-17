@@ -4,8 +4,6 @@ Tests with real EnhancedReBACManager + NamespaceManager backed by
 SQLite in-memory. Covers edge cases specified in the plan.
 """
 
-from __future__ import annotations
-
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
@@ -29,7 +27,6 @@ from nexus.storage.models import Base
 # Fixtures
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture()
 def engine():
     """Create an in-memory SQLite engine with all tables."""
@@ -41,12 +38,10 @@ def engine():
     Base.metadata.create_all(eng)
     return eng
 
-
 @pytest.fixture()
 def session_factory(engine):
     """Create a session factory bound to the in-memory engine."""
     return sessionmaker(bind=engine, expire_on_commit=False)
-
 
 @pytest.fixture()
 def rebac_manager(engine):
@@ -59,12 +54,10 @@ def rebac_manager(engine):
     yield manager
     manager.close()
 
-
 @pytest.fixture()
 def entity_registry(engine):
     """Create a real EntityRegistry backed by SQLite."""
     return EntityRegistry(engine)
-
 
 @pytest.fixture()
 def delegation_service(session_factory, rebac_manager, entity_registry):
@@ -74,7 +67,6 @@ def delegation_service(session_factory, rebac_manager, entity_registry):
         rebac_manager=rebac_manager,
         entity_registry=entity_registry,
     )
-
 
 def _register_coordinator(
     entity_registry, rebac_manager, agent_id="coordinator_1", owner_id="alice", zone_id=None
@@ -115,11 +107,9 @@ def _register_coordinator(
     )
     return agent_id
 
-
 # ---------------------------------------------------------------------------
 # Edge Case Tests
 # ---------------------------------------------------------------------------
-
 
 class TestEdge01_CoordinatorZeroGrants:
     """EC1: Coordinator with zero grants tries 'copy' → empty delegation."""
@@ -146,7 +136,6 @@ class TestEdge01_CoordinatorZeroGrants:
         # No grants to copy, so mount table should be empty
         assert result.mount_table == []
 
-
 class TestEdge02_EscalationAttempt:
     """EC2: Coordinator tries to add grants it doesn't have → EscalationError."""
 
@@ -162,7 +151,6 @@ class TestEdge02_EscalationAttempt:
                 delegation_mode=DelegationMode.CLEAN,
                 add_grants=["/secret/top_secret.txt"],
             )
-
 
 class TestEdge03_TTLZeroOrNegative:
     """EC3: TTL of 0 or negative → validation error."""
@@ -191,7 +179,6 @@ class TestEdge03_TTLZeroOrNegative:
                 ttl_seconds=-100,
             )
 
-
 class TestEdge04_TTLExceedsMax:
     """EC4: TTL exceeds 24h → validation error."""
 
@@ -206,7 +193,6 @@ class TestEdge04_TTLExceedsMax:
                 delegation_mode=DelegationMode.COPY,
                 ttl_seconds=86401,
             )
-
 
 class TestEdge06_DelegationChain:
     """EC6: Delegation chain tests."""
@@ -270,7 +256,6 @@ class TestEdge06_DelegationChain:
         assert record_c.depth == 1
         assert record_c.parent_delegation_id == result_b.delegation_id
 
-
 class TestEdge10_PathPrefixNormalization:
     """EC10: Path prefix with trailing slash vs without."""
 
@@ -296,7 +281,6 @@ class TestEdge10_PathPrefixNormalization:
         ids = {g.object_id for g in result}
         assert ids == {"/workspace/proj/a.txt", "/workspace/proj/b.txt"}
 
-
 class TestEdge11_MaxGrantsBoundary:
     """EC11: MAX_DELEGATABLE_GRANTS boundary (exactly 1000 vs 1001)."""
 
@@ -311,7 +295,6 @@ class TestEdge11_MaxGrantsBoundary:
         grants = [("direct_viewer", f"/f/{i}.txt") for i in range(1001)]
         with pytest.raises(TooManyGrantsError):
             derive_grants(grants, DelegationMode.COPY)
-
 
 class TestDelegationLifecycle:
     """Full lifecycle: create → list → revoke."""
@@ -384,7 +367,6 @@ class TestDelegationLifecycle:
         with pytest.raises(DelegationError, match="not active"):
             delegation_service.revoke_delegation(result.delegation_id)
 
-
 class TestDelegationIntent:
     """#1618: Intent tracking on delegations."""
 
@@ -419,7 +401,6 @@ class TestDelegationIntent:
         assert record is not None
         assert record.intent == ""
 
-
 class TestDelegationChainTrace:
     """#1618: get_delegation_chain traces from child to root."""
 
@@ -452,7 +433,6 @@ class TestDelegationChainTrace:
         assert chain[0].depth == 1
         assert chain[1].depth == 0
 
-
 class TestCopyModeWithScopeAndReadonly:
     """Copy mode with scope_prefix and readonly_paths."""
 
@@ -479,7 +459,6 @@ class TestCopyModeWithScopeAndReadonly:
         assert record.scope_prefix == "/workspace/proj"
         assert "/workspace/proj/main.py" in record.readonly_paths
 
-
 class TestCleanModeIntegration:
     """Clean mode with real ReBAC grants."""
 
@@ -497,7 +476,6 @@ class TestCleanModeIntegration:
 
         assert result.worker_agent_id == "worker_clean"
         assert result.delegation_mode == DelegationMode.CLEAN
-
 
 class TestSharedModeIntegration:
     """Shared mode with real ReBAC grants."""

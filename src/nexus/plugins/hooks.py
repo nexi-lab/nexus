@@ -7,7 +7,6 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-
 class HookType(StrEnum):
     """Available hook types for plugins."""
 
@@ -21,7 +20,6 @@ class HookType(StrEnum):
     AFTER_MKDIR = "after_mkdir"
     BEFORE_COPY = "before_copy"
     AFTER_COPY = "after_copy"
-
 
 class PluginHooks:
     """Registry for plugin hooks with priority ordering."""

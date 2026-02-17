@@ -3,8 +3,6 @@
 Issue #1246 Phase 4: Extracted from monolithic models.py.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from sqlalchemy import (
@@ -20,7 +18,6 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from nexus.storage.models._base import Base, _generate_uuid, _get_uuid_server_default
-
 
 class VersionHistoryModel(Base):
     """Version history tracking for files and memories.

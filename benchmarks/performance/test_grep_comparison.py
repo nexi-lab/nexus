@@ -24,7 +24,6 @@ NEXUS_API_KEY = os.getenv(
 # Pattern to search for
 SEARCH_PATTERN = "ERROR"
 
-
 def test_native_bash(file_count=1000):
     """Test native filesystem using bash grep."""
     print(f"\n{'=' * 70}")
@@ -73,7 +72,6 @@ def test_native_bash(file_count=1000):
 
     return results
 
-
 def test_native_python(file_count=1000):
     """Test native filesystem using Python re."""
     print(f"\n{'=' * 70}")
@@ -120,7 +118,6 @@ def test_native_python(file_count=1000):
     }
 
     return results
-
 
 def test_nexus(file_count=1000):
     """Test Nexus filesystem grep."""
@@ -270,7 +267,6 @@ def test_nexus(file_count=1000):
 
     return results
 
-
 def test_sandbox_bash(file_count=1000):
     """Test grep via FUSE-mounted Nexus in Docker sandbox using bash."""
     print(f"\n{'=' * 70}")
@@ -404,7 +400,6 @@ def test_sandbox_bash(file_count=1000):
             print(f"  ✓ Stopped sandbox {sandbox_id}")
         except Exception as e:
             print(f"  ⚠️ Error stopping sandbox: {e}")
-
 
 def test_sandbox_python(file_count=1000):
     """Test grep via FUSE-mounted Nexus in Docker sandbox using Python."""
@@ -588,7 +583,6 @@ print(f"GREP|{{files_searched}}|{{match_count}}")
         except Exception as e:
             print(f"  ⚠️ Error stopping sandbox: {e}")
 
-
 def write_csv(results, filename):
     """Write results to CSV file."""
     fieldnames = [
@@ -633,7 +627,6 @@ def write_csv(results, filename):
 
     print(f"\n✅ Results written to {filename}")
 
-
 def main():
     print(f"\n{'=' * 120}")
     print(f"{'COMPREHENSIVE GREP TEST':^120}")
@@ -673,7 +666,6 @@ def main():
     print(f"\n{'=' * 120}")
     print(f"{'TEST COMPLETE!':^120}")
     print(f"{'=' * 120}")
-
 
 if __name__ == "__main__":
     main()

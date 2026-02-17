@@ -4,8 +4,6 @@ Tests the Subscription dataclass, ReactiveSubscriptionManager class,
 find_affected_connections, cleanup sweep, and stats.
 """
 
-from __future__ import annotations
-
 import time
 
 import pytest
@@ -21,7 +19,6 @@ from nexus.core.read_set import ReadSet, ReadSetRegistry
 # ---------------------------------------------------------------------------
 # TestSubscription
 # ---------------------------------------------------------------------------
-
 
 class TestSubscription:
     """Tests for the frozen Subscription dataclass."""
@@ -53,11 +50,9 @@ class TestSubscription:
         with pytest.raises(AttributeError):
             sub.subscription_id = "changed"  # type: ignore[misc]
 
-
 # ---------------------------------------------------------------------------
 # TestPathMatchesPattern
 # ---------------------------------------------------------------------------
-
 
 class TestPathMatchesPattern:
     """Tests for the extracted path_matches_pattern function."""
@@ -77,11 +72,9 @@ class TestPathMatchesPattern:
     def test_fnmatch_simple(self) -> None:
         assert path_matches_pattern("/a/b.py", "/a/b.py")
 
-
 # ---------------------------------------------------------------------------
 # TestReactiveSubscriptionManager
 # ---------------------------------------------------------------------------
-
 
 class TestReactiveSubscriptionManager:
     """Tests for register/unregister operations."""
@@ -244,11 +237,9 @@ class TestReactiveSubscriptionManager:
         count = await manager.unregister_connection("ghost")
         assert count == 0
 
-
 # ---------------------------------------------------------------------------
 # TestFindAffectedConnections
 # ---------------------------------------------------------------------------
-
 
 class TestFindAffectedConnections:
     """Tests for find_affected_connections event matching."""
@@ -422,11 +413,9 @@ class TestFindAffectedConnections:
         result = manager.find_affected_connections(event)
         assert result == set()
 
-
 # ---------------------------------------------------------------------------
 # TestFindAffectedSubscriptions (#1170)
 # ---------------------------------------------------------------------------
-
 
 class TestFindAffectedSubscriptions:
     """Tests for find_affected_subscriptions — subscription-level grouping."""
@@ -635,11 +624,9 @@ class TestFindAffectedSubscriptions:
 
         assert manager._lookup_count == initial_count + 2
 
-
 # ---------------------------------------------------------------------------
 # TestCleanup
 # ---------------------------------------------------------------------------
-
 
 class TestCleanup:
     """Tests for cleanup_sweep and connection cleanup."""
@@ -735,11 +722,9 @@ class TestCleanup:
         assert len(manager._subscriptions) == 0
         assert registry.get_read_set("q1") is None
 
-
 # ---------------------------------------------------------------------------
 # TestStats
 # ---------------------------------------------------------------------------
-
 
 class TestStats:
     """Tests for get_stats."""

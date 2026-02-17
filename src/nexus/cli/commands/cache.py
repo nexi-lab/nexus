@@ -1,7 +1,5 @@
 """Cache management commands - warmup, stats, clear (Issue #1076)."""
 
-from __future__ import annotations
-
 import asyncio
 from typing import Any
 
@@ -15,11 +13,9 @@ from nexus.cli.utils import (
     handle_error,
 )
 
-
 def register_commands(cli: click.Group) -> None:
     """Register all cache management commands."""
     cli.add_command(cache_group)
-
 
 @click.group(name="cache")
 def cache_group() -> None:
@@ -28,7 +24,6 @@ def cache_group() -> None:
     Manage cache warming, statistics, and clearing.
     """
     pass
-
 
 @cache_group.command(name="warmup")
 @click.argument("path", type=str, default="/", required=False)
@@ -147,7 +142,6 @@ def warmup(
     except Exception as e:
         handle_error(e)
 
-
 @cache_group.command(name="stats")
 @click.option("--json", "as_json", is_flag=True, help="Output as JSON")
 @add_backend_options
@@ -235,7 +229,6 @@ def stats(
 
     except Exception as e:
         handle_error(e)
-
 
 @cache_group.command(name="clear")
 @click.option("--metadata", is_flag=True, help="Clear metadata cache")
@@ -353,7 +346,6 @@ def clear(
 
     except Exception as e:
         handle_error(e)
-
 
 @cache_group.command(name="hot")
 @click.option("-n", "--limit", type=int, default=20, help="Number of hot files to show")

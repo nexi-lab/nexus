@@ -24,7 +24,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
 async def main() -> bool:
     """Build all template images with dockerfile_override."""
 
@@ -94,7 +93,6 @@ async def main() -> bool:
     logger.info(f"✅ Template build complete: {success_count}/{len(templates_to_build)} successful")
 
     return success_count == len(templates_to_build)
-
 
 if __name__ == "__main__":
     try:

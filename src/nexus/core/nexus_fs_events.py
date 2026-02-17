@@ -18,8 +18,6 @@ Selection Logic:
 3. Else → raise NotImplementedError
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import logging
@@ -29,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 from nexus.core.protocols.connector import PassthroughProtocol
 from nexus.core.rpc_decorator import rpc_expose
 
+from nexus.core.permissions import OperationContext
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
     from nexus.core.distributed_lock import LockManagerBase
@@ -37,7 +36,6 @@ if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
 
 logger = logging.getLogger(__name__)
-
 
 class NexusFSEventsMixin:
     """Mixin providing event operations for NexusFS.
@@ -100,7 +98,7 @@ class NexusFSEventsMixin:
         """
         return hasattr(self, "_lock_manager") and self._lock_manager is not None
 
-    def _get_file_watcher(self) -> FileWatcher:
+    def _get_file_watcher(self) -> "FileWatcher":
         """Get or create the file watcher instance for same-box mode.
 
         Returns:

@@ -19,8 +19,6 @@ Example:
     ... )
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import UTC
 from pathlib import Path
@@ -37,11 +35,11 @@ from nexus.core.exceptions import BackendError
 from nexus.core.hash_fast import hash_content
 from nexus.core.response import HandlerResponse, timed_response
 
+from nexus.core.context import OperationContext
 if TYPE_CHECKING:
     from nexus.core.context import OperationContext
 
 logger = logging.getLogger(__name__)
-
 
 # Type alias for casting error responses
 _BytesResponse = HandlerResponse[bytes]
@@ -50,7 +48,6 @@ _ListDictResponse = HandlerResponse[list[dict[str, Any]]]
 _DictResponse = HandlerResponse[dict[str, Any]]
 _ListStrResponse = HandlerResponse[list[str]]
 _IntResponse = HandlerResponse[int]
-
 
 @register_connector(
     "local_connector",

@@ -3,8 +3,6 @@
 Provides workspace-level version control for time-travel debugging and rollback.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from typing import TYPE_CHECKING, Any
@@ -15,13 +13,15 @@ from nexus.core.exceptions import NexusFileNotFoundError, NexusPermissionError
 from nexus.core.workspace_manifest import WorkspaceManifest
 from nexus.storage.models import WorkspaceSnapshotModel
 
+from nexus.backends.backend import Backend
+from nexus.core._metadata_generated import FileMetadataProtocol
+from nexus.rebac.manager import ReBACManager
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
     from nexus.core._metadata_generated import FileMetadataProtocol
     from nexus.rebac.manager import ReBACManager
 
 logger = logging.getLogger(__name__)
-
 
 class WorkspaceManager:
     """Manage workspace snapshots for version control and rollback.

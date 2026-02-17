@@ -1,11 +1,8 @@
 """Unit tests for AuthCache with invalidation (Decision #15)."""
 
-from __future__ import annotations
-
 import time
 
 from nexus.auth.cache import AuthCache
-
 
 def test_cache_set_and_get():
     """Set then get returns the cached value."""
@@ -17,12 +14,10 @@ def test_cache_set_and_get():
     assert result["authenticated"] is True
     assert result["subject_id"] == "alice"
 
-
 def test_cache_miss():
     """get() returns None on miss."""
     cache = AuthCache(ttl=60, max_size=100)
     assert cache.get("nonexistent") is None
-
 
 def test_cache_get_returns_copy():
     """get() returns a copy — mutations don't affect cache."""
@@ -38,7 +33,6 @@ def test_cache_get_returns_copy():
     assert original is not None
     assert original["key"] == "value"
 
-
 def test_cache_invalidate():
     """invalidate() removes a specific entry."""
     cache = AuthCache(ttl=60, max_size=100)
@@ -50,12 +44,10 @@ def test_cache_invalidate():
     assert cache.get("token-1") is None
     assert cache.get("token-2") is not None
 
-
 def test_cache_invalidate_nonexistent():
     """invalidate() on non-existent key does not raise."""
     cache = AuthCache(ttl=60, max_size=100)
     cache.invalidate("ghost-token")  # should not raise
-
 
 def test_cache_clear():
     """clear() removes all entries."""
@@ -69,7 +61,6 @@ def test_cache_clear():
     assert cache.get("a") is None
     assert cache.get("b") is None
 
-
 def test_cache_size():
     """size property tracks entry count."""
     cache = AuthCache(ttl=60, max_size=100)
@@ -80,7 +71,6 @@ def test_cache_size():
 
     cache.set("b", {})
     assert cache.size == 2
-
 
 def test_cache_ttl_expiration():
     """Entries expire after TTL seconds."""
@@ -94,7 +84,6 @@ def test_cache_ttl_expiration():
 
     assert cache.get("ephemeral") is None
 
-
 def test_cache_max_size_eviction():
     """Oldest entries are evicted when max_size is exceeded."""
     cache = AuthCache(ttl=60, max_size=2)
@@ -104,7 +93,6 @@ def test_cache_max_size_eviction():
 
     # "first" may have been evicted (LRU behavior)
     assert cache.size <= 2
-
 
 def test_cache_overwrite():
     """Setting a key twice overwrites the value."""
@@ -116,13 +104,11 @@ def test_cache_overwrite():
     assert result is not None
     assert result["version"] == 2
 
-
 def test_token_hash_consistency():
     """Same token always produces the same hash key."""
     h1 = AuthCache._token_hash("same-token")
     h2 = AuthCache._token_hash("same-token")
     assert h1 == h2
-
 
 def test_token_hash_uniqueness():
     """Different tokens produce different hash keys."""

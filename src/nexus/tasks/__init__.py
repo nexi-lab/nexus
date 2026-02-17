@@ -19,8 +19,6 @@ Usage:
     await runner.run()
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING
 
 _HAS_NEXUS_TASKS = False
@@ -37,11 +35,9 @@ except ImportError:
     TaskRecord = None
     QueueStats = None
 
-
 def is_available() -> bool:
     """Check if the Rust nexus_tasks extension is available."""
     return _HAS_NEXUS_TASKS
-
 
 # Re-export the async runner (always available, gracefully degrades)
 from nexus.tasks.runner import AsyncTaskRunner  # noqa: E402

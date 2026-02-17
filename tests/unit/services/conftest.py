@@ -1,13 +1,10 @@
 """Shared fixtures for service layer tests."""
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from nexus.core.permissions import OperationContext
-
 
 @pytest.fixture
 def operation_context():
@@ -24,7 +21,6 @@ def operation_context():
         is_admin=False,
     )
 
-
 @pytest.fixture
 def system_context():
     """Create a system operation context (bypasses all permissions).
@@ -40,7 +36,6 @@ def system_context():
         is_admin=True,
     )
 
-
 @pytest.fixture
 def admin_context():
     """Create an admin operation context.
@@ -55,7 +50,6 @@ def admin_context():
         is_system=False,
         is_admin=True,
     )
-
 
 @pytest.fixture
 def mock_metadata_store():
@@ -83,7 +77,6 @@ def mock_metadata_store():
     ]
     return mock
 
-
 @pytest.fixture
 def mock_cas_store():
     """Create a mock CAS store for testing.
@@ -97,7 +90,6 @@ def mock_cas_store():
     mock.exists.return_value = True
     return mock
 
-
 @pytest.fixture
 def mock_permission_enforcer():
     """Create a mock permission enforcer (permissive by default).
@@ -110,7 +102,6 @@ def mock_permission_enforcer():
     mock.filter_paths_by_permission.side_effect = lambda paths, ctx: paths
     return mock
 
-
 @pytest.fixture
 def mock_router():
     """Create a mock path router for testing.
@@ -122,7 +113,6 @@ def mock_router():
     mock.resolve_backend.return_value = MagicMock()
     mock.get_mount_point.return_value = "/mnt/test"
     return mock
-
 
 @pytest.fixture
 def mock_rebac_manager():

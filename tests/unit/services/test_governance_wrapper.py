@@ -4,8 +4,6 @@ Issue #1519, 10A: Tests governance constraint checks, exception propagation,
 delegation to inner protocol, and fire-and-forget anomaly analysis.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -17,7 +15,6 @@ from nexus.services.governance.governance_wrapper import (
     GovernanceEnforcedPayment,
 )
 
-
 @dataclass
 class _FakeConstraintCheck:
     """Minimal constraint check result for testing."""
@@ -26,7 +23,6 @@ class _FakeConstraintCheck:
     constraint_type: object = None
     reason: str | None = None
     edge_id: str | None = None
-
 
 @pytest.fixture()
 def inner_protocol():
@@ -37,16 +33,13 @@ def inner_protocol():
     mock.transfer = AsyncMock(return_value=MagicMock(success=True, tx_id="tx-1"))
     return mock
 
-
 @pytest.fixture()
 def graph_service():
     return AsyncMock()
 
-
 @pytest.fixture()
 def anomaly_service():
     return AsyncMock()
-
 
 @pytest.fixture()
 def wrapper(inner_protocol, graph_service, anomaly_service):
@@ -55,7 +48,6 @@ def wrapper(inner_protocol, graph_service, anomaly_service):
         graph_service=graph_service,
         anomaly_service=anomaly_service,
     )
-
 
 @pytest.fixture()
 def transfer_request():
@@ -70,7 +62,6 @@ def transfer_request():
         amount=Decimal("100.0"),
         metadata={"zone_id": "acme"},
     )
-
 
 class TestGovernanceExceptions:
     """Tests for GovernanceBlockedError and GovernanceApprovalRequired."""
@@ -89,7 +80,6 @@ class TestGovernanceExceptions:
         assert str(err) == "needs approval"
         assert err.edge_id == "edge-2"
 
-
 class TestDelegation:
     """Tests for protocol_name and can_handle delegation."""
 
@@ -99,7 +89,6 @@ class TestDelegation:
     def test_can_handle_delegates_to_inner(self, wrapper, inner_protocol):
         assert wrapper.can_handle("agent-2") is True
         inner_protocol.can_handle.assert_called_once_with("agent-2", None)
-
 
 class TestTransferPreCheck:
     """Tests for governance constraint pre-check in transfer()."""
@@ -174,7 +163,6 @@ class TestTransferPreCheck:
 
         with pytest.raises(GovernanceBlockedError):
             await wrapper.transfer(transfer_request)
-
 
 class TestPostAnalysis:
     """Tests for fire-and-forget anomaly analysis after transfer."""

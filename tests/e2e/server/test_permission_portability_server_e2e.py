@@ -19,8 +19,6 @@ Test flow:
 Issue #1255: ReBAC permission export/import in portability module
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket
@@ -41,13 +39,11 @@ os.environ["NO_PROXY"] = "*"
 PYTHON = sys.executable
 SERVER_STARTUP_TIMEOUT = 30
 
-
 def _find_free_port() -> int:
     """Find a free TCP port on localhost."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
-
 
 def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> None:
     """Poll /health until the server responds or timeout."""
@@ -62,7 +58,6 @@ def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> 
                 pass
             time.sleep(0.3)
     raise TimeoutError(f"Server did not start within {timeout}s at {base_url}")
-
 
 def _rpc_call(
     client: httpx.Client,
@@ -81,7 +76,6 @@ def _rpc_call(
     if "error" in data:
         raise RuntimeError(f"RPC error in {method}: {data['error']}")
     return data.get("result")
-
 
 def _make_nexus_fs(data_dir: Path, *, enforce_permissions: bool = False):
     """Create a NexusFS with RaftMetadataStore + persistent SQLAlchemyRecordStore.
@@ -106,7 +100,6 @@ def _make_nexus_fs(data_dir: Path, *, enforce_permissions: bool = False):
         auto_parse=False,
         enforce_permissions=enforce_permissions,
     )
-
 
 @pytest.fixture(scope="module")
 def e2e_env():
@@ -300,11 +293,9 @@ def e2e_env():
                     proc.kill()
                     proc.wait(timeout=5)
 
-
 # =============================================================================
 # Tests: Permission round-trip verification via real HTTP server
 # =============================================================================
-
 
 class TestPermissionPortabilityServerE2E:
     """E2E tests for permission round-trip through real FastAPI server.

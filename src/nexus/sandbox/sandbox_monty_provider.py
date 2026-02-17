@@ -13,8 +13,6 @@ Design decisions (see Issue #1316 plan review):
     - #16B: Resource limits per security profile tier
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import time
@@ -55,11 +53,9 @@ except ImportError:
     MONTY_AVAILABLE = False
     logger.info("pydantic-monty not installed. MontySandboxProvider unavailable.")
 
-
 # ---------------------------------------------------------------------------
 # Resource limit profiles — tied to security profile tiers (Decision #16B)
 # ---------------------------------------------------------------------------
-
 
 @dataclass(frozen=True)
 class MontyResourceProfile:
@@ -83,7 +79,6 @@ class MontyResourceProfile:
             max_recursion_depth=self.max_recursion_depth,
             gc_interval=self.gc_interval,
         )
-
 
 # Pre-built profiles matching SandboxSecurityProfile tiers
 MONTY_RESOURCE_PROFILES: dict[str, MontyResourceProfile] = {
@@ -109,11 +104,9 @@ MONTY_RESOURCE_PROFILES: dict[str, MontyResourceProfile] = {
 
 DEFAULT_RESOURCE_PROFILE = MONTY_RESOURCE_PROFILES["standard"]
 
-
 # ---------------------------------------------------------------------------
 # Internal state tracking
 # ---------------------------------------------------------------------------
-
 
 @dataclass
 class _MontyInstance:
@@ -127,11 +120,9 @@ class _MontyInstance:
     host_functions: dict[str, Callable[..., Any]] = field(default_factory=dict)
     last_active_at: datetime | None = None
 
-
 # ---------------------------------------------------------------------------
 # Provider implementation
 # ---------------------------------------------------------------------------
-
 
 class MontySandboxProvider(SandboxProvider):
     """Pydantic Monty in-process sandbox provider.

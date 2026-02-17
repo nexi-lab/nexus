@@ -20,8 +20,6 @@ References:
 Related: Issue #1206 (x402 protocol integration)
 """
 
-from __future__ import annotations
-
 import base64
 import hashlib
 import hmac
@@ -36,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 from cachetools import TTLCache
 from starlette.responses import Response
 
+from nexus.pay.credits import CreditsService
 if TYPE_CHECKING:
     import httpx
 
@@ -72,22 +71,18 @@ _WALLET_REGEX = re.compile(r"^0x[0-9a-fA-F]{40}$")
 # Default cache TTL for payment verifications
 DEFAULT_CACHE_TTL_SECONDS = 60.0
 
-
 # =============================================================================
 # Exceptions
 # =============================================================================
-
 
 class X402Error(Exception):
     """Base exception for x402 operations."""
 
     pass
 
-
 # =============================================================================
 # Data Classes
 # =============================================================================
-
 
 @dataclass
 class X402Receipt:
@@ -99,7 +94,6 @@ class X402Receipt:
     currency: str
     timestamp: datetime
 
-
 @dataclass
 class X402PaymentVerification:
     """Result of verifying an x402 payment."""
@@ -109,11 +103,9 @@ class X402PaymentVerification:
     amount: Decimal | None
     error: str | None
 
-
 # =============================================================================
 # Utility Functions
 # =============================================================================
-
 
 def usdc_to_micro(amount: Decimal) -> int:
     """Convert USDC amount to micro units (6 decimals).
@@ -126,7 +118,6 @@ def usdc_to_micro(amount: Decimal) -> int:
     """
     return int(amount * USDC_SCALE)
 
-
 def micro_to_usdc(micro: int) -> Decimal:
     """Convert micro units to USDC amount.
 
@@ -137,7 +128,6 @@ def micro_to_usdc(micro: int) -> Decimal:
         Amount in USDC
     """
     return Decimal(micro) / Decimal(USDC_SCALE)
-
 
 def validate_wallet_address(address: str) -> bool:
     """Validate an EVM wallet address.
@@ -152,7 +142,6 @@ def validate_wallet_address(address: str) -> bool:
     """
     return bool(address and _WALLET_REGEX.match(address))
 
-
 def validate_network(network: str) -> bool:
     """Validate network is supported.
 
@@ -164,11 +153,9 @@ def validate_network(network: str) -> bool:
     """
     return network in SUPPORTED_NETWORKS
 
-
 # =============================================================================
 # X402Client
 # =============================================================================
-
 
 class X402Client:
     """x402 protocol client for agent payments.
@@ -236,7 +223,7 @@ class X402Client:
         """Get CAIP-2 formatted network identifier."""
         return NETWORK_CAIP2_MAP.get(self.network, f"eip155:{self.network}")
 
-    async def _get_http_client(self) -> httpx.AsyncClient:
+    async def _get_http_client(self) -> "httpx.AsyncClient":
         """Get or create persistent HTTP client with connection pooling.
 
         Connection pooling reduces TCP/TLS handshake overhead for
@@ -634,7 +621,6 @@ class X402Client:
         ).hexdigest()
 
         return hmac.compare_digest(signature, expected_sig)
-
 
 # =============================================================================
 # Module Exports

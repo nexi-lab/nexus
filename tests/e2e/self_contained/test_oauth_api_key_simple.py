@@ -14,14 +14,12 @@ from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.server.auth.oauth_crypto import OAuthCrypto
 from nexus.storage.models import APIKeyModel, Base, OAuthAPIKeyModel, UserModel
 
-
 @pytest.fixture
 def db_engine():
     """Create an in-memory SQLite database for testing."""
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     return engine
-
 
 @pytest.fixture
 def db_session(db_engine):
@@ -31,13 +29,11 @@ def db_session(db_engine):
     yield session
     session.close()
 
-
 @pytest.fixture
 def oauth_crypto():
     """Create OAuthCrypto instance for testing."""
     # Use random key for testing (simpler than database persistence)
     return OAuthCrypto()
-
 
 @pytest.fixture
 def test_user(db_session):
@@ -53,7 +49,6 @@ def test_user(db_session):
     db_session.add(user)
     db_session.commit()
     return user
-
 
 class TestOAuthCrypto:
     """Tests for OAuth encryption/decryption functionality."""
@@ -83,7 +78,6 @@ class TestOAuthCrypto:
 
         with pytest.raises(InvalidToken):
             oauth_crypto.decrypt_token("invalid-encrypted-data")
-
 
 class TestOAuthAPIKeyModel:
     """Tests for OAuthAPIKeyModel database operations."""
@@ -189,7 +183,6 @@ class TestOAuthAPIKeyModel:
         for oauth_key in user_keys:
             decrypted = oauth_crypto.decrypt_token(oauth_key.encrypted_key_value)
             assert decrypted.startswith("sk-")
-
 
 class TestOAuthAPIKeyFlow:
     """Integration tests for the complete OAuth API key flow."""

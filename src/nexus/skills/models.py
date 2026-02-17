@@ -1,14 +1,12 @@
 """Data models for the Skills System."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+from nexus.mcp.models import MCPToolConfig
 if TYPE_CHECKING:
     from nexus.mcp.models import MCPToolConfig
-
 
 @dataclass
 class SkillMetadata:
@@ -89,7 +87,6 @@ class SkillMetadata:
         # Validate mcp_config is provided for mcp_tool or hybrid types
         if self.skill_type in ("mcp_tool", "hybrid") and self.mcp_config is None:
             raise SkillValidationError(f"mcp_config is required for skill_type '{self.skill_type}'")
-
 
 @dataclass
 class Skill:

@@ -40,8 +40,6 @@ References:
     - Linux VFS dcache: https://docs.kernel.org/filesystems/path-lookup.html
 """
 
-from __future__ import annotations
-
 import bisect
 import hashlib
 import logging
@@ -59,7 +57,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 @dataclass(frozen=True)
 class MountEntry:
     """A namespace mount entry representing a visible path for a subject.
@@ -72,7 +69,6 @@ class MountEntry:
     """
 
     virtual_path: str
-
 
 def build_mount_entries(object_paths: list[tuple[str, str]]) -> list[MountEntry]:
     """Build mount entries from ReBAC-granted object paths.
@@ -138,7 +134,6 @@ def build_mount_entries(object_paths: list[tuple[str, str]]) -> list[MountEntry]
 
     return [MountEntry(virtual_path=d) for d in deduplicated]
 
-
 class NamespaceManager:
     """Per-subject namespace manager — builds and caches mount tables from ReBAC grants.
 
@@ -170,14 +165,14 @@ class NamespaceManager:
 
     def __init__(
         self,
-        rebac_manager: EnhancedReBACManager,
+        rebac_manager: "EnhancedReBACManager",
         cache_maxsize: int = 10_000,
         cache_ttl: int = 300,
         revision_window: int = 10,
         dcache_maxsize: int = 100_000,
         dcache_positive_ttl: int = 300,
         dcache_negative_ttl: int = 60,
-        persistent_store: PersistentViewStore | None = None,
+        persistent_store: "PersistentViewStore | None" = None,
     ) -> None:
         self._rebac_manager = rebac_manager
         self._revision_window = revision_window

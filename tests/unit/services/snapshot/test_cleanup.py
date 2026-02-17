@@ -3,8 +3,6 @@
 Tests: Init, Lifecycle, Sweep, Errors.
 """
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
@@ -12,14 +10,12 @@ import pytest
 
 from nexus.services.snapshot.cleanup import SnapshotCleanupWorker
 
-
 @pytest.fixture
 def mock_snapshot_service() -> MagicMock:
     """Mock TransactionalSnapshotService."""
     svc = MagicMock()
     svc.cleanup_expired = AsyncMock(return_value=0)
     return svc
-
 
 class TestInit:
     """Tests for SnapshotCleanupWorker initialization."""
@@ -34,7 +30,6 @@ class TestInit:
         worker = SnapshotCleanupWorker(mock_snapshot_service, sweep_interval=60.0, batch_limit=50)
         assert worker._sweep_interval == 60.0
         assert worker._batch_limit == 50
-
 
 class TestLifecycle:
     """Tests for start/stop lifecycle."""
@@ -62,7 +57,6 @@ class TestLifecycle:
         await worker.stop()  # should not raise
         assert not worker.is_running
 
-
 class TestSweep:
     """Tests for cleanup sweep behavior."""
 
@@ -76,7 +70,6 @@ class TestSweep:
         await worker.stop()
 
         mock_snapshot_service.cleanup_expired.assert_called_with(limit=50)
-
 
 class TestErrors:
     """Tests for error handling during sweep."""

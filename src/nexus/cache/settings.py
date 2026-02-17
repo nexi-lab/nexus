@@ -53,7 +53,6 @@ import os
 from dataclasses import dataclass, field
 from typing import Literal
 
-
 @dataclass
 class CacheSettings:
     """Configuration for Nexus cache layer.

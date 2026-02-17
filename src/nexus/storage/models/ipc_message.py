@@ -7,15 +7,12 @@ and accessed through the standard SQLAlchemy session factory.
 Issue: #1469
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from sqlalchemy import Boolean, DateTime, Index, LargeBinary, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base, uuid_pk
-
 
 class IPCMessageModel(Base):
     """IPC message or directory marker stored via RecordStoreABC.

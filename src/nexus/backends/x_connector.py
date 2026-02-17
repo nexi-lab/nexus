@@ -58,7 +58,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 # Cache TTL configuration (in seconds)
 CACHE_TTL = {
     # Frequently changing data (short TTL)
@@ -75,7 +74,6 @@ CACHE_TTL = {
     "create_tweet": 0,  # Write operation
     "delete_tweet": 0,  # Write operation
 }
-
 
 @register_connector(
     "x_connector",

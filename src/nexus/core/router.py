@@ -9,7 +9,6 @@ from nexus.core.exceptions import AccessDeniedError, InvalidPathError, PathNotMo
 if TYPE_CHECKING:
     from nexus.core.protocols.connector import ConnectorProtocol
 
-
 @dataclass
 class MountConfig:
     """Mount configuration for path routing."""
@@ -20,7 +19,6 @@ class MountConfig:
     readonly: bool = False
     conflict_strategy: str | None = None  # Per-mount override (Issue #1130)
 
-
 @dataclass
 class RouteResult:
     """Result of path routing."""
@@ -30,7 +28,6 @@ class RouteResult:
     mount_point: str  # Matched mount point
     readonly: bool
 
-
 @dataclass
 class PathInfo:
     """Parsed path information with namespace and zone details."""
@@ -38,7 +35,6 @@ class PathInfo:
     namespace: str  # e.g., "workspace", "shared", "external", "system", "archives"
     zone_id: str | None  # Zone identifier (if applicable)
     relative_path: str  # Remaining path after namespace/zone
-
 
 @dataclass
 class NamespaceConfig:
@@ -48,7 +44,6 @@ class NamespaceConfig:
     readonly: bool = False  # Whether namespace is read-only
     admin_only: bool = False  # Whether namespace requires admin access
     requires_zone: bool = True  # Whether namespace requires zone isolation
-
 
 class PathRouter:
     """

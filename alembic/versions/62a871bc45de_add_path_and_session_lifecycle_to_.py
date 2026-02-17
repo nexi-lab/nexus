@@ -28,7 +28,6 @@ down_revision = "61f540751c4d"
 branch_labels = None
 depends_on = None
 
-
 def upgrade():
     """Add path and session lifecycle fields to trajectories and playbooks."""
 
@@ -57,7 +56,6 @@ def upgrade():
     op.create_index("idx_playbook_path", "playbooks", ["path"])
     op.create_index("idx_playbook_session", "playbooks", ["session_id"])
     op.create_index("idx_playbook_expires", "playbooks", ["expires_at"])
-
 
 def downgrade():
     """Remove path and session lifecycle fields from trajectories and playbooks."""

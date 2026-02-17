@@ -3,8 +3,6 @@
 Parses JSON output from `npx eslint --format json`.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import shlex
@@ -22,7 +20,6 @@ _ESLINT_SEVERITY_MAP: dict[int, _Severity] = {
     1: "warning",
     2: "error",
 }
-
 
 class ESLintValidator(Validator):
     """Parser for ESLint JSON output."""

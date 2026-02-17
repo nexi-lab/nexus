@@ -24,8 +24,6 @@ Usage:
     shutdown_profiling()
 """
 
-from __future__ import annotations
-
 import logging
 import os
 
@@ -33,7 +31,6 @@ logger = logging.getLogger(__name__)
 
 # Global state
 _initialized = False
-
 
 def _parse_sample_rate_hz(env_var: str, default: int = 100) -> int:
     """Parse CPU sampling rate in Hz from an environment variable.
@@ -53,11 +50,9 @@ def _parse_sample_rate_hz(env_var: str, default: int = 100) -> int:
         return default
     return max(1, min(1000, rate))
 
-
 def is_profiling_enabled() -> bool:
     """Check if profiling is enabled via PYROSCOPE_ENABLED environment variable."""
     return os.environ.get("PYROSCOPE_ENABLED", "false").lower() in ("true", "1", "yes")
-
 
 def setup_profiling(
     application_name: str | None = None,
@@ -167,7 +162,6 @@ def setup_profiling(
         logger.error("Failed to initialize Pyroscope: %s", e)
         return False
 
-
 def _register_otel_processor() -> None:
     """Register PyroscopeSpanProcessor on the active OTel TracerProvider.
 
@@ -189,7 +183,6 @@ def _register_otel_processor() -> None:
         logger.debug("pyroscope-otel not available, skipping trace-to-profile correlation")
     except Exception as e:
         logger.warning("Failed to register PyroscopeSpanProcessor: %s", e)
-
 
 def shutdown_profiling() -> None:
     """Shutdown Pyroscope profiling. Idempotent.

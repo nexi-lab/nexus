@@ -10,8 +10,6 @@ Measures the cost of NexusFS → service delegation patterns:
 Run with: pytest tests/benchmarks/test_service_delegation.py -v --benchmark-only
 """
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
@@ -24,7 +22,6 @@ from nexus.services.gateway import NexusFSGateway
 # =============================================================================
 # Fixtures
 # =============================================================================
-
 
 @pytest.fixture
 def mock_nexus_fs():
@@ -66,7 +63,6 @@ def mock_nexus_fs():
     fs.mount_service.list_mounts = AsyncMock(return_value=[])
     return fs
 
-
 @pytest.fixture
 def mock_gateway():
     """Create a NexusFSGateway with mock NexusFS for gateway benchmarks."""
@@ -94,7 +90,6 @@ def mock_gateway():
     mock_fs.read_bulk = MagicMock(return_value={})
     return NexusFSGateway(mock_fs)
 
-
 @pytest.fixture
 def context():
     """Standard operation context for benchmarks."""
@@ -106,11 +101,9 @@ def context():
         is_admin=False,
     )
 
-
 # =============================================================================
 # NexusFS → Service Async Delegation Overhead
 # =============================================================================
-
 
 @pytest.mark.benchmark_ci
 class TestAsyncDelegationOverhead:
@@ -173,11 +166,9 @@ class TestAsyncDelegationOverhead:
 
         benchmark(run)
 
-
 # =============================================================================
 # NexusFS → Service Sync Delegation Overhead
 # =============================================================================
-
 
 @pytest.mark.benchmark_ci
 class TestSyncDelegationOverhead:
@@ -236,11 +227,9 @@ class TestSyncDelegationOverhead:
         """Benchmark create_llm_reader sync delegation."""
         benchmark(mock_nexus_fs.create_llm_reader)
 
-
 # =============================================================================
 # Gateway Delegation Overhead
 # =============================================================================
-
 
 @pytest.mark.benchmark_ci
 class TestGatewayDelegationOverhead:
@@ -283,11 +272,9 @@ class TestGatewayDelegationOverhead:
             zone_id="z1",
         )
 
-
 # =============================================================================
 # Service Instantiation
 # =============================================================================
-
 
 class TestServiceInstantiation:
     """Benchmark service construction time."""
@@ -326,11 +313,9 @@ class TestServiceInstantiation:
             enforce_permissions=False,
         )
 
-
 # =============================================================================
 # Context Extraction
 # =============================================================================
-
 
 class TestContextExtractionOverhead:
     """Benchmark context extraction helpers used in delegation."""

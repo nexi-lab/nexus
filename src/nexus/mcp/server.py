@@ -4,8 +4,6 @@ This module implements a Model Context Protocol (MCP) server that exposes
 Nexus functionality to AI agents and tools using the fastmcp framework.
 """
 
-from __future__ import annotations
-
 import contextlib
 import contextvars
 import json
@@ -25,7 +23,6 @@ logger = logging.getLogger(__name__)
 _request_api_key: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "request_api_key", default=None
 )
-
 
 def set_request_api_key(api_key: str) -> contextvars.Token[str | None]:
     """Set the API key for the current request context.
@@ -53,7 +50,6 @@ def set_request_api_key(api_key: str) -> contextvars.Token[str | None]:
     """
     return _request_api_key.set(api_key)
 
-
 def get_request_api_key() -> str | None:
     """Get the current request API key from context.
 
@@ -65,7 +61,6 @@ def get_request_api_key() -> str | None:
     """
     return _request_api_key.get()
 
-
 def reset_request_api_key(token: contextvars.Token[str | None]) -> None:
     """Reset the request API key context variable using a previously saved token.
 
@@ -73,7 +68,6 @@ def reset_request_api_key(token: contextvars.Token[str | None]) -> None:
         token: The token returned by set_request_api_key()
     """
     _request_api_key.reset(token)
-
 
 def create_mcp_server(
     nx: NexusFilesystem | None = None,
@@ -1378,7 +1372,6 @@ Start by running the semantic search.
 
     return mcp
 
-
 def main() -> None:
     """Main entry point for running MCP server from command line."""
 
@@ -1445,7 +1438,6 @@ def main() -> None:
         mcp.run(transport="sse", host=host, port=port)
     else:
         raise ValueError(f"Unknown transport: {transport}")
-
 
 if __name__ == "__main__":
     main()

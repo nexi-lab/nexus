@@ -23,8 +23,6 @@ Example:
         await nx.skills_create("my-skill", "A skill", template="basic")
 """
 
-from __future__ import annotations
-
 import builtins
 import logging
 import time
@@ -34,6 +32,15 @@ from functools import cached_property
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin
 
+from nexus.remote.domain.ace import AsyncACEClient
+from nexus.remote.domain.admin import AsyncAdminClient
+from nexus.remote.domain.llm import AsyncLLMClient
+from nexus.remote.domain.mcp import AsyncMCPClient
+from nexus.remote.domain.memory import AsyncMemoryClient
+from nexus.remote.domain.oauth import AsyncOAuthClient
+from nexus.remote.domain.sandbox import AsyncSandboxClient
+from nexus.remote.domain.share_links import AsyncShareLinksClient
+from nexus.remote.domain.skills import AsyncSkillsClient
 if TYPE_CHECKING:
     from nexus.remote.domain.ace import AsyncACEClient
     from nexus.remote.domain.admin import AsyncAdminClient
@@ -71,7 +78,6 @@ from .client import (
 
 logger = logging.getLogger(__name__)
 
-
 # ============================================================
 # Async domain method map — includes async-only domains
 # ============================================================
@@ -97,7 +103,6 @@ _ASYNC_DOMAIN_METHOD_MAP: dict[str, tuple[str, str]] = {
     "ace_get_playbook": ("ace", "get_playbook"),
     "ace_query_playbooks": ("ace", "query_playbooks"),
 }
-
 
 class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
     """Async remote Nexus filesystem client.
@@ -170,7 +175,7 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
         self._negative_bloom: Any = None
         self._init_negative_cache()
 
-    async def __aenter__(self) -> AsyncRemoteNexusFS:
+    async def __aenter__(self) -> "AsyncRemoteNexusFS":
         await self._ensure_initialized()
         return self
 
@@ -844,7 +849,6 @@ class AsyncRemoteNexusFS(RPCProxyBase, BaseRemoteNexusFS):
     async def unlock(self, lock_id: str, path: str) -> bool:
         result = await self._call_rpc("unlock", {"lock_id": lock_id, "path": path})
         return bool(result.get("released", False)) if result else False
-
 
 # Register as virtual subclass of NexusFilesystem so isinstance() works at runtime
 # without putting abstract methods in MRO (which would shadow __getattr__ dispatch).

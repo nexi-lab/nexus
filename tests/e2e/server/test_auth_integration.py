@@ -26,7 +26,6 @@ from nexus.storage.models import Base
 # Test Fixtures
 # ==============================================================================
 
-
 @pytest.fixture
 def test_app():
     """Create FastAPI test app with in-memory database."""
@@ -67,11 +66,9 @@ def test_app():
     Base.metadata.drop_all(engine)
     engine.dispose()
 
-
 # ==============================================================================
 # Registration Tests
 # ==============================================================================
-
 
 def test_register_user(test_app):
     """Test user registration endpoint."""
@@ -92,7 +89,6 @@ def test_register_user(test_app):
     assert data["display_name"] == "Test User"
     assert "token" in data
     assert "user_id" in data
-
 
 def test_register_duplicate_email(test_app):
     """Test that duplicate email registration fails."""
@@ -119,7 +115,6 @@ def test_register_duplicate_email(test_app):
     assert response.status_code == 400
     assert "already exists" in response.json()["detail"].lower()
 
-
 def test_register_short_password(test_app):
     """Test that short password registration fails."""
     response = test_app.post(
@@ -133,11 +128,9 @@ def test_register_short_password(test_app):
 
     assert response.status_code == 422  # Validation error
 
-
 # ==============================================================================
 # Login Tests
 # ==============================================================================
-
 
 def test_login_with_email(test_app):
     """Test login with email."""
@@ -165,7 +158,6 @@ def test_login_with_email(test_app):
     assert "token" in data
     assert data["user"]["email"] == "login@example.com"
 
-
 def test_login_with_username(test_app):
     """Test login with username."""
     # Register user
@@ -192,7 +184,6 @@ def test_login_with_username(test_app):
     assert "token" in data
     assert data["user"]["username"] == "myusername"
 
-
 def test_login_invalid_password(test_app):
     """Test that login fails with wrong password."""
     # Register user
@@ -216,7 +207,6 @@ def test_login_invalid_password(test_app):
 
     assert response.status_code == 401
 
-
 def test_login_nonexistent_user(test_app):
     """Test that login fails for non-existent user."""
     response = test_app.post(
@@ -229,11 +219,9 @@ def test_login_nonexistent_user(test_app):
 
     assert response.status_code == 401
 
-
 # ==============================================================================
 # Profile Tests
 # ==============================================================================
-
 
 def test_get_user_profile(test_app):
     """Test getting current user profile."""
@@ -258,7 +246,6 @@ def test_get_user_profile(test_app):
     data = response.json()
     assert data["email"] == "profile@example.com"
     assert data["username"] == "profileuser"
-
 
 def test_update_user_profile(test_app):
     """Test updating user profile."""
@@ -288,11 +275,9 @@ def test_update_user_profile(test_app):
     assert data["display_name"] == "Updated Name"
     assert data["avatar_url"] == "https://example.com/avatar.jpg"
 
-
 # ==============================================================================
 # Password Management Tests
 # ==============================================================================
-
 
 def test_change_password(test_app):
     """Test password change."""
@@ -348,11 +333,9 @@ def test_change_password(test_app):
     )
     assert response.status_code == 200
 
-
 # ==============================================================================
 # OAuth Tests
 # ==============================================================================
-
 
 def test_get_google_oauth_url(test_app):
     """Test getting Google OAuth authorization URL."""
@@ -366,7 +349,6 @@ def test_get_google_oauth_url(test_app):
         data = response.json()
         assert "auth_url" in data
         assert "state" in data
-
 
 def test_oauth_callback_race_condition():
     """Test that concurrent OAuth callbacks don't create duplicate API keys.
@@ -523,7 +505,6 @@ def test_oauth_callback_race_condition():
         if os.path.exists(db_file):
             os.unlink(db_file)
 
-
 def test_oauth_callback_race_condition_postgres():
     """Test race condition with PostgreSQL (if available).
 
@@ -673,7 +654,6 @@ def test_oauth_callback_race_condition_postgres():
         session.commit()
 
     engine.dispose()
-
 
 if __name__ == "__main__":
     # Run tests with pytest

@@ -10,8 +10,6 @@ Design decisions:
     - Session-per-operation pattern (same as AgentRegistry)
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import uuid
@@ -24,11 +22,11 @@ from sqlalchemy import select
 
 from nexus.storage.models import AgentEventModel
 
+from sqlalchemy.orm import Session, sessionmaker
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
 
 logger = logging.getLogger(__name__)
-
 
 class AgentEventLog:
     """Append-only agent lifecycle event log.

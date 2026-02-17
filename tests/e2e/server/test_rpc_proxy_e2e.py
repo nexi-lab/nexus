@@ -12,8 +12,6 @@ Validates the __getattr__-based proxy dispatch works end-to-end:
 Issue #1289: Protocol + RPC Proxy pattern.
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket
@@ -37,12 +35,10 @@ PYTHON = sys.executable
 SRC_PATH = str(Path(__file__).resolve().parents[2] / "src")
 SERVER_STARTUP_TIMEOUT = 30
 
-
 def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
-
 
 def _rpc_call(
     client: httpx.Client, base_url: str, method: str, params: dict, *, api_key: str
@@ -58,11 +54,9 @@ def _rpc_call(
         raise RuntimeError(f"RPC error in {method}: {data['error']}")
     return data.get("result")
 
-
 # =============================================================================
 # Fixtures
 # =============================================================================
-
 
 @pytest.fixture(scope="module")
 def e2e_server(tmp_path_factory):
@@ -226,7 +220,6 @@ def e2e_server(tmp_path_factory):
                 proc.kill()
                 proc.wait(timeout=5)
 
-
 @pytest.fixture(scope="module")
 def admin_client(e2e_server) -> RemoteNexusFS:
     """RemoteNexusFS connected as admin."""
@@ -237,7 +230,6 @@ def admin_client(e2e_server) -> RemoteNexusFS:
     )
     yield nx
     nx.close()
-
 
 @pytest.fixture(scope="module")
 def non_admin_key(e2e_server) -> str:
@@ -258,7 +250,6 @@ def non_admin_key(e2e_server) -> str:
         )
         return result["api_key"]
 
-
 @pytest.fixture(scope="module")
 def non_admin_client(e2e_server, non_admin_key) -> RemoteNexusFS:
     """RemoteNexusFS connected as non-admin user with no permissions."""
@@ -270,11 +261,9 @@ def non_admin_client(e2e_server, non_admin_key) -> RemoteNexusFS:
     yield nx
     nx.close()
 
-
 # =============================================================================
 # Tests: Core File Operations (proxy-dispatched + hand-written overrides)
 # =============================================================================
-
 
 class TestProxyFileOperations:
     """Test core file operations via the new proxy client."""
@@ -351,11 +340,9 @@ class TestProxyFileOperations:
         # Cleanup
         admin_client.delete("/workspace/edit-test.txt")
 
-
 # =============================================================================
 # Tests: Auto-dispatched Methods (via __getattr__)
 # =============================================================================
-
 
 class TestAutoDispatchedMethods:
     """Test methods that go through __getattr__ auto-dispatch."""
@@ -387,11 +374,9 @@ class TestAutoDispatchedMethods:
         etag = admin_client.get_etag("/workspace/does-not-exist-abc.txt")
         assert etag is None
 
-
 # =============================================================================
 # Tests: Deprecated Methods
 # =============================================================================
-
 
 class TestDeprecatedMethods:
     """Test deprecated methods raise NotImplementedError."""
@@ -408,11 +393,9 @@ class TestDeprecatedMethods:
         with pytest.raises(NotImplementedError, match="rebac_create"):
             admin_client.grant_user("user1", "/workspace/test.txt", "read")
 
-
 # =============================================================================
 # Tests: Performance (no regression) — runs BEFORE permission tests
 # =============================================================================
-
 
 class TestPerformance:
     """Verify proxy dispatch doesn't add significant overhead."""
@@ -458,11 +441,9 @@ class TestPerformance:
             f"\n  Batch perf: 5 write+read+delete cycles in {elapsed:.3f}s ({elapsed / 5 * 1000:.0f}ms avg)"
         )
 
-
 # =============================================================================
 # Tests: isinstance check (virtual subclass)
 # =============================================================================
-
 
 class TestVirtualSubclass:
     """Test that isinstance works with virtual subclass registration."""
@@ -475,13 +456,11 @@ class TestVirtualSubclass:
     def test_isinstance_remote_nexusfs(self, admin_client: RemoteNexusFS) -> None:
         assert isinstance(admin_client, RemoteNexusFS)
 
-
 # =============================================================================
 # Tests: Permission Enforcement (non-admin user) — runs LAST
 # These tests can cause the server's async event loop to become unresponsive
 # (pre-existing server-side issue with permission enforcement + SQLite).
 # =============================================================================
-
 
 class TestPermissionEnforcement:
     """Test that non-admin user is properly denied via proxy.

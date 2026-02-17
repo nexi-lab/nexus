@@ -25,8 +25,6 @@ Usage:
     python scripts/test_gcalendar_e2e.py --user your@email.com
 """
 
-from __future__ import annotations
-
 import argparse
 import sys
 import tempfile
@@ -36,19 +34,16 @@ from pathlib import Path
 # Add src to path for local development
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-
 def print_header(title: str) -> None:
     """Print a section header."""
     print(f"\n{'=' * 60}")
     print(f"  {title}")
     print(f"{'=' * 60}\n")
 
-
 def print_result(success: bool, message: str) -> None:
     """Print test result."""
     status = "✅ PASS" if success else "❌ FAIL"
     print(f"{status}: {message}")
-
 
 def test_skill_md_generation(backend, tmp_dir: Path) -> bool:
     """Test SKILL.md auto-generation."""
@@ -85,7 +80,6 @@ def test_skill_md_generation(backend, tmp_dir: Path) -> bool:
     except Exception as e:
         print_result(False, f"Exception: {e}")
         return False
-
 
 def test_validation_errors(backend) -> bool:
     """Test that validation errors are properly raised."""
@@ -144,7 +138,6 @@ def test_validation_errors(backend) -> bool:
 
     return tests_passed
 
-
 def test_create_event(backend, context) -> str | None:
     """Test creating a calendar event."""
     print_header("Test 3: Create Event")
@@ -179,7 +172,6 @@ end:
 
         traceback.print_exc()
         return None
-
 
 def test_read_event(backend, context, event_id: str) -> bool:
     """Test reading a calendar event."""
@@ -217,7 +209,6 @@ def test_read_event(backend, context, event_id: str) -> bool:
         traceback.print_exc()
         return False
 
-
 def test_update_event(backend, context, event_id: str) -> bool:
     """Test updating a calendar event."""
     print_header("Test 5: Update Event")
@@ -250,7 +241,6 @@ description: This event was UPDATED by the Nexus Calendar Connector E2E test.
         traceback.print_exc()
         return False
 
-
 def test_list_events(backend, context) -> bool:
     """Test listing calendar events."""
     print_header("Test 6: List Events")
@@ -273,7 +263,6 @@ def test_list_events(backend, context) -> bool:
 
         traceback.print_exc()
         return False
-
 
 def test_delete_event(backend, context, event_id: str) -> bool:
     """Test deleting a calendar event."""
@@ -321,7 +310,6 @@ def test_delete_event(backend, context, event_id: str) -> bool:
         traceback.print_exc()
         return False
 
-
 def test_checkpoint_functionality(backend) -> bool:
     """Test checkpoint creation and management."""
     print_header("Test 8: Checkpoint Functionality")
@@ -363,7 +351,6 @@ def test_checkpoint_functionality(backend) -> bool:
         tests_passed = False
 
     return tests_passed
-
 
 def main():
     """Run all E2E tests."""
@@ -454,7 +441,6 @@ def main():
 
         # Exit with error code if any test failed
         sys.exit(0 if passed == total else 1)
-
 
 if __name__ == "__main__":
     main()

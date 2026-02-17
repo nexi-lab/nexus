@@ -12,8 +12,6 @@ Section 1: Lightweight mocked tests (no DB)
 Section 2: Full integration tests with real SpendingPolicyService + SQLite
 """
 
-from __future__ import annotations
-
 import asyncio
 from decimal import Decimal
 from typing import Any
@@ -29,7 +27,6 @@ from nexus.server.api.v2.routers.pay import _register_pay_exception_handlers, ro
 # =============================================================================
 # Fixtures
 # =============================================================================
-
 
 def _create_test_app(
     *,
@@ -71,7 +68,6 @@ def _create_test_app(
     app.dependency_overrides[_get_require_auth()] = mock_auth
     return app
 
-
 @pytest.fixture
 def mock_credits_service():
     """Mock CreditsService."""
@@ -87,7 +83,6 @@ def mock_credits_service():
     service.transfer_batch.return_value = ["tx-1"]
     service.provision_wallet.return_value = None
     return service
-
 
 @pytest.fixture
 def mock_policy_service():
@@ -113,11 +108,9 @@ def mock_policy_service():
     service.delete_policy.return_value = True
     return service
 
-
 # =============================================================================
 # Budget Endpoint Tests
 # =============================================================================
-
 
 class TestBudgetEndpoint:
     """GET /api/v2/pay/budget returns spending summary."""
@@ -153,11 +146,9 @@ class TestBudgetEndpoint:
             assert resp.status_code == 200
             assert resp.json()["has_policy"] is False
 
-
 # =============================================================================
 # Policy Denial via Exception Handler Tests
 # =============================================================================
-
 
 class TestPolicyDenialResponse:
     """PolicyDeniedError mapped to 403 with error_code 'policy_denied'."""
@@ -188,11 +179,9 @@ class TestPolicyDenialResponse:
             assert data["error_code"] == "policy_denied"
             assert "per-transaction limit" in data["detail"]
 
-
 # =============================================================================
 # Policy CRUD Endpoint Tests
 # =============================================================================
-
 
 class TestPolicyCRUDEndpoints:
     """Policy CRUD requires admin access."""
@@ -263,11 +252,9 @@ class TestPolicyCRUDEndpoints:
             resp = await client.delete("/api/v2/pay/policies/nonexistent")
             assert resp.status_code == 404
 
-
 # =============================================================================
 # Concurrency Tests (Decision #10A)
 # =============================================================================
-
 
 class TestConcurrentTransfers:
     """Verify policy enforcement under concurrent requests."""
@@ -352,11 +339,9 @@ class TestConcurrentTransfers:
                 assert resp.status_code == 200
                 assert resp.json()["has_policy"] is True
 
-
 # =============================================================================
 # Section 2: Real DB Integration Tests (SQLite async)
 # =============================================================================
-
 
 def _create_integration_app(
     *,
@@ -396,7 +381,6 @@ def _create_integration_app(
     app.dependency_overrides[_get_require_auth()] = mock_auth
     return app
 
-
 @pytest.fixture
 async def async_session_factory():
     """Create an async SQLite in-memory database with spending policy tables."""
@@ -413,14 +397,12 @@ async def async_session_factory():
     yield factory
     await engine.dispose()
 
-
 @pytest.fixture
 def real_policy_service(async_session_factory):
     """Create a real SpendingPolicyService backed by SQLite."""
     from nexus.pay.spending_policy_service import SpendingPolicyService
 
     return SpendingPolicyService(session_factory=async_session_factory)
-
 
 class TestRealDBPolicyCRUD:
     """Integration tests: real SpendingPolicyService + real SQLite + FastAPI."""

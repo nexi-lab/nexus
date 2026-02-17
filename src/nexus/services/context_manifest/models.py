@@ -13,8 +13,6 @@ References:
     - Stripe Minions: https://stripe.dev/blog/minions-stripes-one-shot-end-to-end-coding-agents
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Annotated, Any, Literal, Protocol, runtime_checkable
 
@@ -27,11 +25,9 @@ from pydantic import BaseModel, ConfigDict, Discriminator, Field
 DEFAULT_TIMEOUT_SECONDS: float = 30.0
 DEFAULT_MAX_RESULT_BYTES: int = 1_048_576  # 1 MB
 
-
 # ===========================================================================
 # ContextSourceProtocol — structural interface for all source types (CQ-3)
 # ===========================================================================
-
 
 @runtime_checkable
 class ContextSourceProtocol(Protocol):
@@ -58,11 +54,9 @@ class ContextSourceProtocol(Protocol):
         """Human-readable name for this source (CQ-1)."""
         ...
 
-
 # ===========================================================================
 # Source type models (Pydantic, frozen)
 # ===========================================================================
-
 
 class MCPToolSource(BaseModel):
     """Pre-execute an MCP tool and inject its result into agent context.
@@ -90,7 +84,6 @@ class MCPToolSource(BaseModel):
         """Human-readable name for this source."""
         return self.tool_name
 
-
 class WorkspaceSnapshotSource(BaseModel):
     """Load a workspace snapshot into agent context.
 
@@ -110,7 +103,6 @@ class WorkspaceSnapshotSource(BaseModel):
     def source_name(self) -> str:
         """Human-readable name for this source."""
         return self.snapshot_id
-
 
 class FileGlobSource(BaseModel):
     """Resolve a file glob pattern and load matching files into context.
@@ -133,7 +125,6 @@ class FileGlobSource(BaseModel):
         """Human-readable name for this source."""
         return self.pattern
 
-
 class MemoryQuerySource(BaseModel):
     """Run a semantic search over agent memory and inject top results.
 
@@ -155,7 +146,6 @@ class MemoryQuerySource(BaseModel):
         """Human-readable name for this source."""
         return self.query
 
-
 # ---------------------------------------------------------------------------
 # Discriminated union
 # ---------------------------------------------------------------------------
@@ -169,11 +159,9 @@ ContextSource = Annotated[
 Pydantic dispatches on the ``type`` field to select the correct model.
 """
 
-
 # ===========================================================================
 # Result types (frozen dataclasses)
 # ===========================================================================
-
 
 @dataclass(frozen=True, slots=True)
 class SourceResult:
@@ -202,7 +190,7 @@ class SourceResult:
         source_name: str,
         data: Any,
         elapsed_ms: float = 0.0,
-    ) -> SourceResult:
+    ) -> "SourceResult":
         """Create a successful result."""
         return cls(
             source_type=source_type,
@@ -219,7 +207,7 @@ class SourceResult:
         source_name: str,
         error_message: str,
         elapsed_ms: float = 0.0,
-    ) -> SourceResult:
+    ) -> "SourceResult":
         """Create an error result."""
         return cls(
             source_type=source_type,
@@ -237,7 +225,7 @@ class SourceResult:
         source_name: str,
         error_message: str,
         elapsed_ms: float = 0.0,
-    ) -> SourceResult:
+    ) -> "SourceResult":
         """Create a timeout result."""
         return cls(
             source_type=source_type,
@@ -254,7 +242,7 @@ class SourceResult:
         source_type: str,
         source_name: str,
         error_message: str,
-    ) -> SourceResult:
+    ) -> "SourceResult":
         """Create a skipped result (e.g., no executor registered)."""
         return cls(
             source_type=source_type,
@@ -272,7 +260,7 @@ class SourceResult:
         data: Any,
         error_message: str,
         elapsed_ms: float = 0.0,
-    ) -> SourceResult:
+    ) -> "SourceResult":
         """Create a truncated result."""
         return cls(
             source_type=source_type,
@@ -282,7 +270,6 @@ class SourceResult:
             error_message=error_message,
             elapsed_ms=elapsed_ms,
         )
-
 
 @dataclass(frozen=True, slots=True)
 class ManifestResult:
@@ -298,11 +285,9 @@ class ManifestResult:
     resolved_at: str
     total_ms: float
 
-
 # ===========================================================================
 # Exceptions
 # ===========================================================================
-
 
 class ManifestResolutionError(Exception):
     """Raised when one or more required sources fail during manifest resolution.

@@ -4,8 +4,6 @@ CAS-backed operation logging for all filesystem operations.
 Provides audit trail, undo capability, and debugging support.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 import click
@@ -19,7 +17,6 @@ from nexus.cli.utils import (
     handle_error,
 )
 
-
 def register_commands(cli: click.Group) -> None:
     """Register operation log commands with the CLI.
 
@@ -28,7 +25,6 @@ def register_commands(cli: click.Group) -> None:
     """
     cli.add_command(ops_group)
     cli.add_command(undo)
-
 
 @click.group(name="ops")
 def ops_group() -> None:
@@ -42,7 +38,6 @@ def ops_group() -> None:
         nexus ops log --type write --path /workspace/data.txt
     """
     pass
-
 
 @ops_group.command(name="diff")
 @click.argument("path", type=str)
@@ -178,7 +173,6 @@ def ops_diff(
     except Exception as e:
         handle_error(e)
 
-
 @ops_group.command(name="log")
 @click.option("--agent", "-a", help="Filter by agent ID")
 @click.option("--zone", "-z", help="Filter by zone ID")
@@ -273,7 +267,6 @@ def ops_log(
     except Exception as e:
         handle_error(e)
 
-
 @click.command(name="undo")
 @click.option("--agent", "-a", help="Filter by agent ID (undo last operation by this agent)")
 @click.option("--yes", "-y", is_flag=True, help="Skip confirmation")
@@ -335,7 +328,6 @@ def undo(agent: str | None, yes: bool, backend_config: BackendConfig) -> None:
 
     except Exception as e:
         handle_error(e)
-
 
 def _undo_operation(nx: Any, logger: Any, operation: Any) -> None:
     """Undo a specific operation.

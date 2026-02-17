@@ -7,14 +7,11 @@ Note: Uses Starlette TestClient for WebSocket testing as the websockets
 library has compatibility issues with Python 3.14.
 """
 
-from __future__ import annotations
-
 import sys
 from typing import Any
 
 import pytest
 from starlette.testclient import TestClient
-
 
 class TestWebSocketHealthIntegration:
     """Tests for WebSocket integration with health endpoint."""
@@ -123,7 +120,6 @@ class TestWebSocketHealthIntegration:
                 during = response.json()["components"]["websocket"]["current_connections"]
                 assert during == initial + 1
 
-
 class TestWebSocketPatternFiltering:
     """Tests for WebSocket pattern filtering."""
 
@@ -148,7 +144,6 @@ class TestWebSocketPatternFiltering:
             response = ws.receive_json()
             assert response["type"] == "subscribed"
             assert response["patterns"] == ["/src/**/*.py"]
-
 
 @pytest.mark.skipif(
     sys.version_info >= (3, 14),

@@ -6,12 +6,9 @@ max_concurrent limits. Syncs from DB on startup for crash recovery.
 No I/O — the sync method accepts pre-fetched data.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 from cachetools import LRUCache
-
 
 @dataclass(frozen=True, slots=True)
 class FairShareSnapshot:
@@ -29,10 +26,8 @@ class FairShareSnapshot:
     def is_at_capacity(self) -> bool:
         return self.running_count >= self.max_concurrent
 
-
 # Default max concurrent tasks per agent
 _DEFAULT_MAX_CONCURRENT = 10
-
 
 class FairShareCounter:
     """In-memory per-agent concurrency tracker.

@@ -1,7 +1,5 @@
 """Tests for skill_generator module."""
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import pytest
@@ -16,7 +14,6 @@ from nexus.skills.skill_generator import (
     generate_skill_md,
     get_skill_generator,
 )
-
 
 @pytest.fixture
 def temp_templates_dir(tmp_path: Path) -> Path:
@@ -58,7 +55,6 @@ invalid: yaml: structure:
     (templates_dir / "invalid_yaml.md").write_text(invalid_yaml)
 
     return templates_dir
-
 
 @pytest.fixture
 def mock_service_registry():
@@ -102,7 +98,6 @@ def mock_service_registry():
 
     _sm._synced = False
 
-
 @pytest.fixture
 def skill_generator(temp_templates_dir: Path, mock_service_registry) -> SkillGenerator:
     """Create a SkillGenerator with temporary templates.
@@ -111,7 +106,6 @@ def skill_generator(temp_templates_dir: Path, mock_service_registry) -> SkillGen
     before templates are loaded.
     """
     return SkillGenerator(templates_path=temp_templates_dir)
-
 
 class TestSkillGenerator:
     """Tests for SkillGenerator class."""
@@ -194,7 +188,6 @@ class TestSkillGenerator:
         """Test getting nonexistent template."""
         template = skill_generator.get_template("nonexistent")
         assert template is None
-
 
 class TestSkillGeneration:
     """Tests for skill generation methods."""
@@ -359,7 +352,6 @@ class TestSkillGeneration:
         frontmatter = yaml.safe_load(parts[1])
         assert frontmatter["name"] == "unknown-service"
 
-
 class TestMetadataBuilding:
     """Tests for metadata building."""
 
@@ -437,7 +429,6 @@ class TestMetadataBuilding:
         )
 
         assert metadata.tool_count == 1
-
 
 class TestToolsSectionGeneration:
     """Tests for MCP tools section generation."""
@@ -554,7 +545,6 @@ class TestToolsSectionGeneration:
         assert "Tool without parameters" in section
         assert "**Parameters:**" not in section
 
-
 class TestPlaceholderReplacement:
     """Tests for {mount_path} placeholder replacement."""
 
@@ -585,7 +575,6 @@ class TestPlaceholderReplacement:
 
         assert "/mnt/test/" in frontmatter["description"]
         assert "{mount_path}" not in frontmatter["description"]
-
 
 class TestModuleLevelFunctions:
     """Tests for module-level convenience functions."""
@@ -635,7 +624,6 @@ class TestModuleLevelFunctions:
 
         assert "## MCP Tools" in skill_md
         assert "### test_tool" in skill_md
-
 
 class TestEdgeCases:
     """Tests for edge cases and error handling."""
@@ -688,7 +676,6 @@ class TestEdgeCases:
         # Empty list should not add tools section
         assert "## MCP Tools" not in skill_md
 
-
 class TestConnectorTemplate:
     """Tests for ConnectorTemplate dataclass."""
 
@@ -708,7 +695,6 @@ class TestConnectorTemplate:
         assert template.connector == "test_connector"
         assert template.oauth_provider == "test"
         assert "read" in template.capabilities
-
 
 class TestSkillMetadata:
     """Tests for SkillMetadata dataclass."""

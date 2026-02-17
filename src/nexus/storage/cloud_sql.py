@@ -16,11 +16,8 @@ Usage::
     async_engine = create_async_engine("postgresql+asyncpg://", creator=async_creator)
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from typing import Any
-
 
 def create_cloud_sql_creators(
     instance_connection_name: str,

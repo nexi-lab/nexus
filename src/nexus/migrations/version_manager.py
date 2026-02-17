@@ -8,8 +8,6 @@ This module provides the core logic for:
 - Rolling back failed migrations
 """
 
-from __future__ import annotations
-
 import json
 import shutil
 import time
@@ -17,16 +15,12 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import nexus
+from nexus.config import NexusConfig
 from nexus.migrations.registry import MigrationPath, get_registry
-
-if TYPE_CHECKING:
-    from sqlalchemy.orm import Session
-
-    from nexus.config import NexusConfig
-
+from sqlalchemy.orm import Session
 
 @dataclass
 class MigrationContext:
@@ -56,7 +50,6 @@ class MigrationContext:
         """
         if self.progress_callback:
             self.progress_callback(message, current, total)
-
 
 @dataclass
 class MigrationResult:
@@ -94,7 +87,6 @@ class MigrationResult:
             f"duration={self.duration_seconds:.2f}s)"
         )
 
-
 @dataclass
 class MigrationHistoryEntry:
     """Record of a migration execution.
@@ -122,7 +114,6 @@ class MigrationHistoryEntry:
     completed_at: datetime | None = None
     error_message: str | None = None
     metadata: dict | None = None
-
 
 class VersionManager:
     """Orchestrates version upgrades and rollbacks.

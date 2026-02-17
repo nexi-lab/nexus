@@ -12,8 +12,6 @@ Tests verify:
 - Error handling with real errors
 """
 
-from __future__ import annotations
-
 import asyncio
 import os
 import socket
@@ -21,7 +19,6 @@ import uuid
 from decimal import Decimal
 
 import pytest
-
 
 def _is_tigerbeetle_available() -> tuple[bool, str]:
     """Check if TigerBeetle is available (module + server)."""
@@ -49,17 +46,14 @@ def _is_tigerbeetle_available() -> tuple[bool, str]:
 
     return True, ""
 
-
 _tb_available, _tb_skip_reason = _is_tigerbeetle_available()
 
 # Skip all tests if TigerBeetle not available
 pytestmark = pytest.mark.skipif(not _tb_available, reason=_tb_skip_reason)
 
-
 def unique_agent_id() -> str:
     """Generate unique agent ID for test isolation."""
     return f"test-agent-{uuid.uuid4().hex[:8]}"
-
 
 class TestTigerBeetleConnection:
     """Test TigerBeetle client connection."""
@@ -78,7 +72,6 @@ class TestTigerBeetleConnection:
         balance = await service.get_balance(unique_agent_id())
         # New accounts should have zero balance
         assert balance == Decimal("0")
-
 
 class TestWalletProvisioning:
     """Test wallet creation with real TigerBeetle."""
@@ -117,7 +110,6 @@ class TestWalletProvisioning:
 
         # Second provision should not raise
         await service.provision_wallet(agent_id, "test-zone")
-
 
 class TestTransferOperations:
     """Test credit transfers with real TigerBeetle."""
@@ -202,7 +194,6 @@ class TestTransferOperations:
                 amount=Decimal("100"),
             )
 
-
 class TestTwoPhaseTransfers:
     """Test reservation (two-phase) operations with real TigerBeetle."""
 
@@ -284,7 +275,6 @@ class TestTwoPhaseTransfers:
         with pytest.raises(InsufficientCreditsError):
             await service.reserve(agent_id=agent_id, amount=Decimal("50"))
 
-
 class TestFastMetering:
     """Test fast deduction for API metering."""
 
@@ -327,7 +317,6 @@ class TestFastMetering:
         result = await service.deduct_fast(agent_id, Decimal("1"))
         assert result is False
 
-
 class TestBatchOperations:
     """Test batch transfers with real TigerBeetle."""
 
@@ -369,7 +358,6 @@ class TestBatchOperations:
         assert await service.get_balance(receiver2_id) == Decimal("20")
         assert await service.get_balance(receiver3_id) == Decimal("30")
 
-
 class TestConcurrentOperations:
     """Test concurrent operations with real TigerBeetle."""
 
@@ -407,7 +395,6 @@ class TestConcurrentOperations:
         # Total balance should still be 1000 (10 agents * 100 each)
         total = sum([await service.get_balance(a) for a in agents])
         assert total == Decimal("1000")
-
 
 class TestIdempotency:
     """Test idempotency with real TigerBeetle."""

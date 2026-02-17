@@ -4,7 +4,6 @@ from unittest.mock import Mock, patch
 
 from nexus.mcp.server import create_mcp_server
 
-
 class TestCreateMCPServer:
     """Test create_mcp_server function."""
 
@@ -52,7 +51,6 @@ class TestCreateMCPServer:
             mock_connect.assert_called_once()
             assert server is not None
 
-
 class TestMCPServerCreation:
     """Test basic MCP server creation."""
 
@@ -74,7 +72,6 @@ class TestMCPServerCreation:
         server = create_mcp_server(nx=nx)
 
         assert server is not None
-
 
 class TestMCPMain:
     """Test MCP main entry point."""

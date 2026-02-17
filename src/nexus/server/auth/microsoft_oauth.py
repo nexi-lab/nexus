@@ -24,7 +24,6 @@ import httpx
 
 from .oauth_provider import OAuthCredential, OAuthError, OAuthProvider
 
-
 class MicrosoftOAuthProvider(OAuthProvider):
     """Microsoft OAuth 2.0 provider (Microsoft Identity Platform).
 

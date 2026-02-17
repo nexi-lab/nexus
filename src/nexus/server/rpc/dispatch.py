@@ -12,15 +12,12 @@ Key design decisions:
   parameter instead of reaching into module-level globals.
 """
 
-from __future__ import annotations
-
 import asyncio
 import dataclasses
 import logging
 from typing import Any
 
 logger = logging.getLogger(__name__)
-
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class DispatchEntry:
@@ -46,10 +43,8 @@ class DispatchEntry:
     event_size_key: str | None = None
     pass_auth_provider: bool = False
 
-
 # Lazily initialized — handler functions are imported on first RPC request.
 _DISPATCH_TABLE: dict[str, DispatchEntry] = {}
-
 
 def build_dispatch_table() -> dict[str, DispatchEntry]:
     """Build the RPC dispatch table.
@@ -145,7 +140,6 @@ def build_dispatch_table() -> dict[str, DispatchEntry]:
         "admin_update_key": DispatchEntry(handle_admin_update_key, pass_auth_provider=True),
     }
 
-
 async def fire_rpc_event(
     subscription_manager: Any,
     event_type: str,
@@ -178,7 +172,6 @@ async def fire_rpc_event(
         await subscription_manager.broadcast(event_type, data, zone_id)
     except Exception as e:
         logger.warning(f"[RPC] Failed to fire event {event_type} for {path}: {e}")
-
 
 async def dispatch_method(
     method: str,
@@ -267,7 +260,6 @@ async def dispatch_method(
         return await _auto_dispatch(method, params, context, exposed_methods=exposed_methods)
 
     raise ValueError(f"Unknown method: {method}")
-
 
 async def _auto_dispatch(
     method: str,

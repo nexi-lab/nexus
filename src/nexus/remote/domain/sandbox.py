@@ -3,10 +3,7 @@
 Issue #1603: Decompose remote/client.py into domain clients.
 """
 
-from __future__ import annotations
-
 from typing import Any, cast
-
 
 class SandboxClient:
     """Sandbox management domain client (sync)."""
@@ -136,7 +133,6 @@ class SandboxClient:
             "sandbox_validate",
             {"sandbox_id": sandbox_id, "workspace_path": workspace_path},
         )
-
 
 class AsyncSandboxClient:
     """Sandbox management domain client (async)."""

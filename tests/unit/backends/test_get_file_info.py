@@ -6,8 +6,6 @@ Tests delta sync change detection metadata returned by each backend:
 - S3ConnectorBackend: S3 version ID or ETag fallback
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -19,7 +17,6 @@ from nexus.backends.backend import FileInfo
 # =============================================================================
 # LocalConnectorBackend.get_file_info()
 # =============================================================================
-
 
 class TestLocalConnectorGetFileInfo:
     """Test LocalConnectorBackend.get_file_info()."""
@@ -98,11 +95,9 @@ class TestLocalConnectorGetFileInfo:
         assert response.success is True
         assert response.data.size == 0
 
-
 # =============================================================================
 # GCSConnectorBackend.get_file_info()
 # =============================================================================
-
 
 class TestGCSConnectorGetFileInfo:
     """Test GCSConnectorBackend.get_file_info() with mocked GCS."""
@@ -198,11 +193,9 @@ class TestGCSConnectorGetFileInfo:
         # Verify the correct blob path was used
         mock_bucket.blob.assert_called_once()
 
-
 # =============================================================================
 # S3ConnectorBackend.get_file_info()
 # =============================================================================
-
 
 class TestS3ConnectorGetFileInfo:
     """Test S3ConnectorBackend.get_file_info() with mocked S3."""

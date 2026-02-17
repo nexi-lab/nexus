@@ -19,8 +19,6 @@ Requirements:
 - Database: scorpio (user: scorpio, password: scorpio) or set TEST_DATABASE_URL
 """
 
-from __future__ import annotations
-
 import base64
 import json
 import os
@@ -52,7 +50,6 @@ from nexus.storage.models import (
 )
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
-
 def _pg_available() -> bool:
     """Check if PostgreSQL is reachable at localhost:5432."""
     try:
@@ -60,7 +57,6 @@ def _pg_available() -> bool:
             return True
     except OSError:
         return False
-
 
 PG_AVAILABLE = _pg_available()
 
@@ -83,7 +79,6 @@ pytestmark = [
 # =============================================================================
 # Fixtures
 # =============================================================================
-
 
 @pytest_asyncio.fixture
 async def engine() -> AsyncGenerator[AsyncEngine, None]:
@@ -197,7 +192,6 @@ async def engine() -> AsyncGenerator[AsyncEngine, None]:
 
     await engine.dispose()
 
-
 @pytest_asyncio.fixture
 async def rebac_manager(engine: AsyncEngine) -> AsyncReBACManager:
     """Real AsyncReBACManager backed by PostgreSQL.
@@ -218,7 +212,6 @@ async def rebac_manager(engine: AsyncEngine) -> AsyncReBACManager:
 
     return manager
 
-
 @pytest.fixture
 def mock_credits_service():
     """Mock CreditsService for NexusPay."""
@@ -236,7 +229,6 @@ def mock_credits_service():
     service.topup.return_value = "topup-server-001"
     return service
 
-
 @pytest.fixture
 def x402_client():
     """Real X402Client for payment-gated tests."""
@@ -246,7 +238,6 @@ def x402_client():
         network="base",
         webhook_secret="test-secret",
     )
-
 
 @pytest_asyncio.fixture
 async def client(
@@ -353,11 +344,9 @@ async def client(
     _fastapi_app.state.async_nexus_fs = None
     app.dependency_overrides.clear()
 
-
 # =============================================================================
 # 1. NexusPay through real server stack (auth + permissions enabled)
 # =============================================================================
-
 
 @pytest.mark.asyncio
 async def test_health_with_permissions(client: AsyncClient) -> None:
@@ -366,7 +355,6 @@ async def test_health_with_permissions(client: AsyncClient) -> None:
     assert resp.status_code == 200
     data = resp.json()
     assert data["status"] == "healthy"
-
 
 @pytest.mark.asyncio
 async def test_balance_through_server(client: AsyncClient) -> None:
@@ -377,7 +365,6 @@ async def test_balance_through_server(client: AsyncClient) -> None:
     assert data["available"] == "100.0"
     assert data["reserved"] == "5.0"
     assert data["total"] == "105.0"
-
 
 @pytest.mark.asyncio
 async def test_transfer_through_server(
@@ -395,7 +382,6 @@ async def test_transfer_through_server(
     assert data["amount"] == "5.00"
     mock_credits_service.transfer.assert_called_once()
 
-
 @pytest.mark.asyncio
 async def test_reserve_through_server(
     client: AsyncClient,
@@ -411,11 +397,9 @@ async def test_reserve_through_server(
     assert data["status"] == "pending"
     mock_credits_service.reserve.assert_called_once()
 
-
 # =============================================================================
 # 2. x402 payment-gated endpoints on real server
 # =============================================================================
-
 
 @pytest.mark.asyncio
 async def test_premium_returns_402_on_real_server(client: AsyncClient) -> None:
@@ -427,7 +411,6 @@ async def test_premium_returns_402_on_real_server(client: AsyncClient) -> None:
     payload = json.loads(base64.b64decode(resp.headers["X-Payment-Required"]).decode())
     assert payload["amount"] == "1.00"
     assert payload["currency"] == "USDC"
-
 
 @pytest.mark.asyncio
 async def test_premium_unlocks_with_payment_on_real_server(
@@ -455,7 +438,6 @@ async def test_premium_unlocks_with_payment_on_real_server(
     assert resp.status_code == 200
     assert resp.json()["paid"] is True
 
-
 @pytest.mark.asyncio
 async def test_premium_rejects_invalid_payment_on_real_server(
     client: AsyncClient,
@@ -475,11 +457,9 @@ async def test_premium_rejects_invalid_payment_on_real_server(
     )
     assert resp.status_code == 402
 
-
 # =============================================================================
 # 3. File operations with permissions + payment in same server
 # =============================================================================
-
 
 @pytest.mark.asyncio
 async def test_file_write_with_permissions_enabled(client: AsyncClient) -> None:
@@ -490,7 +470,6 @@ async def test_file_write_with_permissions_enabled(client: AsyncClient) -> None:
     )
     assert resp.status_code == 200
     assert resp.json()["version"] == 1
-
 
 @pytest.mark.asyncio
 async def test_file_write_denied_when_no_permission(
@@ -563,7 +542,6 @@ async def test_file_write_denied_when_no_permission(
     _fastapi_app.state.async_nexus_fs = None
     app.dependency_overrides.clear()
 
-
 @pytest.mark.asyncio
 async def test_payment_and_file_ops_coexist(
     client: AsyncClient,
@@ -589,7 +567,6 @@ async def test_payment_and_file_ops_coexist(
     resp = await client.get("/api/v2/files/read", params={"path": "/pay/after-payment.txt"})
     assert resp.status_code == 200
     assert resp.json()["content"] == "paid content"
-
 
 @pytest.mark.asyncio
 async def test_full_lifecycle_auth_permission_payment(
@@ -643,11 +620,9 @@ async def test_full_lifecycle_auth_permission_payment(
     )
     assert resp.status_code == 200
 
-
 # =============================================================================
 # 4. Pay endpoint auth enforcement with permissions enabled
 # =============================================================================
-
 
 @pytest_asyncio.fixture
 async def auth_enforced_client(
@@ -704,13 +679,11 @@ async def auth_enforced_client(
     metadata_store.close()
     _fastapi_app.state.async_nexus_fs = None
 
-
 @pytest.mark.asyncio
 async def test_pay_balance_requires_auth(auth_enforced_client: AsyncClient) -> None:
     """Pay balance endpoint returns 401 without valid API key."""
     resp = await auth_enforced_client.get("/api/v2/pay/balance")
     assert resp.status_code == 401
-
 
 @pytest.mark.asyncio
 async def test_pay_transfer_requires_auth(auth_enforced_client: AsyncClient) -> None:
@@ -721,7 +694,6 @@ async def test_pay_transfer_requires_auth(auth_enforced_client: AsyncClient) -> 
     )
     assert resp.status_code == 401
 
-
 @pytest.mark.asyncio
 async def test_pay_reserve_requires_auth(auth_enforced_client: AsyncClient) -> None:
     """Pay reserve endpoint returns 401 without valid API key."""
@@ -730,7 +702,6 @@ async def test_pay_reserve_requires_auth(auth_enforced_client: AsyncClient) -> N
         json={"amount": "10.00"},
     )
     assert resp.status_code == 401
-
 
 @pytest.mark.asyncio
 async def test_pay_succeeds_with_valid_api_key(
@@ -744,7 +715,6 @@ async def test_pay_succeeds_with_valid_api_key(
     )
     assert resp.status_code == 200
     assert resp.json()["available"] == "100.0"
-
 
 @pytest.mark.asyncio
 async def test_pay_operations_scoped_to_authenticated_agent(
@@ -765,7 +735,6 @@ async def test_pay_operations_scoped_to_authenticated_agent(
     data = resp.json()
     # The from_agent should be the authenticated user (test_user from mock_auth_result)
     assert data["from_agent"] == "test_user"
-
 
 @pytest.mark.asyncio
 async def test_file_permission_denied_does_not_affect_pay(
@@ -851,11 +820,9 @@ async def test_file_permission_denied_does_not_affect_pay(
     _fastapi_app.state.async_nexus_fs = None
     app.dependency_overrides.clear()
 
-
 # =============================================================================
 # 5. DatabaseAPIKeyAuth (auth_type=database) with PostgreSQL
 # =============================================================================
-
 
 @pytest_asyncio.fixture
 async def db_auth_client(
@@ -953,7 +920,6 @@ async def db_auth_client(
 
     sync_engine.dispose()
 
-
 @pytest.mark.asyncio
 async def test_db_auth_pay_balance_no_token(
     db_auth_client: tuple[AsyncClient, str],
@@ -962,7 +928,6 @@ async def test_db_auth_pay_balance_no_token(
     http_client, _ = db_auth_client
     resp = await http_client.get("/api/v2/pay/balance")
     assert resp.status_code == 401
-
 
 @pytest.mark.asyncio
 async def test_db_auth_pay_balance_invalid_token(
@@ -975,7 +940,6 @@ async def test_db_auth_pay_balance_invalid_token(
         headers={"Authorization": "Bearer invalid-garbage-token"},
     )
     assert resp.status_code == 401
-
 
 @pytest.mark.asyncio
 async def test_db_auth_pay_balance_valid_key(
@@ -991,7 +955,6 @@ async def test_db_auth_pay_balance_valid_key(
     data = resp.json()
     assert data["available"] == "100.0"
     assert data["reserved"] == "5.0"
-
 
 @pytest.mark.asyncio
 async def test_db_auth_pay_transfer_valid_key(
@@ -1013,7 +976,6 @@ async def test_db_auth_pay_transfer_valid_key(
     assert data["from_agent"] == "pay_test_agent"
     mock_credits_service.transfer.assert_called_once()
 
-
 @pytest.mark.asyncio
 async def test_db_auth_pay_transfer_no_token(
     db_auth_client: tuple[AsyncClient, str],
@@ -1025,7 +987,6 @@ async def test_db_auth_pay_transfer_no_token(
         json={"to": "agent-bob", "amount": "5.00", "memo": "should fail"},
     )
     assert resp.status_code == 401
-
 
 @pytest.mark.asyncio
 async def test_db_auth_full_lifecycle(

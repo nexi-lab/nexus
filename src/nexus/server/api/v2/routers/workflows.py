@@ -13,8 +13,6 @@ Provides 8 endpoints for workflow management:
 Related: Issue #1522
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -25,11 +23,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/workflows", tags=["workflows"])
 
-
 # =============================================================================
 # Pydantic Request/Response Models
 # =============================================================================
-
 
 class WorkflowTriggerModel(BaseModel):
     """A workflow trigger definition."""
@@ -37,14 +33,12 @@ class WorkflowTriggerModel(BaseModel):
     type: str = Field(..., description="Trigger type (e.g. 'file_write', 'file_delete')")
     config: dict[str, Any] = Field(default_factory=dict, description="Trigger configuration")
 
-
 class WorkflowActionModel(BaseModel):
     """A workflow action definition."""
 
     name: str = Field(..., description="Action name")
     type: str = Field(..., description="Action type (e.g. 'python', 'bash', 'parse')")
     config: dict[str, Any] = Field(default_factory=dict, description="Action configuration")
-
 
 class CreateWorkflowRequest(BaseModel):
     """Request to load a workflow definition."""
@@ -59,7 +53,6 @@ class CreateWorkflowRequest(BaseModel):
     variables: dict[str, Any] = Field(default_factory=dict, description="Default variables")
     enabled: bool = Field(default=True, description="Enable workflow after loading")
 
-
 class ExecuteWorkflowRequest(BaseModel):
     """Request for manual workflow execution."""
 
@@ -69,7 +62,6 @@ class ExecuteWorkflowRequest(BaseModel):
     context: dict[str, Any] = Field(
         default_factory=dict, description="Additional execution context"
     )
-
 
 class WorkflowSummary(BaseModel):
     """Summary of a loaded workflow."""
@@ -81,7 +73,6 @@ class WorkflowSummary(BaseModel):
     triggers: int
     actions: int
 
-
 class WorkflowDetail(BaseModel):
     """Full workflow definition."""
 
@@ -92,7 +83,6 @@ class WorkflowDetail(BaseModel):
     actions: list[WorkflowActionModel] = Field(default_factory=list)
     variables: dict[str, Any] = Field(default_factory=dict)
     enabled: bool = True
-
 
 class ExecutionSummary(BaseModel):
     """Summary of a workflow execution."""
@@ -107,7 +97,6 @@ class ExecutionSummary(BaseModel):
     actions_total: int = 0
     error_message: str | None = None
 
-
 class ExecutionResult(BaseModel):
     """Result from a manual execution."""
 
@@ -117,18 +106,15 @@ class ExecutionResult(BaseModel):
     actions_total: int = 0
     error_message: str | None = None
 
-
 # =============================================================================
 # Dependencies
 # =============================================================================
-
 
 def _get_require_auth() -> Any:
     """Lazy import to avoid circular imports."""
     from nexus.server.fastapi_server import require_auth
 
     return require_auth
-
 
 def _get_workflow_engine(request: Request) -> Any:
     """Get WorkflowEngine from app state (set by lifespan)."""
@@ -138,11 +124,9 @@ def _get_workflow_engine(request: Request) -> Any:
 
     return engine
 
-
 # =============================================================================
 # Endpoints
 # =============================================================================
-
 
 @router.get("", response_model=list[WorkflowSummary])
 async def list_workflows(
@@ -162,7 +146,6 @@ async def list_workflows(
         )
         for w in workflows
     ]
-
 
 @router.post("", response_model=WorkflowSummary, status_code=201)
 async def create_workflow(
@@ -204,7 +187,6 @@ async def create_workflow(
         actions=len(definition.actions),
     )
 
-
 @router.get("/{name}", response_model=WorkflowDetail)
 async def get_workflow(
     name: str,
@@ -231,7 +213,6 @@ async def get_workflow(
         enabled=engine.enabled_workflows.get(name, False),
     )
 
-
 @router.delete("/{name}", status_code=204)
 async def delete_workflow(
     name: str,
@@ -242,7 +223,6 @@ async def delete_workflow(
     success = engine.unload_workflow(name)
     if not success:
         raise HTTPException(status_code=404, detail=f"Workflow '{name}' not found")
-
 
 @router.post("/{name}/enable", status_code=204)
 async def enable_workflow(
@@ -255,7 +235,6 @@ async def enable_workflow(
         raise HTTPException(status_code=404, detail=f"Workflow '{name}' not found")
     engine.enable_workflow(name)
 
-
 @router.post("/{name}/disable", status_code=204)
 async def disable_workflow(
     name: str,
@@ -266,7 +245,6 @@ async def disable_workflow(
     if name not in engine.workflows:
         raise HTTPException(status_code=404, detail=f"Workflow '{name}' not found")
     engine.disable_workflow(name)
-
 
 @router.post("/{name}/execute", response_model=ExecutionResult)
 async def execute_workflow(
@@ -297,7 +275,6 @@ async def execute_workflow(
         error_message=execution.error_message,
     )
 
-
 @router.get("/{name}/executions", response_model=list[ExecutionSummary])
 async def get_executions(
     name: str,
@@ -327,7 +304,6 @@ async def get_executions(
         )
         for e in executions
     ]
-
 
 # =============================================================================
 # Module Exports

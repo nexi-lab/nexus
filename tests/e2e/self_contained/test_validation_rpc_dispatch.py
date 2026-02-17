@@ -5,8 +5,6 @@ pipeline: protocol params class, method exposure, and parameter parsing.
 No Docker or live server required.
 """
 
-from __future__ import annotations
-
 import dataclasses
 
 import pytest
@@ -21,7 +19,6 @@ from nexus.validation.script_builder import (
     build_simple_validation_script,
     parse_simple_script_output,
 )
-
 
 class TestSandboxValidateProtocol:
     """Verify sandbox_validate is properly wired into the RPC protocol."""
@@ -49,7 +46,6 @@ class TestSandboxValidateProtocol:
         )
         assert params.sandbox_id == "sb-456"
         assert params.workspace_path == "/code"
-
 
 class TestValidationResultSerialization:
     """Verify results serialize cleanly for JSON-RPC response."""
@@ -104,7 +100,6 @@ class TestValidationResultSerialization:
         assert response["validations"][0]["validator"] == "ruff"
         assert response["validations"][1]["passed"] is False
 
-
 class TestCodeExecutionResultValidations:
     """Verify CodeExecutionResult carries validations correctly."""
 
@@ -133,7 +128,6 @@ class TestCodeExecutionResultValidations:
         d = dataclasses.asdict(result)
         assert d["stdout"] == "out"
         assert d["validations"] is None
-
 
 class TestPerformanceCharacteristics:
     """Verify the pipeline has no N+1 patterns and stays within budget."""

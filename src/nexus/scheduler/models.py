@@ -6,8 +6,6 @@ Pydantic models for API request/response are in the router module.
 Related: Issue #1212, #1274
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
@@ -21,7 +19,6 @@ from nexus.scheduler.constants import (
     PriorityTier,
     RequestState,
 )
-
 
 @dataclass(frozen=True)
 class TaskSubmission:
@@ -43,7 +40,6 @@ class TaskSubmission:
     request_state: RequestState = RequestState.PENDING
     priority_class: PriorityClass | None = None  # None = auto-classify
     estimated_service_time: float = DEFAULT_EST_SERVICE_TIME_SECS
-
 
 @dataclass(frozen=True)
 class ScheduledTask:

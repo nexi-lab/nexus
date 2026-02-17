@@ -6,8 +6,6 @@ Track-only: no hard CI assertions (Decision #12).
 Issue #1397
 """
 
-from __future__ import annotations
-
 import asyncio
 from pathlib import Path
 from typing import Any
@@ -27,14 +25,12 @@ except ImportError:
 
 pytest.importorskip("pytest_benchmark")
 
-
 def _event(i: int = 0) -> FileEvent:
     return FileEvent(
         type=FileEventType.FILE_WRITE,
         path=f"/bench/file-{i}.txt",
         zone_id="zone-bench",
     )
-
 
 @pytest.fixture()
 def wal(tmp_path: Path) -> WALEventLog:
@@ -46,7 +42,6 @@ def wal(tmp_path: Path) -> WALEventLog:
     except Exception:
         pass
 
-
 def test_bench_append_single(benchmark: Any, wal: WALEventLog) -> None:
     """Benchmark single event append (no fsync)."""
     loop = asyncio.new_event_loop()
@@ -56,7 +51,6 @@ def test_bench_append_single(benchmark: Any, wal: WALEventLog) -> None:
 
     benchmark(run)
     loop.close()
-
 
 @pytest.mark.benchmark_ci
 def test_bench_append_batch_1k(benchmark: Any, wal: WALEventLog) -> None:
@@ -69,7 +63,6 @@ def test_bench_append_batch_1k(benchmark: Any, wal: WALEventLog) -> None:
 
     benchmark(run)
     loop.close()
-
 
 def test_bench_read_1k(benchmark: Any, wal: WALEventLog) -> None:
     """Benchmark reading 1000 events from middle of WAL."""

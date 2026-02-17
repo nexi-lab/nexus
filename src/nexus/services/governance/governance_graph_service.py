@@ -6,8 +6,6 @@ dynamic constraint management with TTL cache.
 Hot path: check_constraint() — <1ms cached, <5ms uncached.
 """
 
-from __future__ import annotations
-
 import contextlib
 import json
 import logging
@@ -23,13 +21,14 @@ from nexus.services.governance.models import (
     GovernanceEdge,
 )
 
+from collections.abc import Callable
+from sqlalchemy.ext.asyncio import AsyncSession
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
-
 
 class GovernanceGraphService:
     """Manages governance constraints between agents.

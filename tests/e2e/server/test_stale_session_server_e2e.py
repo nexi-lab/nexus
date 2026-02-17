@@ -13,8 +13,6 @@ Tests the full flow:
 5. Performance: auth + permission check completes within acceptable latency
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket
@@ -35,12 +33,10 @@ import pytest
 PYTHON = sys.executable
 SRC_PATH = str(Path(__file__).resolve().parents[2] / "src")
 
-
 def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
-
 
 def _wait_for_health(base_url: str, timeout: float = 45.0) -> None:
     deadline = time.monotonic() + timeout
@@ -58,15 +54,12 @@ def _wait_for_health(base_url: str, timeout: float = 45.0) -> None:
         f"Server did not start within {timeout}s at {base_url}. Last error: {last_err}"
     )
 
-
 def _make_client() -> httpx.Client:
     return httpx.Client(timeout=10.0, trust_env=False)
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
 
 @pytest.fixture(scope="module")
 def server():
@@ -163,16 +156,13 @@ def server():
 
         shutil.rmtree(data_dir, ignore_errors=True)
 
-
 @pytest.fixture()
 def base_url(server: dict) -> str:
     return server["base_url"]
 
-
 @pytest.fixture()
 def jwt_secret(server: dict) -> str:
     return server["jwt_secret"]
-
 
 def _create_jwt(secret: str, claims: dict) -> str:
     """Create a JWT token using the same LocalAuth mechanism."""
@@ -182,11 +172,9 @@ def _create_jwt(secret: str, claims: dict) -> str:
     email = claims.pop("email", "test@example.com")
     return auth.create_token(email, claims)
 
-
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
-
 
 class TestStaleSessionWithRealServer:
     """Validate Issue #1445: agent_generation flows from JWT through permissions."""
@@ -310,7 +298,6 @@ class TestStaleSessionWithRealServer:
             )
             assert r.status_code != 200, "Should not succeed without auth"
 
-
 class TestJWTAgentGenerationRoundtrip:
     """Verify agent_generation is correctly encoded/decoded in JWT tokens."""
 
@@ -350,7 +337,6 @@ class TestJWTAgentGenerationRoundtrip:
 
         claims = auth.verify_token(token)
         assert "agent_generation" not in claims
-
 
 class TestPerformanceBaseline:
     """Verify no performance regression from Issue #1445 changes."""

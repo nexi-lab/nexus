@@ -1,7 +1,5 @@
 """Dynamic feedback system for trajectories."""
 
-from __future__ import annotations
-
 import json
 import uuid
 from datetime import UTC, datetime
@@ -10,7 +8,6 @@ from typing import Any, Literal
 from sqlalchemy.orm import Session
 
 from nexus.storage.models import TrajectoryFeedbackModel, TrajectoryModel
-
 
 class FeedbackManager:
     """Manage dynamic feedback for trajectories.

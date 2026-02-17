@@ -8,8 +8,6 @@ References:
     - Issue #1428: Review fix — DRY (5A), typed protocols (6A)
 """
 
-from __future__ import annotations
-
 import time
 from concurrent.futures import Executor
 from typing import Protocol, runtime_checkable
@@ -21,7 +19,6 @@ from nexus.services.context_manifest.template import resolve_template
 # Per-executor source protocols (6A)
 # ---------------------------------------------------------------------------
 
-
 @runtime_checkable
 class FileGlobSourceProtocol(ContextSourceProtocol, Protocol):
     """Typed protocol for file_glob sources."""
@@ -31,7 +28,6 @@ class FileGlobSourceProtocol(ContextSourceProtocol, Protocol):
 
     @property
     def max_files(self) -> int: ...
-
 
 @runtime_checkable
 class MemoryQuerySourceProtocol(ContextSourceProtocol, Protocol):
@@ -43,7 +39,6 @@ class MemoryQuerySourceProtocol(ContextSourceProtocol, Protocol):
     @property
     def top_k(self) -> int: ...
 
-
 @runtime_checkable
 class WorkspaceSnapshotSourceProtocol(ContextSourceProtocol, Protocol):
     """Typed protocol for workspace_snapshot sources."""
@@ -51,11 +46,9 @@ class WorkspaceSnapshotSourceProtocol(ContextSourceProtocol, Protocol):
     @property
     def snapshot_id(self) -> str: ...
 
-
 # ---------------------------------------------------------------------------
 # DRY template resolution helper (5A)
 # ---------------------------------------------------------------------------
-
 
 def resolve_source_template(
     field_value: str,
@@ -101,11 +94,9 @@ def resolve_source_template(
             elapsed_ms=elapsed_ms,
         )
 
-
 # ---------------------------------------------------------------------------
 # Thread pool helper (14B)
 # ---------------------------------------------------------------------------
-
 
 def get_executor_pool(
     custom_pool: Executor | None,

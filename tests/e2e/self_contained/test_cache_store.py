@@ -4,8 +4,6 @@ Tests realistic cache workflows using InMemoryCacheStore as the driver.
 DragonflyCacheStore would use the same ABC interface against a real Dragonfly instance.
 """
 
-from __future__ import annotations
-
 import asyncio
 
 import pytest
@@ -20,17 +18,14 @@ from nexus.core.cache_store import CacheStoreABC, NullCacheStore
 # Fixture: shared InMemoryCacheStore for realistic scenarios
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture
 def cache_store():
     """InMemoryCacheStore — real storage, process-local."""
     return InMemoryCacheStore()
 
-
 # ---------------------------------------------------------------------------
 # Scenario 1: Permission caching workflow
 # ---------------------------------------------------------------------------
-
 
 class TestPermissionCachingWorkflow:
     """Simulate how PermissionCache would use CacheStoreABC primitives.
@@ -93,11 +88,9 @@ class TestPermissionCachingWorkflow:
         assert await cache_store.exists(grant_key)
         assert await cache_store.exists(denial_key)
 
-
 # ---------------------------------------------------------------------------
 # Scenario 2: PubSub event distribution
 # ---------------------------------------------------------------------------
-
 
 class TestEventDistribution:
     """Simulate EventBus using CacheStoreABC PubSub primitives."""
@@ -151,11 +144,9 @@ class TestEventDistribution:
         await asyncio.wait_for(task, timeout=2.0)
         assert zone2_received == [b"zone2-event"]
 
-
 # ---------------------------------------------------------------------------
 # Scenario 3: Graceful degrade (NullCacheStore)
 # ---------------------------------------------------------------------------
-
 
 class TestGracefulDegrade:
     """NullCacheStore provides no-op behavior — kernel works without cache."""
@@ -187,11 +178,9 @@ class TestGracefulDegrade:
         store = InMemoryCacheStore()
         assert isinstance(store, CacheStoreABC)
 
-
 # ---------------------------------------------------------------------------
 # Scenario 4: TTL expiration behavior
 # ---------------------------------------------------------------------------
-
 
 class TestTTLExpiration:
     """TTL-based cache expiration in InMemoryCacheStore."""
@@ -214,11 +203,9 @@ class TestTTLExpiration:
         await asyncio.sleep(0.05)
         assert await cache_store.get("permanent") == b"data"
 
-
 # ---------------------------------------------------------------------------
 # Scenario 5: Domain caches via CacheStoreABC (driver-agnostic)
 # ---------------------------------------------------------------------------
-
 
 class TestPermissionCacheDomain:
     """PermissionCache built on CacheStoreABC — the full stack."""
@@ -268,7 +255,6 @@ class TestPermissionCacheDomain:
         # /private untouched
         assert await perm_cache.get("user", "alice", "read", "file", "/private", "zone1") is True
 
-
 class TestTigerCacheDomain:
     """TigerCache built on CacheStoreABC — bitmap store/retrieve."""
 
@@ -302,11 +288,9 @@ class TestTigerCacheDomain:
         deleted = await tiger_cache.invalidate(subject_type="user", subject_id="alice")
         assert deleted == 2
 
-
 # ---------------------------------------------------------------------------
 # Scenario 6: CacheFactory with injected CacheStoreABC
 # ---------------------------------------------------------------------------
-
 
 class TestCacheFactoryIntegration:
     """CacheFactory creates domain caches from injected CacheStoreABC."""

@@ -1,7 +1,5 @@
 """Directory operation commands - ls, mkdir, rmdir, tree."""
 
-from __future__ import annotations
-
 from typing import Any, cast
 
 import click
@@ -16,14 +14,12 @@ from nexus.cli.utils import (
     handle_error,
 )
 
-
 def register_commands(cli: click.Group) -> None:
     """Register all directory operation commands."""
     cli.add_command(list_files)
     cli.add_command(mkdir)
     cli.add_command(rmdir)
     cli.add_command(tree)
-
 
 @click.command(name="ls")
 @click.argument("path", default="/", type=str)
@@ -227,7 +223,6 @@ def list_files(
     except Exception as e:
         handle_error(e)
 
-
 @click.command()
 @click.argument("path", type=str)
 @click.option("-p", "--parents", is_flag=True, help="Create parent directories as needed")
@@ -251,7 +246,6 @@ def mkdir(
         console.print(f"[green]✓[/green] Created directory [cyan]{path}[/cyan]")
     except Exception as e:
         handle_error(e)
-
 
 @click.command()
 @click.argument("path", type=str)
@@ -285,7 +279,6 @@ def rmdir(
         console.print(f"[green]✓[/green] Removed directory [cyan]{path}[/cyan]")
     except Exception as e:
         handle_error(e)
-
 
 @click.command(name="tree")
 @click.argument("path", default="/", type=str)

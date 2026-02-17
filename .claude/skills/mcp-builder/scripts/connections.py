@@ -9,7 +9,6 @@ from mcp.client.sse import sse_client
 from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import streamablehttp_client
 
-
 class MCPConnection(ABC):
     """Base class for MCP server connections."""
 
@@ -69,7 +68,6 @@ class MCPConnection(ABC):
         result = await self.session.call_tool(tool_name, arguments=arguments)
         return result.content
 
-
 class MCPConnectionStdio(MCPConnection):
     """MCP connection using standard input/output."""
 
@@ -84,7 +82,6 @@ class MCPConnectionStdio(MCPConnection):
             StdioServerParameters(command=self.command, args=self.args, env=self.env)
         )
 
-
 class MCPConnectionSSE(MCPConnection):
     """MCP connection using Server-Sent Events."""
 
@@ -96,7 +93,6 @@ class MCPConnectionSSE(MCPConnection):
     def _create_context(self):
         return sse_client(url=self.url, headers=self.headers)
 
-
 class MCPConnectionHTTP(MCPConnection):
     """MCP connection using Streamable HTTP."""
 
@@ -107,7 +103,6 @@ class MCPConnectionHTTP(MCPConnection):
 
     def _create_context(self):
         return streamablehttp_client(url=self.url, headers=self.headers)
-
 
 def create_connection(
     transport: str,

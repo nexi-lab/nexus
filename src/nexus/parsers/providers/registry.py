@@ -11,7 +11,6 @@ from nexus.parsers.types import ParseResult
 
 logger = logging.getLogger(__name__)
 
-
 class ProviderRegistry(BaseRegistry[ParseProvider]):
     """Registry for managing parse providers.
 

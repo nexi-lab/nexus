@@ -13,7 +13,6 @@ from nexus.storage.version_gc import VersionGCSettings, VersionHistoryGC
 
 logger = logging.getLogger(__name__)
 
-
 async def sandbox_cleanup_task(sandbox_manager: Any, interval_seconds: int = 300) -> None:
     """Background task: Clean up expired sandboxes (Issue #372).
 
@@ -42,7 +41,6 @@ async def sandbox_cleanup_task(sandbox_manager: Any, interval_seconds: int = 300
             logger.error(f"Sandbox cleanup failed: {e}", exc_info=True)
 
         await asyncio.sleep(interval_seconds)
-
 
 async def session_cleanup_task(session_factory: Any, interval_seconds: int = 3600) -> None:
     """Background task: Clean up expired sessions.
@@ -77,7 +75,6 @@ async def session_cleanup_task(session_factory: Any, interval_seconds: int = 360
 
         await asyncio.sleep(interval_seconds)
 
-
 async def inactive_session_cleanup_task(
     session_factory: Any,
     inactive_threshold: timedelta = timedelta(days=30),
@@ -111,7 +108,6 @@ async def inactive_session_cleanup_task(
             logger.error(f"Inactive session cleanup failed: {e}", exc_info=True)
 
         await asyncio.sleep(interval_seconds)
-
 
 async def tiger_cache_queue_task(
     rebac_manager: Any,
@@ -159,7 +155,6 @@ async def tiger_cache_queue_task(
             logger.warning(f"Tiger Cache queue processing error: {e}")
 
         await asyncio.sleep(interval_seconds)
-
 
 async def version_gc_task(
     session_factory: Any,
@@ -214,7 +209,6 @@ async def version_gc_task(
                 logger.error(f"Version GC failed: {e}", exc_info=True)
 
         await asyncio.sleep(interval_seconds)
-
 
 async def hotspot_prefetch_task(
     hotspot_detector: Any,
@@ -295,7 +289,6 @@ async def hotspot_prefetch_task(
 
         await asyncio.sleep(interval_seconds)
 
-
 async def heartbeat_flush_task(agent_registry: Any, interval_seconds: int = 60) -> None:
     """Periodically flush agent heartbeat buffer to database (Issue #1240).
 
@@ -311,7 +304,6 @@ async def heartbeat_flush_task(agent_registry: Any, interval_seconds: int = 60) 
                 logger.info(f"[HEARTBEAT] Flushed {flushed} agent heartbeats to database")
         except Exception:
             logger.exception("[HEARTBEAT] Failed to flush heartbeat buffer")
-
 
 async def stale_agent_detection_task(
     agent_registry: Any, interval_seconds: int = 300, threshold_seconds: int = 300
@@ -332,7 +324,6 @@ async def stale_agent_detection_task(
                 logger.warning(f"[HEARTBEAT] {len(stale)} stale agents detected: {stale_ids[:10]}")
         except Exception:
             logger.exception("[HEARTBEAT] Failed to detect stale agents")
-
 
 def start_background_tasks(
     session_factory: Any,

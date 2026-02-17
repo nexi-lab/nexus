@@ -15,7 +15,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 import nexus
 
-
 def setup_tasks():
     """Create initial demo tasks."""
     # Connect to local Nexus instance with agent identity
@@ -58,7 +57,6 @@ def setup_tasks():
 
     print(f"\n✅ Created {len(tasks)} initial tasks")
     print("\nRun 'python agent.py' to start the agent workflow.")
-
 
 if __name__ == "__main__":
     setup_tasks()

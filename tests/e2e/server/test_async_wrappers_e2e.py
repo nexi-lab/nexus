@@ -14,8 +14,6 @@ Run with:
     pytest tests/e2e/test_async_wrappers_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import asyncio
 import uuid
 from collections.abc import Iterator
@@ -46,7 +44,6 @@ from nexus.storage.models import Base
 # Fixtures: real implementations, not mocks
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture()
 def sqlite_registry(tmp_path: Path) -> Iterator[AgentRegistry]:
     """Real AgentRegistry backed by SQLite."""
@@ -61,11 +58,9 @@ def sqlite_registry(tmp_path: Path) -> Iterator[AgentRegistry]:
     )
     engine.dispose()
 
-
 @pytest.fixture()
 def async_registry(sqlite_registry: AgentRegistry) -> AsyncAgentRegistry:
     return AsyncAgentRegistry(sqlite_registry)
-
 
 @pytest.fixture()
 def real_router(tmp_path: Path) -> PathRouter:
@@ -79,26 +74,21 @@ def real_router(tmp_path: Path) -> PathRouter:
     router.add_mount("/workspace", backend, priority=10)
     return router
 
-
 @pytest.fixture()
 def async_router(real_router: PathRouter) -> AsyncVFSRouter:
     return AsyncVFSRouter(real_router)
-
 
 @pytest.fixture()
 def real_hooks() -> PluginHooks:
     return PluginHooks()
 
-
 @pytest.fixture()
 def async_hooks(real_hooks: PluginHooks) -> AsyncHookEngine:
     return AsyncHookEngine(real_hooks)
 
-
 # ---------------------------------------------------------------------------
 # 1. Protocol isinstance conformance (all 4 wrappers)
 # ---------------------------------------------------------------------------
-
 
 class TestProtocolConformance:
     """All 4 async wrappers satisfy isinstance checks against their protocols."""
@@ -120,11 +110,9 @@ class TestProtocolConformance:
     def test_hook_engine_protocol(self, async_hooks: AsyncHookEngine) -> None:
         assert isinstance(async_hooks, HookEngineProtocol)
 
-
 # ---------------------------------------------------------------------------
 # 2. AsyncAgentRegistry with real SQLite DB
 # ---------------------------------------------------------------------------
-
 
 class TestAsyncAgentRegistryE2E:
     """Full agent lifecycle through AsyncAgentRegistry -> real AgentRegistry -> SQLite."""
@@ -198,11 +186,9 @@ class TestAsyncAgentRegistryE2E:
         agent_ids = {r.agent_id for r in results}
         assert len(agent_ids) == 10
 
-
 # ---------------------------------------------------------------------------
 # 3. AsyncVFSRouter with real PathRouter + LocalBackend
 # ---------------------------------------------------------------------------
-
 
 class TestAsyncVFSRouterE2E:
     """Route resolution through AsyncVFSRouter -> real PathRouter -> LocalBackend."""
@@ -251,11 +237,9 @@ class TestAsyncVFSRouterE2E:
         removed_again = await async_router.remove_mount("/test-mount")
         assert removed_again is False
 
-
 # ---------------------------------------------------------------------------
 # 4. AsyncHookEngine with real PluginHooks
 # ---------------------------------------------------------------------------
-
 
 class TestAsyncHookEngineE2E:
     """Hook lifecycle through AsyncHookEngine -> real PluginHooks."""
@@ -362,11 +346,9 @@ class TestAsyncHookEngineE2E:
         # At least some unregisters succeeded
         assert any(results[1:])
 
-
 # ---------------------------------------------------------------------------
 # 5. Server factory import validation
 # ---------------------------------------------------------------------------
-
 
 class TestServerWiring:
     """Validate that the fastapi_server.py changes load without errors."""
@@ -401,11 +383,9 @@ class TestServerWiring:
 
         assert AsyncHookEngine is not None
 
-
 # ---------------------------------------------------------------------------
 # 6. Server lifespan wiring simulation
 # ---------------------------------------------------------------------------
-
 
 class TestServerLifespanWiring:
     """Simulate the FastAPI lifespan wiring path for async wrappers.

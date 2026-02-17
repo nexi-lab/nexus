@@ -11,8 +11,6 @@ Run with:
     pytest tests/e2e/test_fuse_events_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import base64
 import json
 import threading
@@ -28,7 +26,6 @@ import pytest
 # ==============================================================================
 # Mock Webhook Server
 # ==============================================================================
-
 
 class WebhookHandler(BaseHTTPRequestHandler):
     """HTTP handler that captures webhook requests."""
@@ -55,7 +52,6 @@ class WebhookHandler(BaseHTTPRequestHandler):
     def log_message(self, format: str, *args: Any) -> None:
         """Suppress logging."""
         pass
-
 
 class MockWebhookServer:
     """Context manager for running a mock webhook server."""
@@ -104,16 +100,13 @@ class MockWebhookServer:
                         break
         return events
 
-
 # ==============================================================================
 # Helper Functions
 # ==============================================================================
 
-
 def encode_bytes(content: bytes) -> dict:
     """Encode bytes for JSON-RPC transport."""
     return {"__type__": "bytes", "data": base64.b64encode(content).decode("utf-8")}
-
 
 def make_rpc_request(
     client: httpx.Client,
@@ -137,7 +130,6 @@ def make_rpc_request(
         headers=headers,
     )
     return response.json()
-
 
 def register_user(client: httpx.Client, username: str, password: str = "password123") -> dict:
     """Register a new user and return token.
@@ -167,11 +159,9 @@ def register_user(client: httpx.Client, username: str, password: str = "password
         "access_token": None,  # No token needed for open access mode
     }
 
-
 # ==============================================================================
 # Tests
 # ==============================================================================
-
 
 class TestFUSEEventsE2E:
     """E2E tests for FUSE event firing."""
@@ -339,7 +329,6 @@ class TestFUSEEventsE2E:
             assert len(events) >= 1, "Test event not received"
             assert events[0].get("data", {}).get("_test") is True
 
-
 def is_redis_available(host: str = "127.0.0.1", port: int = 1778) -> bool:
     """Check if Redis is available on the specified host:port."""
     import socket
@@ -352,7 +341,6 @@ def is_redis_available(host: str = "127.0.0.1", port: int = 1778) -> bool:
         return result == 0
     except Exception:
         return False
-
 
 class TestEventBusIntegration:
     """Tests for event bus integration (requires Redis/Dragonfly)."""

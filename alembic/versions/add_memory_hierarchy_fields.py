@@ -31,7 +31,6 @@ down_revision: Union[str, Sequence[str], None] = "add_graph_storage_tables"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add hierarchy fields to memories table."""
     # Add abstraction_level column (0 = atomic, 1 = cluster, 2 = abstract, etc.)
@@ -92,7 +91,6 @@ def upgrade() -> None:
         "memories",
         ["is_archived"],
     )
-
 
 def downgrade() -> None:
     """Remove hierarchy fields from memories table."""

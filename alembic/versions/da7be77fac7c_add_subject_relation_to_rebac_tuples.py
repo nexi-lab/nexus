@@ -19,7 +19,6 @@ down_revision: Union[str, Sequence[str], None] = "b98c750d8d1a"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add subject_relation column to rebac_tuples for userset-as-subject support."""
     inspector = sa.inspect(op.get_bind())
@@ -37,7 +36,6 @@ def upgrade() -> None:
             "rebac_tuples",
             ["subject_type", "subject_id", "subject_relation"],
         )
-
 
 def downgrade() -> None:
     """Remove subject_relation column from rebac_tuples."""

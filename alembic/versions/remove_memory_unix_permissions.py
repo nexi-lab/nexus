@@ -16,13 +16,11 @@ down_revision = "04a22b67d228"
 branch_labels = None
 depends_on = None
 
-
 def upgrade() -> None:
     """Remove UNIX-style group and mode columns from memories table."""
     # Remove columns that are no longer used in ReBAC-based permissions
     op.drop_column("memories", "group")
     op.drop_column("memories", "mode")
-
 
 def downgrade() -> None:
     """Re-add UNIX-style group and mode columns to memories table."""

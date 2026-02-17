@@ -29,7 +29,6 @@ down_revision: Union[str, Sequence[str], None] = "217a7e641338"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add ACE foundation tables and fields."""
 
@@ -120,7 +119,6 @@ def upgrade() -> None:
     op.create_index("idx_playbook_tenant", "playbooks", ["tenant_id"])
     op.create_index("idx_playbook_name", "playbooks", ["name"])
     op.create_index("idx_playbook_scope", "playbooks", ["scope"])
-
 
 def downgrade() -> None:
     """Remove ACE foundation tables and fields."""

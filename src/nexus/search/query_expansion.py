@@ -21,8 +21,6 @@ References:
     - QMD: https://github.com/tobi/qmd
 """
 
-from __future__ import annotations
-
 import asyncio
 import hashlib
 import logging
@@ -38,14 +36,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 class ExpansionType(StrEnum):
     """Type of query expansion."""
 
     LEX = "lex"  # Lexical variants for BM25 (keywords)
     VEC = "vec"  # Vector variants for semantic search (natural language)
     HYDE = "hyde"  # Hypothetical document passages
-
 
 @dataclass
 class QueryExpansion:
@@ -68,7 +64,6 @@ class QueryExpansion:
             "text": self.text,
             "weight": self.weight,
         }
-
 
 @dataclass
 class QueryExpansionConfig:
@@ -136,7 +131,6 @@ class QueryExpansionConfig:
         if self.max_lex_variants < 0 or self.max_vec_variants < 0 or self.max_hyde_passages < 0:
             raise ValueError("Variant counts must be non-negative")
 
-
 @dataclass
 class ExpansionResult:
     """Result of query expansion.
@@ -196,7 +190,6 @@ class ExpansionResult:
             "cache_hit": self.cache_hit,
         }
 
-
 class QueryExpander(ABC):
     """Abstract base class for query expanders.
 
@@ -225,7 +218,6 @@ class QueryExpander(ABC):
         """Close any resources."""
         pass
 
-
 # Default prompt template for query expansion
 EXPANSION_PROMPT_TEMPLATE = """Generate search query expansions for the following query.
 
@@ -242,7 +234,6 @@ Rules:
 - PRESERVE important entities exactly (names, acronyms, technical terms like API, SDK, etc.)
 - Do NOT add explanations, just output the lines
 - Each line MUST start with the correct prefix (lex:, vec:, or hyde:)"""
-
 
 class OpenRouterQueryExpander(QueryExpander):
     """Query expander using OpenRouter API.
@@ -453,7 +444,6 @@ class OpenRouterQueryExpander(QueryExpander):
             await self._client.close()
             self._client = None
 
-
 class SignalDetector:
     """Detects strong BM25 signal to skip unnecessary query expansion.
 
@@ -524,7 +514,6 @@ class SignalDetector:
         """
         return not self.has_strong_signal(results)
 
-
 class CachedQueryExpander(QueryExpander):
     """Query expander with caching layer.
 
@@ -535,7 +524,7 @@ class CachedQueryExpander(QueryExpander):
     def __init__(
         self,
         expander: QueryExpander,
-        cache: Redis,
+        cache: "Redis",
         ttl: int = 3600,
         key_prefix: str = "qexp",
     ) -> None:
@@ -629,7 +618,6 @@ class CachedQueryExpander(QueryExpander):
     async def close(self) -> None:
         """Close underlying expander."""
         await self.expander.close()
-
 
 class QueryExpansionService:
     """High-level service for query expansion with smart triggering.
@@ -738,9 +726,7 @@ class QueryExpansionService:
         """Close resources."""
         await self.expander.close()
 
-
 # Factory functions
-
 
 def create_query_expander(
     provider: str = "openrouter",
@@ -771,7 +757,6 @@ def create_query_expander(
         return OpenRouterQueryExpander(config=config, api_key=api_key)
     else:
         raise ValueError(f"Unsupported provider: {provider}. Supported: openrouter")
-
 
 async def create_cached_query_expander(
     provider: str = "openrouter",
@@ -818,7 +803,6 @@ async def create_cached_query_expander(
 
     return base_expander
 
-
 def create_query_expansion_service(
     provider: str = "openrouter",
     model: str | None = None,
@@ -844,7 +828,6 @@ def create_query_expansion_service(
     )
 
     return QueryExpansionService(expander=expander, config=config)
-
 
 def get_expansion_config_from_env() -> QueryExpansionConfig:
     """Create QueryExpansionConfig from environment variables.

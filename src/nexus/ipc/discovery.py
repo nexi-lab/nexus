@@ -8,8 +8,6 @@ Bridges internal discovery (IPC storage) with external discovery
 (A2A Agent Card at ``/.well-known/agent.json``).
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from dataclasses import dataclass
@@ -18,13 +16,13 @@ from typing import TYPE_CHECKING, Any
 from nexus.ipc.conventions import AGENTS_ROOT, agent_card_path
 from nexus.ipc.storage.protocol import IPCStorageDriver
 
+from nexus.core.cache_store import CacheStoreABC
 if TYPE_CHECKING:
     from nexus.core.cache_store import CacheStoreABC
 
 logger = logging.getLogger(__name__)
 
 _DISCOVERY_CACHE_KEY = "nexus:ipc:discovery:agents"
-
 
 @dataclass(frozen=True)
 class DiscoveredAgent:
@@ -45,7 +43,6 @@ class DiscoveredAgent:
     status: str
     inbox: str
     metadata: dict[str, Any]
-
 
 class AgentDiscovery:
     """Discovers agents by reading IPC storage.
@@ -173,7 +170,6 @@ class AgentDiscovery:
         all_agents = await self.discover_all()
         return [a for a in all_agents if skill in a.skills]
 
-
 def _serialize_agents(agents: list[DiscoveredAgent]) -> bytes:
     """Serialize a list of DiscoveredAgent to JSON bytes for CacheStoreABC."""
     payload = [
@@ -188,7 +184,6 @@ def _serialize_agents(agents: list[DiscoveredAgent]) -> bytes:
         for a in agents
     ]
     return json.dumps(payload).encode()
-
 
 def _deserialize_agents(data: bytes) -> list[DiscoveredAgent]:
     """Deserialize JSON bytes back to a list of DiscoveredAgent."""

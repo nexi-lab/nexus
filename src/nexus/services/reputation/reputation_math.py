@@ -14,8 +14,6 @@ Time decay:
 - Recent events weigh more than older ones.
 """
 
-from __future__ import annotations
-
 import math
 
 # Default half-life: 30 days in seconds
@@ -28,7 +26,6 @@ DEFAULT_DIMENSION_WEIGHTS: dict[str, float] = {
     "timeliness": 0.20,
     "fairness": 0.20,
 }
-
 
 def compute_beta_score(alpha: float, beta: float) -> float:
     """Compute expected value of Beta(alpha, beta).
@@ -46,7 +43,6 @@ def compute_beta_score(alpha: float, beta: float) -> float:
     if total <= 0:
         return 0.5
     return alpha / total
-
 
 def compute_confidence(alpha: float, beta: float) -> float:
     """Compute confidence level from Beta distribution parameters.
@@ -74,7 +70,6 @@ def compute_confidence(alpha: float, beta: float) -> float:
         return 0.0
     return 1.0 - 1.0 / (1.0 + math.log(1.0 + n))
 
-
 def compute_decay_weight(
     age_seconds: float,
     half_life_seconds: float = DEFAULT_HALF_LIFE_SECONDS,
@@ -95,7 +90,6 @@ def compute_decay_weight(
     if half_life_seconds <= 0:
         return 0.0
     return math.pow(2.0, -age_seconds / half_life_seconds)
-
 
 def compute_composite_score(
     dimensions: dict[str, tuple[float, float]],

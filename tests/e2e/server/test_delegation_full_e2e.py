@@ -32,7 +32,6 @@ from nexus.storage.models import Base
 # Fixtures
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture()
 def engine():
     """Shared SQLite in-memory engine for all components."""
@@ -44,11 +43,9 @@ def engine():
     Base.metadata.create_all(eng)
     return eng
 
-
 @pytest.fixture()
 def session_factory(engine):
     return sessionmaker(bind=engine, expire_on_commit=False)
-
 
 @pytest.fixture()
 def rebac_manager(engine):
@@ -60,11 +57,9 @@ def rebac_manager(engine):
     yield manager
     manager.close()
 
-
 @pytest.fixture()
 def entity_registry(engine):
     return EntityRegistry(engine)
-
 
 @pytest.fixture()
 def delegation_service(session_factory, rebac_manager, entity_registry):
@@ -73,7 +68,6 @@ def delegation_service(session_factory, rebac_manager, entity_registry):
         rebac_manager=rebac_manager,
         entity_registry=entity_registry,
     )
-
 
 def _setup_coordinator(entity_registry, rebac_manager):
     """Register coordinator agent with file grants and return agent info."""
@@ -121,11 +115,9 @@ def _setup_coordinator(entity_registry, rebac_manager):
         ]
     )
 
-
 # ---------------------------------------------------------------------------
 # Full Lifecycle Test
 # ---------------------------------------------------------------------------
-
 
 class TestFullDelegationLifecycle:
     """Complete delegation lifecycle with real services."""

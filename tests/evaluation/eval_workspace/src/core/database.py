@@ -23,7 +23,6 @@ MAX_OVERFLOW = 10
 POOL_TIMEOUT = 30
 CONNECTION_RECYCLE = 3600
 
-
 class DatabaseManager:
     """Async database manager with connection pooling.
 
@@ -68,7 +67,6 @@ class DatabaseManager:
     async def close(self):
         """Close all connections and cleanup resources."""
         pass
-
 
 class QueryBuilder:
     """Fluent interface for building SQL queries safely.

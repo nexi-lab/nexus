@@ -36,8 +36,6 @@ Protocol Format:
     }
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Any
 
@@ -58,7 +56,6 @@ from nexus.core.rpc_types import RPCErrorCode, RPCRequest, RPCResponse  # noqa: 
 # Method-specific parameter schemas
 # ============================================================
 
-
 @dataclass
 class ReadParams:
     """Parameters for read() method."""
@@ -69,7 +66,6 @@ class ReadParams:
     return_url: bool = False  # Return presigned URL instead of content (S3/GCS)
     expires_in: int = 3600  # URL expiration in seconds (default 1 hour)
 
-
 @dataclass
 class ReadBulkParams:
     """Parameters for read_bulk() method."""
@@ -77,7 +73,6 @@ class ReadBulkParams:
     paths: list[str]
     return_metadata: bool = False  # Return dict with content + metadata
     skip_errors: bool = True  # Skip files that can't be read
-
 
 @dataclass
 class WriteParams:
@@ -91,7 +86,6 @@ class WriteParams:
     lock: bool = False  # Acquire distributed lock before writing (#1143)
     lock_timeout: float = 30.0  # Max seconds to wait for lock
 
-
 @dataclass
 class AppendParams:
     """Parameters for append() method."""
@@ -100,7 +94,6 @@ class AppendParams:
     content: bytes
     if_match: str | None = None  # Optimistic concurrency control
     force: bool = False  # Skip version check
-
 
 @dataclass
 class EditParams:
@@ -117,20 +110,17 @@ class EditParams:
     fuzzy_threshold: float = 0.85  # Fuzzy matching threshold (0.0-1.0)
     preview: bool = False  # If True, return diff without applying changes
 
-
 @dataclass
 class WriteBatchParams:
     """Parameters for write_batch() method."""
 
     files: list[tuple[str, bytes]]  # List of (path, content) tuples
 
-
 @dataclass
 class DeleteParams:
     """Parameters for delete() method."""
 
     path: str
-
 
 @dataclass
 class RenameParams:
@@ -139,7 +129,6 @@ class RenameParams:
     old_path: str
     new_path: str
 
-
 @dataclass
 class DeleteBulkParams:
     """Parameters for delete_bulk() method."""
@@ -147,13 +136,11 @@ class DeleteBulkParams:
     paths: list[str]
     recursive: bool = False
 
-
 @dataclass
 class RenameBulkParams:
     """Parameters for rename_bulk() method."""
 
     renames: list[tuple[str, str]]
-
 
 @dataclass
 class ExistsParams:
@@ -161,13 +148,11 @@ class ExistsParams:
 
     path: str
 
-
 @dataclass
 class GetEtagParams:
     """Parameters for get_etag() method."""
 
     path: str
-
 
 @dataclass
 class StatParams:
@@ -175,14 +160,12 @@ class StatParams:
 
     path: str
 
-
 @dataclass
 class StatBulkParams:
     """Parameters for stat_bulk() method."""
 
     paths: list[str]
     skip_errors: bool = True
-
 
 @dataclass
 class ListParams:
@@ -201,14 +184,12 @@ class ListParams:
     limit: int | None = None  # Max items per page (1-10000). Enables pagination when set.
     cursor: str | None = None  # Continuation token from previous page's next_cursor
 
-
 @dataclass
 class GlobParams:
     """Parameters for glob() method."""
 
     pattern: str
     path: str = "/"
-
 
 @dataclass
 class ExistsBatchParams:
@@ -219,7 +200,6 @@ class ExistsBatchParams:
 
     paths: list[str]
 
-
 @dataclass
 class MetadataBatchParams:
     """Parameters for metadata_batch() method (Issue #859).
@@ -228,7 +208,6 @@ class MetadataBatchParams:
     """
 
     paths: list[str]
-
 
 @dataclass
 class GlobBatchParams:
@@ -239,7 +218,6 @@ class GlobBatchParams:
 
     patterns: list[str]
     path: str = "/"
-
 
 @dataclass
 class GrepParams:
@@ -254,14 +232,12 @@ class GrepParams:
     )
     search_mode: str = "auto"
 
-
 @dataclass
 class SemanticSearchIndexParams:
     """Parameters for semantic_search_index() method (Issue #947)."""
 
     path: str = "/"
     recursive: bool = True
-
 
 @dataclass
 class MkdirParams:
@@ -271,7 +247,6 @@ class MkdirParams:
     parents: bool = False
     exist_ok: bool = False
 
-
 @dataclass
 class RmdirParams:
     """Parameters for rmdir() method."""
@@ -279,13 +254,11 @@ class RmdirParams:
     path: str
     recursive: bool = False
 
-
 @dataclass
 class IsDirectoryParams:
     """Parameters for is_directory() method."""
 
     path: str
-
 
 @dataclass
 class GetAvailableNamespacesParams:
@@ -293,13 +266,11 @@ class GetAvailableNamespacesParams:
 
     pass
 
-
 @dataclass
 class GetMetadataParams:
     """Parameters for get_metadata() method."""
 
     path: str
-
 
 @dataclass
 class RebacCreateParams:
@@ -312,7 +283,6 @@ class RebacCreateParams:
     zone_id: str | None = None
     column_config: dict[str, Any] | None = None
     context: dict[str, Any] | None = None  # Operation context for permission checks
-
 
 @dataclass
 class RebacCheckParams:
@@ -331,7 +301,6 @@ class RebacCheckParams:
     )
     min_revision: int | None = None  # Required for at_least_as_fresh mode
 
-
 @dataclass
 class RebacCheckResult:
     """Result of rebac_check() with consistency metadata (Issue #1081).
@@ -344,7 +313,6 @@ class RebacCheckResult:
     consistency_token: str  # Opaque token (e.g., "v123")
     cached: bool  # Whether result came from cache
     decision_time_ms: float  # Time to compute decision
-
 
 @dataclass
 class RebacCreateResult:
@@ -367,14 +335,12 @@ class RebacCreateResult:
     revision: int  # Revision number (for min_revision in subsequent checks)
     consistency_token: str  # Opaque token (e.g., "v123")
 
-
 @dataclass
 class RebacExpandParams:
     """Parameters for rebac_expand() method."""
 
     permission: str
     object: tuple[str, str]
-
 
 @dataclass
 class RebacExplainParams:
@@ -385,13 +351,11 @@ class RebacExplainParams:
     object: tuple[str, str]
     zone_id: str | None = None
 
-
 @dataclass
 class RebacDeleteParams:
     """Parameters for rebac_delete() method."""
 
     tuple_id: str
-
 
 @dataclass
 class RebacListTuplesParams:
@@ -400,7 +364,6 @@ class RebacListTuplesParams:
     subject: tuple[str, str] | None = None
     relation: str | None = None
     object: tuple[str, str] | None = None
-
 
 # Cross-zone sharing params
 @dataclass
@@ -414,7 +377,6 @@ class ShareWithUserParams:
     user_zone_id: str | None = None
     expires_at: str | None = None
 
-
 @dataclass
 class RevokeShareParams:
     """Parameters for revoke_share() method."""
@@ -422,13 +384,11 @@ class RevokeShareParams:
     resource: tuple[str, str]
     user_id: str
 
-
 @dataclass
 class RevokeShareByIdParams:
     """Parameters for revoke_share_by_id() method."""
 
     share_id: str
-
 
 @dataclass
 class ListOutgoingSharesParams:
@@ -440,7 +400,6 @@ class ListOutgoingSharesParams:
     offset: int = 0
     cursor: str | None = None
 
-
 @dataclass
 class ListIncomingSharesParams:
     """Parameters for list_incoming_shares() method."""
@@ -450,7 +409,6 @@ class ListIncomingSharesParams:
     offset: int = 0
     cursor: str | None = None
 
-
 # Public access params
 @dataclass
 class MakePublicParams:
@@ -459,13 +417,11 @@ class MakePublicParams:
     resource: tuple[str, str]
     zone_id: str | None = None
 
-
 @dataclass
 class MakePrivateParams:
     """Parameters for make_private() method."""
 
     resource: tuple[str, str]
-
 
 @dataclass
 class NamespaceCreateParams:
@@ -474,13 +430,11 @@ class NamespaceCreateParams:
     object_type: str
     config: dict[str, Any]
 
-
 @dataclass
 class NamespaceGetParams:
     """Parameters for namespace_get() method."""
 
     object_type: str
-
 
 @dataclass
 class NamespaceListParams:
@@ -488,13 +442,11 @@ class NamespaceListParams:
 
     pass
 
-
 @dataclass
 class NamespaceDeleteParams:
     """Parameters for namespace_delete() method."""
 
     object_type: str
-
 
 @dataclass
 class RegisterWorkspaceParams:
@@ -509,7 +461,6 @@ class RegisterWorkspaceParams:
     session_id: str | None = None  # v0.5.0
     ttl: Any | None = None  # v0.5.0: Will be converted from seconds
 
-
 @dataclass
 class RegisterMemoryParams:
     """Parameters for register_memory() method (v0.5.0)."""
@@ -522,20 +473,17 @@ class RegisterMemoryParams:
     session_id: str | None = None  # v0.5.0
     ttl: Any | None = None  # v0.5.0: Will be converted from seconds
 
-
 @dataclass
 class GetWorkspaceInfoParams:
     """Parameters for get_workspace_info() method (v0.5.0)."""
 
     path: str
 
-
 @dataclass
 class UnregisterWorkspaceParams:
     """Parameters for unregister_workspace() method (v0.5.0)."""
 
     path: str
-
 
 @dataclass
 class UpdateWorkspaceParams:
@@ -546,13 +494,11 @@ class UpdateWorkspaceParams:
     description: str | None = None
     metadata: dict[str, Any] | None = None
 
-
 @dataclass
 class GetMemoryInfoParams:
     """Parameters for get_memory_info() method (v0.5.0)."""
 
     path: str
-
 
 @dataclass
 class UnregisterMemoryParams:
@@ -560,13 +506,11 @@ class UnregisterMemoryParams:
 
     path: str
 
-
 @dataclass
 class ListWorkspacesParams:
     """Parameters for list_workspaces() method (v0.5.0)."""
 
     pass
-
 
 @dataclass
 class ListMemoriesParams:
@@ -579,13 +523,11 @@ class ListMemoriesParams:
     namespace_prefix: str | None = None  # v0.8.0
     state: str | None = "active"  # #368: Filter by state (inactive/active/all)
 
-
 @dataclass
 class ListRegisteredMemoriesParams:
     """Parameters for list_registered_memories() method."""
 
     pass
-
 
 @dataclass
 class WorkspaceSnapshotParams:
@@ -596,7 +538,6 @@ class WorkspaceSnapshotParams:
     tags: list[str] | None = None
     created_by: str | None = None
 
-
 @dataclass
 class WorkspaceRestoreParams:
     """Parameters for workspace_restore() method (v0.5.0)."""
@@ -604,14 +545,12 @@ class WorkspaceRestoreParams:
     snapshot_number: int
     workspace_path: str | None = None
 
-
 @dataclass
 class WorkspaceLogParams:
     """Parameters for workspace_log() method (v0.5.0)."""
 
     workspace_path: str | None = None
     limit: int = 100
-
 
 @dataclass
 class WorkspaceDiffParams:
@@ -621,20 +560,17 @@ class WorkspaceDiffParams:
     snapshot_2: int
     workspace_path: str | None = None
 
-
 @dataclass
 class OverlayFlattenParams:
     """Parameters for workspace_flatten() method (Issue #1264)."""
 
     workspace_path: str
 
-
 @dataclass
 class OverlayStatsParams:
     """Parameters for workspace_overlay_stats() method (Issue #1264)."""
 
     workspace_path: str
-
 
 @dataclass
 class GetVersionParams:
@@ -643,13 +579,11 @@ class GetVersionParams:
     path: str
     version: int
 
-
 @dataclass
 class ListVersionsParams:
     """Parameters for list_versions() method."""
 
     path: str
-
 
 @dataclass
 class RollbackParams:
@@ -657,7 +591,6 @@ class RollbackParams:
 
     path: str
     version: int
-
 
 @dataclass
 class DiffVersionsParams:
@@ -667,7 +600,6 @@ class DiffVersionsParams:
     v1: int
     v2: int
     mode: str = "metadata"
-
 
 @dataclass
 class RegisterAgentParams:
@@ -685,7 +617,6 @@ class RegisterAgentParams:
     capabilities: list[str] | None = None  # Issue #1210: Agent capabilities for discovery
     context: dict | None = None  # For compatibility with NexusFS signature
 
-
 @dataclass
 class UpdateAgentParams:
     """Parameters for update_agent() method (v0.5.1).
@@ -699,13 +630,11 @@ class UpdateAgentParams:
     metadata: dict | None = None  # Optional metadata (platform, endpoint_url, agent_id, etc.)
     context: dict | None = None  # For compatibility with NexusFS signature
 
-
 @dataclass
 class ListAgentsParams:
     """Parameters for list_agents() method (v0.5.0)."""
 
     pass
-
 
 @dataclass
 class GetAgentParams:
@@ -713,16 +642,13 @@ class GetAgentParams:
 
     agent_id: str
 
-
 @dataclass
 class DeleteAgentParams:
     """Parameters for delete_agent() method (v0.5.0)."""
 
     agent_id: str
 
-
 # ========== Agent Lifecycle Parameters (Issue #1240) ==========
-
 
 @dataclass
 class AgentTransitionParams:
@@ -736,7 +662,6 @@ class AgentTransitionParams:
     expected_generation: int | None = None  # For optimistic locking
     context: dict | None = None
 
-
 @dataclass
 class AgentHeartbeatParams:
     """Parameters for agent_heartbeat() method (Issue #1240).
@@ -746,7 +671,6 @@ class AgentHeartbeatParams:
 
     agent_id: str
     context: dict | None = None
-
 
 @dataclass
 class AgentListByZoneParams:
@@ -759,9 +683,7 @@ class AgentListByZoneParams:
     state: str | None = None  # AgentState value or None for all states
     context: dict | None = None
 
-
 # ========== Memory API Parameters (v0.5.0) ==========
-
 
 @dataclass
 class StartTrajectoryParams:
@@ -769,7 +691,6 @@ class StartTrajectoryParams:
 
     task_description: str
     task_type: str | None = None
-
 
 @dataclass
 class LogTrajectoryStepParams:
@@ -780,7 +701,6 @@ class LogTrajectoryStepParams:
     description: str
     result: Any = None
 
-
 @dataclass
 class CompleteTrajectoryParams:
     """Parameters for complete_trajectory() method (v0.5.0)."""
@@ -790,13 +710,11 @@ class CompleteTrajectoryParams:
     success_score: float | None = None
     error_message: str | None = None
 
-
 @dataclass
 class GetPlaybookParams:
     """Parameters for get_playbook() method (v0.5.0)."""
 
     playbook_name: str = "default"
-
 
 @dataclass
 class CuratePlaybookParams:
@@ -806,7 +724,6 @@ class CuratePlaybookParams:
     playbook_name: str = "default"
     merge_threshold: float = 0.7
 
-
 @dataclass
 class BatchReflectParams:
     """Parameters for batch_reflect() method (v0.5.0)."""
@@ -815,7 +732,6 @@ class BatchReflectParams:
     since: str | None = None
     min_trajectories: int = 10
     task_type: str | None = None
-
 
 @dataclass
 class StoreMemoryParams:
@@ -830,7 +746,6 @@ class StoreMemoryParams:
     state: str = "active"  # #368
     tags: list[str] | None = None
 
-
 @dataclass
 class RetrieveMemoryParams:
     """Parameters for retrieve_memory() method (v0.8.0)."""
@@ -839,16 +754,13 @@ class RetrieveMemoryParams:
     path_key: str | None = None
     path: str | None = None
 
-
 @dataclass
 class DeleteMemoryParams:
     """Parameters for delete_memory() method (v0.8.0)."""
 
     memory_id: str
 
-
 # ========== ACE (Adaptive Concurrency Engine) Parameters ==========
-
 
 @dataclass
 class AceStartTrajectoryParams:
@@ -857,7 +769,6 @@ class AceStartTrajectoryParams:
     task_description: str
     task_type: str | None = None
     context: dict | None = None
-
 
 @dataclass
 class AceLogTrajectoryStepParams:
@@ -869,7 +780,6 @@ class AceLogTrajectoryStepParams:
     result: Any = None
     context: dict | None = None
 
-
 @dataclass
 class AceCompleteTrajectoryParams:
     """Parameters for ace_complete_trajectory() method."""
@@ -879,7 +789,6 @@ class AceCompleteTrajectoryParams:
     success_score: float | None = None
     error_message: str | None = None
     context: dict | None = None
-
 
 @dataclass
 class AceAddFeedbackParams:
@@ -893,14 +802,12 @@ class AceAddFeedbackParams:
     metrics: dict | None = None
     context: dict | None = None
 
-
 @dataclass
 class AceGetTrajectoryFeedbackParams:
     """Parameters for ace_get_trajectory_feedback() method."""
 
     trajectory_id: str
     context: dict | None = None
-
 
 @dataclass
 class AceGetEffectiveScoreParams:
@@ -909,7 +816,6 @@ class AceGetEffectiveScoreParams:
     trajectory_id: str
     strategy: str = "latest"
     context: dict | None = None
-
 
 @dataclass
 class AceMarkForRelearningParams:
@@ -920,7 +826,6 @@ class AceMarkForRelearningParams:
     priority: int = 5
     context: dict | None = None
 
-
 @dataclass
 class AceQueryTrajectoriesParams:
     """Parameters for ace_query_trajectories() method."""
@@ -929,7 +834,6 @@ class AceQueryTrajectoriesParams:
     status: str | None = None
     limit: int = 50
     context: dict | None = None
-
 
 @dataclass
 class AceCreatePlaybookParams:
@@ -940,14 +844,12 @@ class AceCreatePlaybookParams:
     scope: str = "agent"
     context: dict | None = None
 
-
 @dataclass
 class AceGetPlaybookParams:
     """Parameters for ace_get_playbook() method."""
 
     playbook_id: str
     context: dict | None = None
-
 
 @dataclass
 class AceQueryPlaybooksParams:
@@ -957,13 +859,11 @@ class AceQueryPlaybooksParams:
     limit: int = 50
     context: dict | None = None
 
-
 @dataclass
 class ApproveMemoryParams:
     """Parameters for approve_memory() method (#368)."""
 
     memory_id: str
-
 
 @dataclass
 class DeactivateMemoryParams:
@@ -971,13 +871,11 @@ class DeactivateMemoryParams:
 
     memory_id: str
 
-
 @dataclass
 class ApproveMemoryBatchParams:
     """Parameters for approve_memory_batch() method (#368)."""
 
     memory_ids: list[str]
-
 
 @dataclass
 class DeactivateMemoryBatchParams:
@@ -985,13 +883,11 @@ class DeactivateMemoryBatchParams:
 
     memory_ids: list[str]
 
-
 @dataclass
 class DeleteMemoryBatchParams:
     """Parameters for delete_memory_batch() method (#368)."""
 
     memory_ids: list[str]
-
 
 @dataclass
 class QueryMemoriesParams:
@@ -1006,7 +902,6 @@ class QueryMemoriesParams:
     search_mode: str | None = None  # "semantic", "keyword", or "hybrid"
     embedding_provider: str | None = None  # "openai", "voyage", or "openrouter"
 
-
 @dataclass
 class QueryTrajectoriesParams:
     """Parameters for query_trajectories() method (v0.5.0)."""
@@ -1014,7 +909,6 @@ class QueryTrajectoriesParams:
     agent_id: str | None = None
     status: str | None = None
     limit: int = 50
-
 
 @dataclass
 class QueryPlaybooksParams:
@@ -1024,18 +918,15 @@ class QueryPlaybooksParams:
     scope: str | None = None
     limit: int = 50
 
-
 @dataclass
 class ProcessRelearningParams:
     """Parameters for process_relearning() method (v0.5.0)."""
 
     limit: int = 10
 
-
 # ============================================================
 # Admin API Parameters (v0.5.1)
 # ============================================================
-
 
 @dataclass
 class AdminCreateKeyParams:
@@ -1053,7 +944,6 @@ class AdminCreateKeyParams:
     subject_type: str = "user"
     subject_id: str | None = None
 
-
 @dataclass
 class AdminListKeysParams:
     """Parameters for admin_list_keys() method.
@@ -1069,7 +959,6 @@ class AdminListKeysParams:
     limit: int = 100
     offset: int = 0
 
-
 @dataclass
 class AdminGetKeyParams:
     """Parameters for admin_get_key() method.
@@ -1079,7 +968,6 @@ class AdminGetKeyParams:
 
     key_id: str
 
-
 @dataclass
 class AdminRevokeKeyParams:
     """Parameters for admin_revoke_key() method.
@@ -1088,7 +976,6 @@ class AdminRevokeKeyParams:
     """
 
     key_id: str
-
 
 @dataclass
 class AdminUpdateKeyParams:
@@ -1102,7 +989,6 @@ class AdminUpdateKeyParams:
     is_admin: bool | None = None
     name: str | None = None
 
-
 @dataclass
 class AdminGcVersionsParams:
     """Parameters for admin_gc_versions() method (Issue #974).
@@ -1114,7 +1000,6 @@ class AdminGcVersionsParams:
     retention_days: int | None = None  # Override default retention
     max_versions: int | None = None  # Override default max versions per resource
 
-
 @dataclass
 class AdminGcVersionsStatsParams:
     """Parameters for admin_gc_versions_stats() method (Issue #974).
@@ -1123,7 +1008,6 @@ class AdminGcVersionsStatsParams:
     """
 
     pass  # No parameters needed
-
 
 @dataclass
 class BackfillDirectoryIndexParams:
@@ -1134,7 +1018,6 @@ class BackfillDirectoryIndexParams:
 
     prefix: str = "/"
     zone_id: str | None = None
-
 
 @dataclass
 class ProvisionUserParams:
@@ -1151,7 +1034,6 @@ class ProvisionUserParams:
     create_agents: bool = True
     import_skills: bool = True
 
-
 @dataclass
 class DeprovisionUserParams:
     """Parameters for deprovision_user() method.
@@ -1164,11 +1046,9 @@ class DeprovisionUserParams:
     delete_user_record: bool = False
     force: bool = False
 
-
 # ============================================================================
 # Sandbox Management Parameters (Issue #372)
 # ============================================================================
-
 
 @dataclass
 class SandboxCreateParams:
@@ -1179,7 +1059,6 @@ class SandboxCreateParams:
     provider: str = "e2b"
     template_id: str | None = None
     context: dict | None = None
-
 
 @dataclass
 class SandboxRunParams:
@@ -1193,7 +1072,6 @@ class SandboxRunParams:
     nexus_api_key: str | None = None
     context: dict | None = None
 
-
 @dataclass
 class SandboxValidateParams:
     """Parameters for sandbox_validate() method."""
@@ -1202,14 +1080,12 @@ class SandboxValidateParams:
     workspace_path: str = "/workspace"
     context: dict | None = None
 
-
 @dataclass
 class SandboxPauseParams:
     """Parameters for sandbox_pause() method."""
 
     sandbox_id: str
     context: dict | None = None
-
 
 @dataclass
 class SandboxResumeParams:
@@ -1218,14 +1094,12 @@ class SandboxResumeParams:
     sandbox_id: str
     context: dict | None = None
 
-
 @dataclass
 class SandboxStopParams:
     """Parameters for sandbox_stop() method."""
 
     sandbox_id: str
     context: dict | None = None
-
 
 @dataclass
 class SandboxListParams:
@@ -1238,14 +1112,12 @@ class SandboxListParams:
     agent_id: str | None = None
     status: str | None = None
 
-
 @dataclass
 class SandboxStatusParams:
     """Parameters for sandbox_status() method."""
 
     sandbox_id: str
     context: dict | None = None
-
 
 @dataclass
 class SandboxGetOrCreateParams:
@@ -1257,7 +1129,6 @@ class SandboxGetOrCreateParams:
     template_id: str | None = None
     verify_status: bool = True
     context: dict | None = None
-
 
 @dataclass
 class SandboxConnectParams:
@@ -1272,7 +1143,6 @@ class SandboxConnectParams:
     agent_id: str | None = None  # Agent ID for version attribution (issue #418)
     context: dict | None = None
 
-
 @dataclass
 class SandboxDisconnectParams:
     """Parameters for sandbox_disconnect() method."""
@@ -1281,7 +1151,6 @@ class SandboxDisconnectParams:
     provider: str = "e2b"
     sandbox_api_key: str | None = None
     context: dict | None = None
-
 
 # Mount management parameters (v0.5.6 - Issue #313)
 @dataclass
@@ -1294,13 +1163,11 @@ class AddMountParams:
     priority: int = 0
     readonly: bool = False
 
-
 @dataclass
 class RemoveMountParams:
     """Parameters for remove_mount() method."""
 
     mount_point: str
-
 
 @dataclass
 class DeleteConnectorParams:
@@ -1311,13 +1178,11 @@ class DeleteConnectorParams:
     provider: str | None = None
     user_email: str | None = None
 
-
 @dataclass
 class ListConnectorsParams:
     """Parameters for list_connectors() method."""
 
     category: str | None = None
-
 
 @dataclass
 class ListMountsParams:
@@ -1325,20 +1190,17 @@ class ListMountsParams:
 
     context: dict | None = None  # For compatibility with NexusFS signature
 
-
 @dataclass
 class GetMountParams:
     """Parameters for get_mount() method."""
 
     mount_point: str
 
-
 @dataclass
 class HasMountParams:
     """Parameters for has_mount() method."""
 
     mount_point: str
-
 
 @dataclass
 class SaveMountParams:
@@ -1353,7 +1215,6 @@ class SaveMountParams:
     zone_id: str | None = None
     description: str | None = None
 
-
 @dataclass
 class ListSavedMountsParams:
     """Parameters for list_saved_mounts() method."""
@@ -1362,20 +1223,17 @@ class ListSavedMountsParams:
     zone_id: str | None = None
     context: dict | None = None  # For compatibility with NexusFS signature
 
-
 @dataclass
 class LoadMountParams:
     """Parameters for load_mount() method."""
 
     mount_point: str
 
-
 @dataclass
 class DeleteSavedMountParams:
     """Parameters for delete_saved_mount() method."""
 
     mount_point: str
-
 
 @dataclass
 class SyncMountParams:
@@ -1390,7 +1248,6 @@ class SyncMountParams:
     exclude_patterns: list[str] | None = None
     generate_embeddings: bool = False
 
-
 @dataclass
 class SyncMountAsyncParams:
     """Parameters for sync_mount_async() method (Issue #609)."""
@@ -1404,20 +1261,17 @@ class SyncMountAsyncParams:
     exclude_patterns: list[str] | None = None
     generate_embeddings: bool = False
 
-
 @dataclass
 class GetSyncJobParams:
     """Parameters for get_sync_job() method (Issue #609)."""
 
     job_id: str
 
-
 @dataclass
 class CancelSyncJobParams:
     """Parameters for cancel_sync_job() method (Issue #609)."""
 
     job_id: str
-
 
 @dataclass
 class ListSyncJobsParams:
@@ -1426,7 +1280,6 @@ class ListSyncJobsParams:
     mount_point: str | None = None
     status: str | None = None
     limit: int = 50
-
 
 # Task queue parameter dataclasses (Issue #574)
 @dataclass
@@ -1438,20 +1291,17 @@ class SubmitTaskParams:
     priority: int = 2
     max_retries: int = 3
 
-
 @dataclass
 class GetTaskParams:
     """Parameters for get_task() method."""
 
     task_id: int
 
-
 @dataclass
 class CancelTaskParams:
     """Parameters for cancel_task() method."""
 
     task_id: int
-
 
 @dataclass
 class ListQueueTasksParams:
@@ -1462,13 +1312,11 @@ class ListQueueTasksParams:
     limit: int = 50
     offset: int = 0
 
-
 @dataclass
 class GetTaskStatsParams:
     """Parameters for get_task_stats() method."""
 
     pass
-
 
 # Skills management parameter dataclasses
 @dataclass
@@ -1481,7 +1329,6 @@ class SkillsCreateParams:
     tier: str = "agent"
     author: str | None = None
 
-
 @dataclass
 class SkillsCreateFromContentParams:
     """Parameters for skills_create_from_content method."""
@@ -1493,7 +1340,6 @@ class SkillsCreateFromContentParams:
     author: str | None = None
     source_url: str | None = None
     metadata: dict[str, Any] | None = None
-
 
 @dataclass
 class SkillsCreateFromFileParams:
@@ -1510,7 +1356,6 @@ class SkillsCreateFromFileParams:
     extract_images: bool = False
     _author: str | None = None  # Unused: plugin manages authorship
 
-
 @dataclass
 class SkillsListParams:
     """Parameters for skills_list method."""
@@ -1518,13 +1363,11 @@ class SkillsListParams:
     tier: str | None = None
     include_metadata: bool = True
 
-
 @dataclass
 class SkillsInfoParams:
     """Parameters for skills_info method."""
 
     skill_name: str
-
 
 @dataclass
 class SkillsForkParams:
@@ -1535,7 +1378,6 @@ class SkillsForkParams:
     tier: str = "agent"
     author: str | None = None
 
-
 @dataclass
 class SkillsPublishParams:
     """Parameters for skills_publish method."""
@@ -1543,7 +1385,6 @@ class SkillsPublishParams:
     skill_name: str
     source_tier: str = "agent"
     target_tier: str = "zone"
-
 
 @dataclass
 class SkillsSearchParams:
@@ -1553,7 +1394,6 @@ class SkillsSearchParams:
     tier: str | None = None
     limit: int = 10
 
-
 @dataclass
 class SkillsSubmitApprovalParams:
     """Parameters for skills_submit_approval method."""
@@ -1562,7 +1402,6 @@ class SkillsSubmitApprovalParams:
     submitted_by: str
     reviewers: list[str] | None = None
     comments: str | None = None
-
 
 @dataclass
 class SkillsApproveParams:
@@ -1574,7 +1413,6 @@ class SkillsApproveParams:
     comments: str | None = None
     zone_id: str | None = None
 
-
 @dataclass
 class SkillsRejectParams:
     """Parameters for skills_reject method."""
@@ -1585,14 +1423,12 @@ class SkillsRejectParams:
     comments: str | None = None
     zone_id: str | None = None
 
-
 @dataclass
 class SkillsListApprovalsParams:
     """Parameters for skills_list_approvals method."""
 
     status: str | None = None
     skill_name: str | None = None
-
 
 @dataclass
 class SkillsImportParams:
@@ -1602,13 +1438,11 @@ class SkillsImportParams:
     tier: str = "user"
     allow_overwrite: bool = False
 
-
 @dataclass
 class SkillsValidateZipParams:
     """Parameters for skills_validate_zip method."""
 
     zip_data: str
-
 
 @dataclass
 class SkillsExportParams:
@@ -1618,7 +1452,6 @@ class SkillsExportParams:
     format: str = "generic"
     include_dependencies: bool = False
 
-
 # New permission-based skill methods (v1.0.0)
 @dataclass
 class SkillsDiscoverParams:
@@ -1626,20 +1459,17 @@ class SkillsDiscoverParams:
 
     filter: str = "all"
 
-
 @dataclass
 class SkillsSubscribeParams:
     """Parameters for skills_subscribe method."""
 
     skill_path: str
 
-
 @dataclass
 class SkillsUnsubscribeParams:
     """Parameters for skills_unsubscribe method."""
 
     skill_path: str
-
 
 @dataclass
 class SkillsShareParams:
@@ -1648,7 +1478,6 @@ class SkillsShareParams:
     skill_path: str
     share_with: str
 
-
 @dataclass
 class SkillsUnshareParams:
     """Parameters for skills_unshare method."""
@@ -1656,20 +1485,17 @@ class SkillsUnshareParams:
     skill_path: str
     unshare_from: str
 
-
 @dataclass
 class SkillsLoadParams:
     """Parameters for skills_load method."""
 
     skill_path: str
 
-
 @dataclass
 class SkillsGetPromptContextParams:
     """Parameters for skills_get_prompt_context method."""
 
     max_skills: int = 50
-
 
 # OAuth management methods (v0.9.0)
 @dataclass
@@ -1678,7 +1504,6 @@ class OAuthListProvidersParams:
 
     pass  # No parameters required
 
-
 @dataclass
 class OAuthGetAuthUrlParams:
     """Parameters for oauth_get_auth_url method."""
@@ -1686,7 +1511,6 @@ class OAuthGetAuthUrlParams:
     provider: str
     redirect_uri: str = DEFAULT_OAUTH_REDIRECT_URI
     scopes: list[str] | None = None
-
 
 @dataclass
 class OAuthExchangeCodeParams:
@@ -1698,14 +1522,12 @@ class OAuthExchangeCodeParams:
     state: str | None = None
     redirect_uri: str = DEFAULT_OAUTH_REDIRECT_URI
 
-
 @dataclass
 class OAuthListCredentialsParams:
     """Parameters for oauth_list_credentials method."""
 
     provider: str | None = None
     include_revoked: bool = False
-
 
 @dataclass
 class OAuthRevokeCredentialParams:
@@ -1714,14 +1536,12 @@ class OAuthRevokeCredentialParams:
     provider: str
     user_email: str
 
-
 @dataclass
 class OAuthTestCredentialParams:
     """Parameters for oauth_test_credential method."""
 
     provider: str
     user_email: str
-
 
 @dataclass
 class MCPConnectParams:
@@ -1732,7 +1552,6 @@ class MCPConnectParams:
     user_email: str | None = None
     reuse_nexus_token: bool = True
 
-
 @dataclass
 class MCPListMountsParams:
     """Parameters for mcp_list_mounts method."""
@@ -1740,13 +1559,11 @@ class MCPListMountsParams:
     tier: str | None = None
     include_unmounted: bool = True
 
-
 @dataclass
 class MCPListToolsParams:
     """Parameters for mcp_list_tools method."""
 
     name: str
-
 
 @dataclass
 class MCPMountParams:
@@ -1762,13 +1579,11 @@ class MCPMountParams:
     description: str | None = None
     tier: str = "system"
 
-
 @dataclass
 class MCPUnmountParams:
     """Parameters for mcp_unmount method."""
 
     name: str
-
 
 @dataclass
 class MCPSyncParams:
@@ -1776,11 +1591,9 @@ class MCPSyncParams:
 
     name: str
 
-
 # ============================================================
 # Share Link parameter schemas (Issue #227)
 # ============================================================
-
 
 @dataclass
 class CreateShareLinkParams:
@@ -1792,13 +1605,11 @@ class CreateShareLinkParams:
     max_access_count: int | None = None
     password: str | None = None
 
-
 @dataclass
 class GetShareLinkParams:
     """Parameters for get_share_link method."""
 
     link_id: str
-
 
 @dataclass
 class ListShareLinksParams:
@@ -1808,13 +1619,11 @@ class ListShareLinksParams:
     include_revoked: bool = False
     include_expired: bool = False
 
-
 @dataclass
 class RevokeShareLinkParams:
     """Parameters for revoke_share_link method."""
 
     link_id: str
-
 
 @dataclass
 class AccessShareLinkParams:
@@ -1825,14 +1634,12 @@ class AccessShareLinkParams:
     ip_address: str | None = None
     user_agent: str | None = None
 
-
 @dataclass
 class GetShareLinkAccessLogsParams:
     """Parameters for get_share_link_access_logs method."""
 
     link_id: str
     limit: int = 100
-
 
 # Mapping of method names to parameter dataclasses
 METHOD_PARAMS = {
@@ -2034,7 +1841,6 @@ METHOD_PARAMS = {
     "access_share_link": AccessShareLinkParams,
     "get_share_link_access_logs": GetShareLinkAccessLogsParams,
 }
-
 
 def parse_method_params(method: str, params: dict[str, Any] | None) -> Any:
     """Parse and validate method parameters.

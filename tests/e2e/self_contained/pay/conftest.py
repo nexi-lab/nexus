@@ -9,8 +9,6 @@ Or use the full test profile:
     docker compose --profile test up -d
 """
 
-from __future__ import annotations
-
 import os
 
 import pytest
@@ -18,7 +16,6 @@ import pytest
 # TigerBeetle connection settings
 TIGERBEETLE_ADDRESS = os.environ.get("TIGERBEETLE_ADDRESS", "127.0.0.1:3000")
 TIGERBEETLE_CLUSTER_ID = int(os.environ.get("TIGERBEETLE_CLUSTER_ID", "0"))
-
 
 def is_tigerbeetle_module_available() -> bool:
     """Check if TigerBeetle Python client is installed."""
@@ -28,7 +25,6 @@ def is_tigerbeetle_module_available() -> bool:
         return True
     except ImportError:
         return False
-
 
 def is_tigerbeetle_server_available() -> bool:
     """Check if TigerBeetle server is running and accessible."""
@@ -44,7 +40,6 @@ def is_tigerbeetle_server_available() -> bool:
     except Exception:
         return False
 
-
 def get_skip_reason() -> str | None:
     """Get reason for skipping tests, or None if tests should run."""
     if not is_tigerbeetle_module_available():
@@ -56,7 +51,6 @@ def get_skip_reason() -> str | None:
         )
     return None
 
-
 _skip_reason = get_skip_reason()
 
 # Skip all tests in this module if TigerBeetle is not available
@@ -65,12 +59,10 @@ pytestmark = pytest.mark.skipif(
     reason=_skip_reason or "",
 )
 
-
 @pytest.fixture
 def tigerbeetle_address() -> str:
     """Get TigerBeetle address."""
     return TIGERBEETLE_ADDRESS
-
 
 @pytest.fixture
 def tigerbeetle_cluster_id() -> int:

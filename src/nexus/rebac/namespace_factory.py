@@ -10,14 +10,14 @@ from typing import TYPE_CHECKING
 
 from nexus.rebac.namespace_manager import NamespaceManager
 
+from nexus.storage.record_store import RecordStoreABC
 if TYPE_CHECKING:
-    from nexus.rebac.rebac_manager_enhanced import EnhancedReBACManager
-    from nexus.storage.record_store import RecordStoreABC
+    from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
 
 def create_namespace_manager(
-    rebac_manager: EnhancedReBACManager,
+    rebac_manager: "EnhancedReBACManager",
     record_store: RecordStoreABC | None = None,
 ) -> NamespaceManager:
     """Create NamespaceManager with config from environment variables.

@@ -9,8 +9,6 @@ following the pattern from test_memory_classification_e2e.py.
 Run with: python -m pytest tests/e2e/test_memory_evolution_e2e.py -v
 """
 
-from __future__ import annotations
-
 import json
 import shutil
 import tempfile
@@ -32,7 +30,6 @@ from nexus.storage.models import Base
 # ==============================================================================
 # In-memory metadata store stub (avoids LocalRaft dependency)
 # ==============================================================================
-
 
 class InMemoryMetadataStore(FileMetadataProtocol):
     """Minimal in-memory metadata store for tests that don't need file ops."""
@@ -82,18 +79,15 @@ class InMemoryMetadataStore(FileMetadataProtocol):
     def close(self) -> None:
         self._store.clear()
 
-
 # ==============================================================================
 # Fixtures
 # ==============================================================================
-
 
 @pytest.fixture(autouse=True)
 def _set_env(monkeypatch):
     """Set required env vars for server modules."""
     monkeypatch.setenv("NEXUS_JWT_SECRET", "test-secret-key-12345")
     monkeypatch.delenv("NEXUS_DATABASE_URL", raising=False)
-
 
 @pytest.fixture
 def db_engine(tmp_path):
@@ -112,12 +106,10 @@ def db_engine(tmp_path):
     Base.metadata.drop_all(engine)
     engine.dispose()
 
-
 @pytest.fixture
 def db_session_factory(db_engine):
     """Create session factory bound to shared engine."""
     return sessionmaker(bind=db_engine)
-
 
 @pytest.fixture
 def api_keys(db_session_factory):
@@ -157,7 +149,6 @@ def api_keys(db_session_factory):
         "admin_key": admin_raw,
         "admin_key_id": admin_key_id,
     }
-
 
 @pytest.fixture
 def app_with_auth(tmp_path, db_session_factory, api_keys):
@@ -200,35 +191,29 @@ def app_with_auth(tmp_path, db_session_factory, api_keys):
     record_store.close()
     shutil.rmtree(tmpdir, ignore_errors=True)
 
-
 @pytest.fixture
 def client(app_with_auth):
     """Create TestClient."""
     return TestClient(app_with_auth)
-
 
 @pytest.fixture
 def user_headers(api_keys):
     """Auth headers for normal user."""
     return {"Authorization": f"Bearer {api_keys['normal_key']}"}
 
-
 @pytest.fixture
 def agent_headers(api_keys):
     """Auth headers for agent subject type."""
     return {"Authorization": f"Bearer {api_keys['agent_key']}"}
-
 
 @pytest.fixture
 def admin_headers(api_keys):
     """Auth headers for admin user."""
     return {"Authorization": f"Bearer {api_keys['admin_key']}"}
 
-
 # ==============================================================================
 # Helper methods
 # ==============================================================================
-
 
 def _store_memory_v1(
     client: TestClient,
@@ -248,7 +233,6 @@ def _store_memory_v1(
     assert resp.status_code == 200, f"V1 Store failed: {resp.text}"
     return resp.json()
 
-
 def _store_memory_v2(
     client: TestClient,
     headers: dict,
@@ -267,13 +251,11 @@ def _store_memory_v2(
     assert resp.status_code == 201, f"V2 Store failed: {resp.text}"
     return resp.json()
 
-
 def _get_memory_v1(client: TestClient, headers: dict, memory_id: str) -> dict:
     """Get a memory by ID via V1 API."""
     resp = client.get(f"/api/memory/{memory_id}", headers=headers)
     assert resp.status_code == 200, f"V1 Get failed: {resp.text}"
     return resp.json()["memory"]
-
 
 def _get_memory_v2(client: TestClient, headers: dict, memory_id: str) -> dict:
     """Get a memory by ID via V2 API."""
@@ -281,11 +263,9 @@ def _get_memory_v2(client: TestClient, headers: dict, memory_id: str) -> dict:
     assert resp.status_code == 200, f"V2 Get failed: {resp.text}"
     return resp.json()["memory"]
 
-
 # ==============================================================================
 # Tests: V1 API — POST /api/memory/store with detect_evolution
 # ==============================================================================
-
 
 class TestEvolutionV1API:
     """E2E tests for memory evolution via V1 API."""
@@ -357,11 +337,9 @@ class TestEvolutionV1API:
         )
         assert resp.status_code == 401
 
-
 # ==============================================================================
 # Tests: V2 API — POST /api/v2/memories with detect_evolution
 # ==============================================================================
-
 
 class TestEvolutionV2API:
     """E2E tests for memory evolution via V2 API."""
@@ -428,11 +406,9 @@ class TestEvolutionV2API:
         assert "extended_by_ids" in memory
         assert "derived_from_ids" in memory
 
-
 # ==============================================================================
 # Tests: Agent Permissions (non-user subject type)
 # ==============================================================================
-
 
 class TestEvolutionAgentPermissions:
     """Tests with agent (non-user) authentication."""
@@ -470,11 +446,9 @@ class TestEvolutionAgentPermissions:
         assert "extends_ids" in memory
         assert "derived_from_ids" in memory
 
-
 # ==============================================================================
 # Tests: Cross-API Compatibility
 # ==============================================================================
-
 
 class TestEvolutionCrossAPI:
     """Tests ensuring V1 and V2 APIs are compatible."""
@@ -502,11 +476,9 @@ class TestEvolutionCrossAPI:
         assert "extends_ids" in memory
         assert "derived_from_ids" in memory
 
-
 # ==============================================================================
 # Tests: Performance
 # ==============================================================================
-
 
 class TestEvolutionPerformance:
     """Performance tests for evolution detection through the HTTP layer."""
@@ -544,11 +516,9 @@ class TestEvolutionPerformance:
         assert result.get("memory_id") is not None
         assert result.get("status") == "created"
 
-
 # ==============================================================================
 # Tests: Edge Cases
 # ==============================================================================
-
 
 class TestEvolutionEdgeCases:
     """Edge case tests for evolution detection."""

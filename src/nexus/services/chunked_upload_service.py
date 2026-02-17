@@ -8,8 +8,6 @@ Manages the lifecycle of chunked upload sessions:
 - Per-session locking for concurrent chunk uploads
 """
 
-from __future__ import annotations
-
 import asyncio
 import base64
 import hashlib
@@ -30,6 +28,10 @@ from nexus.core.exceptions import (
 from nexus.services.upload_session import UploadSession, UploadStatus
 from nexus.storage.models.upload_session import UploadSessionModel
 
+from collections.abc import Callable
+from nexus.core._metadata_generated import FileMetadataProtocol
+from nexus.core.protocols.connector import ConnectorProtocol
+from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -54,7 +56,6 @@ DEFAULT_MIN_CHUNK_SIZE = 5 * 1024 * 1024  # 5 MB
 DEFAULT_MAX_CHUNK_SIZE = 64 * 1024 * 1024  # 64 MB
 DEFAULT_CHUNK_SIZE = 10 * 1024 * 1024  # 10 MB
 
-
 class ChunkedUploadConfig:
     """Configuration for the chunked upload service."""
 
@@ -75,7 +76,6 @@ class ChunkedUploadConfig:
         self.max_chunk_size = max_chunk_size
         self.default_chunk_size = default_chunk_size
         self.max_upload_size = max_upload_size
-
 
 class ChunkedUploadService:
     """Core service for tus.io resumable chunked uploads.

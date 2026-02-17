@@ -15,8 +15,6 @@ References:
     - docs/architecture/KERNEL-ARCHITECTURE.md §3
 """
 
-from __future__ import annotations
-
 import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -24,11 +22,9 @@ from typing import Any, Literal, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
-
 # =============================================================================
 # Low-level Store Protocol
 # =============================================================================
-
 
 @runtime_checkable
 class LockStoreProtocol(Protocol):
@@ -74,11 +70,9 @@ class LockStoreProtocol(Protocol):
         """Get a value by key (used for health checks)."""
         ...
 
-
 # =============================================================================
 # Data Classes
 # =============================================================================
-
 
 @dataclass
 class LockInfo:
@@ -93,7 +87,6 @@ class LockInfo:
     holders: list[HolderInfo]
     fence_token: int
 
-
 @dataclass
 class HolderInfo:
     """Information about a single lock holder."""
@@ -103,7 +96,6 @@ class HolderInfo:
     acquired_at: float  # Unix timestamp
     expires_at: float  # Unix timestamp
 
-
 @dataclass
 class ExtendResult:
     """Result of a lock extend (heartbeat) operation."""
@@ -111,11 +103,9 @@ class ExtendResult:
     success: bool
     lock_info: LockInfo | None = None
 
-
 # =============================================================================
 # Abstract Interface (Protocol)
 # =============================================================================
-
 
 @runtime_checkable
 class LockManagerProtocol(Protocol):
@@ -244,7 +234,6 @@ class LockManagerProtocol(Protocol):
     async def health_check(self) -> bool:
         """Check if the lock manager is healthy."""
         ...
-
 
 class LockManagerBase(ABC):
     """Abstract base class for lock manager implementations.

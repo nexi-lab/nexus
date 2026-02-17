@@ -55,11 +55,9 @@ _PROVIDER_REFRESH_TIMEOUT_SECONDS = 30
 # History pruning: entries older than this are deleted on rotation
 _HISTORY_RETENTION_DAYS = 30
 
-
 def _hash_token(token: str) -> str:
     """Compute SHA-256 hash of a token (never store plaintext in history)."""
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
 
 class TokenManager:
     """Centralized OAuth token manager with automatic refresh and rotation.

@@ -29,7 +29,6 @@ down_revision: Union[str, Sequence[str], None] = "add_backend_version_idx"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Create rebac_group_closure table for transitive group memberships."""
     bind = op.get_bind()
@@ -85,7 +84,6 @@ def upgrade() -> None:
             ON rebac_group_closure USING BRIN (updated_at)
             """
         )
-
 
 def downgrade() -> None:
     """Drop rebac_group_closure table."""

@@ -43,28 +43,22 @@ BLUE = "\033[0;34m"
 CYAN = "\033[0;36m"
 NC = "\033[0m"
 
-
 def print_header(title: str) -> None:
     print(f"\n{'=' * 60}")
     print(f"  {title}")
     print(f"{'=' * 60}")
 
-
 def print_success(msg: str) -> None:
     print(f"{GREEN}✓{NC} {msg}")
-
 
 def print_error(msg: str) -> None:
     print(f"{RED}✗{NC} {msg}")
 
-
 def print_info(msg: str) -> None:
     print(f"{BLUE}ℹ{NC} {msg}")
 
-
 def print_test(msg: str) -> None:
     print(f"{CYAN}TEST:{NC} {msg}")
-
 
 class ServerProcess:
     """Manages a local Nexus server process."""
@@ -124,7 +118,6 @@ class ServerProcess:
         if os.path.exists(self.db_file):
             os.remove(self.db_file)
 
-
 class TestRunner:
     """Base class for test runners."""
 
@@ -150,7 +143,6 @@ class TestRunner:
         else:
             print_error(f"{self.failed}/{total} tests failed")
             return False
-
 
 class LocalTestRunner(TestRunner):
     """Run tests using local NexusFS (no server needed)."""
@@ -362,7 +354,6 @@ class LocalTestRunner(TestRunner):
             [self.base, f"{self.base}/subdir", f"{self.base}/implicit_renamed"], recursive=True
         )
         print_success("Test directory cleaned up")
-
 
 class RemoteTestRunner(TestRunner):
     """Run tests using async remote client."""
@@ -582,7 +573,6 @@ class RemoteTestRunner(TestRunner):
         )
         print_success("Test directory cleaned up")
 
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="Test bulk delete and rename operations")
     mode_group = parser.add_mutually_exclusive_group()
@@ -638,7 +628,6 @@ def main() -> int:
             success = runner.run()
 
     return 0 if success else 1
-
 
 if __name__ == "__main__":
     sys.exit(main())

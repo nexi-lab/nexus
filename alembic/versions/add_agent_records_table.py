@@ -24,7 +24,6 @@ down_revision: Union[str, Sequence[str], None] = "add_memory_version_tracking"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add agent_records table with composite indexes."""
     op.create_table(
@@ -49,7 +48,6 @@ def upgrade() -> None:
         ["state", "last_heartbeat"],
     )
     op.create_index("idx_agent_records_owner", "agent_records", ["owner_id"])
-
 
 def downgrade() -> None:
     """Remove agent_records table and indexes."""

@@ -3,13 +3,10 @@
 This module is separate to avoid circular imports between core and server modules.
 """
 
-from __future__ import annotations
-
 from collections.abc import Callable
 from typing import Any, TypeVar
 
 F = TypeVar("F", bound=Callable[..., Any])
-
 
 def rpc_expose(
     name: str | None = None,

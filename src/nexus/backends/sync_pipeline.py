@@ -25,14 +25,13 @@ Usage:
 Part of: #1461 (backend contract gaps)
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.hash_fast import hash_content
 from nexus.core.permissions import OperationContext
 
+from nexus.backends.cache_mixin import CacheEntry
 if TYPE_CHECKING:
     from nexus.backends.cache_mixin import CacheEntry, SyncResult
 
@@ -40,7 +39,6 @@ logger = logging.getLogger(__name__)
 
 # Backend version constant for immutable content (e.g., Gmail emails that never change)
 IMMUTABLE_VERSION = "immutable"
-
 
 class SyncPipelineService:
     """7-step content sync pipeline for connector backends.

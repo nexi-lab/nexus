@@ -8,8 +8,6 @@ Consolidates constants previously duplicated across:
 - server/auth/auth_routes.py (partial personal domain list)
 """
 
-from __future__ import annotations
-
 # P0-1: Token type discrimination
 API_KEY_PREFIX = "sk-"
 

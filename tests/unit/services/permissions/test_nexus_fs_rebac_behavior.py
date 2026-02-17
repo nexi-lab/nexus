@@ -11,7 +11,6 @@ import pytest
 
 from nexus.core.nexus_fs import NexusFS
 
-
 class MockNexusFS:
     """Test fixture class that provides mock attributes for ReBAC methods on NexusFS.
 
@@ -63,7 +62,6 @@ class MockNexusFS:
     process_tiger_cache_queue = NexusFS.process_tiger_cache_queue
     warm_tiger_cache = NexusFS.warm_tiger_cache
 
-
 class TestRequireRebac:
     """Tests for _require_rebac property."""
 
@@ -82,7 +80,6 @@ class TestRequireRebac:
 
         with pytest.raises(RuntimeError, match="ReBAC manager not available"):
             _ = fs._require_rebac
-
 
 class TestGetSubjectFromContext:
     """Tests for _get_subject_from_context method."""
@@ -182,7 +179,6 @@ class TestGetSubjectFromContext:
 
         assert result is None
 
-
 class TestCheckSharePermission:
     """Tests for _check_share_permission method."""
 
@@ -274,7 +270,6 @@ class TestCheckSharePermission:
 
         # Should not raise even without proper permissions
         fs._check_share_permission(resource, context)
-
 
 class TestRebacCreate:
     """Tests for rebac_create validation logic."""
@@ -424,7 +419,6 @@ class TestRebacCreate:
             "consistency_token": "token-abc",
         }
 
-
 class TestRebacCheck:
     """Tests for rebac_check method."""
 
@@ -490,7 +484,6 @@ class TestRebacCheck:
                 object="invalid",  # Not a tuple
             )
 
-
 class TestRebacDelete:
     """Tests for rebac_delete method."""
 
@@ -512,7 +505,6 @@ class TestRebacDelete:
         # The property _require_rebac will raise when _rebac_manager is None
         with pytest.raises(RuntimeError, match="ReBAC manager not available"):
             fs.rebac_delete("tuple-id-123")
-
 
 class TestRebacExpand:
     """Tests for rebac_expand method."""
@@ -544,7 +536,6 @@ class TestRebacExpand:
                 permission="read",
                 object=["file", "/test.txt"],  # List instead of tuple
             )
-
 
 class TestRebacExplain:
     """Tests for rebac_explain method."""
@@ -613,7 +604,6 @@ class TestRebacExplain:
                 object=("file",),  # Only 1 element
             )
 
-
 class TestRebacCheckBatch:
     """Tests for rebac_check_batch method."""
 
@@ -670,7 +660,6 @@ class TestRebacCheckBatch:
         with pytest.raises(ValueError, match="object must be"):
             fs.rebac_check_batch(invalid_checks)
 
-
 class TestGetRebacOption:
     """Tests for get_rebac_option method."""
 
@@ -708,7 +697,6 @@ class TestGetRebacOption:
 
         with pytest.raises(RuntimeError, match="ReBAC manager not available"):
             fs.get_rebac_option("max_depth")
-
 
 class TestGetNamespace:
     """Tests for get_namespace method."""
@@ -750,7 +738,6 @@ class TestGetNamespace:
 
         with pytest.raises(RuntimeError, match="ReBAC manager not available"):
             fs.get_namespace("file")
-
 
 class TestShareWithUser:
     """Tests for share_with_user method."""
@@ -816,7 +803,6 @@ class TestShareWithUser:
             context=context,
         )
 
-
 class TestShareWithGroup:
     """Tests for share_with_group method."""
 
@@ -880,7 +866,6 @@ class TestShareWithGroup:
             resource=("file", "/test.txt"),
             context=context,
         )
-
 
 class TestListOutgoingShares:
     """Tests for list_outgoing_shares method."""
@@ -979,7 +964,6 @@ class TestListOutgoingShares:
         assert result["has_more"] is True
         assert len(result["items"]) == 100
 
-
 class TestListIncomingShares:
     """Tests for list_incoming_shares method."""
 
@@ -1055,7 +1039,6 @@ class TestListIncomingShares:
         assert "has_more" in result
         assert result["total_count"] == 50
         assert len(result["items"]) == 20
-
 
 class TestGetDynamicViewerConfig:
     """Tests for get_dynamic_viewer_config method."""

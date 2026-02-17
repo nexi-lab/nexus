@@ -6,8 +6,6 @@ failed export to external systems after exhausting retries.
 Issue #1138: Event Stream Export.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from datetime import UTC, datetime
@@ -15,6 +13,8 @@ from typing import TYPE_CHECKING
 
 from nexus.core.event_bus import FileEvent
 
+from nexus.services.event_log.exporter_registry import ExporterRegistry
+from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
@@ -26,13 +26,11 @@ logger = logging.getLogger(__name__)
 
 _TRANSIENT_ERRORS = (ConnectionError, TimeoutError, OSError)
 
-
 def classify_error(error: Exception) -> str:
     """Classify an error as transient or permanent."""
     if isinstance(error, _TRANSIENT_ERRORS):
         return "transient"
     return "permanent"
-
 
 class DeadLetterHandler:
     """Manages the dead letter queue for failed event exports."""

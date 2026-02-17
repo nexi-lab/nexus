@@ -9,8 +9,6 @@ This service handles all search operations:
 Extracted from: nexus_fs_search.py (2,817 lines)
 """
 
-from __future__ import annotations
-
 import asyncio
 import builtins
 import fnmatch
@@ -89,7 +87,6 @@ DEFAULT_IGNORE_PATTERNS: frozenset[str] = frozenset(
     }
 )
 
-
 def _should_ignore_path(
     path: str, ignore_patterns: frozenset[str] = DEFAULT_IGNORE_PATTERNS
 ) -> bool:
@@ -103,23 +100,24 @@ def _should_ignore_path(
                 return True
     return False
 
-
 def _filter_ignored_paths(
     paths: list[str], ignore_patterns: frozenset[str] = DEFAULT_IGNORE_PATTERNS
 ) -> list[str]:
     """Filter out paths matching gitignore-style patterns (Issue #538)."""
     return [p for p in paths if not _should_ignore_path(p, ignore_patterns)]
 
-
 logger = logging.getLogger(__name__)
 
+from nexus.core._metadata_generated import FileMetadataProtocol
+from nexus.core.router import PathRouter
+from nexus.services.permissions.enforcer import PermissionEnforcer
+from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
 if TYPE_CHECKING:
     from nexus.core._metadata_generated import FileMetadataProtocol
     from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter
     from nexus.services.permissions.enforcer import PermissionEnforcer
     from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
-
 
 class SearchService(SemanticSearchMixin):
     """Independent search service extracted from NexusFS.
@@ -139,7 +137,7 @@ class SearchService(SemanticSearchMixin):
         router: PathRouter | None = None,
         rebac_manager: EnhancedReBACManager | None = None,
         enforce_permissions: bool = True,
-        default_context: OperationContext | None = None,
+        default_context: "OperationContext | None" = None,
         record_store: Any | None = None,
         # Gateway for NexusFS operations (Issue #1287, replaces 8 Callable params)
         gateway: NexusFSGateway | None = None,

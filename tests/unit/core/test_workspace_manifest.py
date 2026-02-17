@@ -4,14 +4,11 @@ Issue #1264: Extracted manifest format shared between WorkspaceManager and Overl
 Pattern follows: tests/unit/backends/test_chunked_storage.py (TestChunkInfo, TestChunkedReference)
 """
 
-from __future__ import annotations
-
 import json
 
 import pytest
 
 from nexus.core.workspace_manifest import ManifestEntry, WorkspaceManifest
-
 
 class TestManifestEntry:
     """Tests for ManifestEntry dataclass."""
@@ -44,7 +41,6 @@ class TestManifestEntry:
         assert reconstructed.content_hash == original.content_hash
         assert reconstructed.size == original.size
         assert reconstructed.mime_type == original.mime_type
-
 
 class TestWorkspaceManifest:
     """Tests for WorkspaceManifest dataclass."""
@@ -99,7 +95,6 @@ class TestWorkspaceManifest:
             }
         )
         assert manifest.total_size == 600
-
 
 class TestWorkspaceManifestSerialization:
     """Tests for JSON serialization/deserialization."""
@@ -229,7 +224,6 @@ class TestWorkspaceManifestSerialization:
     def test_from_json_missing_hash_raises(self) -> None:
         with pytest.raises(KeyError):
             WorkspaceManifest.from_json(b'{"file.txt": {"size": 100}}')
-
 
 class TestWorkspaceManifestFromFileList:
     """Tests for from_file_list constructor."""

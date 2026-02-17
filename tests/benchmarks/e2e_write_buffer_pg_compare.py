@@ -6,8 +6,6 @@ Usage:
     PYTHONPATH=src python3.13 tests/benchmarks/e2e_write_buffer_pg_compare.py
 """
 
-from __future__ import annotations
-
 import base64
 import os
 import re
@@ -27,13 +25,11 @@ PG_BASE = "postgresql://nexus_test:nexus_test_password@localhost:5433/nexus_test
 SRC_PATH = str(Path(__file__).parent.parent.parent / "src")
 WRITE_COUNT = 50
 
-
 def find_free_port() -> int:
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
         s.bind(("", 0))
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         return int(s.getsockname()[1])
-
 
 def wait_for_server(url: str, timeout: float = 45.0) -> bool:
     start = time.time()
@@ -47,7 +43,6 @@ def wait_for_server(url: str, timeout: float = 45.0) -> bool:
         time.sleep(0.3)
     return False
 
-
 def rpc(client: httpx.Client, method: str, params: dict, headers: dict | None = None) -> dict:
     resp = client.post(
         f"/api/nfs/{method}",
@@ -56,10 +51,8 @@ def rpc(client: httpx.Client, method: str, params: dict, headers: dict | None = 
     )
     return resp.json()
 
-
 def encode_bytes(data: bytes) -> dict:
     return {"__type__": "bytes", "data": base64.b64encode(data).decode()}
-
 
 def create_fresh_db(db_name: str):
     engine = create_engine(PG_BASE, isolation_level="AUTOCOMMIT")
@@ -67,7 +60,6 @@ def create_fresh_db(db_name: str):
         conn.execute(text(f"DROP DATABASE IF EXISTS {db_name}"))
         conn.execute(text(f"CREATE DATABASE {db_name}"))
     engine.dispose()
-
 
 def run_benchmark(db_name: str, enable_write_buffer: bool, write_count: int) -> dict:
     """Start a server, write files, measure latency, return results."""
@@ -193,7 +185,6 @@ def run_benchmark(db_name: str, enable_write_buffer: bool, write_count: int) -> 
         except subprocess.TimeoutExpired:
             process.kill()
 
-
 def main():
     print("=" * 70)
     print(f"E2E Comparison: WriteBuffer ON vs OFF (PostgreSQL, {WRITE_COUNT} writes)")
@@ -259,7 +250,6 @@ def main():
     print("  CAS storage. The WriteBuffer only affects the PostgreSQL sync path.")
     print("  Pure PG benefit is ~2000x (see bench_write_buffer_pg.py).")
     print(f"{'=' * 70}")
-
 
 if __name__ == "__main__":
     main()

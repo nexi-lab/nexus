@@ -16,14 +16,12 @@ from sqlalchemy import create_engine
 from nexus.rebac.manager import ReBACManager
 from nexus.storage.models import Base
 
-
 @pytest.fixture
 def engine():
     """Create in-memory SQLite database for testing."""
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     return engine
-
 
 @pytest.fixture
 def rebac_manager(engine):
@@ -35,7 +33,6 @@ def rebac_manager(engine):
     )
     yield manager
     manager.close()
-
 
 def test_batch_write_basic(rebac_manager):
     """Test basic batch write functionality."""
@@ -78,7 +75,6 @@ def test_batch_write_basic(rebac_manager):
         zone_id="org_123",
     )
 
-
 def test_batch_write_deduplication(rebac_manager):
     """Test that batch write handles duplicates correctly (idempotent)."""
     tuples = [
@@ -97,7 +93,6 @@ def test_batch_write_deduplication(rebac_manager):
     # Second batch with same tuple (should skip duplicate)
     created2 = rebac_manager.rebac_write_batch(tuples)
     assert created2 == 0
-
 
 def test_batch_write_multiple_duplicates_in_same_batch(rebac_manager):
     """Test that duplicates within the same batch are handled correctly."""
@@ -120,12 +115,10 @@ def test_batch_write_multiple_duplicates_in_same_batch(rebac_manager):
     # Both should be created (they're different tuples)
     assert created == 2
 
-
 def test_batch_write_empty_list(rebac_manager):
     """Test that empty batch returns 0."""
     created = rebac_manager.rebac_write_batch([])
     assert created == 0
-
 
 def test_batch_write_cross_zone_validation(rebac_manager):
     """Test that cross-zone relationships are rejected in batch."""
@@ -141,7 +134,6 @@ def test_batch_write_cross_zone_validation(rebac_manager):
 
     with pytest.raises(ValueError, match="Cross-zone relationship not allowed"):
         rebac_manager.rebac_write_batch(tuples)
-
 
 def test_batch_write_cycle_detection(rebac_manager):
     """Test that cycles are detected and rejected in batch."""
@@ -174,7 +166,6 @@ def test_batch_write_cycle_detection(rebac_manager):
         object=("file", "/a"),
         zone_id="org_123",
     )
-
 
 def test_batch_write_mixed_valid_and_cycle(rebac_manager):
     """Test batch with mix of valid tuples and cycle-creating tuples."""
@@ -213,7 +204,6 @@ def test_batch_write_mixed_valid_and_cycle(rebac_manager):
         object=("file", "/d"),
         zone_id="org_123",
     )
-
 
 def test_batch_write_cache_invalidation(rebac_manager):
     """Test that batch write invalidates cache correctly."""
@@ -256,7 +246,6 @@ def test_batch_write_cache_invalidation(rebac_manager):
     )
     assert result2 is True
 
-
 def test_batch_write_with_userset_subject(rebac_manager):
     """Test batch write with userset-as-subject (3-tuple subject)."""
     tuples = [
@@ -270,7 +259,6 @@ def test_batch_write_with_userset_subject(rebac_manager):
 
     created = rebac_manager.rebac_write_batch(tuples)
     assert created == 1
-
 
 def test_batch_write_large_batch(rebac_manager):
     """Test batch write with large number of tuples (performance test)."""
@@ -302,7 +290,6 @@ def test_batch_write_large_batch(rebac_manager):
         object=("file", "/files"),
         zone_id="org_123",
     )
-
 
 def test_batch_write_different_zones(rebac_manager):
     """Test batch write with tuples from different zones."""
@@ -341,7 +328,6 @@ def test_batch_write_different_zones(rebac_manager):
     # Note: In the current implementation, zone isolation is enforced at write time
     # via cross-zone validation, not at check time. The check above verifies that
     # tuples were created correctly for each zone.
-
 
 @pytest.mark.skip(reason="Performance tests are flaky in CI")
 def test_batch_write_performance_vs_individual(rebac_manager):

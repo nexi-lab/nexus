@@ -3,11 +3,8 @@
 Issue #1603: Decompose remote/client.py into domain clients.
 """
 
-from __future__ import annotations
-
 import builtins
 from typing import Any
-
 
 class MCPClient:
     """MCP management domain client (sync)."""
@@ -98,7 +95,6 @@ class MCPClient:
         return self._call_rpc(  # type: ignore[no-any-return]
             "backfill_directory_index", {"prefix": prefix, "zone_id": zone_id}
         )
-
 
 class AsyncMCPClient:
     """MCP management domain client (async)."""

@@ -25,8 +25,6 @@ References:
     - Issue #1589: Extract HeartbeatBuffer from AgentRegistry (SRP)
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import threading
@@ -50,11 +48,11 @@ from nexus.services.agents.agent_record import (
 )
 from nexus.storage.models import AgentRecordModel
 
+from sqlalchemy.orm import Session, sessionmaker
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
 
 logger = logging.getLogger(__name__)
-
 
 def _safe_json_loads(raw: str | None, field_name: str, agent_id: str) -> Any:
     """Safely deserialize a JSON text column, returning a typed default on failure.
@@ -70,7 +68,6 @@ def _safe_json_loads(raw: str | None, field_name: str, agent_id: str) -> Any:
         logger.warning("[AGENT-REG] Corrupt %s for agent %s", field_name, agent_id)
         return default
 
-
 class InvalidTransitionError(Exception):
     """Raised when a state transition is not allowed by the allowlist."""
 
@@ -81,7 +78,6 @@ class InvalidTransitionError(Exception):
         super().__init__(
             f"Invalid transition for agent '{agent_id}': {current.value} -> {target.value}"
         )
-
 
 class StaleAgentError(Exception):
     """Raised when optimistic locking detects a stale generation."""
@@ -94,10 +90,8 @@ class StaleAgentError(Exception):
             f"expected generation {expected_generation} but record has changed"
         )
 
-
 # Sentinel for cache miss (distinguishes "agent not found" from "not cached")
 _CACHE_MISS = object()
-
 
 class AgentRegistry:
     """Agent registry with lifecycle state machine and session generation counters.

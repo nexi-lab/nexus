@@ -32,7 +32,6 @@ down_revision: Union[str, Sequence[str], None] = "drop_duplicate_unused_indexes"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Drop duplicate ix_* indexes.
 
@@ -224,7 +223,6 @@ def upgrade() -> None:
     # tenants table - 2 duplicates
     op.execute(text("DROP INDEX IF EXISTS ix_tenants_name"))  # → idx_tenants_name
     op.execute(text("DROP INDEX IF EXISTS ix_tenants_is_active"))  # → idx_tenants_active
-
 
 def downgrade() -> None:
     """Recreate ix_* indexes if needed for rollback.

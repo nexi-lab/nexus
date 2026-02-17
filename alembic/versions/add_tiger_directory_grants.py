@@ -30,7 +30,6 @@ down_revision: Union[str, Sequence[str], None] = "add_memory_hierarchy_fields"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Create tiger_directory_grants table and related indexes."""
     bind = op.get_bind()
@@ -135,7 +134,6 @@ def upgrade() -> None:
         "tiger_directory_grants",
         ["tenant_id", "directory_path", "permission"],
     )
-
 
 def downgrade() -> None:
     """Drop tiger_directory_grants table and indexes."""

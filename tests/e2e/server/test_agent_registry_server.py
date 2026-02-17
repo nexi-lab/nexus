@@ -5,8 +5,6 @@ Tests the HTTP delegation endpoint with real DelegationService + AgentRegistry
 as the single registration path. No mocks for core services.
 """
 
-from __future__ import annotations
-
 from typing import Any
 from unittest.mock import patch
 
@@ -33,7 +31,6 @@ from nexus.storage.models import Base
 # Fixtures: real services
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture()
 def engine():
     eng = create_engine(
@@ -44,16 +41,13 @@ def engine():
     Base.metadata.create_all(eng)
     return eng
 
-
 @pytest.fixture()
 def session_factory(engine):
     return sessionmaker(bind=engine, expire_on_commit=False)
 
-
 @pytest.fixture()
 def entity_registry(session_factory):
     return EntityRegistry(session_factory)
-
 
 @pytest.fixture()
 def agent_registry(session_factory, entity_registry):
@@ -62,13 +56,11 @@ def agent_registry(session_factory, entity_registry):
         entity_registry=entity_registry,
     )
 
-
 @pytest.fixture()
 def rebac_manager(engine):
     manager = EnhancedReBACManager(engine=engine, cache_ttl_seconds=0, max_depth=10)
     yield manager
     manager.close()
-
 
 @pytest.fixture()
 def delegation_service(session_factory, rebac_manager, entity_registry, agent_registry):
@@ -78,7 +70,6 @@ def delegation_service(session_factory, rebac_manager, entity_registry, agent_re
         entity_registry=entity_registry,
         agent_registry=agent_registry,
     )
-
 
 def _setup_coordinator(entity_registry, rebac_manager, agent_registry):
     """Register user + coordinator agent with file grants."""
@@ -95,7 +86,6 @@ def _setup_coordinator(entity_registry, rebac_manager, agent_registry):
             },
         ]
     )
-
 
 def _create_test_app(delegation_service, agent_auth):
     """Create a minimal FastAPI app with the delegation endpoint wired to real services."""
@@ -153,11 +143,9 @@ def _create_test_app(delegation_service, agent_auth):
     app.include_router(router)
     return app
 
-
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
-
 
 class TestServerDelegationPath:
     """Full HTTP → DelegationService → AgentRegistry path."""

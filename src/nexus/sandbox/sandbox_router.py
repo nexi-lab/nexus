@@ -14,8 +14,6 @@ Design decisions:
     - #15: LRU cache (maxsize=10,000) for agent history
 """
 
-from __future__ import annotations
-
 import ast
 import logging
 import threading
@@ -24,6 +22,8 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.sandbox.sandbox_router_metrics import SandboxRouterMetrics
 
+from collections.abc import Callable
+from nexus.sandbox.sandbox_provider import SandboxProvider
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -50,7 +50,6 @@ _ESCALATION_FUNCTIONS = frozenset(
 # History threshold: if >= this fraction of recent executions used a tier,
 # sticky session overrides static analysis.
 _HISTORY_THRESHOLD = 0.7
-
 
 class SandboxRouter:
     """Smart routing: Monty (0.06ms) -> Docker (5s) -> E2B (20s).

@@ -12,8 +12,6 @@ Issue #1264: CAS dedup at VFS level.
 Pattern follows: services/search_service.py (independent service, injected into NexusFS)
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -23,6 +21,8 @@ from cachetools import LRUCache
 
 from nexus.core.workspace_manifest import ManifestEntry, WorkspaceManifest
 
+from nexus.core._metadata_generated import FileMetadataProtocol
+from nexus.core.protocols.connector import ConnectorProtocol
 if TYPE_CHECKING:
     from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol
     from nexus.core.protocols.connector import ConnectorProtocol
@@ -31,7 +31,6 @@ logger = logging.getLogger(__name__)
 
 # Sentinel hash value for whiteout markers (deletions in overlay)
 WHITEOUT_HASH = "whiteout:deleted"
-
 
 @dataclass(slots=True)
 class OverlayConfig:
@@ -48,7 +47,6 @@ class OverlayConfig:
     base_manifest_hash: str | None = None
     workspace_path: str = ""
     agent_id: str | None = None
-
 
 @dataclass(slots=True)
 class OverlayStats:
@@ -80,7 +78,6 @@ class OverlayStats:
             "shared_ratio": self.shared_ratio,
             "estimated_savings_bytes": self.estimated_savings_bytes,
         }
-
 
 class OverlayResolver:
     """Resolves file lookups through overlay layers (base + upper).

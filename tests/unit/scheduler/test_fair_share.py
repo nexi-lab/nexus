@@ -3,12 +3,9 @@
 Tests admission, counters, limits, sync, and snapshots.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.scheduler.policies.fair_share import FairShareCounter, FairShareSnapshot
-
 
 class TestFairShareSnapshot:
     """Test FairShareSnapshot properties."""
@@ -28,7 +25,6 @@ class TestFairShareSnapshot:
     def test_available_slots_never_negative(self):
         snap = FairShareSnapshot(agent_id="a", running_count=15, max_concurrent=10)
         assert snap.available_slots == 0
-
 
 class TestFairShareAdmission:
     """Test admission checks."""
@@ -50,7 +46,6 @@ class TestFairShareAdmission:
         snap = counter.snapshot("agent-a")
         assert snap.running_count == 0  # admit is read-only
 
-
 class TestFairShareCounters:
     """Test record_start and record_complete."""
 
@@ -70,7 +65,6 @@ class TestFairShareCounters:
         counter = FairShareCounter()
         counter.record_complete("agent-a")
         assert counter.snapshot("agent-a").running_count == 0
-
 
 class TestFairShareLimits:
     """Test per-agent limit configuration."""
@@ -92,7 +86,6 @@ class TestFairShareLimits:
         with pytest.raises(ValueError, match="max_concurrent"):
             counter.set_limit("agent-a", 0)
 
-
 class TestFairShareSync:
     """Test sync_from_db."""
 
@@ -109,7 +102,6 @@ class TestFairShareSync:
         counter.record_start("agent-a")
         counter.sync_from_db({})
         assert counter.snapshot("agent-a").running_count == 0
-
 
 class TestAllSnapshots:
     """Test all_snapshots aggregation."""

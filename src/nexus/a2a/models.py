@@ -7,8 +7,6 @@ All models use Pydantic v2 for validation, serialization, and OpenAPI
 schema generation.
 """
 
-from __future__ import annotations
-
 from datetime import datetime
 from enum import StrEnum
 from typing import Annotated, Any, Literal
@@ -18,7 +16,6 @@ from pydantic import BaseModel, ConfigDict, Field
 # ============================================================================
 # Task State
 # ============================================================================
-
 
 class TaskState(StrEnum):
     """A2A task lifecycle states."""
@@ -30,7 +27,6 @@ class TaskState(StrEnum):
     FAILED = "failed"
     CANCELED = "canceled"
     REJECTED = "rejected"
-
 
 #: States from which no further transitions are allowed.
 TERMINAL_STATES: frozenset[TaskState] = frozenset(
@@ -56,16 +52,13 @@ VALID_TRANSITIONS: dict[TaskState, frozenset[TaskState]] = {
     TaskState.REJECTED: frozenset(),
 }
 
-
 def is_valid_transition(from_state: TaskState, to_state: TaskState) -> bool:
     """Check whether a state transition is valid."""
     return to_state in VALID_TRANSITIONS.get(from_state, frozenset())
 
-
 # ============================================================================
 # Message Parts (discriminated union on "type" field)
 # ============================================================================
-
 
 class TextPart(BaseModel):
     """Plain text content."""
@@ -75,7 +68,6 @@ class TextPart(BaseModel):
     metadata: dict[str, Any] | None = None
 
     model_config = ConfigDict(extra="forbid")
-
 
 class FileContent(BaseModel):
     """File reference or inline bytes."""
@@ -87,7 +79,6 @@ class FileContent(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-
 class FilePart(BaseModel):
     """File content part."""
 
@@ -96,7 +87,6 @@ class FilePart(BaseModel):
     metadata: dict[str, Any] | None = None
 
     model_config = ConfigDict(extra="forbid")
-
 
 class DataPart(BaseModel):
     """Structured JSON data part."""
@@ -107,15 +97,12 @@ class DataPart(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-
 #: Discriminated union of Part types.
 Part = Annotated[TextPart | FilePart | DataPart, Field(discriminator="type")]
-
 
 # ============================================================================
 # Messages and Artifacts
 # ============================================================================
-
 
 class Message(BaseModel):
     """A message exchanged between client and agent."""
@@ -125,7 +112,6 @@ class Message(BaseModel):
     metadata: dict[str, Any] | None = None
 
     model_config = ConfigDict(extra="forbid")
-
 
 class Artifact(BaseModel):
     """An output artifact produced by the agent."""
@@ -138,11 +124,9 @@ class Artifact(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-
 # ============================================================================
 # Task
 # ============================================================================
-
 
 class TaskStatus(BaseModel):
     """Current status of a task."""
@@ -152,7 +136,6 @@ class TaskStatus(BaseModel):
     timestamp: datetime | None = None
 
     model_config = ConfigDict(extra="forbid")
-
 
 class Task(BaseModel):
     """An A2A task."""
@@ -166,11 +149,9 @@ class Task(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-
 # ============================================================================
 # Streaming Events
 # ============================================================================
-
 
 class TaskStatusUpdateEvent(BaseModel):
     """Streaming event: task status changed."""
@@ -181,7 +162,6 @@ class TaskStatusUpdateEvent(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-
 class TaskArtifactUpdateEvent(BaseModel):
     """Streaming event: new or updated artifact."""
 
@@ -191,11 +171,9 @@ class TaskArtifactUpdateEvent(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-
 # ============================================================================
 # Agent Card
 # ============================================================================
-
 
 class AgentSkill(BaseModel):
     """A skill advertised in the Agent Card."""
@@ -208,7 +186,6 @@ class AgentSkill(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-
 class AgentCapabilities(BaseModel):
     """Declared agent capabilities."""
 
@@ -216,7 +193,6 @@ class AgentCapabilities(BaseModel):
     pushNotifications: bool = False
 
     model_config = ConfigDict(extra="forbid")
-
 
 class AuthScheme(BaseModel):
     """Authentication scheme declaration."""
@@ -226,7 +202,6 @@ class AuthScheme(BaseModel):
 
     model_config = ConfigDict(extra="allow")
 
-
 class AgentProvider(BaseModel):
     """Information about the agent provider / organization."""
 
@@ -234,7 +209,6 @@ class AgentProvider(BaseModel):
     url: str | None = None
 
     model_config = ConfigDict(extra="forbid")
-
 
 class AgentCard(BaseModel):
     """A2A Agent Card served at /.well-known/agent.json."""
@@ -253,11 +227,9 @@ class AgentCard(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-
 # ============================================================================
 # JSON-RPC Envelope
 # ============================================================================
-
 
 class A2ARequest(BaseModel):
     """A2A JSON-RPC 2.0 request."""
@@ -269,7 +241,6 @@ class A2ARequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-
 class A2AErrorData(BaseModel):
     """JSON-RPC error object."""
 
@@ -278,7 +249,6 @@ class A2AErrorData(BaseModel):
     data: dict[str, Any] | None = None
 
     model_config = ConfigDict(extra="forbid")
-
 
 class A2AResponse(BaseModel):
     """A2A JSON-RPC 2.0 response."""
@@ -291,20 +261,18 @@ class A2AResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     @classmethod
-    def success(cls, request_id: str | int, result: Any) -> A2AResponse:
+    def success(cls, request_id: str | int, result: Any) -> "A2AResponse":
         """Create a success response."""
         return cls(id=request_id, result=result)
 
     @classmethod
-    def from_error(cls, request_id: str | int | None, error: A2AErrorData) -> A2AResponse:
+    def from_error(cls, request_id: str | int | None, error: A2AErrorData) -> "A2AResponse":
         """Create an error response."""
         return cls(id=request_id, error=error)
-
 
 # ============================================================================
 # Method-Specific Params
 # ============================================================================
-
 
 class SendParams(BaseModel):
     """Parameters for a2a.tasks.send / a2a.tasks.sendStreamingMessage."""
@@ -315,7 +283,6 @@ class SendParams(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-
 class TaskQueryParams(BaseModel):
     """Parameters for a2a.tasks.get."""
 
@@ -324,14 +291,12 @@ class TaskQueryParams(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-
 class TaskIdParams(BaseModel):
     """Parameters for a2a.tasks.cancel and a2a.tasks.subscribeToTask."""
 
     taskId: str
 
     model_config = ConfigDict(extra="forbid")
-
 
 class PushNotificationConfig(BaseModel):
     """Webhook configuration for push notifications."""
@@ -342,7 +307,6 @@ class PushNotificationConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-
 class SetPushNotificationParams(BaseModel):
     """Parameters for a2a.tasks.createPushNotificationConfig."""
 
@@ -351,14 +315,12 @@ class SetPushNotificationParams(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-
 class GetPushNotificationParams(BaseModel):
     """Parameters for a2a.tasks.getPushNotificationConfig."""
 
     taskId: str
 
     model_config = ConfigDict(extra="forbid")
-
 
 class DeletePushNotificationParams(BaseModel):
     """Parameters for a2a.tasks.deletePushNotificationConfig."""

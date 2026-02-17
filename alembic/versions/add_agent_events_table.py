@@ -22,7 +22,6 @@ down_revision: Union[str, Sequence[str], None] = "add_agent_records_table"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add agent_events table with indexes."""
     op.create_table(
@@ -50,7 +49,6 @@ def upgrade() -> None:
         "agent_events",
         ["event_type"],
     )
-
 
 def downgrade() -> None:
     """Remove agent_events table."""

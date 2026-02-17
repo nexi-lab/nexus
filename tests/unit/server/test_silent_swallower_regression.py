@@ -11,7 +11,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-
 def _has_silent_swallower(source: str) -> tuple[bool, int]:
     """Check if source has any `except Exception: pass` patterns.
 
@@ -30,7 +29,6 @@ def _has_silent_swallower(source: str) -> tuple[bool, int]:
         ):
             return True, node.lineno
     return False, 0
-
 
 class TestAuthHelperLogging:
     """Verify auth helper errors are logged, not silently swallowed."""
@@ -51,7 +49,6 @@ class TestAuthHelperLogging:
         assert result == []
         assert "Failed to fetch zone IDs" in caplog.text
 
-
 class TestOAuthCleanupLogging:
     """Verify OAuth cleanup errors are logged with specific types."""
 
@@ -61,7 +58,6 @@ class TestOAuthCleanupLogging:
 
         found, line = _has_silent_swallower(inspect.getsource(oauth_service))
         assert not found, f"Silent swallower found at line {line}"
-
 
 class TestPermissionFilterLogging:
     """Verify permission filter chain errors are logged."""
@@ -73,7 +69,6 @@ class TestPermissionFilterLogging:
         found, line = _has_silent_swallower(inspect.getsource(permission_filter_chain))
         assert not found, f"Silent swallower found at line {line}"
 
-
 class TestCacheWarmerLogging:
     """Verify cache warmer errors are logged."""
 
@@ -84,7 +79,6 @@ class TestCacheWarmerLogging:
         found, line = _has_silent_swallower(inspect.getsource(warmer))
         assert not found, f"Silent swallower found at line {line}"
 
-
 class TestFastAPIServerLogging:
     """Verify FastAPI server silent swallowers are fixed."""
 
@@ -94,7 +88,6 @@ class TestFastAPIServerLogging:
 
         found, line = _has_silent_swallower(inspect.getsource(fastapi_server))
         assert not found, f"Silent swallower found at line {line}"
-
 
 class TestNexusFSCoreLogging:
     """Verify nexus_fs_core.py silent swallowers are fixed."""

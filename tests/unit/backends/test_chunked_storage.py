@@ -14,7 +14,6 @@ from nexus.backends.chunked_storage import (
 )
 from nexus.backends.local import LocalBackend
 
-
 class TestChunkInfo:
     """Tests for ChunkInfo dataclass."""
 
@@ -31,7 +30,6 @@ class TestChunkInfo:
         assert chunk.chunk_hash == "def456"
         assert chunk.offset == 1024
         assert chunk.length == 2048
-
 
 class TestChunkedReference:
     """Tests for ChunkedReference dataclass."""
@@ -110,7 +108,6 @@ class TestChunkedReference:
         wrong_type = json.dumps({"type": "something_else"}).encode()
         assert ChunkedReference.is_chunked_manifest(wrong_type) is False
 
-
 class TestChunkedStorageMixin:
     """Tests for ChunkedStorageMixin via LocalBackend."""
 
@@ -150,7 +147,6 @@ class TestChunkedStorageMixin:
             total_length += length
 
         assert total_length == len(content)
-
 
 class TestLocalBackendChunkedWriteRead:
     """Integration tests for chunked write/read operations."""
@@ -329,7 +325,6 @@ class TestLocalBackendChunkedWriteRead:
         assert exists_result2.success
         assert exists_result2.unwrap() is False
 
-
 class TestBackwardCompatibility:
     """Tests for backward compatibility with existing single-blob storage."""
 
@@ -382,7 +377,6 @@ class TestBackwardCompatibility:
         # Verify deleted
         assert not backend.content_exists(small_hash).unwrap()
         assert not backend.content_exists(large_hash).unwrap()
-
 
 class TestCDCChunking:
     """Tests specifically for CDC chunking behavior."""

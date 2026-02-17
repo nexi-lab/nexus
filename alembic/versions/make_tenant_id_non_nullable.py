@@ -66,7 +66,6 @@ TABLES_WITH_TENANT_ID = [
 # rebac_tuples uses zone_id (not tenant_id) for multi-tenant isolation
 REBAC_ZONE_COLUMNS = ["zone_id", "subject_zone_id", "object_zone_id"]
 
-
 def _table_has_column(inspector, table: str, column: str) -> bool:
     """Check if a table exists and has the given column."""
     try:
@@ -74,7 +73,6 @@ def _table_has_column(inspector, table: str, column: str) -> bool:
     except sa.exc.NoSuchTableError:
         return False
     return column in columns
-
 
 def upgrade() -> None:
     """Make tenant_id columns non-nullable after backfilling."""
@@ -159,7 +157,6 @@ def upgrade() -> None:
                     existing_type=sa.String(255),
                     nullable=False,
                 )
-
 
 def downgrade() -> None:
     """Revert tenant_id columns to nullable."""

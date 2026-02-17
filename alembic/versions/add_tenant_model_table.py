@@ -29,7 +29,6 @@ down_revision: Union[str, Sequence[str], None] = "u1234567890a"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add tenants table for tenant metadata."""
 
@@ -51,7 +50,6 @@ def upgrade() -> None:
     op.create_index("idx_tenants_name", "tenants", ["name"])
     op.create_index("idx_tenants_domain", "tenants", ["domain"])
     op.create_index("idx_tenants_active", "tenants", ["is_active"])
-
 
 def downgrade() -> None:
     """Remove tenants table."""

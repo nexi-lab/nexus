@@ -7,8 +7,6 @@ handles truncated records and corrupted CRC bytes.
 Issue #1397
 """
 
-from __future__ import annotations
-
 import struct
 from pathlib import Path
 
@@ -25,21 +23,17 @@ try:
 except ImportError:
     pytest.skip("_nexus_wal extension not available", allow_module_level=True)
 
-
 def _make_event(path: str = "/test.txt") -> FileEvent:
     return FileEvent(type=FileEventType.FILE_WRITE, path=path, zone_id="z1")
 
-
 def _find_segments(wal_dir: Path) -> list[Path]:
     return sorted(wal_dir.glob("wal-*.seg"))
-
 
 @pytest.fixture()
 def wal_dir(tmp_path: Path) -> Path:
     d = tmp_path / "wal"
     d.mkdir()
     return d
-
 
 class TestCleanRecovery:
     @pytest.mark.asyncio()
@@ -61,7 +55,6 @@ class TestCleanRecovery:
                 assert e.path == f"/f{i}.txt"
         finally:
             await wal2.close()
-
 
 class TestTruncatedRecovery:
     @pytest.mark.asyncio()
@@ -91,7 +84,6 @@ class TestTruncatedRecovery:
             assert last_seg.stat().st_size == original_size
         finally:
             await wal2.close()
-
 
 class TestCorruptedCrcRecovery:
     @pytest.mark.asyncio()

@@ -22,7 +22,6 @@ from nexus.workflows.types import WorkflowDefinition, WorkflowExecution
 
 logger = logging.getLogger(__name__)
 
-
 class WorkflowStore:
     """Async storage layer for workflow persistence."""
 

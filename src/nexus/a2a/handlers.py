@@ -5,8 +5,6 @@ imports.  Extracted from ``router.py`` for testability and separation
 of concerns (Decision 1 / #1585).
 """
 
-from __future__ import annotations
-
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -25,7 +23,6 @@ from nexus.a2a.models import (
     TaskState,
 )
 from nexus.a2a.task_manager import TaskManager
-
 
 async def dispatch(
     *,
@@ -57,7 +54,6 @@ async def dispatch(
         raise PushNotificationNotSupportedError()
     else:
         raise MethodNotFoundError(data={"method": method})
-
 
 async def handle_send(
     params: dict[str, Any],
@@ -110,7 +106,6 @@ async def handle_send(
     )
     return task.model_dump(mode="json")
 
-
 async def handle_get(
     params: dict[str, Any],
     zone_id: str,
@@ -128,7 +123,6 @@ async def handle_get(
         history_length=query_params.historyLength,
     )
     return task.model_dump(mode="json")
-
 
 async def handle_cancel(
     params: dict[str, Any],

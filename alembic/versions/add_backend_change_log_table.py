@@ -33,7 +33,6 @@ down_revision: Union[str, Sequence[str], None] = "add_migration_history"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Create backend_change_log table with indexes."""
     op.create_table(
@@ -69,7 +68,6 @@ def upgrade() -> None:
         conn.execute(
             text("CREATE INDEX idx_bcl_synced_brin ON backend_change_log USING brin (synced_at)")
         )
-
 
 def downgrade() -> None:
     """Drop backend_change_log table and its indexes."""

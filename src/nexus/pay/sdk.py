@@ -19,8 +19,6 @@ Example:
 Related: Issue #1207
 """
 
-from __future__ import annotations
-
 import re
 import uuid
 from collections.abc import Callable
@@ -41,6 +39,9 @@ from nexus.pay.protocol import (
 )
 from nexus.pay.x402 import validate_wallet_address
 
+from collections.abc import AsyncIterator
+from nexus.pay.credits import CreditsService
+from nexus.pay.x402 import X402Client
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
@@ -55,19 +56,15 @@ F = Any  # Generic callable type for decorators
 
 _API_KEY_PATTERN = re.compile(r"^nx_(live|test)_(.+)$")
 
-
 class NexusPayError(Exception):
     """Base exception for NexusPay SDK operations."""
-
 
 class BudgetExceededError(NexusPayError):
     """Raised when an operation exceeds budget limits."""
 
-
 # =============================================================================
 # Data Classes
 # =============================================================================
-
 
 @dataclass
 class Balance:
@@ -79,7 +76,6 @@ class Balance:
     @property
     def total(self) -> Decimal:
         return self.available + self.reserved
-
 
 @dataclass
 class Receipt:
@@ -95,7 +91,6 @@ class Receipt:
     tx_hash: str | None  # For x402 payments
     metadata: dict[str, Any] = field(default_factory=dict)
 
-
 @dataclass
 class Reservation:
     """A pending credit reservation."""
@@ -106,7 +101,6 @@ class Reservation:
     expires_at: datetime | None
     status: str  # "pending" | "committed" | "released"
 
-
 @dataclass
 class Quote:
     """A price quote for an external service call."""
@@ -115,7 +109,7 @@ class Quote:
     service: str
     price: Decimal
     params: dict[str, Any] = field(default_factory=dict)
-    nexuspay: NexusPay | None = field(default=None, repr=False)
+    nexuspay: "NexusPay | None" = field(default=None, repr=False)
 
     async def execute(self) -> Receipt:
         """Execute the quoted operation by paying via x402."""
@@ -139,11 +133,9 @@ class Quote:
             tx_hash=x402_receipt.tx_hash,
         )
 
-
 # =============================================================================
 # Budget Context
 # =============================================================================
-
 
 class BudgetContext:
     """Budget-limited payment context.
@@ -151,7 +143,7 @@ class BudgetContext:
     Tracks spending and enforces per-transaction and daily limits.
     """
 
-    def __init__(self, nexuspay: NexusPay, daily: Decimal, per_tx: Decimal) -> None:
+    def __init__(self, nexuspay: "NexusPay", daily: Decimal, per_tx: Decimal) -> None:
         self._nexuspay = nexuspay
         self._daily = daily
         self._per_tx = per_tx
@@ -180,11 +172,9 @@ class BudgetContext:
         self._spent += amount
         return receipt
 
-
 # =============================================================================
 # NexusPay SDK
 # =============================================================================
-
 
 class NexusPay:
     """Unified payment SDK for agent transactions.
@@ -573,7 +563,6 @@ class NexusPay:
             "network": self._x402.network,
             "agent_id": self.agent_id,
         }
-
 
 __all__ = [
     "Balance",

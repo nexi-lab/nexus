@@ -9,7 +9,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-
 class OAuthProviderConfig(BaseModel):
     """Configuration for a single OAuth provider.
 
@@ -55,7 +54,6 @@ class OAuthProviderConfig(BaseModel):
     )
 
     model_config = {"frozen": False}
-
 
 class OAuthConfig(BaseModel):
     """OAuth configuration containing all provider configurations."""

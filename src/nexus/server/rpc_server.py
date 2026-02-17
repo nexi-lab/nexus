@@ -14,14 +14,13 @@ The server maps each NexusFilesystem method to an RPC endpoint:
 Authentication is done via simple API key in the Authorization header.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import urlparse
 
+from nexus import NexusFilesystem
 if TYPE_CHECKING:
     from nexus import NexusFilesystem
 else:
@@ -55,7 +54,6 @@ from nexus.server.protocol import (
 )
 
 logger = logging.getLogger(__name__)
-
 
 class RPCRequestHandler(BaseHTTPRequestHandler):
     """HTTP request handler for Nexus RPC API.
@@ -1676,7 +1674,6 @@ class RPCRequestHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
         self.wfile.flush()  # Ensure all data is sent before connection closes
-
 
 class NexusRPCServer:
     """RPC server for Nexus filesystem.

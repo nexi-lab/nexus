@@ -5,15 +5,12 @@ Provides ``@run_sync`` decorator to replace the repetitive
 pattern used across 16 service files (76 occurrences).
 """
 
-from __future__ import annotations
-
 import asyncio
 from collections.abc import Callable, Coroutine
 from functools import wraps
 from typing import Any, TypeVar
 
 _T = TypeVar("_T")
-
 
 def run_sync(fn: Callable[..., _T]) -> Callable[..., Coroutine[Any, Any, _T]]:
     """Convert a sync method to async by running it in a thread pool.

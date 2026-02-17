@@ -17,8 +17,6 @@ Example:
     ```
 """
 
-from __future__ import annotations
-
 import bisect
 import logging
 import re
@@ -33,13 +31,11 @@ from nexus.core.context_utils import get_zone_id
 from nexus.services.change_log_store import ChangeLogEntry, ChangeLogStore
 from nexus.services.permission_utils import check_permission
 
-if TYPE_CHECKING:
-    from nexus.backends.backend import FileInfo
-    from nexus.core.permissions import OperationContext
-    from nexus.services.gateway import NexusFSGateway
+from nexus.backends.backend import FileInfo
+from nexus.core.permissions import OperationContext
+from nexus.services.gateway import NexusFSGateway
 
 logger = logging.getLogger(__name__)
-
 
 def _belongs_to_other_mount(path: str, sorted_mounts: list[str]) -> bool:
     """Check if path belongs to another mount using binary search. O(log m)."""
@@ -50,10 +46,8 @@ def _belongs_to_other_mount(path: str, sorted_mounts: list[str]) -> bool:
             return True
     return False
 
-
 # Type alias for progress callback: (files_scanned: int, current_path: str) -> None
 ProgressCallback = Callable[[int, str], None]
-
 
 @dataclass
 class SyncContext:
@@ -74,7 +68,6 @@ class SyncContext:
     progress_callback: ProgressCallback | None = None
     # Issue #1127: Delta sync support
     full_sync: bool = False  # Force full scan, bypassing delta checks
-
 
 @dataclass
 class SyncResult:
@@ -98,7 +91,6 @@ class SyncResult:
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return asdict(self)
-
 
 class SyncService:
     """Handles metadata and content synchronization (SYNC).

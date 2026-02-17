@@ -6,7 +6,6 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-
 def format_rate(rate):
     """Format rate as ops/sec with appropriate units."""
     if rate >= 1000:
@@ -18,7 +17,6 @@ def format_rate(rate):
     else:
         return f"{rate:.2f}"
 
-
 def format_duration(duration):
     """Format duration in seconds."""
     if duration >= 60:
@@ -28,7 +26,6 @@ def format_duration(duration):
     else:
         return f"{duration * 1000:.0f}ms"
 
-
 def get_class_for_value(value, best_value, worst_value, lower_is_better=False):
     """Determine CSS class based on value comparison."""
     if value == best_value:
@@ -36,7 +33,6 @@ def get_class_for_value(value, best_value, worst_value, lower_is_better=False):
     elif value == worst_value:
         return "bad"
     return ""
-
 
 def generate_flat_nested_table(csv_path, test_name):
     """Generate HTML table for flat or nested directory tests."""
@@ -93,7 +89,6 @@ def generate_flat_nested_table(csv_path, test_name):
 
     return html
 
-
 def generate_grep_table(csv_path):
     """Generate HTML table for grep tests."""
     with open(csv_path) as f:
@@ -147,7 +142,6 @@ def generate_grep_table(csv_path):
         html += "</tbody>\n</table>\n"
 
     return html
-
 
 def generate_html_report(result_dir):
     """Generate complete HTML report."""
@@ -323,7 +317,6 @@ def generate_html_report(result_dir):
     )
 
     return html
-
 
 if __name__ == "__main__":
     if len(sys.argv) != 2:

@@ -32,7 +32,6 @@ down_revision: Union[str, Sequence[str], None] = "convert_vector_to_halfvec"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Remove tenant_id from Tiger Cache unique constraint."""
     bind = op.get_bind()
@@ -91,7 +90,6 @@ def upgrade() -> None:
                 "idx_tiger_cache_lookup",
                 ["subject_type", "subject_id", "permission", "resource_type"],
             )
-
 
 def downgrade() -> None:
     """Restore tenant_id to Tiger Cache unique constraint."""

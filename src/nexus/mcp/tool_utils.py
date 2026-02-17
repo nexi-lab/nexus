@@ -18,8 +18,6 @@ References:
     - MiniScope: mechanical enforcement > prompt-based
 """
 
-from __future__ import annotations
-
 import asyncio
 import functools
 import logging
@@ -27,11 +25,9 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-
 # ---------------------------------------------------------------------------
 # Error envelope
 # ---------------------------------------------------------------------------
-
 
 def tool_error(
     category: str,
@@ -65,11 +61,9 @@ def tool_error(
         logger.debug("[TOOL-ERROR] %s: %s", category, message)
     return f"Error: {message}"
 
-
 # ---------------------------------------------------------------------------
 # Error handling decorator
 # ---------------------------------------------------------------------------
-
 
 def handle_tool_errors(operation: str) -> Any:
     """Decorator that wraps MCP tool functions with standard error handling.
@@ -142,11 +136,9 @@ def handle_tool_errors(operation: str) -> Any:
 
     return decorator
 
-
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
 
 def _extract_path_hint(
     args: tuple[Any, ...],

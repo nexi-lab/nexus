@@ -15,7 +15,6 @@ from nexus.core._metadata_generated import FileMetadata
 from nexus.core.exceptions import ValidationError
 from nexus.storage.models import ContentChunkModel, FileMetadataModel, FilePathModel
 
-
 class TestFileMetadataValidation:
     """Test suite for FileMetadata validation."""
 
@@ -108,7 +107,6 @@ class TestFileMetadataValidation:
         with pytest.raises(ValidationError, match="version must be >= 1"):
             metadata.validate()
 
-
 class TestFilePathModelValidation:
     """Test suite for FilePathModel validation."""
 
@@ -183,7 +181,6 @@ class TestFilePathModelValidation:
         with pytest.raises(ValidationError, match="size_bytes cannot be negative"):
             file_path.validate()
 
-
 class TestFileMetadataModelValidation:
     """Test suite for FileMetadataModel validation."""
 
@@ -230,7 +227,6 @@ class TestFileMetadataModelValidation:
         )
         with pytest.raises(ValidationError, match="metadata key must be 255 characters or less"):
             metadata.validate()
-
 
 class TestContentChunkModelValidation:
     """Test suite for ContentChunkModel validation."""
@@ -311,7 +307,6 @@ class TestContentChunkModelValidation:
         )
         with pytest.raises(ValidationError, match="ref_count cannot be negative"):
             chunk.validate()
-
 
 class TestTableDrivenValidation:
     """Table-driven validation tests for comprehensive coverage."""

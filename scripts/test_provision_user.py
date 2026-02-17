@@ -24,7 +24,6 @@ import nexus
 from nexus.core.permissions import OperationContext
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
-
 def test_provision_user() -> bool:
     """Test provision_user implementation."""
     print("=" * 80)
@@ -237,7 +236,6 @@ def test_provision_user() -> bool:
     print()
 
     return True
-
 
 if __name__ == "__main__":
     try:

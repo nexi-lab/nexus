@@ -16,7 +16,6 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import nexus
 
-
 def test_basic_operations():
     """Test basic file operations through NexusBackend."""
 
@@ -110,7 +109,6 @@ def test_basic_operations():
         shutil.rmtree(test_dir)
         print("✓ Cleaned up test directory")
 
-
 def test_backend_interface():
     """Test that NexusBackend matches expected interface."""
 
@@ -144,7 +142,6 @@ def test_backend_interface():
         print("   The NexusBackend implementation is complete, but cannot be")
         print("   fully tested without deepagents installed.")
         print()
-
 
 if __name__ == "__main__":
     # Test basic Nexus operations

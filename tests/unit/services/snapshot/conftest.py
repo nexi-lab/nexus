@@ -1,7 +1,5 @@
 """Shared fixtures for snapshot service tests (Issue #1752)."""
 
-from __future__ import annotations
-
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -9,7 +7,6 @@ import pytest
 
 from nexus.services.snapshot.registry import TransactionRegistry
 from nexus.services.snapshot.service import TransactionalSnapshotService
-
 
 class FakeSession:
     """Minimal session mock that supports context manager and basic operations."""
@@ -50,7 +47,6 @@ class FakeSession:
     def execute(self, stmt: Any) -> Any:
         return FakeResult([])
 
-
 class FakeResult:
     """Minimal result mock for SQLAlchemy queries."""
 
@@ -63,7 +59,6 @@ class FakeResult:
     def all(self) -> list[Any]:
         return self._items
 
-
 @pytest.fixture
 def mock_cas_store() -> MagicMock:
     """Mock CASBlobStore with hold_reference and release."""
@@ -72,14 +67,12 @@ def mock_cas_store() -> MagicMock:
     store.release.return_value = False
     return store
 
-
 @pytest.fixture
 def mock_metadata_store() -> MagicMock:
     """Mock metadata store with get/put/delete."""
     store = MagicMock()
     store.get.return_value = None
     return store
-
 
 @pytest.fixture
 def mock_session_factory() -> MagicMock:
@@ -88,12 +81,10 @@ def mock_session_factory() -> MagicMock:
     factory = MagicMock(return_value=session)
     return factory
 
-
 @pytest.fixture
 def registry() -> TransactionRegistry:
     """Fresh TransactionRegistry instance."""
     return TransactionRegistry()
-
 
 @pytest.fixture
 def snapshot_service(

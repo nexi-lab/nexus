@@ -4,8 +4,6 @@ Coordinates detection, script building, execution, and result parsing
 into a single pipeline that runs all applicable validators.
 """
 
-from __future__ import annotations
-
 import logging
 import shlex
 import time
@@ -25,6 +23,7 @@ from nexus.validation.script_builder import (
     parse_simple_script_output,
 )
 
+from nexus.sandbox.sandbox_provider import SandboxProvider
 if TYPE_CHECKING:
     from nexus.sandbox.sandbox_provider import SandboxProvider
 
@@ -45,7 +44,6 @@ _DEFAULT_VALIDATOR_CONFIGS: dict[str, ValidatorConfig] = {
 }
 
 logger = logging.getLogger(__name__)
-
 
 class ValidationRunner:
     """Orchestrates validation pipeline inside sandboxes."""

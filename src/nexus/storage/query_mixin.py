@@ -7,13 +7,10 @@ Both loggers compose this mixin rather than inheriting from it,
 keeping each store's public API explicit.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 from sqlalchemy import Select, desc, func, select
 from sqlalchemy.orm import Session
-
 
 class AppendOnlyQueryMixin:
     """Reusable query helpers for append-only log tables.

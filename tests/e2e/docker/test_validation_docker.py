@@ -5,8 +5,6 @@ the @pytest.mark.integration marker. They are skipped automatically
 if Docker is not available.
 """
 
-from __future__ import annotations
-
 import pytest
 
 # Check Docker availability
@@ -25,7 +23,6 @@ try:
     DOCKER_PROVIDER_AVAILABLE = True
 except ImportError:
     DOCKER_PROVIDER_AVAILABLE = False
-
 
 @pytest.mark.integration
 @pytest.mark.skipif(

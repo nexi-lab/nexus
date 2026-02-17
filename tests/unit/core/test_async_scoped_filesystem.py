@@ -3,14 +3,11 @@
 Tests path scoping/unscoping for multi-zone isolation with async client.
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
 import pytest
 
 from nexus.core.async_scoped_filesystem import AsyncScopedFilesystem
-
 
 @pytest.fixture
 def mock_async_fs() -> MagicMock:
@@ -21,12 +18,10 @@ def mock_async_fs() -> MagicMock:
     type(fs).zone_id = PropertyMock(return_value="test-zone")
     return fs
 
-
 @pytest.fixture
 def scoped_fs(mock_async_fs: MagicMock) -> AsyncScopedFilesystem:
     """Create an AsyncScopedFilesystem with a test root."""
     return AsyncScopedFilesystem(mock_async_fs, root="/zones/team_12/users/user_1")
-
 
 class TestPathScoping:
     """Test path scoping and unscoping logic."""
@@ -52,7 +47,6 @@ class TestPathScoping:
         """Test unscoping to root."""
         assert scoped_fs._unscope_path("/zones/team_12/users/user_1") == "/"
 
-
 class TestRootNormalization:
     """Test root path normalization."""
 
@@ -66,7 +60,6 @@ class TestRootNormalization:
         fs = AsyncScopedFilesystem(mock_async_fs, root="")
         assert fs.root == ""
         assert fs._scope_path("/workspace/file.txt") == "/workspace/file.txt"
-
 
 class TestProperties:
     """Test property delegation."""
@@ -82,7 +75,6 @@ class TestProperties:
     def test_root_property(self, scoped_fs: AsyncScopedFilesystem) -> None:
         """Test root property."""
         assert scoped_fs.root == "/zones/team_12/users/user_1"
-
 
 class TestCoreFileOperations:
     """Test core file operation path scoping (async)."""
@@ -196,7 +188,6 @@ class TestCoreFileOperations:
         )
         assert result is True
 
-
 class TestFileDiscoveryOperations:
     """Test file discovery operation path scoping (async)."""
 
@@ -257,7 +248,6 @@ class TestFileDiscoveryOperations:
         result = await scoped_fs.grep("TODO", "/workspace")
         assert result[0]["file"] == "/workspace/app.py"
 
-
 class TestDirectoryOperations:
     """Test directory operation path scoping (async)."""
 
@@ -292,7 +282,6 @@ class TestDirectoryOperations:
             "/zones/team_12/users/user_1/workspace/dir", None
         )
         assert result is True
-
 
 class TestVersionOperations:
     """Test version operation path scoping (async)."""
@@ -331,7 +320,6 @@ class TestVersionOperations:
             "/zones/team_12/users/user_1/workspace/file.txt", 1, None
         )
 
-
 class TestMountOperations:
     """Test mount operation path scoping (async)."""
 
@@ -363,7 +351,6 @@ class TestMountOperations:
         result = await scoped_fs.list_mounts()
         assert result[0]["mount_point"] == "/external/gcs"
 
-
 class TestMemoryOperations:
     """Test memory operation path scoping (async)."""
 
@@ -390,7 +377,6 @@ class TestMemoryOperations:
         result = await scoped_fs.list_registered_memories()
         assert result[0]["path"] == "/workspace/memory"
 
-
 class TestAgentOperations:
     """Test that agent operations are passed through without path scoping."""
 
@@ -403,7 +389,6 @@ class TestAgentOperations:
         result = await scoped_fs.register_agent("agent-123", "Test Agent")
         mock_async_fs.register_agent.assert_called_once_with("agent-123", "Test Agent", None, False)
         assert result["agent_id"] == "agent-123"
-
 
 class TestLifecycleManagement:
     """Test lifecycle management (async)."""

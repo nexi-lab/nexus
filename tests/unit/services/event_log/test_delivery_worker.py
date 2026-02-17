@@ -7,8 +7,6 @@ Tests cover the new features added to the delivery worker:
 - Error classification and retry tracking
 """
 
-from __future__ import annotations
-
 import asyncio
 import tempfile
 import uuid
@@ -23,19 +21,16 @@ from nexus.core.event_bus import FileEvent
 from nexus.storage.models import OperationLogModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
-
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
-
 
 @pytest.fixture
 def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]:
     rs = SQLAlchemyRecordStore(db_path=temp_dir / "delivery_test.db")
     yield rs
     rs.close()
-
 
 def _insert_undelivered(
     session_factory,
@@ -65,11 +60,9 @@ def _insert_undelivered(
         session.commit()
     return op_id
 
-
 # =========================================================================
 # _run_async helper
 # =========================================================================
-
 
 class TestRunAsync:
     """Test the sync->async bridge helper."""
@@ -107,11 +100,9 @@ class TestRunAsync:
             thread.join(timeout=2.0)
             loop.close()
 
-
 # =========================================================================
 # ExporterRegistry integration
 # =========================================================================
-
 
 class TestExporterRegistryIntegration:
     """Test EventDeliveryWorker with ExporterRegistry wired in."""
@@ -176,11 +167,9 @@ class TestExporterRegistryIntegration:
         assert count == 1
         assert worker.metrics["total_dispatched"] == 1
 
-
 # =========================================================================
 # DLQ routing after max_retries
 # =========================================================================
-
 
 class TestDLQRouting:
     """Test DLQ routing after exhausting retries."""

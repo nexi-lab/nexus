@@ -22,8 +22,6 @@ Run with:
     pytest tests/e2e/test_namespace_dcache_database_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import os
 import shutil
 import signal
@@ -60,9 +58,7 @@ for _key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
     os.environ.pop(_key, None)
 os.environ["NO_PROXY"] = "*"
 
-
 # === Helpers ===
-
 
 def _find_free_port() -> int:
     """Find a free TCP port on localhost."""
@@ -70,11 +66,9 @@ def _find_free_port() -> int:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
 
-
 def _make_client() -> httpx.Client:
     """Create httpx client for localhost connections."""
     return httpx.Client(timeout=15, trust_env=False)
-
 
 def _auth_headers(api_key: str, zone_id: str = "test") -> dict[str, str]:
     """Build Authorization + Zone headers for a given API key."""
@@ -82,7 +76,6 @@ def _auth_headers(api_key: str, zone_id: str = "test") -> dict[str, str]:
         "Authorization": f"Bearer {api_key}",
         "X-Nexus-Zone-ID": zone_id,
     }
-
 
 def _rebac_create(
     client: httpx.Client,
@@ -111,7 +104,6 @@ def _rebac_create(
     # RPC response: {"result": {"tuple_id": "...", "revision": ..., ...}}
     return data.get("result", data)
 
-
 def _rebac_delete(
     client: httpx.Client,
     base_url: str,
@@ -126,7 +118,6 @@ def _rebac_delete(
     )
     assert resp.status_code == 200, f"rebac_delete failed: {resp.text}"
 
-
 def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> None:
     """Poll /health until the server responds or timeout."""
     deadline = time.monotonic() + timeout
@@ -140,7 +131,6 @@ def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> 
                 pass
             time.sleep(0.3)
     raise TimeoutError(f"Server did not start within {timeout}s at {base_url}")
-
 
 def _wait_for_ready(base_url: str, admin_key: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> None:
     """Wait for AsyncNexusFS to be initialized (not just health check).
@@ -166,7 +156,6 @@ def _wait_for_ready(base_url: str, admin_key: str, timeout: float = SERVER_START
             time.sleep(0.5)
     raise TimeoutError(f"AsyncNexusFS not ready within {timeout}s")
 
-
 def _check_postgres() -> bool:
     """Check if PostgreSQL is available."""
     try:
@@ -177,7 +166,6 @@ def _check_postgres() -> bool:
         return True
     except Exception:
         return False
-
 
 def _preseed_database(db_url: str) -> dict[str, str]:
     """Pre-seed PostgreSQL with tables and admin/user API keys.
@@ -245,7 +233,6 @@ def _preseed_database(db_url: str) -> dict[str, str]:
     engine.dispose()
     return keys
 
-
 def _cleanup_database(db_url: str) -> None:
     """Clean up test data from PostgreSQL after tests."""
     try:
@@ -267,9 +254,7 @@ def _cleanup_database(db_url: str) -> None:
     except Exception:
         pass  # Best-effort cleanup
 
-
 # === Fixtures ===
-
 
 @pytest.fixture(scope="module")
 def server():
@@ -386,29 +371,24 @@ def server():
         shutil.rmtree(data_dir, ignore_errors=True)
         _cleanup_database(POSTGRES_URL)
 
-
 @pytest.fixture(scope="module")
 def client(server: dict) -> httpx.Client:
     """Shared httpx client."""
     with _make_client() as c:
         yield c
 
-
 @pytest.fixture()
 def base_url(server: dict) -> str:
     return server["base_url"]
-
 
 @pytest.fixture()
 def api_keys(server: dict) -> dict[str, str]:
     """API keys: {"admin": "sk-...", "alice": "sk-...", "bob": "sk-..."}."""
     return server["api_keys"]
 
-
 # =============================================================================
 # Health Check
 # =============================================================================
-
 
 def test_health(base_url: str, client: httpx.Client) -> None:
     """Server started successfully with database auth + PostgreSQL."""
@@ -416,11 +396,9 @@ def test_health(base_url: str, client: httpx.Client) -> None:
     assert resp.status_code == 200
     assert resp.json()["status"] == "healthy"
 
-
 # =============================================================================
 # Admin → User Permission Flow (Issue #1244 dcache validation)
 # =============================================================================
-
 
 def test_admin_can_write_files(
     base_url: str, client: httpx.Client, api_keys: dict[str, str]
@@ -433,7 +411,6 @@ def test_admin_can_write_files(
         headers=admin_headers,
     )
     assert resp.status_code == 200, f"Admin write failed: {resp.text}"
-
 
 def test_user_without_grants_gets_404(
     base_url: str, client: httpx.Client, api_keys: dict[str, str]
@@ -452,7 +429,6 @@ def test_user_without_grants_gets_404(
     )
     # 404 (invisible), not 403 (denied) — namespace visibility model
     assert resp.status_code == 404, f"Expected 404 for ungranted path: {resp.text}"
-
 
 def test_admin_grants_then_user_reads(
     base_url: str, client: httpx.Client, api_keys: dict[str, str]
@@ -506,7 +482,6 @@ def test_admin_grants_then_user_reads(
         headers=bob_headers,
     )
     assert resp.status_code == 404, f"Bob should NOT see {test_path}: {resp.text}"
-
 
 def test_per_subject_namespace_isolation_database_auth(
     base_url: str, client: httpx.Client, api_keys: dict[str, str]
@@ -581,7 +556,6 @@ def test_per_subject_namespace_isolation_database_auth(
     )
     assert resp.status_code == 404
 
-
 def test_admin_bypasses_namespace_database_auth(
     base_url: str, client: httpx.Client, api_keys: dict[str, str]
 ) -> None:
@@ -615,7 +589,6 @@ def test_admin_bypasses_namespace_database_auth(
     )
     assert resp.status_code == 200
     assert resp.json()["content"] == "Top secret dcache"
-
 
 def test_grant_revocation_makes_path_invisible_database_auth(
     base_url: str, client: httpx.Client, api_keys: dict[str, str]
@@ -675,7 +648,6 @@ def test_grant_revocation_makes_path_invisible_database_auth(
     )
     assert resp.status_code == 404
 
-
 def test_fine_grained_rebac_after_namespace_database_auth(
     base_url: str, client: httpx.Client, api_keys: dict[str, str]
 ) -> None:
@@ -726,11 +698,9 @@ def test_fine_grained_rebac_after_namespace_database_auth(
     )
     assert resp.status_code == 403, f"Expected 403 for write without permission: {resp.text}"
 
-
 # =============================================================================
 # Performance: dcache benefits
 # =============================================================================
-
 
 def test_dcache_performance_repeated_reads(
     base_url: str, client: httpx.Client, api_keys: dict[str, str]

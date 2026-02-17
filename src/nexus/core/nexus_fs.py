@@ -1,7 +1,5 @@
 """Unified filesystem implementation for Nexus."""
 
-from __future__ import annotations
-
 import asyncio
 import builtins
 import contextlib
@@ -63,7 +61,6 @@ from nexus.storage.content_cache import ContentCache
 from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
-
 
 class NexusFS(  # type: ignore[misc]
     NexusFSCoreMixin,
@@ -922,7 +919,7 @@ class NexusFS(  # type: ignore[misc]
         """Default user_id from the instance context."""
         return getattr(self._default_context, "user", None)
 
-    def _get_memory_api(self, context: dict | None = None) -> Memory:
+    def _get_memory_api(self, context: dict | None = None) -> "Memory":
         """Get Memory API instance with context-specific configuration.
 
         Args:
@@ -976,7 +973,7 @@ class NexusFS(  # type: ignore[misc]
             is_system=context.get("is_system", False),
         )
 
-    def _ensure_entity_registry(self) -> EntityRegistry:
+    def _ensure_entity_registry(self) -> "EntityRegistry":
         """Lazily create and cache an EntityRegistry instance.
 
         Consolidates 7 deferred import sites (Issue #1291).
@@ -10417,7 +10414,7 @@ class NexusFS(  # type: ignore[misc]
         context: Any = None,
         limit: int | None = None,
         cursor: str | None = None,
-    ) -> list[str] | list[dict[str, Any]] | Any:
+    ) -> "list[str] | list[dict[str, Any]] | Any":
         """List files in a directory - delegates to SearchService."""
         return self.search_service.list(
             path=path,
@@ -10763,7 +10760,7 @@ class NexusFS(  # type: ignore[misc]
         limit: int = 50,
         offset: int = 0,
         context: OperationContext | None = None,  # noqa: ARG002
-    ) -> list[dict[str, Any]]:  # type: ignore[valid-type]
+    ) -> "list[dict[str, Any]]":
         """List tasks with optional filters."""
         return self.task_queue_service.list_tasks(
             task_type=task_type,

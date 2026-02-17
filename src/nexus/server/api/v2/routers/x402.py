@@ -8,8 +8,6 @@ This module provides FastAPI routes for:
 Related: Issue #1206 (x402 protocol integration)
 """
 
-from __future__ import annotations
-
 import logging
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
@@ -24,11 +22,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/x402", tags=["x402"])
 
-
 # =============================================================================
 # Request/Response Models
 # =============================================================================
-
 
 class TopupRequest(BaseModel):
     """Request to initiate a credit topup via x402."""
@@ -36,7 +32,6 @@ class TopupRequest(BaseModel):
     agent_id: str = Field(..., description="Agent to receive credits")
     amount: str = Field(..., description="Amount in USDC")
     tenant_id: str = Field(default="default", description="Tenant identifier")
-
 
 class TopupResponse(BaseModel):
     """Response for topup initiation (402 with payment details)."""
@@ -47,7 +42,6 @@ class TopupResponse(BaseModel):
     network: str = Field(default="eip155:8453", description="CAIP-2 network ID")
     address: str = Field(..., description="Recipient wallet address")
     description: str = Field(default="Credit topup")
-
 
 class WebhookPayload(BaseModel):
     """x402 webhook payload for payment confirmation."""
@@ -65,14 +59,12 @@ class WebhookPayload(BaseModel):
 
     model_config = {"populate_by_name": True}
 
-
 class WebhookResponse(BaseModel):
     """Response for webhook processing."""
 
     status: str = Field(..., description="Processing status")
     tx_id: str | None = Field(default=None, description="TigerBeetle transaction ID")
     message: str | None = Field(default=None, description="Status message")
-
 
 class X402ConfigResponse(BaseModel):
     """x402 configuration for the server."""
@@ -82,11 +74,9 @@ class X402ConfigResponse(BaseModel):
     facilitator_url: str = Field(..., description="x402 facilitator URL")
     wallet_address: str | None = Field(default=None, description="Server wallet address")
 
-
 # =============================================================================
 # Dependencies
 # =============================================================================
-
 
 def get_x402_client(request: Request) -> Any:
     """Get X402Client from app state."""
@@ -98,7 +88,6 @@ def get_x402_client(request: Request) -> Any:
         )
     return x402_client
 
-
 def get_credits_service(request: Request) -> Any:
     """Get CreditsService from app state."""
     credits_service = getattr(request.app.state, "credits_service", None)
@@ -109,11 +98,9 @@ def get_credits_service(request: Request) -> Any:
         )
     return credits_service
 
-
 # =============================================================================
 # Endpoints
 # =============================================================================
-
 
 @router.post("/webhook", response_model=WebhookResponse)
 async def x402_webhook(
@@ -166,7 +153,6 @@ async def x402_webhook(
         )
         raise HTTPException(status_code=500, detail="Internal error processing webhook") from e
 
-
 @router.post("/topup", response_model=TopupResponse, status_code=402)
 async def request_topup(
     request: TopupRequest,
@@ -205,7 +191,6 @@ async def request_topup(
     except X402Error as e:
         raise HTTPException(status_code=400, detail=str(e)) from e
 
-
 @router.get("/config", response_model=X402ConfigResponse)
 async def get_x402_config(
     request: Request,
@@ -230,7 +215,6 @@ async def get_x402_config(
         facilitator_url=x402_client.facilitator_url,
         wallet_address=x402_client.wallet_address,
     )
-
 
 # =============================================================================
 # Module Exports

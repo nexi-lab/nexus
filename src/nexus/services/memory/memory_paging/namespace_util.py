@@ -1,10 +1,7 @@
 """Shared utility for tier namespace manipulation."""
 
-from __future__ import annotations
-
 # Tier namespace prefixes to strip when moving memories between tiers
 _TIER_PREFIXES = ("recall/", "archival/")
-
 
 def strip_tier_prefix(namespace: str | None) -> str:
     """Extract the base namespace by stripping tier prefixes.

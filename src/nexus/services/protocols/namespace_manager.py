@@ -15,13 +15,11 @@ References:
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from nexus.rebac.namespace_manager import NamespaceMount
 if TYPE_CHECKING:
     from nexus.rebac.namespace_manager import NamespaceMount
-
 
 @runtime_checkable
 class NamespaceManagerProtocol(Protocol):

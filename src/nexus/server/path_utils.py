@@ -13,10 +13,7 @@ Internal path formats handled:
 Related: Issue #1202 - list('/') returns paths with /tenant: prefix
 """
 
-from __future__ import annotations
-
 from typing import overload
-
 
 @overload
 def unscope_result(r: dict) -> dict: ...
@@ -25,7 +22,6 @@ def unscope_result(r: str) -> str: ...
 @overload
 def unscope_result(r: object) -> object: ...
 
-
 def unscope_result(r: object) -> dict | str | object:
     """Unscope a single grep/list result (dict, str, or passthrough)."""
     if isinstance(r, dict):
@@ -33,7 +29,6 @@ def unscope_result(r: object) -> dict | str | object:
     if isinstance(r, str):
         return unscope_internal_path(r)
     return r
-
 
 def unscope_internal_path(path: str) -> str:
     """Strip internal zone/tenant/user prefix from a storage path.
@@ -78,7 +73,6 @@ def unscope_internal_path(path: str) -> str:
     remaining = "/".join(parts[skip:])
     return f"/{remaining}" if remaining else "/"
 
-
 def unscope_internal_paths(paths: list[str]) -> list[str]:
     """Strip internal prefixes from a list of paths.
 
@@ -89,7 +83,6 @@ def unscope_internal_paths(paths: list[str]) -> list[str]:
         List of user-friendly paths
     """
     return [unscope_internal_path(p) for p in paths]
-
 
 def unscope_internal_dict(d: dict, path_keys: list[str]) -> dict:
     """Strip internal prefixes from path values in a dict.

@@ -9,8 +9,6 @@ This mixin provides all semantic search functionality:
 Extracted from: search_service.py (2,478 lines -> under 2,000)
 """
 
-from __future__ import annotations
-
 import asyncio
 import builtins
 import contextlib
@@ -24,7 +22,6 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from nexus.search.async_search import AsyncSemanticSearch
     from nexus.search.semantic import SemanticSearch
-
 
 class SemanticSearchMixin:
     """Mixin providing semantic search capabilities for SearchService.
@@ -59,8 +56,8 @@ class SemanticSearchMixin:
             )
 
     # Type hints for attributes provided by SearchService.__init__
-    _semantic_search: SemanticSearch | None
-    _async_search: AsyncSemanticSearch | None
+    _semantic_search: "SemanticSearch | None"
+    _async_search: "AsyncSemanticSearch | None"
     _record_store: Any
     _gw_session_factory: Any
     _gw_backend: Any

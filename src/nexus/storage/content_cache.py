@@ -17,7 +17,6 @@ logger = logging.getLogger(__name__)
 # LZ4 frame magic bytes for detection
 _LZ4_MAGIC = b"\x04\x22\x4d\x18"
 
-
 class ContentCache:
     """
     LRU cache for file content indexed by content hash.

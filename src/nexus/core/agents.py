@@ -12,16 +12,15 @@ Key concepts:
 See: docs/design/AGENT_IDENTITY_AND_SESSIONS.md
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+from nexus.rebac.entity_registry import EntityRegistry
+from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from nexus.rebac.entity_registry import EntityRegistry
-
 
 def register_agent(
     user_id: str,
@@ -94,7 +93,6 @@ def register_agent(
         "created_at": datetime.now(UTC).isoformat(),
     }
 
-
 def create_agent_with_api_key(
     session: Session,
     user_id: str,
@@ -150,7 +148,6 @@ def create_agent_with_api_key(
 
     return agent, raw_key
 
-
 def unregister_agent(agent_id: str, entity_registry: EntityRegistry | None = None) -> bool:
     """Unregister an agent.
 
@@ -166,7 +163,6 @@ def unregister_agent(agent_id: str, entity_registry: EntityRegistry | None = Non
     if entity_registry:
         return entity_registry.delete_entity("agent", agent_id)
     return False
-
 
 def validate_agent_ownership(agent_id: str, user_id: str, entity_registry: EntityRegistry) -> bool:
     """Validate that agent belongs to user.

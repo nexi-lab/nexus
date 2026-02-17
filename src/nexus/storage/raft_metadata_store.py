@@ -22,8 +22,6 @@ Usage:
     store = await RaftMetadataStore.remote("10.0.0.2:2026")
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from collections.abc import Iterator, Sequence
@@ -45,7 +43,6 @@ except ImportError:
         "Falling back to JSON serialization. This is expected in CI/testing."
     )
 
-
 def _serialize_metadata(metadata: FileMetadata) -> bytes:
     """Serialize FileMetadata to bytes for Raft storage.
 
@@ -61,7 +58,6 @@ def _serialize_metadata(metadata: FileMetadata) -> bytes:
         # Fallback to JSON serialization
         obj = MetadataMapper.to_json(metadata)
         return json.dumps(obj).encode("utf-8")
-
 
 def _deserialize_metadata(data: bytes | list[int]) -> FileMetadata:
     """Deserialize bytes to FileMetadata.
@@ -93,7 +89,6 @@ def _deserialize_metadata(data: bytes | list[int]) -> FileMetadata:
         return MetadataMapper.from_json(obj)
     except Exception as e:
         raise ValueError(f"Failed to deserialize metadata: {e}") from e
-
 
 class RaftMetadataStore(FileMetadataProtocol):
     """Primary metadata store for Nexus using embedded redb database.
@@ -231,7 +226,7 @@ class RaftMetadataStore(FileMetadataProtocol):
         self,
         prefix: str = "",
         recursive: bool = True,
-    ) -> list[FileMetadata]:
+    ) -> "list[FileMetadata]":
         """List metadata entries from the embedded sled engine.
 
         Args:
@@ -257,7 +252,7 @@ class RaftMetadataStore(FileMetadataProtocol):
         return result
 
     @classmethod
-    def embedded(cls, db_path: str, zone_id: str | None = None) -> RaftMetadataStore:
+    def embedded(cls, db_path: str, zone_id: str | None = None) -> "RaftMetadataStore":
         """Create an embedded metastore using direct sled access.
 
         This is the fast path (~5μs per operation) for standalone mode.
@@ -286,7 +281,7 @@ class RaftMetadataStore(FileMetadataProtocol):
         cls,
         address: str,
         zone_id: str | None = None,
-    ) -> RaftMetadataStore:
+    ) -> "RaftMetadataStore":
         """Create a remote Raft metadata store using gRPC.
 
         This connects to a remote Raft node over gRPC (~200μs per operation).
@@ -447,7 +442,7 @@ class RaftMetadataStore(FileMetadataProtocol):
         recursive: bool = True,
         zone_id: str | None = None,
         accessible_int_ids: set[int] | None = None,
-    ) -> list[FileMetadata]:
+    ) -> "list[FileMetadata]":
         """List all files with given path prefix.
 
         RaftMetadataStore is zone-local: each zone has its own sled database,
@@ -961,7 +956,7 @@ class RaftMetadataStore(FileMetadataProtocol):
         else:
             raise NotImplementedError("Remote lock info requires async")
 
-    def list_locks(self, prefix: str = "", limit: int = 1000) -> list[dict[str, Any]]:
+    def list_locks(self, prefix: str = "", limit: int = 1000) -> "list[dict[str, Any]]":
         """List all active locks matching a prefix.
 
         Args:
@@ -1076,7 +1071,7 @@ class RaftMetadataStore(FileMetadataProtocol):
         prefix: str = "",
         recursive: bool = True,
         zone_id: str | None = None,
-    ) -> list[FileMetadata]:
+    ) -> "list[FileMetadata]":
         """List all files with given path prefix (async).
 
         RaftMetadataStore is zone-local: each zone has its own sled database,

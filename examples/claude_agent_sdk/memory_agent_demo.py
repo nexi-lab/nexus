@@ -34,14 +34,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 import nexus
 from claude_agent_sdk import query
 
-
 def setup_nexus(agent_id: str = "memory-agent"):
     """Setup Nexus with agent identifier"""
     nx = nexus.connect()
     print("✓ Connected to Nexus")
     print(f"  Agent ID: {agent_id}")
     return nx
-
 
 def create_memory_tools(nx, agent_id: str):
     """
@@ -252,7 +250,6 @@ def create_memory_tools(nx, agent_id: str):
         forget_about,
     ]
 
-
 async def run_conversation(_nx, tools, prompt: str):
     """Run a single conversation turn with memory"""
     print("\n" + "─" * 70)
@@ -285,7 +282,6 @@ User message: {prompt}"""
 
     print("\n")
     return assistant_response
-
 
 async def interactive_demo():
     """Run an interactive demo with memory"""
@@ -338,7 +334,6 @@ async def interactive_demo():
     print("3. Memory persists across multiple conversation turns")
     print("\nThis memory is stored in Nexus and persists across Python sessions!")
 
-
 async def scripted_demo():
     """Run a scripted demo showing memory capabilities"""
     print("=" * 70)
@@ -368,7 +363,6 @@ async def scripted_demo():
 
     print("\n📝 Scenario 5: Specific Recall")
     await run_conversation(nx, tools, "What project am I working on?")
-
 
 if __name__ == "__main__":
     # Run interactive demo by default

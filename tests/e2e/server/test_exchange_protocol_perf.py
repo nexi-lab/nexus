@@ -4,8 +4,6 @@ Verifies no latency regression from the models.py split or error handler registr
 Each endpoint should respond within reasonable thresholds.
 """
 
-from __future__ import annotations
-
 import statistics
 import time
 
@@ -17,7 +15,6 @@ AUTH_HEADERS = {"Authorization": "Bearer test-e2e-api-key-12345"}
 THRESHOLD_FAST = 0.5  # Simple reads
 THRESHOLD_MEDIUM = 1.0  # Writes / searches
 THRESHOLD_SLOW = 2.0  # Complex operations
-
 
 def _measure(client: httpx.Client, method: str, url: str, rounds: int = 5, **kwargs) -> dict:
     """Hit an endpoint multiple times and return timing stats."""
@@ -40,7 +37,6 @@ def _measure(client: httpx.Client, method: str, url: str, rounds: int = 5, **kwa
         "max": max(times),
         "status": last_status,
     }
-
 
 class TestEndpointLatency:
     """Measure response times for key endpoints after models split."""

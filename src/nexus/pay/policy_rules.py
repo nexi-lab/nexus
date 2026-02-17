@@ -12,8 +12,6 @@ Rules are evaluated in order. First matching deny rule short-circuits.
 If all rules pass (or no rules), the transaction is allowed.
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -26,7 +24,6 @@ _RuleHandler = Callable[[dict[str, Any], "RuleContext"], "RuleResult"]
 
 logger = logging.getLogger(__name__)
 
-
 @dataclass(frozen=True)
 class RuleContext:
     """Context provided to the rule evaluator for each transaction."""
@@ -38,7 +35,6 @@ class RuleContext:
     metadata: dict[str, Any] = field(default_factory=dict)
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
-
 @dataclass(frozen=True)
 class RuleResult:
     """Result of evaluating all rules."""
@@ -46,7 +42,6 @@ class RuleResult:
     allowed: bool
     denied_reason: str | None = None
     matched_rule_type: str | None = None
-
 
 def evaluate_rules(rules: list[dict[str, Any]], context: RuleContext) -> RuleResult:
     """Evaluate a list of rules against the transaction context.
@@ -73,11 +68,9 @@ def evaluate_rules(rules: list[dict[str, Any]], context: RuleContext) -> RuleRes
             return result
     return RuleResult(allowed=True)
 
-
 # =============================================================================
 # Rule Handlers
 # =============================================================================
-
 
 def _eval_recipient_allowlist(rule: dict[str, Any], ctx: RuleContext) -> RuleResult:
     """Allow only if recipient is in the allowlist."""
@@ -92,7 +85,6 @@ def _eval_recipient_allowlist(rule: dict[str, Any], ctx: RuleContext) -> RuleRes
         matched_rule_type="recipient_allowlist",
     )
 
-
 def _eval_recipient_blocklist(rule: dict[str, Any], ctx: RuleContext) -> RuleResult:
     """Deny if recipient is in the blocklist."""
     recipients: list[str] = rule.get("recipients", [])
@@ -103,7 +95,6 @@ def _eval_recipient_blocklist(rule: dict[str, Any], ctx: RuleContext) -> RuleRes
             matched_rule_type="recipient_blocklist",
         )
     return RuleResult(allowed=True)
-
 
 def _eval_time_window(rule: dict[str, Any], ctx: RuleContext) -> RuleResult:
     """Allow only during specified UTC hours [start, end)."""
@@ -129,7 +120,6 @@ def _eval_time_window(rule: dict[str, Any], ctx: RuleContext) -> RuleResult:
         matched_rule_type="time_window",
     )
 
-
 def _eval_metadata_match(rule: dict[str, Any], ctx: RuleContext) -> RuleResult:
     """Require specific key-value pairs in transaction metadata."""
     required: dict[str, Any] = rule.get("required", {})
@@ -142,7 +132,6 @@ def _eval_metadata_match(rule: dict[str, Any], ctx: RuleContext) -> RuleResult:
                 matched_rule_type="metadata_match",
             )
     return RuleResult(allowed=True)
-
 
 def _eval_amount_range(rule: dict[str, Any], ctx: RuleContext) -> RuleResult:
     """Allow only if amount is within [min, max] range."""
@@ -162,7 +151,6 @@ def _eval_amount_range(rule: dict[str, Any], ctx: RuleContext) -> RuleResult:
             matched_rule_type="amount_range",
         )
     return RuleResult(allowed=True)
-
 
 # Registry of rule type → handler
 _RULE_HANDLERS: dict[str, _RuleHandler] = {

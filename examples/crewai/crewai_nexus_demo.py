@@ -48,7 +48,6 @@ from crewai.tools import tool
 # Since we want fine control and MCPServerAdapter may not be stable yet,
 # we'll create custom tools that call the MCP server via subprocess
 
-
 def call_nexus_mcp(tool_name: str, **kwargs) -> str:
     """Call a Nexus MCP tool via stdio transport."""
     import json
@@ -121,11 +120,9 @@ def call_nexus_mcp(tool_name: str, **kwargs) -> str:
     except Exception as e:
         return f"Error calling {tool_name}: {str(e)}"
 
-
 # =========================================================================
 # CREWAI TOOLS - Wrapped Nexus MCP Tools
 # =========================================================================
-
 
 @tool("Read File")
 def read_file(path: str) -> str:
@@ -138,7 +135,6 @@ def read_file(path: str) -> str:
         File content as string
     """
     return call_nexus_mcp("nexus_read_file", path=path)
-
 
 @tool("Write File")
 def write_file(path: str, content: str) -> str:
@@ -153,7 +149,6 @@ def write_file(path: str, content: str) -> str:
     """
     return call_nexus_mcp("nexus_write_file", path=path, content=content)
 
-
 @tool("List Files")
 def list_files(path: str = "/", recursive: bool = False) -> str:
     """List files in a directory.
@@ -166,7 +161,6 @@ def list_files(path: str = "/", recursive: bool = False) -> str:
         List of file paths
     """
     return call_nexus_mcp("nexus_list_files", path=path, recursive=recursive)
-
 
 @tool("Search Files by Pattern")
 def glob_files(pattern: str, path: str = "/") -> str:
@@ -181,7 +175,6 @@ def glob_files(pattern: str, path: str = "/") -> str:
     """
     return call_nexus_mcp("nexus_glob", pattern=pattern, path=path)
 
-
 @tool("Search File Contents")
 def grep_files(pattern: str, path: str = "/") -> str:
     """Search file contents using regex pattern.
@@ -195,7 +188,6 @@ def grep_files(pattern: str, path: str = "/") -> str:
     """
     return call_nexus_mcp("nexus_grep", pattern=pattern, path=path)
 
-
 @tool("Semantic Search")
 def semantic_search(query: str, limit: int = 10) -> str:
     """Search files semantically using natural language.
@@ -208,7 +200,6 @@ def semantic_search(query: str, limit: int = 10) -> str:
         Search results with relevance scores
     """
     return call_nexus_mcp("nexus_semantic_search", query=query, limit=limit)
-
 
 @tool("Store Memory")
 def store_memory(content: str, memory_type: str = None, importance: float = 0.5) -> str:
@@ -226,7 +217,6 @@ def store_memory(content: str, memory_type: str = None, importance: float = 0.5)
         "nexus_store_memory", content=content, memory_type=memory_type, importance=importance
     )
 
-
 @tool("Query Memory")
 def query_memory(query: str, limit: int = 5) -> str:
     """Retrieve relevant memories using semantic search.
@@ -240,11 +230,9 @@ def query_memory(query: str, limit: int = 5) -> str:
     """
     return call_nexus_mcp("nexus_query_memory", query=query, limit=limit)
 
-
 # =========================================================================
 # DEMO TASKS
 # =========================================================================
-
 
 def demo_1_file_analysis():
     """Demo 1: File Analysis - Search, read, and analyze files."""
@@ -287,7 +275,6 @@ def demo_1_file_analysis():
     print(result)
 
     return result
-
 
 def demo_2_research_with_memory():
     """Demo 2: Research Agent with Memory - Learn and remember insights."""
@@ -342,7 +329,6 @@ def demo_2_research_with_memory():
     print(result)
 
     return result
-
 
 def demo_3_multi_agent_collaboration():
     """Demo 3: Multi-Agent Collaboration - Agents working together via Nexus."""
@@ -412,11 +398,9 @@ def demo_3_multi_agent_collaboration():
 
     return result
 
-
 # =========================================================================
 # MAIN
 # =========================================================================
-
 
 def check_environment():
     """Check that required environment variables are set."""
@@ -463,7 +447,6 @@ def check_environment():
         sys.exit(1)
 
     print("\n✓ Environment check passed!\n")
-
 
 def setup_test_data():
     """Setup test data for demos."""
@@ -534,7 +517,6 @@ def validate_input(data: dict) -> bool:
         print(f"Warning: Could not setup test data: {e}")
         print("Continuing anyway...")
 
-
 def main():
     """Main entry point."""
 
@@ -588,7 +570,6 @@ def main():
     print("\n" + "=" * 70)
     print("Demo completed!")
     print("=" * 70)
-
 
 if __name__ == "__main__":
     main()

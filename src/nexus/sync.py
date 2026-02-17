@@ -4,15 +4,13 @@ Provides efficient sync, copy, and move operations with hash-based
 change detection and progress reporting.
 """
 
-from __future__ import annotations
-
 import os
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
+from nexus import NexusFilesystem
 if TYPE_CHECKING:
     from nexus import NexusFilesystem
-
 
 class SyncStats:
     """Statistics for sync operations."""
@@ -24,7 +22,6 @@ class SyncStats:
         self.files_deleted = 0
         self.bytes_transferred = 0
         self.errors: list[str] = []
-
 
 def is_local_path(path: str) -> bool:
     """Check if a path is a local filesystem path (not a Nexus path).
@@ -49,7 +46,6 @@ def is_local_path(path: str) -> bool:
     # Return True if parent exists AND is not root, otherwise assume it's a Nexus path
     return bool(parent and parent != "/" and os.path.exists(parent))
 
-
 def list_local_files(local_path: str, recursive: bool = True) -> list[str]:
     """List files in a local directory."""
     local_path_obj = Path(local_path)
@@ -68,7 +64,6 @@ def list_local_files(local_path: str, recursive: bool = True) -> list[str]:
                 files.append(str(item))
 
     return files
-
 
 def copy_file(
     nx: NexusFilesystem,
@@ -162,7 +157,6 @@ def copy_file(
 
         nx.write(dest, content)
         return len(content)
-
 
 def sync_directories(
     nx: NexusFilesystem,
@@ -305,7 +299,6 @@ def sync_directories(
 
     return stats
 
-
 def copy_recursive(
     nx: NexusFilesystem,
     source: str,
@@ -318,7 +311,6 @@ def copy_recursive(
     This is similar to sync but without the delete option.
     """
     return sync_directories(nx, source, dest, delete=False, checksum=checksum, progress=progress)
-
 
 def move_file(
     nx: NexusFilesystem,

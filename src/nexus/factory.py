@@ -38,13 +38,15 @@ Usage::
     nx = NexusFS(backend=backend, metadata_store=metadata_store, services=services)
 """
 
-from __future__ import annotations
-
 import logging
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from nexus.backends.backend import Backend
+from nexus.core._metadata_generated import FileMetadataProtocol
+from nexus.core.config import CacheConfig, DistributedConfig, KernelServices, PermissionConfig
+from nexus.storage.record_store import RecordStoreABC
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
     from nexus.core._metadata_generated import FileMetadataProtocol
@@ -60,11 +62,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 # ---------------------------------------------------------------------------
 # Boot context — carries shared deps between tier functions
 # ---------------------------------------------------------------------------
-
 
 @dataclass(frozen=True)
 class _BootContext:
@@ -91,11 +91,9 @@ class _BootContext:
     resiliency_raw: dict[str, Any] | None
     db_url: str
 
-
 # =========================================================================
 # Issue #1520: NexusFS → FileReaderProtocol adapter
 # =========================================================================
-
 
 class _NexusFSFileReader:
     """Adapts a NexusFS instance to the FileReaderProtocol interface.
@@ -159,7 +157,6 @@ class _NexusFSFileReader:
             content_hash: str | None = session.execute(stmt).scalar_one_or_none()
             return content_hash
 
-
 def _create_wallet_provisioner() -> Any:
     """Create a sync wallet provisioner for NexusFS agent registration.
 
@@ -222,7 +219,6 @@ def _create_wallet_provisioner() -> Any:
 
     logger.info("[WALLET] Wallet provisioner enabled (TigerBeetle @ %s)", tb_address)
     return _provision_wallet
-
 
 def _parse_resiliency_config(raw: dict[str, Any] | None) -> Any:
     """Convert raw YAML dict → frozen ``ResiliencyConfig`` dataclasses.
@@ -290,7 +286,6 @@ def _parse_resiliency_config(raw: dict[str, Any] | None) -> Any:
         logger.error("Invalid resiliency config, using defaults: %s", exc)
         return ResiliencyConfig()
 
-
 def create_record_store(
     *,
     db_url: str | None = None,
@@ -338,7 +333,6 @@ def create_record_store(
         db_path=db_path,
         create_tables=create_tables,
     )
-
 
 def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
     """Boot Tier 0 (KERNEL) — mandatory services that are fatal on failure.
@@ -522,7 +516,6 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
         logger.critical("[BOOT:KERNEL] Fatal: %s", exc)
         raise BootError(str(exc), tier="kernel") from exc
 
-
 def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str, Any]:
     """Boot Tier 1 (SYSTEM) — degraded-mode on failure.
 
@@ -636,7 +629,6 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
     active = sum(1 for v in result.values() if v is not None)
     logger.info("[BOOT:SYSTEM] %d/%d services ready (%.3fs)", active, len(result), elapsed)
     return result
-
 
 def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str, Any]:
     """Boot Tier 2 (BRICK) — optional, silent on failure.
@@ -852,7 +844,6 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
     logger.info("[BOOT:BRICK] %d/%d services ready (%.3fs)", active, len(result), elapsed)
     return result
 
-
 def _start_background_services(kernel: dict[str, Any], system: dict[str, Any]) -> None:
     """Start background threads after all tiers are constructed.
 
@@ -880,12 +871,11 @@ def _start_background_services(kernel: dict[str, Any], system: dict[str, Any]) -
         dw.start()
         logger.debug("[BOOT:BG] EventDeliveryWorker started")
 
-
 def create_nexus_services(
     record_store: RecordStoreABC,
     metadata_store: FileMetadataProtocol,
     backend: Backend,
-    router: PathRouter,
+    router: "PathRouter",
     *,
     permissions: PermissionConfig | None = None,
     cache: CacheConfig | None = None,
@@ -1004,7 +994,6 @@ def create_nexus_services(
         snapshot_service=brick["snapshot_service"],
     )
 
-
 def _create_distributed_infra(
     dist: DistributedConfig,
     metadata_store: FileMetadataProtocol,
@@ -1075,7 +1064,6 @@ def _create_distributed_infra(
 
     return event_bus, lock_manager
 
-
 def _create_workflow_engine(record_store: Any, glob_match_fn: Any = None) -> Any:
     """Create workflow engine with async store and DI.
 
@@ -1107,8 +1095,7 @@ def _create_workflow_engine(record_store: Any, glob_match_fn: Any = None) -> Any
         logger.warning("Failed to create workflow engine: %s", e)
         return None
 
-
-def _post_init(nx: NexusFS) -> None:
+def _post_init(nx: "NexusFS") -> None:
     """Post-construction steps: mount restoration.
 
     Called after NexusFS is constructed to perform I/O that requires
@@ -1144,7 +1131,6 @@ def _post_init(nx: NexusFS) -> None:
                     logger.error("  Mount error: %s", error)
     except Exception as e:
         logger.warning("Failed to load saved mounts during initialization: %s", e)
-
 
 def create_nexus_fs(
     backend: Backend,
@@ -1192,7 +1178,7 @@ def create_nexus_fs(
     agent_id: str | None = None,
     custom_parsers: list[dict[str, Any]] | None = None,  # noqa: ARG001
     workflow_engine: Any = None,
-) -> NexusFS:
+) -> "NexusFS":
     """Create NexusFS with default services — the recommended entry point.
 
     Accepts both new config objects and legacy flat params for backward

@@ -5,8 +5,6 @@ All async service methods are tested via asyncio.run() to avoid
 pytest-asyncio dependency.
 """
 
-from __future__ import annotations
-
 import asyncio
 from unittest.mock import MagicMock
 
@@ -19,7 +17,6 @@ from nexus.services.mount_service import MountService
 # Fixtures
 # =============================================================================
 
-
 @pytest.fixture
 def mock_router():
     """Create a mock PathRouter."""
@@ -31,7 +28,6 @@ def mock_router():
     router.list_mounts.return_value = []
     return router
 
-
 @pytest.fixture
 def mock_mount_manager():
     """Create a mock MountManager."""
@@ -41,7 +37,6 @@ def mock_mount_manager():
     manager.list_mounts.return_value = []
     manager.remove_mount.return_value = True
     return manager
-
 
 @pytest.fixture
 def mock_nexus_fs():
@@ -59,7 +54,6 @@ def mock_nexus_fs():
     fs.SessionLocal = None
     return fs
 
-
 @pytest.fixture
 def mount_service(mock_router, mock_mount_manager, mock_nexus_fs):
     """Create a MountService with all mock dependencies."""
@@ -68,7 +62,6 @@ def mount_service(mock_router, mock_mount_manager, mock_nexus_fs):
         mount_manager=mock_mount_manager,
         nexus_fs=mock_nexus_fs,
     )
-
 
 @pytest.fixture
 def operation_context():
@@ -81,11 +74,9 @@ def operation_context():
         is_admin=False,
     )
 
-
 # =============================================================================
 # MountService initialization
 # =============================================================================
-
 
 class TestMountServiceInit:
     """Tests for MountService construction."""
@@ -108,11 +99,9 @@ class TestMountServiceInit:
         assert service.mount_manager is None
         assert service.nexus_fs is None
 
-
 # =============================================================================
 # list_mounts tests
 # =============================================================================
-
 
 class TestListMounts:
     """Tests for the list_mounts method."""
@@ -197,11 +186,9 @@ class TestListMounts:
         assert len(result) == 1
         assert result[0]["mount_point"] == "/mnt/restricted"
 
-
 # =============================================================================
 # remove_mount tests
 # =============================================================================
-
 
 class TestRemoveMount:
     """Tests for the remove_mount method."""
@@ -245,11 +232,9 @@ class TestRemoveMount:
         assert result["directory_deleted"] is False
         assert len(result["errors"]) > 0
 
-
 # =============================================================================
 # get_mount tests
 # =============================================================================
-
 
 class TestGetMount:
     """Tests for the get_mount method."""
@@ -280,11 +265,9 @@ class TestGetMount:
         result = asyncio.run(mount_service.get_mount("/mnt/nonexistent"))
         assert result is None
 
-
 # =============================================================================
 # has_mount tests
 # =============================================================================
-
 
 class TestHasMount:
     """Tests for the has_mount method."""
@@ -299,11 +282,9 @@ class TestHasMount:
         mock_router.has_mount.return_value = False
         assert asyncio.run(mount_service.has_mount("/mnt/nonexistent")) is False
 
-
 # =============================================================================
 # save_mount / delete_saved_mount tests
 # =============================================================================
-
 
 class TestSavedMounts:
     """Tests for saved mount configuration operations."""
@@ -355,11 +336,9 @@ class TestSavedMounts:
         with pytest.raises(RuntimeError, match="Mount manager not available"):
             asyncio.run(service.delete_saved_mount("/mnt/test"))
 
-
 # =============================================================================
 # sync_mount delegation tests
 # =============================================================================
-
 
 class TestSyncMountDelegation:
     """Tests for sync_mount delegation to NexusFS."""
@@ -385,11 +364,9 @@ class TestSyncMountDelegation:
         with pytest.raises(RuntimeError, match="requires NexusFS integration"):
             asyncio.run(service.sync_mount(mount_point="/mnt/test"))
 
-
 # =============================================================================
 # _grant_mount_owner_permission tests
 # =============================================================================
-
 
 class TestGrantMountOwnerPermission:
     """Tests for the _grant_mount_owner_permission helper."""
@@ -422,11 +399,9 @@ class TestGrantMountOwnerPermission:
         # Permission grant should still be attempted
         mock_nexus_fs.rebac_add_tuple.assert_called_once()
 
-
 # =============================================================================
 # _generate_connector_skill tests
 # =============================================================================
-
 
 class TestGenerateConnectorSkill:
     """Tests for the _generate_connector_skill helper."""

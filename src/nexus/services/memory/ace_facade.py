@@ -13,8 +13,6 @@ Usage:
     ace.feedback.add_feedback(traj_id, "monitoring", score=0.8)
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -30,7 +28,6 @@ if TYPE_CHECKING:
     from nexus.services.ace.trajectory import TrajectoryManager
 
 logger = logging.getLogger(__name__)
-
 
 class AceFacade:
     """Lazy-initialized facade for ACE subsystem services.

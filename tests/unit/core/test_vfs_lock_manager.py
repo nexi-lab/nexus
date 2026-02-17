@@ -4,8 +4,6 @@ Tests both the Rust-accelerated and pure-Python implementations to verify
 identical semantics.
 """
 
-from __future__ import annotations
-
 import threading
 import time
 
@@ -30,16 +28,13 @@ try:
 except (ImportError, Exception):
     pass
 
-
 @pytest.fixture(params=_IMPLEMENTATIONS, ids=lambda cls: cls.__name__)
 def mgr(request: pytest.FixtureRequest) -> VFSLockManagerProtocol:
     return request.param()
 
-
 # ---------------------------------------------------------------------------
 # Basic acquire / release
 # ---------------------------------------------------------------------------
-
 
 class TestBasicAcquireRelease:
     def test_read_acquire_release(self, mgr: VFSLockManagerProtocol) -> None:
@@ -60,11 +55,9 @@ class TestBasicAcquireRelease:
         with pytest.raises((ValueError, Exception)):
             mgr.acquire("/foo", "exclusive")
 
-
 # ---------------------------------------------------------------------------
 # Read-read coexistence
 # ---------------------------------------------------------------------------
-
 
 class TestReadReadCoexistence:
     def test_two_readers_same_path(self, mgr: VFSLockManagerProtocol) -> None:
@@ -79,11 +72,9 @@ class TestReadReadCoexistence:
         mgr.release(h2)
         assert not mgr.is_locked("/foo")
 
-
 # ---------------------------------------------------------------------------
 # Read-write conflicts
 # ---------------------------------------------------------------------------
-
 
 class TestReadWriteConflict:
     def test_write_blocks_read(self, mgr: VFSLockManagerProtocol) -> None:
@@ -107,11 +98,9 @@ class TestReadWriteConflict:
         assert w2 == 0
         mgr.release(w1)
 
-
 # ---------------------------------------------------------------------------
 # Ancestor conflicts
 # ---------------------------------------------------------------------------
-
 
 class TestAncestorConflict:
     def test_ancestor_write_blocks_child_read(self, mgr: VFSLockManagerProtocol) -> None:
@@ -148,11 +137,9 @@ class TestAncestorConflict:
         assert mgr.acquire("/", "write") == 0
         mgr.release(r)
 
-
 # ---------------------------------------------------------------------------
 # Descendant conflicts
 # ---------------------------------------------------------------------------
-
 
 class TestDescendantConflict:
     def test_descendant_write_blocks_parent_write(self, mgr: VFSLockManagerProtocol) -> None:
@@ -170,11 +157,9 @@ class TestDescendantConflict:
         assert mgr.acquire("/a", "read") == 0
         mgr.release(w)
 
-
 # ---------------------------------------------------------------------------
 # Release wrong handle
 # ---------------------------------------------------------------------------
-
 
 class TestReleaseEdgeCases:
     def test_release_invalid_handle(self, mgr: VFSLockManagerProtocol) -> None:
@@ -185,11 +170,9 @@ class TestReleaseEdgeCases:
         assert mgr.release(h)
         assert not mgr.release(h)
 
-
 # ---------------------------------------------------------------------------
 # Timeout behavior
 # ---------------------------------------------------------------------------
-
 
 class TestTimeout:
     def test_nonblocking_returns_zero(self, mgr: VFSLockManagerProtocol) -> None:
@@ -226,11 +209,9 @@ class TestTimeout:
         assert result_holder[0] > 0
         mgr.release(result_holder[0])
 
-
 # ---------------------------------------------------------------------------
 # Holders info
 # ---------------------------------------------------------------------------
-
 
 class TestHolders:
     def test_holders_none_when_unlocked(self, mgr: VFSLockManagerProtocol) -> None:
@@ -250,11 +231,9 @@ class TestHolders:
         assert info["writer"] == h
         mgr.release(h)
 
-
 # ---------------------------------------------------------------------------
 # Stats
 # ---------------------------------------------------------------------------
-
 
 class TestStats:
     def test_stats_keys(self, mgr: VFSLockManagerProtocol) -> None:
@@ -278,11 +257,9 @@ class TestStats:
         assert s["acquire_count"] >= 1
         assert s["release_count"] >= 1
 
-
 # ---------------------------------------------------------------------------
 # Unicode paths
 # ---------------------------------------------------------------------------
-
 
 class TestUnicodePaths:
     def test_unicode_path(self, mgr: VFSLockManagerProtocol) -> None:
@@ -296,11 +273,9 @@ class TestUnicodePaths:
         assert h > 0
         mgr.release(h)
 
-
 # ---------------------------------------------------------------------------
 # Concurrent threading test
 # ---------------------------------------------------------------------------
-
 
 class TestConcurrency:
     def test_concurrent_readers(self, mgr: VFSLockManagerProtocol) -> None:
@@ -346,11 +321,9 @@ class TestConcurrency:
         assert len(successes) == 1
         mgr.release(successes[0])
 
-
 # ---------------------------------------------------------------------------
 # Factory function
 # ---------------------------------------------------------------------------
-
 
 class TestFactory:
     def test_create_returns_protocol(self) -> None:

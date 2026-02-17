@@ -8,13 +8,10 @@ Defines the core domain objects for agent delegation:
 Follows AgentRecord pattern: frozen dataclass + SQLAlchemy model separation.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import datetime
 from decimal import Decimal
 from enum import Enum
-
 
 class DelegationMode(Enum):
     """Delegation namespace mode.
@@ -27,7 +24,6 @@ class DelegationMode(Enum):
     COPY = "copy"
     CLEAN = "clean"
     SHARED = "shared"
-
 
 class DelegationOutcome(Enum):
     """Outcome of a completed delegation (#1619).
@@ -42,7 +38,6 @@ class DelegationOutcome(Enum):
     FAILED = "failed"
     TIMEOUT = "timeout"
 
-
 class DelegationStatus(Enum):
     """Delegation lifecycle state.
 
@@ -56,7 +51,6 @@ class DelegationStatus(Enum):
     REVOKED = "revoked"
     EXPIRED = "expired"
     COMPLETED = "completed"
-
 
 @dataclass(frozen=True)
 class DelegationScope:
@@ -78,7 +72,6 @@ class DelegationScope:
     resource_patterns: frozenset[str] = field(default_factory=frozenset)
     budget_limit: Decimal | None = None
     max_depth: int = 0
-
 
 @dataclass(frozen=True)
 class DelegationRecord:
@@ -125,7 +118,6 @@ class DelegationRecord:
     depth: int = 0
     can_sub_delegate: bool = False
     created_at: datetime | None = None
-
 
 @dataclass(frozen=True)
 class DelegationResult:

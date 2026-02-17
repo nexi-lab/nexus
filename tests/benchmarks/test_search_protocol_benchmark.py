@@ -4,8 +4,6 @@ Validates that SearchBrickProtocol indirection adds <1ms overhead
 for 1000 mock calls through the protocol layer.
 """
 
-from __future__ import annotations
-
 import time
 from typing import Any
 
@@ -16,7 +14,6 @@ from nexus.services.protocols.search import SearchBrickProtocol
 # =============================================================================
 # Mock search brick for benchmarking
 # =============================================================================
-
 
 class FastMockSearchBrick:
     """Minimal mock that satisfies SearchBrickProtocol with near-zero work."""
@@ -63,11 +60,9 @@ class FastMockSearchBrick:
     def verify_imports(self) -> dict[str, bool]:
         return {"nexus.search.semantic": True}
 
-
 # =============================================================================
 # Adapter simulating SearchService delegation to brick
 # =============================================================================
-
 
 class SearchServiceAdapter:
     """Simulates SearchService delegating to SearchBrickProtocol.
@@ -85,11 +80,9 @@ class SearchServiceAdapter:
     async def get_stats(self) -> dict[str, Any]:
         return await self._brick.get_stats()
 
-
 # =============================================================================
 # Benchmarks
 # =============================================================================
-
 
 class TestProtocolPassthroughOverhead:
     """Measure protocol indirection overhead."""

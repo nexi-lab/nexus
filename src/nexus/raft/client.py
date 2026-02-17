@@ -11,8 +11,6 @@ For local same-box scenarios, use Metastore (PyO3 FFI) instead for better
 performance (~5μs vs ~200μs latency).
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -28,17 +26,16 @@ from nexus.core import metadata_pb2
 # Import generated proto types
 from nexus.raft import commands_pb2, transport_pb2, transport_pb2_grpc
 
+from nexus.core._metadata_generated import FileMetadata
 if TYPE_CHECKING:
     from nexus.core._metadata_generated import FileMetadata
 
 logger = logging.getLogger(__name__)
 
-
 class RaftError(Exception):
     """Base exception for Raft operations."""
 
     pass
-
 
 class RaftNotLeaderError(RaftError):
     """Raised when operation requires leader but connected to follower."""
@@ -47,7 +44,6 @@ class RaftNotLeaderError(RaftError):
         super().__init__(message)
         self.leader_address = leader_address
 
-
 @dataclass
 class LockResult:
     """Result of a lock acquisition attempt."""
@@ -55,7 +51,6 @@ class LockResult:
     acquired: bool
     current_holder: str | None = None
     expires_at_ms: int = 0
-
 
 @dataclass
 class LockInfo:
@@ -66,7 +61,6 @@ class LockInfo:
     expires_at_ms: int = 0
     max_holders: int = 0
     current_holders: int = 0
-
 
 @dataclass
 class RaftClientConfig:
@@ -88,7 +82,6 @@ class RaftClientConfig:
     tls_cert_path: str | None = None
     tls_key_path: str | None = None
     tls_ca_path: str | None = None
-
 
 class RaftClient:
     """Async gRPC client for Raft cluster (client-facing API).
@@ -183,7 +176,7 @@ class RaftClient:
             self._stub = None
             logger.debug(f"Disconnected from Raft node at {self.address}")
 
-    async def __aenter__(self) -> RaftClient:
+    async def __aenter__(self) -> "RaftClient":
         await self.connect()
         return self
 
@@ -771,7 +764,6 @@ class RaftClient:
             if result.acquired:
                 await self.release_lock(lock_id, holder_id, zone_id)
 
-
 @dataclass
 class RaftClientPool:
     """Pool of RaftClient connections to multiple Raft nodes.
@@ -848,7 +840,7 @@ class RaftClientPool:
         self._clients.clear()
         self._leader_address = None
 
-    async def __aenter__(self) -> RaftClientPool:
+    async def __aenter__(self) -> "RaftClientPool":
         return self
 
     async def __aexit__(

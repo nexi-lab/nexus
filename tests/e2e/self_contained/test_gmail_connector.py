@@ -12,8 +12,6 @@ use real OAuth tokens in CI. For full E2E testing with real
 Google API, use OAuth authentication via the integrations page.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -34,7 +32,6 @@ from nexus.storage.record_store import SQLAlchemyRecordStore
 # ============================================================================
 # FIXTURES
 # ============================================================================
-
 
 @pytest.fixture
 def mock_gmail_service():
@@ -81,7 +78,6 @@ def mock_gmail_service():
 
     return service
 
-
 @pytest.fixture
 def gmail_backend(mock_gmail_service, tmp_path):
     """Create a Gmail backend with mocked Google service."""
@@ -99,7 +95,6 @@ def gmail_backend(mock_gmail_service, tmp_path):
 
     return backend
 
-
 @pytest.fixture
 def operation_context():
     """Create an operation context for testing."""
@@ -110,11 +105,9 @@ def operation_context():
         zone_id="root",
     )
 
-
 # ============================================================================
 # SCHEMA VALIDATION TESTS
 # ============================================================================
-
 
 class TestSendEmailSchema:
     """Test SendEmailSchema validation."""
@@ -178,7 +171,6 @@ class TestSendEmailSchema:
                 confirm=True,
             )
 
-
 class TestReplyEmailSchema:
     """Test ReplyEmailSchema validation."""
 
@@ -205,7 +197,6 @@ class TestReplyEmailSchema:
                 confirm=True,
             )
 
-
 class TestDraftEmailSchema:
     """Test DraftEmailSchema validation."""
 
@@ -218,11 +209,9 @@ class TestDraftEmailSchema:
 
         assert draft.body == "Draft content..."
 
-
 # ============================================================================
 # TRAIT VALIDATION TESTS
 # ============================================================================
-
 
 class TestTraitValidation:
     """Test trait-based validation."""
@@ -269,11 +258,9 @@ class TestTraitValidation:
         warnings = gmail_backend.validate_traits("create_draft", data)
         assert warnings == []
 
-
 # ============================================================================
 # SKILL.MD GENERATION TESTS
 # ============================================================================
-
 
 class TestSkillDocGeneration:
     """Test SKILL.md loading from static file."""
@@ -346,11 +333,9 @@ class TestSkillDocGeneration:
         finally:
             nx.close()
 
-
 # ============================================================================
 # ERROR FORMATTING TESTS
 # ============================================================================
-
 
 class TestErrorFormatting:
     """Test error message formatting with SKILL.md references."""
@@ -387,11 +372,9 @@ class TestErrorFormatting:
         # Should include fix example from ERROR_REGISTRY
         assert "confirm" in str(error).lower()
 
-
 # ============================================================================
 # CHECKPOINT TESTS
 # ============================================================================
-
 
 class TestCheckpoints:
     """Test checkpoint/rollback functionality."""
@@ -430,11 +413,9 @@ class TestCheckpoints:
         gmail_backend.clear_checkpoint(checkpoint.checkpoint_id)
         assert gmail_backend.get_checkpoint(checkpoint.checkpoint_id) is None
 
-
 # ============================================================================
 # OPERATION TRAITS TESTS
 # ============================================================================
-
 
 class TestOperationTraits:
     """Test operation trait configuration."""

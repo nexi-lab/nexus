@@ -29,7 +29,6 @@ from nexus.core.filters import is_os_metadata_file
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-
 def scan_and_remove(
     nexus_fs: any,  # type: ignore[valid-type]
     path: str = "/",
@@ -79,7 +78,6 @@ def scan_and_remove(
 
     except Exception as e:
         logger.error(f"Error scanning {path}: {e}")
-
 
 def main() -> None:
     """Main entry point for cleanup script."""
@@ -153,7 +151,6 @@ def main() -> None:
         logger.info("Run without --dry-run to actually delete files.")
     else:
         logger.info(f"Cleanup completed. Deleted {deleted_count[0]} files.")
-
 
 if __name__ == "__main__":
     main()

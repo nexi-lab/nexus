@@ -15,7 +15,6 @@ import pytest
 from nexus.core.nexus_fs import NexusFS
 from nexus.remote.client import RemoteNexusFS
 
-
 def get_rpc_exposed_methods(cls):
     """Get all methods marked with @rpc_expose decorator.
 
@@ -35,7 +34,6 @@ def get_rpc_exposed_methods(cls):
         except Exception:
             continue
     return exposed
-
 
 def get_remote_methods(cls):
     """Get all public methods from RemoteNexusFS.
@@ -73,7 +71,6 @@ def get_remote_methods(cls):
         pass
 
     return methods
-
 
 def test_all_rpc_methods_have_remote_implementations():
     """Verify all @rpc_expose methods have RemoteNexusFS implementations.
@@ -147,7 +144,6 @@ def test_all_rpc_methods_have_remote_implementations():
     print(f"  Exposed methods: {', '.join(sorted(exposed_methods.keys())[:5])}...")
     print(f"  Remote methods: {len(remote_methods)} total")
 
-
 def test_remote_methods_match_signatures():
     """Verify RemoteNexusFS method signatures match core methods (where applicable).
 
@@ -207,7 +203,6 @@ def test_remote_methods_match_signatures():
         print("\n".join(msg_lines))
     else:
         print("\n✓ Method signatures look compatible")
-
 
 def test_all_public_methods_are_exposed_or_excluded():
     """ENFORCEMENT: All public methods MUST be @rpc_expose or explicitly excluded.
@@ -376,7 +371,6 @@ def test_all_public_methods_are_exposed_or_excluded():
     print(f"  - {len(INTERNAL_ONLY_METHODS)} explicitly excluded (internal-only)")
     print("  - 0 missing (enforcement passed!)")
 
-
 def test_list_all_exposed_methods():
     """List all @rpc_expose methods for documentation purposes."""
     exposed_methods = get_rpc_exposed_methods(NexusFS)
@@ -426,7 +420,6 @@ def test_list_all_exposed_methods():
                 print(f"  - {method}() {f'- {desc_short}' if desc_short else ''}")
 
     print(f"\n{'=' * 60}\n")
-
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "-s"])

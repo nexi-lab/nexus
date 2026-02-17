@@ -7,8 +7,6 @@ Extracted from ChangeLogStore (Issue #1127) during Phase 0 refactoring
 for Issue #1129 (Bidirectional Sync).
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 from collections.abc import Callable, Generator
@@ -16,7 +14,6 @@ from contextlib import contextmanager
 from typing import Any
 
 logger = logging.getLogger(__name__)
-
 
 class SyncStoreBase:
     """Base class providing session management and dialect detection.

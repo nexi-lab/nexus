@@ -3,8 +3,6 @@
 Issue #1246 Phase 3: Verifies buffering, flushing, retry, and metrics.
 """
 
-from __future__ import annotations
-
 import time
 from datetime import datetime
 from unittest.mock import MagicMock, patch
@@ -21,7 +19,6 @@ from nexus.storage.write_buffer import EventType, WriteBuffer, WriteEvent
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
 
 def _make_metadata(
     path: str = "/test/file.txt",
@@ -43,7 +40,6 @@ def _make_metadata(
         modified_at=now,
     )
 
-
 @pytest.fixture
 def engine():
     eng = create_engine(
@@ -54,17 +50,14 @@ def engine():
     Base.metadata.create_all(eng)
     return eng
 
-
 @pytest.fixture
 def session_factory(engine):
     factory = sessionmaker(bind=engine)
     return factory
 
-
 # ---------------------------------------------------------------------------
 # WriteEvent tests
 # ---------------------------------------------------------------------------
-
 
 class TestWriteEvent:
     """Tests for WriteEvent dataclass."""
@@ -81,11 +74,9 @@ class TestWriteEvent:
         assert EventType.DELETE.value == "delete"
         assert EventType.RENAME.value == "rename"
 
-
 # ---------------------------------------------------------------------------
 # Buffer lifecycle tests
 # ---------------------------------------------------------------------------
-
 
 class TestBufferLifecycle:
     """Tests for start/stop and basic buffering."""
@@ -138,11 +129,9 @@ class TestBufferLifecycle:
         assert metrics["total_failed"] == 0
         assert metrics["pending"] == 0
 
-
 # ---------------------------------------------------------------------------
 # Flush behavior tests
 # ---------------------------------------------------------------------------
-
 
 class TestFlushBehavior:
     """Tests for periodic and threshold-based flushing."""
@@ -253,11 +242,9 @@ class TestFlushBehavior:
             assert ops[0].path == "/test/old.txt"
             assert ops[0].new_path == "/test/new.txt"
 
-
 # ---------------------------------------------------------------------------
 # Retry tests
 # ---------------------------------------------------------------------------
-
 
 class TestRetryBehavior:
     """Tests for retry on flush failure."""
@@ -303,11 +290,9 @@ class TestRetryBehavior:
         # Events should be counted as failed
         assert buf.metrics["total_failed"] > 0
 
-
 # ---------------------------------------------------------------------------
 # Enhanced metrics tests (Issue #1370)
 # ---------------------------------------------------------------------------
-
 
 class TestEnhancedMetrics:
     """Tests for the new timing, retry, and per-type metrics."""

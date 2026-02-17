@@ -11,8 +11,6 @@ These tests build a standalone FastAPI app that exercises:
 5. NexusPay used as payment backend for protected endpoints
 """
 
-from __future__ import annotations
-
 import base64
 import json
 from decimal import Decimal
@@ -34,7 +32,6 @@ from nexus.server.middleware.x402 import X402PaymentMiddleware
 # Fixtures
 # =============================================================================
 
-
 @pytest.fixture
 def credits_service():
     """Mock CreditsService that behaves like disabled mode."""
@@ -52,7 +49,6 @@ def credits_service():
     service.topup = AsyncMock(return_value="topup-e2e-001")
     return service
 
-
 @pytest.fixture
 def x402_client():
     """Real X402Client with test wallet."""
@@ -63,7 +59,6 @@ def x402_client():
         webhook_secret="test-secret",
     )
 
-
 @pytest.fixture
 def nexuspay(credits_service, x402_client):
     """NexusPay SDK instance wired to mock services."""
@@ -72,7 +67,6 @@ def nexuspay(credits_service, x402_client):
         credits_service=credits_service,
         x402_client=x402_client,
     )
-
 
 @pytest.fixture
 def app(nexuspay, x402_client, credits_service):
@@ -171,16 +165,13 @@ def app(nexuspay, x402_client, credits_service):
 
     return app
 
-
 @pytest.fixture
 def client(app):
     return TestClient(app)
 
-
 # =============================================================================
 # 1. Public Endpoints
 # =============================================================================
-
 
 class TestPublicEndpoints:
     """Test endpoints that don't require payment."""
@@ -198,11 +189,9 @@ class TestPublicEndpoints:
         assert data["reserved"] == "5.0"
         assert data["total"] == "105.0"
 
-
 # =============================================================================
 # 2. Transfer Through Server
 # =============================================================================
-
 
 class TestTransferThroughServer:
     """Test NexusPay transfers exposed via FastAPI."""
@@ -259,11 +248,9 @@ class TestTransferThroughServer:
         )
         assert response.status_code == 400
 
-
 # =============================================================================
 # 3. Metered Endpoint (per-call charging)
 # =============================================================================
-
 
 class TestMeteredEndpoint:
     """Test per-call metering through server."""
@@ -282,11 +269,9 @@ class TestMeteredEndpoint:
         assert response.status_code == 402
         assert "insufficient" in response.json()["detail"].lower()
 
-
 # =============================================================================
 # 4. x402 Payment-Gated Endpoints (Middleware)
 # =============================================================================
-
 
 class TestPaymentGatedEndpoints:
     """Test x402 middleware with NexusPay backend."""
@@ -344,11 +329,9 @@ class TestPaymentGatedEndpoints:
         assert response.status_code == 402
         assert "verification failed" in response.json()["error"].lower()
 
-
 # =============================================================================
 # 5. Two-Phase Reservation Through Server
 # =============================================================================
-
 
 class TestReservationThroughServer:
     """Test reserve/commit flow through API."""
@@ -380,11 +363,9 @@ class TestReservationThroughServer:
             reservation_id, actual_amount=Decimal("7.5")
         )
 
-
 # =============================================================================
 # 6. Full Payment Lifecycle
 # =============================================================================
-
 
 class TestFullPaymentLifecycle:
     """Test complete payment flows end-to-end."""
@@ -433,11 +414,9 @@ class TestFullPaymentLifecycle:
             rid, actual_amount=Decimal("12.5")
         )
 
-
 # =============================================================================
 # 7. NexusPay SDK Direct E2E (no server)
 # =============================================================================
-
 
 class TestNexusPayDirectE2E:
     """Test NexusPay SDK directly with disabled-mode CreditsService."""
@@ -523,11 +502,9 @@ class TestNexusPayDirectE2E:
         # All unique IDs
         assert len({r.id for r in results}) == 50
 
-
 # =============================================================================
 # 8. Pay REST API Multi-Step Flows (Issue #1209)
 # =============================================================================
-
 
 class TestPayRestApiFlows:
     """E2E tests for the pay router REST API endpoints.
@@ -662,11 +639,9 @@ class TestPayRestApiFlows:
         assert data[0]["id"] == "tx-b1"
         assert data[1]["id"] == "tx-b2"
 
-
 # =============================================================================
 # 9. Module Export Verification
 # =============================================================================
-
 
 class TestModuleExports:
     """Verify NexusPay is properly exported from nexus.pay."""

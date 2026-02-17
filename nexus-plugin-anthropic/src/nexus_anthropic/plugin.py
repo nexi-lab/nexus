@@ -12,7 +12,6 @@ from rich.table import Table
 
 console = Console()
 
-
 class AnthropicPlugin(NexusPlugin):
     """Plugin for Anthropic Claude Skills API integration.
 

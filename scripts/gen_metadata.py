@@ -12,8 +12,6 @@ Usage:
     python scripts/gen_metadata.py
 """
 
-from __future__ import annotations
-
 import re
 import sys
 from pathlib import Path
@@ -119,9 +117,7 @@ DIRECT_COMPACT_FIELDS: dict[str, str] = {
     "i_links_count": "int",
 }
 
-
 # --- Proto parser ---
-
 
 def parse_proto_enums(proto_path: Path) -> dict[str, list[tuple[str, int]]]:
     """Parse enum definitions from proto file.
@@ -141,7 +137,6 @@ def parse_proto_enums(proto_path: Path) -> dict[str, list[tuple[str, int]]]:
         enums[enum_name] = values
 
     return enums
-
 
 def parse_proto_fields(proto_path: Path) -> list[dict[str, str]]:
     """Parse FileMetadata fields from proto file.
@@ -186,9 +181,7 @@ def parse_proto_fields(proto_path: Path) -> list[dict[str, str]]:
 
     return fields
 
-
 # --- Code generators ---
-
 
 def python_type_for(field: dict[str, str]) -> str:
     """Get Python type annotation for a proto field."""
@@ -200,7 +193,6 @@ def python_type_for(field: dict[str, str]) -> str:
         return f"{base_type} | None"
     return base_type
 
-
 def python_default_for(field: dict[str, str]) -> str | None:
     """Get Python default value, or None if no default."""
     name = field["name"]
@@ -209,7 +201,6 @@ def python_default_for(field: dict[str, str]) -> str | None:
     if name in DATETIME_FIELDS or name in NULLABLE_STRING_FIELDS:
         return "None"
     return None
-
 
 def _enum_common_prefix(values: list[tuple[str, int]]) -> str:
     """Find common prefix of enum value names ending with '_'.
@@ -227,7 +218,6 @@ def _enum_common_prefix(values: list[tuple[str, int]]) -> str:
     idx = prefix.rfind("_")
     return prefix[: idx + 1] if idx >= 0 else ""
 
-
 def _generate_enum_constants(enums: dict[str, list[tuple[str, int]]]) -> str:
     """Generate Python constants from proto enums.
 
@@ -244,7 +234,6 @@ def _generate_enum_constants(enums: dict[str, list[tuple[str, int]]]) -> str:
             lines.append(f"{vname} = {vnum}")
         blocks.append("\n".join(lines))
     return "\n\n".join(blocks)
-
 
 def _generate_enum_properties(
     fields: list[dict[str, str]],
@@ -275,7 +264,6 @@ def _generate_enum_properties(
             lines.append(f"        return self.{field_name} == {vnum}")
             lines.append("")
     return "\n".join(lines)
-
 
 def generate_metadata_py(
     fields: list[dict[str, str]],
@@ -323,8 +311,6 @@ Contains:
   - AsyncFileMetadataWrapper: Async wrapper (derived from FileMetadataProtocol)
 """
 
-from __future__ import annotations
-
 import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
@@ -365,7 +351,6 @@ class PaginatedResult:
             "has_more": self.has_more,
             "total_count": self.total_count,
         }}
-
 
 @dataclass(slots=True)
 class FileMetadata:
@@ -431,7 +416,6 @@ class FileMetadata:
             Full FileMetadata object
         """
         return compact.to_file_metadata()
-
 
 class FileMetadataProtocol(ABC):
     """Abstract interface for metadata storage.
@@ -549,7 +533,6 @@ class FileMetadataProtocol(ABC):
         pass
 '''
 
-
 def _extract_protocol_methods(source: str) -> list[tuple[str, str, str]]:
     """Extract method signatures from the generated FileMetadataProtocol text.
 
@@ -586,7 +569,6 @@ def _extract_protocol_methods(source: str) -> list[tuple[str, str, str]]:
 
     return methods
 
-
 def _params_to_call_args(params: str) -> str:
     """Extract argument names from a parameter string for a function call.
 
@@ -615,7 +597,6 @@ def _params_to_call_args(params: str) -> str:
         else:
             args.append(name)
     return ", ".join(args)
-
 
 def generate_async_wrapper(metadata_source: str) -> str:
     """Generate AsyncFileMetadataWrapper by parsing FileMetadataProtocol.
@@ -659,7 +640,6 @@ class AsyncFileMetadataWrapper:
 
 {methods_block}
 '''
-
 
 def generate_compact_py(fields: list[dict[str, str]]) -> str:
     """Generate _compact_generated.py content."""
@@ -725,8 +705,6 @@ Timestamps are stored as ISO 8601 strings to preserve precision
 and timezone information across serialization boundaries.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
@@ -742,7 +720,6 @@ _STRING_POOL: dict[str, int] = {{}}
 _STRING_POOL_REVERSE: dict[int, str] = {{}}
 _NEXT_ID: int = 0
 
-
 def _intern(s: str | None) -> int:
     """Intern a string and return its ID. Returns -1 for None."""
     global _NEXT_ID
@@ -754,13 +731,11 @@ def _intern(s: str | None) -> int:
         _NEXT_ID += 1
     return _STRING_POOL[s]
 
-
 def _resolve(id: int) -> str | None:
     """Resolve a string ID back to its value. Returns None for -1."""
     if id == -1:
         return None
     return _STRING_POOL_REVERSE.get(id)
-
 
 def _resolve_required(id: int) -> str:
     """Resolve a required string field. Raises if not found."""
@@ -768,7 +743,6 @@ def _resolve_required(id: int) -> str:
     if result is None:
         raise ValueError(f"Interned string ID {{id}} not found in pool")
     return result
-
 
 @dataclass(frozen=True)
 class CompactFileMetadata:
@@ -797,14 +771,12 @@ class CompactFileMetadata:
 {fm_block}
         )
 
-
 def get_intern_pool_stats() -> dict[str, int]:
     """Get string interning pool statistics."""
     return {{
         "count": len(_STRING_POOL),
         "memory_estimate": sum(len(s) for s in _STRING_POOL) + len(_STRING_POOL) * 100,
     }}
-
 
 def clear_intern_pool() -> None:
     """Clear the intern pool. Use only for testing."""
@@ -813,7 +785,6 @@ def clear_intern_pool() -> None:
     _STRING_POOL_REVERSE.clear()
     _NEXT_ID = 0
 '''
-
 
 def _field_category(field: dict[str, str]) -> str:
     """Classify a proto field for mapper code generation.
@@ -831,7 +802,6 @@ def _field_category(field: dict[str, str]) -> str:
     if proto_type in PROTO_TYPE_MAP and PROTO_TYPE_MAP[proto_type] == "int":
         return "enum"
     return "required_string"
-
 
 def generate_mapper_py(fields: list[dict[str, str]]) -> str:
     """Generate _metadata_mapper_generated.py content.
@@ -919,8 +889,6 @@ Central metadata mapping between FileMetadata and serialization formats.
 Proto/JSON methods are auto-generated. SQL methods are manual (different schema).
 """
 
-from __future__ import annotations
-
 import logging
 from contextlib import suppress
 from datetime import datetime
@@ -931,20 +899,17 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 def _to_naive(dt: datetime | None) -> datetime | None:
     """Strip timezone from datetime (SQLite stores naive UTC)."""
     if dt is None:
         return None
     return dt.replace(tzinfo=None) if dt.tzinfo else dt
 
-
 def _utcnow_naive() -> datetime:
     """Return current UTC time as naive datetime (for SQLite compat)."""
     from datetime import UTC
 
     return datetime.now(UTC).replace(tzinfo=None)
-
 
 # ---------------------------------------------------------------------------
 # Field name mapping: proto field -> SQLAlchemy column (manual, not generated)
@@ -967,7 +932,6 @@ PROTO_TO_SQL: dict[str, str | None] = {{
     "owner_id": "posix_uid",
     "i_links_count": None,  # Metastore-only (mount ref count), not in SQL
 }}
-
 
 class MetadataMapper:
     """Centralized mapping between FileMetadata and other representations.
@@ -1065,7 +1029,6 @@ class MetadataMapper:
         }}
 '''
 
-
 def generate_protobuf_stubs() -> None:
     """Generate metadata_pb2.py via grpc_tools.protoc.
 
@@ -1105,7 +1068,6 @@ def generate_protobuf_stubs() -> None:
     print(f"Generated: {pb2_path}")
     print(f"Generated: {pyi_path}")
 
-
 def apply_renames(renames: dict[str, str]) -> list[str]:
     """Apply one-time renames to all downstream .py files.
 
@@ -1143,7 +1105,6 @@ def apply_renames(renames: dict[str, str]) -> list[str]:
                 modified.append(str(py_file.relative_to(REPO_ROOT)))
 
     return modified
-
 
 def audit_ssot_coverage() -> list[str]:
     """Audit that all downstream imports from generated modules use valid names.
@@ -1202,7 +1163,6 @@ def audit_ssot_coverage() -> list[str]:
                         warnings.append(f"  {rel}: imports '{name}' from {module} (not in SSOT)")
 
     return warnings
-
 
 def main() -> None:
     """Parse proto and generate Python files."""
@@ -1275,7 +1235,6 @@ def main() -> None:
         print("  All downstream imports reference valid generated names.")
 
     print("\nDone. SSOT: proto/nexus/core/metadata.proto")
-
 
 if __name__ == "__main__":
     main()

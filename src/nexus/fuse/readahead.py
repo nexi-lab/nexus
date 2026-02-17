@@ -32,8 +32,6 @@ References:
 - GeeseFS: https://github.com/yandex-cloud/geesefs
 """
 
-from __future__ import annotations
-
 import contextlib
 import logging
 import threading
@@ -44,11 +42,11 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from nexus.storage.local_disk_cache import LocalDiskCache
 if TYPE_CHECKING:
     from nexus.storage.local_disk_cache import LocalDiskCache
 
 logger = logging.getLogger(__name__)
-
 
 class AccessPattern(Enum):
     """Detected file access pattern."""
@@ -56,7 +54,6 @@ class AccessPattern(Enum):
     UNKNOWN = "unknown"
     SEQUENTIAL = "sequential"
     RANDOM = "random"
-
 
 # =============================================================================
 # Configuration
@@ -74,7 +71,6 @@ DEFAULT_MAX_WINDOW = 64 * 1024 * 1024  # 64MB max (like GCS FUSE)
 DEFAULT_SEQUENTIAL_TOLERANCE = 64 * 1024  # 64KB tolerance for sequential detection
 DEFAULT_MAX_BLOCKS_PER_TRIGGER = 8  # Prefetch 8 blocks in parallel (32MB ahead)
 DEFAULT_PREFETCH_ON_OPEN = True  # Start prefetching when file is opened
-
 
 @dataclass
 class ReadaheadConfig:
@@ -99,7 +95,7 @@ class ReadaheadConfig:
     prefetch_on_open: bool = DEFAULT_PREFETCH_ON_OPEN  # Start prefetching on file open
 
     @classmethod
-    def from_dict(cls, config: dict[str, Any]) -> ReadaheadConfig:
+    def from_dict(cls, config: dict[str, Any]) -> "ReadaheadConfig":
         """Create config from dictionary."""
         return cls(
             enabled=config.get("readahead_enabled", True),
@@ -121,11 +117,9 @@ class ReadaheadConfig:
             prefetch_on_open=config.get("readahead_prefetch_on_open", DEFAULT_PREFETCH_ON_OPEN),
         )
 
-
 # =============================================================================
 # ReadSession: Per-file access pattern tracking
 # =============================================================================
-
 
 @dataclass
 class ReadSession:
@@ -292,11 +286,9 @@ class ReadSession:
             "age_seconds": time.time() - self.created_at,
         }
 
-
 # =============================================================================
 # PrefetchBufferPool: Bounded memory for prefetched data
 # =============================================================================
-
 
 @dataclass
 class BufferEntry:
@@ -307,7 +299,6 @@ class BufferEntry:
     data: bytes
     created_at: float = field(default_factory=time.time)
     access_count: int = 0
-
 
 class PrefetchBufferPool:
     """Bounded memory pool for prefetched data.
@@ -522,11 +513,9 @@ class PrefetchBufferPool:
                 ),
             }
 
-
 # =============================================================================
 # ReadaheadManager: Main orchestration
 # =============================================================================
-
 
 class ReadaheadManager:
     """Intelligent readahead manager for FUSE operations.

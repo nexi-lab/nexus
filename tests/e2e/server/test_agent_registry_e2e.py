@@ -11,8 +11,6 @@ Checks:
 - No performance regressions in hot paths (heartbeat, validate_ownership)
 """
 
-from __future__ import annotations
-
 import logging
 import time
 
@@ -33,7 +31,6 @@ from nexus.storage.models import Base
 # Fixtures
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture()
 def engine():
     """Shared SQLite in-memory engine for all components."""
@@ -45,16 +42,13 @@ def engine():
     Base.metadata.create_all(eng)
     return eng
 
-
 @pytest.fixture()
 def session_factory(engine):
     return sessionmaker(bind=engine, expire_on_commit=False)
 
-
 @pytest.fixture()
 def entity_registry(session_factory):
     return EntityRegistry(session_factory)
-
 
 @pytest.fixture()
 def agent_registry(session_factory, entity_registry):
@@ -62,7 +56,6 @@ def agent_registry(session_factory, entity_registry):
         session_factory=session_factory,
         entity_registry=entity_registry,
     )
-
 
 @pytest.fixture()
 def rebac_manager(engine):
@@ -74,7 +67,6 @@ def rebac_manager(engine):
     yield manager
     manager.close()
 
-
 @pytest.fixture()
 def delegation_service(session_factory, rebac_manager, entity_registry, agent_registry):
     return DelegationService(
@@ -84,11 +76,9 @@ def delegation_service(session_factory, rebac_manager, entity_registry, agent_re
         agent_registry=agent_registry,
     )
 
-
 # ---------------------------------------------------------------------------
 # Single-source-of-truth: registration goes through AgentRegistry only
 # ---------------------------------------------------------------------------
-
 
 class TestSingleSourceOfTruth:
     """Verify AgentRegistry is the sole registration path."""
@@ -130,11 +120,9 @@ class TestSingleSourceOfTruth:
         assert agent_registry.get("agent-unreg-1") is None
         assert entity_registry.get_entity("agent", "agent-unreg-1") is None
 
-
 # ---------------------------------------------------------------------------
 # Delegation uses AgentRegistry (not agents.py)
 # ---------------------------------------------------------------------------
-
 
 class TestDelegationUsesAgentRegistry:
     """Verify DelegationService creates workers via AgentRegistry."""
@@ -212,11 +200,9 @@ class TestDelegationUsesAgentRegistry:
         # Worker removed from EntityRegistry
         assert entity_registry.get_entity("agent", "worker-rev-1") is None
 
-
 # ---------------------------------------------------------------------------
 # Ownership validation uses AgentRegistry with caching
 # ---------------------------------------------------------------------------
-
 
 class TestOwnershipValidation:
     """Verify ownership validation is correct and cached."""
@@ -247,11 +233,9 @@ class TestOwnershipValidation:
         # 1000 cached lookups should be < 100ms
         assert elapsed < 0.1, f"1000 cached validate_ownership took {elapsed:.3f}s — too slow"
 
-
 # ---------------------------------------------------------------------------
 # Performance: heartbeat, flush, registration hot paths
 # ---------------------------------------------------------------------------
-
 
 class TestPerformanceHotPaths:
     """Verify no performance regression in hot paths."""
@@ -314,11 +298,9 @@ class TestPerformanceHotPaths:
         # 10000 to_dict() calls should take < 100ms
         assert elapsed < 0.1, f"10000 to_dict() calls took {elapsed:.3f}s — too slow"
 
-
 # ---------------------------------------------------------------------------
 # Bridge reliability: errors propagate
 # ---------------------------------------------------------------------------
-
 
 class TestBridgeReliabilityE2E:
     """Verify bridge errors are non-silent in real scenario."""

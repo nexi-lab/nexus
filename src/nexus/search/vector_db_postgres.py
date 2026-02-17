@@ -4,8 +4,6 @@ Handles pgvector vector search, pg_textsearch BM25, and ts_rank fallback.
 Extracted from vector_db.py to isolate backend-specific logic.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -16,9 +14,9 @@ from nexus.search.result_builders import build_result_from_row
 
 logger = logging.getLogger(__name__)
 
+from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
-
 
 def init_postgresql(conn: Any, hnsw_config: Any) -> tuple[bool, bool]:
     """Initialize PostgreSQL with pgvector and pg_textsearch.
@@ -111,14 +109,12 @@ def init_postgresql(conn: Any, hnsw_config: Any) -> tuple[bool, bool]:
 
     return vec_available, bm25_available
 
-
 def postgres_store_embedding(session: Session, chunk_id: str, embedding: list[float]) -> None:
     """Store embedding as pgvector array."""
     session.execute(
         text("UPDATE document_chunks SET embedding = :embedding WHERE chunk_id = :chunk_id"),
         {"embedding": embedding, "chunk_id": chunk_id},
     )
-
 
 def postgres_vector_search(
     session: Session,
@@ -161,7 +157,6 @@ def postgres_vector_search(
 
     return [build_result_from_row(row) for row in results]
 
-
 def postgres_keyword_search(
     session: Session,
     query: str,
@@ -173,7 +168,6 @@ def postgres_keyword_search(
     if bm25_available:
         return _postgres_bm25_search(session, query, limit, path_filter)
     return _postgres_tsrank_search(session, query, limit, path_filter)
-
 
 def _postgres_bm25_search(
     session: Session,
@@ -211,7 +205,6 @@ def _postgres_bm25_search(
         results = session.execute(sql, {"query": query, "limit": limit})
 
     return [build_result_from_row(row, score_abs=True) for row in results]
-
 
 def _postgres_tsrank_search(
     session: Session,

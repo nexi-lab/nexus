@@ -7,8 +7,6 @@ Tests the complete import workflow including:
 - Dry run mode
 """
 
-from __future__ import annotations
-
 import tempfile
 from pathlib import Path
 
@@ -26,13 +24,11 @@ from nexus.portability import (
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
-
 @pytest.fixture
 def temp_dir():
     """Create temporary directory for tests."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
-
 
 @pytest.fixture
 def source_nexus_fs(temp_dir):
@@ -57,7 +53,6 @@ def source_nexus_fs(temp_dir):
     yield fs
     fs.close()
 
-
 @pytest.fixture
 def target_nexus_fs(temp_dir):
     """Create target NexusFS instance for import."""
@@ -75,7 +70,6 @@ def target_nexus_fs(temp_dir):
     yield fs
     fs.close()
 
-
 @pytest.fixture
 def exported_bundle(source_nexus_fs, temp_dir):
     """Create an exported bundle for import tests."""
@@ -90,7 +84,6 @@ def exported_bundle(source_nexus_fs, temp_dir):
     )
 
     return output_path
-
 
 class TestZoneImportService:
     """Tests for ZoneImportService."""
@@ -149,7 +142,6 @@ class TestZoneImportService:
         # But files should not actually exist
         assert not target_nexus_fs.exists("/workspace/readme.md")
         assert not target_nexus_fs.exists("/docs/guide.txt")
-
 
 class TestConflictResolution:
     """Tests for conflict resolution modes."""
@@ -213,7 +205,6 @@ class TestConflictResolution:
         assert result.success is False
         assert len(result.errors) > 0
 
-
 class TestPathRemapping:
     """Tests for path prefix remapping."""
 
@@ -256,7 +247,6 @@ class TestPathRemapping:
         assert target_nexus_fs.exists("/projects/readme.md")
         assert target_nexus_fs.exists("/documentation/guide.txt")
 
-
 class TestImportConvenienceFunction:
     """Tests for import_zone_bundle convenience function."""
 
@@ -288,7 +278,6 @@ class TestImportConvenienceFunction:
         # Should have received progress updates
         assert len(progress_calls) > 0
 
-
 class TestImportValidation:
     """Tests for import validation."""
 
@@ -316,7 +305,6 @@ class TestImportValidation:
         assert result.duration_seconds >= 0
         assert result.started_at is not None
         assert result.completed_at is not None
-
 
 class TestRoundTrip:
     """Tests for export -> import round trip."""

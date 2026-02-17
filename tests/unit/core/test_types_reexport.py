@@ -6,13 +6,10 @@ Verifies that:
 3. core/types.py is a zero-dependency leaf module (no runtime nexus.* imports).
 """
 
-from __future__ import annotations
-
 import ast
 from pathlib import Path
 
 _TYPES_FILE = Path(__file__).resolve().parents[3] / "src" / "nexus" / "core" / "types.py"
-
 
 class TestOperationContextReExport:
     """OperationContext importable from both modules with identity."""
@@ -33,7 +30,6 @@ class TestOperationContextReExport:
 
         assert OC_permissions is OC_types
 
-
 class TestPermissionReExport:
     """Permission importable from both modules with identity."""
 
@@ -53,7 +49,6 @@ class TestPermissionReExport:
 
         assert P_permissions is P_types
 
-
 class TestContextIdentityReExport:
     """ContextIdentity importable from both modules with identity."""
 
@@ -62,7 +57,6 @@ class TestContextIdentityReExport:
 
         assert ContextIdentity is not None
 
-
 class TestExtractContextIdentityExport:
     """extract_context_identity importable from core.types."""
 
@@ -70,7 +64,6 @@ class TestExtractContextIdentityExport:
         from nexus.core.types import extract_context_identity
 
         assert extract_context_identity is not None
-
 
 class TestTypesIsLeafModule:
     """core/types.py must have zero runtime nexus.* imports."""
@@ -106,8 +99,8 @@ class TestTypesIsLeafModule:
             f"but has runtime nexus imports: {runtime_nexus_imports}"
         )
 
-    def test_has_future_annotations(self) -> None:
-        """types.py must use ``from __future__ import annotations``."""
+    def test_no_future_annotations(self) -> None:
+        """types.py should NOT use ``from __future__ import annotations`` (Python 3.14+, PEP 649)."""
         source = _TYPES_FILE.read_text(encoding="utf-8")
         tree = ast.parse(source, filename=str(_TYPES_FILE))
 
@@ -117,4 +110,7 @@ class TestTypesIsLeafModule:
                 for alias in node.names:
                     if alias.name == "annotations":
                         has_future = True
-        assert has_future, "core/types.py must use 'from __future__ import annotations'"
+
+        assert not has_future, (
+            "core/types.py should not use 'from __future__ import annotations' (PEP 649)"
+        )

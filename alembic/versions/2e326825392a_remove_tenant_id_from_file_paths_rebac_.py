@@ -36,7 +36,6 @@ down_revision: Union[str, Sequence[str], None] = "6563315727ab"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 # Intentionally duplicated from nexus.storage.views.VIEW_NAMES.
 # Migrations must be self-contained snapshots — importing from application
 # code would break if views.py changes after this migration is written.
@@ -50,7 +49,6 @@ _VIEW_NAMES = [
     "hot_tier_eviction_candidates",
     "orphaned_content_objects",
 ]
-
 
 def upgrade() -> None:
     """Remove tenant_id from file_paths table for pure ReBAC."""
@@ -84,7 +82,6 @@ def upgrade() -> None:
         op.batch_alter_table("file_paths") as batch_op,
     ):
         batch_op.create_unique_constraint("uq_virtual_path", ["virtual_path"])
-
 
 def downgrade() -> None:
     """Restore tenant_id to file_paths table (for rollback to previous version)."""

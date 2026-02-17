@@ -9,8 +9,6 @@ Processors:
   ``NEXUS_SERVICE_NAME`` env var, defaults to ``"nexus"``).
 """
 
-from __future__ import annotations
-
 import os
 import sys
 from collections.abc import MutableMapping
@@ -33,7 +31,6 @@ except ImportError:
 # Configurable service name (Issue #1002 / Issue 8).
 # Matches OTel convention (OTEL_SERVICE_NAME).
 _SERVICE_NAME = os.environ.get("NEXUS_SERVICE_NAME", "nexus")
-
 
 def otel_trace_processor(
     _logger: Any, _method_name: Any, event_dict: MutableMapping[str, Any]
@@ -64,7 +61,6 @@ def otel_trace_processor(
         pass
 
     return event_dict
-
 
 def error_classification_processor(
     _logger: Any, _method_name: Any, event_dict: MutableMapping[str, Any]
@@ -111,7 +107,6 @@ def error_classification_processor(
     event_dict["should_alert"] = not is_expected
 
     return event_dict
-
 
 def add_service_name(
     _logger: Any, _method_name: Any, event_dict: MutableMapping[str, Any]

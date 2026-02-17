@@ -15,8 +15,6 @@ Usage:
     # result.embedding_json, result.entities_json, etc.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from dataclasses import dataclass
@@ -24,7 +22,6 @@ from datetime import datetime
 from typing import Any
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass
 class EnrichmentFlags:
@@ -45,7 +42,6 @@ class EnrichmentFlags:
     coreference_context: str | None = None
     temporal_reference_time: Any = None
     relationship_types: list[str] | None = None
-
 
 @dataclass
 class EnrichmentResult:
@@ -75,7 +71,6 @@ class EnrichmentResult:
     temporal_stability: str | None = None
     stability_confidence: float | None = None
     estimated_ttl_days: int | None = None
-
 
 class EnrichmentPipeline:
     """Composable enrichment pipeline for memory content.

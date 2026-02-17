@@ -4,8 +4,6 @@ Provides 1 endpoint for reflection analysis:
 - POST /api/v2/reflect - Trigger reflection on trajectory
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -16,11 +14,9 @@ from nexus.server.api.v2.models import ReflectionResponse, ReflectRequest
 
 router = APIRouter(prefix="/api/v2/reflect", tags=["reflection"])
 
-
 # =============================================================================
 # Endpoints
 # =============================================================================
-
 
 @router.post("", response_model=ReflectionResponse)
 @api_error_handler(context="perform reflection")

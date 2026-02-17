@@ -4,8 +4,6 @@ Covers filter modes, metadata loading, error paths, and edge cases
 that will be touched by the Phase 3 pipeline refactor (Issue #1400).
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest
@@ -17,7 +15,6 @@ from nexus.services.skill_service import SkillService
 # =============================================================================
 # Fixtures
 # =============================================================================
-
 
 @pytest.fixture
 def mock_gateway():
@@ -41,11 +38,9 @@ def mock_gateway():
 
     return gw
 
-
 @pytest.fixture
 def svc(mock_gateway):
     return SkillService(gateway=mock_gateway)
-
 
 @pytest.fixture
 def ctx():
@@ -57,16 +52,13 @@ def ctx():
         is_admin=False,
     )
 
-
 SKILL_MD = (
     b"---\nname: Test Skill\ndescription: A test\nversion: '1.0'\ntags:\n  - test\n---\n# Test"
 )
 
-
 # =============================================================================
 # Filter: "subscribed"
 # =============================================================================
-
 
 class TestDiscoverSubscribed:
     """Tests for discover(filter='subscribed')."""
@@ -110,11 +102,9 @@ class TestDiscoverSubscribed:
         assert len(result) == 1
         assert result[0].is_public is True
 
-
 # =============================================================================
 # Filter: "owned"
 # =============================================================================
-
 
 class TestDiscoverOwned:
     """Tests for discover(filter='owned')."""
@@ -143,11 +133,9 @@ class TestDiscoverOwned:
         result = svc.discover(ctx, filter="owned")
         assert result == []
 
-
 # =============================================================================
 # Filter: "public"
 # =============================================================================
-
 
 class TestDiscoverPublic:
     """Tests for discover(filter='public')."""
@@ -180,11 +168,9 @@ class TestDiscoverPublic:
         result = svc.discover(ctx, filter="public")
         assert result == []
 
-
 # =============================================================================
 # Filter: "shared"
 # =============================================================================
-
 
 class TestDiscoverShared:
     """Tests for discover(filter='shared')."""
@@ -231,11 +217,9 @@ class TestDiscoverShared:
         result = svc.discover(ctx, filter="shared")
         assert result == []
 
-
 # =============================================================================
 # Filter: "all"
 # =============================================================================
-
 
 class TestDiscoverAll:
     """Tests for discover(filter='all')."""
@@ -252,11 +236,9 @@ class TestDiscoverAll:
         result = svc.discover(ctx, filter="all")
         assert result == []
 
-
 # =============================================================================
 # _load_skill_metadata: system context fallback
 # =============================================================================
-
 
 class TestLoadSkillMetadata:
     """Tests for _load_skill_metadata system context fallback."""
@@ -291,11 +273,9 @@ class TestLoadSkillMetadata:
 
         assert result == {}
 
-
 # =============================================================================
 # _find_public_skills error path
 # =============================================================================
-
 
 class TestFindPublicSkillsErrors:
     """Tests for _find_public_skills error handling."""
@@ -318,11 +298,9 @@ class TestFindPublicSkillsErrors:
         assert len(result) == 1
         assert "/skill/" in result[0]
 
-
 # =============================================================================
 # _find_direct_viewer_skills error path
 # =============================================================================
-
 
 class TestFindDirectViewerSkillsErrors:
     """Tests for _find_direct_viewer_skills error handling."""
@@ -349,11 +327,9 @@ class TestFindDirectViewerSkillsErrors:
         result = svc._find_direct_viewer_skills(ctx)
         assert result == ["/zone/acme/user/bob/skill/test/"]
 
-
 # =============================================================================
 # _load_assigned_skills edge cases
 # =============================================================================
-
 
 class TestLoadAssignedSkills:
     """Tests for _load_assigned_skills with various agent_id formats."""

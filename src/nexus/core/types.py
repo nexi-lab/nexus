@@ -15,19 +15,13 @@ Types:
     - ``extract_context_identity()``: DRY helper to extract identity from OperationContext.
 """
 
-from __future__ import annotations
-
 import logging
 import uuid
 from dataclasses import dataclass, field
 from enum import IntFlag
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from nexus.core.read_set import ReadSet
+from nexus.core.read_set import ReadSet
 
 logger = logging.getLogger(__name__)
-
 
 class Permission(IntFlag):
     """Permission flags for file operations.
@@ -51,7 +45,6 @@ class Permission(IntFlag):
     TRAVERSE = 8  # t - can traverse/stat but not list (like Unix x on directories)
     ALL = 7  # rwx (does not include TRAVERSE by default)
     ALL_WITH_TRAVERSE = 15  # rwxt
-
 
 @dataclass
 class OperationContext:
@@ -243,7 +236,6 @@ class OperationContext:
         """
         self.track_reads = False
 
-
 @dataclass(frozen=True)
 class ContextIdentity:
     """Extracted identity from OperationContext (DRY helper).
@@ -260,7 +252,6 @@ class ContextIdentity:
     zone_id: str
     user_id: str
     is_admin: bool
-
 
 def extract_context_identity(context: OperationContext | None) -> ContextIdentity:
     """Extract zone/user/admin from an OperationContext.

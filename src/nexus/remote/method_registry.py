@@ -7,10 +7,7 @@ registry use default pass-through behavior (call _call_rpc, return result).
 Issue #1289: Protocol + RPC Proxy pattern.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
-
 
 @dataclass(frozen=True, slots=True)
 class MethodSpec:
@@ -25,7 +22,6 @@ class MethodSpec:
     rpc_name: str | None = None
     response_key: str | None = None
     custom_timeout: float | None = None
-
 
 # Registry: method_name -> MethodSpec
 # Methods NOT in this registry use default pass-through behavior:

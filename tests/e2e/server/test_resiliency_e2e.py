@@ -5,12 +5,9 @@ when the server is running with services enabled, and that there
 is no performance regression.
 """
 
-from __future__ import annotations
-
 import time
 
 import httpx
-
 
 class TestResiliencyE2E:
     def test_health_detailed_includes_resiliency(self, test_app: httpx.Client) -> None:

@@ -12,8 +12,6 @@ Architecture:
     If sync fails, the write still succeeds (sled is authoritative).
 """
 
-from __future__ import annotations
-
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -23,14 +21,13 @@ from sqlalchemy.orm import Session
 
 from nexus.storage.models import FilePathModel, VersionHistoryModel
 
+from nexus.core._metadata_generated import FileMetadata
 if TYPE_CHECKING:
     from nexus.core._metadata_generated import FileMetadata
-
 
 def _utcnow_naive() -> datetime:
     """Return current UTC time as naive datetime (for SQLite compat)."""
     return datetime.now(UTC).replace(tzinfo=None)
-
 
 class VersionRecorder:
     """Records file version history to RecordStore (FilePathModel + VersionHistoryModel).

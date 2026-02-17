@@ -10,8 +10,6 @@ Set NEXUS_NATS_URL to override the default nats://localhost:4222.
 Related: Issue #1331
 """
 
-from __future__ import annotations
-
 import asyncio
 import os
 
@@ -20,7 +18,6 @@ import pytest
 from nexus.core.event_bus import FileEvent, FileEventType
 
 NATS_URL = os.environ.get("NEXUS_NATS_URL", "nats://localhost:4222")
-
 
 def _is_nats_available() -> bool:
     """Check if NATS server is reachable."""
@@ -37,13 +34,11 @@ def _is_nats_available() -> bool:
     except (OSError, ValueError):
         return False
 
-
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(not _is_nats_available(), reason="NATS not available"),
     pytest.mark.xdist_group("nats"),  # All NATS tests share one stream; run sequentially
 ]
-
 
 @pytest.fixture
 async def nats_bus():
@@ -62,7 +57,6 @@ async def nats_bus():
         except Exception:
             pass
     await bus.stop()
-
 
 class TestNatsEventBusIntegration:
     """Integration tests with a real NATS server."""

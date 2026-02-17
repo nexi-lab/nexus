@@ -21,7 +21,6 @@ from pathlib import Path
 
 import nexus
 
-
 async def main() -> None:
     """Run the Skill Seekers plugin SDK demo."""
     print("=" * 70)
@@ -378,7 +377,6 @@ https://docs.sqlalchemy.org/ sqlalchemy-orm
 
         # Close Nexus connection
         nx.close()
-
 
 if __name__ == "__main__":
     asyncio.run(main())

@@ -23,13 +23,11 @@ down_revision: Union[str, Sequence[str], None] = ("b02814593b71", "dfb85dcdc557"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add line_start and line_end columns to document_chunks."""
     with op.batch_alter_table("document_chunks", schema=None) as batch_op:
         batch_op.add_column(sa.Column("line_start", sa.Integer(), nullable=True))
         batch_op.add_column(sa.Column("line_end", sa.Integer(), nullable=True))
-
 
 def downgrade() -> None:
     """Remove line_start and line_end columns from document_chunks."""

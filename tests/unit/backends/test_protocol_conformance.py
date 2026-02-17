@@ -8,8 +8,6 @@ Verifies that:
 5. Non-compliant classes are correctly rejected
 """
 
-from __future__ import annotations
-
 import hashlib
 from typing import Any
 
@@ -31,7 +29,6 @@ from nexus.core.response import HandlerResponse
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
 
 class _MockBackend(Backend):
     """In-memory Backend for conformance testing."""
@@ -103,14 +100,12 @@ class _MockBackend(Backend):
     def is_directory(self, path: str, context: Any = None) -> HandlerResponse[bool]:
         return HandlerResponse.ok(data=path in self._dirs, backend_name="mock")
 
-
 class _IncompleteClass:
     """Missing most protocol methods — should fail all checks."""
 
     @property
     def name(self) -> str:
         return "incomplete"
-
 
 class _PartialClass:
     """Has content methods but missing directory ops — should fail ConnectorProtocol."""
@@ -137,11 +132,9 @@ class _PartialClass:
     def get_ref_count(self, content_hash: str, context: Any = None) -> Any:
         return None
 
-
 # ---------------------------------------------------------------------------
 # Test: Backend ABC satisfies all connector protocols
 # ---------------------------------------------------------------------------
-
 
 class TestBackendProtocolConformance:
     """Verify Backend ABC satisfies all connector protocols structurally."""
@@ -174,7 +167,6 @@ class TestBackendProtocolConformance:
         backend = _MockBackend()
         assert isinstance(backend, DirectoryListingProtocol)
 
-
 class TestBackendProtocolConformanceViaHelper:
     """Use assert_protocol_conformance for deeper method+param checking."""
 
@@ -198,11 +190,9 @@ class TestBackendProtocolConformanceViaHelper:
 
         assert_protocol_conformance(Backend, DirectoryListingProtocol)
 
-
 # ---------------------------------------------------------------------------
 # Test: Concrete backends satisfy ConnectorProtocol
 # ---------------------------------------------------------------------------
-
 
 class TestConcreteBackendConformance:
     """Verify concrete backends satisfy ConnectorProtocol via isinstance."""
@@ -222,11 +212,9 @@ class TestConcreteBackendConformance:
         assert isinstance(backend, ConnectorProtocol)
         assert isinstance(backend, PassthroughProtocol)
 
-
 # ---------------------------------------------------------------------------
 # Test: Negative conformance (non-compliant classes)
 # ---------------------------------------------------------------------------
-
 
 class TestNegativeConformance:
     """Incomplete objects must NOT satisfy protocols."""
@@ -249,11 +237,9 @@ class TestNegativeConformance:
         assert isinstance(obj, ContentStoreProtocol)  # Has all CAS methods
         assert not isinstance(obj, ConnectorProtocol)  # Missing dir ops + lifecycle
 
-
 # ---------------------------------------------------------------------------
 # Test: OAuthCapableProtocol
 # ---------------------------------------------------------------------------
-
 
 class TestOAuthCapableProtocol:
     """Verify OAuthCapableProtocol detects OAuth connectors."""
@@ -289,11 +275,9 @@ class TestOAuthCapableProtocol:
         backend = PartialOAuth()
         assert not isinstance(backend, OAuthCapableProtocol)
 
-
 # ---------------------------------------------------------------------------
 # Test: Registry validation (Issue #1703)
 # ---------------------------------------------------------------------------
-
 
 class TestRegistryProtocolValidation:
     """Verify ConnectorRegistry rejects non-compliant backends."""
@@ -335,11 +319,9 @@ class TestRegistryProtocolValidation:
         assert "read_content" in msg
         assert "mkdir" in msg
 
-
 # ---------------------------------------------------------------------------
 # Test: _CONNECTOR_PROTOCOL_MEMBERS stays in sync with ConnectorProtocol
 # ---------------------------------------------------------------------------
-
 
 class TestProtocolMembersSync:
     """Guard against drift between registry frozenset and actual protocol."""

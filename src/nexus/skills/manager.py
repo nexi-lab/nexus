@@ -1,7 +1,5 @@
 """Skill lifecycle management: create, fork, publish, and versioning."""
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from datetime import UTC, datetime
@@ -14,6 +12,9 @@ from nexus.skills.parser import SkillParser
 from nexus.skills.protocols import NexusFilesystem
 from nexus.skills.registry import SkillNotFoundError, SkillRegistry
 
+from nexus.core.permissions import OperationContext
+from nexus.rebac.manager import ReBACManager
+from nexus.skills.governance import SkillGovernance
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.rebac.manager import ReBACManager
@@ -21,12 +22,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 class SkillManagerError(SkillValidationError):
     """Raised when skill management operations fail."""
 
     pass
-
 
 class SkillManager:
     """Manager for skill lifecycle operations.

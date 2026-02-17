@@ -7,8 +7,6 @@ and agent state event flow without requiring a live PostgreSQL database.
 Run with: uv run pytest tests/integration/scheduler/test_astraea_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
@@ -35,7 +33,6 @@ from nexus.server.api.v2.routers.scheduler import (
 # Fixtures
 # =============================================================================
 
-
 def _make_mock_pool():
     """Create a mock asyncpg pool with async context manager."""
     conn = AsyncMock()
@@ -45,7 +42,6 @@ def _make_mock_pool():
     acm.__aexit__ = AsyncMock(return_value=None)
     pool.acquire = MagicMock(return_value=acm)
     return pool, conn
-
 
 def _make_task(
     *,
@@ -75,7 +71,6 @@ def _make_task(
         estimated_service_time=estimated_service_time,
     )
 
-
 @pytest.fixture
 def mock_queue():
     """Fully-mocked TaskQueue with Astraea methods."""
@@ -99,16 +94,13 @@ def mock_queue():
     )
     return q
 
-
 @pytest.fixture
 def fair_share():
     return FairShareCounter(default_max_concurrent=10)
 
-
 @pytest.fixture
 def state_emitter():
     return AgentStateEmitter()
-
 
 @pytest.fixture
 def scheduler_service(mock_queue, fair_share, state_emitter):
@@ -121,7 +113,6 @@ def scheduler_service(mock_queue, fair_share, state_emitter):
         use_hrrn=True,
     )
 
-
 @pytest.fixture
 def mock_auth_result():
     return {
@@ -132,7 +123,6 @@ def mock_auth_result():
         "is_admin": False,
     }
 
-
 @pytest.fixture
 def app(scheduler_service, mock_auth_result):
     app = FastAPI()
@@ -141,16 +131,13 @@ def app(scheduler_service, mock_auth_result):
     app.dependency_overrides[_get_require_auth()] = lambda: mock_auth_result
     return app
 
-
 @pytest.fixture
 def client(app):
     return TestClient(app)
 
-
 # =============================================================================
 # E2E Flow: Submit → Get Status → Cancel
 # =============================================================================
-
 
 class TestSubmitFlowE2E:
     """Full submit flow with Astraea classification."""
@@ -215,11 +202,9 @@ class TestSubmitFlowE2E:
         response = client.post("/api/v2/scheduler/submit", json=payload)
         assert response.status_code == 422
 
-
 # =============================================================================
 # E2E: Classify Endpoint
 # =============================================================================
-
 
 class TestClassifyEndpointE2E:
     """Test /classify endpoint for Astraea classification."""
@@ -256,11 +241,9 @@ class TestClassifyEndpointE2E:
         assert response.status_code == 200
         assert response.json()["priority_class"] == "batch"
 
-
 # =============================================================================
 # E2E: Metrics Endpoint
 # =============================================================================
-
 
 class TestMetricsEndpointE2E:
     """Test /metrics endpoint for queue stats and fair-share."""
@@ -281,11 +264,9 @@ class TestMetricsEndpointE2E:
         assert data["fair_share"]["agent-a"]["running_count"] == 2
         assert data["fair_share"]["agent-b"]["running_count"] == 1
 
-
 # =============================================================================
 # E2E: Fair-Share Admission Control
 # =============================================================================
-
 
 class TestFairShareE2E:
     """Test that fair-share admission is enforced end-to-end."""
@@ -323,11 +304,9 @@ class TestFairShareE2E:
         # Service raises ValueError → 500 (or could be wrapped to 429)
         assert response.status_code == 500
 
-
 # =============================================================================
 # E2E: HRRN Dequeue
 # =============================================================================
-
 
 class TestHrrnDequeueE2E:
     """Test HRRN dequeue via the service."""
@@ -349,11 +328,9 @@ class TestHrrnDequeueE2E:
         # Fair-share updated
         assert fair_share.snapshot("test-agent").running_count == 1
 
-
 # =============================================================================
 # E2E: Agent State Events
 # =============================================================================
-
 
 class TestAgentStateEventsE2E:
     """Test event-driven executor state updates."""
@@ -397,11 +374,9 @@ class TestAgentStateEventsE2E:
         call_args = mock_queue.update_executor_state.call_args
         assert call_args[0][2] == "SUSPENDED"
 
-
 # =============================================================================
 # E2E: Cancel by Agent (Protocol method)
 # =============================================================================
-
 
 class TestCancelByAgentE2E:
     """Test bulk cancel via protocol cancel(agent_id)."""
@@ -416,11 +391,9 @@ class TestCancelByAgentE2E:
         assert count == 3
         mock_queue.cancel_by_agent.assert_called_once()
 
-
 # =============================================================================
 # E2E: Complete with Fair-Share
 # =============================================================================
-
 
 class TestCompleteE2E:
     """Test complete flow with fair-share update."""
@@ -451,11 +424,9 @@ class TestCompleteE2E:
         # Queue was called with failed status
         mock_queue.complete.assert_called_once()
 
-
 # =============================================================================
 # E2E: Starvation Promotion
 # =============================================================================
-
 
 class TestStarvationPromotionE2E:
     """Test starvation promotion flow."""
@@ -473,11 +444,9 @@ class TestStarvationPromotionE2E:
             900,
         )
 
-
 # =============================================================================
 # E2E: Sync Fair-Share from DB
 # =============================================================================
-
 
 class TestSyncFairShareE2E:
     """Test fair-share sync from database."""
@@ -492,11 +461,9 @@ class TestSyncFairShareE2E:
         assert fair_share.snapshot("agent-a").running_count == 3
         assert fair_share.snapshot("agent-b").running_count == 1
 
-
 # =============================================================================
 # E2E: Full Protocol Submit Flow (AgentRequest → task_id)
 # =============================================================================
-
 
 class TestProtocolSubmitE2E:
     """Test the protocol-level submit() that takes AgentRequest."""

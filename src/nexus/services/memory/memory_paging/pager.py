@@ -6,8 +6,6 @@ Automatically pages memories based on capacity and age.
 Thread-safe: ContextManager uses locks, stores use per-operation sessions.
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 import time
@@ -20,6 +18,7 @@ from nexus.services.memory.memory_paging.context_manager import ContextManager
 from nexus.services.memory.memory_paging.namespace_util import strip_tier_prefix
 from nexus.services.memory.memory_paging.recall_store import RecallStore
 
+from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
@@ -35,7 +34,6 @@ _ARCHIVE_CHECK_INTERVAL = 5
 
 # Cache TTL for get_stats() to avoid repeated COUNT queries (seconds)
 _STATS_CACHE_TTL = 5.0
-
 
 class MemoryPager:
     """Orchestrates 3-tier memory paging system.

@@ -1,11 +1,8 @@
 """Unit tests for static API key authentication provider."""
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.auth.providers.static_key import StaticAPIKeyAuth
-
 
 @pytest.fixture
 def sample_api_keys():
@@ -36,11 +33,9 @@ def sample_api_keys():
         },
     }
 
-
 @pytest.fixture
 def auth_provider(sample_api_keys):
     return StaticAPIKeyAuth(sample_api_keys)
-
 
 @pytest.mark.asyncio
 async def test_authenticate_user_key(auth_provider):
@@ -52,7 +47,6 @@ async def test_authenticate_user_key(auth_provider):
     assert result.zone_id == "org_acme"
     assert result.is_admin is True
 
-
 @pytest.mark.asyncio
 async def test_authenticate_agent_key(auth_provider):
     """Authenticate a valid agent API key."""
@@ -62,7 +56,6 @@ async def test_authenticate_agent_key(auth_provider):
     assert result.subject_id == "agent_claude_001"
     assert result.zone_id == "org_acme"
     assert result.is_admin is False
-
 
 @pytest.mark.asyncio
 async def test_authenticate_service_key_with_metadata(auth_provider):
@@ -75,7 +68,6 @@ async def test_authenticate_service_key_with_metadata(auth_provider):
     assert result.is_admin is True
     assert result.metadata == {"purpose": "backup"}
 
-
 @pytest.mark.asyncio
 async def test_authenticate_minimal_key(auth_provider):
     """Authenticate a key with minimal config (no subject_type specified)."""
@@ -86,13 +78,11 @@ async def test_authenticate_minimal_key(auth_provider):
     assert result.zone_id == "org_xyz"
     assert result.is_admin is False
 
-
 @pytest.mark.asyncio
 async def test_authenticate_invalid_key(auth_provider):
     """Authenticate with an unknown key returns failure."""
     result = await auth_provider.authenticate("sk-unknown-key")
     assert result.authenticated is False
-
 
 @pytest.mark.asyncio
 async def test_authenticate_empty_token(auth_provider):
@@ -100,30 +90,25 @@ async def test_authenticate_empty_token(auth_provider):
     result = await auth_provider.authenticate("")
     assert result.authenticated is False
 
-
 @pytest.mark.asyncio
 async def test_authenticate_bad_prefix(auth_provider):
     """Authenticate with a key not starting with sk- returns failure."""
     result = await auth_provider.authenticate("bad-prefix-key")
     assert result.authenticated is False
 
-
 @pytest.mark.asyncio
 async def test_validate_token_valid(auth_provider):
     """validate_token returns True for known keys."""
     assert await auth_provider.validate_token("sk-alice-secret-key") is True
-
 
 @pytest.mark.asyncio
 async def test_validate_token_invalid(auth_provider):
     """validate_token returns False for unknown keys."""
     assert await auth_provider.validate_token("sk-unknown-key") is False
 
-
 def test_close(auth_provider):
     """close() doesn't raise."""
     auth_provider.close()
-
 
 def test_from_config():
     """Create StaticAPIKeyAuth from config dictionary."""
@@ -141,12 +126,10 @@ def test_from_config():
     assert len(provider.api_keys) == 1
     assert "sk-config-key" in provider.api_keys
 
-
 def test_from_config_empty():
     """Create StaticAPIKeyAuth from empty config."""
     provider = StaticAPIKeyAuth.from_config({})
     assert len(provider.api_keys) == 0
-
 
 @pytest.mark.asyncio
 async def test_zone_id_none_when_not_provided():

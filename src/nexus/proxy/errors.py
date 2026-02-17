@@ -4,12 +4,8 @@ All exceptions inherit from ProxyError so callers can catch the
 entire family with a single except clause.
 """
 
-from __future__ import annotations
-
-
 class ProxyError(Exception):
     """Base exception for all proxy brick errors."""
-
 
 class OfflineQueuedError(ProxyError):
     """Raised when an operation is queued for later replay.
@@ -23,7 +19,6 @@ class OfflineQueuedError(ProxyError):
         self.queue_id = queue_id
         super().__init__(f"Operation '{method}' queued for offline replay (id={queue_id})")
 
-
 class CircuitOpenError(ProxyError):
     """Raised when the circuit breaker is open.
 
@@ -35,7 +30,6 @@ class CircuitOpenError(ProxyError):
         self.retry_after = retry_after
         super().__init__(f"Circuit breaker open for {remote_url}; retry after {retry_after:.1f}s")
 
-
 class QueueReplayError(ProxyError):
     """Raised when a queued operation fails during replay."""
 
@@ -44,7 +38,6 @@ class QueueReplayError(ProxyError):
         self.method = method
         self.cause = cause
         super().__init__(f"Failed to replay queued operation {op_id} ({method}): {cause}")
-
 
 class RemoteCallError(ProxyError):
     """Raised when a remote call fails after all retries."""

@@ -5,8 +5,6 @@ Provides 2 endpoints for curation:
 - POST /api/v2/curate/bulk - Bulk curation from trajectories
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 from fastapi import APIRouter, Depends
@@ -21,11 +19,9 @@ from nexus.server.api.v2.models import (
 
 router = APIRouter(prefix="/api/v2/curate", tags=["curation"])
 
-
 # =============================================================================
 # Endpoints
 # =============================================================================
-
 
 @router.post("", response_model=CurationResponse)
 @api_error_handler(context="curate memories")
@@ -50,7 +46,6 @@ async def curate_memories(
         strategies_merged=result.get("strategies_merged", 0),
         strategies_total=result.get("strategies_total", 0),
     )
-
 
 @router.post("/bulk")
 @api_error_handler(context="bulk curate")

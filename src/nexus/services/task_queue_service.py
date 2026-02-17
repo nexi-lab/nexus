@@ -16,8 +16,6 @@ Example:
     ```
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -35,7 +33,6 @@ _STATUS_NAMES = {
     4: "dead_letter",
     5: "cancelled",
 }
-
 
 def _task_record_to_dict(record: Any) -> dict[str, Any]:
     """Convert a PyTaskRecord to a JSON-serializable dict."""
@@ -57,7 +54,6 @@ def _task_record_to_dict(record: Any) -> dict[str, Any]:
         "progress_message": record.progress_message,
         "completed_at": record.completed_at,
     }
-
 
 class TaskQueueService:
     """Manages durable task queue operations via Rust TaskEngine.

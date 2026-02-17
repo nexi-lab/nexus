@@ -27,7 +27,6 @@ from nexus.cache.warmer import CacheWarmer, WarmupConfig
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
-
 def create_test_files(nx: NexusFS, num_files: int, file_size: int = 1024) -> list[str]:
     """Create test files in NexusFS."""
     paths = []
@@ -37,7 +36,6 @@ def create_test_files(nx: NexusFS, num_files: int, file_size: int = 1024) -> lis
         nx.write(path, content)
         paths.append(path)
     return paths
-
 
 def clear_caches(nx: NexusFS) -> None:
     """Clear all in-memory caches."""
@@ -60,7 +58,6 @@ def clear_caches(nx: NexusFS) -> None:
 
     # Force garbage collection
     gc.collect()
-
 
 def benchmark_cold_access(nx: NexusFS, paths: list[str]) -> dict:
     """Benchmark file access with cold cache."""
@@ -94,7 +91,6 @@ def benchmark_cold_access(nx: NexusFS, paths: list[str]) -> dict:
         "total_time_ms": sum(times_exists) + sum(times_read),
     }
 
-
 def benchmark_warm_access(nx: NexusFS, paths: list[str]) -> dict:
     """Benchmark file access with warm cache (after warmup or previous access)."""
     # Cache should be warm from previous operations
@@ -124,7 +120,6 @@ def benchmark_warm_access(nx: NexusFS, paths: list[str]) -> dict:
         "total_time_ms": sum(times_exists) + sum(times_read),
     }
 
-
 async def benchmark_warmup_time(nx: NexusFS, num_files: int) -> dict:
     """Benchmark the warmup operation itself."""
     clear_caches(nx)
@@ -151,7 +146,6 @@ async def benchmark_warmup_time(nx: NexusFS, num_files: int) -> dict:
         "metadata_warmed": stats.metadata_warmed,
         "files_per_second": stats.files_warmed / elapsed if elapsed > 0 else 0,
     }
-
 
 def print_results(cold: dict, warm: dict, warmup: dict, num_files: int) -> None:
     """Print benchmark results."""
@@ -210,7 +204,6 @@ def print_results(cold: dict, warm: dict, warmup: dict, num_files: int) -> None:
 
     print("=" * 70)
 
-
 async def run_benchmark(num_files: int = 100, file_size: int = 1024) -> None:
     """Run the complete benchmark."""
     print(f"\nSetting up benchmark with {num_files} files ({file_size} bytes each)...")
@@ -253,7 +246,6 @@ async def run_benchmark(num_files: int = 100, file_size: int = 1024) -> None:
         finally:
             nx.close()
 
-
 def main():
     """Main entry point."""
     print("=" * 70)
@@ -265,7 +257,6 @@ def main():
         asyncio.run(run_benchmark(num_files=num_files, file_size=1024))
 
     print("\nBenchmark complete!")
-
 
 if __name__ == "__main__":
     main()

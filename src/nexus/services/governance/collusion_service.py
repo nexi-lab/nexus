@@ -7,8 +7,6 @@ All graph operations are zone-scoped with configurable size caps.
 Runs as background job (not in request path).
 """
 
-from __future__ import annotations
-
 import contextlib
 import json
 import logging
@@ -29,6 +27,8 @@ from nexus.services.governance.trust_math import (
     eigentrust,
 )
 
+from collections.abc import Callable
+from sqlalchemy.ext.asyncio import AsyncSession
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -36,7 +36,6 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger(__name__)
-
 
 class CollusionService:
     """Detects collusion patterns in agent transaction graphs.
@@ -66,7 +65,7 @@ class CollusionService:
         since: datetime | None = None,
         *,
         _edges: list[GovernanceEdge] | None = None,
-    ) -> nx.DiGraph:
+    ) -> "nx.DiGraph":
         """Build a NetworkX DiGraph from stored governance edges.
 
         Zone-scoped with size limits to prevent OOM.
@@ -104,7 +103,7 @@ class CollusionService:
         self,
         zone_id: str,
         *,
-        _graph: nx.DiGraph | None = None,
+        _graph: "nx.DiGraph | None" = None,
     ) -> list[FraudRing]:
         """Detect transaction rings (cycles) in the interaction graph.
 

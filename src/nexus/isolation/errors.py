@@ -5,12 +5,8 @@ entire family with a single except clause.  This is a standalone tree
 — isolation errors represent a different concern from ProxyError.
 """
 
-from __future__ import annotations
-
-
 class IsolationError(Exception):
     """Base exception for all isolation errors."""
-
 
 class IsolationStartupError(IsolationError):
     """Raised when a backend fails to import or initialise in the worker."""
@@ -24,7 +20,6 @@ class IsolationStartupError(IsolationError):
             detail += f": {cause}"
         super().__init__(detail)
 
-
 class IsolationCallError(IsolationError):
     """Raised when a delegated method raises an exception in the worker."""
 
@@ -36,7 +31,6 @@ class IsolationCallError(IsolationError):
             detail += f": {cause}"
         super().__init__(detail)
 
-
 class IsolationTimeoutError(IsolationError):
     """Raised when a delegated call exceeds its deadline."""
 
@@ -44,7 +38,6 @@ class IsolationTimeoutError(IsolationError):
         self.method = method
         self.timeout = timeout
         super().__init__(f"Isolated call '{method}' timed out after {timeout:.1f}s")
-
 
 class IsolationPoolError(IsolationError):
     """Raised when the executor pool is shut down or unhealthy."""

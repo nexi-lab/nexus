@@ -1,7 +1,5 @@
 """Integration tests for the full validation pipeline with mock sandbox."""
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock
 
 import pytest
@@ -10,12 +8,10 @@ from nexus.sandbox.sandbox_provider import CodeExecutionResult
 from nexus.validation.models import ValidationPipelineConfig, ValidatorConfig
 from nexus.validation.runner import ValidationRunner
 
-
 def _make_provider(*responses: CodeExecutionResult) -> AsyncMock:
     provider = AsyncMock()
     provider.run_code = AsyncMock(side_effect=list(responses))
     return provider
-
 
 class TestValidationPipelineIntegration:
     """Full pipeline integration tests using mock sandbox provider."""

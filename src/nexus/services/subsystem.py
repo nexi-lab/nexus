@@ -8,14 +8,11 @@ This module provides:
 - ``extract_context_identity()``: DRY helper to extract zone/user/admin from OperationContext.
 """
 
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.core.types import OperationContext as OperationContext  # noqa: F401
-
 
 class Subsystem(ABC):
     """Base class for extracted NexusFS subsystems.

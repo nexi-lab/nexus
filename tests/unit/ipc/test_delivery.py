@@ -1,7 +1,5 @@
 """Unit tests for MessageSender and MessageProcessor."""
 
-from __future__ import annotations
-
 import asyncio
 from datetime import UTC, datetime, timedelta
 
@@ -33,12 +31,10 @@ from .fakes import (
 
 ZONE = "test-zone"
 
-
 async def _provision_agent(vfs: InMemoryVFS, agent_id: str) -> None:
     """Provision agent directories using AgentProvisioner (DRY)."""
     provisioner = AgentProvisioner(vfs, zone_id=ZONE)
     await provisioner.provision(agent_id)
-
 
 def _make_envelope(
     sender: str = "agent:alice",
@@ -56,7 +52,6 @@ def _make_envelope(
         ttl_seconds=ttl_seconds,
         payload={"test": True},
     )
-
 
 class TestMessageSender:
     """Tests for sending messages to inboxes."""
@@ -197,7 +192,6 @@ class TestMessageSender:
 
         with pytest.raises(EnvelopeValidationError, match="correlation_id"):
             await sender.send(env)
-
 
 class TestMessageProcessor:
     """Tests for processing messages from inboxes."""
@@ -353,7 +347,6 @@ class TestMessageProcessor:
 
         assert count == 3
         assert received_ids == ["msg_01", "msg_02", "msg_03"]
-
 
 class TestHotColdDelivery:
     """Tests for tiered hot/cold message delivery (#1747, LEGO 17.7)."""

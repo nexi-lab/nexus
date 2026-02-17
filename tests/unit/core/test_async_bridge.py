@@ -11,7 +11,6 @@ from nexus.core.async_bridge import (
     shutdown_async_rebac_bridge,
 )
 
-
 class TestAsyncReBACBridge:
     """Test AsyncReBACBridge functionality."""
 
@@ -106,7 +105,6 @@ class TestAsyncReBACBridge:
         bridge = AsyncReBACBridge("sqlite:///test.db")
         stats = bridge.get_cache_stats()
         assert stats == {}
-
 
 class TestGlobalBridgeFunctions:
     """Test global bridge helper functions."""

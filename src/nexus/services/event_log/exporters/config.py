@@ -4,12 +4,9 @@ Defines KafkaExporterConfig, NatsExporterConfig, PubSubExporterConfig,
 and the top-level EventStreamConfig that selects which exporter to use.
 """
 
-from __future__ import annotations
-
 from typing import Literal
 
 from pydantic import BaseModel, Field
-
 
 class KafkaExporterConfig(BaseModel):
     """Configuration for the Kafka event stream exporter."""
@@ -21,7 +18,6 @@ class KafkaExporterConfig(BaseModel):
     enable_idempotence: bool = True
     batch_size: int = 100
 
-
 class NatsExporterConfig(BaseModel):
     """Configuration for the external NATS event stream exporter."""
 
@@ -30,14 +26,12 @@ class NatsExporterConfig(BaseModel):
     stream_name: str = "NEXUS_EXPORT"
     max_payload: int = 1_048_576  # 1MB
 
-
 class PubSubExporterConfig(BaseModel):
     """Configuration for the Google Pub/Sub event stream exporter."""
 
     project_id: str = ""
     topic_prefix: str = "nexus-events"
     ordering_enabled: bool = True
-
 
 class EventStreamConfig(BaseModel):
     """Top-level configuration for event stream export."""

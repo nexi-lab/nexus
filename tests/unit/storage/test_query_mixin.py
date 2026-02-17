@@ -4,8 +4,6 @@ Issue #1360: Tests generic filter application, cursor-based pagination,
 and count queries using a concrete model (ExchangeAuditLogModel).
 """
 
-from __future__ import annotations
-
 from decimal import Decimal
 from typing import Any
 
@@ -21,7 +19,6 @@ from nexus.storage.query_mixin import AppendOnlyQueryMixin
 # Fixtures
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture
 def engine():
     eng = create_engine("sqlite:///:memory:")
@@ -29,18 +26,15 @@ def engine():
     yield eng
     eng.dispose()
 
-
 @pytest.fixture
 def session_factory(engine):
     return sessionmaker(bind=engine)
-
 
 @pytest.fixture
 def session(session_factory):
     s = session_factory()
     yield s
     s.close()
-
 
 @pytest.fixture
 def mixin():
@@ -49,7 +43,6 @@ def mixin():
         id_column_name="id",
         created_column_name="created_at",
     )
-
 
 def _insert_record(session, **overrides: Any) -> str:
     """Insert a record directly for testing the mixin in isolation."""
@@ -96,11 +89,9 @@ def _insert_record(session, **overrides: Any) -> str:
     record_id: str = row.id
     return record_id
 
-
 # ---------------------------------------------------------------------------
 # Filter application
 # ---------------------------------------------------------------------------
-
 
 class TestApplyFilters:
     def test_exact_match_filter(self, mixin: AppendOnlyQueryMixin, session) -> None:
@@ -137,11 +128,9 @@ class TestApplyFilters:
         rows, _ = mixin.list_cursor(session, filters={"nonexistent_col": "value"}, limit=10)
         assert len(rows) == 1
 
-
 # ---------------------------------------------------------------------------
 # Cursor pagination
 # ---------------------------------------------------------------------------
-
 
 class TestCursorPagination:
     def test_paginate_forward(self, mixin: AppendOnlyQueryMixin, session) -> None:
@@ -171,11 +160,9 @@ class TestCursorPagination:
         assert len(rows) == 3
         assert cursor is None  # Exactly fits, no more pages
 
-
 # ---------------------------------------------------------------------------
 # Count
 # ---------------------------------------------------------------------------
-
 
 class TestCount:
     def test_count_all(self, mixin: AppendOnlyQueryMixin, session) -> None:

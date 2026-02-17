@@ -33,7 +33,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/zones", tags=["zones"])
 
-
 # Request/Response Models
 class CreateZoneRequest(BaseModel):
     """Request to create a new zone."""
@@ -49,7 +48,6 @@ class CreateZoneRequest(BaseModel):
     domain: str | None = Field(None, description="Domain (e.g., company.com)")
     description: str | None = Field(None, description="Optional description")
 
-
 class ZoneResponse(BaseModel):
     """Zone information response."""
 
@@ -61,13 +59,11 @@ class ZoneResponse(BaseModel):
     created_at: str
     updated_at: str
 
-
 class ZoneListResponse(BaseModel):
     """List of zones."""
 
     zones: list[ZoneResponse]
     total: int
-
 
 @router.post("", response_model=ZoneResponse, status_code=status.HTTP_201_CREATED)
 async def create_zone_endpoint(
@@ -162,7 +158,6 @@ async def create_zone_endpoint(
                 detail=str(e),
             ) from e
 
-
 @router.get("/{zone_id}", response_model=ZoneResponse)
 async def get_zone(
     zone_id: str,
@@ -217,7 +212,6 @@ async def get_zone(
             created_at=zone.created_at.isoformat(),
             updated_at=zone.updated_at.isoformat(),
         )
-
 
 @router.get("", response_model=ZoneListResponse)
 async def list_zones(

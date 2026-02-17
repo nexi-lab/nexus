@@ -12,8 +12,6 @@ Provides:
 - ABAC condition evaluation
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from contextlib import contextmanager, suppress
@@ -30,13 +28,14 @@ from nexus.storage.models.permissions import (
     ReBACVersionSequenceModel as RVS,
 )
 
+from collections.abc import Generator
+from sqlalchemy.engine import Engine
 if TYPE_CHECKING:
     from collections.abc import Generator
 
     from sqlalchemy.engine import Engine
 
 logger = logging.getLogger(__name__)
-
 
 class TupleRepository:
     """Data access layer for ReBAC relationship tuples.

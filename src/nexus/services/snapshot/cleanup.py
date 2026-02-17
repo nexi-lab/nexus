@@ -8,18 +8,16 @@ Configuration:
     - batch_limit: max transactions per sweep (default 100)
 """
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import logging
 from typing import TYPE_CHECKING
 
+from nexus.services.snapshot.service import TransactionalSnapshotService
 if TYPE_CHECKING:
     from nexus.services.snapshot.service import TransactionalSnapshotService
 
 logger = logging.getLogger(__name__)
-
 
 class SnapshotCleanupWorker:
     """Background worker that cleans up expired transactions.

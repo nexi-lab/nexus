@@ -1,7 +1,5 @@
 """Tests for version history garbage collection (Issue #974)."""
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import tempfile
@@ -15,7 +13,6 @@ from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.version_gc import GCStats, VersionGCSettings, VersionHistoryGC
-
 
 class TestGCStats:
     """Test GCStats dataclass."""
@@ -44,7 +41,6 @@ class TestGCStats:
         assert result["resources_processed"] == 3
         assert result["duration_seconds"] == 1.23  # Rounded to 2 decimals
         assert result["dry_run"] is True
-
 
 class TestVersionGCSettings:
     """Test VersionGCSettings configuration."""
@@ -116,7 +112,6 @@ class TestVersionGCSettings:
 
         assert "retention_days=7" in repr_str
         assert "max_versions=50" in repr_str
-
 
 class TestVersionHistoryGC:
     """Test VersionHistoryGC garbage collector."""
@@ -345,7 +340,6 @@ class TestVersionHistoryGC:
         finally:
             nx_empty.close()
             rs_empty.close()
-
 
 class TestVersionGCTask:
     """Test background GC task."""

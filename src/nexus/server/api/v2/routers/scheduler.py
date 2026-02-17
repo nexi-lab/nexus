@@ -10,8 +10,6 @@ Provides endpoints for task scheduling with hybrid priority:
 Related: Issue #1212, #1274
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import datetime
 from decimal import Decimal
@@ -29,11 +27,9 @@ router = APIRouter(prefix="/api/v2/scheduler", tags=["scheduler"])
 VALID_PRIORITIES = frozenset(TIER_ALIASES.keys())
 VALID_REQUEST_STATES = frozenset(s.value for s in RequestState)
 
-
 # =============================================================================
 # Pydantic Models
 # =============================================================================
-
 
 class SubmitTaskRequest(BaseModel):
     """Request to submit a task for scheduling."""
@@ -72,7 +68,6 @@ class SubmitTaskRequest(BaseModel):
             raise ValueError(f"Invalid request_state '{v}'. Must be one of: {valid}")
         return v
 
-
 class TaskStatusResponse(BaseModel):
     """Task status information."""
 
@@ -93,13 +88,11 @@ class TaskStatusResponse(BaseModel):
     priority_class: str = "batch"
     request_state: str = "pending"
 
-
 class CancelResponse(BaseModel):
     """Cancel operation result."""
 
     cancelled: bool
     task_id: str
-
 
 class ClassifyRequest(BaseModel):
     """Request to classify a task into a priority class."""
@@ -115,12 +108,10 @@ class ClassifyRequest(BaseModel):
             raise ValueError(f"Invalid priority '{v}'. Must be one of: {valid}")
         return v
 
-
 class ClassifyResponse(BaseModel):
     """Classification result."""
 
     priority_class: str
-
 
 class MetricsResponse(BaseModel):
     """Scheduler metrics."""
@@ -129,18 +120,15 @@ class MetricsResponse(BaseModel):
     fair_share: dict[str, Any]
     use_hrrn: bool
 
-
 # =============================================================================
 # Dependencies
 # =============================================================================
-
 
 def _get_require_auth() -> Any:
     """Lazy import to avoid circular imports."""
     from nexus.server.fastapi_server import require_auth
 
     return require_auth
-
 
 def get_scheduler_service(request: Request) -> Any:
     """Get SchedulerService from app state."""
@@ -149,7 +137,6 @@ def get_scheduler_service(request: Request) -> Any:
         raise HTTPException(status_code=503, detail="Scheduler service not available")
     return service
 
-
 def _extract_agent_id(auth_result: dict[str, Any]) -> str:
     """Extract agent_id from auth result (x_agent_id header > subject_id)."""
     x_agent_id = auth_result.get("x_agent_id")
@@ -157,11 +144,9 @@ def _extract_agent_id(auth_result: dict[str, Any]) -> str:
         return str(x_agent_id)
     return str(auth_result.get("subject_id", "anonymous"))
 
-
 # =============================================================================
 # Response Converters
 # =============================================================================
-
 
 def _task_to_response(task: Any) -> TaskStatusResponse:
     """Convert ScheduledTask to API response."""
@@ -183,11 +168,9 @@ def _task_to_response(task: Any) -> TaskStatusResponse:
         request_state=getattr(task, "request_state", "pending"),
     )
 
-
 # =============================================================================
 # Endpoints
 # =============================================================================
-
 
 @router.post("/submit", response_model=TaskStatusResponse, status_code=201)
 async def submit_task(
@@ -221,7 +204,6 @@ async def submit_task(
     task = await scheduler.submit_task(submission)
     return _task_to_response(task)
 
-
 @router.get("/task/{task_id}", response_model=TaskStatusResponse)
 async def get_task_status(
     task_id: str,
@@ -233,7 +215,6 @@ async def get_task_status(
     if task is None:
         raise HTTPException(status_code=404, detail="Task not found")
     return _task_to_response(task)
-
 
 @router.post("/task/{task_id}/cancel", response_model=CancelResponse)
 async def cancel_task(
@@ -250,7 +231,6 @@ async def cancel_task(
     cancelled = await scheduler.cancel_task(task_id, agent_id=agent_id)
     return CancelResponse(cancelled=cancelled, task_id=task_id)
 
-
 @router.get("/metrics", response_model=MetricsResponse)
 async def get_metrics(
     auth_result: dict[str, Any] = Depends(_get_require_auth()),  # noqa: ARG001
@@ -259,7 +239,6 @@ async def get_metrics(
     """Get scheduler queue metrics and fair-share snapshots."""
     data = await scheduler.metrics()
     return MetricsResponse(**data)
-
 
 @router.post("/classify", response_model=ClassifyResponse)
 async def classify_request_endpoint(

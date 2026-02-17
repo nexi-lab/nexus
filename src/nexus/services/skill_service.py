@@ -20,8 +20,6 @@ Runner:
 - load: Load full skill content on-demand
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any, cast
 
@@ -31,10 +29,11 @@ from nexus.skills.types import PromptContext, SkillContent, SkillInfo
 
 logger = logging.getLogger(__name__)
 
+from nexus.core.permissions import OperationContext
+from nexus.services.gateway import NexusFSGateway
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.services.gateway import NexusFSGateway
-
 
 class SkillService:
     """Stateless skill service with permission-based access control.

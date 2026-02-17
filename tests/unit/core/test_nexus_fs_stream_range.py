@@ -5,15 +5,12 @@ with validation and error handling. Tests the mixin methods directly
 via a lightweight stub to avoid the heavy NexusFS constructor.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest
 
 from nexus.core.exceptions import NexusFileNotFoundError
 from nexus.core.permissions import OperationContext
-
 
 class _StubFS:
     """Lightweight stub that provides just enough for stream/range testing."""
@@ -38,13 +35,11 @@ class _StubFS:
     def _get_routing_params(self, context):
         return "default", None, False
 
-
 # Graft mixin methods onto stub
 from nexus.core.nexus_fs_core import NexusFSCoreMixin  # noqa: E402
 
 _StubFS.read_range = NexusFSCoreMixin.read_range
 _StubFS.stream_range = NexusFSCoreMixin.stream_range
-
 
 @pytest.fixture()
 def stub_fs():
@@ -69,7 +64,6 @@ def stub_fs():
     router.route.return_value = route
 
     return _StubFS(backend=backend, metadata=metadata, router=router)
-
 
 class TestReadRange:
     """Tests for read_range() byte-range reading."""
@@ -120,7 +114,6 @@ class TestReadRange:
     def test_zero_to_zero_returns_empty(self, stub_fs):
         result = stub_fs.read_range("/test/file.txt", 0, 0)
         assert result == b""
-
 
 class TestStreamRange:
     """Tests for stream_range() chunked byte-range streaming."""

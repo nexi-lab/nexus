@@ -1,7 +1,5 @@
 """Tests for exception hierarchy (src/nexus/llm/exceptions.py)."""
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.llm.exceptions import (
@@ -17,7 +15,6 @@ from nexus.llm.exceptions import (
     LLMTimeoutError,
     LLMTokenCountError,
 )
-
 
 class TestLLMExceptions:
     """Tests verifying the LLM exception hierarchy."""

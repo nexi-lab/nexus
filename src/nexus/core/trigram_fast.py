@@ -10,8 +10,6 @@ Falls back gracefully if Rust extension is not available.
 Pattern follows grep_fast.py.
 """
 
-from __future__ import annotations
-
 import logging
 import os
 from collections.abc import Callable
@@ -74,11 +72,9 @@ except ImportError:
     except ImportError:
         pass
 
-
 def is_available() -> bool:
     """Check if trigram index Rust extension is available."""
     return TRIGRAM_AVAILABLE
-
 
 def get_index_path(zone_id: str, base_dir: str = "") -> str:
     """Get the expected trigram index file path for a zone.
@@ -98,7 +94,6 @@ def get_index_path(zone_id: str, base_dir: str = "") -> str:
         safe_zone_id = "root"
     return os.path.join(base_dir, f"{safe_zone_id}.trgm")
 
-
 def index_exists(zone_id: str, base_dir: str = "") -> bool:
     """Check if a trigram index file exists for the given zone.
 
@@ -110,7 +105,6 @@ def index_exists(zone_id: str, base_dir: str = "") -> bool:
         True if the index file exists.
     """
     return os.path.isfile(get_index_path(zone_id, base_dir))
-
 
 def build_index(
     file_paths: list[str],
@@ -137,7 +131,6 @@ def build_index(
     except (OSError, ValueError, RuntimeError):
         logger.warning("Failed to build trigram index at %s", output_path, exc_info=True)
         return False
-
 
 def build_index_from_entries(
     entries: list[tuple[str, bytes]],
@@ -167,7 +160,6 @@ def build_index_from_entries(
             "Failed to build trigram index from entries at %s", output_path, exc_info=True
         )
         return False
-
 
 def grep(
     index_path: str,
@@ -201,7 +193,6 @@ def grep(
             "Trigram grep failed for pattern %r on %s", pattern, index_path, exc_info=True
         )
         return None
-
 
 def search_candidates(
     index_path: str,
@@ -237,7 +228,6 @@ def search_candidates(
         )
         return None
 
-
 def get_stats(index_path: str) -> dict[str, Any] | None:
     """Get statistics about a trigram index.
 
@@ -257,7 +247,6 @@ def get_stats(index_path: str) -> dict[str, Any] | None:
     except (OSError, ValueError, RuntimeError):
         logger.warning("Failed to get trigram index stats for %s", index_path, exc_info=True)
         return None
-
 
 def invalidate_cache(index_path: str) -> None:
     """Invalidate cached trigram index reader for the given path."""

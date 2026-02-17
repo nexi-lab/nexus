@@ -3,8 +3,6 @@
 Tests the full HTTP request/response cycle using FastAPI's TestClient.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 import pytest
@@ -17,7 +15,6 @@ from nexus.a2a.router import build_router
 # Fixtures
 # ======================================================================
 
-
 @pytest.fixture
 def app() -> FastAPI:
     """Create a minimal FastAPI app with the A2A router."""
@@ -26,11 +23,9 @@ def app() -> FastAPI:
     app.include_router(router)
     return app
 
-
 @pytest.fixture
 def client(app: FastAPI) -> TestClient:
     return TestClient(app)
-
 
 def _make_rpc(
     method: str, params: dict[str, Any] | None = None, request_id: str | int = "req-1"
@@ -45,11 +40,9 @@ def _make_rpc(
         body["params"] = params
     return body
 
-
 # ======================================================================
 # Agent Card Discovery
 # ======================================================================
-
 
 class TestAgentCardEndpoint:
     def test_returns_200(self, client: TestClient) -> None:
@@ -85,11 +78,9 @@ class TestAgentCardEndpoint:
         resp = client.get("/.well-known/agent.json")
         assert resp.status_code == 200
 
-
 # ======================================================================
 # JSON-RPC: tasks.send
 # ======================================================================
-
 
 class TestTasksSend:
     def test_create_task(self, client: TestClient) -> None:
@@ -132,11 +123,9 @@ class TestTasksSend:
         assert "error" in data
         assert data["error"]["code"] == -32602  # Invalid params
 
-
 # ======================================================================
 # JSON-RPC: tasks.get
 # ======================================================================
-
 
 class TestTasksGet:
     def test_get_task(self, client: TestClient) -> None:
@@ -167,11 +156,9 @@ class TestTasksGet:
         assert "error" in data
         assert data["error"]["code"] == -32001  # Task not found
 
-
 # ======================================================================
 # JSON-RPC: tasks.cancel
 # ======================================================================
-
 
 class TestTasksCancel:
     def test_cancel_task(self, client: TestClient) -> None:
@@ -200,11 +187,9 @@ class TestTasksCancel:
         data = resp.json()
         assert data["error"]["code"] == -32001
 
-
 # ======================================================================
 # JSON-RPC: Error handling
 # ======================================================================
-
 
 class TestErrorHandling:
     def test_unknown_method(self, client: TestClient) -> None:
@@ -262,11 +247,9 @@ class TestErrorHandling:
         resp = client.post("/a2a", json=body)
         assert resp.json()["id"] == 42
 
-
 # ======================================================================
 # Narrowed Exception Handler Regression Tests
 # ======================================================================
-
 
 class TestNarrowedExceptionHandlers:
     """Regression tests for narrowed ``except Exception`` handlers (#1591).
@@ -325,11 +308,9 @@ class TestNarrowedExceptionHandlers:
         assert data["error"]["code"] == -32603
         assert data["error"]["message"] == "Internal error"
 
-
 # ======================================================================
 # Extended Agent Card
 # ======================================================================
-
 
 class TestExtendedAgentCard:
     def test_returns_card(self, client: TestClient) -> None:

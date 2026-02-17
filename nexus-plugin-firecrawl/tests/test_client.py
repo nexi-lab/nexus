@@ -5,7 +5,6 @@ from pytest_httpx import HTTPXMock
 
 from nexus_firecrawl.client import CrawlJob, FirecrawlClient, MapResponse, ScrapeResponse
 
-
 @pytest.mark.asyncio
 async def test_scrape_success(httpx_mock: HTTPXMock) -> None:
     """Test successful scrape."""
@@ -28,7 +27,6 @@ async def test_scrape_success(httpx_mock: HTTPXMock) -> None:
     assert result.success is True
     assert result.markdown == "# Test Content"
     assert result.metadata["title"] == "Test Page"
-
 
 @pytest.mark.asyncio
 async def test_scrape_with_options(httpx_mock: HTTPXMock) -> None:
@@ -54,7 +52,6 @@ async def test_scrape_with_options(httpx_mock: HTTPXMock) -> None:
 
     assert result.success is True
 
-
 @pytest.mark.asyncio
 async def test_crawl_start(httpx_mock: HTTPXMock) -> None:
     """Test starting a crawl job."""
@@ -74,7 +71,6 @@ async def test_crawl_start(httpx_mock: HTTPXMock) -> None:
     assert isinstance(job, CrawlJob)
     assert job.id == "job-123"
     assert job.status == "pending"
-
 
 @pytest.mark.asyncio
 async def test_get_crawl_status(httpx_mock: HTTPXMock) -> None:
@@ -100,7 +96,6 @@ async def test_get_crawl_status(httpx_mock: HTTPXMock) -> None:
     assert job.completed == 100
     assert len(job.data) == 2
 
-
 @pytest.mark.asyncio
 async def test_cancel_crawl(httpx_mock: HTTPXMock) -> None:
     """Test cancelling a crawl job."""
@@ -114,7 +109,6 @@ async def test_cancel_crawl(httpx_mock: HTTPXMock) -> None:
         result = await client.cancel_crawl("job-123")
 
     assert result is True
-
 
 @pytest.mark.asyncio
 async def test_map_url(httpx_mock: HTTPXMock) -> None:
@@ -138,7 +132,6 @@ async def test_map_url(httpx_mock: HTTPXMock) -> None:
     assert result.success is True
     assert len(result.links) == 3
 
-
 @pytest.mark.asyncio
 async def test_search(httpx_mock: HTTPXMock) -> None:
     """Test web search."""
@@ -160,7 +153,6 @@ async def test_search(httpx_mock: HTTPXMock) -> None:
 
     assert len(results) == 1
     assert results[0]["url"] == "https://example.com"
-
 
 @pytest.mark.asyncio
 async def test_extract(httpx_mock: HTTPXMock) -> None:
@@ -191,7 +183,6 @@ async def test_extract(httpx_mock: HTTPXMock) -> None:
     assert result["title"] == "Test Page"
     assert result["author"] == "John Doe"
 
-
 @pytest.mark.asyncio
 async def test_client_retry_logic(httpx_mock: HTTPXMock) -> None:
     """Test client retry logic on failure."""
@@ -210,7 +201,6 @@ async def test_client_retry_logic(httpx_mock: HTTPXMock) -> None:
 
     assert result.success is True
     assert result.markdown == "# Success"
-
 
 @pytest.mark.asyncio
 async def test_client_custom_timeout(httpx_mock: HTTPXMock) -> None:

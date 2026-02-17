@@ -8,14 +8,11 @@ Includes adaptive retrieval depth based on query complexity (Issue #1021),
 inspired by SimpleMem (arXiv:2601.02553).
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
-
 
 @runtime_checkable
 class ChunkLike(Protocol):
@@ -32,7 +29,6 @@ class ChunkLike(Protocol):
     score: float | None
     start_offset: int | None
     end_offset: int | None
-
 
 @dataclass
 class AdaptiveRetrievalConfig:
@@ -53,7 +49,6 @@ class AdaptiveRetrievalConfig:
     k_max: int = 20
     delta: float = 0.5
     enabled: bool = True
-
 
 class ContextBuilder:
     """Builds context from search results for LLM prompts.

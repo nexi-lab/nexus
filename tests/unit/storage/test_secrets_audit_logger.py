@@ -4,8 +4,6 @@ Mirrors the ExchangeAuditLogger test suite pattern.
 Covers: CRUD, hash integrity, immutability, pagination, filters, verify integrity.
 """
 
-from __future__ import annotations
-
 import gc
 from datetime import UTC, datetime
 
@@ -20,7 +18,6 @@ from nexus.storage.secrets_audit_logger import (
     compute_record_hash,
 )
 
-
 @pytest.fixture
 def session_factory():
     """In-memory SQLite session factory for testing."""
@@ -31,11 +28,9 @@ def session_factory():
     engine.dispose()
     gc.collect()
 
-
 @pytest.fixture
 def audit_logger(session_factory):
     return SecretsAuditLogger(session_factory=session_factory)
-
 
 class TestSecretsAuditLoggerWrite:
     """Test audit event creation."""
@@ -85,7 +80,6 @@ class TestSecretsAuditLoggerWrite:
         assert row.ip_address == "192.168.1.1"
         assert row.zone_id == "org_acme"
 
-
 class TestSecretsAuditLoggerIntegrity:
     """Test hash integrity and tamper detection."""
 
@@ -133,7 +127,6 @@ class TestSecretsAuditLoggerIntegrity:
         h1 = compute_metadata_hash({"a": 1, "b": 2})
         h2 = compute_metadata_hash({"b": 2, "a": 1})  # Different order
         assert h1 == h2
-
 
 class TestSecretsAuditLoggerImmutability:
     """Test that audit records cannot be modified or deleted."""
@@ -185,7 +178,6 @@ class TestSecretsAuditLoggerImmutability:
         finally:
             session.rollback()
             session.close()
-
 
 class TestSecretsAuditLoggerQuery:
     """Test query and pagination."""

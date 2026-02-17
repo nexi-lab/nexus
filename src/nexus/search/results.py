@@ -8,10 +8,7 @@ Also provides detect_matched_field() — the canonical 6-field version used by
 ranking.py and bm25s_search.py (Issue #1092, #1499).
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
-
 
 @dataclass
 class BaseSearchResult:
@@ -32,7 +29,6 @@ class BaseSearchResult:
     line_end: int | None = None
     keyword_score: float | None = None
     vector_score: float | None = None
-
 
 def detect_matched_field(
     query: str,

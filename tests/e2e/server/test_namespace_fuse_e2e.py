@@ -11,8 +11,6 @@ This test uses the same server fixture pattern as test_namespace_permissions_e2e
 but focuses on agent identity (X-Agent-ID header) rather than user identity.
 """
 
-from __future__ import annotations
-
 import os
 import shutil
 import signal
@@ -38,18 +36,15 @@ for _key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
     os.environ.pop(_key, None)
 os.environ["NO_PROXY"] = "*"
 
-
 def _find_free_port() -> int:
     """Find a free TCP port on localhost."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
 
-
 def _make_client() -> httpx.Client:
     """Create httpx client for localhost connections."""
     return httpx.Client(timeout=10)
-
 
 def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> None:
     """Poll /health AND verify AsyncNexusFS is ready before returning."""
@@ -79,9 +74,7 @@ def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> 
             time.sleep(0.3)
     raise TimeoutError(f"Server did not start within {timeout}s at {base_url}")
 
-
 # === Fixtures ===
-
 
 @pytest.fixture(scope="module")
 def server():
@@ -177,18 +170,15 @@ def server():
 
         shutil.rmtree(data_dir, ignore_errors=True)
 
-
 @pytest.fixture(scope="module")
 def client(server: dict) -> httpx.Client:
     """Shared httpx client."""
     with _make_client() as c:
         yield c
 
-
 @pytest.fixture()
 def base_url(server: dict) -> str:
     return server["base_url"]
-
 
 @pytest.fixture()
 def admin_headers() -> dict[str, str]:
@@ -199,7 +189,6 @@ def admin_headers() -> dict[str, str]:
         "X-Nexus-Require-Admin": "true",
     }
 
-
 @pytest.fixture()
 def agent_headers() -> dict[str, str]:
     """Headers for agent-001 using X-Agent-ID header (Decision 7B)."""
@@ -208,7 +197,6 @@ def agent_headers() -> dict[str, str]:
         "X-Agent-ID": "agent-001",
         "X-Nexus-Zone-ID": "test",
     }
-
 
 @pytest.fixture()
 def agent2_headers() -> dict[str, str]:
@@ -219,18 +207,15 @@ def agent2_headers() -> dict[str, str]:
         "X-Nexus-Zone-ID": "test",
     }
 
-
 # =============================================================================
 # Namespace Visibility Tests via Agent Identity (Issue #1305)
 # =============================================================================
-
 
 def test_health(base_url: str, client: httpx.Client) -> None:
     """Health endpoint responds."""
     resp = client.get(f"{base_url}/health")
     assert resp.status_code == 200
     assert resp.json()["status"] == "healthy"
-
 
 def test_agent_zero_grants_zero_visibility(
     base_url: str, client: httpx.Client, agent_headers: dict, admin_headers: dict
@@ -255,7 +240,6 @@ def test_agent_zero_grants_zero_visibility(
     )
     assert resp.status_code == 404
     assert "not found" in resp.json().get("detail", "").lower()
-
 
 def test_agent_namespace_isolation(
     base_url: str,
@@ -348,7 +332,6 @@ def test_agent_namespace_isolation(
     )
     assert resp.status_code == 404, f"Agent-002 should NOT see {agent1_path}: {resp.text}"
 
-
 def test_admin_sees_everything(base_url: str, client: httpx.Client, admin_headers: dict) -> None:
     """Admin bypasses namespace checks — sees all paths."""
     admin_path = "/admin/fuse-test-secret.txt"
@@ -367,7 +350,6 @@ def test_admin_sees_everything(base_url: str, client: httpx.Client, admin_header
     )
     assert resp.status_code == 200
     assert resp.json()["content"] == "admin only"
-
 
 def test_agent_directory_listing_filtered(
     base_url: str,
@@ -426,7 +408,6 @@ def test_agent_directory_listing_filtered(
         headers=agent_headers,
     )
     assert resp.status_code == 404
-
 
 def test_agent_grant_revocation(
     base_url: str,
@@ -493,7 +474,6 @@ def test_agent_grant_revocation(
         headers=agent_headers,
     )
     assert resp.status_code == 404
-
 
 def test_invisible_path_returns_404_not_403(
     base_url: str,

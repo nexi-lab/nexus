@@ -13,17 +13,15 @@ Example:
     registry = SkillRegistry(filesystem=scoped_fs)
 """
 
-from __future__ import annotations
-
 import builtins
 from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
+from nexus.core.permissions import OperationContext
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
 
 from nexus.core.filesystem import NexusFilesystem
-
 
 class ScopedFilesystem:
     """Filesystem wrapper that scopes all paths to a base directory.
@@ -578,7 +576,7 @@ class ScopedFilesystem:
         """Close the filesystem and release resources."""
         self._fs.close()
 
-    def __enter__(self) -> ScopedFilesystem:
+    def __enter__(self) -> "ScopedFilesystem":
         """Context manager entry."""
         return self
 

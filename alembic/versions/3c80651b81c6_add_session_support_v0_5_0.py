@@ -27,7 +27,6 @@ down_revision: Union[str, Sequence[str], None] = "a5f83e7d53d7"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add session support."""
 
@@ -93,7 +92,6 @@ def upgrade() -> None:
     # Create indexes for memories session fields
     op.create_index("idx_memory_session", "memories", ["session_id"])
     op.create_index("idx_memory_expires", "memories", ["expires_at"])
-
 
 def downgrade() -> None:
     """Remove session support."""

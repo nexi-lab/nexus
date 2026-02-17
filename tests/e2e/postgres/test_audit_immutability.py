@@ -8,8 +8,6 @@ Run with:
     NEXUS_DATABASE_URL=postgresql://... uv run pytest tests/integration/test_audit_immutability.py -o "addopts=" -v
 """
 
-from __future__ import annotations
-
 import os
 from decimal import Decimal
 
@@ -56,7 +54,6 @@ END
 $$;
 """
 
-
 @pytest.fixture(scope="module")
 def pg_engine():
     """Create PostgreSQL engine and set up schema + triggers."""
@@ -73,16 +70,13 @@ def pg_engine():
         conn.commit()
     engine.dispose()
 
-
 @pytest.fixture
 def pg_session_factory(pg_engine):
     return sessionmaker(bind=pg_engine)
 
-
 @pytest.fixture
 def pg_audit_logger(pg_session_factory):
     return ExchangeAuditLogger(session_factory=pg_session_factory)
-
 
 def _create_record(logger: ExchangeAuditLogger) -> str:
     return logger.record(
@@ -95,7 +89,6 @@ def _create_record(logger: ExchangeAuditLogger) -> str:
         zone_id="root",
         transfer_id=None,
     )
-
 
 class TestPostgreSQLImmutability:
     def test_insert_succeeds(self, pg_audit_logger: ExchangeAuditLogger) -> None:

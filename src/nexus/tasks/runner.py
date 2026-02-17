@@ -5,8 +5,6 @@ from the Rust-backed TaskEngine. Workers use exponential backoff polling
 (100ms -> 2s) and reset on successful claim.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from collections.abc import Callable, Coroutine
@@ -14,7 +12,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass(frozen=True)
 class ProgressReporter:
@@ -28,10 +25,8 @@ class ProgressReporter:
         result: bool = self._engine.heartbeat(self._task_id, pct, message)
         return result
 
-
 # Type alias for executor callables
 Executor = Callable[[bytes, ProgressReporter], Coroutine[Any, Any, bytes | None]]
-
 
 @dataclass
 class AsyncTaskRunner:

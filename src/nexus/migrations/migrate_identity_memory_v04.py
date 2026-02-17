@@ -17,7 +17,6 @@ from nexus.storage.models import EntityRegistryModel, MemoryModel
 
 logger = logging.getLogger(__name__)
 
-
 class IdentityMemoryMigration:
     """Migration handler for identity-based memory system."""
 
@@ -264,7 +263,6 @@ class IdentityMemoryMigration:
 
         return results
 
-
 def run_migration_from_config(session: Session, config: dict) -> dict:
     """Convenience function to run migration from Nexus config.
 
@@ -283,7 +281,6 @@ def run_migration_from_config(session: Session, config: dict) -> dict:
         agent_id=config.get("agent_id"),
         migrate_files=config.get("migrate_files", False),
     )
-
 
 if __name__ == "__main__":
     """Run migration as standalone script."""

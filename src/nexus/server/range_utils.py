@@ -7,8 +7,6 @@ download resumption, and media seeking.
 Issue #790: HTTP Range Request Support.
 """
 
-from __future__ import annotations
-
 import re
 from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass
@@ -16,14 +14,12 @@ from typing import Any
 
 from starlette.responses import Response, StreamingResponse
 
-
 class RangeNotSatisfiableError(Exception):
     """Raised when a Range header specifies an unsatisfiable range."""
 
     def __init__(self, total_size: int) -> None:
         self.total_size = total_size
         super().__init__(f"Range not satisfiable for resource of size {total_size}")
-
 
 @dataclass(frozen=True)
 class RangeSpec:
@@ -48,7 +44,6 @@ class RangeSpec:
     def content_range_header(self) -> str:
         """Content-Range header value, e.g. 'bytes 0-499/1000'."""
         return f"bytes {self.start}-{self.end}/{self.total}"
-
 
 def parse_range_header(
     range_header: str,
@@ -100,7 +95,6 @@ def parse_range_header(
 
     return specs
 
-
 def _parse_single_range(range_str: str, total_size: int) -> RangeSpec | None:
     """Parse a single range spec like '0-499', '500-', or '-500'.
 
@@ -139,7 +133,6 @@ def _parse_single_range(range_str: str, total_size: int) -> RangeSpec | None:
 
     return RangeSpec(start=start, end=end, total=total_size)
 
-
 def check_if_range(
     if_range: str | None,
     etag: str | None,
@@ -171,11 +164,9 @@ def check_if_range(
     client_etag = if_range.strip('"')
     return client_etag == etag
 
-
 # Type alias for generator factories
 ContentGenerator = Callable[[int, int, int], Iterator[bytes] | AsyncIterator[bytes]]
 FullGenerator = Callable[[], Iterator[bytes] | AsyncIterator[bytes]]
-
 
 def build_range_response(
     *,
@@ -256,7 +247,6 @@ def build_range_response(
         headers=range_headers,
     )
 
-
 def _full_response(
     full_generator: FullGenerator,
     total_size: int,
@@ -270,7 +260,6 @@ def _full_response(
         media_type=content_type,
         headers={**headers, "Content-Length": str(total_size)},
     )
-
 
 def _416_response(total_size: int, headers: dict[str, str]) -> Response:
     """Build a 416 Range Not Satisfiable response."""

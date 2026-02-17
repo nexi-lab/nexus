@@ -3,15 +3,12 @@
 Issue #1138: Event Stream Export.
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock, PropertyMock
 
 import pytest
 
 from nexus.core.event_bus import FileEvent, FileEventType
 from nexus.services.event_log.exporter_registry import ExporterRegistry
-
 
 def _make_event(event_id: str = "evt-1", path: str = "/test.txt") -> FileEvent:
     return FileEvent(
@@ -20,7 +17,6 @@ def _make_event(event_id: str = "evt-1", path: str = "/test.txt") -> FileEvent:
         zone_id="default",
         event_id=event_id,
     )
-
 
 def _make_mock_exporter(name: str, fail_ids: list[str] | None = None):
     """Create a mock exporter that implements the protocol."""
@@ -31,7 +27,6 @@ def _make_mock_exporter(name: str, fail_ids: list[str] | None = None):
     exporter.close = AsyncMock()
     exporter.health_check = AsyncMock(return_value=True)
     return exporter
-
 
 class TestExporterRegistry:
     """Test ExporterRegistry register/unregister/dispatch."""

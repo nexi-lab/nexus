@@ -21,14 +21,12 @@ from nexus.core.rebac import Entity, NamespaceConfig
 from nexus.rebac.manager import ReBACManager
 from nexus.storage.models import Base
 
-
 @pytest.fixture
 def engine():
     """Create in-memory SQLite database for testing."""
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     return engine
-
 
 @pytest.fixture
 def rebac_manager(engine):
@@ -41,7 +39,6 @@ def rebac_manager(engine):
     yield manager
     manager.close()
 
-
 @pytest.fixture
 def rebac_manager_fast_cache(engine):
     """Create a ReBAC manager with fast cache expiration for cache testing."""
@@ -52,7 +49,6 @@ def rebac_manager_fast_cache(engine):
     )
     yield manager
     manager.close()
-
 
 def test_direct_relationship(rebac_manager):
     """Test direct relationship check."""
@@ -78,7 +74,6 @@ def test_direct_relationship(rebac_manager):
         object=("group", "eng-team"),
     )
     assert result is False
-
 
 def test_inherited_permission_via_group(rebac_manager):
     """Test inherited permission via group membership.
@@ -125,7 +120,6 @@ def test_inherited_permission_via_group(rebac_manager):
         object=("group", "eng-team"),
     )
     assert result is True
-
 
 def test_hierarchical_permission_parent_child(rebac_manager):
     """Test hierarchical permission via parent-child relationship.
@@ -189,7 +183,6 @@ def test_hierarchical_permission_parent_child(rebac_manager):
     )
     assert result is True
 
-
 def test_caching(rebac_manager):
     """Test that check results are cached."""
     # Create a direct relationship
@@ -222,7 +215,6 @@ def test_caching(rebac_manager):
         Entity("group", "eng-team"),
     )
     assert cached is True
-
 
 def test_cache_invalidation_on_write(rebac_manager):
     """Test that cache is invalidated when tuples for the same subject-object pair are added."""
@@ -260,7 +252,6 @@ def test_cache_invalidation_on_write(rebac_manager):
     # After eager cache update, "viewer-of" permission is still cached
     # (because adding "editor-of" doesn't change "viewer-of" result)
     assert cached is True  # Changed from None - cache is now eagerly updated!
-
 
 def test_eager_cache_update_on_write(rebac_manager):
     """Test that cache is eagerly updated (not just invalidated) on write.
@@ -308,7 +299,6 @@ def test_eager_cache_update_on_write(rebac_manager):
     )
     assert result is True
 
-
 def test_cache_invalidation_on_delete(rebac_manager):
     """Test that cache is invalidated when tuples are deleted."""
     # Create relationship
@@ -346,7 +336,6 @@ def test_cache_invalidation_on_delete(rebac_manager):
     )
     assert result is False
 
-
 def test_expiring_tuples(rebac_manager):
     """Test that expired tuples are not considered."""
     with freeze_time("2025-01-01 12:00:00") as frozen_time:
@@ -377,7 +366,6 @@ def test_expiring_tuples(rebac_manager):
             object=("file", "temp-file"),
         )
         assert result is False
-
 
 def test_cycle_detection(rebac_manager):
     """Test that cycle detection prevents infinite loops.
@@ -430,7 +418,6 @@ def test_cycle_detection(rebac_manager):
     )
     assert result is True  # Direct relation exists
 
-
 def test_expand_api_direct(rebac_manager):
     """Test expand API for finding all subjects with direct permission."""
     # Create multiple relationships
@@ -460,7 +447,6 @@ def test_expand_api_direct(rebac_manager):
     assert ("agent", "bob") in subjects
     assert ("agent", "charlie") not in subjects
     assert len(subjects) == 2
-
 
 def test_expand_api_with_union(rebac_manager):
     """Test expand API with union relations.
@@ -511,7 +497,6 @@ def test_expand_api_with_union(rebac_manager):
     assert ("agent", "alice") in subjects
     assert ("agent", "bob") in subjects
 
-
 def test_cleanup_expired_cache(rebac_manager_fast_cache):
     """Test cleanup of expired cache entries."""
     with freeze_time("2025-01-01 12:00:00") as frozen_time:
@@ -536,12 +521,10 @@ def test_cleanup_expired_cache(rebac_manager_fast_cache):
         removed = rebac_manager_fast_cache.cleanup_expired_cache()
         assert removed > 0
 
-
 def test_delete_nonexistent_tuple(rebac_manager):
     """Test deleting a non-existent tuple."""
     result = rebac_manager.rebac_delete("nonexistent-id")
     assert result is False
-
 
 def test_namespace_creation_and_retrieval(rebac_manager):
     """Test creating and retrieving namespace configs."""
@@ -565,7 +548,6 @@ def test_namespace_creation_and_retrieval(rebac_manager):
     assert retrieved.object_type == "workspace"
     assert "relations" in retrieved.config
     assert "admin" in retrieved.config["relations"]
-
 
 def test_max_depth_limit(rebac_manager):
     """Test that graph traversal respects max depth limit."""
@@ -599,7 +581,6 @@ def test_max_depth_limit(rebac_manager):
     )
     assert result is False
 
-
 def test_cross_zone_relationship_blocked(rebac_manager):
     """Test that cross-zone relationships are blocked (zone isolation security).
 
@@ -627,7 +608,6 @@ def test_cross_zone_relationship_blocked(rebac_manager):
             subject_zone_id="zone_a",
             object_zone_id="zone_b",  # Mismatch!
         )
-
 
 def test_cross_zone_validation_with_none_zone_ids(rebac_manager):
     """Test that providing None for zone IDs doesn't bypass validation.
@@ -658,7 +638,6 @@ def test_cross_zone_validation_with_none_zone_ids(rebac_manager):
             object_zone_id="zone_a",
         )
 
-
 def test_same_zone_relationships_allowed(rebac_manager):
     """Test that same-zone relationships are allowed."""
     # Create relationship with matching zone IDs - should succeed
@@ -681,7 +660,6 @@ def test_same_zone_relationships_allowed(rebac_manager):
         zone_id="zone_a",
     )
     assert result is True
-
 
 def test_group_based_file_permissions_issue_338(rebac_manager):
     """Test group-based file permissions (Issue #338).
@@ -836,7 +814,6 @@ def test_group_based_file_permissions_issue_338(rebac_manager):
     )
     assert result is True, "Alice should still have write permission (still in group)"
 
-
 def test_dynamic_viewer_column_config(rebac_manager):
     """Test dynamic_viewer relation with column-level permissions.
 
@@ -898,7 +875,6 @@ def test_dynamic_viewer_column_config(rebac_manager):
     assert config["aggregations"] == {"age": "mean", "salary": "sum"}
     assert config["visible_columns"] == ["name", "email"]
 
-
 def test_dynamic_viewer_aggregation_single_value(rebac_manager):
     """Test that aggregations must be single values, not lists."""
     column_config = {
@@ -938,7 +914,6 @@ def test_dynamic_viewer_aggregation_single_value(rebac_manager):
     assert config["aggregations"]["salary"] == "max"
     assert config["visible_columns"] == []  # Empty means auto-calculate
 
-
 def test_dynamic_viewer_no_config_returns_none(rebac_manager):
     """Test that get_dynamic_viewer_config returns None when no config exists."""
     from nexus.core.nexus_fs import NexusFS
@@ -959,11 +934,9 @@ def test_dynamic_viewer_no_config_returns_none(rebac_manager):
 
     assert config is None, "Should return None when no dynamic_viewer config exists"
 
-
 # ============================================================================
 # Tests for rebac_list_objects (Issue #291)
 # ============================================================================
-
 
 @pytest.fixture
 def enhanced_rebac_manager(engine):
@@ -977,7 +950,6 @@ def enhanced_rebac_manager(engine):
     )
     yield manager
     manager.close()
-
 
 def test_list_objects_direct_permission(enhanced_rebac_manager):
     """Test listing objects with direct permission."""
@@ -1023,7 +995,6 @@ def test_list_objects_direct_permission(enhanced_rebac_manager):
     assert "/workspace/file3.txt" in object_ids
     assert "/workspace/bob_file.txt" not in object_ids
 
-
 def test_list_objects_with_path_prefix(enhanced_rebac_manager):
     """Test listing objects with path prefix filter."""
     # Grant alice access to files in different directories
@@ -1058,7 +1029,6 @@ def test_list_objects_with_path_prefix(enhanced_rebac_manager):
     object_ids = [obj_id for _, obj_id in objects]
     assert len(object_ids) == 1
     assert "/workspace/project1/file.txt" in object_ids
-
 
 def test_list_objects_pagination(enhanced_rebac_manager):
     """Test pagination of listed objects."""
@@ -1102,7 +1072,6 @@ def test_list_objects_pagination(enhanced_rebac_manager):
     all_ids = page1_ids | page2_ids
     assert len(all_ids) == 10
 
-
 def test_list_objects_via_group_membership(enhanced_rebac_manager):
     """Test listing objects accessible via group membership."""
     # Alice is member of developers group
@@ -1143,7 +1112,6 @@ def test_list_objects_via_group_membership(enhanced_rebac_manager):
     assert "/workspace/alice/notes.txt" in object_ids
     assert "/workspace/project/code.py" in object_ids
 
-
 def test_list_objects_empty_result(enhanced_rebac_manager):
     """Test listing objects when user has no access."""
     # No permissions granted to charlie
@@ -1155,7 +1123,6 @@ def test_list_objects_empty_result(enhanced_rebac_manager):
     )
 
     assert len(objects) == 0
-
 
 def test_list_objects_sorted_by_path(enhanced_rebac_manager):
     """Test that results are sorted by object_id for consistent pagination."""

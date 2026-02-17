@@ -13,8 +13,6 @@ Scenarios:
 5. Non-admin gets correct zone-scoped context
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket
@@ -37,17 +35,14 @@ _SRC_PATH = Path(__file__).resolve().parents[2] / "src"
 
 SERVER_STARTUP_TIMEOUT = 30.0
 
-
 # =============================================================================
 # Helpers
 # =============================================================================
-
 
 def _find_free_port() -> int:
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
-
 
 def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> None:
     deadline = time.monotonic() + timeout
@@ -62,11 +57,9 @@ def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> 
             time.sleep(0.3)
     raise TimeoutError(f"Server did not start within {timeout}s at {base_url}")
 
-
 # =============================================================================
 # Fixtures
 # =============================================================================
-
 
 @pytest.fixture(scope="module")
 def db_and_keys(tmp_path_factory):
@@ -120,7 +113,6 @@ def db_and_keys(tmp_path_factory):
         "alice_key": alice_key,
         "bob_key": bob_key,
     }
-
 
 @pytest.fixture(scope="module")
 def server(db_and_keys):
@@ -187,31 +179,25 @@ def server(db_and_keys):
             proc.kill()
             proc.wait(timeout=5)
 
-
 @pytest.fixture(scope="module")
 def base_url(server) -> str:
     return server["base_url"]
-
 
 @pytest.fixture(scope="module")
 def admin_headers(db_and_keys) -> dict[str, str]:
     return {"Authorization": f"Bearer {db_and_keys['admin_key']}"}
 
-
 @pytest.fixture(scope="module")
 def alice_headers(db_and_keys) -> dict[str, str]:
     return {"Authorization": f"Bearer {db_and_keys['alice_key']}"}
-
 
 @pytest.fixture(scope="module")
 def bob_headers(db_and_keys) -> dict[str, str]:
     return {"Authorization": f"Bearer {db_and_keys['bob_key']}"}
 
-
 # =============================================================================
 # Tests: Authentication enforcement (401)
 # =============================================================================
-
 
 class TestAuthEnforcement:
     """Verify that v2 endpoints reject unauthenticated requests."""
@@ -267,11 +253,9 @@ class TestAuthEnforcement:
                 resp = client.post(f"{base_url}{path}", json={})
         assert resp.status_code == 401, f"{method} {path} should require auth"
 
-
 # =============================================================================
 # Tests: Admin access
 # =============================================================================
-
 
 class TestAdminAccess:
     """Admin key should have full access to all v2 endpoints."""
@@ -315,11 +299,9 @@ class TestAdminAccess:
             )
         assert resp.status_code == 200
 
-
 # =============================================================================
 # Tests: Non-admin (alice) access
 # =============================================================================
-
 
 class TestNonAdminAccess:
     """Non-admin "alice" (zone=acme) can use v2 endpoints."""
@@ -402,11 +384,9 @@ class TestNonAdminAccess:
         data = resp.json()
         assert "playbook_id" in data
 
-
 # =============================================================================
 # Tests: X-API-Version header (versioning middleware)
 # =============================================================================
-
 
 class TestVersioningHeaders:
     """Verify versioning middleware works end-to-end."""
@@ -428,11 +408,9 @@ class TestVersioningHeaders:
         assert resp.status_code == 200
         assert "X-API-Version" not in resp.headers
 
-
 # =============================================================================
 # Tests: Memory store-then-retrieve round-trip
 # =============================================================================
-
 
 class TestMemoryRoundTrip:
     """Non-admin user can store and then retrieve a memory."""
@@ -480,11 +458,9 @@ class TestMemoryRoundTrip:
         assert data["stored"] == 2
         assert len(data["memory_ids"]) == 2
 
-
 # =============================================================================
 # Tests: Trajectory lifecycle
 # =============================================================================
-
 
 class TestTrajectoryLifecycle:
     """Non-admin user can run a full trajectory lifecycle."""

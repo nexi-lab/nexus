@@ -1,7 +1,5 @@
 """Work queue commands - query and manage work items."""
 
-from __future__ import annotations
-
 import sys
 
 import click
@@ -15,11 +13,9 @@ from nexus.cli.utils import (
     handle_error,
 )
 
-
 def register_commands(cli: click.Group) -> None:
     """Register all work queue commands."""
     cli.add_command(work)
-
 
 @click.command(name="work")
 @click.argument(

@@ -4,8 +4,6 @@ These errors are used by TraitBasedMixin to provide helpful
 error messages that reference the SKILL.md documentation.
 """
 
-from __future__ import annotations
-
 from nexus.connectors.base import ErrorDef
 
 # Error registry for Gmail operations

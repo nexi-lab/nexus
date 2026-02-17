@@ -18,7 +18,6 @@ from typing import Any
 
 import requests
 
-
 def make_rpc_call(
     base_url: str,
     method: str,
@@ -63,7 +62,6 @@ def make_rpc_call(
 
     print("✓ Success")
     return data.get("result", {})
-
 
 def main() -> int:
     """Test deprovision_user RPC endpoint."""
@@ -165,7 +163,6 @@ def main() -> int:
 
         traceback.print_exc()
         return 1
-
 
 if __name__ == "__main__":
     sys.exit(main())

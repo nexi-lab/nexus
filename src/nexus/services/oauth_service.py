@@ -11,8 +11,6 @@ Phase 2: Core Refactoring (Issue #988, Task 2.6)
 Extracted from: nexus_fs_oauth.py (1,116 lines)
 """
 
-from __future__ import annotations
-
 import builtins
 import json
 import logging
@@ -23,10 +21,11 @@ from nexus.core.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
 
+from nexus.core.cache_store import CacheStoreABC
+from nexus.core.permissions import OperationContext
 if TYPE_CHECKING:
     from nexus.core.cache_store import CacheStoreABC
     from nexus.core.permissions import OperationContext
-
 
 class PKCEStateStore:
     """PKCE state store backed by CacheStoreABC.
@@ -77,7 +76,6 @@ class PKCEStateStore:
         Not available with CacheStoreABC — returns -1 when backed by external store.
         """
         return -1
-
 
 class OAuthService:
     """Independent OAuth service extracted from NexusFS.
@@ -1436,7 +1434,6 @@ class OAuthService:
             logger.warning(f"Failed to fetch user email from provider {provider_name}: {e}")
 
         return None
-
 
 # =============================================================================
 # Phase 2 Extraction: Complete ✅

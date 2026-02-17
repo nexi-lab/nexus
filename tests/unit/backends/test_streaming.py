@@ -16,7 +16,6 @@ from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
-
 class TestBackendWriteStreamDefault:
     """Test default write_stream implementation in Backend base class."""
 
@@ -81,7 +80,6 @@ class TestBackendWriteStreamDefault:
 
         assert backend.written_content == b"Hello World!"
         assert result_hash == hash_content(b"Hello World!")
-
 
 class TestLocalBackendStreaming:
     """Test LocalBackend streaming methods."""
@@ -207,7 +205,6 @@ class TestLocalBackendStreaming:
         assert response.success
         assert response.affected_rows == len(content)
 
-
 class TestCreateHasher:
     """Test create_hasher utility function."""
 
@@ -257,7 +254,6 @@ class TestCreateHasher:
                 hasher.update(content[offset : offset + chunk_size])
                 offset += chunk_size
             assert hasher.hexdigest() == hash_content(content)
-
 
 class TestCASBlobStoreStreaming:
     """Test CASBlobStore.store_streaming() (Issue #1625)."""
@@ -328,7 +324,6 @@ class TestCASBlobStoreStreaming:
             orphans = list(staging_dir.iterdir())
             assert orphans == [], f"Orphaned staging files: {orphans}"
 
-
 class TestStreamingMemoryEfficiency:
     """Verify write_stream does NOT buffer entire content in memory (Issue #1625)."""
 
@@ -379,7 +374,6 @@ class TestStreamingMemoryEfficiency:
 
         # Verify the content hash and size
         assert response.affected_rows == total_bytes
-
 
 class TestBaseBlobConnectorStreamContent:
     """Test stream_content in BaseBlobStorageConnector (Issue #480)."""
@@ -528,7 +522,6 @@ class TestBaseBlobConnectorStreamContent:
         assert connector.stream_blob_called
         assert chunks == [b"chunk1", b"chunk2", b"chunk3"]
 
-
 class TestReadRangeRPC:
     """Test read_range RPC endpoint (Issue #480)."""
 
@@ -630,7 +623,6 @@ class TestReadRangeRPC:
             assert result == content
         finally:
             nx.close()
-
 
 class TestStatRPC:
     """Test stat() RPC endpoint (Issue #480)."""

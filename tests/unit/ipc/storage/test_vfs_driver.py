@@ -4,8 +4,6 @@ Verifies that the VFS storage driver correctly delegates all operations
 to the underlying VFSOperations instance.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.ipc.storage.vfs_driver import VFSStorageDriver
@@ -13,16 +11,13 @@ from tests.unit.ipc.fakes import InMemoryVFS
 
 ZONE = "test-zone"
 
-
 @pytest.fixture
 def vfs() -> InMemoryVFS:
     return InMemoryVFS()
 
-
 @pytest.fixture
 def driver(vfs: InMemoryVFS) -> VFSStorageDriver:
     return VFSStorageDriver(vfs=vfs)
-
 
 class TestVFSStorageDriver:
     """Tests for VFS storage driver delegation."""

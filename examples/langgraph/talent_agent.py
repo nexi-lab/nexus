@@ -198,7 +198,6 @@ agent = create_react_agent(
     prompt=SYSTEM_PROMPT,
 )
 
-
 if __name__ == "__main__":
     # Example usage - Note: requires NEXUS_API_KEY to be set for testing
     import sys

@@ -5,11 +5,8 @@ class exposes all methods declared in a Protocol with compatible parameter
 names and counts.
 """
 
-from __future__ import annotations
-
 import inspect
 from typing import Any
-
 
 def assert_protocol_conformance(
     impl_class: type,
@@ -56,7 +53,6 @@ def assert_protocol_conformance(
             f"  Impl:     {impl_params}"
         )
 
-
 def _public_methods(cls: type) -> dict[str, Any]:
     """Return {name: method} for all public, non-dunder methods on *cls*."""
     result: dict[str, Any] = {}
@@ -67,7 +63,6 @@ def _public_methods(cls: type) -> dict[str, Any]:
         if attr is not None and callable(attr):
             result[name] = attr
     return result
-
 
 def _param_names(method: Any) -> list[str]:
     """Return parameter names excluding 'self'."""

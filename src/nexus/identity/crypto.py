@@ -10,8 +10,6 @@ Uses the `cryptography` library (already a dependency) for all operations.
 No additional crypto dependencies required.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Protocol
 
@@ -27,7 +25,6 @@ from cryptography.hazmat.primitives.serialization import (
     PublicFormat,
 )
 
-
 class TokenEncryptor(Protocol):
     """Protocol for Fernet token encryption/decryption.
 
@@ -37,9 +34,7 @@ class TokenEncryptor(Protocol):
     def encrypt_token(self, token: str) -> str: ...
     def decrypt_token(self, encrypted: str) -> str: ...
 
-
 logger = logging.getLogger(__name__)
-
 
 class IdentityCrypto:
     """Ed25519 + Fernet crypto for agent identity.

@@ -11,8 +11,6 @@ Provides endpoints for managing transactional filesystem snapshots:
 All endpoints require authentication and are scoped to the user's zone_id.
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import datetime
 from typing import Any
@@ -24,18 +22,15 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/snapshots", tags=["snapshots"])
 
-
 # ---------------------------------------------------------------------------
 # Pydantic models
 # ---------------------------------------------------------------------------
-
 
 class BeginTransactionRequest(BaseModel):
     """Request body for beginning a new transaction."""
 
     description: str | None = Field(None, max_length=500)
     ttl_seconds: int = Field(3600, ge=60, le=86400)
-
 
 class TransactionResponse(BaseModel):
     """Response model for a single transaction."""
@@ -49,7 +44,6 @@ class TransactionResponse(BaseModel):
     expires_at: str
     entry_count: int
 
-
 class SnapshotEntryResponse(BaseModel):
     """Response model for a single snapshot entry."""
 
@@ -61,13 +55,11 @@ class SnapshotEntryResponse(BaseModel):
     new_hash: str | None
     created_at: str
 
-
 class TransactionListResponse(BaseModel):
     """Response model for listing transactions."""
 
     transactions: list[TransactionResponse]
     count: int
-
 
 class ConflictResponse(BaseModel):
     """Response model for conflict details."""
@@ -77,18 +69,15 @@ class ConflictResponse(BaseModel):
     current_hash: str | None
     reason: str
 
-
 class CommitErrorResponse(BaseModel):
     """Response model for commit conflict errors."""
 
     detail: str
     conflicts: list[ConflictResponse]
 
-
 # ---------------------------------------------------------------------------
 # Dependency
 # ---------------------------------------------------------------------------
-
 
 async def get_snapshot_context(request: Request) -> tuple[Any, str, str | None]:
     """FastAPI dependency: get snapshot service + auth context from request."""
@@ -115,11 +104,9 @@ async def get_snapshot_context(request: Request) -> tuple[Any, str, str | None]:
 
     return snapshot_service, zone_id, agent_id
 
-
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
-
 
 def _to_response(info: Any) -> TransactionResponse:
     """Convert TransactionInfo to response model."""
@@ -138,7 +125,6 @@ def _to_response(info: Any) -> TransactionResponse:
         entry_count=info.entry_count,
     )
 
-
 def _entry_to_response(entry: Any) -> SnapshotEntryResponse:
     """Convert SnapshotEntry to response model."""
     return SnapshotEntryResponse(
@@ -153,11 +139,9 @@ def _entry_to_response(entry: Any) -> SnapshotEntryResponse:
         else str(entry.created_at),
     )
 
-
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
-
 
 @router.post("", status_code=201, response_model=TransactionResponse)
 async def begin_transaction(
@@ -177,7 +161,6 @@ async def begin_transaction(
     except Exception as e:
         logger.error("Failed to begin transaction: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to begin transaction") from e
-
 
 @router.get("", response_model=TransactionListResponse)
 async def list_transactions(
@@ -201,7 +184,6 @@ async def list_transactions(
         logger.error("Failed to list transactions: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to list transactions") from e
 
-
 async def _verify_zone_ownership(snapshot_service: Any, txn_id: str, zone_id: str) -> Any:
     """Verify transaction exists and belongs to the caller's zone.
 
@@ -212,7 +194,6 @@ async def _verify_zone_ownership(snapshot_service: Any, txn_id: str, zone_id: st
     if info is None or info.zone_id != zone_id:
         raise HTTPException(status_code=404, detail=f"Transaction not found: {txn_id}")
     return info
-
 
 @router.get("/{txn_id}", response_model=TransactionResponse)
 async def get_transaction(
@@ -229,7 +210,6 @@ async def get_transaction(
     except Exception as e:
         logger.error("Failed to get transaction %s: %s", txn_id, e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to get transaction") from e
-
 
 @router.post("/{txn_id}/commit", response_model=TransactionResponse)
 async def commit_transaction(
@@ -272,7 +252,6 @@ async def commit_transaction(
         logger.error("Failed to commit transaction %s: %s", txn_id, e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to commit transaction") from e
 
-
 @router.post("/{txn_id}/rollback", response_model=TransactionResponse)
 async def rollback_transaction(
     txn_id: str = Path(..., min_length=1, max_length=36),
@@ -296,7 +275,6 @@ async def rollback_transaction(
     except Exception as e:
         logger.error("Failed to rollback transaction %s: %s", txn_id, e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to rollback transaction") from e
-
 
 @router.get("/{txn_id}/entries", response_model=list[SnapshotEntryResponse])
 async def list_entries(

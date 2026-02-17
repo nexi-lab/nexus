@@ -32,7 +32,6 @@ down_revision: Union[str, Sequence[str], None] = "add_subscriptions_table"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add text_pattern_ops index for LIKE prefix queries (PostgreSQL only)."""
     # Get the connection to check database type
@@ -62,7 +61,6 @@ def upgrade() -> None:
             ON rebac_tuples (object_id text_pattern_ops)
         """)
         )
-
 
 def downgrade() -> None:
     """Remove text_pattern_ops indexes."""

@@ -6,8 +6,6 @@ Invariants proven:
   3. AgentInfo is immutable (frozen dataclass)
 """
 
-from __future__ import annotations
-
 from hypothesis import given
 from hypothesis import strategies as st
 
@@ -17,7 +15,6 @@ from tests.strategies.kernel import agent_info
 # ---------------------------------------------------------------------------
 # Invariant 1: Generation is always non-negative
 # ---------------------------------------------------------------------------
-
 
 class TestGenerationNonNegative:
     """Generation counter is always >= 0."""
@@ -40,11 +37,9 @@ class TestGenerationNonNegative:
         for i in range(len(sorted_gens) - 1):
             assert sorted_gens[i] <= sorted_gens[i + 1]
 
-
 # ---------------------------------------------------------------------------
 # Invariant 2: Generation monotonicity across transitions
 # ---------------------------------------------------------------------------
-
 
 class TestGenerationMonotonicity:
     """Generation counter only increases across state transitions."""
@@ -92,11 +87,9 @@ class TestGenerationMonotonicity:
                 f"{snapshots[i + 1].generation} at transition {i}"
             )
 
-
 # ---------------------------------------------------------------------------
 # Invariant 3: AgentInfo is immutable (frozen dataclass)
 # ---------------------------------------------------------------------------
-
 
 class TestAgentInfoImmutability:
     """AgentInfo is a frozen dataclass — no mutation after creation."""

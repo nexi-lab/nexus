@@ -3,8 +3,6 @@
 Uses ``ProcessPoolExecutor`` (``force_process=True``) for portability.
 """
 
-from __future__ import annotations
-
 import tempfile
 from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -15,7 +13,6 @@ from nexus.isolation import IsolatedBackend, IsolationConfig
 
 _MOD = "tests.e2e.self_contained.isolation_helpers"
 _CLS = "MockBackend"
-
 
 def _cfg(**overrides: object) -> IsolationConfig:
     defaults: dict = {
@@ -29,13 +26,11 @@ def _cfg(**overrides: object) -> IsolationConfig:
     defaults.update(overrides)
     return IsolationConfig(**defaults)
 
-
 @pytest.fixture()
 def backend(tmp_path) -> Iterator[IsolatedBackend]:
     b = IsolatedBackend(_cfg(backend_kwargs={"storage_dir": str(tmp_path / "store")}))
     yield b
     b.disconnect()
-
 
 class TestFullRoundTrip:
     def test_write_read_delete_cycle(self, backend: IsolatedBackend) -> None:
@@ -63,7 +58,6 @@ class TestFullRoundTrip:
         rm = backend.rmdir("/integration-dir")
         assert rm.success is True
 
-
 class TestLargeContent:
     def test_1mb_transfer(self, backend: IsolatedBackend) -> None:
         """1MB content passes through the isolation boundary correctly."""
@@ -75,7 +69,6 @@ class TestLargeContent:
         assert rd.success is True
         assert len(rd.data) == len(data)
         assert rd.data == data
-
 
 class TestConcurrentRequests:
     def test_parallel_reads(self, backend: IsolatedBackend) -> None:
@@ -93,7 +86,6 @@ class TestConcurrentRequests:
             results = list(tp.map(read_one, range(10)))
 
         assert all(results)
-
 
 class TestPoolRestartRecovery:
     def test_recovery_after_restart(self) -> None:
@@ -116,7 +108,6 @@ class TestPoolRestartRecovery:
                 assert wr.success is True
             finally:
                 backend.disconnect()
-
 
 class TestShutdownAndReconnect:
     def test_disconnect_then_error(self) -> None:

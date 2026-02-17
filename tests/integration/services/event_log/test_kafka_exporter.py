@@ -6,8 +6,6 @@ Skip if dependencies not available or Docker is down.
 Issue #1138: Event Stream Export.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.core.event_bus import FileEvent, FileEventType
@@ -15,7 +13,6 @@ from nexus.core.event_bus import FileEvent, FileEventType
 # Skip if testcontainers or aiokafka not installed
 pytest.importorskip("testcontainers")
 aiokafka = pytest.importorskip("aiokafka")
-
 
 def _docker_available() -> bool:
     """Check if Docker daemon is accessible."""
@@ -27,9 +24,7 @@ def _docker_available() -> bool:
     except Exception:
         return False
 
-
 pytestmark = pytest.mark.skipif(not _docker_available(), reason="Docker daemon not running")
-
 
 @pytest.fixture(scope="module")
 def kafka_container():
@@ -39,11 +34,9 @@ def kafka_container():
     with KafkaContainer("confluentinc/cp-kafka:7.6.0") as kafka:
         yield kafka
 
-
 @pytest.fixture
 def kafka_bootstrap(kafka_container) -> str:
     return kafka_container.get_bootstrap_server()
-
 
 @pytest.fixture
 def exporter(kafka_bootstrap: str):
@@ -58,7 +51,6 @@ def exporter(kafka_bootstrap: str):
     )
     return KafkaExporter(config)
 
-
 def _make_event(event_id: str = "test-1", zone_id: str = "default") -> FileEvent:
     return FileEvent(
         type=FileEventType.FILE_WRITE,
@@ -66,7 +58,6 @@ def _make_event(event_id: str = "test-1", zone_id: str = "default") -> FileEvent
         zone_id=zone_id,
         event_id=event_id,
     )
-
 
 @pytest.mark.asyncio
 class TestKafkaExporter:

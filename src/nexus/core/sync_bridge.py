@@ -36,8 +36,6 @@ Design:
     tracks pending tasks for graceful shutdown.
 """
 
-from __future__ import annotations
-
 import asyncio
 import atexit
 import logging
@@ -49,11 +47,9 @@ logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 
-
 # ---------------------------------------------------------------------------
 # TaskRegistry — bounded task tracker for fire-and-forget (Issue #1519)
 # ---------------------------------------------------------------------------
-
 
 class TaskRegistry:
     """Bounded registry for fire-and-forget tasks.
@@ -166,15 +162,12 @@ class TaskRegistry:
 
         return len(done)
 
-
 # Module-level singleton
 _task_registry = TaskRegistry()
-
 
 def get_task_registry() -> TaskRegistry:
     """Return the module-level TaskRegistry for observability."""
     return _task_registry
-
 
 # ---------------------------------------------------------------------------
 # Background event loop singleton
@@ -182,7 +175,6 @@ def get_task_registry() -> TaskRegistry:
 _bg_loop: asyncio.AbstractEventLoop | None = None
 _bg_thread: threading.Thread | None = None
 _bg_lock = threading.Lock()
-
 
 def _ensure_background_loop() -> asyncio.AbstractEventLoop:
     """Lazily create the background event loop thread.
@@ -219,7 +211,6 @@ def _ensure_background_loop() -> asyncio.AbstractEventLoop:
         logger.debug("Background sync-bridge event loop started (thread=%s)", thread.ident)
         return loop
 
-
 def _run_bg_loop(loop: asyncio.AbstractEventLoop) -> None:
     """Entry point for the background thread."""
     asyncio.set_event_loop(loop)
@@ -233,11 +224,9 @@ def _run_bg_loop(loop: asyncio.AbstractEventLoop) -> None:
         loop.run_until_complete(loop.shutdown_asyncgens())
         loop.close()
 
-
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
-
 
 def run_sync(
     coro: Coroutine[Any, Any, T],
@@ -278,7 +267,6 @@ def run_sync(
         # No running event loop → safe to use asyncio.run().
         return asyncio.run(coro)
 
-
 def fire_and_forget(coro: Coroutine[Any, Any, Any]) -> None:
     """Schedule an async coroutine without waiting for the result.
 
@@ -304,7 +292,6 @@ def fire_and_forget(coro: Coroutine[Any, Any, Any]) -> None:
         # No running loop — submit to the background loop via registry.
         bg_loop = _ensure_background_loop()
         _task_registry.schedule_threadsafe(coro, bg_loop)
-
 
 def shutdown_sync_bridge() -> None:
     """Shut down the background event loop after draining pending tasks.
@@ -340,7 +327,6 @@ def shutdown_sync_bridge() -> None:
         thread.join(timeout=5.0)
 
     logger.debug("Background sync-bridge event loop stopped")
-
 
 # Auto-shutdown on interpreter exit to avoid ResourceWarnings.
 atexit.register(shutdown_sync_bridge)

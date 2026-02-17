@@ -29,8 +29,6 @@ Example:
         3. O(depth) → O(1)
 """
 
-from __future__ import annotations
-
 import logging
 import os
 import threading
@@ -42,7 +40,6 @@ if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
-
 
 class PermissionBoundaryCache:
     """Cache nearest ancestor with explicit permission grant.

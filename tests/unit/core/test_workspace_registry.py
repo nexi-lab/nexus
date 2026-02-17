@@ -14,7 +14,6 @@ from nexus.services.workspace.workspace_registry import (
     WorkspaceRegistry,
 )
 
-
 class TestWorkspaceConfig:
     """Test WorkspaceConfig dataclass."""
 
@@ -65,7 +64,6 @@ class TestWorkspaceConfig:
         result = config.to_dict()
         assert result["created_at"] is None
 
-
 class TestMemoryConfig:
     """Test MemoryConfig dataclass."""
 
@@ -106,7 +104,6 @@ class TestMemoryConfig:
         assert result["path"] == "/memory"
         assert result["name"] == "KB"
         assert result["created_at"] == now.isoformat()
-
 
 class TestWorkspaceRegistry:
     """Test WorkspaceRegistry functionality."""

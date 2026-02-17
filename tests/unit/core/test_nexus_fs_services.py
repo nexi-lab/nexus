@@ -1,7 +1,5 @@
 """Test NexusFS service composition (Phase 2)."""
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import pytest
@@ -20,7 +18,6 @@ except Exception:
     _raft_available = False
 
 pytestmark = pytest.mark.skipif(not _raft_available, reason="Raft metastore not available")
-
 
 def _make_fs(tmp_path: Path, *, enforce_permissions: bool = True) -> NexusFS:
     """Create NexusFS with VersionService injected (mimics factory)."""
@@ -42,7 +39,6 @@ def _make_fs(tmp_path: Path, *, enforce_permissions: bool = True) -> NexusFS:
         permissions=PermissionConfig(enforce=enforce_permissions),
         services=KernelServices(version_service=version_service),
     )
-
 
 class TestNexusFSServiceComposition:
     """Test that NexusFS correctly instantiates all services."""

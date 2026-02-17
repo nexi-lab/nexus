@@ -15,8 +15,6 @@ Subcommands:
     zone validate - Validate a .nexus bundle
 """
 
-from __future__ import annotations
-
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
@@ -35,7 +33,6 @@ from nexus.cli.utils import (
 )
 from nexus.constants import DEFAULT_GRPC_BIND_ADDR
 
-
 @click.group()
 def zone() -> None:
     """Zone management — federation and portability.
@@ -49,11 +46,9 @@ def zone() -> None:
     """
     pass
 
-
 # =========================================================================
 # Federation commands (Issue #1326)
 # =========================================================================
-
 
 def _get_zone_manager(
     node_id: int,
@@ -71,7 +66,6 @@ def _get_zone_manager(
         base_path=data_dir,
         bind_addr=bind_addr,
     )
-
 
 @zone.command(name="create")
 @click.argument("zone_id", type=str)
@@ -141,7 +135,6 @@ def create_zone_cmd(
     except Exception as e:
         handle_error(e)
 
-
 @zone.command(name="join")
 @click.argument("zone_id", type=str)
 @click.option(
@@ -203,7 +196,6 @@ def join_zone_cmd(
     except Exception as e:
         handle_error(e)
 
-
 @zone.command(name="list")
 @click.option(
     "--node-id",
@@ -258,7 +250,6 @@ def list_zones_cmd(
         mgr.shutdown()
     except Exception as e:
         handle_error(e)
-
 
 @zone.command(name="mount")
 @click.argument("mount_path", type=str)
@@ -326,7 +317,6 @@ def mount_zone_cmd(
     except Exception as e:
         handle_error(e)
 
-
 @zone.command(name="unmount")
 @click.argument("mount_path", type=str)
 @click.option(
@@ -383,7 +373,6 @@ def unmount_zone_cmd(
         mgr.shutdown()
     except Exception as e:
         handle_error(e)
-
 
 @zone.command(name="export")
 @click.argument("zone_id", type=str)
@@ -537,7 +526,6 @@ def export_zone(
 
     except Exception as e:
         handle_error(e)
-
 
 @zone.command(name="import")
 @click.argument("bundle_path", type=click.Path(exists=True))
@@ -707,7 +695,6 @@ def import_zone(
     except Exception as e:
         handle_error(e)
 
-
 @zone.command(name="inspect")
 @click.argument("bundle_path", type=click.Path(exists=True))
 def inspect_bundle_cmd(bundle_path: str) -> None:
@@ -747,7 +734,6 @@ def inspect_bundle_cmd(bundle_path: str) -> None:
 
     except Exception as e:
         handle_error(e)
-
 
 @zone.command(name="validate")
 @click.argument("bundle_path", type=click.Path(exists=True))

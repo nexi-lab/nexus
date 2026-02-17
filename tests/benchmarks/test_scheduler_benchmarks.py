@@ -4,8 +4,6 @@ Performance benchmarks for HRRN ranking and classifier throughput.
 Run with: uv run pytest tests/benchmarks/test_scheduler_benchmarks.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import time
 
 import pytest
@@ -13,7 +11,6 @@ import pytest
 from nexus.scheduler.constants import PriorityTier, RequestState
 from nexus.scheduler.policies.classifier import classify_request
 from nexus.scheduler.policies.hrrn import compute_hrrn_score, rank_by_hrrn
-
 
 @pytest.mark.benchmark
 class TestHrrnRankingPerformance:
@@ -56,7 +53,6 @@ class TestHrrnRankingPerformance:
         assert len(result) == 10000
         assert elapsed_ms < 200, f"Ranking 10K tasks took {elapsed_ms:.2f}ms (>200ms)"
 
-
 @pytest.mark.benchmark
 class TestClassifierThroughput:
     """Benchmark classifier function throughput."""
@@ -69,7 +65,6 @@ class TestClassifierThroughput:
             classify_request(tiers[i % len(tiers)], states[i % len(states)])
         elapsed_ms = (time.perf_counter() - start) * 1000
         assert elapsed_ms < 50, f"Classifying 10K requests took {elapsed_ms:.2f}ms (>50ms)"
-
 
 @pytest.mark.benchmark
 class TestHrrnScoreThroughput:

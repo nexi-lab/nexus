@@ -27,10 +27,7 @@ Usage:
             logger.error(f"System error: {e}", exc_info=True)
 """
 
-from __future__ import annotations
-
 from typing import Any
-
 
 class NexusError(Exception):
     """Base exception for all Nexus errors.
@@ -65,7 +62,6 @@ class NexusError(Exception):
             return f"{self.message}: {self.path}"
         return self.message
 
-
 class BootError(NexusError):
     """Fatal boot-time error — a kernel-tier service failed to initialize.
 
@@ -81,7 +77,6 @@ class BootError(NexusError):
         self.tier = tier
         self.service_name = service_name
 
-
 class NexusFileNotFoundError(NexusError, FileNotFoundError):
     """Raised when a file or directory does not exist.
 
@@ -95,7 +90,6 @@ class NexusFileNotFoundError(NexusError, FileNotFoundError):
     def __init__(self, path: str, message: str | None = None):
         msg = message or "File not found"
         super().__init__(msg, path)
-
 
 class NexusPermissionError(NexusError):
     """Raised when access to a file or directory is denied.
@@ -111,7 +105,6 @@ class NexusPermissionError(NexusError):
     def __init__(self, path: str, message: str | None = None):
         msg = message or "Permission denied"
         super().__init__(msg, path)
-
 
 class PermissionDeniedError(NexusPermissionError):
     """Raised when ReBAC permission check fails.
@@ -134,7 +127,6 @@ class PermissionDeniedError(NexusPermissionError):
     def __init__(self, message: str, path: str | None = None):
         super().__init__(path=path or "", message=message)
 
-
 class StaleSessionError(NexusError):
     """Raised when agent's session generation is stale (Issue #1240).
 
@@ -153,7 +145,6 @@ class StaleSessionError(NexusError):
         msg = message or f"Agent session expired for '{agent_id}'"
         super().__init__(msg)
 
-
 class BackendError(NexusError):
     """Raised when a backend operation fails.
 
@@ -171,7 +162,6 @@ class BackendError(NexusError):
             message = f"[{backend}] {message}"
         super().__init__(message, path)
 
-
 class DatabaseError(BackendError):
     """Database operation failed. Wraps SQLAlchemy errors at storage boundary.
 
@@ -183,14 +173,11 @@ class DatabaseError(BackendError):
     def __init__(self, message: str, path: str | None = None):
         super().__init__(message, path=path)
 
-
 class DatabaseConnectionError(DatabaseError):
     """Database connection failed (transient, should retry)."""
 
-
 class DatabaseTimeoutError(DatabaseError):
     """Database query timed out."""
-
 
 class DatabaseIntegrityError(DatabaseError):
     """Database integrity constraint violated (permanent, should not retry).
@@ -200,7 +187,6 @@ class DatabaseIntegrityError(DatabaseError):
 
     is_expected = True
 
-
 class ConnectorError(BackendError):
     """External connector/API operation failed."""
 
@@ -208,7 +194,6 @@ class ConnectorError(BackendError):
 
     def __init__(self, message: str, path: str | None = None):
         super().__init__(message, path=path)
-
 
 class ConnectorAuthError(ConnectorError):
     """Connector authentication/token refresh failed.
@@ -220,7 +205,6 @@ class ConnectorAuthError(ConnectorError):
     error_type = "Unauthorized"
     is_expected = True
 
-
 class ConnectorRateLimitError(ConnectorError):
     """Connector hit rate limit (transient, should retry with backoff).
 
@@ -231,7 +215,6 @@ class ConnectorRateLimitError(ConnectorError):
     error_type = "Too Many Requests"
     is_expected = True
 
-
 class ConnectorQuotaError(ConnectorError):
     """Connector quota exceeded.
 
@@ -239,7 +222,6 @@ class ConnectorQuotaError(ConnectorError):
     """
 
     is_expected = True
-
 
 class RemoteFilesystemError(NexusError):
     """Enhanced remote filesystem error with detailed information.
@@ -274,18 +256,15 @@ class RemoteFilesystemError(NexusError):
 
         super().__init__(" ".join(error_parts))
 
-
 class RemoteConnectionError(RemoteFilesystemError):
     """Error connecting to remote Nexus server."""
 
     pass
 
-
 class RemoteTimeoutError(RemoteFilesystemError):
     """Timeout while communicating with remote server."""
 
     pass
-
 
 class ServiceUnavailableError(NexusError):
     """Service temporarily unavailable (e.g., circuit breaker open).
@@ -300,7 +279,6 @@ class ServiceUnavailableError(NexusError):
 
     def __init__(self, message: str, path: str | None = None):
         super().__init__(message, path)
-
 
 class CircuitOpenError(ServiceUnavailableError):
     """Circuit breaker is open — database unreachable.
@@ -320,7 +298,6 @@ class CircuitOpenError(ServiceUnavailableError):
         msg = message or f"Circuit breaker open for '{service_name}'"
         super().__init__(msg)
 
-
 class InvalidPathError(NexusError):
     """Raised when a path is invalid or contains illegal characters.
 
@@ -335,7 +312,6 @@ class InvalidPathError(NexusError):
         msg = message or "Invalid path"
         super().__init__(msg, path)
 
-
 class MetadataError(NexusError):
     """Raised when metadata operations fail.
 
@@ -347,7 +323,6 @@ class MetadataError(NexusError):
 
     def __init__(self, message: str, path: str | None = None, is_expected: bool | None = None):
         super().__init__(message, path, is_expected)
-
 
 class ValidationError(NexusError):
     """Raised when validation fails.
@@ -367,7 +342,6 @@ class ValidationError(NexusError):
     def __init__(self, message: str, path: str | None = None, is_expected: bool | None = None):
         super().__init__(message, path, is_expected)
 
-
 class ParserError(NexusError):
     """Raised when document parsing fails.
 
@@ -384,7 +358,6 @@ class ParserError(NexusError):
         if parser:
             message = f"[{parser}] {message}"
         super().__init__(message, path)
-
 
 class ConflictError(NexusError):
     """Raised when optimistic concurrency check fails.
@@ -428,7 +401,6 @@ class ConflictError(NexusError):
         )
         super().__init__(message, path)
 
-
 class LockTimeout(NexusError):
     """Raised when a distributed lock cannot be acquired within timeout.
 
@@ -459,7 +431,6 @@ class LockTimeout(NexusError):
         msg = message or f"Could not acquire lock within {timeout}s"
         super().__init__(msg, path)
 
-
 class AuditLogError(NexusError):
     """Raised when audit logging fails and audit_strict_mode is enabled.
 
@@ -488,7 +459,6 @@ class AuditLogError(NexusError):
         self.original_error = original_error
         super().__init__(message, path)
 
-
 class AuthenticationError(NexusError):
     """Raised when authentication fails.
 
@@ -507,9 +477,7 @@ class AuthenticationError(NexusError):
     def __init__(self, message: str, path: str | None = None):
         super().__init__(message, path)
 
-
 # --- Router / Path Exceptions ---
-
 
 class PathNotMountedError(NexusError):
     """Raised when no mount exists for a given path.
@@ -525,7 +493,6 @@ class PathNotMountedError(NexusError):
     def __init__(self, path: str, message: str | None = None):
         msg = message or "No mount found for path"
         super().__init__(msg, path)
-
 
 class AccessDeniedError(NexusError):
     """Raised when access to a path is denied by namespace or zone rules.
@@ -544,9 +511,7 @@ class AccessDeniedError(NexusError):
     def __init__(self, message: str, path: str | None = None):
         super().__init__(message, path)
 
-
 # --- Chunked Upload Exceptions (Issue #788) ---
-
 
 class UploadNotFoundError(NexusError):
     """Raised when a chunked upload session is not found.
@@ -564,7 +529,6 @@ class UploadNotFoundError(NexusError):
         msg = message or f"Upload session not found: {upload_id}"
         super().__init__(msg)
 
-
 class UploadExpiredError(NexusError):
     """Raised when a chunked upload session has expired.
 
@@ -580,7 +544,6 @@ class UploadExpiredError(NexusError):
         self.upload_id = upload_id
         msg = message or f"Upload session expired: {upload_id}"
         super().__init__(msg)
-
 
 class UploadOffsetMismatchError(NexusError):
     """Raised when a PATCH offset does not match the current session offset.
@@ -599,7 +562,6 @@ class UploadOffsetMismatchError(NexusError):
         self.received_offset = received
         msg = f"Upload offset mismatch for {upload_id}: expected {expected}, received {received}"
         super().__init__(msg)
-
 
 class UploadChecksumMismatchError(NexusError):
     """Raised when the chunk checksum does not match the Upload-Checksum header.

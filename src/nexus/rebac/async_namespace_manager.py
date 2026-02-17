@@ -9,16 +9,14 @@ References:
     - Issue #1383: Define 6 kernel protocol interfaces
 """
 
-from __future__ import annotations
-
 import asyncio
 from typing import TYPE_CHECKING
 
 from nexus.rebac.namespace_manager import NamespaceMount
 
+from nexus.rebac.namespace_manager import MountEntry, NamespaceManager
 if TYPE_CHECKING:
     from nexus.rebac.namespace_manager import MountEntry, NamespaceManager
-
 
 def _to_namespace_mount(
     entry: MountEntry,
@@ -36,7 +34,6 @@ def _to_namespace_mount(
         subject_id=subject[1],
         zone_id=zone_id,
     )
-
 
 class AsyncNamespaceManager:
     """Async adapter for ``NamespaceManager`` conforming to ``NamespaceManagerProtocol``.

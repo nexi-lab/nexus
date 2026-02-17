@@ -9,8 +9,6 @@ Invariants proven:
   4. Registered hooks are discoverable (fire calls them)
 """
 
-from __future__ import annotations
-
 import asyncio
 import uuid
 from collections.abc import Awaitable, Callable
@@ -30,7 +28,6 @@ from tests.strategies.kernel import hook_context, hook_spec
 # ---------------------------------------------------------------------------
 # In-memory HookEngine stub (protocol conformance target)
 # ---------------------------------------------------------------------------
-
 
 class InMemoryHookEngine:
     """Minimal HookEngine implementation for protocol invariant testing.
@@ -70,35 +67,28 @@ class InMemoryHookEngine:
 
         return HookResult(proceed=True, modified_context=None, error=None)
 
-
 # Verify protocol conformance at import time
 assert isinstance(InMemoryHookEngine(), HookEngineProtocol)
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-
 def _run(coro):
     """Run an async coroutine synchronously for Hypothesis compatibility."""
     return asyncio.run(coro)
-
 
 async def _noop_handler(ctx: HookContext) -> HookResult:
     """No-op hook handler that always proceeds."""
     return HookResult(proceed=True, modified_context=None, error=None)
 
-
 async def _veto_handler(ctx: HookContext) -> HookResult:
     """Hook handler that vetoes the operation."""
     return HookResult(proceed=False, modified_context=None, error="vetoed")
 
-
 # ---------------------------------------------------------------------------
 # Invariant 1: Registration returns unique HookId
 # ---------------------------------------------------------------------------
-
 
 class TestHookRegistrationInvariants:
     """Hook registration properties."""
@@ -118,11 +108,9 @@ class TestHookRegistrationInvariants:
 
         _run(_inner())
 
-
 # ---------------------------------------------------------------------------
 # Invariant 2: Unregistration idempotency
 # ---------------------------------------------------------------------------
-
 
 class TestHookUnregistrationInvariants:
     """Hook unregistration properties."""
@@ -159,11 +147,9 @@ class TestHookUnregistrationInvariants:
 
         _run(_inner())
 
-
 # ---------------------------------------------------------------------------
 # Invariant 3: Fire always returns valid HookResult
 # ---------------------------------------------------------------------------
-
 
 class TestHookFireInvariants:
     """Hook fire properties."""
@@ -215,11 +201,9 @@ class TestHookFireInvariants:
 
         _run(_inner())
 
-
 # ---------------------------------------------------------------------------
 # Invariant 4: Unregistered hooks are not fired
 # ---------------------------------------------------------------------------
-
 
 class TestHookLifecycleInvariants:
     """Hook lifecycle properties."""

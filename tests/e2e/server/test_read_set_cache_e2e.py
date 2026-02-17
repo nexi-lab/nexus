@@ -8,13 +8,10 @@ Run with:
     pytest tests/e2e/test_read_set_cache_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import base64
 from typing import Any
 
 import pytest
-
 
 def _rpc(method: str, params: dict[str, Any]) -> dict[str, Any]:
     """Build a JSON-RPC request body."""
@@ -24,7 +21,6 @@ def _rpc(method: str, params: dict[str, Any]) -> dict[str, Any]:
         "method": method,
         "params": params,
     }
-
 
 def _decode_bytes(value: Any) -> str:
     """Decode a bytes value from JSON-RPC response.
@@ -37,7 +33,6 @@ def _decode_bytes(value: Any) -> str:
         return base64.b64decode(value["data"]).decode("utf-8")
     return str(value)
 
-
 def _write(client: Any, path: str, content: str) -> dict[str, Any]:
     """Write a file via JSON-RPC and return response data."""
     resp = client.post("/api/nfs/write", json=_rpc("write", {"path": path, "content": content}))
@@ -45,7 +40,6 @@ def _write(client: Any, path: str, content: str) -> dict[str, Any]:
     data = resp.json()
     assert "error" not in data, f"Write {path} RPC error: {data.get('error')}"
     return data.get("result", {})
-
 
 def _read(client: Any, path: str) -> str:
     """Read a file via JSON-RPC and return content string."""
@@ -55,7 +49,6 @@ def _read(client: Any, path: str) -> str:
     assert "error" not in data, f"Read {path} RPC error: {data.get('error')}"
     result = data.get("result", {})
     return _decode_bytes(result)
-
 
 class TestReadSetCacheE2E:
     """E2E tests for read-set-aware cache invalidation via FastAPI."""

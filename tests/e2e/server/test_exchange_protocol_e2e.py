@@ -7,19 +7,15 @@ Tests the following against a real running Nexus server:
 4. Non-admin user access patterns
 """
 
-from __future__ import annotations
-
 import httpx
 
 # Auth header for the default static API key used in conftest.py
 AUTH_HEADERS = {"Authorization": "Bearer test-e2e-api-key-12345"}
 PROTOCOL_HEADERS = {**AUTH_HEADERS, "Nexus-Protocol-Version": "2026.1"}
 
-
 # ---------------------------------------------------------------------------
 # Error handler tests — verify structured error responses
 # ---------------------------------------------------------------------------
-
 
 class TestErrorHandler:
     """Verify NexusExchangeError produces google.rpc.Status-compatible JSON."""
@@ -59,11 +55,9 @@ class TestErrorHandler:
         )
         assert resp.status_code in (404, 500)
 
-
 # ---------------------------------------------------------------------------
 # Models split verification — endpoints still work after models/ package
 # ---------------------------------------------------------------------------
-
 
 class TestModelsSplitEndpoints:
     """Verify all endpoints using split models still respond correctly."""
@@ -161,11 +155,9 @@ class TestModelsSplitEndpoints:
         # 200 with data, or 503 if sync not configured — both are valid
         assert resp.status_code in (200, 503)
 
-
 # ---------------------------------------------------------------------------
 # Audit endpoints — verify models/audit.py works end-to-end
 # ---------------------------------------------------------------------------
-
 
 class TestAuditEndpoints:
     """Verify audit endpoints work with split audit models."""
@@ -229,11 +221,9 @@ class TestAuditEndpoints:
         assert resp.status_code == 200
         assert "text/csv" in resp.headers.get("content-type", "")
 
-
 # ---------------------------------------------------------------------------
 # Non-admin access — verify permission behavior
 # ---------------------------------------------------------------------------
-
 
 class TestNonAdminAccess:
     """Verify endpoints handle unauthenticated/unauthorized access."""

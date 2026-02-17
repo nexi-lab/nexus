@@ -1,7 +1,5 @@
 """Tests for AsyncVFSRouter wrapper (Issue #1440)."""
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest
@@ -15,21 +13,17 @@ from tests.unit.core.protocols.test_conformance import assert_protocol_conforman
 # Fixtures
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture()
 def mock_inner() -> MagicMock:
     return MagicMock()
-
 
 @pytest.fixture()
 def wrapper(mock_inner: MagicMock) -> AsyncVFSRouter:
     return AsyncVFSRouter(mock_inner)
 
-
 # ---------------------------------------------------------------------------
 # Protocol conformance
 # ---------------------------------------------------------------------------
-
 
 class TestConformance:
     def test_assert_protocol_conformance(self) -> None:
@@ -38,11 +32,9 @@ class TestConformance:
     def test_isinstance_check(self, wrapper: AsyncVFSRouter) -> None:
         assert isinstance(wrapper, VFSRouterProtocol)
 
-
 # ---------------------------------------------------------------------------
 # Type conversion tests
 # ---------------------------------------------------------------------------
-
 
 class TestToResolvedPath:
     def test_basic_conversion(self) -> None:
@@ -71,7 +63,6 @@ class TestToResolvedPath:
         assert resolved.zone_id is None
         assert resolved.readonly is True
 
-
 class TestToMountInfo:
     def test_basic_conversion(self) -> None:
         config = MountConfig(
@@ -96,11 +87,9 @@ class TestToMountInfo:
         info = _to_mount_info(config)
         assert info.readonly is True
 
-
 # ---------------------------------------------------------------------------
 # Async method delegation (direct calls, no to_thread)
 # ---------------------------------------------------------------------------
-
 
 class TestRoute:
     @pytest.mark.asyncio()
@@ -131,7 +120,6 @@ class TestRoute:
         with pytest.raises(PathNotMountedError):
             await wrapper.route("/unknown")
 
-
 class TestAddMount:
     @pytest.mark.asyncio()
     async def test_delegates(self, wrapper: AsyncVFSRouter, mock_inner: MagicMock) -> None:
@@ -144,7 +132,6 @@ class TestAddMount:
             readonly=True,
         )
 
-
 class TestRemoveMount:
     @pytest.mark.asyncio()
     async def test_returns_true(self, wrapper: AsyncVFSRouter, mock_inner: MagicMock) -> None:
@@ -155,7 +142,6 @@ class TestRemoveMount:
     async def test_returns_false(self, wrapper: AsyncVFSRouter, mock_inner: MagicMock) -> None:
         mock_inner.remove_mount.return_value = False
         assert await wrapper.remove_mount("/nonexistent") is False
-
 
 class TestListMounts:
     @pytest.mark.asyncio()

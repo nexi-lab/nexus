@@ -10,8 +10,6 @@ intentionally excluded from the mapping key.
 Related: Issue #682, Issue #979
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 from datetime import UTC, datetime
@@ -22,11 +20,11 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from nexus.storage.models.permissions import TigerResourceMapModel as TRM
 
+from sqlalchemy.engine import Connection, Engine
 if TYPE_CHECKING:
     from sqlalchemy.engine import Connection, Engine
 
 logger = logging.getLogger(__name__)
-
 
 class TigerResourceMap:
     """Maps resource UUIDs to int64 IDs for Roaring Bitmap compatibility.

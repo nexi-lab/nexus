@@ -11,14 +11,11 @@ Tier hierarchy (Liedtke minimality):
     - services/ must NOT import from server/ (except via protocols)
 """
 
-from __future__ import annotations
-
 import ast
 from pathlib import Path
 
 # Project root for src/nexus/
 NEXUS_ROOT = Path(__file__).resolve().parents[3] / "src" / "nexus"
-
 
 def _collect_imports(module_path: Path) -> list[tuple[str, int, str]]:
     """Parse a Python file and return all import targets with line numbers.
@@ -38,7 +35,6 @@ def _collect_imports(module_path: Path) -> list[tuple[str, int, str]]:
             imports.append((node.module, node.lineno, "from"))
 
     return imports
-
 
 def _collect_top_level_imports(module_path: Path) -> list[tuple[str, int, str]]:
     """Parse a Python file and return only TOP-LEVEL imports.
@@ -69,16 +65,13 @@ def _collect_top_level_imports(module_path: Path) -> list[tuple[str, int, str]]:
 
     return imports
 
-
 def _get_python_files(directory: Path) -> list[Path]:
     """Get all .py files in directory (non-recursive for top-level modules)."""
     return sorted(directory.glob("*.py"))
 
-
 def _get_python_files_recursive(directory: Path) -> list[Path]:
     """Get all .py files recursively."""
     return sorted(directory.rglob("*.py"))
-
 
 class TestKernelDoesNotImportServer:
     """Verify core/ modules never import from server/ at any level."""
@@ -97,7 +90,6 @@ class TestKernelDoesNotImportServer:
         assert violations == [], "Kernel→Server import violations found:\n" + "\n".join(
             f"  - {v}" for v in violations
         )
-
 
 class TestKernelTopLevelImports:
     """Verify core/ top-level imports don't pull in services/."""
@@ -134,7 +126,6 @@ class TestKernelTopLevelImports:
             f"  - {v}" for v in violations
         )
 
-
 class TestServicesDoNotImportServer:
     """Verify services/ modules don't import from server/ (except via protocols)."""
 
@@ -162,7 +153,6 @@ class TestServicesDoNotImportServer:
             f"  - {v}" for v in violations
         )
 
-
 class TestRPCTypesInCore:
     """Verify RPC types are importable from core (Issue #1519, 1A)."""
 
@@ -178,7 +168,6 @@ class TestRPCTypesInCore:
         from nexus.server.protocol import RPCErrorCode as ServerCode
 
         assert CoreCode is ServerCode
-
 
 class TestZoneHelpersInCore:
     """Verify zone helpers are importable from core (Issue #1519, 3A)."""

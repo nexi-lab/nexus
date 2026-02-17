@@ -3,8 +3,6 @@
 Parses JSON output from `ruff check --output-format json`.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import shlex
@@ -13,7 +11,6 @@ from nexus.validation.models import ValidationError, ValidatorConfig
 from nexus.validation.parsers.base import Validator
 
 logger = logging.getLogger(__name__)
-
 
 class RuffValidator(Validator):
     """Parser for ruff check JSON output."""

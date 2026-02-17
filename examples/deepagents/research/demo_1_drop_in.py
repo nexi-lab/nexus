@@ -42,7 +42,6 @@ except ImportError as e:
     print(f"\nDetails: {e}")
     sys.exit(1)
 
-
 def create_research_agent_with_nexus(nx, workspace="/research"):
     """
     Create a research agent that uses Nexus as its filesystem backend.
@@ -91,7 +90,6 @@ def create_research_agent_with_nexus(nx, workspace="/research"):
     )
 
     return agent
-
 
 def main():
     """Run the research agent demo."""
@@ -277,7 +275,6 @@ Focus on: architecture components, attention mechanisms, and real-world applicat
     print()
     print("Next: Try Tier 2 demos for enhanced agent capabilities!")
     print()
-
 
 if __name__ == "__main__":
     main()

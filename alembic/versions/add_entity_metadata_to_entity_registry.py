@@ -19,7 +19,6 @@ down_revision: Union[str, Sequence[str], None] = "928a619dabf4"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Upgrade schema."""
     # Add entity_metadata column to entity_registry table
@@ -27,7 +26,6 @@ def upgrade() -> None:
         "entity_registry",
         sa.Column("entity_metadata", sa.Text(), nullable=True),
     )
-
 
 def downgrade() -> None:
     """Downgrade schema."""

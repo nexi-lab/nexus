@@ -60,7 +60,6 @@ except ImportError:
 
 console = Console()
 
-
 class TitanicDataLoader:
     """Load and prepare Titanic dataset with known validation issues."""
 
@@ -241,7 +240,6 @@ class TitanicDataLoader:
             "issue_types": issue_counts,
         }
 
-
 class DataValidator:
     """Data validator that learns validation rules through ACE."""
 
@@ -308,7 +306,6 @@ class DataValidator:
             reasons.append("invalid_sex_value")
 
         return is_valid, reasons
-
 
 def run_validation_task(
     df: pd.DataFrame,
@@ -427,7 +424,6 @@ def run_validation_task(
         "score": accuracy,  # Reward signal for ACE
         "error_types": error_types_found,
     }
-
 
 def run_demo(epochs: int = 10, data_dir: str | None = None):
     """Run the data validation learning demo.
@@ -592,7 +588,6 @@ def run_demo(epochs: int = 10, data_dir: str | None = None):
     # Cleanup
     nx.close()
 
-
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -651,7 +646,6 @@ def main():
 
         traceback.print_exc()
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()

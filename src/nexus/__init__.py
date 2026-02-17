@@ -54,6 +54,8 @@ from typing import TYPE_CHECKING, Any, cast
 # dependencies (skills, nexus_fs, remote) on module import.
 # This significantly speeds up CLI startup and FUSE mount initialization.
 
+from nexus.core._metadata_generated import FileMetadataProtocol
+from nexus.core.filesystem import NexusFilesystem
 if TYPE_CHECKING:
     # Type hints for IDE support - these don't trigger actual imports
     from pathlib import Path

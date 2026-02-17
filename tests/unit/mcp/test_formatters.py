@@ -14,7 +14,6 @@ from nexus.mcp.formatters import (
     format_response,
 )
 
-
 class TestFormatResponse:
     """Test format_response function."""
 
@@ -46,7 +45,6 @@ class TestFormatResponse:
         # datetime should be converted to string via default=str
         parsed = json.loads(result)
         assert "2024-01-01" in parsed["timestamp"]
-
 
 class TestFormatAsMarkdown:
     """Test format_as_markdown function."""
@@ -110,7 +108,6 @@ class TestFormatAsMarkdown:
         assert format_as_markdown(42) == "42"
         assert format_as_markdown(3.14) == "3.14"
 
-
 class TestFormatPaginatedResponse:
     """Test _format_paginated_response function."""
 
@@ -165,7 +162,6 @@ class TestFormatPaginatedResponse:
         assert "- two" in result
         assert "- three" in result
 
-
 class TestFormatDict:
     """Test _format_dict function."""
 
@@ -180,7 +176,6 @@ class TestFormatDict:
         """Test empty dictionary formatting."""
         result = _format_dict({})
         assert result == ""
-
 
 class TestFormatList:
     """Test _format_list function."""
@@ -201,7 +196,6 @@ class TestFormatList:
         """Test list of dicts formatting."""
         result = _format_list([{"name": "foo"}])
         assert "### 1. foo" in result
-
 
 class TestFormatListOfDicts:
     """Test _format_list_of_dicts function."""

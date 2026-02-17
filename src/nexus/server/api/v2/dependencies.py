@@ -4,7 +4,6 @@ Provides FastAPI dependency injection for ACE components with
 proper authentication context. All routers should import deps
 from here instead of duplicating inline helpers.
 
-Note: This module intentionally does NOT use `from __future__ import annotations`
 because FastAPI uses `eval_str=True` on dependency signatures at import time,
 which fails for TYPE_CHECKING-only imports.
 """
@@ -16,11 +15,9 @@ from fastapi import Depends, HTTPException, Request
 
 logger = logging.getLogger(__name__)
 
-
 # =============================================================================
 # Internal lazy-import helpers (avoid circular imports with fastapi_server)
 # =============================================================================
-
 
 def _get_require_auth() -> Any:
     """Get the require_auth dependency (lazy import)."""
@@ -28,18 +25,15 @@ def _get_require_auth() -> Any:
 
     return require_auth
 
-
 def _get_operation_context(auth_result: dict[str, Any]) -> Any:
     """Get operation context from auth result (lazy import)."""
     from nexus.server.fastapi_server import get_operation_context
 
     return get_operation_context(auth_result)
 
-
 # =============================================================================
 # Core dependencies
 # =============================================================================
-
 
 async def get_nexus_fs(request: Request) -> Any:
     """Get NexusFS instance, raising 503 if not initialized.
@@ -51,7 +45,6 @@ async def get_nexus_fs(request: Request) -> Any:
         raise HTTPException(status_code=503, detail="NexusFS not initialized")
     return request.app.state.nexus_fs
 
-
 async def get_auth_result(
     auth_result: dict[str, Any] | None = Depends(lambda: _get_require_auth()),
 ) -> dict[str, Any]:
@@ -60,13 +53,11 @@ async def get_auth_result(
         raise HTTPException(status_code=401, detail="Authentication required")
     return auth_result
 
-
 async def get_memory_api(
     nexus_fs: Any = Depends(get_nexus_fs),
 ) -> Any:
     """Get Memory API instance from NexusFS."""
     return nexus_fs.memory
-
 
 async def get_db_session(
     nexus_fs: Any = Depends(get_nexus_fs),
@@ -74,13 +65,11 @@ async def get_db_session(
     """Get database session from NexusFS."""
     return nexus_fs.memory.session
 
-
 async def get_backend(
     nexus_fs: Any = Depends(get_nexus_fs),
 ) -> Any:
     """Get storage backend from NexusFS."""
     return nexus_fs.memory.backend
-
 
 async def get_llm_provider(
     nexus_fs: Any = Depends(get_nexus_fs),
@@ -88,11 +77,9 @@ async def get_llm_provider(
     """Get LLM provider from NexusFS (may be None)."""
     return getattr(nexus_fs, "_llm_provider", None)
 
-
 # =============================================================================
 # ACE manager dependencies
 # =============================================================================
-
 
 async def get_conflict_log_store(request: Request) -> Any:
     """Get ConflictLogStore instance from app state."""
@@ -100,7 +87,6 @@ async def get_conflict_log_store(request: Request) -> Any:
     if store is None:
         raise HTTPException(status_code=503, detail="Conflict log store not initialized")
     return store
-
 
 async def get_write_back_service(request: Request) -> Any:
     """Get WriteBackService instance from app state."""
@@ -111,7 +97,6 @@ async def get_write_back_service(request: Request) -> Any:
             detail="Write-back service not initialized (set NEXUS_WRITE_BACK=true)",
         )
     return service
-
 
 async def get_trajectory_manager(
     nexus_fs: Any = Depends(get_nexus_fs),
@@ -133,7 +118,6 @@ async def get_trajectory_manager(
         context=context,
     )
 
-
 async def get_feedback_manager(
     nexus_fs: Any = Depends(get_nexus_fs),
 ) -> Any:
@@ -142,7 +126,6 @@ async def get_feedback_manager(
 
     session = nexus_fs.memory.session
     return FeedbackManager(session=session)
-
 
 async def get_playbook_manager(
     nexus_fs: Any = Depends(get_nexus_fs),
@@ -163,7 +146,6 @@ async def get_playbook_manager(
         zone_id=context.zone_id,
         context=context,
     )
-
 
 async def get_reflector(
     nexus_fs: Any = Depends(get_nexus_fs),
@@ -200,7 +182,6 @@ async def get_reflector(
         zone_id=context.zone_id,
     )
 
-
 async def get_curator(
     nexus_fs: Any = Depends(get_nexus_fs),
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
@@ -228,7 +209,6 @@ async def get_curator(
         playbook_manager=playbook_manager,
     )
 
-
 async def get_consolidation_engine(
     nexus_fs: Any = Depends(get_nexus_fs),
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
@@ -253,7 +233,6 @@ async def get_consolidation_engine(
         zone_id=context.zone_id,
     )
 
-
 async def get_operation_logger(
     nexus_fs: Any = Depends(get_nexus_fs),
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
@@ -273,7 +252,6 @@ async def get_operation_logger(
     zone_id = context.zone_id or "root"
 
     return OperationLogger(session=session), zone_id
-
 
 async def get_hierarchy_manager(
     nexus_fs: Any = Depends(get_nexus_fs),
@@ -303,7 +281,6 @@ async def get_hierarchy_manager(
         zone_id=context.zone_id or "root",
     )
 
-
 async def get_exchange_audit_logger(
     nexus_fs: Any = Depends(get_nexus_fs),
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
@@ -324,11 +301,9 @@ async def get_exchange_audit_logger(
     )
     return ExchangeAuditLogger(session_factory=session_factory), zone_id
 
-
 # =============================================================================
 # Reputation & Trust dependencies (Issue #1356)
 # =============================================================================
-
 
 async def get_reputation_context(
     nexus_fs: Any = Depends(get_nexus_fs),

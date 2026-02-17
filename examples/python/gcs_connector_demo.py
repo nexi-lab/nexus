@@ -38,28 +38,23 @@ import os
 import sys
 import tempfile
 
-
 def print_section(title: str) -> None:
     """Print a section header."""
     print("\n" + "=" * 70)
     print(f"  {title}")
     print("=" * 70 + "\n")
 
-
 def print_success(message: str) -> None:
     """Print success message."""
     print(f"✓ {message}")
-
 
 def print_info(message: str) -> None:
     """Print info message."""
     print(f"ℹ {message}")
 
-
 def print_error(message: str) -> None:
     """Print error message."""
     print(f"✗ {message}")
-
 
 def check_gsutil() -> bool:
     """Check if gsutil is available."""
@@ -70,7 +65,6 @@ def check_gsutil() -> bool:
         return True
     except (subprocess.CalledProcessError, FileNotFoundError):
         return False
-
 
 def verify_gcs_files(bucket_name: str, prefix: str) -> None:
     """Verify files exist in GCS bucket at actual paths."""
@@ -104,7 +98,6 @@ def verify_gcs_files(bucket_name: str, prefix: str) -> None:
 
     except subprocess.CalledProcessError as e:
         print_error(f"Failed to verify GCS files: {e}")
-
 
 def demo_with_server():
     """Run demo with Nexus server."""
@@ -230,7 +223,6 @@ def demo_with_server():
     nx.remove_mount(mount_point)
     print_success(f"Unmounted {mount_point}")
 
-
 def demo_local():
     """Run demo locally (no server)."""
     from nexus.backends.gcs_connector import GCSConnectorBackend
@@ -325,7 +317,6 @@ def demo_local():
         print_info("\nGCS bucket cleanup (optional):")
         print(f"  gsutil rm -r gs://{bucket_name}/nexus-demo/")
 
-
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(description="Nexus GCS Connector Demo")
@@ -360,7 +351,6 @@ def main():
     print("│ External Browsable │ No (hash-based)      │ Yes (path-based)    │")
     print("│ Use Case           │ Nexus-managed        │ External buckets    │")
     print("└" + "─" * 68 + "┘")
-
 
 if __name__ == "__main__":
     main()

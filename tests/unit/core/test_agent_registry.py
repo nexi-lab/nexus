@@ -11,8 +11,6 @@ Tests cover:
 - Thread-based concurrent heartbeat test (Decision #11A)
 """
 
-from __future__ import annotations
-
 import threading
 
 import pytest
@@ -32,7 +30,6 @@ from nexus.storage.models import Base
 # Fixtures
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture
 def engine():
     """Create in-memory SQLite database for testing (thread-safe)."""
@@ -44,23 +41,19 @@ def engine():
     Base.metadata.create_all(engine)
     return engine
 
-
 @pytest.fixture
 def session_factory(engine):
     """Create a session factory."""
     return sessionmaker(bind=engine, expire_on_commit=False)
-
 
 @pytest.fixture
 def registry(session_factory):
     """Create an AgentRegistry for testing."""
     return AgentRegistry(session_factory=session_factory, flush_interval=60)
 
-
 # ---------------------------------------------------------------------------
 # Registration tests
 # ---------------------------------------------------------------------------
-
 
 class TestRegistration:
     """Tests for agent registration."""
@@ -107,11 +100,9 @@ class TestRegistration:
         with pytest.raises(ValueError, match="owner_id"):
             registry.register("agent-1", "")
 
-
 # ---------------------------------------------------------------------------
 # Get tests
 # ---------------------------------------------------------------------------
-
 
 class TestGet:
     """Tests for getting agent records."""
@@ -127,11 +118,9 @@ class TestGet:
         """Getting a nonexistent agent returns None."""
         assert registry.get("no-such-agent") is None
 
-
 # ---------------------------------------------------------------------------
 # State transition tests
 # ---------------------------------------------------------------------------
-
 
 class TestStateTransition:
     """Tests for state transitions with generation counter semantics."""
@@ -217,11 +206,9 @@ class TestStateTransition:
         r = registry.transition("agent-1", AgentState.CONNECTED, expected_generation=1)
         assert r.generation == 2
 
-
 # ---------------------------------------------------------------------------
 # Optimistic locking tests (Decision #16B)
 # ---------------------------------------------------------------------------
-
 
 class TestOptimisticLocking:
     """Tests for optimistic locking via generation counter."""
@@ -256,11 +243,9 @@ class TestOptimisticLocking:
         assert record.state is AgentState.CONNECTED
         assert record.generation == 1
 
-
 # ---------------------------------------------------------------------------
 # Heartbeat tests (Decision #13A)
 # ---------------------------------------------------------------------------
-
 
 class TestHeartbeat:
     """Tests for in-memory heartbeat buffer with batch flush."""
@@ -315,11 +300,9 @@ class TestHeartbeat:
         with pytest.raises(ValueError, match="not found"):
             registry.heartbeat("no-such-agent")
 
-
 # ---------------------------------------------------------------------------
 # Concurrent heartbeat test (Decision #11A)
 # ---------------------------------------------------------------------------
-
 
 class TestConcurrentHeartbeat:
     """Thread-based concurrent heartbeat test."""
@@ -348,11 +331,9 @@ class TestConcurrentHeartbeat:
         flushed = registry.flush_heartbeats()
         assert flushed >= 1
 
-
 # ---------------------------------------------------------------------------
 # Full lifecycle integration test (Decision #10B)
 # ---------------------------------------------------------------------------
-
 
 class TestFullLifecycle:
     """Real-time lifecycle integration test."""
@@ -389,11 +370,9 @@ class TestFullLifecycle:
         assert record.state is AgentState.CONNECTED
         assert record.generation == 3  # Reactivation!
 
-
 # ---------------------------------------------------------------------------
 # Query tests
 # ---------------------------------------------------------------------------
-
 
 class TestQueries:
     """Tests for list and query operations."""
@@ -445,11 +424,9 @@ class TestQueries:
         assert len(stale) >= 1
         assert stale[0].agent_id == "a1"
 
-
 # ---------------------------------------------------------------------------
 # Unregistration tests
 # ---------------------------------------------------------------------------
-
 
 class TestUnregistration:
     """Tests for agent unregistration."""
@@ -464,11 +441,9 @@ class TestUnregistration:
         """Unregistering a nonexistent agent returns False."""
         assert registry.unregister("no-such") is False
 
-
 # ---------------------------------------------------------------------------
 # Ownership validation tests
 # ---------------------------------------------------------------------------
-
 
 class TestOwnershipValidation:
     """Tests for validate_ownership."""
@@ -487,11 +462,9 @@ class TestOwnershipValidation:
         """validate_ownership returns False for nonexistent agent."""
         assert registry.validate_ownership("no-such", "alice") is False
 
-
 # ---------------------------------------------------------------------------
 # to_dict() tests (Decision #4A)
 # ---------------------------------------------------------------------------
-
 
 class TestToDict:
     """Tests for AgentRecord.to_dict() backward-compat method."""
@@ -526,11 +499,9 @@ class TestToDict:
         assert d["state"] == "CONNECTED"
         assert d["generation"] == 1
 
-
 # ---------------------------------------------------------------------------
 # Bridge reliability tests (Decision #8A)
 # ---------------------------------------------------------------------------
-
 
 class TestBridgeReliability:
     """Tests for entity_registry bridge error handling."""
@@ -583,11 +554,9 @@ class TestBridgeReliability:
         with pytest.raises(RuntimeError, match="Delete failed"):
             reg.unregister("agent-1")
 
-
 # ---------------------------------------------------------------------------
 # Heartbeat capacity warning tests (Decision #15A)
 # ---------------------------------------------------------------------------
-
 
 class TestHeartbeatCapacityWarning:
     """Tests for heartbeat buffer 80% capacity warning."""
@@ -619,11 +588,9 @@ class TestHeartbeatCapacityWarning:
             assert "capacity" in caplog.text
             assert "80%" in caplog.text
 
-
 # ---------------------------------------------------------------------------
 # Migrated from test_agents.py: Registration with bridge (Decision #9A)
 # ---------------------------------------------------------------------------
-
 
 class TestRegistrationWithBridge:
     """Tests for registration with EntityRegistry bridge (migrated from test_agents.py)."""
@@ -681,11 +648,9 @@ class TestRegistrationWithBridge:
         assert reg.get("agent1") is None
         assert entity_reg.get_entity("agent", "agent1") is None
 
-
 # ---------------------------------------------------------------------------
 # Migrated from test_agents.py: Multi-zone isolation
 # ---------------------------------------------------------------------------
-
 
 class TestMultiZoneIsolation:
     """Tests for cross-zone ownership isolation (migrated from test_agents.py)."""
@@ -713,11 +678,9 @@ class TestMultiZoneIsolation:
         assert len(initech_agents) == 1
         assert initech_agents[0].agent_id == "a2"
 
-
 # ---------------------------------------------------------------------------
 # Migrated from test_agents.py: Agent lifecycle integration
 # ---------------------------------------------------------------------------
-
 
 class TestAgentLifecycleIntegration:
     """Full register → validate → unregister → verify lifecycle (migrated from test_agents.py)."""

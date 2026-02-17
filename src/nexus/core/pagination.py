@@ -9,8 +9,6 @@ Key features:
 - URL-safe Base64 encoding for cursor tokens
 """
 
-from __future__ import annotations
-
 import base64
 import hashlib
 import json
@@ -20,12 +18,10 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-
 class CursorError(Exception):
     """Raised when cursor is invalid, expired, or tampered."""
 
     pass
-
 
 @dataclass
 class CursorData:
@@ -34,7 +30,6 @@ class CursorData:
     path: str  # Last item's virtual_path (primary sort key)
     path_id: str | None  # Last item's path_id (tiebreaker for duplicates)
     filters_hash: str  # Hash of query filters to detect tampering
-
 
 def encode_cursor(
     last_path: str,
@@ -69,7 +64,6 @@ def encode_cursor(
     }
     json_bytes = json.dumps(data, separators=(",", ":")).encode("utf-8")
     return base64.urlsafe_b64encode(json_bytes).decode("ascii")
-
 
 def decode_cursor(cursor: str, filters: dict[str, Any]) -> CursorData:
     """Decode and validate pagination cursor.
@@ -118,7 +112,6 @@ def decode_cursor(cursor: str, filters: dict[str, Any]) -> CursorData:
         path_id=data.get("i"),
         filters_hash=data["h"],
     )
-
 
 def _hash_filters(filters: dict[str, Any]) -> str:
     """Create deterministic hash of filter parameters.

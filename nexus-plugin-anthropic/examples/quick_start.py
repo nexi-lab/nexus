@@ -16,7 +16,6 @@ if "ANTHROPIC_API_KEY" not in os.environ:
     )
 os.environ["NEXUS_DATA_DIR"] = "./quick-start-data"
 
-
 async def main() -> None:
     import time
 
@@ -89,7 +88,6 @@ async def main() -> None:
     print("  • Explore examples/README.md for detailed usage")
     print("  • Run examples/cli_examples.sh for CLI workflows")
     print("  • Run examples/python_sdk_examples.py for advanced usage")
-
 
 if __name__ == "__main__":
     asyncio.run(main())

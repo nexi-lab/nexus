@@ -47,11 +47,9 @@ SKIP_PATTERNS = [
     re.compile(r"^\s*$"),  # Empty lines
 ]
 
-
 def is_import_line(line: str) -> bool:
     """Check if a line is an actual import statement (not a comment or string)."""
     return not any(p.match(line) for p in SKIP_PATTERNS)
-
 
 def check_file(file_path: Path) -> list[tuple[int, str, str]]:
     """
@@ -75,14 +73,12 @@ def check_file(file_path: Path) -> list[tuple[int, str, str]]:
 
     return violations
 
-
 def find_brick_files(root: Path) -> list[Path]:
     """Find all Python files under the bricks/ directory."""
     bricks_dir = root / BRICKS_RELATIVE_PATH
     if not bricks_dir.exists():
         return []
     return sorted(bricks_dir.rglob("*.py"))
-
 
 def main() -> int:
     """Main entry point for pre-commit hook and CI check.
@@ -139,7 +135,6 @@ def main() -> int:
         return 1
 
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

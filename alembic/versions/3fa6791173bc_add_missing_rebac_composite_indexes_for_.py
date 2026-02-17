@@ -19,7 +19,6 @@ down_revision: Union[str, Sequence[str], None] = "2e326825392a"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add missing composite indexes for ReBAC query performance.
 
@@ -66,7 +65,6 @@ def upgrade() -> None:
         "rebac_tuples",
         ["zone_id", "object_type", "object_id", "relation", "subject_type", "subject_id"],
     )
-
 
 def downgrade() -> None:
     """Remove composite indexes."""

@@ -7,8 +7,6 @@ Uses Starlette TestClient with real NexusFS + SQLAlchemy metadata store
 (no Rust/Raft dependency, no async fixtures needed).
 """
 
-from __future__ import annotations
-
 import json
 import uuid
 from pathlib import Path
@@ -21,7 +19,6 @@ from nexus.core.config import PermissionConfig
 from nexus.core.nexus_fs import NexusFS
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-
 
 @pytest.fixture
 def nexus_fs_local(tmp_path: Path):
@@ -41,7 +38,6 @@ def nexus_fs_local(tmp_path: Path):
     yield nx
     nx.close()
 
-
 @pytest.fixture
 def rpc_client(nexus_fs_local: NexusFS, tmp_path: Path, monkeypatch):
     """Create sync TestClient with real FastAPI app and NexusFS."""
@@ -56,7 +52,6 @@ def rpc_client(nexus_fs_local: NexusFS, tmp_path: Path, monkeypatch):
     with TestClient(app, raise_server_exceptions=False) as client:
         yield client
 
-
 def _rpc_body(method: str, params: dict | None = None) -> str:
     """Build JSON-RPC request body."""
     return json.dumps(
@@ -67,7 +62,6 @@ def _rpc_body(method: str, params: dict | None = None) -> str:
             "params": params or {},
         }
     )
-
 
 def _rpc_post(client: TestClient, method: str, params: dict | None = None) -> dict:
     """Make RPC call and return parsed response. Asserts 200 status."""
@@ -80,7 +74,6 @@ def _rpc_post(client: TestClient, method: str, params: dict | None = None) -> di
     data = resp.json()
     assert "result" in data, f"No result in RPC response: {data}"
     return data["result"]
-
 
 class TestMemoryListRPCE2E:
     """E2E: memory.list() through full RPC dispatch path (#1203).

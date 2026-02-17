@@ -11,13 +11,11 @@ Tools:
 - load_tools: Load tools into the active context
 """
 
-from __future__ import annotations
-
 from typing import TYPE_CHECKING, Any
 
+from nexus.discovery.tool_index import ToolIndex
 if TYPE_CHECKING:
     from nexus.discovery.tool_index import ToolIndex
-
 
 # Discovery tool definitions (for MCP registration)
 DISCOVERY_TOOLS = {
@@ -90,7 +88,6 @@ DISCOVERY_TOOLS = {
     },
 }
 
-
 def search_tools(
     index: ToolIndex,
     query: str,
@@ -113,7 +110,6 @@ def search_tools(
         "query": query,
     }
 
-
 def list_servers(index: ToolIndex) -> dict[str, Any]:
     """List all available servers.
 
@@ -131,7 +127,6 @@ def list_servers(index: ToolIndex) -> dict[str, Any]:
         "total_servers": len(servers),
         "total_tools": index.tool_count,
     }
-
 
 def get_tool_details(
     index: ToolIndex,
@@ -156,7 +151,6 @@ def get_tool_details(
         "found": True,
         **tool.to_dict(),
     }
-
 
 def load_tools(
     index: ToolIndex,

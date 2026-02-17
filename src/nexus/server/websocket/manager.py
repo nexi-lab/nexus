@@ -13,8 +13,6 @@ Performance Considerations:
 - Background task cleanup on disconnect
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import time
@@ -24,6 +22,8 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import WebSocket, WebSocketDisconnect
 
+from nexus.core.event_bus import EventBusProtocol, FileEvent
+from nexus.core.reactive_subscriptions import ReactiveSubscriptionManager
 if TYPE_CHECKING:
     from nexus.core.event_bus import EventBusProtocol, FileEvent
     from nexus.core.reactive_subscriptions import ReactiveSubscriptionManager
@@ -34,7 +34,6 @@ logger = logging.getLogger(__name__)
 PING_INTERVAL = 25.0  # seconds - slightly less than typical 30s proxy timeout
 PING_TIMEOUT = 10.0  # seconds to wait for pong response
 MAX_MESSAGE_SIZE = 1024 * 1024  # 1MB max message size
-
 
 @dataclass
 class ConnectionInfo:
@@ -50,7 +49,6 @@ class ConnectionInfo:
     messages_sent: int = 0
     messages_received: int = 0
 
-
 @dataclass
 class WebSocketStats:
     """Statistics for WebSocket connections."""
@@ -61,7 +59,6 @@ class WebSocketStats:
     total_messages_received: int = 0
     current_connections: int = 0
     connections_by_zone: dict[str, int] = field(default_factory=dict)
-
 
 class WebSocketManager:
     """Manages WebSocket connections and event broadcasting.

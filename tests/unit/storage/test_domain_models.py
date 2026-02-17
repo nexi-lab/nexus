@@ -7,7 +7,6 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-
 class TestMemoryModelValidate:
     """Tests for MemoryModel.validate()."""
 
@@ -72,7 +71,6 @@ class TestMemoryModelValidate:
         )
         m.validate()  # should not raise
 
-
 class TestUserModelIsDeleted:
     """Tests for UserModel.is_deleted()."""
 
@@ -93,7 +91,6 @@ class TestUserModelIsDeleted:
 
         u = UserModel(user_id="u1", is_active=1, deleted_at=datetime.now(UTC))
         assert u.is_deleted() is True
-
 
 class TestShareLinkModelIsValid:
     """Tests for ShareLinkModel.is_valid()."""
@@ -157,7 +154,6 @@ class TestShareLinkModelIsValid:
             access_count=4,
         )
         assert link.is_valid() is True
-
 
 class TestOAuthCredentialModel:
     """Tests for OAuthCredentialModel business methods."""
@@ -253,7 +249,6 @@ class TestOAuthCredentialModel:
         with pytest.raises(Exception, match="scopes must be valid JSON"):
             cred.validate()
 
-
 class TestUserSessionModelIsExpired:
     """Tests for UserSessionModel.is_expired()."""
 
@@ -274,7 +269,6 @@ class TestUserSessionModelIsExpired:
 
         s = UserSessionModel(user_id="u1", expires_at=datetime.now(UTC) - timedelta(hours=1))
         assert s.is_expired() is True
-
 
 class TestSyncJobModelToDict:
     """Tests for SyncJobModel.to_dict()."""
@@ -313,7 +307,6 @@ class TestSyncJobModelToDict:
         assert d["progress_detail"] == {"files_scanned": 50}
         assert d["sync_params"] == {"path": "/inbox"}
         assert d["result"] == {"files_created": 10}
-
 
 class TestSubscriptionModelMethods:
     """Tests for SubscriptionModel helper methods."""
@@ -358,7 +351,6 @@ class TestSubscriptionModelMethods:
         )
         assert sub.get_patterns() == []
 
-
 class TestUsageEventMetadata:
     """Tests for UsageEvent.get_metadata() / set_metadata()."""
 
@@ -393,7 +385,6 @@ class TestUsageEventMetadata:
         evt.set_metadata({})
         assert evt.metadata_json is None
 
-
 class TestZoneModelParsedSettings:
     """Tests for ZoneModel.parsed_settings."""
 
@@ -410,7 +401,6 @@ class TestZoneModelParsedSettings:
         z = ZoneModel(zone_id="z1", name="Test", settings="{}")
         settings = z.parsed_settings
         assert settings is not None
-
 
 class TestTrajectoryModelValidate:
     """Tests for TrajectoryModel.validate()."""
@@ -463,7 +453,6 @@ class TestTrajectoryModelValidate:
         with pytest.raises(Exception, match="success_score must be between"):
             t.validate()
 
-
 class TestPlaybookModelValidate:
     """Tests for PlaybookModel.validate()."""
 
@@ -512,7 +501,6 @@ class TestPlaybookModelValidate:
         with pytest.raises(Exception, match="version must be >= 1"):
             p.validate()
 
-
 class TestDirectoryEntryModelValidate:
     """Tests for DirectoryEntryModel.validate()."""
 
@@ -542,7 +530,6 @@ class TestDirectoryEntryModelValidate:
         e = DirectoryEntryModel(parent_path="/test/", entry_name="file.txt", entry_type="symlink")
         with pytest.raises(Exception, match="entry_type must be"):
             e.validate()
-
 
 class TestContentChunkModelValidate:
     """Tests for ContentChunkModel.validate()."""
@@ -578,7 +565,6 @@ class TestContentChunkModelValidate:
         with pytest.raises(Exception, match="size_bytes cannot be negative"):
             c.validate()
 
-
 class TestEntityRegistryModelValidate:
     """Tests for EntityRegistryModel.validate()."""
 
@@ -603,7 +589,6 @@ class TestEntityRegistryModelValidate:
         )
         with pytest.raises(Exception, match="parent_type and parent_id must both"):
             e.validate()
-
 
 class TestMountConfigModelValidate:
     """Tests for MountConfigModel.validate()."""
@@ -640,7 +625,6 @@ class TestMountConfigModelValidate:
         with pytest.raises(Exception, match="backend_config must be valid JSON"):
             m.validate()
 
-
 class TestWorkflowModelValidate:
     """Tests for WorkflowModel.validate()."""
 
@@ -657,7 +641,6 @@ class TestWorkflowModelValidate:
         with pytest.raises(Exception, match="name is required"):
             w.validate()
 
-
 class TestBackendChangeLogValidate:
     """Tests for BackendChangeLogModel.validate()."""
 
@@ -673,7 +656,6 @@ class TestBackendChangeLogValidate:
         log = BackendChangeLogModel(path="/test.txt", backend_name="gcs", size_bytes=-1)
         with pytest.raises(Exception, match="size_bytes cannot be negative"):
             log.validate()
-
 
 class TestSandboxMetadataValidate:
     """Tests for SandboxMetadataModel.validate()."""

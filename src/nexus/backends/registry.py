@@ -31,19 +31,15 @@ Inspired by:
 - n8n node discovery system and credentials separation
 """
 
-from __future__ import annotations
-
 import inspect
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
+from nexus.backends.backend import Backend
 from nexus.core.registry import BaseRegistry
-
-if TYPE_CHECKING:
-    from nexus.backends.backend import Backend
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +75,6 @@ _CONNECTOR_PROTOCOL_MEMBERS: frozenset[str] = frozenset(
     }
 )
 
-
 class ArgType(Enum):
     """Types for connection arguments.
 
@@ -106,7 +101,6 @@ class ArgType(Enum):
 
     OAUTH = "oauth"
     """OAuth credential reference (handled by TokenManager)."""
-
 
 @dataclass
 class ConnectionArg:
@@ -168,7 +162,6 @@ class ConnectionArg:
             result["config_key"] = self.config_key
         return result
 
-
 @dataclass
 class ConnectorInfo:
     """Metadata about a registered connector."""
@@ -229,7 +222,6 @@ class ConnectorInfo:
         """
         return [name for name, arg in self.connection_args.items() if arg.secret]
 
-
 def derive_config_mapping(connector_class: type[Backend]) -> dict[str, str]:
     """Auto-derive config key -> constructor param mapping from CONNECTION_ARGS.
 
@@ -269,7 +261,6 @@ def derive_config_mapping(connector_class: type[Backend]) -> dict[str, str]:
         mapping[config_key] = param_name
 
     return mapping
-
 
 class ConnectorRegistry:
     """Registry for dynamic connector loading and discovery.
@@ -471,7 +462,6 @@ class ConnectorRegistry:
         """Clear all registered connectors. Primarily for testing."""
         cls._base.clear()
 
-
 def register_connector(
     name: str,
     description: str = "",
@@ -519,13 +509,11 @@ def register_connector(
 
     return decorator
 
-
 def _ensure_optional_backends_registered() -> None:
     """Ensure optional backends are registered (lazy loading)."""
     from nexus.backends import _register_optional_backends
 
     _register_optional_backends()
-
 
 def create_connector(name: str, **config: Any) -> Backend:
     """Factory function to create a connector instance by name.
@@ -553,7 +541,6 @@ def create_connector(name: str, **config: Any) -> Backend:
     from nexus.backends.factory import BackendFactory
 
     return BackendFactory.create(name, config)
-
 
 def create_connector_from_config(name: str, backend_config: dict[str, Any]) -> Backend:
     """Factory function to create a connector from a config dict.

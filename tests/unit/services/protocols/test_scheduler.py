@@ -1,7 +1,5 @@
 """Tests for SchedulerProtocol, AgentRequest, and InMemoryScheduler (Issue #1383)."""
 
-from __future__ import annotations
-
 import dataclasses
 
 import pytest
@@ -15,7 +13,6 @@ from nexus.services.protocols.scheduler import (
 # ---------------------------------------------------------------------------
 # AgentRequest frozen dataclass tests
 # ---------------------------------------------------------------------------
-
 
 class TestAgentRequest:
     """Verify AgentRequest is a proper frozen, slots dataclass."""
@@ -76,11 +73,9 @@ class TestAgentRequest:
         }
         assert AgentRequest(**kwargs) == AgentRequest(**kwargs)
 
-
 # ---------------------------------------------------------------------------
 # Protocol structural tests
 # ---------------------------------------------------------------------------
-
 
 class TestSchedulerProtocol:
     def test_expected_methods(self) -> None:
@@ -101,11 +96,9 @@ class TestSchedulerProtocol:
         }
         assert expected <= actual
 
-
 # ---------------------------------------------------------------------------
 # InMemoryScheduler conformance + functional tests
 # ---------------------------------------------------------------------------
-
 
 class TestInMemorySchedulerConformance:
     def test_isinstance_check(self) -> None:
@@ -116,7 +109,6 @@ class TestInMemorySchedulerConformance:
         from tests.unit.core.protocols.test_conformance import assert_protocol_conformance
 
         assert_protocol_conformance(InMemoryScheduler, SchedulerProtocol)
-
 
 @pytest.mark.asyncio
 class TestInMemorySchedulerFunctional:

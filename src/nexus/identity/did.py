@@ -20,8 +20,6 @@ References:
     - Multicodec: https://github.com/multiformats/multicodec
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
@@ -33,7 +31,6 @@ _ED25519_MULTICODEC_PREFIX = bytes([0xED, 0x01])
 
 # Base58btc alphabet (Bitcoin alphabet)
 _BASE58_ALPHABET = b"123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
-
 
 def _base58_encode(data: bytes) -> str:
     """Encode bytes to base58btc string (Bitcoin alphabet).
@@ -67,7 +64,6 @@ def _base58_encode(data: bytes) -> str:
 
     result.reverse()
     return result.decode("ascii")
-
 
 def _base58_decode(encoded: str) -> bytes:
     """Decode a base58btc string to bytes.
@@ -103,7 +99,6 @@ def _base58_decode(encoded: str) -> bytes:
     # Add leading zero bytes
     return b"\x00" * num_leading_ones + result
 
-
 def create_did_key(public_key: Ed25519PublicKey) -> str:
     """Create a did:key identifier from an Ed25519 public key.
 
@@ -119,7 +114,6 @@ def create_did_key(public_key: Ed25519PublicKey) -> str:
     multicodec_bytes = _ED25519_MULTICODEC_PREFIX + raw_bytes
     encoded = _base58_encode(multicodec_bytes)
     return f"did:key:z{encoded}"
-
 
 def resolve_did_key(did: str) -> Ed25519PublicKey:
     """Resolve a did:key identifier to an Ed25519 public key.
@@ -160,7 +154,6 @@ def resolve_did_key(did: str) -> Ed25519PublicKey:
 
     return IdentityCrypto.public_key_from_bytes(raw_key_bytes)
 
-
 def create_did_web(domain: str, agent_id: str) -> str:
     """Create a did:web identifier for a public-facing agent.
 
@@ -184,7 +177,6 @@ def create_did_web(domain: str, agent_id: str) -> str:
     # URL-encode colons in agent_id (replace , with -)
     safe_agent_id = agent_id.replace(",", "-").replace("/", "-")
     return f"did:web:{domain}:agents:{safe_agent_id}"
-
 
 def create_did_document(
     did: str,

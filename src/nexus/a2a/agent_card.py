@@ -5,8 +5,6 @@ registered skills.  The card is built once and cached as pre-serialized
 JSON bytes for zero-copy responses.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from typing import Any
@@ -21,7 +19,6 @@ from nexus.a2a.models import (
 from nexus.constants import DEFAULT_NEXUS_URL
 
 logger = logging.getLogger(__name__)
-
 
 class AgentCardCache:
     """Write-once cache for a single Agent Card.
@@ -82,7 +79,6 @@ class AgentCardCache:
     def get_card(self) -> AgentCard | None:
         """Return the cached ``AgentCard`` instance, or *None* if not yet built."""
         return self._card
-
 
 def build_agent_card(
     *,
@@ -145,11 +141,9 @@ def build_agent_card(
 
     return card
 
-
 # ------------------------------------------------------------------
 # Internal helpers
 # ------------------------------------------------------------------
-
 
 def _map_skills(skills: list[Any]) -> list[AgentSkill]:
     """Map Nexus SkillMetadata objects to A2A AgentSkill models."""
@@ -174,7 +168,6 @@ def _map_skills(skills: list[Any]) -> list[AgentSkill]:
         )
 
     return result
-
 
 def _detect_auth_schemes(auth_provider: Any) -> list[AuthScheme]:
     """Detect authentication schemes from the active auth provider."""

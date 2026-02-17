@@ -8,8 +8,6 @@ Issue #1358:
 All tests use real SpendingPolicyService + SQLite async backend.
 """
 
-from __future__ import annotations
-
 from decimal import Decimal
 from typing import Any
 from unittest.mock import AsyncMock
@@ -27,7 +25,6 @@ from nexus.server.api.v2.routers.pay import _register_pay_exception_handlers, ro
 # =============================================================================
 # Fixtures
 # =============================================================================
-
 
 def _create_app(
     *,
@@ -67,7 +64,6 @@ def _create_app(
     app.dependency_overrides[_get_require_auth()] = mock_auth
     return app
 
-
 @pytest.fixture
 def mock_credits_service():
     service = AsyncMock()
@@ -82,7 +78,6 @@ def mock_credits_service():
     service.transfer_batch.return_value = ["tx-1"]
     service.provision_wallet.return_value = None
     return service
-
 
 @pytest.fixture
 async def async_session_factory():
@@ -99,18 +94,15 @@ async def async_session_factory():
     yield factory
     await engine.dispose()
 
-
 @pytest.fixture
 def policy_service(async_session_factory):
     from nexus.pay.spending_policy_service import SpendingPolicyService
 
     return SpendingPolicyService(session_factory=async_session_factory)
 
-
 # =============================================================================
 # Phase 2: Approval Workflow E2E Tests
 # =============================================================================
-
 
 class TestApprovalWorkflow:
     """Full approval lifecycle: create policy → request approval → approve → list."""
@@ -324,11 +316,9 @@ class TestApprovalWorkflow:
             assert (await client.post("/api/v2/pay/approvals/x/approve")).status_code == 403
             assert (await client.post("/api/v2/pay/approvals/x/reject")).status_code == 403
 
-
 # =============================================================================
 # Phase 3: Rate Limit E2E Tests
 # =============================================================================
-
 
 class TestRateLimits:
     """Policy with rate limits creates policies with rate fields."""
@@ -391,11 +381,9 @@ class TestRateLimits:
             assert data["rate_limits"]["max_tx_per_hour"] == 5
             assert data["rate_limits"]["max_tx_per_day"] == 20
 
-
 # =============================================================================
 # Phase 4: DSL Rules E2E Tests
 # =============================================================================
-
 
 class TestDSLRules:
     """Policy with JSON rules creates and returns rules correctly."""

@@ -10,8 +10,6 @@ This module covers critical security properties:
 - Read set tracking for cache invalidation
 """
 
-from __future__ import annotations
-
 import uuid
 from unittest.mock import MagicMock
 
@@ -26,7 +24,6 @@ from nexus.services.permissions.enforcer import PermissionEnforcer
 # ---------------------------------------------------------------------------
 # OperationContext creation and validation
 # ---------------------------------------------------------------------------
-
 
 class TestOperationContextCreation:
     """Verify OperationContext is constructed correctly and validated."""
@@ -105,11 +102,9 @@ class TestOperationContextCreation:
         ctx = OperationContext(user="alice", groups=[], request_id="custom-123")
         assert ctx.request_id == "custom-123"
 
-
 # ---------------------------------------------------------------------------
 # Permission enum combinations and boundary conditions
 # ---------------------------------------------------------------------------
-
 
 class TestPermissionEnumBoundary:
     """Verify Permission IntFlag boundary conditions and combinations."""
@@ -180,11 +175,9 @@ class TestPermissionEnumBoundary:
         # reaches the else branch and returns 'unknown', not 'none'.
         assert enforcer._permission_to_string(Permission.NONE) == "unknown"
 
-
 # ---------------------------------------------------------------------------
 # Admin context bypass behaviour
 # ---------------------------------------------------------------------------
-
 
 class TestAdminBypassBehaviour:
     """Verify admin bypass is correctly scoped by capabilities, paths, and zones."""
@@ -324,11 +317,9 @@ class TestAdminBypassBehaviour:
         assert entry.allowed is True
         assert entry.bypass_type == "admin"
 
-
 # ---------------------------------------------------------------------------
 # System context behaviour
 # ---------------------------------------------------------------------------
-
 
 class TestSystemBypassBehaviour:
     """Verify system bypass scope and kill-switch."""
@@ -384,11 +375,9 @@ class TestSystemBypassBehaviour:
         ctx = OperationContext(user="system", groups=[], is_system=True)
         assert enforcer.check("/system", Permission.WRITE, ctx) is True
 
-
 # ---------------------------------------------------------------------------
 # Zone ID propagation
 # ---------------------------------------------------------------------------
-
 
 class TestZoneIdPropagation:
     """Verify zone_id flows through permission checks for multi-tenant isolation."""
@@ -430,11 +419,9 @@ class TestZoneIdPropagation:
         ctx = OperationContext(user="alice", groups=[])
         assert ctx.zone_id is None
 
-
 # ---------------------------------------------------------------------------
 # Subject type validation
 # ---------------------------------------------------------------------------
-
 
 class TestSubjectTypeValidation:
     """Verify subject types flow correctly through permission checks."""
@@ -494,11 +481,9 @@ class TestSubjectTypeValidation:
         assert ctx.agent_id == "notebook_xyz"
         assert ctx.get_subject() == ("agent", "notebook_xyz")
 
-
 # ---------------------------------------------------------------------------
 # Read set tracking
 # ---------------------------------------------------------------------------
-
 
 class TestReadSetTracking:
     """Verify read set tracking for cache invalidation (Issue #1166)."""
@@ -552,11 +537,9 @@ class TestReadSetTracking:
         ctx.enable_read_tracking(zone_id="other_zone")
         assert ctx.read_set.zone_id == "other_zone"
 
-
 # ---------------------------------------------------------------------------
 # Secure defaults and deny-by-default
 # ---------------------------------------------------------------------------
-
 
 class TestSecureDefaults:
     """Verify the system is secure by default (deny-by-default)."""
@@ -624,11 +607,9 @@ class TestSecureDefaults:
         result = enforcer.filter_list(["/public.txt", "/secret.txt"], ctx)
         assert result == ["/public.txt"]
 
-
 # ---------------------------------------------------------------------------
 # Agent generation / stale session (Issue #1240)
 # ---------------------------------------------------------------------------
-
 
 class TestStaleSessionDetection:
     """Verify stale agent sessions are rejected during permission checks."""
@@ -744,11 +725,9 @@ class TestStaleSessionDetection:
         assert enforcer.check("/file.txt", Permission.READ, ctx) is True
         agent_registry.get.assert_not_called()
 
-
 # ---------------------------------------------------------------------------
 # Shared stale-session helper (Issue #1445)
 # ---------------------------------------------------------------------------
-
 
 class TestCheckStaleSessionHelper:
     """Tests for the check_stale_session() shared helper function."""
@@ -857,11 +836,9 @@ class TestCheckStaleSessionHelper:
         check_stale_session(registry, ctx)  # Should not raise
         registry.get.assert_not_called()
 
-
 # ---------------------------------------------------------------------------
 # Namespace visibility (Issue #1239)
 # ---------------------------------------------------------------------------
-
 
 class TestNamespaceVisibility:
     """Verify namespace manager hides unmounted paths."""

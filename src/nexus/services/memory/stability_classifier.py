@@ -10,8 +10,6 @@ Usage:
     # StabilityClassification(temporal_stability="static", confidence=0.95, ...)
 """
 
-from __future__ import annotations
-
 import logging
 import re
 from dataclasses import dataclass, field
@@ -24,7 +22,6 @@ MAX_CLASSIFICATION_TEXT_LENGTH = 500
 
 # Valid stability values
 VALID_STABILITIES = ("static", "semi_dynamic", "dynamic")
-
 
 @dataclass(frozen=True)
 class StabilityClassification:
@@ -43,7 +40,6 @@ class StabilityClassification:
     estimated_ttl_days: int | None
     method: str
     signals: list[str] = field(default_factory=list)
-
 
 # Pre-compiled regex patterns for heuristic classification
 STATIC_MARKERS = re.compile(
@@ -98,7 +94,6 @@ DEFAULT_TTL: dict[str, int | None] = {
     "semi_dynamic": 365,  # ~1 year
     "dynamic": 30,  # ~1 month
 }
-
 
 class TemporalStabilityClassifier:
     """Hybrid heuristic+LLM classifier for memory temporal stability.

@@ -14,19 +14,17 @@ Performance:
 Related: Issue #919
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from nexus.rebac.cache.tiger.bitmap_cache import TigerCache
 if TYPE_CHECKING:
     from nexus.rebac.cache.tiger.bitmap_cache import TigerCache
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass
 class VisibilityEntry:
@@ -36,7 +34,6 @@ class VisibilityEntry:
     computed_at: float
     # Reason for visibility (for debugging)
     reason: str = ""
-
 
 class DirectoryVisibilityCache:
     """Cache which directories are visible to each user.

@@ -19,7 +19,6 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-
 class RequestLoggingMiddleware:
     """Logs all incoming HTTP requests.
 
@@ -41,7 +40,6 @@ class RequestLoggingMiddleware:
         )
         return response
 
-
 class RateLimitMiddleware:
     """Implements sliding window rate limiting.
 
@@ -62,7 +60,6 @@ class RateLimitMiddleware:
     async def __call__(self, request: Any) -> Any:
         # Check rate limit before processing
         pass
-
 
 class AuthenticationMiddleware:
     """Validates JWT tokens and attaches user context.
@@ -92,7 +89,6 @@ class AuthenticationMiddleware:
             return await self.app(request)
         # Validate JWT token
         pass
-
 
 class ErrorHandlerMiddleware:
     """Catches exceptions and returns formatted error responses.

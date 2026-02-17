@@ -12,22 +12,17 @@ Note: ``CacheConfig`` configures the kernel's **in-memory LRU caches**
 (Dragonfly/ephemeral KV+PubSub) which is a separate storage medium.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from nexus.constants import DEFAULT_NATS_URL
-
-if TYPE_CHECKING:
-    from nexus.core.cache_invalidation import CacheInvalidationObserver
-    from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
-    from nexus.workflows.protocol import WorkflowProtocol
+from nexus.core.cache_invalidation import CacheInvalidationObserver
+from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
+from nexus.workflows.protocol import WorkflowProtocol
 
 # ---------------------------------------------------------------------------
 # Config dataclasses (frozen — immutable, use dataclasses.replace() to copy)
 # ---------------------------------------------------------------------------
-
 
 @dataclass(frozen=True)
 class CacheConfig:
@@ -47,7 +42,6 @@ class CacheConfig:
     enable_content_cache: bool = True
     content_cache_size_mb: int = 256
 
-
 @dataclass(frozen=True)
 class PermissionConfig:
     """Permission enforcement configuration.
@@ -65,7 +59,6 @@ class PermissionConfig:
     enable_deferred: bool = True
     deferred_flush_interval: float = 0.05
 
-
 @dataclass(frozen=True)
 class DistributedConfig:
     """Distributed coordination configuration.
@@ -81,7 +74,6 @@ class DistributedConfig:
     event_bus_backend: str = "redis"
     nats_url: str = DEFAULT_NATS_URL
 
-
 @dataclass(frozen=True)
 class MemoryConfig:
     """MemGPT 3-tier memory paging configuration (Issue #1258)."""
@@ -89,7 +81,6 @@ class MemoryConfig:
     enable_paging: bool = True
     main_capacity: int = 100
     recall_max_age_hours: float = 24.0
-
 
 @dataclass(frozen=True)
 class ParseConfig:
@@ -102,11 +93,9 @@ class ParseConfig:
     auto_parse: bool = True
     providers: tuple[dict[str, Any], ...] | None = None
 
-
 # ---------------------------------------------------------------------------
 # KernelServices — frozen container for injected service dependencies
 # ---------------------------------------------------------------------------
-
 
 @dataclass(frozen=True)
 class KernelServices:
@@ -173,11 +162,9 @@ class KernelServices:
     search_service: Any = None
     events_service: Any = None
 
-
 # ---------------------------------------------------------------------------
 # Observability (unchanged from before)
 # ---------------------------------------------------------------------------
-
 
 @dataclass(frozen=True)
 class ObservabilityConfig:

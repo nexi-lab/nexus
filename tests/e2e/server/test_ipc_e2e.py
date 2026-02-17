@@ -10,8 +10,6 @@ Tests the full IPC flow through the actual FastAPI server:
 Uses a custom auth_server fixture that starts nexus serve with --api-key.
 """
 
-from __future__ import annotations
-
 import json
 import os
 import signal
@@ -30,13 +28,11 @@ import pytest
 
 _src_path = Path(__file__).parent.parent.parent / "src"
 
-
 def _find_free_port() -> int:
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
         s.bind(("", 0))
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         return s.getsockname()[1]
-
 
 @pytest.fixture(scope="function")
 def auth_server(tmp_path):
@@ -140,7 +136,6 @@ def auth_server(tmp_path):
         process.kill()
         process.wait()
 
-
 @pytest.fixture(scope="function")
 def auth_client(auth_server) -> httpx.Client:
     """Authenticated httpx client with admin Bearer token."""
@@ -152,7 +147,6 @@ def auth_client(auth_server) -> httpx.Client:
     ) as client:
         yield client
 
-
 @pytest.fixture(scope="function")
 def unauth_client(auth_server) -> httpx.Client:
     """Unauthenticated httpx client (no Bearer token)."""
@@ -162,7 +156,6 @@ def unauth_client(auth_server) -> httpx.Client:
         trust_env=False,
     ) as client:
         yield client
-
 
 def _rpc_call(
     client: httpx.Client,
@@ -191,13 +184,11 @@ def _rpc_call(
     result = data.get("result", data) if isinstance(data, dict) else data
     return result if isinstance(result, dict) else {"raw": result}
 
-
 def _write_file(client: httpx.Client, path: str, content: str | bytes) -> dict:
     """Write a file via RPC."""
     if isinstance(content, bytes):
         content = content.decode("utf-8")
     return _rpc_call(client, "write", {"path": path, "content": content})
-
 
 def _read_file(client: httpx.Client, path: str) -> str:
     """Read a file via RPC. Returns content as string."""
@@ -226,17 +217,14 @@ def _read_file(client: httpx.Client, path: str) -> str:
         return str(content)
     return str(result)
 
-
 def _list_dir(client: httpx.Client, path: str) -> list:
     """List directory via RPC. Returns list of file/dir entries."""
     result = _rpc_call(client, "list", {"path": path})
     return result.get("files", [])
 
-
 def _mkdir(client: httpx.Client, path: str) -> dict:
     """Create directory via RPC."""
     return _rpc_call(client, "mkdir", {"path": path, "exist_ok": True})
-
 
 def _make_envelope(
     sender: str,
@@ -257,7 +245,6 @@ def _make_envelope(
         "ttl_seconds": None,
         "payload": payload or {"action": "test"},
     }
-
 
 class TestIPCViaServer:
     """E2E tests for IPC through the actual Nexus server with auth enabled."""
@@ -367,7 +354,6 @@ class TestIPCViaServer:
         # Discovery: read AGENT.json for capabilities
         search_card = json.loads(_read_file(auth_client, "/agents/search_agent/AGENT.json"))
         assert "semantic_search" in search_card["skills"]
-
 
 class TestIPCLocal:
     """Lightweight IPC tests using the IPC module directly (no server).

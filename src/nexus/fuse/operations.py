@@ -4,8 +4,6 @@ This module implements the low-level FUSE operations that map filesystem
 calls to Nexus filesystem operations.
 """
 
-from __future__ import annotations
-
 import asyncio
 import errno
 import functools
@@ -52,6 +50,10 @@ except ImportError:
     LocalDiskCache = None  # type: ignore[misc,assignment]
     get_local_disk_cache = None  # type: ignore[assignment]
 
+from nexus.core.filesystem import NexusFilesystem
+from nexus.core.permissions import OperationContext
+from nexus.fuse.mount import MountMode
+from nexus.rebac.namespace_manager import NamespaceManager
 if TYPE_CHECKING:
     from nexus.core.filesystem import NexusFilesystem
     from nexus.core.permissions import OperationContext
@@ -75,7 +77,6 @@ except ImportError:
     FileEventType = None  # type: ignore[misc,assignment]
 
 logger = logging.getLogger(__name__)
-
 
 def _handle_remote_exception(e: Exception, operation: str, path: str, **context: Any) -> NoReturn:
     """Handle remote-specific exceptions with better error messages.
@@ -105,7 +106,6 @@ def _handle_remote_exception(e: Exception, operation: str, path: str, **context:
     logger.exception(f"[FUSE-{operation}] Unexpected error: {path} ({context_str})")
     raise FuseOSError(errno.EIO) from e
 
-
 @dataclass(frozen=True)
 class MetadataObj:
     """Immutable metadata container for FUSE attribute responses (C2-B).
@@ -122,7 +122,7 @@ class MetadataObj:
     is_directory: bool | None = None
 
     @classmethod
-    def from_dict(cls, d: dict[str, Any]) -> MetadataObj:
+    def from_dict(cls, d: dict[str, Any]) -> "MetadataObj":
         return cls(
             path=d.get("path"),
             size=d.get("size"),
@@ -131,7 +131,6 @@ class MetadataObj:
             mode=d.get("mode"),
             is_directory=d.get("is_directory"),
         )
-
 
 def fuse_operation(op_name: str) -> Callable[..., Any]:
     """Decorator for FUSE operations that standardizes error handling (C1-C).
@@ -164,7 +163,6 @@ def fuse_operation(op_name: str) -> Callable[..., Any]:
         return wrapper
 
     return decorator
-
 
 class NexusFUSEOperations(Operations):
     """FUSE operations implementation for Nexus filesystem.

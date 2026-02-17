@@ -9,8 +9,6 @@ Verifies:
 - Cross-module wiring (search → context_builder, ace → protocol)
 """
 
-from __future__ import annotations
-
 import importlib
 
 import pytest
@@ -18,7 +16,6 @@ import pytest
 # ---------------------------------------------------------------------------
 # 1. Import path validation
 # ---------------------------------------------------------------------------
-
 
 class TestImportPaths:
     """Verify all import paths resolve correctly after the move."""
@@ -107,11 +104,9 @@ class TestImportPaths:
         assert LLMBrickManifest is not None
         assert verify_imports is not None
 
-
 # ---------------------------------------------------------------------------
 # 2. Protocol compliance
 # ---------------------------------------------------------------------------
-
 
 class TestProtocolCompliance:
     """Verify protocol contracts are satisfied."""
@@ -141,11 +136,9 @@ class TestProtocolCompliance:
         assert LLMProviderProtocol is not None
         assert LLMServiceProtocol is not None
 
-
 # ---------------------------------------------------------------------------
 # 3. Brick manifest
 # ---------------------------------------------------------------------------
-
 
 class TestBrickManifest:
     """Verify LLM brick manifest and import validation."""
@@ -197,11 +190,9 @@ class TestBrickManifest:
         assert "nexus.llm.exceptions" in status
         assert "nexus.llm.cancellation" in status
 
-
 # ---------------------------------------------------------------------------
 # 4. Cross-module wiring
 # ---------------------------------------------------------------------------
-
 
 class TestCrossModuleWiring:
     """Verify cross-module imports resolve without circular dependencies."""
@@ -239,11 +230,9 @@ class TestCrossModuleWiring:
         finally:
             sys.modules.update(saved)
 
-
 # ---------------------------------------------------------------------------
 # 5. Provider caching in LLMService
 # ---------------------------------------------------------------------------
-
 
 class TestProviderCaching:
     """Verify LLMService caches providers by config hash."""
@@ -257,11 +246,9 @@ class TestProviderCaching:
         assert isinstance(service._provider_cache, dict)
         assert len(service._provider_cache) == 0
 
-
 # ---------------------------------------------------------------------------
 # 6. Context builder with ChunkLike
 # ---------------------------------------------------------------------------
-
 
 class TestContextBuilderIntegration:
     """Verify ContextBuilder works with different ChunkLike implementations."""
@@ -330,11 +317,9 @@ class TestContextBuilderIntegration:
         assert len(citations) == 1
         assert citations[0].path == "/docs/api.md"
 
-
 # ---------------------------------------------------------------------------
 # 7. Performance validation
 # ---------------------------------------------------------------------------
-
 
 class TestPerformanceValidation:
     """Basic performance checks for import times."""

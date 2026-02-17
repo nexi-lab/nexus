@@ -3,12 +3,9 @@
 Tests emitter handler calls, exception isolation, and handler management.
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.scheduler.events import AgentStateEmitter, AgentStateEvent
-
 
 def _make_event(**kwargs) -> AgentStateEvent:
     defaults = {
@@ -20,7 +17,6 @@ def _make_event(**kwargs) -> AgentStateEvent:
     }
     defaults.update(kwargs)
     return AgentStateEvent(**defaults)
-
 
 class TestAgentStateEvent:
     """Test event dataclass."""
@@ -34,7 +30,6 @@ class TestAgentStateEvent:
         event = _make_event(agent_id="x", new_state="SUSPENDED")
         assert event.agent_id == "x"
         assert event.new_state == "SUSPENDED"
-
 
 class TestAgentStateEmitter:
     """Test emitter handler management and dispatch."""

@@ -14,8 +14,6 @@ All strategies are explicitly bounded to prevent pathological inputs:
   - Numeric ranges: realistic bounds
 """
 
-from __future__ import annotations
-
 from hypothesis import strategies as st
 
 from nexus.core.permissions import OperationContext
@@ -40,7 +38,6 @@ _PATH_SEGMENT = st.text(
     max_size=50,
 )
 
-
 @st.composite
 def valid_path(draw: st.DrawFn, *, max_depth: int = 8) -> str:
     """Generate a valid absolute virtual path.
@@ -52,7 +49,6 @@ def valid_path(draw: st.DrawFn, *, max_depth: int = 8) -> str:
     path = "/" + "/".join(segments)
     # Truncate to 255 if needed
     return path[:255]
-
 
 @st.composite
 def valid_namespaced_path(
@@ -69,14 +65,12 @@ def valid_namespaced_path(
     rest = draw(valid_path(max_depth=5))
     return f"/{namespace}{rest}"
 
-
 @st.composite
 def valid_mount_point(draw: st.DrawFn) -> str:
     """Generate a valid mount point path (1-3 segments)."""
     depth = draw(st.integers(min_value=1, max_value=3))
     segments = draw(st.lists(_PATH_SEGMENT, min_size=depth, max_size=depth))
     return "/" + "/".join(segments)
-
 
 @st.composite
 def path_traversal_attempt(draw: st.DrawFn) -> str:
@@ -99,11 +93,9 @@ def path_traversal_attempt(draw: st.DrawFn) -> str:
     )
     return base + traversal
 
-
 # ---------------------------------------------------------------------------
 # ReadSet strategies
 # ---------------------------------------------------------------------------
-
 
 @st.composite
 def read_set_entry(draw: st.DrawFn) -> ReadSetEntry:
@@ -123,7 +115,6 @@ def read_set_entry(draw: st.DrawFn) -> ReadSetEntry:
         timestamp=draw(st.floats(min_value=0, max_value=2_000_000_000)),
     )
 
-
 # ---------------------------------------------------------------------------
 # OperationContext strategies
 # ---------------------------------------------------------------------------
@@ -133,7 +124,6 @@ _IDENTIFIER = st.text(
     min_size=1,
     max_size=30,
 )
-
 
 @st.composite
 def operation_context(draw: st.DrawFn) -> OperationContext:
@@ -151,11 +141,9 @@ def operation_context(draw: st.DrawFn) -> OperationContext:
         subject_type=subject_type,
     )
 
-
 # ---------------------------------------------------------------------------
 # Scheduler strategies
 # ---------------------------------------------------------------------------
-
 
 @st.composite
 def agent_request(
@@ -173,11 +161,9 @@ def agent_request(
         payload=draw(st.fixed_dictionaries({})),
     )
 
-
 # ---------------------------------------------------------------------------
 # AgentInfo / Generation Counter strategies
 # ---------------------------------------------------------------------------
-
 
 @st.composite
 def agent_info(
@@ -195,7 +181,6 @@ def agent_info(
         generation=draw(st.integers(min_value=0, max_value=1_000_000)),
     )
 
-
 # ---------------------------------------------------------------------------
 # HookEngine strategies
 # ---------------------------------------------------------------------------
@@ -211,7 +196,6 @@ _HOOK_PHASES = [
     "post_mkdir",
 ]
 
-
 @st.composite
 def hook_spec(draw: st.DrawFn) -> HookSpec:
     """Generate a valid HookSpec."""
@@ -220,7 +204,6 @@ def hook_spec(draw: st.DrawFn) -> HookSpec:
         handler_name=draw(_IDENTIFIER),
         priority=draw(st.integers(min_value=-10, max_value=10)),
     )
-
 
 @st.composite
 def hook_context(draw: st.DrawFn) -> HookContext:

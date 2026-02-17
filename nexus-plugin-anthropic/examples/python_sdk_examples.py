@@ -21,13 +21,11 @@ if "ANTHROPIC_API_KEY" not in os.environ:
     )
 os.environ["NEXUS_DATA_DIR"] = "./nexus-sdk-examples-data"
 
-
 def print_section(title: str) -> None:
     """Print a section header."""
     print("\n" + "=" * 70)
     print(f"{title}")
     print("=" * 70)
-
 
 async def example_1_custom_nexus_skills() -> None:
     """Example 1: Working with Custom Nexus Skills."""
@@ -115,7 +113,6 @@ async def example_1_custom_nexus_skills() -> None:
 
     nx.close()
 
-
 async def example_2_anthropic_skills_api() -> None:
     """Example 2: Using Anthropic Skills API."""
     print_section("EXAMPLE 2: Using Anthropic Skills API")
@@ -176,7 +173,6 @@ async def example_2_anthropic_skills_api() -> None:
 
     nx.close()
 
-
 async def example_3_github_skills() -> None:
     """Example 3: Importing Skills from GitHub."""
     print_section("EXAMPLE 3: Importing Skills from GitHub")
@@ -225,7 +221,6 @@ async def example_3_github_skills() -> None:
             print(f"✗ {skill}: {e}")
 
     nx.close()
-
 
 async def example_4_advanced_workflow() -> None:
     """Example 4: Advanced Workflow - GitHub Import + Customization + Upload."""
@@ -313,7 +308,6 @@ async def example_4_advanced_workflow() -> None:
 
     nx.close()
 
-
 async def example_5_using_with_claude() -> None:
     """Example 5: Using Skills with Claude API Messages."""
     print_section("EXAMPLE 5: Using Skills with Claude API")
@@ -379,7 +373,6 @@ async def example_5_using_with_claude() -> None:
     )
     """)
 
-
 async def main() -> None:
     """Run all examples."""
     print("""
@@ -419,7 +412,6 @@ async def main() -> None:
         import traceback
 
         traceback.print_exc()
-
 
 if __name__ == "__main__":
     asyncio.run(main())

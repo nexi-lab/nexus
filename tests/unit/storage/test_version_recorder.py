@@ -4,8 +4,6 @@ Tests all write/update/delete paths and verifies field mapping
 from FileMetadata (proto) to FilePathModel (SQLAlchemy).
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 import pytest
@@ -19,7 +17,6 @@ from nexus.storage.version_recorder import VersionRecorder
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
 
 @pytest.fixture
 def engine():
@@ -35,7 +32,6 @@ def engine():
     Base.metadata.create_all(eng)
     return eng
 
-
 @pytest.fixture
 def session(engine):
     """Yield a SQLAlchemy session, rollback on teardown."""
@@ -43,7 +39,6 @@ def session(engine):
     sess = factory()
     yield sess
     sess.close()
-
 
 def _make_metadata(
     path: str = "/test/file.txt",
@@ -78,11 +73,9 @@ def _make_metadata(
         modified_at=modified_at or now,
     )
 
-
 # ---------------------------------------------------------------------------
 # TestRecordCreate
 # ---------------------------------------------------------------------------
-
 
 class TestRecordCreate:
     """Tests for VersionRecorder._record_create (via record_write(is_new=True))."""
@@ -242,11 +235,9 @@ class TestRecordCreate:
 
         assert fp.zone_id == "root"
 
-
 # ---------------------------------------------------------------------------
 # TestRecordUpdate
 # ---------------------------------------------------------------------------
-
 
 class TestRecordUpdate:
     """Tests for VersionRecorder._record_update (via record_write(is_new=False))."""
@@ -369,11 +360,9 @@ class TestRecordUpdate:
         assert fp.content_hash == "orphan-hash"
         assert fp.current_version == 1  # Created as version 1
 
-
 # ---------------------------------------------------------------------------
 # TestRecordDelete
 # ---------------------------------------------------------------------------
-
 
 class TestRecordDelete:
     """Tests for VersionRecorder.record_delete."""
@@ -419,11 +408,9 @@ class TestRecordDelete:
         recorder3.record_delete("/test/file.txt")
         session.commit()
 
-
 # ---------------------------------------------------------------------------
 # TestTimestampHandling
 # ---------------------------------------------------------------------------
-
 
 class TestTimestampHandling:
     """Tests for timezone-aware to naive datetime conversion."""

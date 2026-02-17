@@ -7,7 +7,6 @@ import pytest
 from nexus.skills.exceptions import SkillValidationError
 from nexus.skills.models import Skill, SkillMetadata
 
-
 def test_skill_metadata_initialization() -> None:
     """Test SkillMetadata initialization with required fields."""
     metadata = SkillMetadata(
@@ -23,7 +22,6 @@ def test_skill_metadata_initialization() -> None:
     assert metadata.metadata == {}
     assert metadata.file_path is None
     assert metadata.tier is None
-
 
 def test_skill_metadata_with_all_fields() -> None:
     """Test SkillMetadata with all optional fields."""
@@ -52,7 +50,6 @@ def test_skill_metadata_with_all_fields() -> None:
     assert metadata.file_path == "/path/to/SKILL.md"
     assert metadata.tier == "agent"
 
-
 def test_skill_metadata_validation_missing_name() -> None:
     """Test that validation fails when name is missing."""
     metadata = SkillMetadata(name="", description="Test")
@@ -60,14 +57,12 @@ def test_skill_metadata_validation_missing_name() -> None:
     with pytest.raises(SkillValidationError, match="skill name is required"):
         metadata.validate()
 
-
 def test_skill_metadata_validation_missing_description() -> None:
     """Test that validation fails when description is missing."""
     metadata = SkillMetadata(name="test-skill", description="")
 
     with pytest.raises(SkillValidationError, match="skill description is required"):
         metadata.validate()
-
 
 def test_skill_metadata_validation_invalid_name() -> None:
     """Test that validation fails with invalid name characters."""
@@ -79,7 +74,6 @@ def test_skill_metadata_validation_invalid_name() -> None:
     with pytest.raises(SkillValidationError, match="skill name must be alphanumeric"):
         metadata.validate()
 
-
 def test_skill_metadata_validation_valid_names() -> None:
     """Test that validation passes with valid name formats."""
     valid_names = ["skill", "my-skill", "skill_123", "my-skill-v2"]
@@ -87,7 +81,6 @@ def test_skill_metadata_validation_valid_names() -> None:
     for name in valid_names:
         metadata = SkillMetadata(name=name, description="Test")
         metadata.validate()  # Should not raise
-
 
 def test_skill_metadata_validation_invalid_tier() -> None:
     """Test that validation fails with invalid tier."""
@@ -100,7 +93,6 @@ def test_skill_metadata_validation_invalid_tier() -> None:
     with pytest.raises(SkillValidationError, match="skill tier must be one of"):
         metadata.validate()
 
-
 def test_skill_metadata_validation_valid_tiers() -> None:
     """Test that validation passes with valid tiers."""
     for tier in ["agent", "zone", "system"]:
@@ -111,7 +103,6 @@ def test_skill_metadata_validation_valid_tiers() -> None:
         )
         metadata.validate()  # Should not raise
 
-
 def test_skill_initialization() -> None:
     """Test Skill initialization."""
     metadata = SkillMetadata(name="test-skill", description="Test")
@@ -120,14 +111,12 @@ def test_skill_initialization() -> None:
     assert skill.metadata == metadata
     assert skill.content == "# Skill Content\n\nSome markdown."
 
-
 def test_skill_validation() -> None:
     """Test Skill validation."""
     metadata = SkillMetadata(name="test-skill", description="Test")
     skill = Skill(metadata=metadata, content="# Skill Content")
 
     skill.validate()  # Should not raise
-
 
 def test_skill_validation_missing_content() -> None:
     """Test that validation fails when content is missing."""
@@ -136,7 +125,6 @@ def test_skill_validation_missing_content() -> None:
 
     with pytest.raises(SkillValidationError, match="skill content is required"):
         skill.validate()
-
 
 def test_skill_validation_invalid_metadata() -> None:
     """Test that validation fails when metadata is invalid."""

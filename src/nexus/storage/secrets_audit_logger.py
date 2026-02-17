@@ -8,8 +8,6 @@ Write performance: callers should use ``asyncio.create_task()`` to
 fire-and-forget audit writes so they never block the hot path.
 """
 
-from __future__ import annotations
-
 import hashlib
 import hmac
 import json
@@ -26,28 +24,23 @@ from nexus.storage.query_mixin import AppendOnlyQueryMixin
 
 logger = logging.getLogger(__name__)
 
-
 # ---------------------------------------------------------------------------
 # Immutability guards
 # ---------------------------------------------------------------------------
-
 
 @event.listens_for(SecretsAuditLogModel, "before_update")
 def _reject_update(mapper: Any, connection: Any, target: Any) -> None:  # noqa: ARG001
     """Prevent any UPDATE on secrets audit log records at the ORM level."""
     raise RuntimeError("Secrets audit log records are immutable: UPDATE not allowed")
 
-
 @event.listens_for(SecretsAuditLogModel, "before_delete")
 def _reject_delete(mapper: Any, connection: Any, target: Any) -> None:  # noqa: ARG001
     """Prevent any DELETE on secrets audit log records at the ORM level."""
     raise RuntimeError("Secrets audit log records are immutable: DELETE not allowed")
 
-
 # ---------------------------------------------------------------------------
 # Hash helpers
 # ---------------------------------------------------------------------------
-
 
 def compute_record_hash(
     *,
@@ -79,7 +72,6 @@ def compute_record_hash(
     )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
-
 def compute_metadata_hash(details: dict[str, Any] | None) -> str | None:
     """SHA-256 of deterministically-serialized details, or None."""
     if not details:
@@ -87,11 +79,9 @@ def compute_metadata_hash(details: dict[str, Any] | None) -> str | None:
     serialized = json.dumps(details, sort_keys=True, default=str)
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
-
 # ---------------------------------------------------------------------------
 # SecretsAuditLogger
 # ---------------------------------------------------------------------------
-
 
 class SecretsAuditLogger:
     """Append-only secrets audit logger with query capabilities.

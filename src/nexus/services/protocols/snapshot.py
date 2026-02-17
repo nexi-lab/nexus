@@ -7,8 +7,6 @@ or rollback to the pre-transaction state.
 Follows patterns from hook_engine.py.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Protocol, runtime_checkable
@@ -16,7 +14,6 @@ from typing import Any, Protocol, runtime_checkable
 # ---------------------------------------------------------------------------
 # Data models (frozen — immutable value objects)
 # ---------------------------------------------------------------------------
-
 
 @dataclass(frozen=True, slots=True)
 class TransactionInfo:
@@ -42,7 +39,6 @@ class TransactionInfo:
     expires_at: datetime
     entry_count: int
 
-
 @dataclass(frozen=True, slots=True)
 class SnapshotEntry:
     """Immutable record of a single tracked file operation.
@@ -67,7 +63,6 @@ class SnapshotEntry:
     new_hash: str | None
     created_at: datetime
 
-
 @dataclass(frozen=True, slots=True)
 class ConflictInfo:
     """Information about a detected conflict during commit.
@@ -84,11 +79,9 @@ class ConflictInfo:
     current_hash: str | None
     reason: str
 
-
 # ---------------------------------------------------------------------------
 # Protocol
 # ---------------------------------------------------------------------------
-
 
 @runtime_checkable
 class SnapshotServiceProtocol(Protocol):

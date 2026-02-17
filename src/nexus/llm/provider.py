@@ -1,7 +1,5 @@
 """Base LLM provider interface and implementation using litellm."""
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import copy
@@ -92,7 +90,6 @@ LLM_RETRY_EXCEPTIONS = (
     LLMNoResponseError,
 )
 
-
 def retry_decorator(
     num_retries: int = 3,
     retry_exceptions: tuple[type[Exception], ...] = LLM_RETRY_EXCEPTIONS,
@@ -110,7 +107,6 @@ def retry_decorator(
         reraise=True,
     )
 
-
 def async_retry_decorator(
     num_retries: int = 3,
     retry_exceptions: tuple[type[Exception], ...] = LLM_RETRY_EXCEPTIONS,
@@ -127,7 +123,6 @@ def async_retry_decorator(
         retry=retry_if_exception_type(retry_exceptions),
         reraise=True,
     )
-
 
 class LLMResponse(ABC):
     """Response from an LLM completion."""
@@ -168,7 +163,6 @@ class LLMResponse(ABC):
         """Raw response from the provider."""
         pass
 
-
 class LiteLLMResponse(LLMResponse):
     """Response wrapper for litellm responses."""
 
@@ -207,7 +201,6 @@ class LiteLLMResponse(LLMResponse):
     @property
     def raw_response(self) -> ModelResponse:
         return self._response
-
 
 class LLMProvider(ABC):
     """Abstract base class for LLM providers."""
@@ -336,7 +329,7 @@ class LLMProvider(ABC):
         self._token_count_cache.clear()
 
     @classmethod
-    def from_config(cls, config: LLMConfig) -> LLMProvider:
+    def from_config(cls, config: LLMConfig) -> "LLMProvider":
         """Create a provider from config.
 
         Args:
@@ -347,7 +340,6 @@ class LLMProvider(ABC):
         """
         # Use LiteLLM provider as default (supports all providers)
         return LiteLLMProvider(config)
-
 
 class LiteLLMProvider(LLMProvider):
     """LLM provider using litellm for multi-provider support."""

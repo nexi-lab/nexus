@@ -7,17 +7,15 @@ extra fields for log aggregation and alerting.
 Issue #1000: Enhance agent sandboxing with network isolation.
 """
 
-from __future__ import annotations
-
 import logging
 import sys
 from typing import TYPE_CHECKING, Any
 
+from nexus.sandbox.security_profile import SandboxSecurityProfile
 if TYPE_CHECKING:
     from nexus.sandbox.security_profile import SandboxSecurityProfile
 
 logger = logging.getLogger("nexus.sandbox.audit")
-
 
 class SandboxAuditLogger:
     """Logs sandbox security events for monitoring and alerting.

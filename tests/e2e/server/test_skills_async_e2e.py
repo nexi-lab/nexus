@@ -19,8 +19,6 @@ established via the ``X-Nexus-Subject`` header so that skill ownership
 checks pass (skill paths contain ``/user/admin/``).
 """
 
-from __future__ import annotations
-
 import base64
 import io
 import time
@@ -32,17 +30,14 @@ HEADERS = {
     "X-Nexus-Zone-Id": "root",
 }
 
-
 def _b64(text: str) -> dict:
     """Encode string as RPC bytes value."""
     return {"__type__": "bytes", "data": base64.b64encode(text.encode()).decode()}
-
 
 OTHER_USER_HEADERS = {
     "X-Nexus-Subject": "user:bob",
     "X-Nexus-Zone-Id": "default",
 }
-
 
 def rpc(client, method: str, params: dict | None = None, headers: dict | None = None) -> dict:
     """Make a JSON-RPC call and return the parsed response."""
@@ -55,7 +50,6 @@ def rpc(client, method: str, params: dict | None = None, headers: dict | None = 
     resp = client.post(f"/api/nfs/{method}", json=body, headers=headers or HEADERS)
     return {"status": resp.status_code, "body": resp.json()}
 
-
 def rpc_result(client, method: str, params: dict | None = None, headers: dict | None = None):
     """Make a JSON-RPC call and return just the result (assert 200 + no error)."""
     data = rpc(client, method, params, headers=headers)
@@ -66,11 +60,9 @@ def rpc_result(client, method: str, params: dict | None = None, headers: dict | 
     )
     return body.get("result")
 
-
 def write_file(client, path: str, text: str):
     """Write a file via RPC with proper bytes encoding."""
     return rpc_result(client, "write", {"path": path, "content": _b64(text)})
-
 
 def write_skill(client, skill_dir: str, text: str):
     """Write a SKILL.md and wait for deferred permission buffer to flush.
@@ -83,9 +75,7 @@ def write_skill(client, skill_dir: str, text: str):
     write_file(client, f"{skill_dir}SKILL.md", text)
     time.sleep(0.2)  # Allow deferred buffer flush (50ms interval × 3+ cycles)
 
-
 # ─── Skills Endpoints ──────────────────────────────────────────────────
-
 
 class TestSkillsDiscoverE2E:
     """skills_discover through FastAPI async dispatch."""
@@ -112,7 +102,6 @@ class TestSkillsDiscoverE2E:
         assert result["count"] >= 1
         names = [s["name"] for s in result["skills"]]
         assert "E2E Test Skill" in names
-
 
 class TestSkillsSubscribeE2E:
     """skills_subscribe / skills_unsubscribe through FastAPI."""
@@ -144,7 +133,6 @@ class TestSkillsSubscribeE2E:
         assert unsub2["success"] is True
         assert unsub2["was_subscribed"] is False
 
-
 class TestSkillsLoadE2E:
     """skills_load through FastAPI."""
 
@@ -162,7 +150,6 @@ class TestSkillsLoadE2E:
         assert loaded["owner"] == "admin"
         assert "Instructions" in loaded["content"]
         assert loaded["metadata"]["version"] == "3.0"
-
 
 class TestSkillsPromptContextE2E:
     """skills_get_prompt_context through FastAPI."""
@@ -186,7 +173,6 @@ class TestSkillsPromptContextE2E:
         result = rpc_result(test_app, "skills_get_prompt_context")
         assert result["count"] >= 1
         assert "PromptCtx Skill" in result["xml"]
-
 
 class TestSkillsShareE2E:
     """skills_share / skills_unshare through FastAPI."""
@@ -216,9 +202,7 @@ class TestSkillsShareE2E:
         )
         assert unshared["success"] is True
 
-
 # ─── Skills Export / Import / Validate ──────────────────────────────────
-
 
 def _make_skill_zip(name: str = "Imported", description: str = "A test skill") -> str:
     """Create a minimal .skill ZIP and return base64-encoded data."""
@@ -228,7 +212,6 @@ def _make_skill_zip(name: str = "Imported", description: str = "A test skill") -
         # ZIP must contain SKILL.md inside a named folder (e.g., name/SKILL.md)
         zf.writestr(f"{name}/SKILL.md", skill_md)
     return base64.b64encode(buf.getvalue()).decode()
-
 
 class TestSkillsExportE2E:
     """skills_export through FastAPI async dispatch."""
@@ -249,7 +232,6 @@ class TestSkillsExportE2E:
         )
         # Export returns dict with zip_data (base64) or file path
         assert isinstance(result, dict)
-
 
 class TestSkillsValidateZipE2E:
     """skills_validate_zip through FastAPI async dispatch."""
@@ -276,7 +258,6 @@ class TestSkillsValidateZipE2E:
         assert isinstance(result, dict)
         assert result.get("valid") is False
 
-
 class TestSkillsImportE2E:
     """skills_import through FastAPI async dispatch."""
 
@@ -292,9 +273,7 @@ class TestSkillsImportE2E:
         assert "imported_skills" in result
         assert "ImportedSkill" in result["imported_skills"]
 
-
 # ─── Share Links Endpoints ──────────────────────────────────────────────
-
 
 class TestShareLinksE2E:
     """Share link endpoints through FastAPI async dispatch.
@@ -392,9 +371,7 @@ class TestShareLinksE2E:
         assert "data" in logs
         assert logs["data"]["count"] >= 1
 
-
 # ─── Performance: Discover Timing ─────────────────────────────────────
-
 
 class TestSkillsDiscoverTimingE2E:
     """Verify discover performance with multiple skills (Issue #1400)."""
@@ -442,9 +419,7 @@ class TestSkillsDiscoverTimingE2E:
         assert "<available_skills>" in result["xml"]
         assert elapsed < 2.0, f"Prompt context took {elapsed:.2f}s, expected < 2s"
 
-
 # ─── Cross-User Permission Enforcement ────────────────────────────────
-
 
 class TestSkillsPermissionEnforcementE2E:
     """Verify non-owner users cannot access private skills (Issue #1400).

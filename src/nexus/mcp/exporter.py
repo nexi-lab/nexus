@@ -6,8 +6,6 @@ directory, making them discoverable through the skills system.
 Based on: https://www.anthropic.com/engineering/code-execution-with-mcp
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from datetime import UTC, datetime
@@ -16,11 +14,11 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.mcp.models import MCPToolConfig, MCPToolDefinition, MCPToolExample
 
+from nexus.skills.protocols import NexusFilesystem
 if TYPE_CHECKING:
     from nexus.skills.protocols import NexusFilesystem
 
 logger = logging.getLogger(__name__)
-
 
 # Built-in Nexus MCP tools with their documentation
 NEXUS_TOOLS: list[dict[str, Any]] = [
@@ -550,7 +548,6 @@ NEXUS_TOOLS: list[dict[str, Any]] = [
         "related_tools": ["nexus_sandbox_create", "nexus_sandbox_list"],
     },
 ]
-
 
 class MCPToolExporter:
     """Export Nexus MCP tools to Skills format.

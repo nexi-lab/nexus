@@ -4,8 +4,6 @@ Tests that admins with admin:read:* cannot access files from other zones
 unless they have MANAGE_ZONES capability (system admin only).
 """
 
-from __future__ import annotations
-
 import tempfile
 from collections.abc import Generator
 from pathlib import Path
@@ -20,13 +18,11 @@ from nexus.server.auth.user_helpers import add_user_to_zone
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
-
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
     """Create a temporary directory for tests."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
-
 
 @pytest.fixture
 def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
@@ -41,7 +37,6 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     )
     yield nx
     nx.close()
-
 
 class TestZoneBoundarySecurity:
     """Test zone boundary security for admin bypass."""

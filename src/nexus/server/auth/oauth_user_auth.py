@@ -35,7 +35,6 @@ from nexus.storage.models import UserModel, UserOAuthAccountModel
 
 logger = logging.getLogger(__name__)
 
-
 class OAuthUserAuth:
     """OAuth authentication provider for user login.
 

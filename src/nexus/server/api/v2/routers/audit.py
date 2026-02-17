@@ -11,8 +11,6 @@ FastAPI auto-dispatches them to a threadpool.  This prevents blocking
 the asyncio event loop during synchronous SQLAlchemy I/O.
 """
 
-from __future__ import annotations
-
 import csv
 import io
 import json
@@ -38,7 +36,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/audit", tags=["audit"])
 
-
 def _row_to_dict(row: Any) -> dict[str, Any]:
     """Eagerly extract all fields from an ORM row into a plain dict.
 
@@ -62,11 +59,9 @@ def _row_to_dict(row: Any) -> dict[str, Any]:
         "transfer_id": row.transfer_id,
     }
 
-
 def _dict_to_response(d: dict[str, Any]) -> AuditTransactionResponse:
     """Convert a plain dict to API response model."""
     return AuditTransactionResponse(**d)
-
 
 def _build_filters(
     zone_id: str,
@@ -97,11 +92,9 @@ def _build_filters(
         "amount_max": amount_max,
     }
 
-
 # --------------------------------------------------------------------------
 # List transactions
 # --------------------------------------------------------------------------
-
 
 @router.get("/transactions")
 def list_transactions(
@@ -156,11 +149,9 @@ def list_transactions(
         logger.error("Audit query error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to query audit transactions") from e
 
-
 # --------------------------------------------------------------------------
 # Aggregations
 # --------------------------------------------------------------------------
-
 
 @router.get("/transactions/aggregations")
 def get_aggregations(
@@ -178,11 +169,9 @@ def get_aggregations(
         logger.error("Audit aggregation error: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to compute aggregations") from e
 
-
 # --------------------------------------------------------------------------
 # Export (CSV / JSON)
 # --------------------------------------------------------------------------
-
 
 @router.get("/transactions/export")
 def export_transactions(
@@ -222,7 +211,6 @@ def export_transactions(
     if format == "csv":
         return _csv_response(dicts)
     return _json_response(dicts)
-
 
 def _csv_stream(rows: list[dict[str, Any]]) -> Iterator[str]:
     """Yield CSV data in chunks to enable true streaming."""
@@ -271,7 +259,6 @@ def _csv_stream(rows: list[dict[str, Any]]) -> Iterator[str]:
         output.seek(0)
         output.truncate()
 
-
 def _csv_response(rows: list[dict[str, Any]]) -> StreamingResponse:
     """Build a truly streaming CSV response."""
     return StreamingResponse(
@@ -279,7 +266,6 @@ def _csv_response(rows: list[dict[str, Any]]) -> StreamingResponse:
         media_type="text/csv",
         headers={"Content-Disposition": "attachment; filename=audit_transactions.csv"},
     )
-
 
 def _json_response(rows: list[dict[str, Any]]) -> StreamingResponse:
     """Build a JSON response from pre-extracted dicts."""
@@ -290,11 +276,9 @@ def _json_response(rows: list[dict[str, Any]]) -> StreamingResponse:
         headers={"Content-Disposition": "attachment; filename=audit_transactions.json"},
     )
 
-
 # --------------------------------------------------------------------------
 # Single transaction
 # --------------------------------------------------------------------------
-
 
 @router.get("/transactions/{record_id}")
 def get_transaction(
@@ -309,11 +293,9 @@ def get_transaction(
         raise HTTPException(status_code=404, detail="Transaction not found")
     return _dict_to_response(_row_to_dict(row))
 
-
 # --------------------------------------------------------------------------
 # Integrity verification
 # --------------------------------------------------------------------------
-
 
 @router.get("/integrity/{record_id}")
 def verify_integrity(

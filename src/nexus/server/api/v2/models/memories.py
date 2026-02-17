@@ -1,13 +1,10 @@
 """Memory request/response models for API v2."""
 
-from __future__ import annotations
-
 from typing import Any, Literal
 
 from pydantic import Field
 
 from nexus.server.api.v2.models.base import ApiModel
-
 
 class MemoryStoreRequest(ApiModel):
     """Request model for POST /api/v2/memories."""
@@ -33,7 +30,6 @@ class MemoryStoreRequest(ApiModel):
     detect_evolution: bool = Field(False, description="Detect evolution relationships (#1190)")
     metadata: dict[str, Any] | None = Field(None, description="Additional metadata")
 
-
 class MemoryUpdateRequest(ApiModel):
     """Request model for PUT /api/v2/memories/{id}."""
 
@@ -42,7 +38,6 @@ class MemoryUpdateRequest(ApiModel):
     state: Literal["active", "inactive"] | None = Field(None, description="Updated state")
     namespace: str | None = Field(None, description="Updated namespace")
     metadata: dict[str, Any] | None = Field(None, description="Updated metadata")
-
 
 class MemorySearchRequest(ApiModel):
     """Request model for POST /api/v2/memories/search."""
@@ -62,7 +57,6 @@ class MemorySearchRequest(ApiModel):
     temporal_stability: str | None = Field(
         None, description="Filter by temporal stability (static, semi_dynamic, dynamic)"
     )
-
 
 class MemoryQueryRequest(ApiModel):
     """Request model for POST /api/v2/memories/query (#1185 point-in-time queries)."""
@@ -93,12 +87,10 @@ class MemoryQueryRequest(ApiModel):
         None, description="Filter by temporal stability (static, semi_dynamic, dynamic)"
     )
 
-
 class MemoryBatchStoreRequest(ApiModel):
     """Request model for POST /api/v2/memories/batch."""
 
     memories: list[MemoryStoreRequest] = Field(..., description="List of memories to store")
-
 
 class MemoryResponse(ApiModel):
     """Response model for memory objects."""
@@ -127,20 +119,17 @@ class MemoryResponse(ApiModel):
     created_at: str | None = None
     updated_at: str | None = None
 
-
 class MemoryGetResponse(ApiModel):
     """Response for GET /api/v2/memories/{id}."""
 
     memory: dict[str, Any]
     versions: list[dict[str, Any]] | None = None
 
-
 class MemoryStoreResponse(ApiModel):
     """Response for POST /api/v2/memories."""
 
     memory_id: str
     status: str = "created"
-
 
 class MemoryBatchStoreResponse(ApiModel):
     """Response for POST /api/v2/memories/batch."""
@@ -149,7 +138,6 @@ class MemoryBatchStoreResponse(ApiModel):
     failed: int
     memory_ids: list[str]
     errors: list[dict[str, Any]] | None = None
-
 
 class MemoryVersionHistoryResponse(ApiModel):
     """Response for GET /api/v2/memories/{id}/history."""

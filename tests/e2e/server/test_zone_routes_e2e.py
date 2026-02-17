@@ -10,7 +10,6 @@ Run with: PYTHONPATH=src python -m pytest tests/e2e/test_zone_routes_e2e.py -v
 
 import pytest
 
-
 class TestZoneRoutesAuthentication:
     """Test authentication requirements for zone routes."""
 
@@ -44,7 +43,6 @@ class TestZoneRoutesAuthentication:
         assert response.status_code in (401, 422, 503), (
             f"Got {response.status_code}: {response.text}"
         )
-
 
 class TestZoneRoutesWithAuth:
     """Test zone routes with proper authentication."""
@@ -106,7 +104,6 @@ class TestZoneRoutesWithAuth:
         # 403 = user doesn't have access (correct - access check before existence)
         # 404 = zone not found (also acceptable)
         assert response.status_code in (403, 404)
-
 
 class TestZoneCreatorOwnership:
     """Test that zone creator is assigned as owner."""

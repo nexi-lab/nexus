@@ -6,7 +6,6 @@ from typing import Any
 
 from nexus.parsers.types import ParseResult
 
-
 @dataclass
 class ProviderConfig:
     """Configuration for a parse provider.
@@ -29,7 +28,6 @@ class ProviderConfig:
     api_url: str | None = None
     supported_formats: list[str] | None = None
     extra: dict[str, Any] = field(default_factory=dict)
-
 
 class ParseProvider(ABC):
     """Abstract base class for parse providers.

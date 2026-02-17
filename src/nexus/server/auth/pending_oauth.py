@@ -9,7 +9,6 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-
 @dataclass
 class PendingOAuthRegistration:
     """Pending OAuth registration data."""
@@ -33,7 +32,6 @@ class PendingOAuthRegistration:
             "name": self.name,
             "picture": self.picture,
         }
-
 
 class PendingOAuthManager:
     """Manages pending OAuth registrations with TTL."""
@@ -138,10 +136,8 @@ class PendingOAuthManager:
         for token in expired_tokens:
             del self._storage[token]
 
-
 # Global instance (shared across all requests)
 _pending_oauth_manager: PendingOAuthManager | None = None
-
 
 def get_pending_oauth_manager() -> PendingOAuthManager:
     """Get the global pending OAuth manager instance."""

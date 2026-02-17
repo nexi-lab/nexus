@@ -10,10 +10,7 @@ Implementations:
 - ``InMemoryStorageDriver`` — in-memory fake for testing
 """
 
-from __future__ import annotations
-
 from typing import Protocol, runtime_checkable
-
 
 @runtime_checkable
 class IPCStorageDriver(Protocol):

@@ -16,18 +16,16 @@ References:
     - Issue #1520: Extract search module into search brick
 """
 
-from __future__ import annotations
-
 import builtins
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from nexus.core.types import OperationContext
 if TYPE_CHECKING:
     from nexus.core.types import OperationContext
 
 # =============================================================================
 # Issue #1520: Search Brick Protocol
 # =============================================================================
-
 
 @runtime_checkable
 class SearchBrickProtocol(Protocol):
@@ -64,11 +62,9 @@ class SearchBrickProtocol(Protocol):
 
     async def notify_file_change(self, path: str, change_type: str = "update") -> None: ...
 
-
 # =============================================================================
 # Issue #1287: Search Service Protocol
 # =============================================================================
-
 
 @runtime_checkable
 class SearchProtocol(Protocol):

@@ -7,13 +7,10 @@ The adapter detects search-mode fallback (hybrid → keyword when no
 embeddings are available) and exposes the actual mode used.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
-
 
 @runtime_checkable
 class MemorySearch(Protocol):
@@ -22,7 +19,6 @@ class MemorySearch(Protocol):
     def search(self, query: str, top_k: int, search_mode: str) -> tuple[list[dict[str, Any]], str]:
         """Search memory and return (results, actual_search_mode)."""
         ...
-
 
 class MemorySearchAdapter:
     """Adapts the Memory.search() API to the MemorySearch protocol.

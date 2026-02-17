@@ -7,15 +7,13 @@ from SessionMixin and set self._session_factory.
 Issue #1355: Created for AgentKeyService, available for future services.
 """
 
-from __future__ import annotations
-
 from collections.abc import Generator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
+from sqlalchemy.orm import Session, sessionmaker
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
-
 
 class SessionMixin:
     """Mixin providing a session context manager for SQLAlchemy operations.

@@ -10,8 +10,6 @@ Phase 2: Core Refactoring (Issue #988, Task 2.9)
 Extracted from: nexus_fs_llm.py (286 lines)
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
@@ -20,11 +18,12 @@ from nexus.core.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
 
+from nexus.llm.provider import LLMProvider
+from nexus.services.llm_citation import DocumentReadResult
 if TYPE_CHECKING:
     from nexus.llm.provider import LLMProvider
     from nexus.services.llm_citation import DocumentReadResult
     from nexus.services.llm_document_reader import LLMDocumentReader
-
 
 class LLMService:
     """Independent LLM service extracted from NexusFS.
@@ -334,7 +333,7 @@ class LLMService:
         api_key: str | None = None,
         system_prompt: str | None = None,
         max_context_tokens: int = 3000,
-    ) -> LLMDocumentReader:
+    ) -> "LLMDocumentReader":
         """Create an LLM document reader for advanced usage.
 
         Factory method that creates an LLMDocumentReader instance for users
@@ -416,7 +415,7 @@ class LLMService:
         api_key: str | None = None,
         system_prompt: str | None = None,
         max_context_tokens: int = 3000,
-    ) -> LLMDocumentReader:
+    ) -> "LLMDocumentReader":
         """Get or create LLM document reader.
 
         Internal helper that creates an LLMDocumentReader with proper
@@ -493,7 +492,6 @@ class LLMService:
             system_prompt=system_prompt,
             max_context_tokens=max_context_tokens,
         )
-
 
 # =============================================================================
 # Phase 2 Extraction Progress

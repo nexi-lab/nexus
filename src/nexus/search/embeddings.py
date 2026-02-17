@@ -10,8 +10,6 @@ Batch optimization:
 - Default batch size optimized per provider for best throughput
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import os
@@ -19,6 +17,7 @@ from abc import ABC, abstractmethod
 from enum import StrEnum
 from typing import TYPE_CHECKING, cast
 
+from nexus.cache.base import EmbeddingCacheProtocol
 if TYPE_CHECKING:
     from nexus.cache.base import EmbeddingCacheProtocol
 
@@ -32,7 +31,6 @@ DEFAULT_BATCH_SIZES = {
     "cohere": 96,  # Cohere recommended batch size
     "fastembed": 256,  # Local inference can handle larger batches
 }
-
 
 class EmbeddingModel(StrEnum):
     """Supported embedding models."""
@@ -51,7 +49,6 @@ class EmbeddingModel(StrEnum):
 
     # OpenRouter (via OpenAI-compatible API)
     OPENROUTER_DEFAULT = "openai/text-embedding-3-small"
-
 
 class EmbeddingProvider(ABC):
     """Abstract base class for embedding providers.
@@ -147,7 +144,6 @@ class EmbeddingProvider(ABC):
 
         return embeddings
 
-
 class OpenAIEmbeddingProvider(EmbeddingProvider):
     """OpenAI embedding provider."""
 
@@ -213,7 +209,6 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         else:
             # Default for unknown models
             return 1536
-
 
 class VoyageAIEmbeddingProvider(EmbeddingProvider):
     """Voyage AI embedding provider.
@@ -328,7 +323,6 @@ class VoyageAIEmbeddingProvider(EmbeddingProvider):
             # Default for unknown models
             return 1024
 
-
 class OpenRouterEmbeddingProvider(EmbeddingProvider):
     """OpenRouter embedding provider (OpenAI-compatible API)."""
 
@@ -398,7 +392,6 @@ class OpenRouterEmbeddingProvider(EmbeddingProvider):
         else:
             # Default for unknown models
             return 1536
-
 
 class FastEmbedProvider(EmbeddingProvider):
     """Local embedding provider using FastEmbed (ONNX-optimized).
@@ -470,7 +463,6 @@ class FastEmbedProvider(EmbeddingProvider):
             return 768
         else:
             return 384
-
 
 class CachedEmbeddingProvider(EmbeddingProvider):
     """Wrapper that adds caching to any embedding provider.
@@ -593,7 +585,6 @@ class CachedEmbeddingProvider(EmbeddingProvider):
         """
         return self._cache.get_metrics()
 
-
 def create_embedding_provider(
     provider: str = "openai", model: str | None = None, api_key: str | None = None
 ) -> EmbeddingProvider:
@@ -652,7 +643,6 @@ def create_embedding_provider(
             f"Unknown embedding provider: {provider}. "
             "Supported: openai, voyage, voyage-lite, voyage-large, fastembed, openrouter"
         )
-
 
 async def create_cached_embedding_provider(
     provider: str = "openai",

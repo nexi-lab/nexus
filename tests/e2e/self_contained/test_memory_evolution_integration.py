@@ -4,8 +4,6 @@ Tests the full pipeline: MemoryModel → EvolutionDetector → apply_evolution_r
 using in-memory SQLite for isolation.
 """
 
-from __future__ import annotations
-
 import json
 
 import pytest
@@ -21,7 +19,6 @@ from nexus.services.memory.evolution_detector import (
 from nexus.storage.models._base import Base
 from nexus.storage.models.memory import MemoryModel
 
-
 @pytest.fixture
 def db_session():
     """Create an in-memory SQLite session with MemoryModel tables."""
@@ -32,7 +29,6 @@ def db_session():
     yield session
     session.close()
     engine.dispose()
-
 
 def _create_memory(
     session: Session,
@@ -62,7 +58,6 @@ def _create_memory(
     session.add(memory)
     session.commit()
     return memory
-
 
 class TestFindCandidates:
     """Tests for candidate finding with real SQLite."""
@@ -212,7 +207,6 @@ class TestFindCandidates:
         assert len(candidates) == 2
         assert candidates[0][0].memory_id == mem1.memory_id
         assert candidates[0][1] > candidates[1][1]
-
 
 class TestApplyEvolutionResults:
     """Tests for applying evolution results to the database."""
@@ -372,7 +366,6 @@ class TestApplyEvolutionResults:
         assert existing1.memory_id in extends_list
         assert existing2.memory_id in extends_list
 
-
 class TestFullDetectPipeline:
     """End-to-end tests for the full detect() pipeline on real SQLite."""
 
@@ -484,7 +477,6 @@ class TestFullDetectPipeline:
         )
 
         assert result.elapsed_ms < 500, f"Detection took {result.elapsed_ms:.1f}ms (>500ms)"
-
 
 class TestMemoryModelColumns:
     """Tests for the new MemoryModel columns."""

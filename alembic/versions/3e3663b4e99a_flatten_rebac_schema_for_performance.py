@@ -32,7 +32,6 @@ down_revision: Union[str, Sequence[str], None] = "7ab1369a10a9"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 # New hybrid schema for file namespace
 # Combines benefits of flattened (reduced depth) with unions (better caching)
 NEW_FILE_NAMESPACE_CONFIG = {
@@ -111,7 +110,6 @@ OLD_FILE_NAMESPACE_CONFIG = {
     },
 }
 
-
 def upgrade() -> None:
     """Upgrade schema: Update file namespace to flattened schema."""
     bind = op.get_bind()
@@ -131,7 +129,6 @@ def upgrade() -> None:
     print("  - Reduced graph depth: 7 → 5")
     print("  - parent_* relations now reference direct_* instead of unions")
     print("  - Permissions directly list all relation sources")
-
 
 def downgrade() -> None:
     """Downgrade schema: Revert to old union-based schema."""

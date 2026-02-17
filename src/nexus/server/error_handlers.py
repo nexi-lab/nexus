@@ -9,13 +9,10 @@ a parallel isinstance chain. Adding a new exception subclass automatically
 gets the correct HTTP mapping — no changes needed here.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
-
 
 def nexus_error_handler(_request: Request, exc: Exception) -> JSONResponse:
     """Custom handler for Nexus exceptions.

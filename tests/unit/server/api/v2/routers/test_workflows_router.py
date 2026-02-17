@@ -4,8 +4,6 @@ Issue #1522: Tests for all 8 workflow endpoints using FastAPI TestClient
 with a mock workflow engine.
 """
 
-from __future__ import annotations
-
 import uuid
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -35,7 +33,6 @@ from nexus.workflows.types import (
 _test_app = FastAPI()
 _test_app.include_router(router)
 
-
 def _make_mock_engine() -> Mock:
     """Create a mock workflow engine with default return values."""
     engine = Mock(spec=WorkflowEngine)
@@ -48,25 +45,20 @@ def _make_mock_engine() -> Mock:
     engine.unload_workflow.return_value = True
     return engine
 
-
 _mock_engine = _make_mock_engine()
-
 
 def _override_engine() -> Mock:
     return _mock_engine
 
-
 def _override_auth() -> dict:
     """Override auth dependency — return a dummy auth result."""
     return {"subject_id": "test-user", "zone_id": "root", "is_admin": True}
-
 
 # Override dependencies
 _test_app.dependency_overrides[_get_workflow_engine] = _override_engine
 _test_app.dependency_overrides[_get_require_auth()] = _override_auth
 
 client = TestClient(_test_app)
-
 
 @pytest.fixture(autouse=True)
 def reset_engine():
@@ -76,11 +68,9 @@ def reset_engine():
     _test_app.dependency_overrides[_get_workflow_engine] = lambda: _mock_engine
     yield
 
-
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
-
 
 class TestListWorkflows:
     """Test GET /api/v2/workflows."""
@@ -121,7 +111,6 @@ class TestListWorkflows:
         assert data[0]["enabled"] is True
         assert data[1]["name"] == "wf2"
         assert data[1]["enabled"] is False
-
 
 class TestCreateWorkflow:
     """Test POST /api/v2/workflows."""
@@ -193,7 +182,6 @@ class TestCreateWorkflow:
         assert resp.status_code == 400
         assert "Failed to load workflow" in resp.json()["detail"]
 
-
 class TestGetWorkflow:
     """Test GET /api/v2/workflows/{name}."""
 
@@ -226,7 +214,6 @@ class TestGetWorkflow:
         resp = client.get("/api/v2/workflows/nonexistent")
         assert resp.status_code == 404
 
-
 class TestDeleteWorkflow:
     """Test DELETE /api/v2/workflows/{name}."""
 
@@ -242,7 +229,6 @@ class TestDeleteWorkflow:
         _mock_engine.unload_workflow.return_value = False
         resp = client.delete("/api/v2/workflows/nonexistent")
         assert resp.status_code == 404
-
 
 class TestEnableWorkflow:
     """Test POST /api/v2/workflows/{name}/enable."""
@@ -260,7 +246,6 @@ class TestEnableWorkflow:
         resp = client.post("/api/v2/workflows/nonexistent/enable")
         assert resp.status_code == 404
 
-
 class TestDisableWorkflow:
     """Test POST /api/v2/workflows/{name}/disable."""
 
@@ -276,7 +261,6 @@ class TestDisableWorkflow:
         _mock_engine.workflows = {}
         resp = client.post("/api/v2/workflows/nonexistent/disable")
         assert resp.status_code == 404
-
 
 class TestExecuteWorkflow:
     """Test POST /api/v2/workflows/{name}/execute."""
@@ -327,7 +311,6 @@ class TestExecuteWorkflow:
 
         resp = client.post("/api/v2/workflows/my-wf/execute")
         assert resp.status_code == 200
-
 
 class TestGetExecutions:
     """Test GET /api/v2/workflows/{name}/executions."""

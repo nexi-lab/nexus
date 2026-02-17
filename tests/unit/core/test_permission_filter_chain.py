@@ -5,8 +5,6 @@ permission checks into TigerBitmap -> LeopardIndex -> HierarchyPreFilter ->
 ZonePreFilter -> BulkReBAC stages.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest
@@ -27,7 +25,6 @@ from nexus.services.permissions.permission_filter_chain import (
 # Fixtures
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture
 def mock_cache():
     cache = MagicMock()
@@ -38,13 +35,11 @@ def mock_cache():
     cache.mark_bitmap_complete = MagicMock()
     return cache
 
-
 @pytest.fixture
 def mock_rebac():
     rebac = MagicMock()
     rebac.rebac_check_bulk.return_value = {}
     return rebac
-
 
 @pytest.fixture
 def ctx(mock_cache, mock_rebac):
@@ -57,7 +52,6 @@ def ctx(mock_cache, mock_rebac):
         cache=mock_cache,
         rebac_manager=mock_rebac,
     )
-
 
 def _make_ctx(
     paths: list[str],
@@ -78,11 +72,9 @@ def _make_ctx(
         router=router,
     )
 
-
 # ---------------------------------------------------------------------------
 # Strategy 1: TigerBitmapStrategy
 # ---------------------------------------------------------------------------
-
 
 class TestTigerBitmapStrategy:
     """Tests for TigerBitmapStrategy — O(1) bitmap cache filtering."""
@@ -127,11 +119,9 @@ class TestTigerBitmapStrategy:
         assert result.remaining == []
         assert result.short_circuit is True
 
-
 # ---------------------------------------------------------------------------
 # Strategy 2: LeopardIndexStrategy
 # ---------------------------------------------------------------------------
-
 
 class TestLeopardIndexStrategy:
     """Tests for LeopardIndexStrategy — cached accessible directory index."""
@@ -162,11 +152,9 @@ class TestLeopardIndexStrategy:
         assert result.allowed == []
         assert result.remaining == ["/workspace/a.txt", "/workspace/b.txt"]
 
-
 # ---------------------------------------------------------------------------
 # Strategy 3: HierarchyPreFilterStrategy
 # ---------------------------------------------------------------------------
-
 
 class TestHierarchyPreFilterStrategy:
     """Tests for HierarchyPreFilterStrategy — batch ancestor pruning."""
@@ -230,11 +218,9 @@ class TestHierarchyPreFilterStrategy:
         assert result.allowed == []
         assert len(result.remaining) == 120
 
-
 # ---------------------------------------------------------------------------
 # Strategy 4: ZonePreFilterStrategy
 # ---------------------------------------------------------------------------
-
 
 class TestZonePreFilterStrategy:
     """Tests for ZonePreFilterStrategy — cross-zone path elimination."""
@@ -272,11 +258,9 @@ class TestZonePreFilterStrategy:
         assert result.allowed == []
         assert result.remaining == paths
 
-
 # ---------------------------------------------------------------------------
 # Strategy 5: BulkReBACStrategy
 # ---------------------------------------------------------------------------
-
 
 class TestBulkReBACStrategy:
     """Tests for BulkReBACStrategy — final fallback via rebac_check_bulk()."""
@@ -344,11 +328,9 @@ class TestBulkReBACStrategy:
         assert result.short_circuit is True
         assert ctx.rebac_manager.rebac_check_bulk.call_count == 2
 
-
 # ---------------------------------------------------------------------------
 # Chain Composition
 # ---------------------------------------------------------------------------
-
 
 class TestFilterChainComposition:
     """Tests for run_filter_chain() composing strategies together."""

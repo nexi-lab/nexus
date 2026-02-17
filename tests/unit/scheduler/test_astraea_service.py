@@ -4,8 +4,6 @@ Tests protocol conformance, classification, fair-share rejection,
 HRRN dequeue, and state event handling.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock
 
@@ -26,7 +24,6 @@ from nexus.services.protocols.scheduler import AgentRequest
 # Fixtures
 # =============================================================================
 
-
 @pytest.fixture
 def mock_queue():
     q = AsyncMock()
@@ -43,11 +40,9 @@ def mock_queue():
     q.get_queue_metrics = AsyncMock(return_value=[])
     return q
 
-
 @pytest.fixture
 def mock_conn():
     return AsyncMock()
-
 
 @pytest.fixture
 def mock_pool(mock_conn):
@@ -58,11 +53,9 @@ def mock_pool(mock_conn):
     pool.acquire = MagicMock(return_value=acm)
     return pool
 
-
 @pytest.fixture
 def fair_share():
     return FairShareCounter(default_max_concurrent=10)
-
 
 @pytest.fixture
 def scheduler(mock_queue, mock_pool, fair_share):
@@ -73,11 +66,9 @@ def scheduler(mock_queue, mock_pool, fair_share):
         use_hrrn=True,
     )
 
-
 # =============================================================================
 # Protocol Conformance
 # =============================================================================
-
 
 class TestProtocolConformance:
     """Verify all 8 protocol methods exist."""
@@ -106,11 +97,9 @@ class TestProtocolConformance:
     def test_has_metrics(self, scheduler):
         assert hasattr(scheduler, "metrics")
 
-
 # =============================================================================
 # Classification
 # =============================================================================
-
 
 class TestClassify:
     """Test request classification via protocol."""
@@ -133,11 +122,9 @@ class TestClassify:
         result = await scheduler.classify(req)
         assert result == PriorityClass.BATCH
 
-
 # =============================================================================
 # Submit with Auto-Classification
 # =============================================================================
-
 
 class TestSubmitAutoClassify:
     """Test that submit auto-classifies priority_class."""
@@ -167,11 +154,9 @@ class TestSubmitAutoClassify:
         call_kwargs = mock_queue.enqueue.call_args[1]
         assert call_kwargs["priority_class"] == "interactive"
 
-
 # =============================================================================
 # Fair-Share Rejection
 # =============================================================================
-
 
 class TestFairShareRejection:
     """Test that tasks are rejected when agent is at capacity."""
@@ -192,11 +177,9 @@ class TestFairShareRejection:
         with pytest.raises(ValueError, match="at capacity"):
             await svc.submit_task(sub)
 
-
 # =============================================================================
 # HRRN Dequeue
 # =============================================================================
-
 
 class TestHrrnDequeue:
     """Test HRRN dequeue selection."""
@@ -270,11 +253,9 @@ class TestHrrnDequeue:
         await scheduler.dequeue_next()
         assert fair_share.snapshot("agent-a").running_count == 1
 
-
 # =============================================================================
 # Agent State Events
 # =============================================================================
-
 
 class TestAgentStateEvents:
     """Test state event handling."""
@@ -306,11 +287,9 @@ class TestAgentStateEvents:
         assert fair_share.snapshot("agent-a").running_count == 3
         assert fair_share.snapshot("agent-b").running_count == 1
 
-
 # =============================================================================
 # Complete with Fair-Share
 # =============================================================================
-
 
 class TestCompleteWithFairShare:
     """Test that complete updates fair-share counters."""

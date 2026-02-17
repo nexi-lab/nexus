@@ -6,8 +6,6 @@ validating integrity, and managing rollbacks.
 Issue #165: Migration Tools & Upgrade Paths
 """
 
-from __future__ import annotations
-
 import sys
 from typing import TYPE_CHECKING
 
@@ -21,9 +19,9 @@ from nexus.cli.utils import (
     handle_error,
 )
 
+from nexus.migrations import ImportResult
 if TYPE_CHECKING:
     from nexus.migrations import ImportResult
-
 
 @click.group(name="migrate")
 def migrate() -> None:
@@ -41,7 +39,6 @@ def migrate() -> None:
         nexus migrate validate --check-integrity
     """
     pass
-
 
 @migrate.command(name="status")
 @add_backend_options
@@ -134,7 +131,6 @@ def status(backend_config: BackendConfig) -> None:
     except Exception as e:
         handle_error(e)
 
-
 @migrate.command(name="plan")
 @click.option("--from", "from_version", required=True, help="Source version")
 @click.option("--to", "to_version", required=True, help="Target version")
@@ -195,7 +191,6 @@ def plan(from_version: str, to_version: str, backend_config: BackendConfig) -> N
 
     except Exception as e:
         handle_error(e)
-
 
 @migrate.command(name="upgrade")
 @click.option("--from", "from_version", required=True, help="Source version")
@@ -278,7 +273,6 @@ def upgrade(
     except Exception as e:
         handle_error(e)
 
-
 @migrate.command(name="rollback")
 @click.option("--to-version", required=True, help="Target version to rollback to")
 @click.option("--from-backup", default=None, help="Restore from specific backup path")
@@ -357,7 +351,6 @@ def rollback(
     except Exception as e:
         handle_error(e)
 
-
 @migrate.command(name="backup")
 @click.option("--list", "list_backups", is_flag=True, help="List available backups")
 @add_backend_options
@@ -406,7 +399,6 @@ def backup_cmd(list_backups: bool, backend_config: BackendConfig) -> None:
     except Exception as e:
         handle_error(e)
 
-
 @migrate.command(name="restore")
 @click.argument("backup_path", type=click.Path(exists=True))
 @click.option("--dry-run", is_flag=True, help="Simulate without making changes")
@@ -444,7 +436,6 @@ def restore(backup_path: str, dry_run: bool, backend_config: BackendConfig) -> N
 
     except Exception as e:
         handle_error(e)
-
 
 @migrate.command(name="import-s3")
 @click.option("--bucket", required=True, help="S3 bucket name")
@@ -508,7 +499,6 @@ def import_s3(
 
     except Exception as e:
         handle_error(e)
-
 
 @migrate.command(name="import-gcs")
 @click.option("--bucket", required=True, help="GCS bucket name")
@@ -576,7 +566,6 @@ def import_gcs(
     except Exception as e:
         handle_error(e)
 
-
 @migrate.command(name="import-fs")
 @click.option("--source", required=True, type=click.Path(exists=True), help="Source directory")
 @click.option("--target", required=True, help="Target path in Nexus")
@@ -634,7 +623,6 @@ def import_fs(
 
     except Exception as e:
         handle_error(e)
-
 
 @migrate.command(name="validate")
 @click.option("--check-integrity", is_flag=True, help="Run full integrity checks")
@@ -706,7 +694,6 @@ def validate(
     except Exception as e:
         handle_error(e)
 
-
 def _print_import_result(result: ImportResult, dry_run: bool) -> None:
     """Print import result summary.
 
@@ -735,7 +722,6 @@ def _print_import_result(result: ImportResult, dry_run: bool) -> None:
             console.print(f"  - {error}")
         if len(result.errors) > 5:
             console.print(f"  ... and {len(result.errors) - 5} more")
-
 
 def register_commands(cli: click.Group) -> None:
     """Register all migrate commands to the CLI group.

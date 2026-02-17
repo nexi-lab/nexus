@@ -3,8 +3,6 @@
 Extracted from fastapi_server.py during monolith decomposition.
 """
 
-from __future__ import annotations
-
 import os
 from typing import Literal
 
@@ -12,7 +10,6 @@ from pydantic import BaseModel, Field
 
 # Maximum TTL: 24 hours. Configurable via NEXUS_LOCK_MAX_TTL env var.
 LOCK_MAX_TTL = float(os.environ.get("NEXUS_LOCK_MAX_TTL", "86400"))
-
 
 class LockAcquireRequest(BaseModel):
     """Request model for acquiring a lock."""
@@ -23,7 +20,6 @@ class LockAcquireRequest(BaseModel):
     max_holders: int = Field(default=1, ge=1, le=10000, description="1=mutex, >1=semaphore")
     blocking: bool = True  # If false, return immediately without waiting
 
-
 class LockHolderResponse(BaseModel):
     """Information about a single lock holder."""
 
@@ -31,7 +27,6 @@ class LockHolderResponse(BaseModel):
     holder_info: str = ""
     acquired_at: float  # Unix timestamp
     expires_at: float  # Unix timestamp
-
 
 class LockInfoMutex(BaseModel):
     """Lock info for a mutex (exclusive) lock."""
@@ -44,7 +39,6 @@ class LockInfoMutex(BaseModel):
     expires_at: float
     fence_token: int
 
-
 class LockInfoSemaphore(BaseModel):
     """Lock info for a semaphore (shared) lock."""
 
@@ -53,7 +47,6 @@ class LockInfoSemaphore(BaseModel):
     holders: list[LockHolderResponse]
     current_holders: int
     fence_token: int
-
 
 class LockResponse(BaseModel):
     """Response model for lock operations."""
@@ -66,7 +59,6 @@ class LockResponse(BaseModel):
     expires_at: str  # ISO 8601 timestamp
     fence_token: int
 
-
 class LockStatusResponse(BaseModel):
     """Response model for lock status queries."""
 
@@ -74,13 +66,11 @@ class LockStatusResponse(BaseModel):
     locked: bool
     lock_info: LockInfoMutex | LockInfoSemaphore | None = None
 
-
 class LockExtendRequest(BaseModel):
     """Request model for extending a lock."""
 
     lock_id: str
     ttl: float = Field(default=30.0, ge=1, le=LOCK_MAX_TTL, description="New TTL in seconds")
-
 
 class LockListResponse(BaseModel):
     """Response model for listing locks."""

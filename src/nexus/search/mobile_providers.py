@@ -32,8 +32,6 @@ GGUF Model Download:
     )
 """
 
-from __future__ import annotations
-
 import asyncio
 import concurrent.futures
 import logging
@@ -42,6 +40,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from nexus.search.mobile_config import EmbeddingModelConfig, MobileSearchConfig, RerankerModelConfig
 if TYPE_CHECKING:
     from nexus.search.mobile_config import (
         EmbeddingModelConfig,
@@ -60,7 +59,6 @@ DEFAULT_CACHE_DIR = Path.home() / ".cache" / "nexus" / "models"
 _ML_EXECUTOR: concurrent.futures.ThreadPoolExecutor | None = None
 _ML_EXECUTOR_LOCK: threading.Lock = threading.Lock()
 
-
 def _get_ml_executor() -> concurrent.futures.ThreadPoolExecutor:
     """Get or create the dedicated ML inference thread pool."""
     global _ML_EXECUTOR
@@ -76,11 +74,9 @@ def _get_ml_executor() -> concurrent.futures.ThreadPoolExecutor:
             )
         return _ML_EXECUTOR
 
-
 # =============================================================================
 # Abstract Base Classes
 # =============================================================================
-
 
 class MobileEmbeddingProvider(ABC):
     """Abstract base class for mobile embedding providers."""
@@ -118,7 +114,6 @@ class MobileEmbeddingProvider(ABC):
     def embedding_dimension(self) -> int:
         """Get embedding dimension."""
         return self.config.dimensions
-
 
 class MobileRerankerProvider(ABC):
     """Abstract base class for mobile reranker providers."""
@@ -162,11 +157,9 @@ class MobileRerankerProvider(ABC):
         """
         pass
 
-
 # =============================================================================
 # FastEmbed Provider (ONNX)
 # =============================================================================
-
 
 class FastEmbedMobileProvider(MobileEmbeddingProvider):
     """FastEmbed provider for ONNX-optimized models.
@@ -236,11 +229,9 @@ class FastEmbedMobileProvider(MobileEmbeddingProvider):
         )
         return [e.tolist() for e in embeddings]
 
-
 # =============================================================================
 # Model2Vec Provider (Static Embeddings)
 # =============================================================================
-
 
 class Model2VecProvider(MobileEmbeddingProvider):
     """Model2Vec provider for ultra-fast static embeddings.
@@ -300,11 +291,9 @@ class Model2VecProvider(MobileEmbeddingProvider):
         )
         return embeddings.tolist()  # type: ignore[no-any-return]
 
-
 # =============================================================================
 # SentenceTransformers Provider
 # =============================================================================
-
 
 class SentenceTransformersProvider(MobileEmbeddingProvider):
     """SentenceTransformers provider for HuggingFace models.
@@ -372,11 +361,9 @@ class SentenceTransformersProvider(MobileEmbeddingProvider):
         )
         return embeddings.tolist()  # type: ignore[no-any-return]
 
-
 # =============================================================================
 # GGUF Provider (llama.cpp)
 # =============================================================================
-
 
 class GGUFEmbeddingProvider(MobileEmbeddingProvider):
     """GGUF embedding provider via llama-cpp-python.
@@ -532,11 +519,9 @@ class GGUFEmbeddingProvider(MobileEmbeddingProvider):
 
         return await loop.run_in_executor(_get_ml_executor(), _embed_batch)
 
-
 # =============================================================================
 # GGUF Model Download Helper
 # =============================================================================
-
 
 async def download_gguf_model(
     repo_id: str,
@@ -580,11 +565,9 @@ async def download_gguf_model(
 
     return await loop.run_in_executor(_get_ml_executor(), _download)
 
-
 # =============================================================================
 # Cross-Encoder Reranker Provider
 # =============================================================================
-
 
 class CrossEncoderRerankerProvider(MobileRerankerProvider):
     """Cross-encoder reranker using sentence-transformers.
@@ -657,11 +640,9 @@ class CrossEncoderRerankerProvider(MobileRerankerProvider):
 
         return indexed_scores
 
-
 # =============================================================================
 # Provider Factory
 # =============================================================================
-
 
 def _get_embedding_provider_class(
     config: EmbeddingModelConfig,
@@ -683,7 +664,6 @@ def _get_embedding_provider_class(
 
     return provider_class
 
-
 def _get_reranker_provider_class(
     config: RerankerModelConfig,
 ) -> type[MobileRerankerProvider]:
@@ -700,7 +680,6 @@ def _get_reranker_provider_class(
         raise ValueError(f"Unsupported reranker provider: {config.provider}")
 
     return provider_class
-
 
 async def create_mobile_embedding_provider(
     config: EmbeddingModelConfig,
@@ -729,7 +708,6 @@ async def create_mobile_embedding_provider(
 
     return provider
 
-
 async def create_reranker_provider(
     config: RerankerModelConfig,
     load_immediately: bool = True,
@@ -757,11 +735,9 @@ async def create_reranker_provider(
 
     return provider
 
-
 # =============================================================================
 # Mobile Search Service
 # =============================================================================
-
 
 class MobileSearchService:
     """High-level service for mobile search with automatic config.
@@ -908,11 +884,9 @@ class MobileSearchService:
             "total_model_size_mb": self.config.total_model_size_mb(),
         }
 
-
 # =============================================================================
 # Convenience Functions
 # =============================================================================
-
 
 async def create_service_from_config(
     config: MobileSearchConfig,
@@ -938,7 +912,6 @@ async def create_service_from_config(
         await service.initialize()
     return service
 
-
 async def create_auto_service(initialize: bool = True) -> MobileSearchService:
     """Create a MobileSearchService with auto-detected configuration.
 
@@ -959,11 +932,9 @@ async def create_auto_service(initialize: bool = True) -> MobileSearchService:
     config = auto_detect_config()
     return await create_service_from_config(config, initialize)
 
-
 # =============================================================================
 # Model Download Utilities
 # =============================================================================
-
 
 def check_model_available(model_name: str, provider: str) -> bool:
     """Check if a model is downloaded/available.
@@ -1007,7 +978,6 @@ def check_model_available(model_name: str, provider: str) -> bool:
         return False
 
     return False
-
 
 async def download_model(model_name: str, provider: str) -> bool:
     """Download a model for offline use.
@@ -1058,7 +1028,6 @@ async def download_model(model_name: str, provider: str) -> bool:
         return False
 
     return False
-
 
 async def download_models_for_tier(tier: str) -> dict[str, bool]:
     """Download all models needed for a device tier.

@@ -4,8 +4,6 @@ Tests for the introspection helper and the extra-kwargs filtering logic
 that ensures only constructor-compatible kwargs are forwarded.
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 from nexus.backends.factory import BackendFactory
@@ -14,19 +12,15 @@ from nexus.backends.factory import BackendFactory
 # Helper classes with known signatures
 # ---------------------------------------------------------------------------
 
-
 class _SimpleInit:
     def __init__(self, x: int, y: str) -> None: ...
-
 
 class _VarKwInit:
     def __init__(self, x: int, **kwargs: Any) -> None: ...
 
-
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
-
 
 class TestAcceptedParams:
     """Tests for BackendFactory._accepted_params()."""
@@ -58,7 +52,6 @@ class TestAcceptedParams:
 
         assert r1 is r2
         assert BackendFactory._accepted_params.cache_info().hits == 1
-
 
 class TestExtraKwargsFiltering:
     """Tests for extra-kwargs filtering in BackendFactory.create()."""

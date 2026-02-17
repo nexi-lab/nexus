@@ -30,7 +30,6 @@ OS_METADATA_PATTERNS = [
     ".com.apple.timemachine.donotpresent",  # macOS Time Machine
 ]
 
-
 def is_os_metadata_file(path: str) -> bool:
     """Check if a file path represents OS-generated metadata.
 
@@ -55,7 +54,6 @@ def is_os_metadata_file(path: str) -> bool:
 
     # Check if filename matches any OS metadata pattern (uses Rust if available)
     return glob_fast.glob_match(filename, OS_METADATA_PATTERNS)
-
 
 def filter_os_metadata(files: list[str]) -> list[str]:
     """Filter out OS metadata files from a list of file paths.
@@ -82,7 +80,6 @@ def filter_os_metadata(files: list[str]) -> list[str]:
 
     # Python fallback
     return [f for f in files if not is_os_metadata_file(f)]
-
 
 def filter_os_metadata_dicts(files: list[dict[str, any]]) -> list[dict[str, any]]:  # type: ignore[valid-type]
     """Filter out OS metadata files from a list of file info dicts.

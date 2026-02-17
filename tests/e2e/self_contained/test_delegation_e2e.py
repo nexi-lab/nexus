@@ -27,7 +27,6 @@ from nexus.services.delegation.models import (
 # Fixtures
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture()
 def mock_delegation_service():
     """Create a mock DelegationService."""
@@ -54,7 +53,6 @@ def mock_delegation_service():
     service.get_delegation_chain.return_value = []
     return service
 
-
 @pytest.fixture()
 def agent_auth() -> dict[str, Any]:
     """Mock auth result for an agent caller."""
@@ -68,7 +66,6 @@ def agent_auth() -> dict[str, Any]:
         "metadata": {"user_id": "alice"},
     }
 
-
 @pytest.fixture()
 def user_auth() -> dict[str, Any]:
     """Mock auth result for a user caller (should be rejected)."""
@@ -80,7 +77,6 @@ def user_auth() -> dict[str, Any]:
         "zone_id": "root",
         "is_admin": False,
     }
-
 
 def _create_test_app(mock_service: Any, auth_result: dict[str, Any]) -> FastAPI:
     """Create FastAPI app with real router and dependency overrides.
@@ -104,13 +100,11 @@ def _create_test_app(mock_service: Any, auth_result: dict[str, Any]) -> FastAPI:
 
     return app
 
-
 @pytest.fixture()
 def client(mock_delegation_service, agent_auth):
     """TestClient with agent auth using real router."""
     app = _create_test_app(mock_delegation_service, agent_auth)
     return TestClient(app)
-
 
 @pytest.fixture()
 def user_client(mock_delegation_service, user_auth):
@@ -118,11 +112,9 @@ def user_client(mock_delegation_service, user_auth):
     app = _create_test_app(mock_delegation_service, user_auth)
     return TestClient(app)
 
-
 # ---------------------------------------------------------------------------
 # POST /api/v2/agents/delegate
 # ---------------------------------------------------------------------------
-
 
 class TestCreateDelegation:
     def test_happy_path_copy_mode(self, client):
@@ -305,11 +297,9 @@ class TestCreateDelegation:
         )
         assert response.status_code == 400
 
-
 # ---------------------------------------------------------------------------
 # DELETE /api/v2/agents/delegate/{delegation_id}
 # ---------------------------------------------------------------------------
-
 
 class TestRevokeDelegation:
     def test_revoke_success(self, client):
@@ -339,11 +329,9 @@ class TestRevokeDelegation:
         response = client.delete("/api/v2/agents/delegate/del_other")
         assert response.status_code == 403
 
-
 # ---------------------------------------------------------------------------
 # GET /api/v2/agents/delegate
 # ---------------------------------------------------------------------------
-
 
 class TestListDelegations:
     def test_list_empty(self, client):
@@ -423,11 +411,9 @@ class TestListDelegations:
         assert item["depth"] == 1
         assert item["can_sub_delegate"] is True
 
-
 # ---------------------------------------------------------------------------
 # Auth enforcement: user callers rejected
 # ---------------------------------------------------------------------------
-
 
 class TestAuthEnforcement:
     def test_user_cannot_create_delegation(self, user_client):

@@ -6,8 +6,6 @@ query APIs for the REST conflict management endpoints.
 Extends SyncStoreBase for shared session management and dialect detection.
 """
 
-from __future__ import annotations
-
 import logging
 import uuid
 from datetime import UTC, datetime
@@ -22,7 +20,6 @@ from nexus.services.conflict_resolution import (
 from nexus.storage.sync_store_base import SyncStoreBase
 
 logger = logging.getLogger(__name__)
-
 
 class ConflictLogStore(SyncStoreBase):
     """Audit log store for conflict resolution events.

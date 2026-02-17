@@ -43,7 +43,6 @@ down_revision: str | Sequence[str] | None = "77274f750d1f"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-
 def upgrade() -> None:
     """Add pg_textsearch extension and BM25 index (PostgreSQL 17+ only)."""
     conn = op.get_bind()
@@ -102,7 +101,6 @@ def upgrade() -> None:
             "https://github.com/timescale/pg_textsearch",
             stacklevel=2,
         )
-
 
 def downgrade() -> None:
     """Remove pg_textsearch indexes and extension."""

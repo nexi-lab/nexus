@@ -7,8 +7,6 @@ Tests the complete export workflow including:
 - Reading bundle contents
 """
 
-from __future__ import annotations
-
 import tarfile
 import tempfile
 from pathlib import Path
@@ -28,13 +26,11 @@ from nexus.portability import (
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
-
 @pytest.fixture
 def temp_dir():
     """Create temporary directory for tests."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
-
 
 @pytest.fixture
 def nexus_fs(temp_dir):
@@ -58,7 +54,6 @@ def nexus_fs(temp_dir):
 
     yield fs
     fs.close()
-
 
 class TestZoneExportService:
     """Tests for ZoneExportService."""
@@ -123,7 +118,6 @@ class TestZoneExportService:
 
         # Bundle should be smaller without content
         assert output_path.stat().st_size < 5000  # Small metadata-only bundle
-
 
 class TestBundleReader:
     """Tests for BundleReader."""
@@ -203,7 +197,6 @@ class TestBundleReader:
             assert "manifest.json" in contents
             assert "metadata/files.jsonl" in contents
 
-
 class TestValidateBundle:
     """Tests for bundle validation."""
 
@@ -244,7 +237,6 @@ class TestValidateBundle:
         assert is_valid is False
         assert len(errors) > 0
 
-
 class TestInspectBundle:
     """Tests for bundle inspection."""
 
@@ -265,7 +257,6 @@ class TestInspectBundle:
         assert info["include_content"] is True
         assert "bundle_id" in info
         assert "export_timestamp" in info
-
 
 class TestExportConvenienceFunction:
     """Tests for export_zone_bundle convenience function."""

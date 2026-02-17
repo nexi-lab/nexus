@@ -1,13 +1,10 @@
 """Conflict request/response models for API v2 (Issue #1130)."""
 
-from __future__ import annotations
-
 from typing import Literal
 
 from pydantic import Field
 
 from nexus.server.api.v2.models.base import ApiModel
-
 
 class ConflictDetailResponse(ApiModel):
     """Full conflict record representation."""
@@ -28,7 +25,6 @@ class ConflictDetailResponse(ApiModel):
     status: str
     resolved_at: str | None = None
 
-
 class ConflictListResponse(ApiModel):
     """Response for GET /api/v2/sync/conflicts."""
 
@@ -36,14 +32,12 @@ class ConflictListResponse(ApiModel):
     total: int
     has_more: bool = False
 
-
 class ConflictResolveRequest(ApiModel):
     """Request for POST /api/v2/sync/conflicts/{id}/resolve."""
 
     outcome: Literal["nexus_wins", "backend_wins"] = Field(
         ..., description="Chosen resolution outcome"
     )
-
 
 class ConflictResolveResponse(ApiModel):
     """Response for POST /api/v2/sync/conflicts/{id}/resolve."""

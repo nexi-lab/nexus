@@ -11,8 +11,6 @@ Tests the full pipeline:
 Requires: no external API keys (uses mock LLM generator).
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import os
@@ -33,7 +31,6 @@ from nexus.search.contextual_chunking import (
 
 # Use small chunk size so the test doc produces multiple chunks
 SMALL_CHUNKER = DocumentChunker(chunk_size=40, strategy=ChunkStrategy.FIXED)
-
 
 async def _create_tables_and_path(
     db_url: str, async_session_factory, virtual_path: str, size: int
@@ -64,7 +61,6 @@ async def _create_tables_and_path(
         await session.commit()
     return path_id
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -84,7 +80,6 @@ AMBIGUOUS_DOC_SUMMARY = (
     "Acme Corp Q3 earnings report: 15% revenue growth, international expansion "
     "into Tokyo and Berlin, new $500M stock buyback program approved."
 )
-
 
 def _mock_context_for_chunk(chunk_text: str) -> ChunkContext:
     """Generate a deterministic mock context based on chunk content."""
@@ -119,11 +114,9 @@ def _mock_context_for_chunk(chunk_text: str) -> ChunkContext:
             key_entities=["Acme Corp"],
         )
 
-
 # ---------------------------------------------------------------------------
 # 1. Direct ContextualChunker E2E (no server, validates core logic)
 # ---------------------------------------------------------------------------
-
 
 class TestContextualChunkerDirectE2E:
     """E2E test of ContextualChunker with realistic document content."""
@@ -211,11 +204,9 @@ class TestContextualChunkerDirectE2E:
         # "Acme Corp" should appear in entities across all chunks
         assert "Acme Corp" in all_entities
 
-
 # ---------------------------------------------------------------------------
 # 2. AsyncSemanticSearch + Contextual Chunking Integration (SQLite)
 # ---------------------------------------------------------------------------
-
 
 class TestAsyncSearchWithContextualChunking:
     """Test AsyncSemanticSearch with contextual chunking enabled (SQLite, no embeddings)."""
@@ -330,11 +321,9 @@ class TestAsyncSearchWithContextualChunking:
             assert row[1] is None, "chunk_position should be NULL"
             assert row[2] is None, "source_document_id should be NULL"
 
-
 # ---------------------------------------------------------------------------
 # 3. Server E2E: Write + Permission Validation (non-user subjects)
 # ---------------------------------------------------------------------------
-
 
 class TestServerPermissionsE2E:
     """Test that non-user permission subjects can write and read through the API."""
@@ -380,11 +369,9 @@ class TestServerPermissionsE2E:
         )
         assert response.status_code == 200
 
-
 # ---------------------------------------------------------------------------
 # 4. Performance validation: contextual chunking overhead
 # ---------------------------------------------------------------------------
-
 
 class TestContextualChunkingPerformance:
     """Validate no performance regressions from contextual chunking."""
@@ -489,11 +476,9 @@ class TestContextualChunkingPerformance:
         # Heuristic fallback with retries should still be fast
         assert elapsed < 5.0, f"Degradation took too long: {elapsed:.2f}s"
 
-
 # ---------------------------------------------------------------------------
 # 5. Context generator factory E2E
 # ---------------------------------------------------------------------------
-
 
 class TestContextGeneratorFactoryE2E:
     """Test create_context_generator with realistic payloads."""

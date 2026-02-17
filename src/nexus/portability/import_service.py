@@ -11,8 +11,6 @@ References:
 - Epic #1161: Zone Data Portability
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -29,12 +27,12 @@ from nexus.portability.models import (
     ZoneImportOptions,
 )
 
+from nexus.core.nexus_fs import NexusFS
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
     from nexus.core.permissions import OperationContext
 
 logger = logging.getLogger(__name__)
-
 
 def _create_import_context() -> OperationContext:
     """Create a system context for import operations.
@@ -50,10 +48,8 @@ def _create_import_context() -> OperationContext:
         is_system=True,  # System operations bypass all checks
     )
 
-
 # Progress callback type: (current, total, phase) -> None
 ProgressCallback = Callable[[int, int, str], None]
-
 
 class ZoneImportService:
     """Service for importing zone data from .nexus bundles.
@@ -582,7 +578,6 @@ class ZoneImportService:
         # Final progress update
         if progress_callback:
             progress_callback(idx, idx, "permissions")
-
 
 def import_zone_bundle(
     nexus_fs: NexusFS,

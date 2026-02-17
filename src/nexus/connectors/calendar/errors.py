@@ -9,8 +9,6 @@ These are used by SkillDocMixin to generate self-correcting error messages
 that help agents fix their requests.
 """
 
-from __future__ import annotations
-
 from nexus.connectors.base import ErrorDef
 
 # Error registry for Calendar connector
@@ -115,7 +113,6 @@ ERROR_REGISTRY: dict[str, ErrorDef] = {
     ),
 }
 
-
 def get_error(code: str) -> ErrorDef | None:
     """Get error definition by code.
 
@@ -126,7 +123,6 @@ def get_error(code: str) -> ErrorDef | None:
         ErrorDef if found, None otherwise
     """
     return ERROR_REGISTRY.get(code)
-
 
 def format_error_message(
     code: str,

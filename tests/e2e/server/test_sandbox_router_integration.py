@@ -7,8 +7,6 @@ Tests cover:
 - Router metrics accumulation through manager
 """
 
-from __future__ import annotations
-
 import logging
 from unittest.mock import AsyncMock
 
@@ -39,7 +37,6 @@ from nexus.storage.models import Base  # noqa: E402
 # Fixtures
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture
 def engine():
     """In-memory SQLite DB for testing."""
@@ -51,16 +48,13 @@ def engine():
     Base.metadata.create_all(eng)
     return eng
 
-
 @pytest.fixture
 def session_factory(engine):
     return sessionmaker(bind=engine, expire_on_commit=False)
 
-
 @pytest.fixture
 def monty_provider() -> MontySandboxProvider:
     return MontySandboxProvider(resource_profile="standard", enable_type_checking=False)
-
 
 @pytest.fixture
 def mock_docker_provider() -> SandboxProvider:
@@ -78,7 +72,6 @@ def mock_docker_provider() -> SandboxProvider:
     mock.destroy.return_value = None
     return mock
 
-
 @pytest.fixture
 def mock_e2b_provider() -> SandboxProvider:
     """Mock E2B provider that always succeeds."""
@@ -94,7 +87,6 @@ def mock_e2b_provider() -> SandboxProvider:
     mock.is_available.return_value = True
     mock.destroy.return_value = None
     return mock
-
 
 @pytest.fixture
 def manager_with_router(
@@ -112,11 +104,9 @@ def manager_with_router(
     mgr.wire_router()
     return mgr
 
-
 # ---------------------------------------------------------------------------
 # TestEscalationChain
 # ---------------------------------------------------------------------------
-
 
 class TestEscalationChain:
     """Tests for Monty -> Docker -> E2B escalation."""
@@ -195,11 +185,9 @@ class TestEscalationChain:
         assert cached is not None
         assert "read_file" in cached
 
-
 # ---------------------------------------------------------------------------
 # TestBackwardCompatibility
 # ---------------------------------------------------------------------------
-
 
 class TestBackwardCompatibility:
     """Tests that existing behavior is preserved."""
@@ -253,11 +241,9 @@ class TestBackwardCompatibility:
                 # No provider specified
             )
 
-
 # ---------------------------------------------------------------------------
 # TestRouterWithManager
 # ---------------------------------------------------------------------------
-
 
 class TestRouterWithManager:
     """Tests for router integration with SandboxManager."""

@@ -17,7 +17,6 @@ from nexus.workflows.types import ActionResult, WorkflowContext
 
 logger = logging.getLogger(__name__)
 
-
 class BaseAction(ABC):
     """Base class for workflow actions."""
 
@@ -49,7 +48,6 @@ class BaseAction(ABC):
             logger.warning(f"Variable {e} not found in context")
             return value
 
-
 class ParseAction(BaseAction):
     """Parse a document."""
 
@@ -75,7 +73,6 @@ class ParseAction(BaseAction):
         except Exception as e:
             logger.error(f"Parse action failed: {e}")
             return ActionResult(action_name=self.name, success=False, error=str(e))
-
 
 class TagAction(BaseAction):
     """Add or remove tags."""
@@ -113,7 +110,6 @@ class TagAction(BaseAction):
             logger.error(f"Tag action failed: {e}")
             return ActionResult(action_name=self.name, success=False, error=str(e))
 
-
 class MoveAction(BaseAction):
     """Move or rename a file."""
 
@@ -145,7 +141,6 @@ class MoveAction(BaseAction):
         except Exception as e:
             logger.error(f"Move action failed: {e}")
             return ActionResult(action_name=self.name, success=False, error=str(e))
-
 
 class MetadataAction(BaseAction):
     """Update file metadata."""
@@ -181,7 +176,6 @@ class MetadataAction(BaseAction):
         except Exception as e:
             logger.error(f"Metadata action failed: {e}")
             return ActionResult(action_name=self.name, success=False, error=str(e))
-
 
 class LLMAction(BaseAction):
     """Execute LLM-powered action."""
@@ -233,7 +227,6 @@ class LLMAction(BaseAction):
             logger.error(f"LLM action failed: {e}")
             return ActionResult(action_name=self.name, success=False, error=str(e))
 
-
 class WebhookAction(BaseAction):
     """Send HTTP webhook."""
 
@@ -263,7 +256,6 @@ class WebhookAction(BaseAction):
         except Exception as e:
             logger.error(f"Webhook action failed: {e}")
             return ActionResult(action_name=self.name, success=False, error=str(e))
-
 
 class PythonAction(BaseAction):
     """Execute Python code."""
@@ -343,7 +335,6 @@ class PythonAction(BaseAction):
             logger.error(full_error)
             return ActionResult(action_name=self.name, success=False, error=str(e))
 
-
 class BashAction(BaseAction):
     """Execute shell command."""
 
@@ -362,7 +353,6 @@ class BashAction(BaseAction):
         except Exception as e:
             logger.error(f"Bash action failed: {e}")
             return ActionResult(action_name=self.name, success=False, error=str(e))
-
 
 # Built-in action registry
 BUILTIN_ACTIONS = {

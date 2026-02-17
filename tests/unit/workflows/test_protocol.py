@@ -3,7 +3,6 @@
 from nexus.workflows.engine import WorkflowEngine
 from nexus.workflows.protocol import WorkflowProtocol, WorkflowServices
 
-
 class TestWorkflowProtocol:
     """Test WorkflowProtocol conformance."""
 
@@ -33,7 +32,6 @@ class TestWorkflowProtocol:
         assert callable(engine.enable_workflow)
         assert callable(engine.disable_workflow)
         assert callable(engine.list_workflows)
-
 
 class TestWorkflowServices:
     """Test WorkflowServices dataclass."""

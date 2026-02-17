@@ -19,7 +19,6 @@ down_revision: Union[str, Sequence[str], None] = "3fa6791173bc"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add tenant_id to file_paths for defense-in-depth security.
 
@@ -59,7 +58,6 @@ def upgrade() -> None:
         unique=True,
         postgresql_where=sa.text("tenant_id IS NOT NULL"),
     )
-
 
 def downgrade() -> None:
     """Remove tenant_id defense-in-depth (not recommended for production)."""

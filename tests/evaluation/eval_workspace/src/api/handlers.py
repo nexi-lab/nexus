@@ -29,7 +29,6 @@ RATE_LIMIT_AUTHENTICATED = 1000
 RATE_LIMIT_ADMIN = 5000
 RATE_LIMIT_WINDOW_SECONDS = 60
 
-
 @dataclass
 class APIResponse:
     """Standard API response format."""
@@ -38,7 +37,6 @@ class APIResponse:
     data: Any | None = None
     error: str | None = None
     error_code: int | None = None
-
 
 class UserHandler:
     """Handles user-related API endpoints.
@@ -71,7 +69,6 @@ class UserHandler:
         """Soft delete a user account."""
         pass
 
-
 class ProjectHandler:
     """Handles project-related API endpoints.
 
@@ -98,7 +95,6 @@ class ProjectHandler:
     async def create_project(self, data: dict[str, Any]) -> APIResponse:
         """Create a new project."""
         pass
-
 
 class FileHandler:
     """Handles file upload and management endpoints.

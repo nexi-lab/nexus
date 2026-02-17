@@ -1,7 +1,5 @@
 """Unit tests for TTLSweeper."""
 
-from __future__ import annotations
-
 import asyncio
 from datetime import UTC, datetime
 
@@ -16,12 +14,10 @@ from .fakes import InMemoryVFS
 
 ZONE = "test-zone"
 
-
 async def _provision_agent(vfs: InMemoryVFS, agent_id: str) -> None:
     """Provision agent directories using AgentProvisioner (DRY)."""
     provisioner = AgentProvisioner(vfs, zone_id=ZONE)
     await provisioner.provision(agent_id)
-
 
 def _make_message(
     msg_id: str,
@@ -36,7 +32,6 @@ def _make_message(
         timestamp=timestamp,
         ttl_seconds=ttl_seconds,
     )
-
 
 class TestTTLSweeper:
     """Tests for TTL expiry background sweep."""
@@ -151,7 +146,6 @@ class TestTTLSweeper:
         expired_count = await sweeper.sweep_once()
 
         assert expired_count == 1
-
 
 class TestTTLSweeperLifecycle:
     """T4: Tests for sweeper start/stop/restart lifecycle."""

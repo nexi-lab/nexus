@@ -18,8 +18,6 @@ Fallback chain (Issue #582, #1395):
     3. SHA-256 (last resort, WARNING: incompatible hashes!)
 """
 
-from __future__ import annotations
-
 import hashlib
 import logging
 from typing import Any
@@ -63,7 +61,6 @@ except ImportError:
             "falling back to SHA-256 (WARNING: incompatible hashes!)"
         )
 
-
 def hash_content(content: bytes) -> str:
     """Compute content hash using BLAKE3.
 
@@ -87,7 +84,6 @@ def hash_content(content: bytes) -> str:
         return result
 
     return hashlib.sha256(content).hexdigest()
-
 
 def hash_content_smart(content: bytes) -> str:
     """Compute content hash with strategic sampling for large files.
@@ -145,16 +141,13 @@ def hash_content_smart(content: bytes) -> str:
     sha_hasher.update(len(content).to_bytes(8, byteorder="little"))
     return sha_hasher.hexdigest()
 
-
 def is_rust_available() -> bool:
     """Check if Rust-accelerated hashing is available."""
     return _RUST_AVAILABLE
 
-
 def is_blake3_available() -> bool:
     """Check if BLAKE3 hashing is available (Rust or Python)."""
     return _RUST_AVAILABLE or _PYTHON_BLAKE3_AVAILABLE
-
 
 def get_hash_backend() -> str:
     """Get the current hash backend being used.
@@ -168,7 +161,6 @@ def get_hash_backend() -> str:
         return "python-blake3"
     else:
         return "sha256"
-
 
 def create_hasher() -> Any:
     """Create an incremental hasher for streaming content.

@@ -8,8 +8,6 @@ Requires:
     - Server fixtures from conftest.py (nexus_server, isolated_db)
 """
 
-from __future__ import annotations
-
 import time
 
 import httpx
@@ -28,15 +26,12 @@ pytestmark = [
     pytest.mark.e2e,
 ]
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-
 def _api_key_headers(api_key: str = "test-e2e-api-key-12345") -> dict[str, str]:
     return {"X-API-Key": api_key}
-
 
 def _create_sandbox(
     base_url: str,
@@ -55,7 +50,6 @@ def _create_sandbox(
         trust_env=False,
     )
     return response
-
 
 def _run_code(
     base_url: str,
@@ -76,11 +70,9 @@ def _run_code(
     )
     return response
 
-
 # ---------------------------------------------------------------------------
 # E2E Tests
 # ---------------------------------------------------------------------------
-
 
 class TestMontySandboxE2E:
     """End-to-end tests for Monty sandbox via the real FastAPI server."""

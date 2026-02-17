@@ -12,7 +12,6 @@ from nexus.server.protocol import (
     parse_method_params,
 )
 
-
 class TestRPCRequest:
     """Tests for RPCRequest class."""
 
@@ -40,7 +39,6 @@ class TestRPCRequest:
         assert result["id"] == "test-456"
         assert result["method"] == "write"
         assert result["params"] == {"path": "/file.txt"}
-
 
 class TestRPCResponse:
     """Tests for RPCResponse class."""
@@ -82,7 +80,6 @@ class TestRPCResponse:
         assert "result" not in result
         assert result["error"]["code"] == -32002
         assert result["error"]["message"] == "Invalid path"
-
 
 class TestRPCEncoder:
     """Tests for custom JSON encoder."""
@@ -127,7 +124,6 @@ class TestRPCEncoder:
         assert decoded["obj"]["name"] == "test"
         assert "some_method" not in decoded["obj"]  # Methods should be filtered
 
-
 class TestEncodeDecodeRPCMessage:
     """Tests for encoding/decoding RPC messages."""
 
@@ -155,7 +151,6 @@ class TestEncodeDecodeRPCMessage:
         assert decoded["result"]["timestamp"].year == 2024
         assert decoded["result"]["timestamp"].month == 10
         assert decoded["result"]["timestamp"].day == 19
-
 
 class TestParseMethodParams:
     """Tests for parse_method_params function."""
@@ -196,7 +191,6 @@ class TestParseMethodParams:
         """Test parsing with invalid parameters raises error."""
         with pytest.raises(ValueError, match="Invalid parameters"):
             parse_method_params("read", {"invalid_param": "value"})
-
 
 class TestRPCErrorCode:
     """Tests for RPCErrorCode enum."""

@@ -14,7 +14,6 @@ from nexus.backends.local import LocalBackend
 from nexus.services.memory.memory_with_paging import MemoryWithPaging
 from nexus.storage.models import Base
 
-
 @pytest.fixture
 def engine():
     """Create in-memory test database engine."""
@@ -22,12 +21,10 @@ def engine():
     Base.metadata.create_all(eng)
     return eng
 
-
 @pytest.fixture
 def session_factory(engine):
     """Create session factory bound to engine."""
     return sessionmaker(bind=engine)
-
 
 @pytest.fixture
 def session(session_factory):
@@ -36,14 +33,12 @@ def session(session_factory):
     yield sess
     sess.close()
 
-
 @pytest.fixture
 def backend():
     """Create temporary backend with cleanup."""
     tmpdir = tempfile.mkdtemp(prefix="nexus-paging-e2e-")
     yield LocalBackend(tmpdir)
     shutil.rmtree(tmpdir, ignore_errors=True)
-
 
 @pytest.fixture
 def memory(session, session_factory, backend):
@@ -60,7 +55,6 @@ def memory(session, session_factory, backend):
         warm_up=False,  # Don't warm up from empty test DB
         session_factory=session_factory,
     )
-
 
 class TestMemoryPagingE2E:
     """End-to-end tests for memory paging."""

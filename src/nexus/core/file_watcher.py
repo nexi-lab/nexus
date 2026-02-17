@@ -14,8 +14,6 @@ Used by NexusFS for:
 2. Cache invalidation - automatic cache updates on external changes
 """
 
-from __future__ import annotations
-
 import asyncio
 import ctypes
 import logging
@@ -32,7 +30,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 class ChangeType(Enum):
     """Type of file system change detected."""
 
@@ -40,7 +37,6 @@ class ChangeType(Enum):
     MODIFIED = "modified"
     DELETED = "deleted"
     RENAMED = "renamed"
-
 
 @dataclass
 class FileChange:
@@ -66,10 +62,8 @@ class FileChange:
             result["old_path"] = self.old_path
         return result
 
-
 # Type alias for callback functions
 FileChangeCallback = Callable[[FileChange], None]
-
 
 class FileWatcher:
     """Cross-platform file watcher using OS-native event-driven APIs.
@@ -416,7 +410,6 @@ class FileWatcher:
     def close(self) -> None:
         """Clean up any resources (alias for stop())."""
         self.stop()
-
 
 # =============================================================================
 # Windows Watch Implementation

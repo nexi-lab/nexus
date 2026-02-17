@@ -32,7 +32,6 @@ down_revision: Union[str, Sequence[str], None] = "add_leopard_closure"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Create Tiger Cache tables."""
     bind = op.get_bind()
@@ -166,7 +165,6 @@ def upgrade() -> None:
             ON tiger_cache_queue USING BRIN (created_at)
             """
         )
-
 
 def downgrade() -> None:
     """Drop Tiger Cache tables."""

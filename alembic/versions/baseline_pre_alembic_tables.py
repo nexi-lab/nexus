@@ -29,7 +29,6 @@ down_revision: Union[str, Sequence[str], None] = "58d58578fce0"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Create all pre-Alembic tables with their original schemas."""
     # --- Independent tables (no foreign keys to other missing tables) ---
@@ -320,7 +319,6 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("key_id"),
         sa.ForeignKeyConstraint(["key_id"], ["api_keys.key_id"], ondelete="CASCADE"),
     )
-
 
 def downgrade() -> None:
     """Drop all pre-Alembic baseline tables in reverse order."""

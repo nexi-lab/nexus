@@ -12,8 +12,6 @@ Tests cover:
 - Bulk existence check
 """
 
-from __future__ import annotations
-
 import uuid
 from datetime import UTC, datetime, timedelta
 
@@ -31,7 +29,6 @@ from nexus.storage.models import Base
 
 ZONE = "default"
 
-
 @pytest.fixture
 def engine():
     """Create in-memory SQLite database with ReBAC schema.
@@ -48,12 +45,10 @@ def engine():
     Base.metadata.create_all(eng)
     return eng
 
-
 @pytest.fixture
 def repo(engine):
     """Create a TupleRepository backed by in-memory SQLite."""
     return TupleRepository(engine=engine)
-
 
 def _insert_tuple(
     conn,
@@ -108,11 +103,9 @@ def _insert_tuple(
         conn.commit()
     return tid
 
-
 # ============================================================================
 # Connection management
 # ============================================================================
-
 
 class TestConnectionManagement:
     """Tests for get_connection / close_connection / connection() context manager."""
@@ -169,11 +162,9 @@ class TestConnectionManagement:
         results = repo.find_subjects_with_relation(Entity("file", "readme"), "viewer-of")
         assert len(results) == 0
 
-
 # ============================================================================
 # SQL dialect helpers
 # ============================================================================
-
 
 class TestSQLDialect:
     """Tests for fix_sql_placeholders and create_cursor."""
@@ -201,11 +192,9 @@ class TestSQLDialect:
         """SQLite never supports OLD/NEW RETURNING."""
         assert repo.supports_old_new_returning is False
 
-
 # ============================================================================
 # Zone revision tracking
 # ============================================================================
-
 
 class TestZoneRevision:
     """Tests for get_zone_revision / increment_zone_revision.
@@ -299,11 +288,9 @@ class TestZoneRevision:
         finally:
             repo.close_connection(conn)
 
-
 # ============================================================================
 # Cross-zone validation
 # ============================================================================
-
 
 class TestCrossZoneValidation:
     """Tests for validate_cross_zone static method."""
@@ -330,11 +317,9 @@ class TestCrossZoneValidation:
         """If tuple zone_id is None, no validation needed."""
         TupleRepository.validate_cross_zone(None, "z2", "z3")
 
-
 # ============================================================================
 # Ancestor detection (would_create_cycle)
 # ============================================================================
-
 
 class TestAncestorDetection:
     """Tests for would_create_cycle.
@@ -464,11 +449,9 @@ class TestAncestorDetection:
             repo.close_connection(conn)
         assert result is False
 
-
 # ============================================================================
 # Tuple query methods
 # ============================================================================
-
 
 class TestFindSubjectSets:
     """Tests for find_subject_sets (userset-as-subject queries)."""
@@ -569,7 +552,6 @@ class TestFindSubjectSets:
         result = repo.find_subject_sets("editor-of", Entity("file", "readme"), zone_id=ZONE)
         assert len(result) == 0
 
-
 class TestFindRelatedObjects:
     """Tests for find_related_objects (tupleToUserset traversal)."""
 
@@ -619,7 +601,6 @@ class TestFindRelatedObjects:
         ids = {e.entity_id for e in result}
         assert ids == {"a", "b"}
 
-
 class TestFindSubjectsWithRelation:
     """Tests for find_subjects_with_relation (reverse lookup)."""
 
@@ -651,7 +632,6 @@ class TestFindSubjectsWithRelation:
         ids = {e.entity_id for e in result}
         assert ids == {"alice", "bob"}
 
-
 class TestGetDirectSubjects:
     """Tests for get_direct_subjects."""
 
@@ -675,11 +655,9 @@ class TestGetDirectSubjects:
         assert len(result) == 1
         assert result[0] == ("agent", "alice")
 
-
 # ============================================================================
 # ABAC condition evaluation
 # ============================================================================
-
 
 class TestEvaluateConditions:
     """Tests for evaluate_conditions static method."""
@@ -757,11 +735,9 @@ class TestEvaluateConditions:
             is False
         )
 
-
 # ============================================================================
 # Direct tuple lookup
 # ============================================================================
-
 
 class TestFindDirectTupleBySubject:
     """Tests for find_direct_tuple_by_subject."""
@@ -941,11 +917,9 @@ class TestFindDirectTupleBySubject:
         finally:
             repo.close_connection(conn)
 
-
 # ============================================================================
 # Bulk existence check
 # ============================================================================
-
 
 class TestBulkCheckTuplesExist:
     """Tests for bulk_check_tuples_exist."""

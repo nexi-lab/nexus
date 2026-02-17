@@ -4,8 +4,6 @@ Issue #1360: Tests checkpoint creation, Merkle root correctness,
 threshold-based triggering, and idempotency.
 """
 
-from __future__ import annotations
-
 from decimal import Decimal
 
 import pytest
@@ -22,7 +20,6 @@ from nexus.storage.models.exchange_audit_log import ExchangeAuditLogModel
 # Fixtures
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture
 def engine():
     eng = create_engine("sqlite:///:memory:")
@@ -30,16 +27,13 @@ def engine():
     yield eng
     eng.dispose()
 
-
 @pytest.fixture
 def session_factory(engine):
     return sessionmaker(bind=engine)
 
-
 @pytest.fixture
 def audit_logger(session_factory):
     return ExchangeAuditLogger(session_factory=session_factory)
-
 
 @pytest.fixture
 def checkpoint_task(session_factory, audit_logger):
@@ -49,7 +43,6 @@ def checkpoint_task(session_factory, audit_logger):
         interval_seconds=60,
         threshold=3,  # Low threshold for testing
     )
-
 
 def _seed_records(audit_logger: ExchangeAuditLogger, count: int) -> list[str]:
     ids = []
@@ -67,11 +60,9 @@ def _seed_records(audit_logger: ExchangeAuditLogger, count: int) -> list[str]:
         ids.append(rid)
     return ids
 
-
 # ---------------------------------------------------------------------------
 # Checkpoint creation
 # ---------------------------------------------------------------------------
-
 
 class TestCheckpointCreation:
     def test_creates_checkpoint_when_threshold_met(
@@ -103,11 +94,9 @@ class TestCheckpointCreation:
     def test_no_checkpoint_when_empty(self, checkpoint_task: MerkleCheckpointTask) -> None:
         assert checkpoint_task._maybe_checkpoint() is None
 
-
 # ---------------------------------------------------------------------------
 # Merkle root correctness
 # ---------------------------------------------------------------------------
-
 
 class TestMerkleRootCorrectness:
     def test_checkpoint_root_matches_manual_computation(
@@ -141,11 +130,9 @@ class TestMerkleRootCorrectness:
         assert cp.merkle_root == expected_root
         session.close()
 
-
 # ---------------------------------------------------------------------------
 # Idempotency
 # ---------------------------------------------------------------------------
-
 
 class TestIdempotency:
     def test_no_duplicate_checkpoints(

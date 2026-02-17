@@ -6,8 +6,6 @@ in scheduler/queue.py with a proper ORM model.
 Related: Issue #1212
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from decimal import Decimal
 
@@ -15,7 +13,6 @@ from sqlalchemy import DateTime, Index, Numeric, SmallInteger, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base, uuid_pk
-
 
 class ScheduledTaskModel(Base):
     """Persistent storage for scheduled tasks with priority ordering."""

@@ -7,19 +7,16 @@ import pytest
 from nexus.backends.local import LocalBackend
 from nexus.core.router import PathNotMountedError, PathRouter
 
-
 @pytest.fixture
 def router() -> PathRouter:
     """Create a PathRouter instance."""
     return PathRouter()
-
 
 @pytest.fixture
 def temp_backend() -> LocalBackend:
     """Create a temporary LocalBackend for testing."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield LocalBackend(tmpdir)
-
 
 def test_add_mount(router: PathRouter, temp_backend: LocalBackend) -> None:
     """Test adding a mount to the router."""
@@ -28,12 +25,10 @@ def test_add_mount(router: PathRouter, temp_backend: LocalBackend) -> None:
     assert router._mounts[0].mount_point == "/workspace"
     assert router._mounts[0].backend == temp_backend
 
-
 def test_add_mount_normalizes_path(router: PathRouter, temp_backend: LocalBackend) -> None:
     """Test that mount points are normalized."""
     router.add_mount("/workspace/", temp_backend)  # Trailing slash
     assert router._mounts[0].mount_point == "/workspace"
-
 
 def test_add_mount_sorts_by_priority(router: PathRouter, temp_backend: LocalBackend) -> None:
     """Test that mounts are sorted by priority."""
@@ -44,7 +39,6 @@ def test_add_mount_sorts_by_priority(router: PathRouter, temp_backend: LocalBack
     assert router._mounts[0].mount_point == "/high"
     assert router._mounts[1].mount_point == "/medium"
     assert router._mounts[2].mount_point == "/low"
-
 
 def test_add_mount_sorts_by_length_when_priority_equal(
     router: PathRouter, temp_backend: LocalBackend
@@ -57,7 +51,6 @@ def test_add_mount_sorts_by_length_when_priority_equal(
     assert router._mounts[0].mount_point == "/workspace/data"
     assert router._mounts[1].mount_point == "/workspace"
 
-
 def test_route_exact_match(router: PathRouter, temp_backend: LocalBackend) -> None:
     """Test routing with exact mount point match."""
     router.add_mount("/data", temp_backend)
@@ -69,7 +62,6 @@ def test_route_exact_match(router: PathRouter, temp_backend: LocalBackend) -> No
     assert result.mount_point == "/data"
     assert result.readonly is False
 
-
 def test_route_prefix_match(router: PathRouter, temp_backend: LocalBackend) -> None:
     """Test routing with prefix match."""
     router.add_mount("/workspace", temp_backend)
@@ -80,7 +72,6 @@ def test_route_prefix_match(router: PathRouter, temp_backend: LocalBackend) -> N
     assert result.backend_path == "data/file.txt"
     assert result.mount_point == "/workspace"
 
-
 def test_route_root_mount(router: PathRouter, temp_backend: LocalBackend) -> None:
     """Test routing with root mount."""
     router.add_mount("/", temp_backend)
@@ -90,7 +81,6 @@ def test_route_root_mount(router: PathRouter, temp_backend: LocalBackend) -> Non
     assert result.backend == temp_backend
     assert result.backend_path == "anything/goes/here.txt"
     assert result.mount_point == "/"
-
 
 def test_route_longest_prefix_wins(router: PathRouter) -> None:
     """Test that longest matching prefix wins."""
@@ -107,7 +97,6 @@ def test_route_longest_prefix_wins(router: PathRouter) -> None:
         assert result.backend_path == "file.txt"
         assert result.mount_point == "/workspace/data"
 
-
 def test_route_no_match_raises_error(router: PathRouter, temp_backend: LocalBackend) -> None:
     """Test that routing with no mount raises error."""
     router.add_mount("/workspace", temp_backend)
@@ -117,7 +106,6 @@ def test_route_no_match_raises_error(router: PathRouter, temp_backend: LocalBack
 
     assert "/other/path" in str(exc_info.value)
 
-
 def test_route_readonly_mount(router: PathRouter, temp_backend: LocalBackend) -> None:
     """Test routing to readonly mount."""
     router.add_mount("/readonly", temp_backend, readonly=True)
@@ -126,24 +114,20 @@ def test_route_readonly_mount(router: PathRouter, temp_backend: LocalBackend) ->
 
     assert result.readonly is True
 
-
 def test_normalize_path_removes_trailing_slash(router: PathRouter) -> None:
     """Test that trailing slashes are removed."""
     normalized = router._normalize_path("/workspace/")
     assert normalized == "/workspace"
-
 
 def test_normalize_path_collapses_slashes(router: PathRouter) -> None:
     """Test that multiple slashes are collapsed."""
     normalized = router._normalize_path("/workspace//data///file.txt")
     assert normalized == "/workspace/data/file.txt"
 
-
 def test_normalize_path_handles_dots(router: PathRouter) -> None:
     """Test that . and .. are resolved."""
     normalized = router._normalize_path("/workspace/./data/../file.txt")
     assert normalized == "/workspace/file.txt"
-
 
 def test_normalize_path_rejects_relative_paths(router: PathRouter) -> None:
     """Test that relative paths are rejected."""
@@ -152,7 +136,6 @@ def test_normalize_path_rejects_relative_paths(router: PathRouter) -> None:
 
     assert "must be absolute" in str(exc_info.value)
 
-
 def test_normalize_path_resolves_parent_refs(router: PathRouter) -> None:
     """Test that parent references are resolved correctly."""
     # posixpath.normpath resolves .. but keeps absolute paths
@@ -160,24 +143,20 @@ def test_normalize_path_resolves_parent_refs(router: PathRouter) -> None:
     normalized = router._normalize_path("/../etc/passwd")
     assert normalized == "/etc/passwd"
 
-
 def test_strip_mount_prefix_basic(router: PathRouter) -> None:
     """Test stripping mount prefix."""
     result = router._strip_mount_prefix("/workspace/data/file.txt", "/workspace")
     assert result == "data/file.txt"
-
 
 def test_strip_mount_prefix_exact_match(router: PathRouter) -> None:
     """Test stripping when path equals mount point."""
     result = router._strip_mount_prefix("/workspace", "/workspace")
     assert result == ""
 
-
 def test_strip_mount_prefix_root_mount(router: PathRouter) -> None:
     """Test stripping with root mount."""
     result = router._strip_mount_prefix("/workspace/data/file.txt", "/")
     assert result == "workspace/data/file.txt"
-
 
 def test_match_longest_prefix_exact(router: PathRouter, temp_backend: LocalBackend) -> None:
     """Test matching exact mount point."""
@@ -188,7 +167,6 @@ def test_match_longest_prefix_exact(router: PathRouter, temp_backend: LocalBacke
     assert match is not None
     assert match.mount_point == "/workspace"
 
-
 def test_match_longest_prefix_subdirectory(router: PathRouter, temp_backend: LocalBackend) -> None:
     """Test matching subdirectory."""
     router.add_mount("/workspace", temp_backend)
@@ -198,7 +176,6 @@ def test_match_longest_prefix_subdirectory(router: PathRouter, temp_backend: Loc
     assert match is not None
     assert match.mount_point == "/workspace"
 
-
 def test_match_longest_prefix_no_match(router: PathRouter, temp_backend: LocalBackend) -> None:
     """Test no match returns None."""
     router.add_mount("/workspace", temp_backend)
@@ -206,7 +183,6 @@ def test_match_longest_prefix_no_match(router: PathRouter, temp_backend: LocalBa
     match = router._match_longest_prefix("/other/path")
 
     assert match is None
-
 
 def test_match_longest_prefix_root_matches_all(
     router: PathRouter, temp_backend: LocalBackend
@@ -219,7 +195,6 @@ def test_match_longest_prefix_root_matches_all(
     assert match is not None
     assert match.mount_point == "/"
 
-
 def test_match_prevents_false_prefix(router: PathRouter, temp_backend: LocalBackend) -> None:
     """Test that /workspace doesn't match /workspace2."""
     router.add_mount("/workspace", temp_backend)
@@ -228,15 +203,12 @@ def test_match_prevents_false_prefix(router: PathRouter, temp_backend: LocalBack
 
     assert match is None
 
-
 # === Namespace and Access Control Tests ===
-
 
 def test_validate_path_accepts_valid_path(router: PathRouter) -> None:
     """Test that validate_path accepts valid paths."""
     result = router.validate_path("/workspace/zone1/agent1/data.txt")
     assert result == "/workspace/zone1/agent1/data.txt"
-
 
 def test_validate_path_rejects_null_byte(router: PathRouter) -> None:
     """Test that validate_path rejects paths with null bytes."""
@@ -247,7 +219,6 @@ def test_validate_path_rejects_null_byte(router: PathRouter) -> None:
 
     assert "null byte" in str(exc_info.value)
 
-
 def test_validate_path_rejects_control_characters(router: PathRouter) -> None:
     """Test that validate_path rejects paths with control characters."""
     from nexus.core.router import InvalidPathError
@@ -257,7 +228,6 @@ def test_validate_path_rejects_control_characters(router: PathRouter) -> None:
 
     assert "control characters" in str(exc_info.value)
 
-
 def test_validate_path_rejects_path_traversal(router: PathRouter) -> None:
     """Test that validate_path rejects path traversal attempts."""
     from nexus.core.router import InvalidPathError
@@ -266,7 +236,6 @@ def test_validate_path_rejects_path_traversal(router: PathRouter) -> None:
         router.validate_path("/workspace/../../etc/passwd")
 
     assert "traversal" in str(exc_info.value).lower()
-
 
 def test_validate_path_rejects_path_traversal_variations(router: PathRouter) -> None:
     """Test that validate_path rejects various path traversal attempts.
@@ -291,7 +260,6 @@ def test_validate_path_rejects_path_traversal_variations(router: PathRouter) -> 
             router.validate_path(test_path)
         assert "traversal" in str(exc_info.value).lower(), f"Failed for: {test_path}"
 
-
 def test_validate_path_accepts_safe_dotdot_in_filename(router: PathRouter) -> None:
     """Test that files with .. in the name (but not as path component) are allowed."""
     # These should be ALLOWED because .. is part of filename, not path traversal
@@ -305,7 +273,6 @@ def test_validate_path_accepts_safe_dotdot_in_filename(router: PathRouter) -> No
         # Should not raise - these are safe
         result = router.validate_path(safe_path)
         assert result == safe_path, f"Should allow: {safe_path}"
-
 
 def test_validate_path_normalization_security(router: PathRouter) -> None:
     """Test that normalization properly handles security-sensitive cases.
@@ -340,7 +307,6 @@ def test_validate_path_normalization_security(router: PathRouter) -> None:
         assert result.startswith("/"), f"Result should start with /: {result}"
         assert ".." not in result, f"Result should not contain ..: {result}"
 
-
 def test_parse_path_workspace(router: PathRouter) -> None:
     """Test parsing workspace namespace path - new ReBAC-based format."""
     path_info = router.parse_path("/workspace/my-project/data/file.txt")
@@ -348,7 +314,6 @@ def test_parse_path_workspace(router: PathRouter) -> None:
     assert path_info.namespace == "workspace"
     assert path_info.zone_id is None  # No zone in path for workspace
     assert path_info.relative_path == "my-project/data/file.txt"
-
 
 def test_parse_path_shared(router: PathRouter) -> None:
     """Test parsing shared namespace path."""
@@ -358,7 +323,6 @@ def test_parse_path_shared(router: PathRouter) -> None:
     assert path_info.zone_id == "acme"
     assert path_info.relative_path == "datasets/model.pkl"
 
-
 def test_parse_path_archives(router: PathRouter) -> None:
     """Test parsing archives namespace path."""
     path_info = router.parse_path("/archives/acme/2024/01/backup.tar")
@@ -366,7 +330,6 @@ def test_parse_path_archives(router: PathRouter) -> None:
     assert path_info.namespace == "archives"
     assert path_info.zone_id == "acme"
     assert path_info.relative_path == "2024/01/backup.tar"
-
 
 def test_parse_path_external(router: PathRouter) -> None:
     """Test parsing external namespace path."""
@@ -376,7 +339,6 @@ def test_parse_path_external(router: PathRouter) -> None:
     assert path_info.zone_id is None
     assert path_info.relative_path == "s3/bucket/file.txt"
 
-
 def test_parse_path_system(router: PathRouter) -> None:
     """Test parsing system namespace path."""
     path_info = router.parse_path("/system/config/settings.json")
@@ -384,7 +346,6 @@ def test_parse_path_system(router: PathRouter) -> None:
     assert path_info.namespace == "system"
     assert path_info.zone_id is None
     assert path_info.relative_path == "config/settings.json"
-
 
 def test_parse_path_workspace_partial_paths(router: PathRouter) -> None:
     """Test that workspace allows partial paths for directory creation - new ReBAC-based format."""
@@ -400,7 +361,6 @@ def test_parse_path_workspace_partial_paths(router: PathRouter) -> None:
     assert path_info.zone_id is None  # No zone parsing for workspace
     assert path_info.relative_path == "project-dir"
 
-
 def test_parse_path_shared_partial_paths(router: PathRouter) -> None:
     """Test that shared allows partial paths for directory creation."""
     # /shared - just namespace
@@ -413,7 +373,6 @@ def test_parse_path_shared_partial_paths(router: PathRouter) -> None:
     assert path_info.namespace == "shared"
     assert path_info.zone_id == "zone1"
 
-
 def test_namespace_configuration_defaults(router: PathRouter) -> None:
     """Test that default namespaces are registered."""
     assert "workspace" in router._namespaces
@@ -422,21 +381,17 @@ def test_namespace_configuration_defaults(router: PathRouter) -> None:
     assert "system" in router._namespaces
     assert "archives" in router._namespaces
 
-
 def test_namespace_system_is_readonly(router: PathRouter) -> None:
     """Test that system namespace is read-only."""
     assert router._namespaces["system"].readonly is True
-
 
 def test_namespace_system_is_admin_only(router: PathRouter) -> None:
     """Test that system namespace is admin-only."""
     assert router._namespaces["system"].admin_only is True
 
-
 def test_namespace_archives_is_readonly(router: PathRouter) -> None:
     """Test that archives namespace is read-only."""
     assert router._namespaces["archives"].readonly is True
-
 
 def test_route_with_zone_isolation(router: PathRouter, temp_backend: LocalBackend) -> None:
     """Test routing with zone isolation enforced."""
@@ -446,7 +401,6 @@ def test_route_with_zone_isolation(router: PathRouter, temp_backend: LocalBacken
     result = router.route("/workspace/acme/agent1/data.txt", zone_id="acme")
     assert result.backend == temp_backend
     assert result.backend_path == "acme/agent1/data.txt"
-
 
 def test_route_with_zone_mismatch_raises_error(
     router: PathRouter, temp_backend: LocalBackend
@@ -466,7 +420,6 @@ def test_route_with_zone_mismatch_raises_error(
 
     assert "cannot access" in str(exc_info.value)
 
-
 def test_route_admin_can_access_any_zone(router: PathRouter, temp_backend: LocalBackend) -> None:
     """Test that admin can access any zone's resources."""
     router.add_mount("/workspace", temp_backend)
@@ -474,7 +427,6 @@ def test_route_admin_can_access_any_zone(router: PathRouter, temp_backend: Local
     # Admin can access other zone's resources
     result = router.route("/workspace/acme/agent1/data.txt", zone_id="other_zone", is_admin=True)
     assert result.backend == temp_backend
-
 
 def test_route_system_requires_admin(router: PathRouter, temp_backend: LocalBackend) -> None:
     """Test that system namespace requires admin privileges."""
@@ -487,14 +439,12 @@ def test_route_system_requires_admin(router: PathRouter, temp_backend: LocalBack
 
     assert "requires admin" in str(exc_info.value)
 
-
 def test_route_system_allows_admin(router: PathRouter, temp_backend: LocalBackend) -> None:
     """Test that admin can access system namespace."""
     router.add_mount("/system", temp_backend)
 
     result = router.route("/system/config/settings.json", is_admin=True)
     assert result.backend == temp_backend
-
 
 def test_route_readonly_namespace_rejects_writes(
     router: PathRouter, temp_backend: LocalBackend
@@ -509,7 +459,6 @@ def test_route_readonly_namespace_rejects_writes(
 
     assert "read-only" in str(exc_info.value)
 
-
 def test_route_readonly_namespace_allows_reads(
     router: PathRouter, temp_backend: LocalBackend
 ) -> None:
@@ -520,7 +469,6 @@ def test_route_readonly_namespace_allows_reads(
     result = router.route("/archives/acme/backup.tar", zone_id="acme", check_write=False)
     assert result.backend == temp_backend
     assert result.readonly is True
-
 
 def test_register_custom_namespace(router: PathRouter) -> None:
     """Test registering a custom namespace."""
@@ -533,7 +481,6 @@ def test_register_custom_namespace(router: PathRouter) -> None:
 
     assert "custom" in router._namespaces
     assert router._namespaces["custom"] == custom_ns
-
 
 def test_route_without_zone_id_allows_external(
     router: PathRouter, temp_backend: LocalBackend

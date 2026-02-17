@@ -23,7 +23,6 @@ down_revision: Union[str, Sequence[str], None] = "9c0780bb05c1"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Create SQL views for work detection."""
     import sqlalchemy as sa
@@ -46,7 +45,6 @@ def upgrade() -> None:
     for _name, view_sql in all_views:
         connection.execute(view_sql)
         connection.commit()
-
 
 def downgrade() -> None:
     """Drop SQL views."""

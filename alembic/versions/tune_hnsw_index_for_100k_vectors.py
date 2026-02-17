@@ -34,7 +34,6 @@ down_revision: Union[str, Sequence[str], None] = "update_file_namespace_shared"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Recreate HNSW index with tuned parameters for better performance."""
     conn = op.get_bind()
@@ -79,7 +78,6 @@ def upgrade() -> None:
             WITH (m = 24, ef_construction = 128)
         """)
     )
-
 
 def downgrade() -> None:
     """Revert to default HNSW index parameters."""

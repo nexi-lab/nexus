@@ -12,8 +12,6 @@ Run tests with:
     pytest tests/integration/test_postgres_cache.py -v
 """
 
-from __future__ import annotations
-
 import asyncio
 import os
 from collections.abc import Generator
@@ -38,7 +36,6 @@ PG_URL = os.environ.get(
     "postgresql://postgres:nexus@localhost:5432/nexus",
 )
 
-
 def _pg_is_available() -> bool:
     """Check if PostgreSQL is reachable."""
     try:
@@ -50,7 +47,6 @@ def _pg_is_available() -> bool:
     except Exception:
         return False
 
-
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
@@ -58,7 +54,6 @@ pytestmark = [
         reason="PostgreSQL not available. Start with: docker compose -f docker-compose.demo.yml up postgres -d",
     ),
 ]
-
 
 @pytest.fixture(scope="module")
 def pg_engine() -> Generator[Engine, None, None]:
@@ -84,7 +79,6 @@ def pg_engine() -> Generator[Engine, None, None]:
     yield engine
     engine.dispose()
 
-
 @pytest.fixture(autouse=True)
 def clean_tables(pg_engine: Engine) -> None:
     """Clean cache tables before each test for isolation."""
@@ -93,11 +87,9 @@ def clean_tables(pg_engine: Engine) -> None:
         conn.execute(text("DELETE FROM tiger_cache"))
         # Don't delete tiger_resource_map — auto-increment IDs are global
 
-
 # ---------------------------------------------------------------------------
 # PostgresPermissionCache Tests
 # ---------------------------------------------------------------------------
-
 
 class TestPostgresPermissionCache:
     """Protocol-conformance tests for PostgresPermissionCache."""
@@ -215,11 +207,9 @@ class TestPostgresPermissionCache:
     async def test_health_check(self, cache: PostgresPermissionCache) -> None:
         assert await cache.health_check() is True
 
-
 # ---------------------------------------------------------------------------
 # PostgresTigerCache Tests
 # ---------------------------------------------------------------------------
-
 
 class TestPostgresTigerCache:
     """Protocol-conformance tests for PostgresTigerCache."""
@@ -291,11 +281,9 @@ class TestPostgresTigerCache:
     async def test_health_check(self, cache: PostgresTigerCache) -> None:
         assert await cache.health_check() is True
 
-
 # ---------------------------------------------------------------------------
 # PostgresResourceMapCache Tests
 # ---------------------------------------------------------------------------
-
 
 class TestPostgresResourceMapCache:
     """Protocol-conformance tests for PostgresResourceMapCache."""
@@ -364,11 +352,9 @@ class TestPostgresResourceMapCache:
 
         assert id1 == id2
 
-
 # ---------------------------------------------------------------------------
 # CacheFactory Integration Tests
 # ---------------------------------------------------------------------------
-
 
 class TestCacheFactoryPostgresFallback:
     """Verify CacheFactory returns PostgreSQL implementations when configured."""

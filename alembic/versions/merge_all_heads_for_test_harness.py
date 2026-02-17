@@ -29,11 +29,9 @@ down_revision: Union[str, Sequence[str], None] = (
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Merge heads — no schema changes."""
     pass
-
 
 def downgrade() -> None:
     """Reverse merge — no schema changes."""

@@ -11,8 +11,6 @@ Provides fixtures for:
 Merged from tests/integration/conftest.py and tests/e2e/conftest.py.
 """
 
-from __future__ import annotations
-
 import gc
 import os
 import signal
@@ -44,14 +42,12 @@ _src_path = Path(__file__).parent.parent.parent / "src"
 if str(_src_path) not in sys.path:
     sys.path.insert(0, str(_src_path))
 
-
 def find_free_port() -> int:
     """Find a free port on localhost."""
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
         s.bind(("", 0))
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         return s.getsockname()[1]
-
 
 def _drain_pipe(pipe, lines: list[str], ready: threading.Event | None = None):
     """Read lines from a subprocess pipe (runs in daemon thread).
@@ -71,14 +67,12 @@ def _drain_pipe(pipe, lines: list[str], ready: threading.Event | None = None):
     finally:
         pipe.close()
 
-
 # Aggressive cleanup to prevent SQLite "database is locked" errors
 @pytest.fixture(autouse=True)
 def cleanup_gc():
     """Force garbage collection after each test."""
     yield
     gc.collect()
-
 
 @pytest.fixture(scope="function")
 def isolated_db(tmp_path, monkeypatch):
@@ -107,7 +101,6 @@ def isolated_db(tmp_path, monkeypatch):
 
         with suppress(Exception):  # Best effort cleanup
             db_path.unlink()
-
 
 @pytest.fixture(scope="function")
 def nexus_server(isolated_db, tmp_path):
@@ -220,7 +213,6 @@ def nexus_server(isolated_db, tmp_path):
         process.kill()
         process.wait()
 
-
 @pytest.fixture(scope="function")
 def test_app(nexus_server):
     """Create httpx client for making real HTTP requests to the server.
@@ -235,7 +227,6 @@ def test_app(nexus_server):
     # which can interfere with localhost connections
     with httpx.Client(base_url=nexus_server["base_url"], timeout=30.0, trust_env=False) as client:
         yield client
-
 
 # Keep the old fixture for backward compatibility during transition
 @pytest.fixture(scope="function")
@@ -266,7 +257,6 @@ def nexus_fs(isolated_db, tmp_path):
 
     nx.close()
 
-
 def wait_for_server(url: str, timeout: float = 30.0) -> bool:
     """Wait for server to be ready by polling /health endpoint.
 
@@ -283,7 +273,6 @@ def wait_for_server(url: str, timeout: float = 30.0) -> bool:
         time.sleep(0.1)
     return False
 
-
 @pytest.fixture
 def metadata_store(tmp_path):
     """Create Raft metadata store for tests (primary production path).
@@ -296,7 +285,6 @@ def metadata_store(tmp_path):
     store = RaftMetadataStore.embedded(str(tmp_path / "raft-metadata"))
     yield store
     # Cleanup handled by tmp_path
-
 
 @pytest.fixture
 def record_store():

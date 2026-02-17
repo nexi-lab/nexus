@@ -10,8 +10,6 @@ References:
 - Epic #1161: Zone Data Portability
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import tarfile
@@ -28,7 +26,6 @@ from nexus.portability.models import (
 )
 
 logger = logging.getLogger(__name__)
-
 
 class BundleReader:
     """Reader for .nexus bundle files.
@@ -55,7 +52,7 @@ class BundleReader:
         self._tar: tarfile.TarFile | None = None
         self._manifest: ExportManifest | None = None
 
-    def __enter__(self) -> BundleReader:
+    def __enter__(self) -> "BundleReader":
         """Open the bundle for reading."""
         self.open()
         return self
@@ -254,7 +251,6 @@ class BundleReader:
 
         return [m.name for m in self._tar.getmembers() if m.isfile()]
 
-
 def validate_bundle(bundle_path: Path | str) -> tuple[bool, list[str]]:
     """Validate a .nexus bundle file.
 
@@ -269,7 +265,6 @@ def validate_bundle(bundle_path: Path | str) -> tuple[bool, list[str]]:
             return reader.validate()
     except Exception as e:
         return False, [str(e)]
-
 
 def inspect_bundle(bundle_path: Path | str) -> dict:
     """Get summary information about a bundle.

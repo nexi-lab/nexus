@@ -18,8 +18,6 @@ Provides 14 endpoints for memory CRUD, search, and version operations:
 - GET    /api/v2/memories/{id}/lineage         - Append-only lineage chain (#1188)
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -46,11 +44,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/memories", tags=["memories"])
 
-
 # =============================================================================
 # Endpoints
 # =============================================================================
-
 
 @router.get("/stats")
 async def get_memory_paging_stats(
@@ -72,7 +68,6 @@ async def get_memory_paging_stats(
     except Exception as e:
         logger.error(f"Memory paging stats error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to retrieve paging statistics") from e
-
 
 @router.post("", response_model=MemoryStoreResponse, status_code=status.HTTP_201_CREATED)
 async def store_memory(
@@ -114,7 +109,6 @@ async def store_memory(
     except Exception as e:
         logger.error(f"Memory store error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to store memory") from e
-
 
 @router.get("/{memory_id}", response_model=MemoryGetResponse)
 async def get_memory(
@@ -169,7 +163,6 @@ async def get_memory(
         logger.error(f"Memory get error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to retrieve memory") from e
 
-
 @router.put("/{memory_id}", response_model=MemoryStoreResponse)
 async def update_memory(
     memory_id: str,
@@ -218,7 +211,6 @@ async def update_memory(
         logger.error(f"Memory update error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to update memory") from e
 
-
 @router.delete("/{memory_id}")
 async def delete_memory(
     memory_id: str,
@@ -241,7 +233,6 @@ async def delete_memory(
     except Exception as e:
         logger.error(f"Memory delete error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to delete memory") from e
-
 
 @router.post("/{memory_id}/invalidate")
 async def invalidate_memory(
@@ -266,7 +257,6 @@ async def invalidate_memory(
         logger.error(f"Memory invalidate error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to invalidate memory") from e
 
-
 @router.post("/{memory_id}/revalidate")
 async def revalidate_memory(
     memory_id: str,
@@ -286,7 +276,6 @@ async def revalidate_memory(
     except Exception as e:
         logger.error(f"Memory revalidate error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to revalidate memory") from e
-
 
 @router.post("/search", response_model=dict[str, Any])
 async def search_memories(
@@ -317,7 +306,6 @@ async def search_memories(
     except Exception as e:
         logger.error(f"Memory search error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to search memories") from e
-
 
 @router.post("/query", response_model=dict[str, Any])
 async def query_memories(
@@ -371,7 +359,6 @@ async def query_memories(
     except Exception as e:
         logger.error(f"Memory query error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to query memories") from e
-
 
 @router.post("/batch", response_model=MemoryBatchStoreResponse, status_code=status.HTTP_201_CREATED)
 async def batch_store_memories(
@@ -429,7 +416,6 @@ async def batch_store_memories(
         logger.error(f"Batch store error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to batch store memories") from e
 
-
 @router.get("/{memory_id}/history", response_model=MemoryVersionHistoryResponse)
 async def get_memory_history(
     memory_id: str,
@@ -465,7 +451,6 @@ async def get_memory_history(
         logger.error(f"Memory history error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to retrieve memory history") from e
 
-
 @router.get("/{memory_id}/versions/{version}", response_model=dict[str, Any])
 async def get_memory_version(
     memory_id: str,
@@ -491,7 +476,6 @@ async def get_memory_version(
     except Exception as e:
         logger.error(f"Memory get version error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to retrieve memory version") from e
-
 
 @router.post("/{memory_id}/rollback", response_model=dict[str, Any])
 async def rollback_memory(
@@ -529,7 +513,6 @@ async def rollback_memory(
         logger.error(f"Memory rollback error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to rollback memory") from e
 
-
 @router.get("/{memory_id}/diff", response_model=dict[str, Any])
 async def diff_memory_versions(
     memory_id: str,
@@ -556,7 +539,6 @@ async def diff_memory_versions(
     except Exception as e:
         logger.error(f"Memory diff error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to diff memory versions") from e
-
 
 @router.get("/{memory_id}/lineage", response_model=dict[str, Any])
 async def get_memory_lineage(

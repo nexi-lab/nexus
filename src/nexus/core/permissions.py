@@ -9,8 +9,6 @@ PermissionEnforcer lives in services/permissions/enforcer.py — re-exported her
 for backward compatibility.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -21,7 +19,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 def __getattr__(name: str) -> Any:
     """Lazy re-export to avoid circular import with services.permissions.enforcer."""
     if name == "PermissionEnforcer":
@@ -29,7 +26,6 @@ def __getattr__(name: str) -> Any:
 
         return PermissionEnforcer
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-
 
 def check_stale_session(agent_registry: Any, context: OperationContext) -> None:
     """Check for stale agent sessions and raise if the session is outdated.

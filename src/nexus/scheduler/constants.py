@@ -5,11 +5,8 @@ Defines priority tiers, aging configuration, and boost limits.
 Related: Issue #1212
 """
 
-from __future__ import annotations
-
 from decimal import Decimal
 from enum import IntEnum, StrEnum
-
 
 class PriorityTier(IntEnum):
     """Fixed priority tiers (lower value = higher priority).
@@ -23,7 +20,6 @@ class PriorityTier(IntEnum):
     NORMAL = 2  # Standard (default)
     LOW = 3  # Background jobs
     BEST_EFFORT = 4  # Only when idle
-
 
 # String aliases for API convenience
 TIER_ALIASES: dict[str, PriorityTier] = {
@@ -77,11 +73,9 @@ VALID_TASK_STATUSES = frozenset(
     }
 )
 
-
 # =============================================================================
 # Astraea-Style Enums (Issue #1274)
 # =============================================================================
-
 
 class RequestState(StrEnum):
     """Request execution state for Astraea-style classification."""
@@ -92,14 +86,12 @@ class RequestState(StrEnum):
     IDLE = "idle"
     PENDING = "pending"
 
-
 class PriorityClass(StrEnum):
     """Scheduling class derived from tier + runtime signals."""
 
     INTERACTIVE = "interactive"
     BATCH = "batch"
     BACKGROUND = "background"
-
 
 # Maps PriorityTier → PriorityClass (base mapping before runtime adjustments)
 TIER_TO_CLASS: dict[PriorityTier, PriorityClass] = {

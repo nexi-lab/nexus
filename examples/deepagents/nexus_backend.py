@@ -23,7 +23,6 @@ except ImportError:
 
 import nexus
 
-
 class NexusBackend:
     """
     Nexus implementation of DeepAgents BackendProtocol.
@@ -432,7 +431,6 @@ class NexusBackend:
             pass
 
         return files
-
 
 # Verify protocol compliance at runtime
 if not isinstance(NexusBackend, type):

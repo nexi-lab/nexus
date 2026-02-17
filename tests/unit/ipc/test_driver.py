@@ -5,8 +5,6 @@ IPCVFSDriver bridges the CAS-oriented Backend ABC with path-oriented
 IPC storage, exposing agent messaging via the VFS Router.
 """
 
-from __future__ import annotations
-
 import json
 
 import pytest
@@ -22,7 +20,6 @@ from .fakes import InMemoryStorageDriver
 
 ZONE = "test-zone"
 
-
 def _make_envelope(
     sender: str = "agent:alice",
     recipient: str = "agent:bob",
@@ -36,7 +33,6 @@ def _make_envelope(
         payload={"action": "test"},
     )
 
-
 async def _provision(storage: InMemoryStorageDriver, agent_id: str) -> None:
     """Provision agent directories in storage."""
     root = f"{AGENTS_ROOT}/{agent_id}"
@@ -45,7 +41,6 @@ async def _provision(storage: InMemoryStorageDriver, agent_id: str) -> None:
         await storage.mkdir(f"{root}/{sub}", ZONE)
     card = json.dumps({"name": agent_id, "status": "connected"}).encode()
     await storage.write(f"{root}/AGENT.json", card, ZONE)
-
 
 class TestIPCVFSDriverProperties:
     """Tests for driver identity and capability flags."""
@@ -65,7 +60,6 @@ class TestIPCVFSDriverProperties:
     def test_is_connected(self) -> None:
         driver = IPCVFSDriver(storage=InMemoryStorageDriver(), zone_id=ZONE)
         assert driver.is_connected is True
-
 
 class TestIPCVFSDriverListDir:
     """Tests for directory listing via VFS."""
@@ -115,7 +109,6 @@ class TestIPCVFSDriverListDir:
         with pytest.raises(FileNotFoundError):
             driver.list_dir("/agents/nonexistent")
 
-
 class TestIPCVFSDriverReadContent:
     """Tests for reading messages/agent cards via CAS interface."""
 
@@ -155,7 +148,6 @@ class TestIPCVFSDriverReadContent:
         assert not response.success
         assert response.error_code == 404
 
-
 class TestIPCVFSDriverWriteContent:
     """Tests for writing messages via CAS interface."""
 
@@ -189,7 +181,6 @@ class TestIPCVFSDriverWriteContent:
         assert read_resp.success
         assert json.loads(read_resp.data)["status"] == "idle"
 
-
 class TestIPCVFSDriverMkdir:
     """Tests for directory creation."""
 
@@ -216,7 +207,6 @@ class TestIPCVFSDriverMkdir:
         driver.mkdir(f"{AGENTS_ROOT}/agent:bob", parents=True, exist_ok=True)
         response = driver.mkdir(f"{AGENTS_ROOT}/agent:bob", parents=True, exist_ok=True)
         assert response.success
-
 
 class TestIPCVFSDriverIsDirectory:
     """Tests for directory existence checks."""
@@ -251,7 +241,6 @@ class TestIPCVFSDriverIsDirectory:
         assert resp.success
         assert resp.data is False
 
-
 class TestIPCVFSDriverDeleteContent:
     """Tests for delete (move to dead_letter)."""
 
@@ -266,7 +255,6 @@ class TestIPCVFSDriverDeleteContent:
 
         response = driver.delete_content("some_hash")
         assert response.success
-
 
 class TestIPCVFSDriverContentExists:
     """Tests for content/path existence checks."""
@@ -291,7 +279,6 @@ class TestIPCVFSDriverContentExists:
         resp = driver.content_exists("/agents/ghost/file.json")
         assert resp.success
         assert resp.data is False
-
 
 class TestIPCVFSDriverReBAC:
     """Tests for ReBAC object type mapping."""

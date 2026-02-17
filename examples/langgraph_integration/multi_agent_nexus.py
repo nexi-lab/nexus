@@ -21,7 +21,6 @@ from langgraph.graph import END, START, StateGraph
 
 from nexus.remote import RemoteNexusFS
 
-
 # State definition (same as standard version)
 class AgentState(TypedDict):
     task: str
@@ -31,7 +30,6 @@ class AgentState(TypedDict):
     review_file: str
     iteration: int
     max_iterations: int
-
 
 def get_demo_user_key():
     """
@@ -46,7 +44,6 @@ def get_demo_user_key():
 
     # TODO: Could dynamically create this via API if needed
     return demo_key
-
 
 def setup_nexus_permissions(admin_nx: RemoteNexusFS, workspace: str):
     """
@@ -103,7 +100,6 @@ def setup_nexus_permissions(admin_nx: RemoteNexusFS, workspace: str):
 
     print("🔐 Permission setup complete!\n")
 
-
 def researcher_node(state: AgentState) -> AgentState:
     """Researcher agent: analyzes task and writes requirements."""
     print(f"\n🔍 Researcher is analyzing task: {state['task']}")
@@ -138,7 +134,6 @@ def researcher_node(state: AgentState) -> AgentState:
     print("  (Researcher has write permission to /workspace/research/)")
 
     return {**state, "research_file": research_file, "current_agent": "coder"}
-
 
 def coder_node(state: AgentState) -> AgentState:
     """Coder agent: reads requirements and writes code."""
@@ -178,7 +173,6 @@ def coder_node(state: AgentState) -> AgentState:
     print("  (Coder has write permission to /workspace/code/)")
 
     return {**state, "code_file": code_file, "current_agent": "reviewer"}
-
 
 def reviewer_node(state: AgentState) -> AgentState:
     """Reviewer agent: reviews code and provides feedback."""
@@ -222,7 +216,6 @@ def reviewer_node(state: AgentState) -> AgentState:
         "iteration": state["iteration"] + 1,
     }
 
-
 def build_graph():
     """Build the multi-agent workflow graph (same as standard version)."""
     workflow = StateGraph(AgentState)
@@ -239,7 +232,6 @@ def build_graph():
     workflow.add_edge("reviewer", END)
 
     return workflow.compile()
-
 
 def demonstrate_permission_enforcement():
     """
@@ -280,7 +272,6 @@ def demonstrate_permission_enforcement():
         print(f"  ✓ Access denied: {str(e)}")
 
     print("\n🔒 Permission enforcement verified!")
-
 
 def main():
     """Main function to run the multi-agent workflow with Nexus."""
@@ -340,7 +331,6 @@ def main():
     print("✓ Cloud storage with audit trails")
     print("✓ Multi-user/multi-agent collaboration")
     print("=" * 60)
-
 
 if __name__ == "__main__":
     main()

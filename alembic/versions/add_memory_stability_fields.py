@@ -27,13 +27,11 @@ down_revision: Union[str, Sequence[str], None] = "add_ipc_messages_table"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     op.add_column("memories", sa.Column("temporal_stability", sa.String(20), nullable=True))
     op.add_column("memories", sa.Column("stability_confidence", sa.Float(), nullable=True))
     op.add_column("memories", sa.Column("estimated_ttl_days", sa.Integer(), nullable=True))
     op.create_index("idx_memory_temporal_stability", "memories", ["temporal_stability"])
-
 
 def downgrade() -> None:
     op.drop_index("idx_memory_temporal_stability", table_name="memories")

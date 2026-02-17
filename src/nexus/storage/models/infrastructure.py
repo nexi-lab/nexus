@@ -3,8 +3,6 @@
 Issue #1286: Extracted from monolithic __init__.py.
 """
 
-from __future__ import annotations
-
 import json
 from datetime import UTC, datetime
 from typing import Any
@@ -14,7 +12,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.core.exceptions import ValidationError
 from nexus.storage.models._base import Base, ResourceConfigMixin, TimestampMixin, uuid_pk
-
 
 class SandboxMetadataModel(Base):
     """Sandbox metadata for Nexus-managed sandboxes (E2B, etc.)."""
@@ -81,7 +78,6 @@ class SandboxMetadataModel(Base):
         if self.ttl_minutes is not None and self.ttl_minutes < 1:
             raise ValidationError(f"ttl_minutes must be >= 1, got {self.ttl_minutes}")
 
-
 class MountConfigModel(TimestampMixin, Base):
     """Persistent mount configuration storage.
 
@@ -131,7 +127,6 @@ class MountConfigModel(TimestampMixin, Base):
         if self.priority is not None and self.priority < 0:
             raise ValidationError(f"priority must be non-negative, got {self.priority}")
 
-
 class SystemSettingsModel(TimestampMixin, Base):
     """System-wide settings stored in the database."""
 
@@ -147,7 +142,6 @@ class SystemSettingsModel(TimestampMixin, Base):
     def __repr__(self) -> str:
         value_display = "***" if self.is_sensitive else self.value[:50]
         return f"<SystemSettingsModel(key={self.key}, value={value_display})>"
-
 
 class SubscriptionModel(TimestampMixin, Base):
     """Webhook subscriptions for event notifications."""
@@ -234,7 +228,6 @@ class SubscriptionModel(TimestampMixin, Base):
         result: dict[str, Any] = json.loads(self.custom_metadata) if self.custom_metadata else {}
         return result
 
-
 class MigrationHistoryModel(Base):
     """Tracks migration history for upgrade/rollback support."""
 
@@ -272,7 +265,6 @@ class MigrationHistoryModel(Base):
             f"type={self.migration_type}, status={self.status})>"
         )
 
-
 class WorkspaceConfigModel(ResourceConfigMixin, Base):
     """Workspace configuration registry.
 
@@ -297,7 +289,6 @@ class WorkspaceConfigModel(ResourceConfigMixin, Base):
 
     def __repr__(self) -> str:
         return f"<WorkspaceConfigModel(path={self.path}, name={self.name})>"
-
 
 class UserSessionModel(Base):
     """User session tracking for session-scoped resources."""

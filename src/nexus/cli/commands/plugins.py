@@ -1,7 +1,5 @@
 """Plugin System commands - manage Nexus plugins."""
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import inspect
@@ -12,7 +10,6 @@ import click
 from rich.table import Table
 
 from nexus.cli.utils import console, handle_error
-
 
 def _run_async(coro: Any) -> Any:
     """Run an async coroutine from sync Click command context."""
@@ -28,7 +25,6 @@ def _run_async(coro: Any) -> Any:
             return pool.submit(asyncio.run, coro).result()
     return asyncio.run(coro)
 
-
 def _get_registry() -> Any:
     """Create a PluginRegistry with discovered + loaded plugins."""
     from nexus.plugins.registry import PluginRegistry
@@ -42,12 +38,10 @@ def _get_registry() -> Any:
     _run_async(_discover_and_load())
     return registry
 
-
 def register_commands(cli: click.Group) -> None:
     """Register all plugin commands."""
     cli.add_command(plugins)
     _register_plugin_commands(cli)
-
 
 @click.group(name="plugins")
 def plugins() -> None:
@@ -70,7 +64,6 @@ def plugins() -> None:
         nexus plugins uninstall anthropic
     """
     pass
-
 
 @plugins.command(name="list")
 def plugins_list() -> None:
@@ -102,7 +95,6 @@ def plugins_list() -> None:
 
     except Exception as e:
         handle_error(e)
-
 
 @plugins.command(name="info")
 @click.argument("plugin_name")
@@ -146,7 +138,6 @@ def plugins_info(plugin_name: str) -> None:
     except Exception as e:
         handle_error(e)
 
-
 @plugins.command(name="enable")
 @click.argument("plugin_name")
 def plugins_enable(plugin_name: str) -> None:
@@ -169,7 +160,6 @@ def plugins_enable(plugin_name: str) -> None:
     except Exception as e:
         handle_error(e)
 
-
 @plugins.command(name="disable")
 @click.argument("plugin_name")
 def plugins_disable(plugin_name: str) -> None:
@@ -191,7 +181,6 @@ def plugins_disable(plugin_name: str) -> None:
 
     except Exception as e:
         handle_error(e)
-
 
 @plugins.command(name="install")
 @click.argument("plugin_name")
@@ -216,7 +205,6 @@ def plugins_install(plugin_name: str) -> None:
     except subprocess.CalledProcessError as e:
         console.print(f"[red]Failed to install {package_name}[/red]")
         console.print(f"Error: {e.stderr.decode() if e.stderr else str(e)}")
-
 
 @plugins.command(name="uninstall")
 @click.argument("plugin_name")
@@ -248,7 +236,6 @@ def plugins_uninstall(plugin_name: str, yes: bool) -> None:
     except subprocess.CalledProcessError as e:
         console.print(f"[red]Failed to uninstall {package_name}[/red]")
         console.print(f"Error: {e.stderr.decode() if e.stderr else str(e)}")
-
 
 @plugins.command(name="init")
 @click.argument("name")
@@ -303,7 +290,6 @@ def plugins_init(
         console.print(f"[red]Error: {e}[/red]")
     except Exception as e:
         handle_error(e)
-
 
 # Dynamic plugin command registration
 def _register_plugin_commands(main: click.Group) -> None:

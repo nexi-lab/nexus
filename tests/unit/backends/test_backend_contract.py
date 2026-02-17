@@ -1,7 +1,5 @@
 """Backend contract tests -- parametrized across MockBackend and LocalBackend (Issue #1601)."""
 
-from __future__ import annotations
-
 import hashlib
 from typing import Any
 
@@ -14,7 +12,6 @@ from nexus.core.protocols.connector import (
     DirectoryOpsProtocol,
 )
 from nexus.core.response import HandlerResponse
-
 
 class _MockBackend(Backend):
     """In-memory Backend for contract testing."""
@@ -96,7 +93,6 @@ class _MockBackend(Backend):
     def is_directory(self, path: str, context: Any = None) -> HandlerResponse[bool]:
         return HandlerResponse.ok(data=path in self._dirs, backend_name="mock")
 
-
 class _IncompleteBackend:
     """Missing most protocol methods -- should fail isinstance checks."""
 
@@ -104,18 +100,15 @@ class _IncompleteBackend:
     def name(self) -> str:
         return "incomplete"
 
-
 @pytest.fixture()
 def mock_backend() -> _MockBackend:
     return _MockBackend()
-
 
 @pytest.fixture()
 def local_backend(tmp_path: Any) -> Backend:
     from nexus.backends.local import LocalBackend
 
     return LocalBackend(root_path=str(tmp_path / "nexus-data"))
-
 
 @pytest.fixture(params=["mock", "local"])
 def backend(request: Any, tmp_path: Any) -> Backend:
@@ -127,7 +120,6 @@ def backend(request: Any, tmp_path: Any) -> Backend:
 
         return LocalBackend(root_path=str(tmp_path / "nexus-data"))
     raise ValueError(f"Unknown backend: {request.param}")
-
 
 class TestBackendContract:
     """Contract tests run against all backend implementations."""
@@ -283,13 +275,11 @@ class TestBackendContract:
         assert content_hash is not None
         assert backend.read_content(content_hash, context=None).success
 
-
 class TestLocalBackendSpecific:
     """LocalBackend-specific tests not covered by contract."""
 
     def test_local_has_root_path(self, local_backend: Backend) -> None:
         assert local_backend.has_root_path is True
-
 
 class TestNegativeProtocolConformance:
     """Incomplete objects must NOT satisfy protocols."""

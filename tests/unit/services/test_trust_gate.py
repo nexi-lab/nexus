@@ -8,8 +8,6 @@ Tests that the trust gate in delegate() correctly:
 5. Is skipped when reputation_service is None
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from datetime import datetime
 from unittest.mock import MagicMock, patch
@@ -19,7 +17,6 @@ import pytest
 from nexus.services.delegation.errors import InsufficientTrustError
 from nexus.services.delegation.models import DelegationMode
 from nexus.services.delegation.service import DelegationService
-
 
 @dataclass(frozen=True)
 class FakeReputationScore:
@@ -46,14 +43,12 @@ class FakeReputationScore:
     updated_at: datetime = datetime(2025, 1, 1)
     zone_id: str = "default"
 
-
 @pytest.fixture()
 def mock_reputation_service():
     """Mock ReputationService with controllable get_reputation."""
     service = MagicMock()
     service.get_reputation.return_value = FakeReputationScore(composite_score=0.8)
     return service
-
 
 @pytest.fixture()
 def mock_deps():
@@ -63,7 +58,6 @@ def mock_deps():
     entity_registry = MagicMock()
     agent_registry = MagicMock()
     return session_factory, rebac_manager, entity_registry, agent_registry
-
 
 def _make_service(mock_deps, reputation_service=None):
     """Create DelegationService with mock dependencies."""
@@ -75,7 +69,6 @@ def _make_service(mock_deps, reputation_service=None):
         agent_registry=agent_reg,
         reputation_service=reputation_service,
     )
-
 
 class TestTrustGate:
     """Tests for the trust gate in delegate()."""

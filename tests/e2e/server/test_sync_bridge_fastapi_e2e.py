@@ -11,8 +11,6 @@ realistic FastAPI server context:
 Uses httpx ASGITransport to call the FastAPI app in-process (no subprocess).
 """
 
-from __future__ import annotations
-
 import asyncio
 import os
 import uuid
@@ -24,7 +22,6 @@ import pytest
 from nexus.backends.local import LocalBackend
 from nexus.core.sync_bridge import shutdown_sync_bridge
 from nexus.storage.record_store import SQLAlchemyRecordStore
-
 
 def _create_test_app(tmp_path: Path, enforce_permissions: bool = True):
     """Create a FastAPI app with real NexusFS for testing.
@@ -74,7 +71,6 @@ def _create_test_app(tmp_path: Path, enforce_permissions: bool = True):
 
     return app, api_key
 
-
 def _run_async(coro):
     """Run a coroutine in a fresh event loop (avoids pytest-asyncio dependency)."""
     loop = asyncio.new_event_loop()
@@ -83,14 +79,12 @@ def _run_async(coro):
     finally:
         loop.close()
 
-
 @pytest.fixture
 def server_app(tmp_path):
     """Create a test FastAPI app with permissions."""
     app, api_key = _create_test_app(tmp_path, enforce_permissions=True)
     yield app, api_key
     shutdown_sync_bridge()
-
 
 @pytest.fixture
 def server_app_no_perms(tmp_path):
@@ -99,9 +93,7 @@ def server_app_no_perms(tmp_path):
     yield app, api_key
     shutdown_sync_bridge()
 
-
 # === Health check ===
-
 
 class TestServerHealth:
     """Basic server health with our changes."""
@@ -120,9 +112,7 @@ class TestServerHealth:
 
         _run_async(_test())
 
-
 # === File operations through server (exercises run_sync / fire_and_forget) ===
-
 
 class TestFileOperationsE2E:
     """Test file operations through the FastAPI server.
@@ -219,9 +209,7 @@ class TestFileOperationsE2E:
 
         _run_async(_test())
 
-
 # === Permission-enabled operations ===
-
 
 class TestPermissionsE2E:
     """Test that permissions work correctly with our sync_bridge changes."""
@@ -270,9 +258,7 @@ class TestPermissionsE2E:
 
         _run_async(_test())
 
-
 # === Verify no asyncio.run errors in server context ===
-
 
 class TestNoAsyncioRunErrors:
     """Verify our changes don't produce asyncio.run() errors in server context."""

@@ -19,8 +19,6 @@ Run with:
     pytest tests/e2e/test_email_verification_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import uuid
@@ -50,11 +48,9 @@ pytestmark = [
     ),
 ]
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
 
 def _create_nexus_fs(tmp_path: Path, *, enforce_permissions: bool = False) -> NexusFS:
     """Create a real NexusFS with RaftMetadataStore."""
@@ -77,7 +73,6 @@ def _create_nexus_fs(tmp_path: Path, *, enforce_permissions: bool = False) -> Ne
         is_admin=False,
     )
 
-
 class _TokenCapture(logging.Handler):
     """Logging handler that captures verification URLs."""
 
@@ -91,7 +86,6 @@ class _TokenCapture(logging.Handler):
             url = msg.split("URL:")[1].strip()
             self.urls.append(url)
 
-
 def _rpc_body(method: str, params: dict | None = None) -> str:
     """Build JSON-RPC request body."""
     return json.dumps(
@@ -102,7 +96,6 @@ def _rpc_body(method: str, params: dict | None = None) -> str:
             "params": params or {},
         }
     )
-
 
 def _rpc_post(
     client: TestClient,
@@ -121,11 +114,9 @@ def _rpc_post(
     )
     return resp.status_code, resp.json()
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
 
 @pytest.fixture()
 def _env(tmp_path: Path, monkeypatch):
@@ -177,24 +168,20 @@ def _env(tmp_path: Path, monkeypatch):
     Base.metadata.drop_all(engine)
     engine.dispose()
 
-
 @pytest.fixture()
 def client(_env):
     """TestClient wired to the full FastAPI app."""
     with TestClient(_env["app"], raise_server_exceptions=False) as c:
         yield c
 
-
 @pytest.fixture()
 def local_auth(_env) -> DatabaseLocalAuth:
     """The DatabaseLocalAuth instance for direct method access in tests."""
     return _env["local_auth"]
 
-
 # ---------------------------------------------------------------------------
 # Tests: Full Email Verification Flow with Real Server
 # ---------------------------------------------------------------------------
-
 
 class TestEmailVerificationFullStack:
     """Full email verification flow against create_app() with permissions enabled."""
@@ -363,7 +350,6 @@ class TestEmailVerificationFullStack:
         )
         assert resp.status_code == 400
         assert "not an email verification token" in resp.json()["detail"].lower()
-
 
 class TestNonUserPermissionEnforcement:
     """Validate that non-authenticated (non-user) operations are properly denied

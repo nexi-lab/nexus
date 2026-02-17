@@ -5,8 +5,6 @@ This module contains the auth cache, authentication dependency functions
 (get_operation_context) used by route handlers.
 """
 
-from __future__ import annotations
-
 import hashlib
 import hmac
 import logging
@@ -29,7 +27,6 @@ _AUTH_CACHE: TTLCache[str, dict[str, Any]] = TTLCache(
     maxsize=_AUTH_CACHE_MAX_SIZE, ttl=_AUTH_CACHE_TTL
 )
 
-
 def _get_cached_auth(token: str) -> dict[str, Any] | None:
     """Get cached auth result if valid. Returns a copy to prevent mutation."""
     token_hash = hashlib.sha256(token.encode()).hexdigest()[:32]
@@ -39,17 +36,14 @@ def _get_cached_auth(token: str) -> dict[str, Any] | None:
         return dict(cached)
     return None
 
-
 def _set_cached_auth(token: str, result: dict[str, Any]) -> None:
     """Cache auth result with TTL."""
     token_hash = hashlib.sha256(token.encode()).hexdigest()[:32]
     _AUTH_CACHE[token_hash] = result
 
-
 def _reset_auth_cache() -> None:
     """Reset the auth cache. Used by tests for isolation."""
     _AUTH_CACHE.clear()
-
 
 # NEXUS_STATIC_ADMINS: comma-separated subject IDs that get admin privileges
 # in open access mode (no api_key, no auth_provider). Parsed once at import.
@@ -65,7 +59,6 @@ if _STATIC_ADMINS:
         "Grants admin privileges in open access mode. DO NOT use in production.",
         _STATIC_ADMINS,
     )
-
 
 async def resolve_auth(
     app_state: Any,
@@ -201,7 +194,6 @@ async def resolve_auth(
 
     return None
 
-
 async def get_auth_result(
     request: Request,
     authorization: str | None = Header(None, alias="Authorization"),
@@ -223,7 +215,6 @@ async def get_auth_result(
         x_nexus_zone_id=x_nexus_zone_id,
     )
 
-
 async def require_auth(
     auth_result: dict[str, Any] | None = Depends(get_auth_result),
 ) -> dict[str, Any]:
@@ -235,7 +226,6 @@ async def require_auth(
     if auth_result is None or not auth_result.get("authenticated"):
         raise HTTPException(status_code=401, detail="Invalid or missing API key")
     return auth_result
-
 
 def get_operation_context(auth_result: dict[str, Any]) -> Any:
     """Create OperationContext from auth result.

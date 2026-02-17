@@ -7,8 +7,6 @@ Provides endpoints for coordinator-initiated agent delegation:
 - GET    /api/v2/agents/delegate/{id}/chain    — Trace delegation chain
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import datetime
 from typing import Any
@@ -26,12 +24,10 @@ router = APIRouter(prefix="/api/v2/agents/delegate", tags=["delegation"])
 # Lazy imports (avoid circular imports with fastapi_server)
 # =============================================================================
 
-
 def _get_require_auth() -> Any:
     from nexus.server.fastapi_server import require_auth
 
     return require_auth
-
 
 def _get_delegation_service(request: Request) -> Any:
     """Lazily construct DelegationService from app state."""
@@ -75,11 +71,9 @@ def _get_delegation_service(request: Request) -> Any:
     state._delegation_service = service
     return service
 
-
 # =============================================================================
 # Pydantic models
 # =============================================================================
-
 
 class DelegationScopeModel(BaseModel):
     """Fine-grained scope constraints for a delegation."""
@@ -94,7 +88,6 @@ class DelegationScopeModel(BaseModel):
     max_depth: int = Field(
         default=0, description="Max sub-delegation depth (0 = no sub-delegation)"
     )
-
 
 class DelegateRequest(BaseModel):
     """Request to create a delegated worker agent."""
@@ -132,7 +125,6 @@ class DelegateRequest(BaseModel):
         description="Minimum trust score threshold for coordinator (0.0 = disabled)",
     )
 
-
 class DelegateResponse(BaseModel):
     """Response after creating a delegation."""
 
@@ -142,7 +134,6 @@ class DelegateResponse(BaseModel):
     mount_table: list[str]
     expires_at: datetime | None
     delegation_mode: str
-
 
 class DelegationListItem(BaseModel):
     """Summary of a delegation for list responses."""
@@ -160,7 +151,6 @@ class DelegationListItem(BaseModel):
     can_sub_delegate: bool
     created_at: datetime
 
-
 class DelegationListResponse(BaseModel):
     """Response for listing delegations with pagination."""
 
@@ -168,7 +158,6 @@ class DelegationListResponse(BaseModel):
     total: int
     limit: int
     offset: int
-
 
 class DelegationChainItem(BaseModel):
     """Single node in a delegation chain."""
@@ -182,13 +171,11 @@ class DelegationChainItem(BaseModel):
     intent: str
     created_at: datetime
 
-
 class DelegationChainResponse(BaseModel):
     """Response for delegation chain tracing."""
 
     chain: list[DelegationChainItem]
     total_depth: int
-
 
 class CompleteDelegationRequest(BaseModel):
     """Request to complete a delegation with outcome feedback (#1619)."""
@@ -198,11 +185,9 @@ class CompleteDelegationRequest(BaseModel):
         default=None, ge=0.0, le=1.0, description="Optional quality rating (0.0-1.0)"
     )
 
-
 # =============================================================================
 # Endpoints
 # =============================================================================
-
 
 @router.post("", response_model=DelegateResponse)
 async def create_delegation(
@@ -284,7 +269,6 @@ async def create_delegation(
         delegation_mode=result.delegation_mode.value,
     )
 
-
 @router.delete("/{delegation_id}")
 async def revoke_delegation(
     delegation_id: str,
@@ -318,7 +302,6 @@ async def revoke_delegation(
         raise  # unreachable, but satisfies type checker
 
     return {"status": "revoked", "delegation_id": delegation_id}
-
 
 @router.get("", response_model=DelegationListResponse)
 async def list_delegations(
@@ -379,7 +362,6 @@ async def list_delegations(
 
     return DelegationListResponse(delegations=items, total=total, limit=limit, offset=offset)
 
-
 @router.get("/{delegation_id}/chain", response_model=DelegationChainResponse)
 async def get_delegation_chain(
     delegation_id: str,
@@ -414,7 +396,6 @@ async def get_delegation_chain(
     ]
 
     return DelegationChainResponse(chain=items, total_depth=len(chain) - 1)
-
 
 @router.post("/{delegation_id}/complete")
 async def complete_delegation(
@@ -473,11 +454,9 @@ async def complete_delegation(
         "outcome": request.outcome,
     }
 
-
 # =============================================================================
 # Error handling
 # =============================================================================
-
 
 def _handle_delegation_error(e: Exception) -> None:
     """Map domain errors to HTTP responses. Always raises."""

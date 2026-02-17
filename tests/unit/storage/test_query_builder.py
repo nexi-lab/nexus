@@ -9,7 +9,6 @@ import pytest
 from nexus.core.exceptions import MetadataError
 from nexus.storage.query_builder import WorkQueryBuilder
 
-
 class TestGetReadyWork:
     """Test get_ready_work method."""
 
@@ -112,7 +111,6 @@ class TestGetReadyWork:
         assert "Failed to get ready work" in str(exc_info.value)
         assert "Database error" in str(exc_info.value)
 
-
 class TestGetPendingWork:
     """Test get_pending_work method."""
 
@@ -177,7 +175,6 @@ class TestGetPendingWork:
             WorkQueryBuilder.get_pending_work(session)
 
         assert "Failed to get pending work" in str(exc_info.value)
-
 
 class TestGetBlockedWork:
     """Test get_blocked_work method."""
@@ -244,7 +241,6 @@ class TestGetBlockedWork:
             WorkQueryBuilder.get_blocked_work(session)
 
         assert "Failed to get blocked work" in str(exc_info.value)
-
 
 class TestGetInProgressWork:
     """Test get_in_progress_work method."""
@@ -342,7 +338,6 @@ class TestGetInProgressWork:
             WorkQueryBuilder.get_in_progress_work(session)
 
         assert "Failed to get in-progress work" in str(exc_info.value)
-
 
 class TestGetWorkByPriority:
     """Test get_work_by_priority method."""

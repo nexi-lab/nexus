@@ -7,13 +7,10 @@ Moved from ``core/`` to ``a2a/`` because this module depends on
 ``nexus.a2a.models`` — the kernel must not import from services.
 """
 
-from __future__ import annotations
-
 from typing import Any, Literal
 
 from nexus.a2a.models import DataPart, Message
 from nexus.ipc.envelope import MessageEnvelope, MessageType
-
 
 def a2a_message_to_envelope(
     message: Message,
@@ -41,7 +38,6 @@ def a2a_message_to_envelope(
             "payload": payload,
         }
     )
-
 
 def envelope_to_a2a_message(
     envelope: MessageEnvelope,

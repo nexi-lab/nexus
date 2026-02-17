@@ -5,8 +5,6 @@ When the remote is unreachable, operations are queued to a WAL-backed
 offline queue and replayed automatically when connectivity resumes.
 """
 
-from __future__ import annotations
-
 import asyncio
 import base64
 import contextlib
@@ -28,7 +26,6 @@ from nexus.proxy.offline_queue import OfflineQueue
 from nexus.proxy.transport import HttpTransport
 
 logger = logging.getLogger(__name__)
-
 
 class ProxyBrick:
     """Base proxy that forwards operations to a remote kernel.
@@ -75,7 +72,7 @@ class ProxyBrick:
     # Async context manager
     # ------------------------------------------------------------------
 
-    async def __aenter__(self) -> ProxyBrick:
+    async def __aenter__(self) -> "ProxyBrick":
         await self.start()
         return self
 
@@ -230,11 +227,9 @@ class ProxyBrick:
         """Return the number of pending operations in the offline queue."""
         return await self._queue.pending_count()
 
-
 # ======================================================================
 # Protocol proxy implementations
 # ======================================================================
-
 
 class ProxyVFSBrick(ProxyBrick):
     """Proxy for ``VFSOperations`` — forwards file ops to a cloud kernel.
@@ -273,7 +268,6 @@ class ProxyVFSBrick(ProxyBrick):
     async def exists(self, path: str, zone_id: str) -> bool:
         return cast(bool, await self._forward("exists", path=path, zone_id=zone_id))
 
-
 class ProxyEventLogBrick(ProxyBrick):
     """Proxy for ``EventLogProtocol`` — forwards audit events to cloud."""
 
@@ -293,7 +287,6 @@ class ProxyEventLogBrick(ProxyBrick):
             limit=limit,
             zone_id=zone_id,
         )
-
 
 class ProxySchedulerBrick(ProxyBrick):
     """Proxy for ``SchedulerProtocol`` — forwards scheduling to cloud.
@@ -326,7 +319,6 @@ class ProxySchedulerBrick(ProxyBrick):
 
     async def metrics(self, *, zone_id: str | None = None) -> dict[str, Any]:
         return await self._forward("scheduler.metrics", zone_id=zone_id)  # type: ignore[no-any-return]
-
 
 class ProxyAgentRegistryBrick(ProxyBrick):
     """Proxy for ``AgentRegistryProtocol`` — forwards registry ops to cloud."""
@@ -375,11 +367,9 @@ class ProxyAgentRegistryBrick(ProxyBrick):
     async def unregister(self, agent_id: str) -> bool:
         return await self._forward("agent_registry.unregister", agent_id=agent_id)  # type: ignore[no-any-return]
 
-
 # ======================================================================
 # Helpers
 # ======================================================================
-
 
 def _is_connection_error(exc: RemoteCallError) -> bool:
     """Return True if the underlying cause is a connectivity failure."""

@@ -10,8 +10,6 @@ These tests start `nexus serve` with --api-key to verify:
 Separate from test_a2a_e2e.py which tests in open-access mode.
 """
 
-from __future__ import annotations
-
 import json
 import os
 import signal
@@ -31,7 +29,6 @@ _src_path = str(Path(__file__).resolve().parent.parent.parent / "src")
 
 API_KEY = "test-a2a-auth-e2e-key-42"
 
-
 def _drain_pipe(pipe, lines: list[str], ready: threading.Event | None = None):
     """Read lines from a subprocess pipe (daemon thread)."""
     try:
@@ -44,7 +41,6 @@ def _drain_pipe(pipe, lines: list[str], ready: threading.Event | None = None):
         pass
     finally:
         pipe.close()
-
 
 @pytest.fixture(scope="function")
 def auth_server(isolated_db, tmp_path):
@@ -119,7 +115,6 @@ def auth_server(isolated_db, tmp_path):
         process.kill()
         process.wait()
 
-
 def _rpc(
     method: str,
     params: dict[str, Any] | None = None,
@@ -130,11 +125,9 @@ def _rpc(
         body["params"] = params
     return body
 
-
 # ======================================================================
 # Auth Enforcement
 # ======================================================================
-
 
 class TestA2AAuthEnforcement:
     """Verify A2A enforces auth when server has --api-key."""
@@ -182,11 +175,9 @@ class TestA2AAuthEnforcement:
             assert "result" in data
             assert data["result"]["status"]["state"] == "submitted"
 
-
 # ======================================================================
 # Persistence — agent-scoped paths + MessageEnvelope (§17.6)
 # ======================================================================
-
 
 class TestA2APersistenceE2E:
     """Verify tasks are persisted to disk via VFSTaskStore.

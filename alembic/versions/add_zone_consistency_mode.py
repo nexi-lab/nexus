@@ -24,7 +24,6 @@ down_revision: Union[str, Sequence[str], None] = "add_agent_events_table"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add consistency_mode column with CHECK constraint to zones table."""
     op.add_column(
@@ -42,7 +41,6 @@ def upgrade() -> None:
             "ck_zones_consistency_mode",
             "consistency_mode IN ('SC', 'EC')",
         )
-
 
 def downgrade() -> None:
     """Remove consistency_mode column from zones table."""

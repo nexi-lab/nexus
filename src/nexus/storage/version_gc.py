@@ -11,8 +11,6 @@ Environment variables:
     NEXUS_VERSION_GC_BATCH_SIZE: Delete batch size (default: 1000)
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import os
@@ -22,11 +20,11 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import bindparam, text
 
+from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass
 class GCStats:
@@ -55,7 +53,6 @@ class GCStats:
             "duration_seconds": round(self.duration_seconds, 2),
             "dry_run": self.dry_run,
         }
-
 
 @dataclass
 class VersionGCSettings:
@@ -98,7 +95,7 @@ class VersionGCSettings:
             raise ValueError("NEXUS_VERSION_GC_BATCH_SIZE must be >= 1")
 
     @classmethod
-    def from_env(cls) -> VersionGCSettings:
+    def from_env(cls) -> "VersionGCSettings":
         """Create settings from environment variables."""
         settings = cls()
         settings.validate()
@@ -113,7 +110,6 @@ class VersionGCSettings:
             f"interval_hours={self.run_interval_hours}, "
             f"batch_size={self.batch_size})"
         )
-
 
 class VersionHistoryGC:
     """Garbage collector for version_history table.

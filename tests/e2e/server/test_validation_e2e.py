@@ -7,8 +7,6 @@ exercises the complete RPC serialization path, and validates performance.
 Uses httpx ASGITransport for in-process testing (no subprocess).
 """
 
-from __future__ import annotations
-
 import asyncio
 import os
 import time
@@ -25,7 +23,6 @@ from nexus.validation.script_builder import (
     build_simple_validation_script,
     parse_simple_script_output,
 )
-
 
 def _create_test_app(tmp_path: Path, enforce_permissions: bool = False):
     """Create a FastAPI app with real NexusFS for testing."""
@@ -59,7 +56,6 @@ def _create_test_app(tmp_path: Path, enforce_permissions: bool = False):
     app = create_app(nexus_fs=nx, api_key=api_key, database_url=db_url)
     return app, api_key, nx
 
-
 def _run_async(coro):
     """Run a coroutine in a fresh event loop."""
     loop = asyncio.new_event_loop()
@@ -67,7 +63,6 @@ def _run_async(coro):
         return loop.run_until_complete(coro)
     finally:
         loop.close()
-
 
 @pytest.fixture
 def test_app(tmp_path):
@@ -78,7 +73,6 @@ def test_app(tmp_path):
     yield app, api_key, nx
     shutdown_sync_bridge()
 
-
 @pytest.fixture
 def test_app_with_perms(tmp_path):
     """Create test FastAPI app with permission enforcement."""
@@ -87,7 +81,6 @@ def test_app_with_perms(tmp_path):
     app, api_key, nx = _create_test_app(tmp_path, enforce_permissions=True)
     yield app, api_key, nx
     shutdown_sync_bridge()
-
 
 class TestValidationRPCEndpoint:
     """E2E: sandbox_validate accessible through FastAPI RPC endpoint."""
@@ -154,7 +147,6 @@ class TestValidationRPCEndpoint:
                 assert resp.status_code in (401, 403)
 
         _run_async(_test())
-
 
 class TestValidationPipelineE2E:
     """E2E: full validation pipeline with mocked sandbox provider."""
@@ -298,7 +290,6 @@ class TestValidationPipelineE2E:
         assert len(results) == 1
         assert results[0].validator == "pipeline"
         assert results[0].passed is False
-
 
 class TestPerformanceConstraints:
     """Validate the pipeline meets <5s target (Stripe Minions pattern)."""

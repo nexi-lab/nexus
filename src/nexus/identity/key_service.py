@@ -10,8 +10,6 @@ KeyService manages Ed25519 signing keys with:
 Thread-safe via threading.Lock for cache operations.
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 import uuid
@@ -27,7 +25,6 @@ from nexus.identity.crypto import IdentityCrypto
 from nexus.identity.did import create_did_key
 from nexus.storage.models import AgentKeyModel
 
-
 def _utcnow_naive() -> datetime:
     """Return current UTC time as a naive datetime.
 
@@ -37,7 +34,10 @@ def _utcnow_naive() -> datetime:
     """
     return datetime.now(UTC).replace(tzinfo=None)
 
-
+from collections.abc import Generator
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+from nexus.storage.record_store import RecordStoreABC
+from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from collections.abc import Generator
 
@@ -47,7 +47,6 @@ if TYPE_CHECKING:
     from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass(frozen=True)
 class AgentKeyRecord:
@@ -63,10 +62,8 @@ class AgentKeyRecord:
     expires_at: datetime | None
     revoked_at: datetime | None
 
-
 # Sentinel for cache miss
 _CACHE_MISS = object()
-
 
 class KeyService:
     """Manages agent signing keys with idempotent provisioning.

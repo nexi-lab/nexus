@@ -12,8 +12,6 @@ Documents and tests which operations currently call the observer:
 Phase 1.3 of #1246/#1330 consolidation plan.
 """
 
-from __future__ import annotations
-
 import tempfile
 from collections.abc import Generator
 from pathlib import Path
@@ -25,18 +23,15 @@ from nexus import LocalBackend, NexusFS
 from nexus.core.config import KernelServices, ParseConfig, PermissionConfig
 from tests.helpers.in_memory_metadata_store import InMemoryFileMetadataStore
 
-
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
 
-
 @pytest.fixture
 def observer() -> MagicMock:
     """Non-failing mock observer to record calls."""
     return MagicMock()
-
 
 @pytest.fixture
 def nx(temp_dir: Path, observer: MagicMock) -> Generator[NexusFS, None, None]:
@@ -50,11 +45,9 @@ def nx(temp_dir: Path, observer: MagicMock) -> Generator[NexusFS, None, None]:
     yield nx
     nx.close()
 
-
 # =========================================================================
 # Operations that DO call the observer
 # =========================================================================
-
 
 class TestWriteCallsObserver:
     """write() should call on_write() with correct arguments."""
@@ -91,7 +84,6 @@ class TestWriteCallsObserver:
         assert metadata.size == len(b"content")
         assert metadata.etag is not None
 
-
 class TestDeleteCallsObserver:
     """delete() should call on_delete() with correct arguments."""
 
@@ -115,7 +107,6 @@ class TestDeleteCallsObserver:
         kwargs = observer.on_delete.call_args.kwargs
         assert kwargs["snapshot_hash"] == etag
 
-
 class TestRenameCallsObserver:
     """rename() should call on_rename() with correct arguments."""
 
@@ -129,7 +120,6 @@ class TestRenameCallsObserver:
         kwargs = observer.on_rename.call_args.kwargs
         assert kwargs["old_path"] == "/old.txt"
         assert kwargs["new_path"] == "/new.txt"
-
 
 class TestWriteBatchCallsObserver:
     """write_batch() should call on_write_batch() with correct arguments."""
@@ -155,11 +145,9 @@ class TestWriteBatchCallsObserver:
         assert metadata.path == "/a.txt"
         assert is_new is True
 
-
 # =========================================================================
 # Operations that do NOT call the observer (documenting current gaps)
 # =========================================================================
-
 
 class TestWriteStreamCallsObserver:
     """write_stream() now calls on_write() via _notify_observer (gap closed)."""
@@ -175,7 +163,6 @@ class TestWriteStreamCallsObserver:
         assert kwargs["path"] == "/streamed.txt"
         assert kwargs["is_new"] is True
 
-
 class TestMkdirDoesNotCallObserver:
     """mkdir() currently does NOT call any observer method."""
 
@@ -184,7 +171,6 @@ class TestMkdirDoesNotCallObserver:
 
         # Document the gap: observer should be called but isn't
         observer.on_write.assert_not_called()
-
 
 class TestRmdirDoesNotCallObserver:
     """rmdir() currently does NOT call any observer method."""

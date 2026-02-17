@@ -4,16 +4,14 @@ Maps backend paths to ReBAC object types and IDs, decoupling
 permission logic from the storage Backend interface.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING
 
+from nexus.backends.backend import Backend
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
 
 logger = logging.getLogger(__name__)
-
 
 class ObjectTypeMapper:
     """Maps backend paths to ReBAC object types and IDs.

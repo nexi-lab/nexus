@@ -16,8 +16,6 @@ Run (from inside Docker network — production-consistent):
     docker compose -f dockerfiles/docker-compose.cross-platform-test.yml logs -f test
 """
 
-from __future__ import annotations
-
 import base64
 import re
 import subprocess
@@ -45,7 +43,6 @@ HEALTH_TIMEOUT = 120  # longer for multi-zone startup
 # Map Raft node IDs to HTTP URLs (for leader-hint following)
 _NODE_ID_TO_URL: dict[int, str] = {1: NODE1_URL, 2: NODE2_URL}
 _LEADER_HINT_RE = re.compile(r"leader hint: Some\((\d+)\)")
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -78,7 +75,6 @@ def _jsonrpc(url: str, method: str, params: dict, *, api_key: str, timeout: floa
         return result
     return result
 
-
 def _health(url: str) -> dict | None:
     """Check /health endpoint. Returns None if unreachable."""
     try:
@@ -88,7 +84,6 @@ def _health(url: str) -> dict | None:
     except httpx.TransportError:
         pass
     return None
-
 
 def _wait_healthy(urls: list[str], timeout: float = HEALTH_TIMEOUT) -> None:
     """Wait until all URLs return healthy."""
@@ -102,11 +97,9 @@ def _wait_healthy(urls: list[str], timeout: float = HEALTH_TIMEOUT) -> None:
         else:
             pytest.fail(f"Timed out waiting for {url} to become healthy")
 
-
 # Deterministic admin key set via NEXUS_API_KEY in docker-compose.cross-platform-test.yml.
 # The entrypoint registers this key in the database on startup — no runtime creation needed.
 E2E_ADMIN_API_KEY = "sk-test-federation-e2e-admin-key"
-
 
 def _decode_content(result: dict) -> str:
     """Decode read response content (handles base64 bytes or plain string)."""
@@ -128,12 +121,10 @@ def _decode_content(result: dict) -> str:
         return data
     return str(data)
 
-
 def _list_paths(result: dict) -> list[str]:
     """Extract list of paths from a list JSON-RPC response."""
     files = result["result"]["files"]
     return [f["path"] if isinstance(f, dict) else f for f in files]
-
 
 def _wait_replicated(
     url: str,
@@ -154,11 +145,9 @@ def _wait_replicated(
             pytest.fail(f"{msg}: {expected_path} not in {parent} on {url}")
         time.sleep(0.5)
 
-
 def _uid() -> str:
     """Short unique ID for test isolation."""
     return uuid.uuid4().hex[:8]
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -174,12 +163,10 @@ def cluster():
     _wait_healthy([NODE1_URL, NODE2_URL])
     return {"node1": NODE1_URL, "node2": NODE2_URL}
 
-
 @pytest.fixture(scope="module")
 def api_key(cluster):
     """Admin API key pre-registered via NEXUS_API_KEY in docker-compose."""
     return E2E_ADMIN_API_KEY
-
 
 # ---------------------------------------------------------------------------
 # Class 1: Zone Topology Health
@@ -249,7 +236,6 @@ class TestZoneTopologyHealth:
         r = _jsonrpc(cluster["node1"], "read", {"path": path}, api_key=api_key)
         assert "error" not in r, f"Family read failed: {r}"
 
-
 # ---------------------------------------------------------------------------
 # Class 2: Cross-Zone File Lifecycle
 # ---------------------------------------------------------------------------
@@ -296,7 +282,6 @@ class TestCrossZoneFileLifecycle:
         if isinstance(exists_val, dict):
             exists_val = exists_val.get("exists", exists_val)
         assert exists_val is False
-
 
 # ---------------------------------------------------------------------------
 # Class 3: Nested Mount Traversal
@@ -348,7 +333,6 @@ class TestNestedMountTraversal:
         assert "error" not in ls_corp
         corp_paths = _list_paths(ls_corp)
         assert sales_path in corp_paths, "Sales file missing from /corp/ listing"
-
 
 # ---------------------------------------------------------------------------
 # Class 4: Cross-Link and Isolation
@@ -410,7 +394,6 @@ class TestCrossLinkAndIsolation:
         family_paths = _list_paths(ls_family)
         assert family_path in family_paths
 
-
 # ---------------------------------------------------------------------------
 # Class 5: Cross-Zone Cross-Node Replication
 # ---------------------------------------------------------------------------
@@ -457,7 +440,6 @@ class TestCrossZoneCrossNodeReplication:
             api_key,
             msg="Family file not replicated to node-2",
         )
-
 
 # ---------------------------------------------------------------------------
 # Class 6: All JSON-RPC Methods
@@ -528,7 +510,6 @@ class TestAllJSONRPCMethods:
             exists_val2 = exists_val2.get("exists", exists_val2)
         assert exists_val2 is False
 
-
 # ---------------------------------------------------------------------------
 # Class 7: Lock API Cross-Zone
 # ---------------------------------------------------------------------------
@@ -597,7 +578,6 @@ class TestLockAPICrossZone:
         except httpx.ConnectError:
             pytest.skip("Lock API not reachable")
 
-
 # ---------------------------------------------------------------------------
 # Class 8: gRPC Direct Operations
 # ---------------------------------------------------------------------------
@@ -664,7 +644,6 @@ class TestgRPCDirectOperations:
             if "connect" in err or "not implemented" in err or "refused" in err:
                 pytest.skip(f"gRPC list not available: {e}")
             raise
-
 
 # ---------------------------------------------------------------------------
 # Class 9: Multi-Zone Agent Workflow
@@ -758,7 +737,6 @@ class TestMultiZoneAgentWorkflow:
             (demo, "/family/"),
         ]:
             _wait_replicated(node2, parent, p, api_key, msg=f"Cross-node read failed for {p}")
-
 
 # ---------------------------------------------------------------------------
 # Class 10: Leader Failover Cross-Zone (LAST — restarts containers)

@@ -1,7 +1,5 @@
 """Tests for AsyncNamespaceManager wrapper (Issue #1440)."""
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest
@@ -18,21 +16,17 @@ from tests.unit.core.protocols.test_conformance import assert_protocol_conforman
 # Fixtures
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture()
 def mock_inner() -> MagicMock:
     return MagicMock()
-
 
 @pytest.fixture()
 def wrapper(mock_inner: MagicMock) -> AsyncNamespaceManager:
     return AsyncNamespaceManager(mock_inner)
 
-
 # ---------------------------------------------------------------------------
 # Protocol conformance
 # ---------------------------------------------------------------------------
-
 
 class TestConformance:
     def test_assert_protocol_conformance(self) -> None:
@@ -41,11 +35,9 @@ class TestConformance:
     def test_isinstance_check(self, wrapper: AsyncNamespaceManager) -> None:
         assert isinstance(wrapper, NamespaceManagerProtocol)
 
-
 # ---------------------------------------------------------------------------
 # MountEntry -> NamespaceMount conversion
 # ---------------------------------------------------------------------------
-
 
 class TestToNamespaceMount:
     def test_basic_conversion(self) -> None:
@@ -63,11 +55,9 @@ class TestToNamespaceMount:
         assert mount.zone_id is None
         assert mount.subject_type == "agent"
 
-
 # ---------------------------------------------------------------------------
 # Async method delegation
 # ---------------------------------------------------------------------------
-
 
 class TestIsVisible:
     @pytest.mark.asyncio()
@@ -90,7 +80,6 @@ class TestIsVisible:
         mock_inner.is_visible.return_value = False
         result = await wrapper.is_visible(("user", "bob"), "/admin/secret")
         assert result is False
-
 
 class TestGetMountTable:
     @pytest.mark.asyncio()
@@ -117,7 +106,6 @@ class TestGetMountTable:
         result = await wrapper.get_mount_table(("agent", "bot"))
         assert result == []
 
-
 class TestInvalidate:
     @pytest.mark.asyncio()
     async def test_delegates(self, wrapper: AsyncNamespaceManager, mock_inner: MagicMock) -> None:
@@ -125,11 +113,9 @@ class TestInvalidate:
         await wrapper.invalidate(("user", "alice"))
         mock_inner.invalidate.assert_called_once_with(("user", "alice"))
 
-
 # ---------------------------------------------------------------------------
 # Exception propagation through asyncio.to_thread
 # ---------------------------------------------------------------------------
-
 
 class TestExceptionPropagation:
     @pytest.mark.asyncio()

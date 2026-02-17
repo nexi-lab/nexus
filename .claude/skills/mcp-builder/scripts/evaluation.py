@@ -51,7 +51,6 @@ Response Requirements:
 - For names or text, provide the exact text requested
 - Your response should go last"""
 
-
 def parse_evaluation_file(file_path: Path) -> list[dict[str, Any]]:
     """Parse XML evaluation file with qa_pair elements."""
     try:
@@ -76,13 +75,11 @@ def parse_evaluation_file(file_path: Path) -> list[dict[str, Any]]:
         print(f"Error parsing evaluation file {file_path}: {e}")
         return []
 
-
 def extract_xml_content(text: str, tag: str) -> str | None:
     """Extract content from XML tags."""
     pattern = rf"<{tag}>(.*?)</{tag}>"
     matches = re.findall(pattern, text, re.DOTALL)
     return matches[-1].strip() if matches else None
-
 
 async def agent_loop(
     client: Anthropic,
@@ -159,7 +156,6 @@ async def agent_loop(
     )
     return response_text, tool_metrics
 
-
 async def evaluate_single_task(
     client: Anthropic,
     model: str,
@@ -192,7 +188,6 @@ async def evaluate_single_task(
         "feedback": feedback,
     }
 
-
 REPORT_HEADER = """
 # Evaluation Report
 
@@ -224,7 +219,6 @@ TASK_TEMPLATE = """
 
 ---
 """
-
 
 async def run_evaluation(
     eval_path: Path,
@@ -282,7 +276,6 @@ async def run_evaluation(
 
     return report
 
-
 def parse_headers(header_list: list[str]) -> dict[str, str]:
     """Parse header strings in format 'Key: Value' into a dictionary."""
     headers = {}
@@ -297,7 +290,6 @@ def parse_headers(header_list: list[str]) -> dict[str, str]:
             print(f"Warning: Ignoring malformed header: {header}")
     return headers
 
-
 def parse_env_vars(env_list: list[str]) -> dict[str, str]:
     """Parse environment variable strings in format 'KEY=VALUE' into a dictionary."""
     env = {}
@@ -311,7 +303,6 @@ def parse_env_vars(env_list: list[str]) -> dict[str, str]:
         else:
             print(f"Warning: Ignoring malformed environment variable: {env_var}")
     return env
-
 
 async def main():
     parser = argparse.ArgumentParser(
@@ -401,7 +392,6 @@ Examples:
             print(f"\n✅ Report saved to {args.output}")
         else:
             print("\n" + report)
-
 
 if __name__ == "__main__":
     asyncio.run(main())

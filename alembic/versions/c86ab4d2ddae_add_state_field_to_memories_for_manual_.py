@@ -27,7 +27,6 @@ down_revision: Union[str, Sequence[str], None] = "a16e1db56def"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add state field to memories table for manual approval workflow."""
 
@@ -40,7 +39,6 @@ def upgrade() -> None:
 
     # Create index for state queries
     op.create_index("idx_memory_state", "memories", ["state"])
-
 
 def downgrade() -> None:
     """Remove state field from memories table."""

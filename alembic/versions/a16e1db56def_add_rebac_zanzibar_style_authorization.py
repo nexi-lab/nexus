@@ -19,7 +19,6 @@ down_revision: Union[str, Sequence[str], None] = "777350ff28ce"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Upgrade schema to add ReBAC tables."""
     # ReBAC Tuples - Store authorization relationships
@@ -129,7 +128,6 @@ def upgrade() -> None:
 
     # Create indexes for rebac_changelog
     op.create_index("idx_rebac_changelog_created", "rebac_changelog", ["created_at"])
-
 
 def downgrade() -> None:
     """Downgrade schema to remove ReBAC tables."""

@@ -9,8 +9,6 @@ following the pattern from test_memory_paging_fastapi_e2e.py.
 Run with: python -m pytest tests/e2e/test_memory_classification_e2e.py -v
 """
 
-from __future__ import annotations
-
 import shutil
 import tempfile
 from collections.abc import Sequence
@@ -30,7 +28,6 @@ from nexus.storage.models import Base
 # ==============================================================================
 # In-memory metadata store stub (avoids LocalRaft dependency)
 # ==============================================================================
-
 
 class InMemoryMetadataStore(FileMetadataProtocol):
     """Minimal in-memory metadata store for tests that don't need file ops."""
@@ -80,18 +77,15 @@ class InMemoryMetadataStore(FileMetadataProtocol):
     def close(self) -> None:
         self._store.clear()
 
-
 # ==============================================================================
 # Fixtures
 # ==============================================================================
-
 
 @pytest.fixture(autouse=True)
 def _set_env(monkeypatch):
     """Set required env vars for server modules."""
     monkeypatch.setenv("NEXUS_JWT_SECRET", "test-secret-key-12345")
     monkeypatch.delenv("NEXUS_DATABASE_URL", raising=False)
-
 
 @pytest.fixture
 def db_engine(tmp_path):
@@ -110,12 +104,10 @@ def db_engine(tmp_path):
     Base.metadata.drop_all(engine)
     engine.dispose()
 
-
 @pytest.fixture
 def db_session_factory(db_engine):
     """Create session factory bound to shared engine."""
     return sessionmaker(bind=db_engine)
-
 
 @pytest.fixture
 def api_keys(db_session_factory):
@@ -134,7 +126,6 @@ def api_keys(db_session_factory):
         "normal_key": normal_raw,
         "normal_key_id": normal_key_id,
     }
-
 
 @pytest.fixture
 def app_with_auth(tmp_path, db_session_factory, api_keys):
@@ -177,23 +168,19 @@ def app_with_auth(tmp_path, db_session_factory, api_keys):
     record_store.close()
     shutil.rmtree(tmpdir, ignore_errors=True)
 
-
 @pytest.fixture
 def client(app_with_auth):
     """Create TestClient."""
     return TestClient(app_with_auth)
-
 
 @pytest.fixture
 def headers(api_keys):
     """Auth headers for normal user."""
     return {"Authorization": f"Bearer {api_keys['normal_key']}"}
 
-
 # ==============================================================================
 # Tests
 # ==============================================================================
-
 
 class TestMemoryClassificationE2E:
     """E2E tests for memory stability classification (#1191)."""

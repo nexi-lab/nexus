@@ -4,8 +4,6 @@ These tests use a real RaftLockManager backed by SQLite (no external
 dependencies) to verify the full lock lifecycle through the REST API.
 """
 
-from __future__ import annotations
-
 import pytest
 from pydantic import ValidationError
 
@@ -19,7 +17,6 @@ from nexus.server.api.v1.models.locks import (
     LockResponse,
     LockStatusResponse,
 )
-
 
 class TestLockModels:
     """Test Pydantic models for lock API."""
@@ -164,7 +161,6 @@ class TestLockModels:
         assert resp.count == 0
         assert len(resp.locks) == 0
 
-
 class TestLockRequestValidation:
     """Test request validation for lock models."""
 
@@ -239,7 +235,6 @@ class TestLockRequestValidation:
         """Test that timeout must be >= 0."""
         with pytest.raises(ValidationError):
             LockAcquireRequest(path="/test", timeout=-1)
-
 
 class TestLockManagerIntegration:
     """Integration tests for RaftLockManager.

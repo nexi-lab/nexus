@@ -13,8 +13,6 @@ Strategy: Since NexusFSCoreMixin is a mixin that requires full NexusFS
 For integration tests of actual read/write behavior, see tests/integration/.
 """
 
-from __future__ import annotations
-
 import inspect
 
 import pytest
@@ -67,7 +65,6 @@ ALL_CORE_METHODS = {
     **CORE_METADATA_METHODS,
 }
 
-
 class TestCoreMixinAPIExists:
     """Verify all extraction-critical methods exist on the mixin."""
 
@@ -85,7 +82,6 @@ class TestCoreMixinAPIExists:
         method = getattr(NexusFSCoreMixin, method_name)
         assert callable(method), f"{method_name} is not callable"
 
-
 class TestCoreMixinRPCExposed:
     """Verify all public methods have @rpc_expose decorators."""
 
@@ -97,7 +93,6 @@ class TestCoreMixinRPCExposed:
             f"NexusFSCoreMixin.{method_name}() missing @rpc_expose — "
             f"will not be available via RPC after extraction"
         )
-
 
 class TestCoreMixinSignatures:
     """Verify method signatures match expected parameters."""
@@ -118,7 +113,6 @@ class TestCoreMixinSignatures:
                 f"Has: {param_names}"
             )
 
-
 class TestCoreMixinAsyncClassification:
     """Verify sync vs async classification of methods."""
 
@@ -135,7 +129,6 @@ class TestCoreMixinAsyncClassification:
             f"{'async' if expected['async'] else 'sync'} but is "
             f"{'async' if is_async else 'sync'}"
         )
-
 
 class TestCoreMixinMethodGroups:
     """Verify method grouping by domain for extraction guidance."""

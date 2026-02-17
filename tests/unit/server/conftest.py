@@ -3,14 +3,11 @@
 Issue #1002: Structured JSON logging with request correlation.
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock
 
 # ---------------------------------------------------------------------------
 # ASGI test helpers — shared between correlation middleware test files
 # ---------------------------------------------------------------------------
-
 
 def make_http_scope(
     method: str = "GET",
@@ -26,11 +23,9 @@ def make_http_scope(
         "query_string": b"",
     }
 
-
 def make_receive() -> AsyncMock:
     """Create a mock ASGI receive callable."""
     return AsyncMock(return_value={"type": "http.request", "body": b""})
-
 
 class SendCapture:
     """Captures ASGI send() calls for inspection."""

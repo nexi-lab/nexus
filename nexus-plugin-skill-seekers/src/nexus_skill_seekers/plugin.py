@@ -54,9 +54,7 @@ except ImportError:
     class PermissionDeniedError(Exception):  # type: ignore[no-redef]
         pass
 
-
 console = Console()
-
 
 class SkillSeekersPlugin(NexusPlugin):
     """Plugin for generating skills from documentation with AI enhancement.

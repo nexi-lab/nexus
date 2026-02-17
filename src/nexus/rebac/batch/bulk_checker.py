@@ -11,8 +11,6 @@ Phase 2:   In-memory graph computation (Rust or Python fallback)
 Related: Issue #1459 Phase 15+, Performance optimization
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 import time as time_module
@@ -26,6 +24,11 @@ from nexus.core.rebac import Entity
 from nexus.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 from nexus.rebac.types import ConsistencyLevel
 
+from collections.abc import Callable
+from contextlib import AbstractContextManager
+from nexus.core.rebac import NamespaceConfig
+from nexus.rebac.tiger_cache import TigerCache
+from sqlalchemy.engine import Engine
 if TYPE_CHECKING:
     from collections.abc import Callable
     from contextlib import AbstractContextManager
@@ -36,7 +39,6 @@ if TYPE_CHECKING:
     from nexus.rebac.tiger_cache import TigerCache
 
 logger = logging.getLogger(__name__)
-
 
 class BulkPermissionChecker:
     """Multi-phase bulk permission checker.

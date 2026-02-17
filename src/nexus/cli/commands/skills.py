@@ -9,8 +9,6 @@ The Skills System provides vendor-neutral skill management with:
 - Usage analytics and governance
 """
 
-from __future__ import annotations
-
 import json
 import re
 import sys
@@ -28,7 +26,6 @@ from nexus.cli.utils import (
 )
 from nexus.raft.zone_manager import ROOT_ZONE_ID
 
-
 def register_commands(cli: click.Group) -> None:
     """Register skills commands with the main CLI group.
 
@@ -36,7 +33,6 @@ def register_commands(cli: click.Group) -> None:
         cli: The main Click group to register commands with
     """
     cli.add_command(skills)
-
 
 @click.group(name="skills")
 def skills() -> None:
@@ -58,7 +54,6 @@ def skills() -> None:
         nexus skills export my-skill --output ./my-skill.zip --format claude
     """
     pass
-
 
 @skills.command(name="list")
 @click.option("--user", is_flag=True, help="Show user-level skills")
@@ -131,7 +126,6 @@ def skills_list(
     except Exception as e:
         handle_error(e)
 
-
 @skills.command(name="create")
 @click.argument("name", type=str)
 @click.option("--description", required=True, help="Skill description")
@@ -181,7 +175,6 @@ def skills_create(
 
     except Exception as e:
         handle_error(e)
-
 
 @skills.command(name="create-from-web")
 @click.option("--name", help="Skill name (auto-generated from URL/title if not provided)")
@@ -310,7 +303,6 @@ def skills_create_from_web(
 
     except Exception as e:
         handle_error(e)
-
 
 @skills.command(name="create-from-file")
 @click.argument("source", type=str)
@@ -444,7 +436,6 @@ def skills_create_from_file(
     except Exception as e:
         handle_error(e)
 
-
 def _generate_skill_name_from_url_or_title(url: str, title: str) -> str:
     """Generate a skill name from URL or title.
 
@@ -486,7 +477,6 @@ def _generate_skill_name_from_url_or_title(url: str, title: str) -> str:
         name = f"skill-{timestamp}"
 
     return name or "unnamed-skill"
-
 
 @skills.command(name="fork")
 @click.argument("source_skill", type=str)
@@ -534,7 +524,6 @@ def skills_fork(
     except Exception as e:
         handle_error(e)
 
-
 @skills.command(name="publish")
 @click.argument("skill_name", type=str)
 @click.option(
@@ -580,7 +569,6 @@ def skills_publish(
 
     except Exception as e:
         handle_error(e)
-
 
 @skills.command(name="search")
 @click.argument("query", type=str)
@@ -630,7 +618,6 @@ def skills_search(
 
     except Exception as e:
         handle_error(e)
-
 
 @skills.command(name="info")
 @click.argument("skill_name", type=str)
@@ -692,7 +679,6 @@ def skills_info(
     except Exception as e:
         handle_error(e)
 
-
 @skills.command(name="export")
 @click.argument("skill_name", type=str)
 @click.option("--output", "-o", type=click.Path(), required=True, help="Output .zip file path")
@@ -753,7 +739,6 @@ def skills_export(
 
     except Exception as e:
         handle_error(e)
-
 
 @skills.command(name="validate")
 @click.argument("skill_name", type=str)
@@ -821,7 +806,6 @@ def skills_validate(
     except Exception as e:
         handle_error(e)
 
-
 @skills.command(name="size")
 @click.argument("skill_name", type=str)
 @click.option("--human", "-h", is_flag=True, help="Human-readable output")
@@ -874,7 +858,6 @@ def skills_size(
 
     except Exception as e:
         handle_error(e)
-
 
 @skills.command(name="deps")
 @click.argument("skill_name", type=str)
@@ -995,7 +978,6 @@ def skills_deps(
     except Exception as e:
         handle_error(e)
 
-
 @skills.command(name="submit-approval")
 @click.argument("skill_name", type=str)
 @click.option("--submitted-by", required=True, help="Submitter ID (user or agent)")
@@ -1043,7 +1025,6 @@ def skills_submit_approval(
     except Exception as e:
         handle_error(e)
 
-
 @skills.command(name="approve")
 @click.argument("approval_id", type=str)
 @click.option("--reviewed-by", required=True, help="Reviewer ID")
@@ -1090,7 +1071,6 @@ def skills_approve(
     except Exception as e:
         handle_error(e)
 
-
 @skills.command(name="reject")
 @click.argument("approval_id", type=str)
 @click.option("--reviewed-by", required=True, help="Reviewer ID")
@@ -1135,7 +1115,6 @@ def skills_reject(
 
     except Exception as e:
         handle_error(e)
-
 
 @skills.command(name="list-approvals")
 @click.option(
@@ -1208,7 +1187,6 @@ def skills_list_approvals(
 
     except Exception as e:
         handle_error(e)
-
 
 @skills.command(name="diff")
 @click.argument("skill1", type=str)
@@ -1300,11 +1278,9 @@ def skills_diff(
     except Exception as e:
         handle_error(e)
 
-
 # =============================================================================
 # MCP TOOLS COMMANDS
 # =============================================================================
-
 
 @skills.group(name="mcp")
 def skills_mcp() -> None:
@@ -1319,7 +1295,6 @@ def skills_mcp() -> None:
         nexus skills mcp list-mounts
     """
     pass
-
 
 @skills_mcp.command(name="export-tools")
 @click.option("--output", "-o", help="Output directory (default: /skills/system/mcp-tools/nexus/)")
@@ -1372,7 +1347,6 @@ def skills_mcp_export_tools(
     except Exception as e:
         handle_error(e)
 
-
 @skills_mcp.command(name="list-tools")
 @click.option("--category", "-c", help="Filter by category (file_operations, search, memory, etc.)")
 def skills_mcp_list_tools(
@@ -1417,7 +1391,6 @@ def skills_mcp_list_tools(
 
     except Exception as e:
         handle_error(e)
-
 
 @skills_mcp.command(name="mount")
 @click.argument("name", type=str)
@@ -1821,7 +1794,6 @@ def skills_mcp_mount(
     except Exception as e:
         handle_error(e)
 
-
 @skills_mcp.command(name="unmount")
 @click.argument("name", type=str)
 @add_backend_options
@@ -1853,7 +1825,6 @@ def skills_mcp_unmount(
 
     except Exception as e:
         handle_error(e)
-
 
 @skills_mcp.command(name="list-mounts")
 @click.option("--all", "show_all", is_flag=True, help="Show all mounts including unmounted")
@@ -1909,7 +1880,6 @@ def skills_mcp_list_mounts(
 
     except Exception as e:
         handle_error(e)
-
 
 @skills_mcp.command(name="tools")
 @click.argument("name", type=str)
@@ -2031,7 +2001,6 @@ def skills_mcp_tools(
     except Exception as e:
         handle_error(e)
 
-
 @skills_mcp.command(name="remove")
 @click.argument("name", type=str)
 @click.option("--force", "-f", is_flag=True, help="Force remove even if mounted")
@@ -2080,11 +2049,9 @@ def skills_mcp_remove(
     except Exception as e:
         handle_error(e)
 
-
 # =============================================================================
 # UNIFIED MCP CONNECTION COMMANDS
 # =============================================================================
-
 
 @skills_mcp.command(name="connect")
 @click.argument("provider", type=str)
@@ -2157,7 +2124,6 @@ def skills_mcp_connect(
     except Exception as e:
         handle_error(e)
 
-
 @skills_mcp.command(name="disconnect")
 @click.argument("provider", type=str)
 @click.option("--user", "-u", required=True, help="User ID")
@@ -2193,7 +2159,6 @@ def skills_mcp_disconnect(
 
     except Exception as e:
         handle_error(e)
-
 
 @skills_mcp.command(name="connections")
 @click.option("--user", "-u", help="Filter by user")
@@ -2250,7 +2215,6 @@ def skills_mcp_connections(
 
     except Exception as e:
         handle_error(e)
-
 
 @skills_mcp.command(name="providers")
 @click.option(

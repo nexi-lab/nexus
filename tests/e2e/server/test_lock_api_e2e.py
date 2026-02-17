@@ -4,14 +4,11 @@ These tests run against an actual nexus serve process with authentication enable
 Includes tests for both Raft-backed and Redis-backed lock managers.
 """
 
-from __future__ import annotations
-
 import os
 import time
 
 import httpx
 import pytest
-
 
 @pytest.fixture
 def auth_headers():
@@ -21,7 +18,6 @@ def auth_headers():
     API key auth grants admin privileges.
     """
     return {"Authorization": "Bearer test-e2e-api-key-12345"}
-
 
 def _redis_available() -> bool:
     """Check if Redis/Dragonfly is available for testing."""
@@ -37,11 +33,9 @@ def _redis_available() -> bool:
     except Exception:
         return False
 
-
 # =============================================================================
 # Tests without Redis/Dragonfly (503 error handling)
 # =============================================================================
-
 
 # NOTE: With Raft-based locks (Issue #1110), the lock manager is always available
 # via local sled storage and doesn't require Redis/Dragonfly. These tests are
@@ -89,11 +83,9 @@ class TestLockApiWithoutRedis:
         )
         assert response.status_code == 503
 
-
 # =============================================================================
 # Tests with Redis/Dragonfly (full e2e)
 # =============================================================================
-
 
 @pytest.mark.skipif(
     not _redis_available(),
@@ -309,11 +301,9 @@ class TestLockApiWithRedis:
         response = test_app.delete(f"/api/locks{path}?lock_id={lock_id}", headers=auth_headers)
         assert response.status_code == 200
 
-
 # =============================================================================
 # Edge Case Tests (Input Validation)
 # =============================================================================
-
 
 class TestLockApiEdgeCases:
     """Edge case tests for lock API input validation.

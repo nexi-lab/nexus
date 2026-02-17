@@ -22,8 +22,6 @@ Example:
     run_server(app, host="0.0.0.0", port=2026)
 """
 
-from __future__ import annotations
-
 import asyncio
 import dataclasses
 import hashlib
@@ -92,16 +90,15 @@ from nexus.server.streaming import (  # noqa: E402
     _verify_stream_token,
 )
 
+from nexus.core.nexus_fs import NexusFS
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
 
-
 # ============================================================================
 # Pydantic Models for Request/Response
 # ============================================================================
-
 
 class RPCRequestModel(BaseModel):
     """JSON-RPC 2.0 request model."""
@@ -111,7 +108,6 @@ class RPCRequestModel(BaseModel):
     params: dict[str, Any] | None = None
     id: str | int | None = None
 
-
 class HealthResponse(BaseModel):
     """Health check response."""
 
@@ -120,7 +116,6 @@ class HealthResponse(BaseModel):
     enforce_permissions: bool | None = None
     enforce_zone_isolation: bool | None = None
     has_auth: bool | None = None
-
 
 class WhoamiResponse(BaseModel):
     """Authentication info response."""
@@ -132,7 +127,6 @@ class WhoamiResponse(BaseModel):
     is_admin: bool = False
     inherit_permissions: bool = True  # v0.5.1: Whether agent inherits owner's permissions
     user: str | None = None
-
 
 # ============================================================================
 # Lock API Models — extracted to api/v1/models/locks.py (Issue #1288)
@@ -157,7 +151,6 @@ from nexus.server.rate_limiting import limiter  # noqa: F811, E402 — re-import
 # ============================================================================
 
 T = TypeVar("T")
-
 
 async def to_thread_with_timeout(
     func: Callable[..., T],
@@ -197,7 +190,6 @@ async def to_thread_with_timeout(
     except TimeoutError:
         raise TimeoutError(f"Operation timed out after {effective_timeout}s") from None
 
-
 # ============================================================================
 # Application State (Issue #1288: Eliminated AppState class)
 # ============================================================================
@@ -212,15 +204,12 @@ async def to_thread_with_timeout(
 # Set once during ``create_app()``.
 _fastapi_app: FastAPI | None = None
 
-
 # Stream token signing/verification is now in streaming.py.
 # Auth dependencies (get_auth_result, require_auth, get_operation_context) are in dependencies.py.
-
 
 # ============================================================================
 # Lifespan Management
 # ============================================================================
-
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> Any:
@@ -1190,11 +1179,9 @@ async def lifespan(_app: FastAPI) -> Any:
     except ImportError:
         pass
 
-
 # ============================================================================
 # Application Factory
 # ============================================================================
-
 
 def create_app(
     nexus_fs: NexusFS,
@@ -1454,7 +1441,6 @@ def create_app(
 
     return app
 
-
 def _initialize_oauth_provider(nexus_fs: NexusFS, auth_provider: Any) -> None:
     """Initialize OAuth provider if Google OAuth credentials are available.
 
@@ -1518,7 +1504,6 @@ def _initialize_oauth_provider(nexus_fs: NexusFS, auth_provider: Any) -> None:
     # NexusFS instance is now registered unconditionally in create_app()
     # (moved from here to avoid being gated on OAuth credentials)
 
-
 def _discover_exposed_methods(nexus_fs: NexusFS) -> dict[str, Any]:
     """Discover all methods marked with @rpc_expose decorator."""
     exposed = {}
@@ -1538,7 +1523,6 @@ def _discover_exposed_methods(nexus_fs: NexusFS) -> dict[str, Any]:
 
     logger.info(f"Auto-discovered {len(exposed)} RPC methods")
     return exposed
-
 
 def _register_routes(app: FastAPI) -> None:
     """Register all routes."""
@@ -2207,7 +2191,6 @@ def _register_routes(app: FastAPI) -> None:
             logger.exception(f"Error executing method {method}")
             return _error_response(None, RPCErrorCode.INTERNAL_ERROR, f"Internal error: {e}")
 
-
 def _get_cache_headers(method: str, result: Any) -> dict[str, str]:
     """Generate appropriate cache headers based on method and result.
 
@@ -2268,7 +2251,6 @@ def _get_cache_headers(method: str, result: Any) -> dict[str, str]:
 
     return headers
 
-
 def _error_response(
     request_id: Any,
     code: RPCErrorCode,
@@ -2288,7 +2270,6 @@ def _error_response(
     if data:
         error_dict["error"]["data"] = data
     return JSONResponse(content=error_dict)
-
 
 # Issue #1115: Event firing helper for RPC handlers
 async def _fire_rpc_event(
@@ -2327,7 +2308,6 @@ async def _fire_rpc_event(
     except Exception as e:
         logger.warning(f"[RPC] Failed to fire event {event_type} for {path}: {e}")
 
-
 @dataclasses.dataclass(frozen=True, slots=True)
 class _DispatchEntry:
     """Dispatch table entry for an RPC method.
@@ -2349,10 +2329,8 @@ class _DispatchEntry:
     event_old_path_attr: str | None = None
     event_size_key: str | None = None
 
-
 # Lazily initialized — handler functions are defined later in this module.
 _DISPATCH_TABLE: dict[str, _DispatchEntry] = {}
-
 
 def _build_dispatch_table() -> dict[str, _DispatchEntry]:
     """Build the RPC dispatch table (Issue #1288).
@@ -2406,7 +2384,6 @@ def _build_dispatch_table() -> dict[str, _DispatchEntry]:
         "admin_revoke_key": _DispatchEntry(_handle_admin_revoke_key),
         "admin_update_key": _DispatchEntry(_handle_admin_update_key),
     }
-
 
 async def _dispatch_method(
     method: str,
@@ -2481,7 +2458,6 @@ async def _dispatch_method(
 
     raise ValueError(f"Unknown method: {method}")
 
-
 async def _auto_dispatch(
     method: str,
     params: Any,
@@ -2518,11 +2494,9 @@ async def _auto_dispatch(
         timeout = 300.0 if method == "sync_mount" else None
         return await to_thread_with_timeout(func, timeout=timeout, **kwargs)
 
-
 # ============================================================================
 # Memory API Helper
 # ============================================================================
-
 
 def _get_memory_api_with_context(context: Any) -> Any:
     """Get Memory API instance with authenticated context.
@@ -2552,11 +2526,9 @@ def _get_memory_api_with_context(context: Any) -> Any:
     # _get_memory_api is available on NexusFS
     return nexus_fs._get_memory_api(context_dict if context_dict else None)
 
-
 # ============================================================================
 # Memory Method Handlers (Issue #4)
 # ============================================================================
-
 
 def _handle_store_memory(params: Any, context: Any) -> dict[str, Any]:
     """Handle store_memory RPC method."""
@@ -2572,7 +2544,6 @@ def _handle_store_memory(params: Any, context: Any) -> dict[str, Any]:
     )
     return {"memory_id": memory_id}
 
-
 def _handle_list_memories(params: Any, context: Any) -> dict[str, Any]:
     """Handle list_memories RPC method."""
     memory_api = _get_memory_api_with_context(context)
@@ -2585,7 +2556,6 @@ def _handle_list_memories(params: Any, context: Any) -> dict[str, Any]:
         limit=params.limit,
     )
     return {"memories": memories}
-
 
 def _handle_query_memories(params: Any, context: Any) -> dict[str, Any]:
     """Handle query_memories RPC method."""
@@ -2629,7 +2599,6 @@ def _handle_query_memories(params: Any, context: Any) -> dict[str, Any]:
         )
     return {"memories": memories}
 
-
 def _handle_retrieve_memory(params: Any, context: Any) -> dict[str, Any]:
     """Handle retrieve_memory RPC method."""
     memory_api = _get_memory_api_with_context(context)
@@ -2640,13 +2609,11 @@ def _handle_retrieve_memory(params: Any, context: Any) -> dict[str, Any]:
     )
     return {"memory": memory}
 
-
 def _handle_delete_memory(params: Any, context: Any) -> dict[str, Any]:
     """Handle delete_memory RPC method."""
     memory_api = _get_memory_api_with_context(context)
     deleted = memory_api.delete(params.memory_id)
     return {"deleted": deleted}
-
 
 def _handle_approve_memory(params: Any, context: Any) -> dict[str, Any]:
     """Handle approve_memory RPC method (#368)."""
@@ -2654,13 +2621,11 @@ def _handle_approve_memory(params: Any, context: Any) -> dict[str, Any]:
     approved = memory_api.approve(params.memory_id)
     return {"approved": approved}
 
-
 def _handle_deactivate_memory(params: Any, context: Any) -> dict[str, Any]:
     """Handle deactivate_memory RPC method (#368)."""
     memory_api = _get_memory_api_with_context(context)
     deactivated = memory_api.deactivate(params.memory_id)
     return {"deactivated": deactivated}
-
 
 def _handle_approve_memory_batch(params: Any, context: Any) -> dict[str, Any]:
     """Handle approve_memory_batch RPC method (#368)."""
@@ -2668,13 +2633,11 @@ def _handle_approve_memory_batch(params: Any, context: Any) -> dict[str, Any]:
     result: dict[str, Any] = memory_api.approve_batch(params.memory_ids)
     return result
 
-
 def _handle_deactivate_memory_batch(params: Any, context: Any) -> dict[str, Any]:
     """Handle deactivate_memory_batch RPC method (#368)."""
     memory_api = _get_memory_api_with_context(context)
     result: dict[str, Any] = memory_api.deactivate_batch(params.memory_ids)
     return result
-
 
 def _handle_delete_memory_batch(params: Any, context: Any) -> dict[str, Any]:
     """Handle delete_memory_batch RPC method (#368)."""
@@ -2682,11 +2645,9 @@ def _handle_delete_memory_batch(params: Any, context: Any) -> dict[str, Any]:
     result: dict[str, Any] = memory_api.delete_batch(params.memory_ids)
     return result
 
-
 # ============================================================================
 # Manual Method Handlers
 # ============================================================================
-
 
 def _generate_download_url(
     path: str, context: Any, expires_in: int = 3600
@@ -2782,7 +2743,6 @@ def _generate_download_url(
         logger.warning(f"Failed to generate download URL for {path}: {e}")
         return None
 
-
 async def _handle_read_async(params: Any, context: Any) -> bytes | dict[str, Any]:
     """Handle read method (async version for parsed reads).
 
@@ -2861,7 +2821,6 @@ async def _handle_read_async(params: Any, context: Any) -> bytes | dict[str, Any
 
     return parsed_content
 
-
 def _handle_read(params: Any, context: Any) -> bytes | dict[str, Any]:
     """Handle read method (sync version - kept for compatibility).
 
@@ -2887,7 +2846,6 @@ def _handle_read(params: Any, context: Any) -> bytes | dict[str, Any]:
     if isinstance(result, dict):
         result = unscope_internal_dict(result, ["path", "virtual_path"])
     return result
-
 
 def _handle_write(params: Any, context: Any) -> dict[str, Any]:
     """Handle write method."""
@@ -2918,13 +2876,11 @@ def _handle_write(params: Any, context: Any) -> dict[str, Any]:
     bytes_written = nexus_fs.write(params.path, content, **kwargs)
     return {"bytes_written": bytes_written}
 
-
 def _handle_exists(params: Any, context: Any) -> dict[str, Any]:
     """Handle exists method."""
     nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
     return {"exists": nexus_fs.exists(params.path, context=context)}
-
 
 def _handle_list(params: Any, context: Any) -> dict[str, Any]:
     """Handle list method with optional pagination support (Issue #937).
@@ -3007,7 +2963,6 @@ def _handle_list(params: Any, context: Any) -> dict[str, Any]:
     )
     return response
 
-
 def _handle_delete(params: Any, context: Any) -> dict[str, Any]:
     """Handle delete method."""
     nexus_fs = _fastapi_app.state.nexus_fs
@@ -3021,7 +2976,6 @@ def _handle_delete(params: Any, context: Any) -> dict[str, Any]:
 
     response: dict[str, Any] = {"deleted": True}
     return response
-
 
 def _handle_rename(params: Any, context: Any) -> dict[str, Any]:
     """Handle rename method."""
@@ -3037,14 +2991,12 @@ def _handle_rename(params: Any, context: Any) -> dict[str, Any]:
     response: dict[str, Any] = {"renamed": True}
     return response
 
-
 def _handle_copy(params: Any, context: Any) -> dict[str, Any]:
     """Handle copy method."""
     nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
     nexus_fs.copy(params.src_path, params.dst_path, context=context)  # type: ignore[attr-defined]
     return {"copied": True}
-
 
 def _handle_mkdir(params: Any, context: Any) -> dict[str, Any]:
     """Handle mkdir method."""
@@ -3060,7 +3012,6 @@ def _handle_mkdir(params: Any, context: Any) -> dict[str, Any]:
     nexus_fs.mkdir(params.path, **kwargs)
     return {"created": True}
 
-
 def _handle_rmdir(params: Any, context: Any) -> dict[str, Any]:
     """Handle rmdir method."""
     nexus_fs = _fastapi_app.state.nexus_fs
@@ -3075,7 +3026,6 @@ def _handle_rmdir(params: Any, context: Any) -> dict[str, Any]:
     nexus_fs.rmdir(params.path, **kwargs)
     return {"removed": True}
 
-
 def _handle_get_metadata(params: Any, context: Any) -> dict[str, Any]:
     """Handle get_metadata method."""
     nexus_fs = _fastapi_app.state.nexus_fs
@@ -3085,7 +3035,6 @@ def _handle_get_metadata(params: Any, context: Any) -> dict[str, Any]:
     if isinstance(metadata, dict):
         metadata = unscope_internal_dict(metadata, ["path"])
     return {"metadata": metadata}
-
 
 def _handle_glob(params: Any, context: Any) -> dict[str, Any]:
     """Handle glob method."""
@@ -3100,7 +3049,6 @@ def _handle_glob(params: Any, context: Any) -> dict[str, Any]:
     # Issue #1202: Strip internal zone/tenant/user prefixes from paths
     matches = [unscope_internal_path(m) if isinstance(m, str) else m for m in matches]
     return {"matches": matches}
-
 
 def _handle_grep(params: Any, context: Any) -> dict[str, Any]:
     """Handle grep method."""
@@ -3125,7 +3073,6 @@ def _handle_grep(params: Any, context: Any) -> dict[str, Any]:
     # Return "results" key to match RemoteNexusFS.grep() expectations
     return {"results": results}
 
-
 def _handle_search(params: Any, context: Any) -> dict[str, Any]:
     """Handle search method."""
     nexus_fs = _fastapi_app.state.nexus_fs
@@ -3141,7 +3088,6 @@ def _handle_search(params: Any, context: Any) -> dict[str, Any]:
 
     results = nexus_fs.search(params.query, **kwargs)  # type: ignore[attr-defined]
     return {"results": results}
-
 
 async def _handle_semantic_search_index(params: Any, _context: Any) -> dict[str, Any]:
     """Handle semantic_search_index method (Issue #947).
@@ -3185,18 +3131,15 @@ async def _handle_semantic_search_index(params: Any, _context: Any) -> dict[str,
 
     return {"indexed": results, "total_files": len(results), "total_chunks": total_chunks}
 
-
 def _handle_is_directory(params: Any, context: Any) -> dict[str, Any]:
     """Handle is_directory method."""
     nexus_fs = _fastapi_app.state.nexus_fs
     assert nexus_fs is not None
     return {"is_directory": nexus_fs.is_directory(params.path, context=context)}
 
-
 # ============================================================================
 # Delta Sync Handlers (Issue #869)
 # ============================================================================
-
 
 def _handle_delta_read(params: Any, context: Any) -> dict[str, Any]:
     """Handle delta_read method for rsync-style incremental updates.
@@ -3310,7 +3253,6 @@ def _handle_delta_read(params: Any, context: Any) -> dict[str, Any]:
         "compression_ratio": 1.0 - delta_ratio,
     }
 
-
 def _handle_delta_write(params: Any, context: Any) -> dict[str, Any]:
     """Handle delta_write method for rsync-style incremental updates.
 
@@ -3382,11 +3324,9 @@ def _handle_delta_write(params: Any, context: Any) -> dict[str, Any]:
         "patch_applied": True,
     }
 
-
 # ============================================================================
 # Admin API Handlers (v0.5.1)
 # ============================================================================
-
 
 def _require_admin(context: Any) -> None:
     """Require admin privileges for admin operations."""
@@ -3394,7 +3334,6 @@ def _require_admin(context: Any) -> None:
 
     if not context or not getattr(context, "is_admin", False):
         raise NexusPermissionError("Admin privileges required for this operation")
-
 
 def _handle_admin_create_key(params: Any, context: Any) -> dict[str, Any]:
     """Handle admin_create_key method."""
@@ -3455,7 +3394,6 @@ def _handle_admin_create_key(params: Any, context: Any) -> dict[str, Any]:
             "is_admin": params.is_admin,
             "expires_at": expires_at.isoformat() if expires_at else None,
         }
-
 
 def _handle_admin_list_keys(params: Any, context: Any) -> dict[str, Any]:
     """Handle admin_list_keys method.
@@ -3526,7 +3464,6 @@ def _handle_admin_list_keys(params: Any, context: Any) -> dict[str, Any]:
 
         return {"keys": keys, "total": total}
 
-
 def _handle_admin_get_key(params: Any, context: Any) -> dict[str, Any]:
     """Handle admin_get_key method."""
     from sqlalchemy import select
@@ -3562,7 +3499,6 @@ def _handle_admin_get_key(params: Any, context: Any) -> dict[str, Any]:
             "last_used_at": api_key.last_used_at.isoformat() if api_key.last_used_at else None,
         }
 
-
 def _handle_admin_revoke_key(params: Any, context: Any) -> dict[str, Any]:
     """Handle admin_revoke_key method."""
     from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
@@ -3581,7 +3517,6 @@ def _handle_admin_revoke_key(params: Any, context: Any) -> dict[str, Any]:
 
         session.commit()
         return {"success": True, "key_id": params.key_id}
-
 
 def _handle_admin_update_key(params: Any, context: Any) -> dict[str, Any]:
     """Handle admin_update_key method."""
@@ -3623,11 +3558,9 @@ def _handle_admin_update_key(params: Any, context: Any) -> dict[str, Any]:
             "expires_at": api_key.expires_at.isoformat() if api_key.expires_at else None,
         }
 
-
 # ============================================================================
 # Server Runner
 # ============================================================================
-
 
 def run_server(
     app: FastAPI | str,
@@ -3693,7 +3626,6 @@ def run_server(
         log_level=log_level,
         workers=workers if workers > 1 else None,
     )
-
 
 def run_server_from_config(
     nexus_fs: NexusFS,

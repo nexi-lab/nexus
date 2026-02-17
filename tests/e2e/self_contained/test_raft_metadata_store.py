@@ -5,8 +5,6 @@ and searchable text — without requiring the compiled Rust PyO3 library.
 A FakeLocalRaft simulates the real PyO3 LocalRaft behavior in pure Python.
 """
 
-from __future__ import annotations
-
 import json
 import time
 from dataclasses import dataclass, field
@@ -22,14 +20,12 @@ from nexus.storage.raft_metadata_store import RaftMetadataStore
 # FakeLocalRaft: pure-Python stand-in for the Rust PyO3 LocalRaft
 # ---------------------------------------------------------------------------
 
-
 @dataclass
 class FakeHolderInfo:
     lock_id: str
     holder_info: str
     acquired_at: int
     expires_at: int
-
 
 @dataclass
 class FakeLockState:
@@ -38,13 +34,11 @@ class FakeLockState:
     max_holders: int
     holders: list[FakeHolderInfo] = field(default_factory=list)
 
-
 @dataclass
 class FakeLockInfo:
     path: str
     max_holders: int
     holders: list[FakeHolderInfo] = field(default_factory=list)
-
 
 class FakeLocalRaft:
     """Pure-Python fake that mirrors the PyO3 LocalRaft API."""
@@ -170,11 +164,9 @@ class FakeLocalRaft:
     def flush(self) -> None:
         pass
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
 
 def _make_store(fake: FakeLocalRaft | None = None) -> RaftMetadataStore:
     """Create a RaftMetadataStore backed by a FakeLocalRaft."""
@@ -184,7 +176,6 @@ def _make_store(fake: FakeLocalRaft | None = None) -> RaftMetadataStore:
     store._client = None
     store._zone_id = None
     return store
-
 
 def _make_meta(
     path: str = "/test/file.txt",
@@ -201,11 +192,9 @@ def _make_meta(
         **kwargs,
     )
 
-
 # ===========================================================================
 # CRUD Tests
 # ===========================================================================
-
 
 class TestCRUD:
     """Tests for get / put / delete / exists / rename_path."""
@@ -285,11 +274,9 @@ class TestCRUD:
         assert result.size == 2
         assert result.version == 2
 
-
 # ===========================================================================
 # List and Pagination Tests
 # ===========================================================================
-
 
 class TestListOperations:
     """Tests for list, list_paginated, is_implicit_directory."""
@@ -364,11 +351,9 @@ class TestListOperations:
         page2_paths = {i.path for i in page2.items}
         assert page1_paths.isdisjoint(page2_paths)
 
-
 # ===========================================================================
 # Batch Operations Tests
 # ===========================================================================
-
 
 class TestBatchOperations:
     """Tests for get_batch, put_batch, delete_batch, batch_get_content_ids."""
@@ -412,11 +397,9 @@ class TestBatchOperations:
         assert result["/c/b.txt"] == "hash-b"
         assert result["/c/none.txt"] is None
 
-
 # ===========================================================================
 # Custom File Metadata Tests
 # ===========================================================================
-
 
 class TestCustomFileMetadata:
     """Tests for set_file_metadata, get_file_metadata, searchable text."""
@@ -483,11 +466,9 @@ class TestCustomFileMetadata:
         assert result["/y.txt"] == "val-y"
         assert result["/z.txt"] is None
 
-
 # ===========================================================================
 # Lock Operation Tests
 # ===========================================================================
-
 
 class TestLockOperations:
     """Tests for lock acquire, release, extend, info, list, force-release."""
@@ -576,11 +557,9 @@ class TestLockOperations:
         store = _make_store(fake)
         store.close()  # Should not raise
 
-
 # ===========================================================================
 # SC/EC Consistency Hint Tests (#1364)
 # ===========================================================================
-
 
 class TestConsistencyHints:
     """Tests for per-operation SC/EC consistency parameter."""
@@ -657,11 +636,9 @@ class TestConsistencyHints:
         assert fake.delete_metadata("/test", consistency="ec") is True
         assert fake.get_metadata("/test") is None
 
-
 # ===========================================================================
 # Multi-Zone Isolation Tests
 # ===========================================================================
-
 
 class TestMultiZoneIsolation:
     """Tests for zone-scoped metadata isolation and zone_id assertions."""

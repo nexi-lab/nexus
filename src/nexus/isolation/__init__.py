@@ -19,8 +19,6 @@ Errors
 - ``IsolationPoolError``         — pool shut down or unhealthy
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 from nexus.isolation.backend import IsolatedBackend
@@ -43,7 +41,6 @@ __all__ = [
     "IsolationTimeoutError",
     "create_isolated_backend",
 ]
-
 
 def create_isolated_backend(
     module: str,

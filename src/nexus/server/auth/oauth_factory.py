@@ -17,7 +17,6 @@ from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
 from nexus.server.auth.oauth_config import OAuthConfig, OAuthProviderConfig
 from nexus.server.auth.oauth_provider import OAuthProvider
 
-
 class OAuthProviderFactory:
     """Factory for creating OAuth providers from configuration."""
 

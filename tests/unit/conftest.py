@@ -1,7 +1,5 @@
 """Shared fixtures for unit tests."""
 
-from __future__ import annotations
-
 import platform
 import sys
 import time
@@ -16,11 +14,9 @@ import pytest
 UNIT_TEST_TARGET_SECONDS = 180
 _suite_start: float | None = None
 
-
 def pytest_sessionstart(session: pytest.Session) -> None:
     global _suite_start
     _suite_start = time.monotonic()
-
 
 def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
     global _suite_start
@@ -34,14 +30,12 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         )
         print(msg, file=sys.stderr, flush=True)
 
-
 # Conditionally ignore MCP tests if fastmcp is not installed
 # This must be done at collection time, before any imports from test files
 try:
     import fastmcp  # noqa: F401
 except ImportError:
     collect_ignore_glob = ["mcp/*"]
-
 
 # Mock FuseOSError class
 class FuseOSError(OSError):
@@ -52,7 +46,6 @@ class FuseOSError(OSError):
         self.errno = errno
         super().__init__(errno, f"FUSE error: {errno}")
 
-
 # Mock the fuse module at import time (before any test imports happen)
 # This ensures the fuse module is available when nexus.fuse modules are imported
 _fuse_mock = MagicMock()
@@ -60,7 +53,6 @@ _fuse_mock.FUSE = MagicMock
 _fuse_mock.Operations = object
 _fuse_mock.FuseOSError = FuseOSError
 sys.modules["fuse"] = _fuse_mock
-
 
 @pytest.fixture(autouse=True)
 def mock_fuse_module():
@@ -79,7 +71,6 @@ def mock_fuse_module():
 
     # Cleanup happens automatically before next test
 
-
 @pytest.fixture(autouse=True)
 def isolate_test_database(monkeypatch):
     """Automatically isolate test databases from production environment.
@@ -95,7 +86,6 @@ def isolate_test_database(monkeypatch):
     monkeypatch.delenv("POSTGRES_URL", raising=False)
     monkeypatch.delenv("DATABASE_URL", raising=False)
     yield
-
 
 @pytest.fixture(autouse=True)
 def windows_db_cleanup():
@@ -113,7 +103,6 @@ def windows_db_cleanup():
         # Force garbage collection to release any lingering database connections
         # With proper close() calls in NexusFS, this should be enough
         gc.collect()
-
 
 @pytest.fixture
 def isolated_db(tmp_path, monkeypatch):

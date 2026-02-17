@@ -4,19 +4,18 @@ Centralizes permission check logic used by MountCoreService and SyncService
 to prevent code duplication and ensure consistent error handling.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING
 
 from nexus.core.context_utils import get_user_identity, get_zone_id
 
+from nexus.core.permissions import OperationContext
+from nexus.services.gateway import NexusFSGateway
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.services.gateway import NexusFSGateway
 
 logger = logging.getLogger(__name__)
-
 
 class PermissionCheckError(Exception):
     """Raised when the permission system itself is unavailable.
@@ -24,7 +23,6 @@ class PermissionCheckError(Exception):
     Distinct from a permission denial — this indicates infrastructure failure
     (e.g., ReBAC backend unreachable, DB connection timeout).
     """
-
 
 def check_permission(
     gw: NexusFSGateway,

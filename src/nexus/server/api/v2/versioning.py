@@ -10,28 +10,21 @@ Provides:
 Issue #995: API versioning strategy for breaking changes.
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import TYPE_CHECKING
 
+from fastapi import APIRouter, FastAPI
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
-
-if TYPE_CHECKING:
-    from fastapi import APIRouter, FastAPI
 
 logger = logging.getLogger(__name__)
 
 # Current API version — bump on breaking changes.
 API_VERSION = "2.0"
 
-
 # ---------------------------------------------------------------------------
 # Router registry
 # ---------------------------------------------------------------------------
-
 
 @dataclass(frozen=True)
 class RouterEntry:
@@ -57,7 +50,6 @@ class RouterEntry:
     sunset: str | None = None
     endpoint_count: int = 0
 
-
 @dataclass
 class RouterRegistry:
     """Ordered collection of RouterEntry objects."""
@@ -73,7 +65,6 @@ class RouterRegistry:
 
     def total_endpoints(self) -> int:
         return sum(e.endpoint_count for e in self._entries)
-
 
 def build_v2_registry(
     *,
@@ -230,7 +221,6 @@ def build_v2_registry(
 
     return registry
 
-
 def register_v2_routers(
     app: FastAPI,
     registry: RouterRegistry,
@@ -257,11 +247,9 @@ def register_v2_routers(
     total = registry.total_endpoints()
     logger.info("API v2 routers registered (%d endpoints)", total)
 
-
 # ---------------------------------------------------------------------------
 # Middleware
 # ---------------------------------------------------------------------------
-
 
 class VersionHeaderMiddleware:
     """Pure ASGI middleware — adds ``X-API-Version: 2.0`` to ``/api/v2/`` responses.
@@ -287,7 +275,6 @@ class VersionHeaderMiddleware:
             await send(message)
 
         await self.app(scope, receive, send_with_version)
-
 
 class DeprecationMiddleware:
     """Pure ASGI middleware — adds RFC 9745 ``Deprecation`` and RFC 8594 ``Sunset`` headers.

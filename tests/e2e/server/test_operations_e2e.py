@@ -10,8 +10,6 @@ Both tests run with:
 Tests both admin and unauthenticated access.
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket
@@ -26,13 +24,11 @@ import pytest
 
 _src_path = Path(__file__).parent.parent.parent / "src"
 
-
 def _find_free_port() -> int:
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
         s.bind(("", 0))
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         return s.getsockname()[1]
-
 
 def _wait_for_server(url: str, timeout: float = 60.0) -> bool:
     start = time.time()
@@ -46,11 +42,9 @@ def _wait_for_server(url: str, timeout: float = 60.0) -> bool:
         time.sleep(0.3)
     return False
 
-
 # =============================================================================
 # Fixtures
 # =============================================================================
-
 
 @pytest.fixture(scope="module")
 def operations_server(tmp_path_factory):
@@ -171,7 +165,6 @@ def operations_server(tmp_path_factory):
         process.kill()
         process.wait()
 
-
 @pytest.fixture(scope="module")
 def client(operations_server) -> httpx.Client:
     """HTTP client with admin API key."""
@@ -184,7 +177,6 @@ def client(operations_server) -> httpx.Client:
     ) as c:
         yield c
 
-
 @pytest.fixture(scope="module")
 def unauthenticated_client(operations_server) -> httpx.Client:
     """HTTP client WITHOUT auth headers."""
@@ -195,11 +187,9 @@ def unauthenticated_client(operations_server) -> httpx.Client:
     ) as c:
         yield c
 
-
 # =============================================================================
 # Helper: seed operations via the file API
 # =============================================================================
-
 
 def _seed_file_operations(client: httpx.Client) -> None:
     """Write a few files to create operation log entries."""
@@ -224,11 +214,9 @@ def _seed_file_operations(client: httpx.Client) -> None:
                 },
             )
 
-
 # =============================================================================
 # Tests
 # =============================================================================
-
 
 class TestOperationsAuthEnforcement:
     """Verify auth is enforced on operations endpoint."""
@@ -237,7 +225,6 @@ class TestOperationsAuthEnforcement:
         """GET /api/v2/operations without auth returns 401."""
         resp = unauthenticated_client.get("/api/v2/operations")
         assert resp.status_code == 401, f"Expected 401, got {resp.status_code}: {resp.text}"
-
 
 class TestOperationsEndpoint:
     """E2E tests for GET /api/v2/operations with real server."""
@@ -337,11 +324,9 @@ class TestOperationsEndpoint:
             assert "status" in op
             assert "timestamp" in op
 
-
 # =============================================================================
 # Agent Activity Summary Tests (Issue #1198)
 # =============================================================================
-
 
 class TestAgentActivityAuthEnforcement:
     """Verify auth is enforced on agent activity endpoint."""
@@ -350,7 +335,6 @@ class TestAgentActivityAuthEnforcement:
         """GET /api/v2/operations/agents/{id}/activity without auth returns 401."""
         resp = unauthenticated_client.get("/api/v2/operations/agents/test-agent/activity")
         assert resp.status_code == 401, f"Expected 401, got {resp.status_code}: {resp.text}"
-
 
 class TestAgentActivityEndpoint:
     """E2E tests for GET /api/v2/operations/agents/{agent_id}/activity."""

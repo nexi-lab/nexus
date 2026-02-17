@@ -4,14 +4,11 @@ Declares the ReBAC brick's metadata and provides verify_imports()
 for validating required and optional modules at startup.
 """
 
-from __future__ import annotations
-
 import importlib
 import logging
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass(frozen=True)
 class ReBACBrickManifest:
@@ -29,7 +26,6 @@ class ReBACBrickManifest:
         }
     )
     dependencies: list[str] = field(default_factory=list)
-
 
 def verify_imports() -> dict[str, bool]:
     """Validate required and optional ReBAC imports at startup.

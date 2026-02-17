@@ -5,8 +5,6 @@ This module contains MCP-related CLI commands for:
 - Starting MCP server with HTTP transport (for web clients)
 """
 
-from __future__ import annotations
-
 import sys
 from typing import TYPE_CHECKING, Any, cast
 
@@ -20,10 +18,11 @@ from nexus.cli.utils import (
     handle_error,
 )
 
+from starlette.requests import Request
+from starlette.responses import Response
 if TYPE_CHECKING:
     from starlette.requests import Request
     from starlette.responses import Response
-
 
 def _add_health_check_route(mcp_server: Any) -> None:
     """Add health check route for HTTP transports.
@@ -45,7 +44,6 @@ def _add_health_check_route(mcp_server: Any) -> None:
 
     except Exception as e:
         console.print(f"[yellow]Warning: Failed to add health check route: {e}[/yellow]")
-
 
 def _add_api_key_middleware(mcp_server: Any) -> None:
     """Add HTTP middleware to extract API keys from headers.
@@ -104,7 +102,6 @@ def _add_api_key_middleware(mcp_server: Any) -> None:
     except Exception as e:
         console.print(f"[yellow]Warning: Failed to add API key middleware: {e}[/yellow]")
 
-
 @click.group(name="mcp")
 def mcp() -> None:
     """Model Context Protocol (MCP) server commands.
@@ -146,7 +143,6 @@ def mcp() -> None:
         }
     """
     pass
-
 
 @mcp.command(name="serve")
 @click.option(
@@ -342,7 +338,6 @@ def serve(
         console.print("\n[yellow]MCP server stopped by user[/yellow]")
     except Exception as e:
         handle_error(e)
-
 
 def register_commands(cli: click.Group) -> None:
     """Register MCP commands with the CLI.

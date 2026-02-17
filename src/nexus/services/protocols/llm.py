@@ -12,15 +12,14 @@ References:
     - Issue #1521: Extract LLM module into LLM brick
 """
 
-from __future__ import annotations
-
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from nexus.llm.citation import DocumentReadResult
+from nexus.llm.provider import LLMProvider
 if TYPE_CHECKING:
     from nexus.llm.citation import DocumentReadResult
     from nexus.llm.provider import LLMProvider
-
 
 @runtime_checkable
 class LLMServiceProtocol(Protocol):
@@ -80,7 +79,6 @@ class LLMServiceProtocol(Protocol):
         system_prompt: str | None = None,
         max_context_tokens: int = 3000,
     ) -> Any: ...
-
 
 # Backward compatibility alias (Issue #1521)
 LLMProtocol = LLMServiceProtocol

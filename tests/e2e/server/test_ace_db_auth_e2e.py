@@ -9,8 +9,6 @@ Tests both admin and non-admin users:
 - Non-admin: identity-based access via MemoryPermissionEnforcer (owner match)
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket
@@ -26,13 +24,11 @@ import pytest
 
 _src_path = Path(__file__).parent.parent.parent / "src"
 
-
 def _find_free_port() -> int:
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
         s.bind(("", 0))
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         return s.getsockname()[1]
-
 
 def _wait_for_server(url: str, timeout: float = 60.0) -> bool:
     start = time.time()
@@ -46,7 +42,6 @@ def _wait_for_server(url: str, timeout: float = 60.0) -> bool:
         time.sleep(0.3)
     return False
 
-
 def _extract_api_key(output: str) -> str | None:
     """Extract the admin API key from server startup output."""
     for line in output.split("\n"):
@@ -59,11 +54,9 @@ def _extract_api_key(output: str) -> str | None:
                     return token.rstrip()
     return None
 
-
 # =============================================================================
 # Fixtures
 # =============================================================================
-
 
 @pytest.fixture(scope="module")
 def db_auth_server(tmp_path_factory):
@@ -246,7 +239,6 @@ def db_auth_server(tmp_path_factory):
         process.kill()
         process.wait()
 
-
 @pytest.fixture(scope="module")
 def client(db_auth_server) -> httpx.Client:
     """HTTP client with database auth API key."""
@@ -259,7 +251,6 @@ def client(db_auth_server) -> httpx.Client:
     ) as c:
         yield c
 
-
 @pytest.fixture(scope="module")
 def unauthenticated_client(db_auth_server) -> httpx.Client:
     """HTTP client WITHOUT auth headers."""
@@ -269,7 +260,6 @@ def unauthenticated_client(db_auth_server) -> httpx.Client:
         trust_env=False,
     ) as c:
         yield c
-
 
 @pytest.fixture(scope="module")
 def non_admin_client(db_auth_server) -> httpx.Client:
@@ -290,11 +280,9 @@ def non_admin_client(db_auth_server) -> httpx.Client:
     ) as c:
         yield c
 
-
 # =============================================================================
 # Health check
 # =============================================================================
-
 
 class TestServerHealth:
     def test_health(self, client: httpx.Client):
@@ -302,11 +290,9 @@ class TestServerHealth:
         assert resp.status_code == 200
         assert resp.json()["status"] == "healthy"
 
-
 # =============================================================================
 # Auth enforcement: unauthenticated requests should be rejected
 # =============================================================================
-
 
 class TestAuthEnforcement:
     """Verify database auth rejects unauthenticated requests."""
@@ -333,11 +319,9 @@ class TestAuthEnforcement:
         resp = unauthenticated_client.get("/api/v2/feedback/queue")
         assert resp.status_code == 401, f"Expected 401, got {resp.status_code}: {resp.text}"
 
-
 # =============================================================================
 # Memory endpoints with database auth + permissions
 # =============================================================================
-
 
 class TestMemoriesWithDbAuth:
     def test_store_and_get(self, client: httpx.Client):
@@ -377,11 +361,9 @@ class TestMemoriesWithDbAuth:
         assert resp.status_code == 201, f"Batch failed: {resp.text}"
         assert resp.json()["stored"] == 2
 
-
 # =============================================================================
 # Trajectory endpoints with database auth + permissions
 # =============================================================================
-
 
 class TestTrajectoriesWithDbAuth:
     def test_start_and_complete(self, client: httpx.Client):
@@ -411,11 +393,9 @@ class TestTrajectoriesWithDbAuth:
         assert resp.status_code == 200, f"Query failed: {resp.text}"
         assert "trajectories" in resp.json()
 
-
 # =============================================================================
 # Feedback endpoints with database auth + permissions
 # =============================================================================
-
 
 class TestFeedbackWithDbAuth:
     def test_add_and_get_feedback(self, client: httpx.Client):
@@ -443,11 +423,9 @@ class TestFeedbackWithDbAuth:
         assert resp.status_code == 200, f"Queue failed: {resp.text}"
         assert "queue" in resp.json()
 
-
 # =============================================================================
 # Playbook endpoints with database auth + permissions
 # =============================================================================
-
 
 class TestPlaybooksWithDbAuth:
     def test_crud(self, client: httpx.Client):
@@ -481,11 +459,9 @@ class TestPlaybooksWithDbAuth:
         assert resp.status_code == 200, f"List failed: {resp.text}"
         assert "playbooks" in resp.json()
 
-
 # =============================================================================
 # Consolidation endpoints with database auth + permissions
 # =============================================================================
-
 
 class TestConsolidationWithDbAuth:
     def test_apply_decay(self, client: httpx.Client):
@@ -522,11 +498,9 @@ class TestConsolidationWithDbAuth:
         assert isinstance(body["total_consolidated"], int)
         assert isinstance(body["results"], list)
 
-
 # =============================================================================
 # Reflect + Curate endpoints with database auth + permissions
 # =============================================================================
-
 
 class TestReflectCurateWithDbAuth:
     def test_reflect_requires_llm(self, client: httpx.Client):
@@ -564,7 +538,6 @@ class TestReflectCurateWithDbAuth:
         assert resp.status_code == 200, f"Bulk curate failed: {resp.text}"
         assert "processed" in resp.json()
 
-
 # =============================================================================
 # Non-admin user tests (exercises real ReBAC permission path)
 #
@@ -572,7 +545,6 @@ class TestReflectCurateWithDbAuth:
 # Permission checks go through MemoryPermissionEnforcer which uses
 # identity-based access: owner match (user_id == context.user).
 # =============================================================================
-
 
 class TestNonAdminMemories:
     """Non-admin user can store and retrieve their own memories."""
@@ -626,7 +598,6 @@ class TestNonAdminMemories:
         assert resp.status_code == 200, f"Non-admin query failed: {resp.text}"
         assert "results" in resp.json()
 
-
 class TestNonAdminTrajectories:
     """Non-admin user can manage their own trajectories."""
 
@@ -657,7 +628,6 @@ class TestNonAdminTrajectories:
         assert resp.status_code == 200, f"Non-admin traj query failed: {resp.text}"
         assert "trajectories" in resp.json()
 
-
 class TestNonAdminFeedback:
     """Non-admin user can manage feedback on their trajectories."""
 
@@ -683,7 +653,6 @@ class TestNonAdminFeedback:
         """Non-admin can query relearning queue."""
         resp = non_admin_client.get("/api/v2/feedback/queue?limit=5")
         assert resp.status_code == 200, f"Non-admin queue failed: {resp.text}"
-
 
 class TestNonAdminPlaybooks:
     """Non-admin user can manage their own playbooks."""
@@ -716,7 +685,6 @@ class TestNonAdminPlaybooks:
         resp = non_admin_client.get("/api/v2/playbooks?limit=5")
         assert resp.status_code == 200, f"Non-admin pb list failed: {resp.text}"
         assert "playbooks" in resp.json()
-
 
 class TestNonAdminConsolidation:
     """Non-admin user can use consolidation endpoints."""
@@ -754,7 +722,6 @@ class TestNonAdminConsolidation:
         assert isinstance(body["clusters_formed"], int)
         assert isinstance(body["total_consolidated"], int)
         assert isinstance(body["results"], list)
-
 
 class TestCrossUserIsolation:
     """Verify non-admin user cannot access admin-created data.

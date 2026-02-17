@@ -3,17 +3,15 @@
 Extracted from fastapi_server.py (#1602).
 """
 
-from __future__ import annotations
-
 import logging
 import os
 from typing import TYPE_CHECKING
 
+from fastapi import FastAPI
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
 logger = logging.getLogger(__name__)
-
 
 def startup_observability(app: FastAPI) -> None:
     """Initialize all observability subsystems (sync, no background tasks)."""
@@ -23,7 +21,6 @@ def startup_observability(app: FastAPI) -> None:
     _startup_profiling()
     _startup_prometheus()
     _startup_thread_pool(app)
-
 
 def shutdown_observability() -> None:
     """Shutdown observability subsystems in reverse order."""
@@ -51,11 +48,9 @@ def shutdown_observability() -> None:
     except ImportError:
         pass
 
-
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
 
 def _startup_logging() -> None:
     """Configure structured logging (Issue #1002)."""
@@ -69,7 +64,6 @@ def _startup_logging() -> None:
 
     logger.info("Starting FastAPI Nexus server...")
 
-
 def _startup_sentry() -> None:
     """Initialize Sentry error tracking (Issue #759)."""
     try:
@@ -78,7 +72,6 @@ def _startup_sentry() -> None:
         setup_sentry()
     except ImportError:
         logger.debug("Sentry not available")
-
 
 def _startup_telemetry() -> None:
     """Initialize OpenTelemetry (Issue #764)."""
@@ -89,7 +82,6 @@ def _startup_telemetry() -> None:
     except ImportError:
         logger.debug("OpenTelemetry not available")
 
-
 def _startup_profiling() -> None:
     """Initialize Pyroscope continuous profiling (Issue #763)."""
     try:
@@ -99,7 +91,6 @@ def _startup_profiling() -> None:
     except ImportError:
         logger.debug("Pyroscope not available")
 
-
 def _startup_prometheus() -> None:
     """Initialize Prometheus metrics (Issue #761)."""
     try:
@@ -108,7 +99,6 @@ def _startup_prometheus() -> None:
         setup_prometheus()
     except ImportError:
         logger.debug("prometheus_client not available")
-
 
 def _startup_thread_pool(app: FastAPI) -> None:
     """Configure thread pool size (Issue #932)."""

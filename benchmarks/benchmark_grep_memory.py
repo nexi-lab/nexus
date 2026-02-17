@@ -7,7 +7,6 @@ import psutil
 
 from nexus.core.grep_fast import grep_bulk
 
-
 def test_grep_memory_usage():
     # Create a temporary directory with large files
     temp_dir = tempfile.mkdtemp()
@@ -41,7 +40,6 @@ def test_grep_memory_usage():
 
     finally:
         shutil.rmtree(temp_dir)
-
 
 if __name__ == "__main__":
     test_grep_memory_usage()

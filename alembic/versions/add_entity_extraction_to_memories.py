@@ -22,7 +22,6 @@ down_revision: Union[str, Sequence[str], None] = "eb9a31742e51"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add entity extraction fields to memories table.
 
@@ -47,7 +46,6 @@ def upgrade() -> None:
 
     # Add index on entity_types for efficient filtering
     op.create_index("idx_memory_entity_types", "memories", ["entity_types"])
-
 
 def downgrade() -> None:
     """Remove entity extraction fields from memories table."""

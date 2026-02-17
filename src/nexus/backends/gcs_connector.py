@@ -57,7 +57,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 @register_connector(
     "gcs_connector",
     description="Google Cloud Storage with direct path mapping",

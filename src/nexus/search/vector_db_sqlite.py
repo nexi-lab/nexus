@@ -4,8 +4,6 @@ Handles sqlite-vec vector search and FTS5 keyword search.
 Extracted from vector_db.py to isolate backend-specific logic.
 """
 
-from __future__ import annotations
-
 import logging
 import struct
 from typing import TYPE_CHECKING, Any
@@ -16,9 +14,9 @@ from nexus.search.result_builders import build_result_from_row
 
 logger = logging.getLogger(__name__)
 
+from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
-
 
 def init_sqlite(engine: Any, conn: Any) -> tuple[bool, bool]:
     """Initialize SQLite with sqlite-vec and FTS5.
@@ -122,7 +120,6 @@ def init_sqlite(engine: Any, conn: Any) -> tuple[bool, bool]:
 
     return vec_available, sqlite_vec_loaded
 
-
 def reload_sqlite_vec(conn: Any) -> None:
     """Reload sqlite-vec on an existing connection (already registered listener)."""
     try:
@@ -135,7 +132,6 @@ def reload_sqlite_vec(conn: Any) -> None:
     except (AttributeError, ImportError, RuntimeError):
         pass
 
-
 def sqlite_store_embedding(session: Session, chunk_id: str, embedding: list[float]) -> None:
     """Store embedding as BLOB in SQLite."""
     blob = struct.pack(f"{len(embedding)}f", *embedding)
@@ -143,7 +139,6 @@ def sqlite_store_embedding(session: Session, chunk_id: str, embedding: list[floa
         text("UPDATE document_chunks SET embedding = :embedding WHERE chunk_id = :chunk_id"),
         {"embedding": blob, "chunk_id": chunk_id},
     )
-
 
 def sqlite_vector_search(
     session: Session,
@@ -184,7 +179,6 @@ def sqlite_vector_search(
         results = session.execute(query, {"embedding": query_blob, "limit": limit})
 
     return [build_result_from_row(row) for row in results]
-
 
 def sqlite_keyword_search(
     session: Session,

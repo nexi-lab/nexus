@@ -9,8 +9,6 @@ Provides knowledge graph query endpoints:
 Extracted from ``fastapi_server.py`` during monolith decomposition (#1288).
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -25,11 +23,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["graph"])
 
-
 # ---------------------------------------------------------------------------
 # Shared helpers (DRY: replaces 4x copy-pasted boilerplate)
 # ---------------------------------------------------------------------------
-
 
 @asynccontextmanager
 async def _graph_session(async_session_factory: Any, zone_id: str) -> AsyncIterator[Any]:
@@ -46,16 +42,13 @@ async def _graph_session(async_session_factory: Any, zone_id: str) -> AsyncItera
     async with async_session_factory() as session:
         yield GraphStore(session, zone_id=zone_id)
 
-
 def _zone_id_from(nexus_fs: Any) -> str:
     """Extract zone_id from a NexusFS instance, defaulting to ``"root"``."""
     return getattr(nexus_fs, "zone_id", None) or "root"
 
-
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
-
 
 @router.get("/api/graph/entity/{entity_id}")
 async def get_graph_entity(
@@ -80,7 +73,6 @@ async def get_graph_entity(
     except Exception as e:
         logger.error(f"Graph entity error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Graph entity error: {e}") from e
-
 
 @router.get("/api/graph/entity/{entity_id}/neighbors")
 async def get_graph_neighbors(
@@ -119,7 +111,6 @@ async def get_graph_neighbors(
         logger.error(f"Graph neighbors error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Graph neighbors error: {e}") from e
 
-
 @router.post("/api/graph/subgraph")
 async def get_graph_subgraph(
     request: Request,
@@ -151,7 +142,6 @@ async def get_graph_subgraph(
     except Exception as e:
         logger.error(f"Graph subgraph error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Graph subgraph error: {e}") from e
-
 
 @router.get("/api/graph/search")
 async def search_graph_entities(

@@ -24,7 +24,6 @@ down_revision: Union[str, Sequence[str], None] = "da7be77fac7c"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Remove UNIX permissions and ACL tables for pure ReBAC (v0.6.0)."""
 
@@ -53,7 +52,6 @@ def upgrade() -> None:
 
     with suppress(Exception):  # Column may not exist
         op.drop_column("file_paths", "owner")
-
 
 def downgrade() -> None:
     """Restore UNIX permissions and ACL tables (if needed for rollback)."""

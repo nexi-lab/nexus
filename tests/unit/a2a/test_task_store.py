@@ -5,8 +5,6 @@ gets identical coverage.  Restored from #1699 prune and extended for
 §17.6 convergence (agent-scoped paths + MessageEnvelope format).
 """
 
-from __future__ import annotations
-
 import asyncio
 from datetime import UTC, datetime
 from typing import Any
@@ -27,7 +25,6 @@ from nexus.a2a.task_store import TaskStoreProtocol
 # ======================================================================
 # Fakes / helpers
 # ======================================================================
-
 
 class InMemoryStorageDriver:
     """Minimal fake for IPCStorageDriver used by VFSTaskStore tests."""
@@ -92,7 +89,6 @@ class InMemoryStorageDriver:
         norm = path.rstrip("/")
         return (norm, zone_id) in self._dirs
 
-
 def _make_task(
     task_id: str = "task-001",
     state: TaskState = TaskState.SUBMITTED,
@@ -114,7 +110,6 @@ def _make_task(
         metadata=metadata,
     )
 
-
 def _make_task_with_artifact(task_id: str = "task-art") -> Task:
     """Create a Task with an artifact for testing."""
     return Task(
@@ -134,11 +129,9 @@ def _make_task_with_artifact(task_id: str = "task-art") -> Task:
         ],
     )
 
-
 # ======================================================================
 # Fixtures — parameterized across backends
 # ======================================================================
-
 
 @pytest.fixture(params=["in_memory", "vfs"])
 def store(request: pytest.FixtureRequest) -> TaskStoreProtocol:
@@ -155,7 +148,6 @@ def store(request: pytest.FixtureRequest) -> TaskStoreProtocol:
     else:
         pytest.skip(f"Unknown backend: {request.param}")
 
-
 @pytest.fixture()
 def vfs_store() -> tuple[Any, Any]:
     """VFSTaskStore with exposed driver for index tests."""
@@ -165,11 +157,9 @@ def vfs_store() -> tuple[Any, Any]:
     store = VFSTaskStore(storage=driver, max_cache_size=5)
     return store, driver
 
-
 # ======================================================================
 # Save + Get
 # ======================================================================
-
 
 class TestSaveAndGet:
     @pytest.mark.asyncio
@@ -250,11 +240,9 @@ class TestSaveAndGet:
         assert loaded is not None
         assert loaded.contextId == "my-context-123"
 
-
 # ======================================================================
 # Zone Isolation (Security boundary — critical)
 # ======================================================================
-
 
 class TestZoneIsolation:
     @pytest.mark.asyncio
@@ -306,11 +294,9 @@ class TestZoneIsolation:
         assert loaded_a.history[0].parts[0].text == "alpha version"  # type: ignore[union-attr]
         assert loaded_b.history[0].parts[0].text == "beta version"  # type: ignore[union-attr]
 
-
 # ======================================================================
 # Delete
 # ======================================================================
-
 
 class TestDelete:
     @pytest.mark.asyncio
@@ -333,11 +319,9 @@ class TestDelete:
         result = await store.delete("nonexistent", zone_id="z1")
         assert result is False
 
-
 # ======================================================================
 # List Tasks
 # ======================================================================
-
 
 class TestListTasks:
     @pytest.mark.asyncio
@@ -417,11 +401,9 @@ class TestListTasks:
         assert result[0].id == "t-2"
         assert result[2].id == "t-0"
 
-
 # ======================================================================
 # VFS Task Index (VFSTaskStore-specific)
 # ======================================================================
-
 
 class TestVFSTaskIndex:
     """Tests for the task_id → agent_id LRU index in VFSTaskStore."""
@@ -509,11 +491,9 @@ class TestVFSTaskIndex:
         task_ids = {t.id for t in all_tasks}
         assert task_ids == {"t-a", "t-b"}
 
-
 # ======================================================================
 # MessageEnvelope format verification (VFSTaskStore-specific)
 # ======================================================================
-
 
 class TestVFSEnvelopeFormat:
     """Verify tasks are stored as MessageEnvelope on disk."""
@@ -552,11 +532,9 @@ class TestVFSEnvelopeFormat:
         assert len(loaded.artifacts) == 1
         assert loaded.artifacts[0].artifactId == "art-1"
 
-
 # ======================================================================
 # DatabaseTaskStore deprecation warning
 # ======================================================================
-
 
 class TestDatabaseTaskStoreDeprecation:
     def test_emits_deprecation_warning(self) -> None:

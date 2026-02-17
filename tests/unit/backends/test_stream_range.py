@@ -7,8 +7,6 @@ Tests cover:
 - Edge cases (full file, single byte, empty range)
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import pytest
@@ -20,20 +18,16 @@ from nexus.core.exceptions import NexusFileNotFoundError
 # Helpers
 # =============================================================================
 
-
 def _create_local_backend(tmp_path: Path) -> LocalBackend:
     return LocalBackend(root_path=tmp_path)
-
 
 def _write_content(backend: LocalBackend, data: bytes) -> str:
     resp = backend.write_content(data)
     return resp.unwrap()
 
-
 # =============================================================================
 # Default Backend.stream_range() (read + slice)
 # =============================================================================
-
 
 class TestDefaultBackendStreamRange:
     """Test the default stream_range() on the Backend ABC."""
@@ -73,11 +67,9 @@ class TestDefaultBackendStreamRange:
         result = b"".join(chunks)
         assert result == b"ABCDEF"
 
-
 # =============================================================================
 # LocalBackend.stream_range() (seek-based)
 # =============================================================================
-
 
 class TestLocalBackendStreamRange:
     def test_first_10_bytes(self, tmp_path: Path) -> None:
@@ -144,11 +136,9 @@ class TestLocalBackendStreamRange:
         with pytest.raises(NexusFileNotFoundError):
             list(backend.stream_range("nonexistent_hash_abc123", 0, 10))
 
-
 # =============================================================================
 # AsyncLocalBackend.stream_range()
 # =============================================================================
-
 
 class TestAsyncLocalBackendStreamRange:
     @pytest.mark.asyncio

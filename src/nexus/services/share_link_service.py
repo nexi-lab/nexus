@@ -12,8 +12,6 @@ Phase 2: Core Refactoring (Issue #1287)
 Extracted from: nexus_fs_share_links.py (678 lines)
 """
 
-from __future__ import annotations
-
 import asyncio
 import hashlib
 import logging
@@ -27,10 +25,11 @@ from nexus.core.rpc_decorator import rpc_expose
 
 logger = logging.getLogger(__name__)
 
+from nexus.core.permissions import OperationContext
+from nexus.services.gateway import NexusFSGateway
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.services.gateway import NexusFSGateway
-
 
 class ShareLinkService:
     """Independent share link service extracted from NexusFS.

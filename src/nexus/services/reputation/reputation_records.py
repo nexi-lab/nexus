@@ -5,11 +5,8 @@ Three records: ReputationEvent, ReputationScore, DisputeRecord.
 Follows the same pattern as agent_key_record.py (Decision #6A).
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from datetime import datetime
-
 
 @dataclass(frozen=True)
 class ReputationEvent:
@@ -51,7 +48,6 @@ class ReputationEvent:
     weight: float
     record_hash: str
     created_at: datetime
-
 
 @dataclass(frozen=True)
 class ReputationScore:
@@ -96,7 +92,6 @@ class ReputationScore:
     global_trust_score: float | None
     updated_at: datetime
     zone_id: str
-
 
 @dataclass(frozen=True)
 class DisputeRecord:

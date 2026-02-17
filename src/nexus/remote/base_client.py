@@ -10,8 +10,6 @@ Shared concerns:
 - Zone/agent identity properties
 """
 
-from __future__ import annotations
-
 import base64
 import logging
 from typing import Any
@@ -27,7 +25,6 @@ from nexus.core.exceptions import (
 from nexus.server.protocol import RPCErrorCode
 
 logger = logging.getLogger(__name__)
-
 
 class BaseRemoteNexusFS:
     """Base class containing shared non-I/O logic for remote clients.

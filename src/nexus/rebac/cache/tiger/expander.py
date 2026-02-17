@@ -5,21 +5,20 @@ individual file-level bitmap entries in batches, enabling non-blocking
 grant operations, progress tracking, and failure recovery.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import text
 
+from nexus.rebac.cache.tiger.bitmap_cache import TigerCache
+from sqlalchemy.engine import Engine
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
     from nexus.rebac.cache.tiger.bitmap_cache import TigerCache
 
 logger = logging.getLogger(__name__)
-
 
 class DirectoryGrantExpander:
     """Async worker for expanding large directory grants (Leopard-style).

@@ -13,8 +13,6 @@ References:
     - JuiceFS: --prefetch for read patterns
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import threading
@@ -22,11 +20,11 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from nexus.rebac.tiger_cache import TigerCache, TigerCacheUpdater
 if TYPE_CHECKING:
     from nexus.rebac.tiger_cache import TigerCache, TigerCacheUpdater
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass
 class HotspotConfig:
@@ -50,7 +48,6 @@ class HotspotConfig:
     prefetch_interval_seconds: int = 10
     cleanup_interval_seconds: int = 60
 
-
 @dataclass
 class HotspotEntry:
     """A hot permission path entry."""
@@ -72,7 +69,6 @@ class HotspotEntry:
             self.resource_type,
             self.zone_id,
         )
-
 
 class HotspotDetector:
     """Track and detect frequently accessed permission paths.
@@ -358,7 +354,6 @@ class HotspotDetector:
             self._hot_entries_detected = 0
             self._prefetches_triggered = 0
 
-
 class HotspotPrefetcher:
     """Background worker that proactively warms hot cache entries.
 
@@ -485,7 +480,6 @@ class HotspotPrefetcher:
             "last_cycle_duration_seconds": self._last_cycle_duration,
             "detector_stats": self._detector.get_stats(),
         }
-
 
 async def hotspot_prefetch_task(
     detector: HotspotDetector,

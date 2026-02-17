@@ -10,8 +10,6 @@ Requirements:
 Related: Issue #1106 Block 2
 """
 
-from __future__ import annotations
-
 import asyncio
 import os
 from typing import TYPE_CHECKING
@@ -32,11 +30,9 @@ _skip_lock_manager = pytest.mark.skip(
     reason="TODO: https://github.com/nexi-lab/nexus/issues/1702 — RedisLockManager removed from source; tests need rewrite for RaftLockManager",
 )
 
-
 # =============================================================================
 # Fixtures
 # =============================================================================
-
 
 @pytest.fixture
 async def redis_client():
@@ -60,7 +56,6 @@ async def redis_client():
     # Cleanup
     await client.disconnect()
 
-
 @pytest.fixture
 async def event_bus(redis_client):
     """Create a RedisEventBus for testing."""
@@ -73,7 +68,6 @@ async def event_bus(redis_client):
 
     await bus.stop()
 
-
 @pytest.fixture
 async def lock_manager(redis_client):
     """Create a RedisLockManager for testing."""
@@ -83,11 +77,9 @@ async def lock_manager(redis_client):
 
     yield manager
 
-
 # =============================================================================
 # Event Bus Integration Tests
 # =============================================================================
-
 
 class TestRedisEventBusIntegration:
     """Integration tests for RedisEventBus with real Redis."""
@@ -284,11 +276,9 @@ class TestRedisEventBusIntegration:
         assert stats["status"] == "running"
         assert "channel_prefix" in stats
 
-
 # =============================================================================
 # Lock Manager Integration Tests
 # =============================================================================
-
 
 @_skip_lock_manager
 class TestRedisLockManagerIntegration:
@@ -509,11 +499,9 @@ class TestRedisLockManagerIntegration:
             await lock_manager.release(lock_a, "zone-A", "/shared.txt")
             await lock_manager.release(lock_b, "zone-B", "/shared.txt")
 
-
 # =============================================================================
 # Combined Event + Lock Workflow Tests
 # =============================================================================
-
 
 @_skip_lock_manager
 class TestDistributedWorkflows:
@@ -607,11 +595,9 @@ class TestDistributedWorkflows:
         assert results["acquired"] >= 1
         assert results["acquired"] + results["failed"] == 5
 
-
 # =============================================================================
 # Path Pattern Filtering Tests (Layer 1 Parity + Additional)
 # =============================================================================
-
 
 class TestPathPatternFiltering:
     """Comprehensive tests for path pattern matching in event filtering.
@@ -1027,11 +1013,9 @@ class TestPathPatternFiltering:
             await publisher.stop()
             await subscriber.stop()
 
-
 # =============================================================================
 # Event Type Tests
 # =============================================================================
-
 
 class TestEventTypes:
     """Tests for different event types being properly received."""
@@ -1285,11 +1269,9 @@ class TestEventTypes:
             await publisher.stop()
             await subscriber.stop()
 
-
 # =============================================================================
 # Lock Corner Cases Tests
 # =============================================================================
-
 
 @_skip_lock_manager
 class TestLockCornerCases:
@@ -1493,11 +1475,9 @@ class TestLockCornerCases:
                     results["second_lock_id"], "test-zone", "/wait-release.txt"
                 )
 
-
 # =============================================================================
 # Distributed-Specific Tests
 # =============================================================================
-
 
 class TestDistributedSpecific:
     """Tests specific to distributed event system scenarios."""
@@ -1753,11 +1733,9 @@ class TestDistributedSpecific:
             await publisher.stop()
             await subscriber.stop()
 
-
 # =============================================================================
 # Additional Edge Cases Tests
 # =============================================================================
-
 
 @_skip_lock_manager
 @pytest.mark.skipif(
@@ -1815,11 +1793,9 @@ class TestAdditionalEdgeCases:
         # Should return None or empty info
         assert info is None or info.get("locked") is False
 
-
 # =============================================================================
 # Stress and Performance Tests
 # =============================================================================
-
 
 @_skip_lock_manager
 @pytest.mark.skipif(
@@ -1970,11 +1946,9 @@ class TestStressAndPerformance:
         # All should succeed (different paths)
         assert all(results)
 
-
 # =============================================================================
 # Error Recovery Tests (Layer 2)
 # =============================================================================
-
 
 @pytest.mark.skipif(
     not os.environ.get("NEXUS_REDIS_URL") and not os.environ.get("REDIS_ENABLED"),

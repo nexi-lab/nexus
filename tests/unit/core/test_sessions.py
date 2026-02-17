@@ -18,14 +18,12 @@ from nexus.services.sessions import (
 )
 from nexus.storage.models import Base, MemoryModel, UserSessionModel
 
-
 @pytest.fixture
 def engine():
     """Create in-memory SQLite database for testing."""
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     return engine
-
 
 @pytest.fixture
 def session(engine):
@@ -35,7 +33,6 @@ def session(engine):
     yield session
     session.rollback()
     session.close()
-
 
 class TestCreateSession:
     """Test create_session function."""
@@ -101,7 +98,6 @@ class TestCreateSession:
 
         assert sess1.session_id != sess2.session_id
 
-
 class TestUpdateSessionActivity:
     """Test update_session_activity function."""
 
@@ -129,7 +125,6 @@ class TestUpdateSessionActivity:
 
         assert success is False
 
-
 class TestDeleteSessionResources:
     """Test delete_session_resources function."""
 
@@ -150,7 +145,6 @@ class TestDeleteSessionResources:
         counts = delete_session_resources(session, user_session.session_id)
 
         assert counts["memories"] == 1
-
 
 class TestDeleteSession:
     """Test delete_session function."""
@@ -175,7 +169,6 @@ class TestDeleteSession:
         success = delete_session(session, "nonexistent-session-id")
 
         assert success is False
-
 
 class TestCleanupExpiredSessions:
     """Test cleanup_expired_sessions function."""
@@ -234,7 +227,6 @@ class TestCleanupExpiredSessions:
         )
         assert remaining is not None
 
-
 class TestListUserSessions:
     """Test list_user_sessions function."""
 
@@ -269,7 +261,6 @@ class TestListUserSessions:
         alice_sessions = list_user_sessions(session, user_id="alice")
 
         assert len(alice_sessions) == 2
-
 
 class TestCleanupInactiveSessions:
     """Test cleanup_inactive_sessions function."""
@@ -309,7 +300,6 @@ class TestCleanupInactiveSessions:
         # Verify session still exists
         remaining = session.query(UserSessionModel).filter_by(session_id=active.session_id).first()
         assert remaining is not None
-
 
 class TestSessionBasics:
     """Basic session tests."""

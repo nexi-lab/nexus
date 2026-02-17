@@ -4,8 +4,6 @@ These tests verify that the mobile search configuration integrates correctly
 with the actual search infrastructure using different device tiers.
 """
 
-from __future__ import annotations
-
 import tempfile
 
 import pytest
@@ -22,7 +20,6 @@ from nexus.search.mobile_config import (
     get_config_for_tier,
     list_available_models,
 )
-
 
 class TestDeviceDetectionE2E:
     """E2E tests for device tier detection on real hardware."""
@@ -45,7 +42,6 @@ class TestDeviceDetectionE2E:
         print(f"  Embedding: {config.embedding.name if config.embedding else 'API'}")
         print(f"  Reranker: {config.reranker.name if config.reranker else 'None'}")
         print(f"  Memory budget: {config.max_memory_mb}MB")
-
 
 class TestTierPresetsE2E:
     """E2E tests for tier preset configurations."""
@@ -76,7 +72,6 @@ class TestTierPresetsE2E:
 
         print(f"\n{tier}: mode={config.mode}, memory={config.total_model_size_mb()}MB")
 
-
 class TestModelRegistryE2E:
     """E2E tests for model registry completeness."""
 
@@ -106,7 +101,6 @@ class TestModelRegistryE2E:
         print(f"  Rerankers: {len(models['rerankers'])}")
         for name, info in models["rerankers"].items():
             print(f"    - {name}: {info['size_mb']}MB")
-
 
 class TestCustomConfigE2E:
     """E2E tests for custom configuration creation."""
@@ -155,7 +149,6 @@ class TestCustomConfigE2E:
         assert config.embedding is not None
         print(f"\nHybrid (no rerank) config: {config.embedding.name}")
 
-
 class TestMatryoshkaE2E:
     """E2E tests for Matryoshka embedding dimension selection."""
 
@@ -198,7 +191,6 @@ class TestMatryoshkaE2E:
             assert effective == 256
             print(f"\nTarget dims: 256, Effective: {effective}")
 
-
 class TestSearchModeRequirementsE2E:
     """E2E tests for search mode requirements."""
 
@@ -240,7 +232,6 @@ class TestSearchModeRequirementsE2E:
         assert config.requires_embedding() is True
         assert config.requires_reranker() is True
 
-
 class TestMemoryBudgetE2E:
     """E2E tests for memory budget management."""
 
@@ -279,7 +270,6 @@ class TestMemoryBudgetE2E:
         assert config.fits_memory_budget() is False
         print(f"\nBudget test: {config.total_model_size_mb()}MB > {config.max_memory_mb}MB budget")
 
-
 class TestProviderE2E:
     """E2E tests for model provider configurations."""
 
@@ -303,7 +293,6 @@ class TestProviderE2E:
                 # Model2Vec should be small
                 assert model.size_mb <= 50, f"{name}: Model2Vec models should be small"
                 print(f"\n{name}: batch_size={model.batch_size}, size={model.size_mb}MB")
-
 
 class TestIntegrationWithBM25:
     """Integration tests with BM25S search."""
@@ -350,7 +339,6 @@ class TestIntegrationWithBM25:
             assert len(results) > 0
             print(f"\nBM25 search results: {[r.path_id for r in results]}")
 
-
 class TestPerformanceE2E:
     """Performance tests for configuration operations."""
 
@@ -389,7 +377,6 @@ class TestPerformanceE2E:
         print(f"\nTier detection: {per_detection_ms:.1f}ms per detection")
         # Allow more time since it may involve system calls
         assert per_detection_ms < 100, "Tier detection should be <100ms"
-
 
 class TestEdgeCasesE2E:
     """E2E tests for edge cases and error handling."""

@@ -5,8 +5,6 @@ Covers: HandlerResponse creation, @timed_response decorator, and
 BackendObjectStore adapter methods (read, write, exists).
 """
 
-from __future__ import annotations
-
 import hashlib
 import time
 
@@ -15,7 +13,6 @@ import pytest
 from nexus.backends.backend import Backend
 from nexus.core.object_store import BackendObjectStore, ObjectStoreABC
 from nexus.core.response import HandlerResponse, timed_response
-
 
 class _BenchBackend(Backend):
     """Minimal zero-overhead backend for isolating adapter cost."""
@@ -70,12 +67,10 @@ class _BenchBackend(Backend):
     def is_directory(self, path, context=None) -> HandlerResponse[bool]:
         return HandlerResponse.ok(data=False, backend_name="bench")
 
-
 @pytest.fixture
 def bench_store() -> BackendObjectStore:
     backend = _BenchBackend()
     return BackendObjectStore(backend)
-
 
 class TestTimedResponseOverhead:
     """Benchmark @timed_response decorator overhead."""
@@ -109,7 +104,6 @@ class TestTimedResponseOverhead:
             obj.op()
         elapsed_us = (time.perf_counter() - start) * 1_000_000 / iterations
         assert elapsed_us < 50, f"@timed_response took {elapsed_us:.2f}μs per call"
-
 
 class TestAdapterOverhead:
     """Benchmark BackendObjectStore adapter overhead for hot-path operations."""

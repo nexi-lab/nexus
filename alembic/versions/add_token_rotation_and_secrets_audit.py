@@ -28,7 +28,6 @@ down_revision: Union[str, Sequence[str], None] = "add_memory_evolution_fields"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add token rotation columns, refresh_token_history, and secrets_audit_log."""
 
@@ -156,7 +155,6 @@ def upgrade() -> None:
                 """
             )
         )
-
 
 def downgrade() -> None:
     """Remove token rotation columns, refresh_token_history, and secrets_audit_log."""

@@ -23,7 +23,6 @@ down_revision: Union[str, Sequence[str], None] = "baseline_pre_alembic_tables"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add resource management columns."""
     # Add columns to file_paths table
@@ -37,7 +36,6 @@ def upgrade() -> None:
     op.create_index("idx_file_paths_accessed_at", "file_paths", ["accessed_at"])
     op.create_index("idx_file_paths_locked_by", "file_paths", ["locked_by"])
     op.create_index("idx_content_chunks_last_accessed", "content_chunks", ["last_accessed_at"])
-
 
 def downgrade() -> None:
     """Remove resource management columns."""

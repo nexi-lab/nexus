@@ -21,8 +21,6 @@ On failure at step 2+: unregister agent (no key exists, safe to retry).
     - DelegationScope serialization
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import uuid
@@ -48,6 +46,12 @@ from nexus.services.delegation.models import (
     DelegationStatus,
 )
 
+from nexus.rebac.entity_registry import EntityRegistry
+from nexus.rebac.namespace_manager import NamespaceManager
+from nexus.services.agents.agent_registry import AgentRegistry
+from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+from nexus.services.reputation.reputation_service import ReputationService
+from sqlalchemy.orm import Session, sessionmaker
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
 
@@ -64,7 +68,6 @@ MAX_TTL_SECONDS = 86400  # 24 hours
 
 # Maximum sub-delegation depth
 MAX_CHAIN_DEPTH = 5
-
 
 class DelegationService:
     """Service for managing agent identity delegation.

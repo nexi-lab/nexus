@@ -6,7 +6,6 @@ from unittest.mock import patch
 
 from nexus.mcp.oauth_mappings import OAuthKlavisMappings, OAuthProviderMapping
 
-
 class TestOAuthProviderMapping:
     """Test OAuthProviderMapping dataclass."""
 
@@ -67,7 +66,6 @@ class TestOAuthProviderMapping:
         assert mapping.klavis_mcps == []
         assert mapping.mcp_scopes == {}
 
-
 class TestOAuthKlavisMappingsInit:
     """Test OAuthKlavisMappings initialization."""
 
@@ -94,7 +92,6 @@ class TestOAuthKlavisMappingsInit:
         assert len(mappings.list_oauth_providers()) == 2
         assert "google" in mappings.list_oauth_providers()
         assert "microsoft" in mappings.list_oauth_providers()
-
 
 class TestOAuthKlavisMappingsFromYaml:
     """Test loading mappings from YAML file."""
@@ -150,7 +147,6 @@ oauth_providers:
         finally:
             Path(temp_path).unlink()
 
-
 class TestOAuthKlavisMappingsLoadDefault:
     """Test loading default mappings."""
 
@@ -185,7 +181,6 @@ oauth_providers:
             assert "google" in mappings.list_oauth_providers()
             assert "microsoft" in mappings.list_oauth_providers()
 
-
 class TestOAuthKlavisMappingsWithBuiltinDefaults:
     """Test built-in default mappings."""
 
@@ -217,7 +212,6 @@ class TestOAuthKlavisMappingsWithBuiltinDefaults:
         assert mappings.get_oauth_provider_for_klavis_mcp("outlook") == "microsoft"
         assert mappings.get_oauth_provider_for_klavis_mcp("onedrive") == "microsoft"
 
-
 class TestOAuthKlavisMappingsGetOAuthProvider:
     """Test getting OAuth provider for various identifiers."""
 
@@ -247,7 +241,6 @@ class TestOAuthKlavisMappingsGetOAuthProvider:
         assert mappings.get_oauth_provider_for_local_provider("x") == "twitter"
         assert mappings.get_oauth_provider_for_local_provider("nonexistent") is None
 
-
 class TestOAuthKlavisMappingsGetRequiredScopes:
     """Test getting required scopes for MCP."""
 
@@ -266,7 +259,6 @@ class TestOAuthKlavisMappingsGetRequiredScopes:
 
         scopes = mappings.get_required_scopes("nonexistent")
         assert scopes == []
-
 
 class TestOAuthKlavisMappingsGetReusableKlavisMcps:
     """Test getting reusable Klavis MCPs for OAuth provider."""
@@ -294,7 +286,6 @@ class TestOAuthKlavisMappingsGetReusableKlavisMcps:
 
         mcps = mappings.get_reusable_klavis_mcps("nonexistent")
         assert mcps == []
-
 
 class TestOAuthKlavisMappingsCanReuseToken:
     """Test checking if token can be reused."""
@@ -332,7 +323,6 @@ class TestOAuthKlavisMappingsCanReuseToken:
         token_scopes = ["https://www.googleapis.com/auth/gmail.readonly"]
 
         assert mappings.can_reuse_token("gmail", token_scopes) is True
-
 
 class TestOAuthKlavisMappingsGetMapping:
     """Test getting full mapping for provider."""

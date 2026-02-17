@@ -5,13 +5,10 @@ including rename_path and set_file_metadata which are not part of the
 base FileMetadataProtocol ABC but are used via duck-typing.
 """
 
-from __future__ import annotations
-
 from collections.abc import Sequence
 from typing import Any
 
 from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol
-
 
 class InMemoryFileMetadataStore(FileMetadataProtocol):
     """In-memory metadata store for tests that don't need Rust Raft extension."""

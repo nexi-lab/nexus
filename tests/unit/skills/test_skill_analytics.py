@@ -10,7 +10,6 @@ from nexus.skills.analytics import (
     SkillUsageRecord,
 )
 
-
 @pytest.mark.asyncio
 async def test_track_usage() -> None:
     """Test tracking skill usage."""
@@ -32,7 +31,6 @@ async def test_track_usage() -> None:
     assert record.execution_time == 1.5
     assert record.success is True
 
-
 @pytest.mark.asyncio
 async def test_track_usage_failure() -> None:
     """Test tracking failed skill execution."""
@@ -51,7 +49,6 @@ async def test_track_usage_failure() -> None:
     record = tracker._in_memory_records[0]
     assert record.success is False
     assert record.error_message == "Test error"
-
 
 @pytest.mark.asyncio
 async def test_get_skill_analytics() -> None:
@@ -73,7 +70,6 @@ async def test_get_skill_analytics() -> None:
     assert analytics.avg_execution_time == pytest.approx((1.0 + 2.0 + 1.5) / 3)
     assert analytics.unique_users == 2
 
-
 @pytest.mark.asyncio
 async def test_get_skill_analytics_empty() -> None:
     """Test getting analytics for non-existent skill."""
@@ -84,7 +80,6 @@ async def test_get_skill_analytics_empty() -> None:
     assert analytics.skill_name == "nonexistent"
     assert analytics.usage_count == 0
     assert analytics.success_rate == 0.0
-
 
 @pytest.mark.asyncio
 async def test_get_skill_analytics_zone_filter() -> None:
@@ -102,7 +97,6 @@ async def test_get_skill_analytics_zone_filter() -> None:
     assert analytics.usage_count == 2
     assert analytics.success_count == 1
     assert analytics.failure_count == 1
-
 
 @pytest.mark.asyncio
 async def test_get_dashboard_metrics() -> None:
@@ -138,7 +132,6 @@ async def test_get_dashboard_metrics() -> None:
     assert "skill1" in metrics.avg_execution_times
     assert metrics.avg_execution_times["skill1"] == pytest.approx(1.5)
 
-
 @pytest.mark.asyncio
 async def test_get_dashboard_metrics_zone_filter() -> None:
     """Test dashboard metrics filtered by zone."""
@@ -155,7 +148,6 @@ async def test_get_dashboard_metrics_zone_filter() -> None:
     assert metrics.total_skills == 2
     assert metrics.total_usage_count == 2
     assert metrics.total_users == 1
-
 
 @pytest.mark.asyncio
 async def test_usage_record_validation() -> None:
@@ -179,7 +171,6 @@ async def test_usage_record_validation() -> None:
     record.execution_time = -1.0
     with pytest.raises(SkillValidationError, match="execution_time cannot be negative"):
         record.validate()
-
 
 @pytest.mark.asyncio
 async def test_skill_analytics_calculate_success_rate() -> None:

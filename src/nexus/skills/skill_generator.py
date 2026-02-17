@@ -24,8 +24,6 @@ Example:
     ... )
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,6 +31,8 @@ from typing import TYPE_CHECKING, Any
 
 import yaml
 
+from collections.abc import Callable
+from nexus.mcp.models import MCPMount, MCPToolDefinition
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -42,7 +42,6 @@ logger = logging.getLogger(__name__)
 
 # Default path for connector skill templates
 CONNECTOR_SKILLS_PATH = Path(__file__).parent.parent.parent.parent / "configs" / "connector-skills"
-
 
 @dataclass
 class ConnectorTemplate:
@@ -55,7 +54,6 @@ class ConnectorTemplate:
     capabilities: list[str]
     content: str  # Full markdown content (after frontmatter)
     raw_content: str  # Original file content
-
 
 @dataclass
 class SkillMetadata:
@@ -72,7 +70,6 @@ class SkillMetadata:
     oauth_provider: str | None = None
     transport: str | None = None
     tool_count: int = 0
-
 
 class SkillGenerator:
     """Generator for unified SKILL.md content.
@@ -480,10 +477,8 @@ class SkillGenerator:
 
         return "\n".join(parts)
 
-
 # Module-level generator instance for convenience
 _generator: SkillGenerator | None = None
-
 
 def get_skill_generator() -> SkillGenerator:
     """Get the shared skill generator instance."""
@@ -491,7 +486,6 @@ def get_skill_generator() -> SkillGenerator:
     if _generator is None:
         _generator = SkillGenerator()
     return _generator
-
 
 def generate_skill_md(
     service_name: str,

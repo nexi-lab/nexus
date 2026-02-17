@@ -9,8 +9,6 @@ Usage:
     .venv/bin/python -m pytest tests/e2e/test_raft_auth_permissions_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import os
 import re
 import signal
@@ -33,13 +31,11 @@ import pytest
 
 _src_path = Path(__file__).parent.parent.parent / "src"
 
-
 def _find_free_port() -> int:
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
         s.bind(("", 0))
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         return int(s.getsockname()[1])
-
 
 def _wait_for_server(url: str, timeout: float = 45.0) -> bool:
     start = time.time()
@@ -53,13 +49,11 @@ def _wait_for_server(url: str, timeout: float = 45.0) -> bool:
         time.sleep(0.2)
     return False
 
-
 def _encode_bytes(data: bytes) -> dict[str, str]:
     """Encode bytes for the RPC protocol (matches protocol.py's NexusEncoder)."""
     import base64
 
     return {"__type__": "bytes", "data": base64.b64encode(data).decode()}
-
 
 def _rpc(
     client: httpx.Client, method: str, params: dict[str, Any], headers: dict[str, str] | None = None
@@ -78,11 +72,9 @@ def _rpc(
     result: dict[str, Any] = resp.json()
     return result
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
 
 @pytest.fixture(scope="module")
 def db_auth_server(
@@ -183,12 +175,10 @@ def db_auth_server(
         process.kill()
         process.wait()
 
-
 @pytest.fixture(scope="module")
 def admin_headers(db_auth_server: dict[str, Any]) -> dict[str, str]:
     """Auth headers for the admin user (API key from --init)."""
     return {"Authorization": f"Bearer {db_auth_server['admin_api_key']}"}
-
 
 @pytest.fixture(scope="module")
 def admin_client(
@@ -203,7 +193,6 @@ def admin_client(
     )
     yield client
     client.close()
-
 
 @pytest.fixture(scope="module")
 def registered_user(db_auth_server: dict[str, Any], admin_client: httpx.Client) -> dict[str, Any]:
@@ -254,7 +243,6 @@ def registered_user(db_auth_server: dict[str, Any], admin_client: httpx.Client) 
         "headers": {"Authorization": f"Bearer {token}"},
     }
 
-
 @pytest.fixture(scope="module")
 def user_client(
     db_auth_server: dict[str, Any], registered_user: dict[str, Any]
@@ -269,11 +257,9 @@ def user_client(
     yield client
     client.close()
 
-
 # ===========================================================================
 # Health & Auth Tests
 # ===========================================================================
-
 
 class TestServerHealth:
     """Verify the server started correctly with database auth."""
@@ -302,11 +288,9 @@ class TestServerHealth:
         finally:
             client.close()
 
-
 # ===========================================================================
 # Admin File Operations (RPC)
 # ===========================================================================
-
 
 class TestAdminFileOperations:
     """Admin should be able to perform all file operations."""
@@ -369,11 +353,9 @@ class TestAdminFileOperations:
         elif isinstance(exists, bool):
             assert exists is False
 
-
 # ===========================================================================
 # Permission Enforcement Tests
 # ===========================================================================
-
 
 class TestPermissionEnforcement:
     """Test that permissions are enforced for non-admin users."""
@@ -474,11 +456,9 @@ class TestPermissionEnforcement:
         # The important thing is we don't crash
         assert isinstance(result, dict)
 
-
 # ===========================================================================
 # User Registration & Auth Flow Tests
 # ===========================================================================
-
 
 class TestAuthFlow:
     """Test user registration and login flow."""
@@ -572,11 +552,9 @@ class TestAuthFlow:
         finally:
             client.close()
 
-
 # ===========================================================================
 # Full Write → Read → Delete Lifecycle (Admin)
 # ===========================================================================
-
 
 class TestAdminLifecycle:
     """Full CRUD lifecycle as admin through the API."""
@@ -656,11 +634,9 @@ class TestAdminLifecycle:
         if isinstance(items, list):
             assert len(items) >= 3
 
-
 # ===========================================================================
 # Lock API Tests with Auth
 # ===========================================================================
-
 
 class TestLockApiAuth:
     """Test lock API endpoints with authenticated users."""

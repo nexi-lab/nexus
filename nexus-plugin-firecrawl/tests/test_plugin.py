@@ -4,7 +4,6 @@ import pytest
 
 from nexus_firecrawl.plugin import FirecrawlPlugin
 
-
 def test_plugin_metadata() -> None:
     """Test plugin metadata."""
     plugin = FirecrawlPlugin()
@@ -13,7 +12,6 @@ def test_plugin_metadata() -> None:
     assert metadata.name == "firecrawl"
     assert metadata.version == "0.1.0"
     assert "scraping" in metadata.description.lower()
-
 
 def test_plugin_commands() -> None:
     """Test plugin commands registration."""
@@ -26,7 +24,6 @@ def test_plugin_commands() -> None:
     assert "search" in commands
     assert "extract" in commands
     assert "pipe" in commands
-
 
 def test_url_to_path() -> None:
     """Test URL to path conversion."""
@@ -44,14 +41,12 @@ def test_url_to_path() -> None:
     path = plugin._url_to_path("https://example.com/docs/")
     assert path == "example_com/docs.md"
 
-
 def test_get_client_missing_api_key() -> None:
     """Test error handling when API key is missing."""
     plugin = FirecrawlPlugin()
 
     with pytest.raises(ValueError, match="API key not found"):
         plugin._get_client()
-
 
 def test_get_client_with_config() -> None:
     """Test client creation with config."""
@@ -69,7 +64,6 @@ def test_get_client_with_config() -> None:
     assert client.base_url == "https://api.test.com"
     assert client.timeout == 30
     assert client.max_retries == 5
-
 
 def test_is_enabled() -> None:
     """Test plugin enabled status."""

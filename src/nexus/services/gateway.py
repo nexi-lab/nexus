@@ -22,20 +22,17 @@ Example:
     ```
 """
 
-from __future__ import annotations
-
 import builtins
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.core._metadata_generated import FileMetadata
+from nexus.core.permissions import OperationContext, Permission
+from nexus.core.router import PathRouter
 if TYPE_CHECKING:
-    from nexus.core._metadata_generated import FileMetadata
     from nexus.core.nexus_fs import NexusFS
-    from nexus.core.permissions import OperationContext, Permission
-    from nexus.core.router import PathRouter
 
 logger = logging.getLogger(__name__)
-
 
 class NexusFSGateway:
     """Gateway providing NexusFS operations to services.
@@ -54,7 +51,7 @@ class NexusFSGateway:
     - Session: session_factory property
     """
 
-    def __init__(self, fs: NexusFS):
+    def __init__(self, fs: "NexusFS"):
         """Initialize gateway with NexusFS instance.
 
         Args:

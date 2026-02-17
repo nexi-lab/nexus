@@ -18,13 +18,11 @@ from nexus.core.exceptions import (
 )
 from nexus.storage.session_scope import session_scope
 
-
 def _make_session_factory():
     """Create a mock session factory that returns a mock session."""
     session = MagicMock()
     factory = MagicMock(return_value=session)
     return factory, session
-
 
 class TestSessionScopeCommit:
     """Test successful commit path."""
@@ -46,7 +44,6 @@ class TestSessionScopeCommit:
 
         with session_scope(factory) as s:
             assert s is session
-
 
 class TestSessionScopeRollback:
     """Test rollback on exception."""
@@ -70,7 +67,6 @@ class TestSessionScopeRollback:
             raise RuntimeError("fatal")
 
         session.close.assert_called_once()
-
 
 class TestSessionScopeSQLAlchemyTranslation:
     """Test SQLAlchemy error → DatabaseError translation."""

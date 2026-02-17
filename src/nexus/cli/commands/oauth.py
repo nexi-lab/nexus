@@ -21,8 +21,6 @@ Examples:
     nexus oauth init google --client-id "..." --client-secret "..." --scopes "https://www.googleapis.com/auth/drive"
 """
 
-from __future__ import annotations
-
 import asyncio
 import os
 import sys
@@ -41,7 +39,6 @@ from nexus.server.auth.x_oauth import XOAuthProvider
 
 # Rich console for output
 _console = Console()
-
 
 def get_token_manager(db_path: str | None = None) -> TokenManager:
     """Get TokenManager instance.
@@ -70,7 +67,6 @@ def get_token_manager(db_path: str | None = None) -> TokenManager:
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         return TokenManager(db_path=db_path)
 
-
 @click.group()
 def oauth() -> None:
     """OAuth credential management commands.
@@ -89,7 +85,6 @@ def oauth() -> None:
         nexus oauth test google alice@example.com
     """
     pass
-
 
 @oauth.command("list")
 @click.option(
@@ -153,7 +148,6 @@ def list_credentials(db_path: str | None, zone_id: str | None) -> None:
     asyncio.run(_list())
     manager.close()
 
-
 @oauth.command("revoke")
 @click.argument("provider", type=str)
 @click.argument("user_email", type=str)
@@ -196,7 +190,6 @@ def revoke_credential(
 
     asyncio.run(_revoke())
     manager.close()
-
 
 @oauth.command("test")
 @click.argument("provider", type=str)
@@ -249,7 +242,6 @@ def test_credential(
 
     asyncio.run(_test())
     manager.close()
-
 
 @oauth.command("setup-gdrive")
 @click.option(
@@ -403,7 +395,6 @@ def setup_gdrive(
     except Exception as e:
         console.print(f"\n[red]✗[/red] Failed to setup Google Drive: {e}")
         sys.exit(1)
-
 
 @oauth.command("setup-x")
 @click.option(
@@ -568,7 +559,6 @@ def setup_x(
 
         console.print(f"[dim]{traceback.format_exc()}[/dim]")
         sys.exit(1)
-
 
 @oauth.command("init")
 @click.argument("provider", type=click.Choice(["google", "microsoft", "microsoft-onedrive"]))

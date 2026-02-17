@@ -17,11 +17,13 @@ all affected caches are properly invalidated in the correct order:
 Related: Issue #1459 (decomposition), Issue #1244, Issue #1077, Issue #922, Issue #919
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
+from collections.abc import Callable, MutableMapping
+from nexus.rebac.cache.boundary import PermissionBoundaryCache
+from nexus.rebac.cache.iterator import IteratorCache
+from nexus.rebac.cache.result_cache import ReBACPermissionCache
 if TYPE_CHECKING:
     from collections.abc import Callable, MutableMapping
 
@@ -45,7 +47,6 @@ _RELATION_TO_PERMISSIONS: dict[str, list[str]] = {
     "member": ["read"],
     "member-of": ["read"],
 }
-
 
 class CacheCoordinator:
     """Unified cache invalidation orchestrator.

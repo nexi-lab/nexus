@@ -21,7 +21,6 @@ from nexus import connect
 
 from nexus_firecrawl import FirecrawlPlugin
 
-
 async def main() -> None:
     if len(sys.argv) < 2 or sys.argv[1] in ["-h", "--help"]:
         print(__doc__)
@@ -55,7 +54,6 @@ async def main() -> None:
     await plugin.crawl(url, max_pages=max_pages, save_to_nexus=True)
 
     print("✓ Done!")
-
 
 if __name__ == "__main__":
     asyncio.run(main())

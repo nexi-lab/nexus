@@ -11,7 +11,6 @@ import pytest
 
 from nexus.services.workspace.workspace_registry import WorkspaceConfig
 
-
 def _make_workspace(path: str, created_by: str | None = None) -> WorkspaceConfig:
     """Create a WorkspaceConfig for testing."""
     return WorkspaceConfig(
@@ -21,11 +20,9 @@ def _make_workspace(path: str, created_by: str | None = None) -> WorkspaceConfig
         created_by=created_by,
     )
 
-
 def _make_context(user_id: str | None = None, zone_id: str | None = None) -> SimpleNamespace:
     """Create a mock operation context."""
     return SimpleNamespace(user_id=user_id, zone_id=zone_id)
-
 
 @pytest.fixture
 def nexus_fs():
@@ -36,7 +33,6 @@ def nexus_fs():
         fs = NexusFS.__new__(NexusFS)
         fs._workspace_registry = MagicMock()
         return fs
-
 
 class TestListWorkspacesAuthGuard:
     """Test that list_workspaces requires authenticated context."""
@@ -75,7 +71,6 @@ class TestListWorkspacesAuthGuard:
         ctx = _make_context(user_id="alice", zone_id="")
         with pytest.raises(ValueError, match="requires authenticated context"):
             nexus_fs.list_workspaces(context=ctx)
-
 
 class TestListWorkspacesFiltering:
     """Test workspace filtering by created_by and path prefix."""

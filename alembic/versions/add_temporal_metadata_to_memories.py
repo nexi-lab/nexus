@@ -19,7 +19,6 @@ down_revision: Union[str, Sequence[str], None] = "add_entity_extraction"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add temporal metadata fields to memories table.
 
@@ -45,7 +44,6 @@ def upgrade() -> None:
     # Add indexes for efficient date-range queries
     op.create_index("idx_memory_earliest_date", "memories", ["earliest_date"])
     op.create_index("idx_memory_latest_date", "memories", ["latest_date"])
-
 
 def downgrade() -> None:
     """Remove temporal metadata fields from memories table."""

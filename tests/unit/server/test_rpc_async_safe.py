@@ -12,7 +12,6 @@ import pytest
 
 from nexus.server.rpc_server import RPCRequestHandler
 
-
 class TestRunAsyncSafe:
     """Tests for the _run_async_safe method."""
 
@@ -97,7 +96,6 @@ class TestRunAsyncSafe:
         with pytest.raises(ValueError, match="test error"):
             handler._run_async_safe(failing_coro())
 
-
 class TestRunAsyncSafeWithAuthProvider:
     """Tests for _run_async_safe with auth_provider (the actual use case)."""
 
@@ -159,7 +157,6 @@ class TestRunAsyncSafeWithAuthProvider:
         assert len(errors) == 0, f"Errors: {errors}"
         assert len(results) == 20
         assert all(r is True for r in results)
-
 
 class TestRunAsyncSafePerformance:
     """Performance tests for _run_async_safe using sync_bridge."""

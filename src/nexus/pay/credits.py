@@ -20,8 +20,6 @@ References:
 - https://docs.tigerbeetle.com/coding/recipes/rate-limiting/
 """
 
-from __future__ import annotations
-
 import asyncio
 import hashlib
 import logging
@@ -46,45 +44,39 @@ from nexus.pay.constants import (
     micro_to_credits,
 )
 
+from nexus.storage.exchange_audit_logger import ExchangeAuditLogger
 if TYPE_CHECKING:
     from nexus.storage.exchange_audit_logger import ExchangeAuditLogger
 
 _audit_logger_module = logging.getLogger(__name__ + ".audit")
 
-
 # =============================================================================
 # Exceptions
 # =============================================================================
-
 
 class CreditsError(Exception):
     """Base exception for credits operations."""
 
     pass
 
-
 class InsufficientCreditsError(CreditsError):
     """Raised when account has insufficient credits for operation."""
 
     pass
-
 
 class WalletNotFoundError(CreditsError):
     """Raised when wallet/account does not exist."""
 
     pass
 
-
 class ReservationError(CreditsError):
     """Raised when reservation operation fails."""
 
     pass
 
-
 # =============================================================================
 # Data Classes
 # =============================================================================
-
 
 @dataclass
 class TransferRequest:
@@ -95,11 +87,9 @@ class TransferRequest:
     amount: Decimal
     memo: str = ""
 
-
 # =============================================================================
 # CreditsService
 # =============================================================================
-
 
 class CreditsService:
     """High-performance credits service using TigerBeetle.
@@ -898,7 +888,6 @@ class CreditsService:
         available, reserved = await self.get_balance_with_reserved(agent_id, zone_id)
         effective_balance = available - reserved
         return effective_balance >= amount
-
 
 # =============================================================================
 # Module-level convenience

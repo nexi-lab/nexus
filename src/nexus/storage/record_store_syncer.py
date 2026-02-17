@@ -18,18 +18,17 @@ Architecture:
 Issue #1246: BufferedRecordStoreSyncer implements Decision 13A (write-behind buffer).
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
+from collections.abc import Callable
+from nexus.core._metadata_generated import FileMetadata
 if TYPE_CHECKING:
     from collections.abc import Callable
 
     from nexus.core._metadata_generated import FileMetadata
 
 logger = logging.getLogger(__name__)
-
 
 class RecordStoreSyncer:
     """Syncs Metastore writes to RecordStore (OperationLog + VersionHistory).
@@ -161,7 +160,6 @@ class RecordStoreSyncer:
             )
             VersionRecorder(session).record_delete(path)
             session.commit()
-
 
 class BufferedRecordStoreSyncer:
     """Async write observer backed by WriteBuffer (Issue #1246, Decision 13A).

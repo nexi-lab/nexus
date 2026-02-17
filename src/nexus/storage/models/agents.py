@@ -4,15 +4,12 @@ Issue #1286: Extracted from monolithic __init__.py.
 Issue #1271: Added DelegationRecordModel for agent delegation.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base
-
 
 class AgentRecordModel(Base):
     """Agent record for lifecycle tracking (Agent OS Phase 1, Issue #1240).
@@ -52,7 +49,6 @@ class AgentRecordModel(Base):
             f"generation={self.generation})>"
         )
 
-
 class AgentEventModel(Base):
     """Agent lifecycle events audit log (Issue #1307).
 
@@ -81,7 +77,6 @@ class AgentEventModel(Base):
             f"<AgentEventModel(id={self.id}, agent_id={self.agent_id}, "
             f"event_type={self.event_type})>"
         )
-
 
 class DelegationRecordModel(Base):
     """Delegation record for agent identity delegation (Issue #1271, #1618).

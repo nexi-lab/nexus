@@ -18,19 +18,18 @@ Example:
     ```
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 from dataclasses import asdict
 from typing import TYPE_CHECKING, Any
 
+from nexus.services.gateway import NexusFSGateway
+from nexus.services.sync_service import SyncService
 if TYPE_CHECKING:
     from nexus.services.gateway import NexusFSGateway
     from nexus.services.sync_service import SyncService
 
 logger = logging.getLogger(__name__)
-
 
 class SyncJobService:
     """Manages async sync jobs (background execution).

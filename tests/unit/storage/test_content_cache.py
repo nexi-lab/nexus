@@ -4,7 +4,6 @@ from concurrent.futures import ThreadPoolExecutor
 
 from nexus.storage.content_cache import ContentCache
 
-
 class TestContentCacheBasic:
     """Test basic ContentCache functionality."""
 
@@ -94,7 +93,6 @@ class TestContentCacheBasic:
         cache.put("hash1", b"x" * 200)
 
         assert cache.get("hash1") is None
-
 
 class TestContentCacheCompression:
     """Test LZ4 compression functionality."""
@@ -195,7 +193,6 @@ class TestContentCacheCompression:
         assert stats["compression_savings_bytes"] == 0
         assert stats["compression_ratio"] == 1.0
 
-
 class TestContentCacheThreadSafety:
     """Test thread safety of ContentCache."""
 
@@ -261,7 +258,6 @@ class TestContentCacheThreadSafety:
                 f.result()
 
         assert len(errors) == 0
-
 
 class TestContentCacheEdgeCases:
     """Test edge cases and boundary conditions."""

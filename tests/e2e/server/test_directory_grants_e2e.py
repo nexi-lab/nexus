@@ -12,8 +12,6 @@ Run with:
     pytest tests/e2e/test_directory_grants_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import os
 import sys
 import time
@@ -33,13 +31,11 @@ _src_path = Path(__file__).parent.parent.parent / "src"
 if str(_src_path) not in sys.path:
     sys.path.insert(0, str(_src_path))
 
-
 @pytest.fixture
 def db_with_migrations(tmp_path):
     """Create SQLite database path and add migration tables after NexusFS init."""
     db_path = tmp_path / "test_dir_grants.db"
     return db_path
-
 
 def add_migration_tables(engine):
     """Add tables that are normally created by migrations."""
@@ -88,7 +84,6 @@ def add_migration_tables(engine):
             )
         )
 
-
 @pytest.fixture
 def nexus_fs_with_tiger(db_with_migrations, tmp_path):
     """Create NexusFS instance with Tiger Cache and directory grants enabled."""
@@ -130,7 +125,6 @@ def nexus_fs_with_tiger(db_with_migrations, tmp_path):
     yield nx
 
     nx.close()
-
 
 class TestDirectoryGrantExpansion:
     """Tests for directory permission grant expansion."""
@@ -333,7 +327,6 @@ class TestDirectoryGrantExpansion:
         )
         assert has_bob_access, "Bob should have access after file moved to dir_b"
 
-
 @pytest.fixture
 def standalone_engine(tmp_path):
     """Create a standalone engine for worker tests."""
@@ -379,7 +372,6 @@ def standalone_engine(tmp_path):
         )
 
     return engine
-
 
 class TestDirectoryGrantWorker:
     """Tests for the async directory grant expansion worker."""
@@ -471,7 +463,6 @@ class TestDirectoryGrantWorker:
         assert row.expansion_status == "completed"
         assert row.expanded_count == 0
 
-
 class TestTigerCacheIntegration:
     """Integration tests for Tiger Cache with directory grants."""
 
@@ -511,7 +502,6 @@ class TestTigerCacheIntegration:
             if bitmap:
                 # The bitmap should contain at least 3 entries (the files we created)
                 assert len(bitmap) >= 3, f"Bitmap should contain expanded files, got {len(bitmap)}"
-
 
 class TestHTTPAPIIntegration:
     """E2E tests via HTTP API (if test_app fixture is available).
@@ -583,7 +573,6 @@ class TestHTTPAPIIntegration:
         assert response.status_code == 200
         data = response.json()
         assert data.get("status") in ("healthy", "degraded")
-
 
 # Skip HTTP tests if test_app fixture not available (run with nexus_server)
 def pytest_collection_modifyitems(config, items):

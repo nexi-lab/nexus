@@ -10,8 +10,6 @@ Run with:
     pytest tests/e2e/test_list_race_concurrent_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import base64
 import concurrent.futures
 import uuid
@@ -19,7 +17,6 @@ from typing import Any
 
 import httpx
 import pytest
-
 
 def make_rpc_request(
     client: httpx.Client,
@@ -40,12 +37,10 @@ def make_rpc_request(
     )
     return response.json()
 
-
 def encode_bytes(content: str | bytes) -> dict:
     if isinstance(content, str):
         content = content.encode("utf-8")
     return {"__type__": "bytes", "data": base64.b64encode(content).decode("utf-8")}
-
 
 def parse_list_result(list_response: dict) -> list[dict]:
     result = list_response.get("result", {})
@@ -54,7 +49,6 @@ def parse_list_result(list_response: dict) -> list[dict]:
     elif isinstance(result, list):
         return result
     return []
-
 
 def get_file_names(files: list) -> list[str]:
     names = []
@@ -67,7 +61,6 @@ def get_file_names(files: list) -> list[str]:
         else:
             names.append(str(f))
     return names
-
 
 class TestConcurrentRaceCondition:
     """Tests that attempt to trigger race condition with concurrent requests."""

@@ -13,23 +13,15 @@ Because All-Voters model means every zone has a local redb replica,
 all reads are local (~5μs). No network hop for path resolution.
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
-
-from nexus.raft.zone_manager import ROOT_ZONE_ID
-
-if TYPE_CHECKING:
-    from nexus.raft.zone_manager import ZoneManager
-    from nexus.storage.raft_metadata_store import RaftMetadataStore
+from nexus.raft.zone_manager import ROOT_ZONE_ID, ZoneManager
+from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 logger = logging.getLogger(__name__)
 
 # Guard against infinite mount loops
 MAX_MOUNT_DEPTH = 16
-
 
 @dataclass
 class ResolvedPath:
@@ -46,7 +38,6 @@ class ResolvedPath:
     zone_id: str
     path: str
     mount_chain: list[tuple[str, str]]
-
 
 class ZonePathResolver:
     """Resolve paths across zone boundaries via DT_MOUNT entries.

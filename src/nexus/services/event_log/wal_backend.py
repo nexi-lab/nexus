@@ -7,14 +7,13 @@ Rust handles frame I/O, CRC32, segment rotation, and crash recovery.
 Tracked by: #1397
 """
 
-from __future__ import annotations
-
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Self
 
 import orjson
 
+from nexus.services.event_log.protocol import EventLogConfig
 if TYPE_CHECKING:
     from nexus.core.event_bus import FileEvent
     from nexus.services.event_log.protocol import EventLogConfig
@@ -39,11 +38,9 @@ except ImportError:
     except ImportError:
         PyWAL = None
 
-
 def is_available() -> bool:
     """Return True if the Rust WAL extension is importable."""
     return _HAS_NEXUS_WAL
-
 
 class WALEventLog:
     """EventLogProtocol implementation backed by Rust WAL.

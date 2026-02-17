@@ -5,8 +5,6 @@ context manager that also translates SQLAlchemy errors to the Nexus
 DatabaseError hierarchy at the storage boundary.
 """
 
-from __future__ import annotations
-
 import socket
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
@@ -32,7 +30,6 @@ _PG_TIMEOUT_CODES = frozenset(
     }
 )
 
-
 def _is_timeout_error(exc: SAOperationalError) -> bool:
     """Determine if an OperationalError represents a timeout.
 
@@ -52,7 +49,6 @@ def _is_timeout_error(exc: SAOperationalError) -> bool:
     # Fallback: string matching for SQLite and other dialects
     msg = str(exc).lower()
     return "timeout" in msg or "timed out" in msg
-
 
 @contextmanager
 def session_scope(session_factory: Callable[[], Session]) -> Generator[Session, None, None]:

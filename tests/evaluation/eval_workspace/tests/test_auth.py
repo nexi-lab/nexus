@@ -7,7 +7,6 @@ Coverage Target: 90%
 
 import pytest
 
-
 class TestUserAuthenticator:
     """Tests for UserAuthenticator class."""
 
@@ -58,7 +57,6 @@ class TestUserAuthenticator:
     def test_rate_limit_exceeded(self):
         """Requests exceeding rate limit should be blocked."""
         pass
-
 
 class TestPermissionManager:
     """Tests for PermissionManager class."""

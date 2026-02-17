@@ -5,15 +5,12 @@ output, capturing per-tool exit code, stdout, and stderr. This avoids
 N+1 sandbox exec calls by running everything in one shot.
 """
 
-from __future__ import annotations
-
 import json
 import uuid
 
 from nexus.validation.models import ValidationError, ValidatorConfig
 from nexus.validation.parsers import BUILTIN_VALIDATORS, Validator
 from nexus.validation.parsers.base import Validator as BaseValidator
-
 
 class _GenericValidator(BaseValidator):
     """Fallback validator for unknown tools — returns no parsed errors."""
@@ -26,7 +23,6 @@ class _GenericValidator(BaseValidator):
     ) -> list[ValidationError]:
         return []
 
-
 def _get_validator_instance(config: ValidatorConfig) -> Validator:
     """Get a Validator instance for the given config.
 
@@ -37,7 +33,6 @@ def _get_validator_instance(config: ValidatorConfig) -> Validator:
     if cls is not None:
         return cls(config)
     return _GenericValidator(config)
-
 
 def build_simple_validation_script(
     configs: list[ValidatorConfig],
@@ -92,7 +87,6 @@ def build_simple_validation_script(
         parts.append("")
 
     return "\n".join(parts)
-
 
 def parse_simple_script_output(
     stdout: str,

@@ -77,7 +77,6 @@ DEFAULT_STORIES_PER_FEED = 10
 MAX_COMMENTS_DEPTH = 5
 MAX_COMMENTS_TOTAL = 100
 
-
 @register_connector(
     "hn_connector",
     description="HackerNews API (read-only)",

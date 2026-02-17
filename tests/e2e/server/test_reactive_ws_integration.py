@@ -3,8 +3,6 @@
 Tests the full flow: register subscription -> event occurs -> WS receives/doesn't.
 """
 
-from __future__ import annotations
-
 from typing import cast
 
 import pytest
@@ -18,7 +16,6 @@ from nexus.core.reactive_subscriptions import (
 )
 from nexus.core.read_set import ReadSet, ReadSetRegistry
 from nexus.server.websocket.manager import WebSocketManager
-
 
 class TestReactiveWSIntegration:
     """Integration tests for ReactiveSubscriptionManager with WebSocketManager."""

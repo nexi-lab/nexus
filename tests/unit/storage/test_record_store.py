@@ -4,10 +4,7 @@ Tests cover: URL resolution, pool config via env vars, create_tables flag,
 creator/async_creator pass-through, async URL conversion, and lifecycle.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, patch
-
 
 class TestRecordStoreURLResolution:
     """Tests for database URL resolution logic."""
@@ -69,7 +66,6 @@ class TestRecordStoreURLResolution:
         store = SQLAlchemyRecordStore.__new__(SQLAlchemyRecordStore)
         resolved = store._resolve_db_url("sqlite:///:memory:", None)
         assert resolved == "sqlite:///:memory:"
-
 
 class TestRecordStorePoolConfig:
     """Tests for connection pool configuration via environment variables."""
@@ -143,7 +139,6 @@ class TestRecordStorePoolConfig:
                 call_kwargs = mock_create.call_args[1]
                 assert call_kwargs["pool_pre_ping"] is True
 
-
 class TestRecordStoreAsyncURLConversion:
     """Tests for sync→async URL conversion."""
 
@@ -168,7 +163,6 @@ class TestRecordStoreAsyncURLConversion:
         result = SQLAlchemyRecordStore._to_async_url("mysql://host/db")
         assert result == "mysql://host/db"
 
-
 class TestRecordStoreCreateTables:
     """Tests for create_tables flag."""
 
@@ -189,7 +183,6 @@ class TestRecordStoreCreateTables:
             store = SQLAlchemyRecordStore(create_tables=False)
             mock_base.metadata.create_all.assert_not_called()
             store.close()
-
 
 class TestRecordStoreCreatorParams:
     """Tests for creator/async_creator parameters (Cloud SQL support)."""
@@ -268,7 +261,6 @@ class TestRecordStoreCreatorParams:
                 call_kwargs = mock_async_create.call_args[1]
                 assert call_kwargs["async_creator"] is mock_async_creator
 
-
 class TestRecordStoreAsyncSessionFactory:
     """Tests for lazy async session factory initialization."""
 
@@ -301,7 +293,6 @@ class TestRecordStoreAsyncSessionFactory:
         assert callable(factory)
         assert store._async_engine is not None
         store.close()
-
 
 class TestRecordStoreLifecycle:
     """Tests for store lifecycle management."""

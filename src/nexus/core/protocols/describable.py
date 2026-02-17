@@ -13,10 +13,7 @@ Design reference:
     - Recursive Wrapping Rule #3: every wrapper MUST implement describe()
 """
 
-from __future__ import annotations
-
 from typing import Protocol, runtime_checkable
-
 
 @runtime_checkable
 class Describable(Protocol):

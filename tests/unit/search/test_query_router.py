@@ -8,8 +8,6 @@ Tests cover:
 - RoutedQuery serialization
 """
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.search.query_router import QueryRouter, RoutedQuery, RoutingConfig
@@ -17,7 +15,6 @@ from nexus.search.query_router import QueryRouter, RoutedQuery, RoutingConfig
 # =============================================================================
 # RoutingConfig validation
 # =============================================================================
-
 
 class TestRoutingConfig:
     """Test RoutingConfig threshold validation."""
@@ -57,11 +54,9 @@ class TestRoutingConfig:
         with pytest.raises(ValueError, match="Invalid thresholds"):
             RoutingConfig(simple_max=-0.1, moderate_max=0.6, complex_max=0.8)
 
-
 # =============================================================================
 # _classify_complexity boundary values
 # =============================================================================
-
 
 class TestClassifyComplexity:
     """Test _classify_complexity at boundary values."""
@@ -109,11 +104,9 @@ class TestClassifyComplexity:
         assert router._classify_complexity(0.89) == "complex"
         assert router._classify_complexity(0.90) == "very_complex"
 
-
 # =============================================================================
 # _estimate_complexity_fallback
 # =============================================================================
-
 
 class TestEstimateComplexityFallback:
     """Test heuristic complexity estimation."""
@@ -178,11 +171,9 @@ class TestEstimateComplexityFallback:
         score_upper = self.router._estimate_complexity_fallback("HOW DOES IT WORK")
         assert score_lower == score_upper
 
-
 # =============================================================================
 # route() end-to-end
 # =============================================================================
-
 
 class TestRoute:
     """Test route() end-to-end behavior."""
@@ -238,11 +229,9 @@ class TestRoute:
         routed = router.route("hello")
         assert routed.complexity_class == "simple"
 
-
 # =============================================================================
 # RoutedQuery.to_dict()
 # =============================================================================
-
 
 class TestRoutedQueryToDict:
     """Test RoutedQuery serialization."""

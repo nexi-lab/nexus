@@ -9,8 +9,6 @@ Performance:
     - Thread pool is configurable via constructor (14B).
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import time
@@ -25,7 +23,6 @@ from nexus.services.context_manifest.executors.memory_search_adapter import Memo
 from nexus.services.context_manifest.models import ContextSourceProtocol, SourceResult
 
 logger = logging.getLogger(__name__)
-
 
 class MemoryQueryExecutor:
     """Execute memory_query sources by searching agent memory.

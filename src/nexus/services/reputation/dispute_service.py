@@ -8,8 +8,6 @@ Tier 1 auto-mediation with forward-compatible data model. State machine:
 All other transitions are invalid and raise InvalidTransitionError.
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, ClassVar
@@ -21,6 +19,7 @@ from nexus.storage.models._base import _generate_uuid
 from nexus.storage.models.dispute import DisputeModel
 from nexus.storage.session_mixin import SessionMixin
 
+from sqlalchemy.orm import Session, sessionmaker
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
 
@@ -28,7 +27,6 @@ logger = logging.getLogger(__name__)
 
 # Appeal deadline: 7 days after resolution
 _APPEAL_WINDOW_DAYS = 7
-
 
 class DisputeService(SessionMixin):
     """Dispute lifecycle management with state machine enforcement.
@@ -286,14 +284,11 @@ class DisputeService(SessionMixin):
             appeal_deadline=model.appeal_deadline,
         )
 
-
 class InvalidTransitionError(Exception):
     """Raised when a dispute state transition is not valid."""
 
-
 class DisputeNotFoundError(Exception):
     """Raised when a dispute is not found."""
-
 
 class DuplicateDisputeError(Exception):
     """Raised when a dispute already exists for an exchange."""

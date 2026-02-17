@@ -11,7 +11,6 @@ from nexus.storage.views import (
     get_work_by_priority_view,
 )
 
-
 class TestHelperFunctions:
     """Test helper functions for SQL generation."""
 
@@ -59,7 +58,6 @@ class TestHelperFunctions:
         result = _interval_ago("1 hour", "postgresql")
         assert "NOW()" in result
         assert "INTERVAL '1 hour'" in result
-
 
 class TestViewGeneration:
     """Test SQL view generation."""
@@ -134,7 +132,6 @@ class TestViewGeneration:
         sql = str(view)
         assert "select" in sql.lower()
 
-
 class TestAdditionalViews:
     """Test additional view generation functions."""
 
@@ -198,7 +195,6 @@ class TestAdditionalViews:
         sql = str(view)
         assert "select" in sql.lower()
         assert "extract" in sql.lower()
-
 
 class TestViewUtilities:
     """Test view utility functions."""

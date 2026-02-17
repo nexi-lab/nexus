@@ -28,7 +28,6 @@ down_revision: Union[str, Sequence[str], None] = "add_memory_stability_fields"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     op.add_column("memories", sa.Column("extends_ids", sa.Text(), nullable=True))
     op.add_column("memories", sa.Column("extended_by_ids", sa.Text(), nullable=True))
@@ -36,7 +35,6 @@ def upgrade() -> None:
     op.create_index("idx_memory_extends_ids", "memories", ["extends_ids"])
     op.create_index("idx_memory_extended_by_ids", "memories", ["extended_by_ids"])
     op.create_index("idx_memory_derived_from_ids", "memories", ["derived_from_ids"])
-
 
 def downgrade() -> None:
     op.drop_index("idx_memory_derived_from_ids", table_name="memories")

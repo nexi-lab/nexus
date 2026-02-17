@@ -116,7 +116,6 @@ EXPECTED_MODELS = [
     "SnapshotEntryModel",
 ]
 
-
 class TestModelReExports:
     """Verify all models are importable from nexus.storage.models."""
 

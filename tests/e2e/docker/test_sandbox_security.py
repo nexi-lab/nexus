@@ -10,8 +10,6 @@ Requires:
 Skip with: pytest -m "not docker"
 """
 
-from __future__ import annotations
-
 import logging
 
 import pytest
@@ -34,7 +32,6 @@ pytestmark = [
     pytest.mark.integration,
 ]
 
-
 from nexus.sandbox.security_profile import SandboxSecurityProfile  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -42,7 +39,6 @@ from nexus.sandbox.security_profile import SandboxSecurityProfile  # noqa: E402
 # ---------------------------------------------------------------------------
 
 ALPINE_IMAGE = "alpine:3.19"
-
 
 async def _run_in_container(
     client: docker.DockerClient,
@@ -76,7 +72,6 @@ async def _run_in_container(
             except Exception:
                 pass
 
-
 @pytest.fixture(scope="module")
 def docker_client() -> docker.DockerClient:
     """Docker client for integration tests."""
@@ -89,11 +84,9 @@ def docker_client() -> docker.DockerClient:
         client.images.pull(ALPINE_IMAGE)
     return client
 
-
 # ---------------------------------------------------------------------------
 # Strict profile: maximum lockdown
 # ---------------------------------------------------------------------------
-
 
 class TestStrictProfileEnforcement:
     """Verify strict profile constraints are enforced in real containers."""
@@ -152,11 +145,9 @@ class TestStrictProfileEnforcement:
         )
         assert "CAP_DROPPED" in output or exit_code != 0
 
-
 # ---------------------------------------------------------------------------
 # Standard profile: balanced isolation
 # ---------------------------------------------------------------------------
-
 
 class TestStandardProfileEnforcement:
     """Verify standard profile constraints in real containers."""
@@ -198,11 +189,9 @@ class TestStandardProfileEnforcement:
         assert kwargs["cap_drop"] == ["ALL"]
         assert "SYS_ADMIN" in kwargs.get("cap_add", [])
 
-
 # ---------------------------------------------------------------------------
 # Permissive profile: network access works
 # ---------------------------------------------------------------------------
-
 
 class TestPermissiveProfileEnforcement:
     """Verify permissive profile has expected access."""
@@ -237,11 +226,9 @@ class TestPermissiveProfileEnforcement:
         assert exit_code == 0
         assert "WRITABLE" in output
 
-
 # ---------------------------------------------------------------------------
 # Docker inspect verification — security kwargs are applied
 # ---------------------------------------------------------------------------
-
 
 class TestDockerInspectVerification:
     """Verify Docker inspect confirms security settings are applied."""
@@ -330,11 +317,9 @@ class TestDockerInspectVerification:
             container.stop(timeout=1)
             container.remove(force=True)
 
-
 # ---------------------------------------------------------------------------
 # Resource limit enforcement
 # ---------------------------------------------------------------------------
-
 
 class TestResourceLimitEnforcement:
     """Verify resource limits are actually enforced."""
@@ -368,11 +353,9 @@ class TestResourceLimitEnforcement:
         # Should hit resource limit — some forks should fail
         assert "Resource" in output or "Cannot" in output or exit_code != 0 or "EXIT=1" in output
 
-
 # ---------------------------------------------------------------------------
 # Input validation
 # ---------------------------------------------------------------------------
-
 
 class TestInputValidation:
     """Verify input validation prevents command injection."""
@@ -435,11 +418,9 @@ class TestInputValidation:
         assert validate_domain("api.openai.com") == "api.openai.com"
         assert validate_domain("*") == "*"
 
-
 # ---------------------------------------------------------------------------
 # Trust tier mapping
 # ---------------------------------------------------------------------------
-
 
 class TestTrustTierIntegration:
     """Verify trust tier → profile mapping end-to-end."""

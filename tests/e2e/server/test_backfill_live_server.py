@@ -10,8 +10,6 @@ Usage:
     .venv/bin/python -m pytest tests/e2e/test_backfill_live_server.py -v --tb=short -p no:xdist -o "addopts=" --log-cli-level=INFO
 """
 
-from __future__ import annotations
-
 import logging
 import os
 
@@ -20,14 +18,12 @@ from fastapi.testclient import TestClient
 
 logger = logging.getLogger(__name__)
 
-
 def _save_app_state(monkeypatch):
     """Record _app_state attributes so monkeypatch auto-restores them at teardown."""
     from nexus.server import fastapi_server as fas
 
     for attr in ("nexus_fs", "api_key", "auth_provider"):
         monkeypatch.setattr(fas._app_state, attr, getattr(fas._app_state, attr))
-
 
 @pytest.fixture
 def live_server(tmp_path, monkeypatch):
@@ -106,7 +102,6 @@ def live_server(tmp_path, monkeypatch):
     logger.info("Live server started with permissions enabled")
 
     yield client, admin_key, user_key
-
 
 class TestBackfillLiveServer:
     """E2E tests with real server, real auth, real permissions."""

@@ -4,8 +4,6 @@ Tests the full HTTP layer using httpx.AsyncClient against the
 tus uploads router with a real service and in-memory SQLite backend.
 """
 
-from __future__ import annotations
-
 import base64
 import hashlib
 from pathlib import Path
@@ -23,11 +21,9 @@ from nexus.services.chunked_upload_service import (
 
 # --- Test fixtures ---
 
-
 @pytest.fixture
 def tmp_backend(tmp_path: Path) -> LocalBackend:
     return LocalBackend(root_path=tmp_path)
-
 
 @pytest.fixture
 def upload_service(tmp_path: Path, tmp_backend: LocalBackend) -> ChunkedUploadService:
@@ -62,7 +58,6 @@ def upload_service(tmp_path: Path, tmp_backend: LocalBackend) -> ChunkedUploadSe
         config=config,
     )
 
-
 @pytest.fixture
 def app(upload_service: ChunkedUploadService) -> FastAPI:
     """Create a FastAPI app with the tus router."""
@@ -71,19 +66,15 @@ def app(upload_service: ChunkedUploadService) -> FastAPI:
     _app.include_router(router, prefix="/api/v2/uploads")
     return _app
 
-
 @pytest.fixture
 async def client(app: FastAPI) -> AsyncClient:
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
 
-
 TUS_HEADERS = {"Tus-Resumable": "1.0.0"}
 
-
 # --- Tests ---
-
 
 class TestOptionsEndpoint:
     @pytest.mark.asyncio
@@ -97,7 +88,6 @@ class TestOptionsEndpoint:
         assert "checksum" in resp.headers["Tus-Extension"]
         assert resp.headers.get("Tus-Max-Size")
         assert "sha256" in resp.headers["Tus-Checksum-Algorithm"]
-
 
 class TestCreateEndpoint:
     @pytest.mark.asyncio
@@ -131,7 +121,6 @@ class TestCreateEndpoint:
         )
         assert resp.status_code == 400
 
-
 class TestTusVersionValidation:
     @pytest.mark.asyncio
     async def test_missing_tus_resumable_returns_412(self, client: AsyncClient) -> None:
@@ -148,7 +137,6 @@ class TestTusVersionValidation:
             headers={"Tus-Resumable": "0.2.2", "Upload-Length": "100"},
         )
         assert resp.status_code == 412
-
 
 class TestFullUploadLifecycle:
     @pytest.mark.asyncio
@@ -229,7 +217,6 @@ class TestFullUploadLifecycle:
         assert patch2.status_code == 204
         assert patch2.headers["Upload-Offset"] == str(total)
 
-
 class TestResumeAfterDisconnect:
     @pytest.mark.asyncio
     async def test_resume_after_disconnect(self, client: AsyncClient) -> None:
@@ -274,7 +261,6 @@ class TestResumeAfterDisconnect:
         )
         assert patch2.status_code == 204
         assert patch2.headers["Upload-Offset"] == str(len(full_content))
-
 
 class TestChecksumEndpoints:
     @pytest.mark.asyncio
@@ -323,7 +309,6 @@ class TestChecksumEndpoints:
         )
         assert patch_resp.status_code == 460
 
-
 class TestOffsetMismatch:
     @pytest.mark.asyncio
     async def test_offset_mismatch_returns_409(self, client: AsyncClient) -> None:
@@ -343,7 +328,6 @@ class TestOffsetMismatch:
             content=b"x" * 50,
         )
         assert patch_resp.status_code == 409
-
 
 class TestContentTypeValidation:
     @pytest.mark.asyncio
@@ -365,7 +349,6 @@ class TestContentTypeValidation:
         )
         assert patch_resp.status_code == 415
 
-
 class TestTerminateEndpoint:
     @pytest.mark.asyncio
     async def test_terminate_deletes_resources(self, client: AsyncClient) -> None:
@@ -385,7 +368,6 @@ class TestTerminateEndpoint:
             headers=TUS_HEADERS,
         )
         assert resp.status_code == 404
-
 
 class TestZeroByteUpload:
     @pytest.mark.asyncio
@@ -408,7 +390,6 @@ class TestZeroByteUpload:
             content=b"",
         )
         assert patch_resp.status_code == 204
-
 
 class TestUploadMetadataParsing:
     @pytest.mark.asyncio

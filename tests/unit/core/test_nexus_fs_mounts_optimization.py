@@ -16,13 +16,11 @@ from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
-
 @pytest.fixture
 def temp_dir():
     """Create a temporary directory for tests."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
-
 
 @pytest.fixture
 def nx_with_hierarchy(temp_dir: Path):
@@ -37,7 +35,6 @@ def nx_with_hierarchy(temp_dir: Path):
     )
     yield nx
     nx.close()
-
 
 class TestMountSyncOptimization:
     """Test mount sync optimizations for performance."""
@@ -173,7 +170,6 @@ class TestMountSyncOptimization:
                 # Sync should be fast (< 100ms) without redundant tuple operations
                 # Note: May still be slow due to other operations, but no tuple overhead
                 print(f"Sync took {elapsed * 1000:.1f}ms for 50 existing files")
-
 
 class TestMountDatabaseVsConfig:
     """Test database vs config mount precedence."""

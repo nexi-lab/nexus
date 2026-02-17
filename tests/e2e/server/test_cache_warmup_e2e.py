@@ -10,10 +10,7 @@ Run with:
     pytest tests/e2e/test_cache_warmup_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import pytest
-
 
 class TestCacheWarmupAPI:
     """End-to-end tests for Cache Warmup API endpoints."""
@@ -244,7 +241,6 @@ class TestCacheWarmupAPI:
         data = response.json()
         assert isinstance(data, list)
 
-
 class TestCacheWarmupWithPermissions:
     """Tests for cache warmup with ReBAC permissions enabled."""
 
@@ -264,7 +260,6 @@ class TestCacheWarmupWithPermissions:
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "completed"
-
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--log-cli-level=INFO"])

@@ -8,8 +8,6 @@ For actual search operations, use the standard search APIs with the
 appropriate embedding provider configured via MobileSearchConfig.
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -26,17 +24,14 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/mobile", tags=["mobile"])
 
-
 # =============================================================================
 # Request/Response Models
 # =============================================================================
-
 
 class ModelDownloadRequest(BaseModel):
     """Request for model download."""
 
     tier: str = Field(..., description="Device tier to download models for")
-
 
 class ModelDownloadResponse(BaseModel):
     """Response for model download."""
@@ -47,11 +42,9 @@ class ModelDownloadResponse(BaseModel):
     )
     message: str
 
-
 # =============================================================================
 # Endpoints
 # =============================================================================
-
 
 @router.get("/detect")
 async def detect_device() -> dict[str, Any]:
@@ -111,7 +104,6 @@ async def detect_device() -> dict[str, Any]:
             "max_memory_mb": config.max_memory_mb,
         },
     }
-
 
 @router.post("/download", response_model=ModelDownloadResponse)
 async def download_models(request: ModelDownloadRequest) -> ModelDownloadResponse:

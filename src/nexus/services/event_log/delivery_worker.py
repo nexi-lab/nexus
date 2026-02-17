@@ -18,8 +18,6 @@ Key guarantees:
 Tracked by: Issue #1241, #1138
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import threading
@@ -28,6 +26,9 @@ from typing import TYPE_CHECKING, Any
 from nexus.core.event_bus import FileEvent, FileEventType
 from nexus.core.operation_types import OperationType
 
+from collections.abc import Callable
+from nexus.services.event_log.exporter_registry import ExporterRegistry
+from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -53,7 +54,6 @@ _OP_TO_EVENT_TYPE: dict[str, FileEventType] = {
 
 # ---- Sync -> async bridge helper -------------------------------------------
 
-
 def _run_async(coro: Any, loop: asyncio.AbstractEventLoop | None = None) -> Any:
     """Run an async coroutine from a sync context, properly awaiting the result.
 
@@ -73,7 +73,6 @@ def _run_async(coro: Any, loop: asyncio.AbstractEventLoop | None = None) -> Any:
         return future.result(timeout=30.0)
     else:
         return asyncio.run(coro)
-
 
 class EventDeliveryWorker:
     """Background worker polling undelivered events from operation_log.

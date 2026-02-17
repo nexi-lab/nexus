@@ -9,8 +9,6 @@ Uses SessionMixin for session lifecycle, TTLCache for read performance,
 and Bayesian Beta math for scoring.
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 import logging
@@ -28,6 +26,7 @@ from nexus.storage.models.reputation_event import ReputationEventModel
 from nexus.storage.models.reputation_score import ReputationScoreModel
 from nexus.storage.session_mixin import SessionMixin
 
+from sqlalchemy.orm import Session, sessionmaker
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
 
@@ -43,7 +42,6 @@ _OUTCOME_INCREMENTS: dict[str, tuple[float, float]] = {
     "neutral": (0.3, 0.3),
     "mixed": (0.5, 0.5),
 }
-
 
 class ReputationService(SessionMixin):
     """Feedback and reputation score management.
@@ -495,7 +493,6 @@ class ReputationService(SessionMixin):
             updated_at=model.updated_at,
             zone_id=model.zone_id,
         )
-
 
 class DuplicateFeedbackError(Exception):
     """Raised when duplicate feedback is submitted for the same exchange+rater."""

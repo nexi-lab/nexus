@@ -10,8 +10,6 @@ Usage:
     # Server runs on http://localhost:4219 with API key "sk-e2e-test-key"
 """
 
-from __future__ import annotations
-
 from decimal import Decimal
 from unittest.mock import AsyncMock
 
@@ -32,7 +30,6 @@ from nexus.server.api.v2.routers.pay import (
 # Static API key for E2E tests
 API_KEY = "sk-e2e-test-key"
 PORT = 4219
-
 
 def create_e2e_app() -> FastAPI:
     """Create a minimal FastAPI app with real pay router + auth."""
@@ -114,7 +111,6 @@ def create_e2e_app() -> FastAPI:
         return {"status": "ok", "auth": "static", "api_key_required": True}
 
     return app
-
 
 if __name__ == "__main__":
     app = create_e2e_app()

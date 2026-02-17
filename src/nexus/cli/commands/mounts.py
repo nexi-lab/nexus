@@ -11,8 +11,6 @@ For remote servers, commands call the RPC API (add_mount, remove_mount, etc.).
 For local instances, commands interact directly with the NexusFS methods.
 """
 
-from __future__ import annotations
-
 import json
 import sys
 
@@ -25,7 +23,6 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
-
 
 @click.group(name="mounts")
 def mounts_group() -> None:
@@ -53,7 +50,6 @@ def mounts_group() -> None:
         nexus mounts info /personal/alice
     """
     pass
-
 
 @mounts_group.command(name="add")
 @click.argument("mount_point", type=str)
@@ -142,7 +138,6 @@ def add_mount(
     except Exception as e:
         handle_error(e)
 
-
 @mounts_group.command(name="remove")
 @click.argument("mount_point", type=str)
 @add_backend_options
@@ -177,7 +172,6 @@ def remove_mount(mount_point: str, backend_config: BackendConfig) -> None:
 
     except Exception as e:
         handle_error(e)
-
 
 @mounts_group.command(name="list")
 @click.option("--owner", type=str, default=None, help="Filter by owner user ID")
@@ -248,7 +242,6 @@ def list_mounts(
     except Exception as e:
         handle_error(e)
 
-
 @mounts_group.command(name="info")
 @click.argument("mount_point", type=str)
 @click.option(
@@ -295,7 +288,6 @@ def mount_info(mount_point: str, show_config: bool, backend_config: BackendConfi
 
     except Exception as e:
         handle_error(e)
-
 
 @mounts_group.command(name="sync")
 @click.argument("mount_point", type=str, required=False, default=None)
@@ -497,7 +489,6 @@ def sync_mount(
     except Exception as e:
         handle_error(e)
 
-
 @mounts_group.command(name="sync-status")
 @click.argument("job_id", type=str, required=False, default=None)
 @click.option("--watch", is_flag=True, help="Watch progress until completion")
@@ -597,7 +588,6 @@ def sync_status(
     except Exception as e:
         handle_error(e)
 
-
 def _display_job_status(job: dict) -> None:
     """Display job status in a formatted way."""
     status_colors = {
@@ -646,7 +636,6 @@ def _display_job_status(job: dict) -> None:
         console.print(f"    Files updated: {result.get('files_updated', 0)}")
         console.print(f"    Cache synced: {result.get('cache_synced', 0)}")
 
-
 @mounts_group.command(name="sync-cancel")
 @click.argument("job_id", type=str)
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
@@ -684,7 +673,6 @@ def sync_cancel(
 
     except Exception as e:
         handle_error(e)
-
 
 @mounts_group.command(name="sync-jobs")
 @click.option("--mount", type=str, default=None, help="Filter by mount point")
@@ -763,7 +751,6 @@ def sync_jobs(
 
     except Exception as e:
         handle_error(e)
-
 
 def register_commands(cli: click.Group) -> None:
     """Register mount commands with the CLI.

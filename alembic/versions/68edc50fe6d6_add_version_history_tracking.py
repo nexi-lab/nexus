@@ -19,7 +19,6 @@ down_revision: Union[str, Sequence[str], None] = "a277e3bdceb7"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Upgrade schema."""
     # Add current_version column to file_paths table
@@ -57,7 +56,6 @@ def upgrade() -> None:
     op.create_index("idx_version_history_content_hash", "version_history", ["content_hash"])
     op.create_index("idx_version_history_created_at", "version_history", ["created_at"])
     op.create_index("idx_version_history_parent", "version_history", ["parent_version_id"])
-
 
 def downgrade() -> None:
     """Downgrade schema."""

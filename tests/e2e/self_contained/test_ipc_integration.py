@@ -5,8 +5,6 @@ process → dead_letter. Uses InMemoryVFS to test components working
 together without kernel dependencies.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 import pytest
@@ -29,16 +27,13 @@ from tests.unit.ipc.fakes import InMemoryEventPublisher, InMemoryVFS
 
 ZONE = "integration-zone"
 
-
 @pytest.fixture
 def vfs() -> InMemoryVFS:
     return InMemoryVFS()
 
-
 @pytest.fixture
 def publisher() -> InMemoryEventPublisher:
     return InMemoryEventPublisher()
-
 
 async def _setup_agents(
     vfs: InMemoryVFS,
@@ -50,7 +45,6 @@ async def _setup_agents(
     for agent_id in agent_ids:
         await prov.provision(agent_id, skills=["test_skill"])
     return prov
-
 
 class TestFullMessageRoundTrip:
     """Integration: provision → send → process → verify lifecycle."""
@@ -169,7 +163,6 @@ class TestFullMessageRoundTrip:
         assert responses[0].correlation_id == "workflow_1"
         assert responses[0].payload["status"] == "approved"
 
-
 class TestProvisioningAndDiscovery:
     """Integration: provisioning + discovery working together."""
 
@@ -220,7 +213,6 @@ class TestProvisioningAndDiscovery:
         agent = await discovery.get_agent_card("temp_agent")
         assert agent is not None
         assert agent.status == "deprovisioned"
-
 
 class TestDeadLetterAndTTLSweep:
     """Integration: dead letter handling + TTL sweep."""
@@ -300,7 +292,6 @@ class TestDeadLetterAndTTLSweep:
         assert len(inbox_files) == 1  # Only the valid message remains
         dl_files = await vfs.list_dir(dead_letter_path("agent:bob"), ZONE)
         assert len(dl_files) == 1  # Expired message moved here
-
 
 class TestBackpressure:
     """Integration: inbox size limits and backpressure."""

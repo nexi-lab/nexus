@@ -7,8 +7,6 @@ Each test covers one enrichment step in isolation, ensuring behavioral equivalen
 after extraction.
 """
 
-from __future__ import annotations
-
 from unittest.mock import patch
 
 import pytest
@@ -20,14 +18,12 @@ from nexus.services.memory.memory_api import Memory
 from nexus.services.permissions.entity_registry import EntityRegistry
 from nexus.storage.models import Base
 
-
 @pytest.fixture
 def engine():
     """Create in-memory SQLite database for testing."""
     engine = create_engine("sqlite:///:memory:")
     Base.metadata.create_all(engine)
     return engine
-
 
 @pytest.fixture
 def session(engine):
@@ -37,12 +33,10 @@ def session(engine):
     yield session
     session.close()
 
-
 @pytest.fixture
 def backend(tmp_path):
     """Create local backend for content storage."""
     return LocalBackend(root_path=tmp_path)
-
 
 @pytest.fixture
 def entity_registry(session):
@@ -52,7 +46,6 @@ def entity_registry(session):
     registry.register_entity("user", "alice", parent_type="zone", parent_id="acme")
     registry.register_entity("agent", "agent1", parent_type="user", parent_id="alice")
     return registry
-
 
 @pytest.fixture
 def memory_api(session, backend, entity_registry):
@@ -65,7 +58,6 @@ def memory_api(session, backend, entity_registry):
         agent_id="agent1",
         entity_registry=entity_registry,
     )
-
 
 class TestEntityExtraction:
     """Test entity extraction enrichment step (#1025)."""
@@ -114,7 +106,6 @@ class TestEntityExtraction:
             # Entities should be None due to failure, but memory stored successfully
             assert result["memory_id"] == memory_id
 
-
 class TestTemporalExtraction:
     """Test temporal metadata extraction enrichment step (#1028)."""
 
@@ -136,7 +127,6 @@ class TestTemporalExtraction:
         )
         result = memory_api.get(memory_id)
         assert result is not None
-
 
 class TestStabilityClassification:
     """Test temporal stability classification enrichment step (#1191)."""
@@ -190,7 +180,6 @@ class TestStabilityClassification:
             assert result is not None
             assert result["temporal_stability"] is None
 
-
 class TestEmbeddingGeneration:
     """Test embedding generation enrichment step (#406)."""
 
@@ -224,7 +213,6 @@ class TestEmbeddingGeneration:
         result = memory_api.get(memory_id)
         assert result is not None
 
-
 class TestRelationshipExtraction:
     """Test relationship extraction enrichment step (#1038)."""
 
@@ -237,7 +225,6 @@ class TestRelationshipExtraction:
         result = memory_api.get(memory_id)
         assert result is not None
         # Relationships extraction is off by default
-
 
 class TestCoreferenceResolution:
     """Test coreference resolution enrichment step (#1027)."""
@@ -252,7 +239,6 @@ class TestCoreferenceResolution:
         assert result is not None
         assert result["content"] == "He went to the store"  # Not resolved
 
-
 class TestTemporalResolution:
     """Test temporal expression resolution enrichment step (#1027)."""
 
@@ -266,7 +252,6 @@ class TestTemporalResolution:
         assert result is not None
         assert "tomorrow" in result["content"]  # Not resolved
 
-
 class TestEvolutionDetection:
     """Test memory evolution detection enrichment step (#1190)."""
 
@@ -278,7 +263,6 @@ class TestEvolutionDetection:
         )
         result = memory_api.get(memory_id)
         assert result is not None
-
 
 class TestEnrichmentPipelineIntegration:
     """Test multiple enrichment steps working together."""
@@ -328,7 +312,6 @@ class TestEnrichmentPipelineIntegration:
         assert result is not None
         # Whitespace content should store but skip NLP enrichment
         assert result["temporal_stability"] is None
-
 
 class TestResponseModels:
     """Test that Pydantic response models produce correct output (#1498)."""
@@ -473,7 +456,6 @@ class TestResponseModels:
         assert "score" in result
         assert "memory_id" in result
         assert "content" in result
-
 
 class TestHelperMethods:
     """Test the new helper methods (#1498)."""

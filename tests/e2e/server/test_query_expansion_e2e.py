@@ -10,8 +10,6 @@ Or to run a quick single test:
     OPENROUTER_API_KEY=sk-or-... python tests/e2e/test_query_expansion_e2e.py
 """
 
-from __future__ import annotations
-
 import asyncio
 import os
 import sys
@@ -24,7 +22,6 @@ pytestmark = pytest.mark.skipif(
     not os.environ.get("OPENROUTER_API_KEY"),
     reason="OPENROUTER_API_KEY not set",
 )
-
 
 class TestQueryExpansionE2E:
     """End-to-end tests with real LLM."""
@@ -290,7 +287,6 @@ class TestQueryExpansionE2E:
         finally:
             await expander.close()
 
-
 async def run_quick_test():
     """Run a quick test without pytest."""
     api_key = os.environ.get("OPENROUTER_API_KEY")
@@ -391,7 +387,6 @@ async def run_quick_test():
     print("\n" + "=" * 60)
     print("All E2E tests PASSED!")
     print("=" * 60)
-
 
 if __name__ == "__main__":
     asyncio.run(run_quick_test())

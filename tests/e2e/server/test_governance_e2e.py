@@ -17,8 +17,6 @@ Run with:
     uv run pytest tests/e2e/test_governance_e2e.py -v -o "addopts="
 """
 
-from __future__ import annotations
-
 import time
 from datetime import UTC, datetime
 
@@ -40,7 +38,6 @@ from nexus.storage.models._base import Base
 # Fixtures — real async SQLite + real governance services
 # =============================================================================
 
-
 @pytest.fixture
 async def async_engine(tmp_path):
     """Create async SQLite engine and initialize tables."""
@@ -57,12 +54,10 @@ async def async_engine(tmp_path):
 
     await engine.dispose()
 
-
 @pytest.fixture
 async def session_factory(async_engine):
     """Create async session factory."""
     return AsyncSessionMaker(async_engine, class_=AsyncSession, expire_on_commit=False)
-
 
 @pytest.fixture
 def detector():
@@ -84,7 +79,6 @@ def detector():
     )
     d.set_counterparties("agent-a", "root", {"agent-b", "agent-c"})
     return d
-
 
 @pytest.fixture
 def governance_app(session_factory, detector) -> FastAPI:
@@ -110,7 +104,6 @@ def governance_app(session_factory, detector) -> FastAPI:
 
     return app
 
-
 @pytest.fixture
 async def client(governance_app: FastAPI):
     """AsyncClient for making ASGI requests."""
@@ -121,14 +114,12 @@ async def client(governance_app: FastAPI):
     ) as c:
         yield c
 
-
 @pytest.fixture
 def unwired_app() -> FastAPI:
     """FastAPI app WITHOUT governance services (for 503 tests)."""
     app = FastAPI()
     app.include_router(router)
     return app
-
 
 @pytest.fixture
 async def unwired_client(unwired_app: FastAPI):
@@ -139,11 +130,9 @@ async def unwired_client(unwired_app: FastAPI):
     ) as c:
         yield c
 
-
 # =============================================================================
 # Constraint CRUD — Full lifecycle
 # =============================================================================
-
 
 class TestConstraintCRUD:
     """Tests for constraint creation, listing, checking, and removal."""
@@ -272,11 +261,9 @@ class TestConstraintCRUD:
         assert resp.status_code == 400
         assert "Invalid constraint_type" in resp.json()["detail"]
 
-
 # =============================================================================
 # Alerts
 # =============================================================================
-
 
 class TestAlerts:
     """Tests for anomaly alert endpoints."""
@@ -341,11 +328,9 @@ class TestAlerts:
         assert data["resolved"] is True
         assert data["resolved_by"] == "admin-1"
 
-
 # =============================================================================
 # Suspensions — Full lifecycle
 # =============================================================================
-
 
 class TestSuspensionLifecycle:
     """Tests for suspension, appeal, and decision endpoints."""
@@ -487,11 +472,9 @@ class TestSuspensionLifecycle:
         )
         assert resp2.status_code == 400
 
-
 # =============================================================================
 # Fraud Scores
 # =============================================================================
-
 
 class TestFraudScores:
     """Tests for fraud score endpoints."""
@@ -517,11 +500,9 @@ class TestFraudScores:
         assert data["count"] == 0
         assert data["rings"] == []
 
-
 # =============================================================================
 # 503 when services not wired
 # =============================================================================
-
 
 class TestServiceUnavailable:
     """Tests that endpoints return 503 when services are not configured."""
@@ -546,11 +527,9 @@ class TestServiceUnavailable:
         resp = await unwired_client.get("/api/v2/governance/suspensions")
         assert resp.status_code == 503
 
-
 # =============================================================================
 # Performance Validation
 # =============================================================================
-
 
 class TestPerformance:
     """Performance benchmarks for hot-path operations."""
@@ -605,11 +584,9 @@ class TestPerformance:
         resp = await client.get("/api/v2/governance/check/cache-a/cache-b?zone_id=default")
         assert resp.json()["allowed"] is False
 
-
 # =============================================================================
 # Integration: Suspension creates BLOCK constraint
 # =============================================================================
-
 
 class TestCrossServiceIntegration:
     """Tests that suspension creates actual BLOCK constraints in the governance graph."""

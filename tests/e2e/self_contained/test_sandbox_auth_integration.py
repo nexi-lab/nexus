@@ -7,8 +7,6 @@ Verifies the full pipeline:
     register agent → create sandbox → verify state transitions → verify events
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -26,7 +24,6 @@ from nexus.storage.models import Base
 # Fixtures
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture
 def engine():
     """Create in-memory SQLite database with all tables."""
@@ -38,23 +35,19 @@ def engine():
     Base.metadata.create_all(engine)
     return engine
 
-
 @pytest.fixture
 def session_factory(engine):
     return sessionmaker(bind=engine, expire_on_commit=False)
-
 
 @pytest.fixture
 def agent_registry(session_factory):
     """Real AgentRegistry backed by in-memory SQLite."""
     return AgentRegistry(session_factory=session_factory)
 
-
 @pytest.fixture
 def event_log(session_factory):
     """Real AgentEventLog backed by in-memory SQLite."""
     return AgentEventLog(session_factory=session_factory)
-
 
 @pytest.fixture
 def mock_sandbox_manager():
@@ -83,7 +76,6 @@ def mock_sandbox_manager():
     )
     return mgr
 
-
 @pytest.fixture
 def auth_service(agent_registry, mock_sandbox_manager, event_log):
     """SandboxAuthService wired with real registry + real event log."""
@@ -95,11 +87,9 @@ def auth_service(agent_registry, mock_sandbox_manager, event_log):
         budget_enforcement=False,
     )
 
-
 # ---------------------------------------------------------------------------
 # Full Pipeline Tests
 # ---------------------------------------------------------------------------
-
 
 class TestFullPipeline:
     """End-to-end pipeline: register → create → verify."""
@@ -202,11 +192,9 @@ class TestFullPipeline:
         event_types = {e["event_type"] for e in events}
         assert event_types == {"sandbox.created", "sandbox.connected"}
 
-
 # ---------------------------------------------------------------------------
 # Error Path Integration Tests
 # ---------------------------------------------------------------------------
-
 
 class TestErrorPathIntegration:
     """Error paths with real registry (not mocks)."""
@@ -294,11 +282,9 @@ class TestErrorPathIntegration:
         events = event_log.list_events("agent-fail")
         assert len(events) == 0
 
-
 # ---------------------------------------------------------------------------
 # Budget Enforcement Integration
 # ---------------------------------------------------------------------------
-
 
 class TestBudgetEnforcementIntegration:
     @pytest.mark.asyncio

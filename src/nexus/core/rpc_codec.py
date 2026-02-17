@@ -10,13 +10,10 @@ Handles special types:
 - timedelta → total seconds with __type__ wrapper
 """
 
-from __future__ import annotations
-
 import base64
 import json
 from datetime import date, datetime, timedelta
 from typing import Any
-
 
 class RPCEncoder(json.JSONEncoder):
     """Custom JSON encoder for RPC messages.
@@ -49,7 +46,6 @@ class RPCEncoder(json.JSONEncoder):
                 return {f.name: getattr(obj, f.name) for f in fields(obj)}
         return super().default(obj)
 
-
 def rpc_decode_hook(obj: Any) -> Any:
     """Decode hook for special types."""
     if isinstance(obj, dict) and "__type__" in obj:
@@ -63,7 +59,6 @@ def rpc_decode_hook(obj: Any) -> Any:
             return timedelta(seconds=obj["seconds"])
     return obj
 
-
 # Try to import orjson for faster JSON serialization (2-3x faster)
 try:
     import orjson
@@ -71,7 +66,6 @@ try:
     HAS_ORJSON = True
 except ImportError:
     HAS_ORJSON = False
-
 
 def _prepare_for_orjson(obj: Any) -> Any:
     """Convert objects to orjson-compatible types for encoding responses.
@@ -107,7 +101,6 @@ def _prepare_for_orjson(obj: Any) -> Any:
     else:
         return obj
 
-
 def _apply_decode_hook(obj: Any) -> Any:
     """Recursively apply rpc_decode_hook to convert special types after orjson parsing.
 
@@ -121,7 +114,6 @@ def _apply_decode_hook(obj: Any) -> Any:
         return [_apply_decode_hook(item) for item in obj]
     else:
         return obj
-
 
 def encode_rpc_message(data: dict[str, Any]) -> bytes:
     """Encode RPC message to JSON bytes (uses orjson if available for 2-3x speedup)."""
@@ -144,7 +136,6 @@ def encode_rpc_message(data: dict[str, Any]) -> bytes:
             f"[RPC-PERF] standard json encode: {len(result_json)} bytes in {elapsed:.1f}ms"
         )
         return result_json
-
 
 def decode_rpc_message(data: bytes) -> dict[str, Any]:
     """Decode RPC message from JSON bytes (uses orjson if available).

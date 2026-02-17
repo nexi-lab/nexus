@@ -4,8 +4,6 @@ Manage authorization relationships using Zanzibar-style ReBAC.
 Enables team-based permissions, hierarchical access, and dynamic inheritance.
 """
 
-from __future__ import annotations
-
 import sys
 from typing import Any
 
@@ -21,7 +19,6 @@ from nexus.cli.utils import (
     handle_error,
 )
 
-
 @click.group(name="rebac")
 def rebac() -> None:
     """Relationship-Based Access Control (ReBAC) commands.
@@ -36,7 +33,6 @@ def rebac() -> None:
         nexus rebac delete <tuple-id>
     """
     pass
-
 
 @rebac.command(name="create")
 @click.argument("subject_type", type=str)
@@ -201,7 +197,6 @@ def rebac_create(
     except Exception as e:
         handle_error(e)
 
-
 @rebac.command(name="list")
 @click.option("--subject-type", type=str, help="Filter by subject type")
 @click.option("--subject-id", type=str, help="Filter by subject ID")
@@ -325,7 +320,6 @@ def rebac_list_cmd(
     except Exception as e:
         handle_error(e)
 
-
 @rebac.command(name="delete")
 @click.argument("tuple_id", type=str)
 @add_backend_options
@@ -353,7 +347,6 @@ def rebac_delete_cmd(
 
     except Exception as e:
         handle_error(e)
-
 
 @rebac.command(name="check")
 @click.argument("subject_type", type=str)
@@ -410,7 +403,6 @@ def rebac_check_cmd(
 
     except Exception as e:
         handle_error(e)
-
 
 @rebac.command(name="expand")
 @click.argument("permission", type=str)
@@ -471,7 +463,6 @@ def rebac_expand_cmd(
 
     except Exception as e:
         handle_error(e)
-
 
 @rebac.command(name="explain")
 @click.argument("subject_type", type=str)
@@ -588,7 +579,6 @@ def rebac_explain_cmd(
     except Exception as e:
         handle_error(e)
 
-
 def _format_tuple(tuple_info: dict) -> str:
     """Format a tuple for display.
 
@@ -611,7 +601,6 @@ def _format_tuple(tuple_info: dict) -> str:
         subject = f"{subj_type}:{subj_id}"
 
     return f"({subject}, {relation}, {obj_type}:{obj_id})"
-
 
 def _display_proof_tree(path: dict, depth: int = 0, step_number: list[int] | None = None) -> None:
     """Display a proof tree for permission explanation.
@@ -689,7 +678,6 @@ def _display_proof_tree(path: dict, depth: int = 0, step_number: list[int] | Non
                 console.print()
                 _display_proof_tree(sub_path, depth + 1, step_number)
                 break  # Only show successful path
-
 
 @rebac.command(name="check-batch")
 @click.argument("checks_file", type=click.Path(exists=True))
@@ -822,7 +810,6 @@ def rebac_check_batch_cmd(
     except Exception as e:
         handle_error(e)
 
-
 @rebac.command(name="namespace-create")
 @click.argument("object_type", type=str)
 @click.option(
@@ -919,7 +906,6 @@ def namespace_create(
     except Exception as e:
         handle_error(e)
 
-
 @rebac.command(name="namespace-list")
 @click.option(
     "--format",
@@ -983,7 +969,6 @@ def namespace_list(
     except Exception as e:
         handle_error(e)
 
-
 @rebac.command(name="namespace-get")
 @click.argument("object_type", type=str)
 @click.option(
@@ -1029,7 +1014,6 @@ def namespace_get(
     except Exception as e:
         handle_error(e)
 
-
 @rebac.command(name="namespace-delete")
 @click.argument("object_type", type=str)
 @click.option("--yes", is_flag=True, help="Skip confirmation prompt")
@@ -1069,7 +1053,6 @@ def namespace_delete(
 
     except Exception as e:
         handle_error(e)
-
 
 def register_commands(cli: click.Group) -> None:
     """Register ReBAC commands with the CLI.

@@ -24,17 +24,14 @@ from pathlib import Path
 # Add src to path
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
-
 def content_hash(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
-
 
 def simulate_network_latency(base_ms: float = 20.0, jitter_ms: float = 5.0) -> float:
     """Simulate network latency with jitter."""
     import random
 
     return base_ms + random.uniform(-jitter_ms, jitter_ms)
-
 
 def benchmark_without_l2(num_files: int = 100, file_size: int = 4096) -> dict:
     """Benchmark WITHOUT LocalDiskCache (current behavior).
@@ -100,7 +97,6 @@ def benchmark_without_l2(num_files: int = 100, file_size: int = 4096) -> dict:
         "p95_ms": sorted(times)[int(len(times) * 0.95)],
         "total_ms": sum(times),
     }
-
 
 def benchmark_with_l2(num_files: int = 100, file_size: int = 4096) -> dict:
     """Benchmark WITH LocalDiskCache (new behavior).
@@ -190,7 +186,6 @@ def benchmark_with_l2(num_files: int = 100, file_size: int = 4096) -> dict:
             "total_ms": sum(times),
         }
 
-
 def benchmark_cold_start(num_files: int = 50, file_size: int = 4096) -> dict:
     """Benchmark cold start scenario (L2 not populated yet).
 
@@ -245,7 +240,6 @@ def benchmark_cold_start(num_files: int = 50, file_size: int = 4096) -> dict:
             "speedup": statistics.mean(first_access_times) / statistics.mean(second_access_times),
         }
 
-
 def run_benchmarks():
     print("=" * 70)
     print("FUSE CACHE HIERARCHY BENCHMARK (Issue #1072)")
@@ -287,7 +281,6 @@ def run_benchmarks():
         f"    - IDE file open:  {without_l2['avg_ms']:.0f}ms → {with_l2['avg_ms']:.2f}ms (near-instant)"
     )
     print("    - Build/compile:  Network-bound → SSD-bound")
-
 
 if __name__ == "__main__":
     run_benchmarks()

@@ -7,8 +7,6 @@ Commands for discovering and inspecting available connectors:
 Works with both local and remote Nexus instances.
 """
 
-from __future__ import annotations
-
 import json
 import sys
 from typing import Any
@@ -23,7 +21,6 @@ from nexus.cli.utils import (
     get_filesystem,
     handle_error,
 )
-
 
 @click.group(name="connectors")
 def connectors_group() -> None:
@@ -52,7 +49,6 @@ def connectors_group() -> None:
     """
     pass
 
-
 def _list_connectors_local(category: str | None) -> list[dict]:
     """List connectors from local registry."""
     from nexus.backends import ConnectorRegistry
@@ -73,12 +69,10 @@ def _list_connectors_local(category: str | None) -> list[dict]:
         for c in connectors
     ]
 
-
 def _list_connectors_remote(nx: Any, category: str | None) -> list[dict[str, Any]]:
     """List connectors from remote server via RPC."""
     result: list[dict[str, Any]] = nx.list_connectors(category=category)
     return result
-
 
 @connectors_group.command(name="list")
 @click.option(
@@ -154,7 +148,6 @@ def list_connectors(category: str | None, as_json: bool, backend_config: Backend
 
     except Exception as e:
         handle_error(e)
-
 
 @connectors_group.command(name="info")
 @click.argument("connector_name", type=str)
@@ -253,7 +246,6 @@ def connector_info(connector_name: str, backend_config: BackendConfig) -> None:
 
     except Exception as e:
         handle_error(e)
-
 
 def register_commands(cli: click.Group) -> None:
     """Register connector commands to the main CLI group."""

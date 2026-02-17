@@ -15,7 +15,6 @@ from nexus.core._metadata_generated import PaginatedResult
 from nexus.core.config import PermissionConfig
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
-
 @pytest.fixture
 def nexus_fs(tmp_path, isolated_db):
     """Create a NexusFS instance for testing."""
@@ -27,14 +26,12 @@ def nexus_fs(tmp_path, isolated_db):
     yield nx
     nx.close()
 
-
 @pytest.fixture
 def nexus_fs_with_files(nexus_fs):
     """Create NexusFS with 100 test files."""
     for i in range(100):
         nexus_fs.write(f"/workspace/file{i:03d}.txt", f"content {i}")
     return nexus_fs
-
 
 @pytest.fixture
 def nexus_fs_large(tmp_path, isolated_db):
@@ -51,7 +48,6 @@ def nexus_fs_large(tmp_path, isolated_db):
 
     yield nx
     nx.close()
-
 
 class TestPaginatedListBasic:
     """Basic pagination tests."""
@@ -129,7 +125,6 @@ class TestPaginatedListBasic:
         assert result.has_more is False
         assert result.next_cursor is None
 
-
 class TestBackwardCompatibility:
     """Tests for backward compatibility."""
 
@@ -164,7 +159,6 @@ class TestBackwardCompatibility:
         result = nexus_fs.list("/test/", recursive=False)
         # Returns a.txt, b.txt, and sub/ directory = 3 items
         assert len(result) == 3
-
 
 class TestPaginationAtScale:
     """Tests for pagination with larger datasets."""
@@ -207,7 +201,6 @@ class TestPaginationAtScale:
         assert len(result.items) == 1000
         assert result.has_more is False
 
-
 class TestPaginationWithPermissions:
     """Tests for pagination with permission filtering.
 
@@ -226,7 +219,6 @@ class TestPaginationWithPermissions:
         assert isinstance(result, PaginatedResult)
         assert len(result.items) == 10
         assert result.has_more is True
-
 
 class TestPaginationEdgeCases:
     """Tests for edge cases in pagination."""

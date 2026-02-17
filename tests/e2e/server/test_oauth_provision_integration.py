@@ -19,7 +19,6 @@ from nexus.storage.models import APIKeyModel, OAuthAPIKeyModel
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
-
 @pytest.fixture
 def record_store(tmp_path):
     """Create SQLAlchemyRecordStore for testing."""
@@ -27,7 +26,6 @@ def record_store(tmp_path):
     rs = SQLAlchemyRecordStore(db_path=db_file)
     yield rs
     rs.close()
-
 
 @pytest.fixture
 def nx(tmp_path, record_store):
@@ -43,7 +41,6 @@ def nx(tmp_path, record_store):
     yield nx_instance
     nx_instance.close()
 
-
 @pytest.fixture
 def admin_context():
     """Create admin operation context."""
@@ -54,12 +51,10 @@ def admin_context():
         is_admin=True,
     )
 
-
 @pytest.fixture
 def oauth_crypto():
     """Create OAuthCrypto instance for testing."""
     return OAuthCrypto()
-
 
 class TestOAuthProvisionIntegration:
     """Integration tests for OAuth user provisioning with simplified API key creation."""

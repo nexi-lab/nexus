@@ -3,8 +3,6 @@
 Uses SQLAlchemy async ORM with aiosqlite for crash-safe persistence.
 """
 
-from __future__ import annotations
-
 import json
 import os
 import time
@@ -22,7 +20,6 @@ from sqlalchemy.ext.asyncio import (
 from nexus.storage.models._base import Base
 from nexus.storage.models.sync import PendingOperationModel as PO
 
-
 @dataclass(frozen=True, slots=True)
 class QueuedOperation:
     """A single queued operation awaiting replay."""
@@ -34,7 +31,6 @@ class QueuedOperation:
     payload_ref: str | None
     retry_count: int
     created_at: float
-
 
 class OfflineQueue:
     """Persistent offline operation queue backed by SQLAlchemy async ORM.

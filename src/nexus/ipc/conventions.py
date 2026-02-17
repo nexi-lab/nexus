@@ -13,8 +13,6 @@ Defines the directory layout for agent communication:
 All functions are pure — they compose path strings with no I/O.
 """
 
-from __future__ import annotations
-
 from datetime import datetime
 
 AGENTS_ROOT = "/agents"
@@ -36,41 +34,33 @@ AGENT_SUBDIRS: tuple[str, ...] = (
     TASKS_DIR,
 )
 
-
 def agent_dir(agent_id: str) -> str:
     """Root directory for an agent: ``/agents/{agent_id}``."""
     return f"{AGENTS_ROOT}/{agent_id}"
-
 
 def inbox_path(agent_id: str) -> str:
     """Inbox directory: ``/agents/{agent_id}/inbox``."""
     return f"{AGENTS_ROOT}/{agent_id}/{INBOX_DIR}"
 
-
 def outbox_path(agent_id: str) -> str:
     """Outbox directory: ``/agents/{agent_id}/outbox``."""
     return f"{AGENTS_ROOT}/{agent_id}/{OUTBOX_DIR}"
-
 
 def processed_path(agent_id: str) -> str:
     """Processed directory: ``/agents/{agent_id}/processed``."""
     return f"{AGENTS_ROOT}/{agent_id}/{PROCESSED_DIR}"
 
-
 def dead_letter_path(agent_id: str) -> str:
     """Dead letter directory: ``/agents/{agent_id}/dead_letter``."""
     return f"{AGENTS_ROOT}/{agent_id}/{DEAD_LETTER_DIR}"
-
 
 def agent_card_path(agent_id: str) -> str:
     """Agent card file: ``/agents/{agent_id}/AGENT.json``."""
     return f"{AGENTS_ROOT}/{agent_id}/{AGENT_CARD_FILENAME}"
 
-
 def tasks_path(agent_id: str) -> str:
     """Tasks directory: ``/agents/{agent_id}/tasks``."""
     return f"{AGENTS_ROOT}/{agent_id}/{TASKS_DIR}"
-
 
 def task_file_path(agent_id: str, task_id: str, timestamp: datetime) -> str:
     """Full path for a task file in an agent's tasks directory.
@@ -83,11 +73,9 @@ def task_file_path(agent_id: str, task_id: str, timestamp: datetime) -> str:
     ts = timestamp.strftime("%Y%m%dT%H%M%S%fZ")
     return f"{tasks_path(agent_id)}/{ts}_{task_id}.json"
 
-
 def task_dead_letter_path(agent_id: str) -> str:
     """Dead letter directory for deleted tasks: ``/agents/{agent_id}/tasks/_dead_letter``."""
     return f"{tasks_path(agent_id)}/_dead_letter"
-
 
 def message_filename(msg_id: str, timestamp: datetime) -> str:
     """Generate a sortable, unique message filename.
@@ -107,21 +95,17 @@ def message_filename(msg_id: str, timestamp: datetime) -> str:
     ts = timestamp.strftime("%Y%m%dT%H%M%S")
     return f"{ts}_{msg_id}.json"
 
-
 def message_path_in_inbox(agent_id: str, msg_id: str, timestamp: datetime) -> str:
     """Full path for a message in an agent's inbox."""
     return f"{inbox_path(agent_id)}/{message_filename(msg_id, timestamp)}"
-
 
 def message_path_in_outbox(agent_id: str, msg_id: str, timestamp: datetime) -> str:
     """Full path for a message in an agent's outbox."""
     return f"{outbox_path(agent_id)}/{message_filename(msg_id, timestamp)}"
 
-
 def message_path_in_processed(agent_id: str, msg_id: str, timestamp: datetime) -> str:
     """Full path for a message in an agent's processed directory."""
     return f"{processed_path(agent_id)}/{message_filename(msg_id, timestamp)}"
-
 
 def message_path_in_dead_letter(agent_id: str, msg_id: str, timestamp: datetime) -> str:
     """Full path for a message in an agent's dead letter directory."""

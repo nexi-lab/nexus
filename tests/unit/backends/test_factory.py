@@ -3,15 +3,12 @@
 Tests for centralized backend creation via BackendFactory.create().
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 import pytest
 
 from nexus.backends.backend import Backend
 from nexus.backends.factory import BackendFactory
-
 
 class TestBackendFactory:
     """Tests for BackendFactory.create()."""

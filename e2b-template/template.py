@@ -5,7 +5,6 @@ Extends the official code-interpreter-v1 template with additional packages.
 
 from e2b import Template
 
-
 def make_template() -> Template:
     """
     Create a Nexus-enabled sandbox template that extends code-interpreter-v1.
@@ -65,7 +64,6 @@ def make_template() -> Template:
     # and waits for http://localhost:49999/health
 
     return template
-
 
 # Export the template
 template = make_template()

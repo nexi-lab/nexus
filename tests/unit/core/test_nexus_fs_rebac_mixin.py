@@ -13,8 +13,6 @@ Tests cover ReBAC operations:
 - Dynamic viewer functionality
 """
 
-from __future__ import annotations
-
 # Check if pandas is available (required for dynamic viewer tests)
 import importlib.util
 import tempfile
@@ -33,13 +31,11 @@ PANDAS_AVAILABLE = importlib.util.find_spec("pandas") is not None
 
 requires_pandas = pytest.mark.skipif(not PANDAS_AVAILABLE, reason="pandas package not installed")
 
-
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
     """Create a temporary directory for tests."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
-
 
 @pytest.fixture
 def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
@@ -54,7 +50,6 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     yield nx
     nx.close()
 
-
 @pytest.fixture
 def nx_no_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance without permissions enforcement."""
@@ -67,7 +62,6 @@ def nx_no_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
     )
     yield nx
     nx.close()
-
 
 class TestGetSubjectFromContext:
     """Tests for _get_subject_from_context helper."""
@@ -112,7 +106,6 @@ class TestGetSubjectFromContext:
         """Test _get_subject_from_context with empty dict."""
         result = nx._get_subject_from_context({})
         assert result is None
-
 
 class TestRebacCreate:
     """Tests for rebac_create method."""
@@ -190,7 +183,6 @@ class TestRebacCreate:
         )
 
         assert tuple_id is not None
-
 
 class TestRebacCheck:
     """Tests for rebac_check method."""
@@ -273,7 +265,6 @@ class TestRebacCheck:
         )
         assert has_permission is False
 
-
 class TestRebacExpand:
     """Tests for rebac_expand method."""
 
@@ -320,7 +311,6 @@ class TestRebacExpand:
                 object="invalid",  # type: ignore[arg-type]
             )
 
-
 class TestRebacDelete:
     """Tests for rebac_delete method."""
 
@@ -348,7 +338,6 @@ class TestRebacDelete:
         """Test deleting a nonexistent tuple returns False."""
         deleted = nx.rebac_delete("nonexistent-tuple-id")
         assert deleted is False
-
 
 class TestRebacExplain:
     """Tests for rebac_explain method."""
@@ -395,7 +384,6 @@ class TestRebacExplain:
                 object=("file", "/test.txt"),
             )
 
-
 class TestRebacCheckBatch:
     """Tests for rebac_check_batch method."""
 
@@ -433,7 +421,6 @@ class TestRebacCheckBatch:
         """Test that invalid check format raises ValueError."""
         with pytest.raises(ValueError, match="Check 0 must be"):
             nx.rebac_check_batch(["invalid"])  # type: ignore[list-item]
-
 
 class TestRebacListTuples:
     """Tests for rebac_list_tuples method."""
@@ -516,7 +503,6 @@ class TestRebacListTuples:
             assert t["object_type"] == "file"
             assert t["object_id"] == "/target.txt"
 
-
 class TestRebacOptions:
     """Tests for ReBAC configuration options."""
 
@@ -551,7 +537,6 @@ class TestRebacOptions:
         """Test setting invalid cache_ttl value raises ValueError."""
         with pytest.raises(ValueError, match="cache_ttl must be"):
             nx.set_rebac_option("cache_ttl", -1)
-
 
 class TestNamespaceOperations:
     """Tests for namespace operations."""
@@ -654,7 +639,6 @@ class TestNamespaceOperations:
         """Test deleting nonexistent namespace returns False."""
         deleted = nx.namespace_delete("nonexistent_namespace")
         assert deleted is False
-
 
 class TestConsentAndPrivacy:
     """Tests for consent and privacy controls."""
@@ -766,7 +750,6 @@ class TestConsentAndPrivacy:
         # Result should be a list
         assert isinstance(subjects, list)
 
-
 class TestDynamicViewer:
     """Tests for dynamic viewer functionality."""
 
@@ -829,7 +812,6 @@ class TestDynamicViewer:
 
         assert config is None
 
-
 class TestRebacWithoutManager:
     """Tests for ReBAC operations when manager is not available."""
 
@@ -838,7 +820,6 @@ class TestRebacWithoutManager:
         # This test depends on how NexusFS is configured without ReBAC
         # Most configurations include ReBAC by default
         pass  # Implementation depends on how to create NexusFS without ReBAC
-
 
 class TestRebacIntegration:
     """Integration tests for ReBAC with file operations."""

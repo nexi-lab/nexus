@@ -7,13 +7,14 @@ Contains:
 - ExpandEngine: Find all subjects with a given permission on an object
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING
 
 from nexus.core.rebac import Entity
 
+from collections.abc import Callable
+from nexus.core.rebac import NamespaceConfig
+from nexus.services.permissions.tuples.repository import TupleRepository
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -21,7 +22,6 @@ if TYPE_CHECKING:
     from nexus.services.permissions.tuples.repository import TupleRepository
 
 logger = logging.getLogger(__name__)
-
 
 class ExpandEngine:
     """Expands permissions to find all subjects with access.

@@ -4,11 +4,8 @@ AuthResult is the primary output of authentication, consumed by
 the server layer (dependencies.py) and downstream services.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from typing import Any
-
 
 @dataclass(frozen=True)
 class AuthResult:
@@ -31,7 +28,6 @@ class AuthResult:
     metadata: dict[str, Any] | None = None
     agent_generation: int | None = None
     inherit_permissions: bool = True
-
 
 @dataclass(frozen=True)
 class AuthConfig:

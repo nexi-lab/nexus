@@ -10,8 +10,6 @@ This verifies:
 Issue #940: Full async migration for FileMetadataProtocol and NexusFS.
 """
 
-from __future__ import annotations
-
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -24,7 +22,6 @@ from nexus.core.async_nexus_fs import AsyncNexusFS
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
 # === Fixtures ===
-
 
 @pytest_asyncio.fixture
 async def client(
@@ -87,9 +84,7 @@ async def client(
     fastapi_server._fastapi_app.state.async_nexus_fs = None
     metadata_store.close()
 
-
 # === E2E Tests: Full FastAPI Server Stack ===
-
 
 @pytest.mark.asyncio
 async def test_server_write_and_read(client: AsyncClient) -> None:
@@ -113,7 +108,6 @@ async def test_server_write_and_read(client: AsyncClient) -> None:
     assert read_resp.status_code == 200, f"Read failed: {read_resp.text}"
     assert read_resp.json()["content"] == "Hello from E2E!"
 
-
 @pytest.mark.asyncio
 async def test_server_delete(client: AsyncClient) -> None:
     """Test delete through full server stack."""
@@ -135,7 +129,6 @@ async def test_server_delete(client: AsyncClient) -> None:
         params={"path": "/deleteme.txt"},
     )
     assert exists_resp.json()["exists"] is False
-
 
 @pytest.mark.asyncio
 async def test_server_mkdir_and_list(client: AsyncClient) -> None:
@@ -167,7 +160,6 @@ async def test_server_mkdir_and_list(client: AsyncClient) -> None:
     assert "beta.txt" in items
     assert "gamma.txt" in items
 
-
 @pytest.mark.asyncio
 async def test_server_metadata(client: AsyncClient) -> None:
     """Test metadata endpoint through full server stack."""
@@ -186,7 +178,6 @@ async def test_server_metadata(client: AsyncClient) -> None:
     assert data["size"] == len("metadata test")
     assert data["version"] == 1
     assert data["is_directory"] is False
-
 
 @pytest.mark.asyncio
 async def test_server_batch_read(client: AsyncClient) -> None:
@@ -207,7 +198,6 @@ async def test_server_batch_read(client: AsyncClient) -> None:
     for p in paths:
         assert data[p]["content"] == f"batch-{p}"
 
-
 @pytest.mark.asyncio
 async def test_server_stream(client: AsyncClient) -> None:
     """Test stream endpoint through full server stack."""
@@ -223,7 +213,6 @@ async def test_server_stream(client: AsyncClient) -> None:
     )
     assert stream_resp.status_code == 200
     assert stream_resp.content.decode() == content
-
 
 @pytest.mark.asyncio
 async def test_server_etag_304(client: AsyncClient) -> None:
@@ -242,7 +231,6 @@ async def test_server_etag_304(client: AsyncClient) -> None:
     )
     assert cached_resp.status_code == 304
 
-
 @pytest.mark.asyncio
 async def test_server_version_bumps(client: AsyncClient) -> None:
     """Test version incrementing through full server stack."""
@@ -259,7 +247,6 @@ async def test_server_version_bumps(client: AsyncClient) -> None:
         params={"path": "/versioned.txt"},
     )
     assert read_resp.json()["content"] == "v3"
-
 
 @pytest.mark.asyncio
 async def test_server_404_on_missing(client: AsyncClient) -> None:

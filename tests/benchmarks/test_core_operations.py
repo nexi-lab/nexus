@@ -6,8 +6,6 @@ These benchmarks identify Python hotspots for potential Rust acceleration.
 See issue #570 for context.
 """
 
-from __future__ import annotations
-
 import hashlib
 
 import pytest
@@ -15,7 +13,6 @@ import pytest
 # =============================================================================
 # FILE OPERATIONS BENCHMARKS
 # =============================================================================
-
 
 @pytest.mark.benchmark_file_ops
 class TestFileOperationBenchmarks:
@@ -160,11 +157,9 @@ class TestFileOperationBenchmarks:
 
         benchmark(delete_file)
 
-
 # =============================================================================
 # DIRECTORY AND GLOB BENCHMARKS
 # =============================================================================
-
 
 @pytest.mark.benchmark_glob
 class TestGlobBenchmarks:
@@ -270,11 +265,9 @@ class TestGlobBenchmarks:
         result = benchmark(glob_files)
         assert result is not None
 
-
 # =============================================================================
 # CONTENT HASHING BENCHMARKS
 # =============================================================================
-
 
 @pytest.mark.benchmark_hash
 class TestHashingBenchmarks:
@@ -358,11 +351,9 @@ class TestHashingBenchmarks:
         result = benchmark(hash_incremental)
         assert len(result) == 64
 
-
 # =============================================================================
 # METADATA QUERY BENCHMARKS
 # =============================================================================
-
 
 @pytest.mark.benchmark_metadata
 class TestMetadataBenchmarks:
@@ -446,11 +437,9 @@ class TestMetadataBenchmarks:
         result = benchmark(get_meta)
         assert result == "bench_value"
 
-
 # =============================================================================
 # PERMISSION CHECK BENCHMARKS
 # =============================================================================
-
 
 @pytest.mark.benchmark_permissions
 class TestPermissionBenchmarks:
@@ -586,11 +575,9 @@ class TestPermissionBenchmarks:
         result = benchmark(check_bulk)
         assert len(result) == 1000
 
-
 # =============================================================================
 # PATH RESOLUTION BENCHMARKS
 # =============================================================================
-
 
 @pytest.mark.benchmark_file_ops
 class TestPathResolutionBenchmarks:
@@ -627,11 +614,9 @@ class TestPathResolutionBenchmarks:
 
         benchmark(validate)
 
-
 # =============================================================================
 # BULK OPERATIONS BENCHMARKS
 # =============================================================================
-
 
 @pytest.mark.benchmark_file_ops
 class TestBulkOperationBenchmarks:
@@ -687,11 +672,9 @@ class TestBulkOperationBenchmarks:
         result = benchmark(read_bulk)
         assert len(result) == 50
 
-
 # =============================================================================
 # BLAKE3 HASHING BENCHMARKS (Rust-accelerated)
 # =============================================================================
-
 
 @pytest.mark.benchmark_hash
 class TestBlake3HashingBenchmarks:

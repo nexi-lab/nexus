@@ -1,14 +1,11 @@
 """Unit tests for NexusRPCTransport."""
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
 
 from nexus.core.rpc_transport import NexusRPCTransport, RPCError, TransportError
-
 
 class TestNexusRPCTransport:
     """Tests for NexusRPCTransport."""
@@ -165,7 +162,6 @@ class TestNexusRPCTransport:
         with NexusRPCTransport("http://localhost:2026") as transport:
             assert transport.ping() is False
 
-
 class TestRPCError:
     """Tests for RPCError exception."""
 
@@ -181,7 +177,6 @@ class TestRPCError:
         error = RPCError(code=-32000, message="File not found")
         assert "-32000" in str(error)
         assert "File not found" in str(error)
-
 
 class TestTransportError:
     """Tests for TransportError exception."""

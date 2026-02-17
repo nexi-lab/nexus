@@ -15,7 +15,6 @@ from nexus.backends.registry import (
     register_connector,
 )
 
-
 class DummyBackend(Backend):
     """Dummy backend for testing."""
 
@@ -68,7 +67,6 @@ class DummyBackend(Backend):
     def is_directory(self, path, context=None):
         return True
 
-
 @pytest.fixture(autouse=True)
 def clear_registry():
     """Clear registry before and after each test."""
@@ -86,7 +84,6 @@ def clear_registry():
     ConnectorRegistry._base._items = saved
     _backends._optional_backends_registered = False
     _sm._synced = False
-
 
 class TestConnectorRegistry:
     """Test ConnectorRegistry class."""
@@ -205,7 +202,6 @@ class TestConnectorRegistry:
 
         assert len(ConnectorRegistry.list_available()) == 0
 
-
 class TestRegisterConnectorDecorator:
     """Test @register_connector decorator."""
 
@@ -249,7 +245,6 @@ class TestRegisterConnectorDecorator:
         assert info.category == "api"
         assert info.requires == ["dep1", "dep2"]
 
-
 class TestCreateConnectorFromConfig:
     """Test create_connector_from_config factory function."""
 
@@ -290,7 +285,6 @@ class TestCreateConnectorFromConfig:
         with pytest.raises(RuntimeError, match="Unsupported backend type"):
             create_connector_from_config("nonexistent", {})
 
-
 class TestBuiltinConnectorRegistration:
     """Test that builtin connectors are registered correctly."""
 
@@ -316,7 +310,6 @@ class TestBuiltinConnectorRegistration:
             assert info.connector_class == LocalBackend
             assert info.category == "storage"
             assert "local" in info.name.lower() or "Local" in info.description
-
 
 class TestConnectionArgs:
     """Test CONNECTION_ARGS functionality."""
@@ -459,7 +452,6 @@ class TestConnectionArgs:
         assert "root_path" in LocalBackend.CONNECTION_ARGS
         assert LocalBackend.CONNECTION_ARGS["root_path"].required is True
 
-
 class TestDeriveConfigMapping:
     """Test derive_config_mapping function."""
 
@@ -559,7 +551,6 @@ class TestDeriveConfigMapping:
 
         # DummyBackend has config_key="extra" on other_param
         assert info.config_mapping == {"data_dir": "data_dir", "extra": "other_param"}
-
 
 class TestExhaustiveBackendMappings:
     """Verify every registered backend has valid config_mapping."""

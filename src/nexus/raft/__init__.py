@@ -34,8 +34,6 @@ Example (RaftClient - remote):
         await client.put_metadata(file_metadata)
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -110,7 +108,6 @@ from nexus.raft.federated_metadata_proxy import FederatedMetadataProxy
 from nexus.raft.zone_manager import ZoneManager
 from nexus.raft.zone_path_resolver import ZonePathResolver
 
-
 def require_metastore() -> None:
     """Require Metastore (sled driver) to be available.
 
@@ -126,7 +123,6 @@ def require_metastore() -> None:
             "Or install the pre-built wheel:\n"
             "  pip install nexus-ai-fs"
         )
-
 
 __all__ = [
     # gRPC client (remote - for RemoteNexusFS)

@@ -12,12 +12,10 @@ from nexus.core.read_set import AccessType, ReadSet, ReadSetRegistry
 from nexus.storage.cache import _CACHE_MISS, MetadataCache
 from nexus.storage.read_set_cache import ReadSetAwareCache
 
-
 def _is_cached(cache: MetadataCache, path: str) -> bool:
     """Check if a path has a cache entry (not evicted/invalidated)."""
     result = cache.get_path(path)
     return result is not _CACHE_MISS
-
 
 class TestReadSetAwareCachePutAndGet:
     """Tests for cache put/get operations with read set tracking."""
@@ -93,7 +91,6 @@ class TestReadSetAwareCachePutAndGet:
 
         stats = self.cache.get_stats()
         assert stats["stale_insert_rejections"] == 1
-
 
 class TestReadSetAwareCacheInvalidation:
     """Tests for precise invalidation via read sets."""
@@ -202,7 +199,6 @@ class TestReadSetAwareCacheInvalidation:
         stats = self.cache.get_stats()
         assert stats["fallback_invalidations"] >= 1
 
-
 class TestReadSetAwareCacheEviction:
     """Tests for cache eviction → read set cleanup."""
 
@@ -292,7 +288,6 @@ class TestReadSetAwareCacheEviction:
         assert len(cache._cache_key_to_query) <= 5
         assert len(cache._query_to_cache_keys) <= 5
 
-
 class TestReadSetAwareCacheStats:
     """Tests for invalidation precision metrics."""
 
@@ -308,7 +303,6 @@ class TestReadSetAwareCacheStats:
         assert "stale_insert_rejections" in stats
         assert "precision_ratio" in stats
         assert "read_set_count" in stats
-
 
 class TestZoneRevisionCounter:
     """Tests for per-zone monotonic revision counter (Issue #1169)."""

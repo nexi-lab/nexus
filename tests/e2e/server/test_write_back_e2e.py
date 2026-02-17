@@ -12,8 +12,6 @@ Tests the full round-trip:
 Uses: in-process WriteBackService, real SQLite, real LocalConnectorBackend.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
@@ -36,7 +34,6 @@ from nexus.storage.models import Base
 # =============================================================================
 # Helpers
 # =============================================================================
-
 
 def _make_entry(
     *,
@@ -65,7 +62,6 @@ def _make_entry(
         error_message=None,
     )
 
-
 def _async_iter_empty():
     """Return an async iterator that yields nothing."""
 
@@ -75,11 +71,9 @@ def _async_iter_empty():
 
     return _gen()
 
-
 # =============================================================================
 # Fixtures
 # =============================================================================
-
 
 @pytest.fixture
 def db_session_factory():
@@ -88,7 +82,6 @@ def db_session_factory():
     Base.metadata.create_all(engine)
     return sessionmaker(bind=engine)
 
-
 @pytest.fixture
 def backend_dir(tmp_path: Path) -> Path:
     """Dedicated temp dir for the LocalConnectorBackend."""
@@ -96,12 +89,10 @@ def backend_dir(tmp_path: Path) -> Path:
     d.mkdir()
     return d
 
-
 @pytest.fixture
 def local_backend(backend_dir: Path) -> LocalConnectorBackend:
     """Real LocalConnectorBackend pointing to backend_dir."""
     return LocalConnectorBackend(local_path=str(backend_dir))
-
 
 @pytest.fixture
 def mock_event_bus():
@@ -117,7 +108,6 @@ def mock_event_bus():
     bus.subscribe = MagicMock(return_value=_async_iter_empty())
     bus._published = published
     return bus
-
 
 @pytest.fixture
 def gateway_with_local(local_backend):
@@ -147,7 +137,6 @@ def gateway_with_local(local_backend):
     gw.read.return_value = b"hello from nx"
     return gw
 
-
 @pytest.fixture
 def write_back_service(gateway_with_local, mock_event_bus, db_session_factory) -> WriteBackService:
     """WriteBackService wired to real local backend."""
@@ -165,11 +154,9 @@ def write_back_service(gateway_with_local, mock_event_bus, db_session_factory) -
         default_strategy=ConflictStrategy.KEEP_NEWER,
     )
 
-
 # =============================================================================
 # Tests
 # =============================================================================
-
 
 class TestWriteBackE2ERoundTrip:
     """Full round-trip: NexusFS write -> backlog -> backend push -> verify file."""
@@ -295,7 +282,6 @@ class TestWriteBackE2ERoundTrip:
 
         stats = service.get_stats()
         assert stats["metrics"]["changes_failed"] >= 1
-
 
 class TestWriteBackE2EConflict:
     """Conflict scenario: backend file modified externally."""

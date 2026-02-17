@@ -3,8 +3,6 @@
 Extracted from fastapi_server.py (#1602).
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -17,7 +15,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["health"])
 
-
 class HealthResponse(BaseModel):
     """Health check response."""
 
@@ -26,7 +23,6 @@ class HealthResponse(BaseModel):
     enforce_permissions: bool | None = None
     enforce_zone_isolation: bool | None = None
     has_auth: bool | None = None
-
 
 @router.get("/health", response_model=HealthResponse)
 @limiter.exempt
@@ -64,7 +60,6 @@ async def health_check(request: Request) -> HealthResponse | Any:
         enforce_zone_isolation=enforce_zone_isolation,
         has_auth=has_auth,
     )
-
 
 @router.get("/health/detailed")
 @limiter.exempt
@@ -207,7 +202,6 @@ async def health_check_detailed(request: Request) -> dict[str, Any]:
             health["status"] = "degraded"
 
     return health
-
 
 @router.get("/metrics/pool")
 @limiter.exempt

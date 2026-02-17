@@ -8,8 +8,6 @@ Validates:
 - get_search_daemon/set_search_daemon singleton
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -26,7 +24,6 @@ from nexus.search.daemon import (
 # =============================================================================
 # SearchDaemon lifecycle
 # =============================================================================
-
 
 class TestSearchDaemonLifecycle:
     """Test startup/shutdown lifecycle."""
@@ -81,11 +78,9 @@ class TestSearchDaemonLifecycle:
         mock_engine.dispose.assert_awaited_once()
         assert daemon._async_engine is None
 
-
 # =============================================================================
 # _init_bm25s_index
 # =============================================================================
-
 
 class TestInitBM25S:
     """Test _init_bm25s_index behavior."""
@@ -105,11 +100,9 @@ class TestInitBM25S:
         # Should not crash, bm25s_index remains None
         assert daemon._bm25s_index is None
 
-
 # =============================================================================
 # _init_database_pool
 # =============================================================================
-
 
 class TestInitDatabasePool:
     """Test _init_database_pool behavior."""
@@ -126,11 +119,9 @@ class TestInitDatabasePool:
         assert daemon._async_session is None
         assert daemon.stats.db_pool_size == 0
 
-
 # =============================================================================
 # Latency tracking
 # =============================================================================
-
 
 class TestLatencyTracking:
     """Test latency tracking circular buffer."""
@@ -176,11 +167,9 @@ class TestLatencyTracking:
         daemon._track_latency(10.0)
         assert daemon.stats.total_queries == 2
 
-
 # =============================================================================
 # Singleton management
 # =============================================================================
-
 
 class TestDaemonSingleton:
     """Test get_search_daemon / set_search_daemon."""
@@ -211,11 +200,9 @@ class TestDaemonSingleton:
         finally:
             mod._daemon_instance = original
 
-
 # =============================================================================
 # DaemonConfig defaults
 # =============================================================================
-
 
 class TestDaemonConfigDefaults:
     """Test DaemonConfig default values."""
@@ -244,11 +231,9 @@ class TestDaemonConfigDefaults:
         assert config.db_pool_min_size == 5
         assert config.db_pool_max_size == 20
 
-
 # =============================================================================
 # DaemonStats and SearchResult
 # =============================================================================
-
 
 class TestDaemonStats:
     """Test DaemonStats defaults."""
@@ -261,7 +246,6 @@ class TestDaemonStats:
         assert stats.avg_latency_ms == 0.0
         assert stats.p99_latency_ms == 0.0
         assert stats.zoekt_available is False
-
 
 class TestSearchResult:
     """Test SearchResult dataclass."""
@@ -282,11 +266,9 @@ class TestSearchResult:
         result = SearchResult(path="/test.py", chunk_text="hello", score=0.9)
         assert isinstance(result, BaseSearchResult)
 
-
 # =============================================================================
 # get_stats and get_health
 # =============================================================================
-
 
 class TestDaemonStats2:
     """Test get_stats() and get_health() output."""

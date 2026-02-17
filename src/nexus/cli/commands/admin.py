@@ -9,8 +9,6 @@ All commands require:
 3. Server URL set via NEXUS_URL or --remote-url
 """
 
-from __future__ import annotations
-
 import json
 import sys
 from datetime import UTC, datetime
@@ -29,7 +27,6 @@ from nexus.remote import RemoteNexusFS
 
 # Rich console for output
 _console = Console()
-
 
 def get_remote_client(url: str | None, api_key: str | None) -> RemoteNexusFS:
     """Get remote Nexus client for admin operations.
@@ -56,7 +53,6 @@ def get_remote_client(url: str | None, api_key: str | None) -> RemoteNexusFS:
 
     return RemoteNexusFS(server_url=url, api_key=api_key)
 
-
 @click.group()
 def admin() -> None:
     """Admin commands for user and API key management.
@@ -79,7 +75,6 @@ def admin() -> None:
         nexus admin revoke-key <key_id>
     """
     pass
-
 
 @admin.command("create-user")
 @click.argument("user_id")
@@ -156,7 +151,6 @@ def create_user(
     except Exception as e:
         console.print(f"[red]Error creating user:[/red] {e}")
         sys.exit(1)
-
 
 @admin.command("list-users")
 @click.option("--user-id", help="Filter by user ID")
@@ -266,7 +260,6 @@ def list_users(
         console.print(f"[red]Error listing users:[/red] {e}")
         sys.exit(1)
 
-
 @admin.command("revoke-key")
 @click.argument("key_id")
 @click.option("--json-output", is_flag=True, help="Output as JSON")
@@ -299,7 +292,6 @@ def revoke_key(
     except Exception as e:
         console.print(f"[red]Error revoking key:[/red] {e}")
         sys.exit(1)
-
 
 @admin.command("create-key")
 @click.argument("user_id")
@@ -351,7 +343,6 @@ def create_key(
     except Exception as e:
         console.print(f"[red]Error creating key:[/red] {e}")
         sys.exit(1)
-
 
 @admin.command("get-user")
 @click.option("--user-id", help="User ID to look up")
@@ -426,7 +417,6 @@ def get_user(
         console.print(f"[red]Error getting user:[/red] {e}")
         sys.exit(1)
 
-
 @admin.command("create-agent-key")
 @click.argument("user_id")
 @click.argument("agent_id")
@@ -498,7 +488,6 @@ def create_agent_key(
         console.print(f"[red]Error creating agent key:[/red] {e}")
         sys.exit(1)
 
-
 @admin.command("update-key")
 @click.argument("key_id")
 @click.option("--expires-days", type=int, help="Extend expiry by days from now")
@@ -558,7 +547,6 @@ def update_key(
     except Exception as e:
         console.print(f"[red]Error updating key:[/red] {e}")
         sys.exit(1)
-
 
 @admin.command("gc-versions")
 @click.option("--dry-run/--execute", default=True, help="Dry run (default) or execute")
@@ -640,7 +628,6 @@ def gc_versions(
     except Exception as e:
         console.print(f"[red]Error running GC:[/red] {e}")
         sys.exit(1)
-
 
 @admin.command("gc-versions-stats")
 @click.option("--json-output", is_flag=True, help="Output as JSON")
@@ -725,7 +712,6 @@ def gc_versions_stats(
     except Exception as e:
         console.print(f"[red]Error getting stats:[/red] {e}")
         sys.exit(1)
-
 
 def register_commands(cli: click.Group) -> None:
     """Register admin command group to the main CLI.

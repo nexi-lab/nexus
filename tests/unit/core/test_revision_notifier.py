@@ -1,13 +1,10 @@
 """Tests for RevisionNotifier and NullRevisionNotifier (Issue #1432)."""
 
-from __future__ import annotations
-
 import threading
 import time
 from unittest.mock import patch
 
 from nexus.core.revision_notifier import NullRevisionNotifier, RevisionNotifier
-
 
 class TestRevisionNotifier:
     """Tests for RevisionNotifier."""
@@ -66,7 +63,6 @@ class TestRevisionNotifier:
         notifier.notify_revision("z", 5)
         assert notifier.get_latest_revision("z") == 10
 
-
 class TestNullRevisionNotifier:
     """Tests for NullRevisionNotifier (no-op fallback)."""
 
@@ -76,7 +72,6 @@ class TestNullRevisionNotifier:
         null.notify_revision("z", 1)  # should not raise
         assert null.get_latest_revision("z") == 0
         assert null.wait_for_revision("z", 1, timeout_ms=10) is False
-
 
 class TestLazyInit:
     """Tests for the lazy init pattern in NexusFSCoreMixin."""

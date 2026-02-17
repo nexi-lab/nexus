@@ -5,11 +5,8 @@ They are separate from the internal models (Skill, SkillMetadata) to allow
 for independent evolution of internal and external representations.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
-
 
 @runtime_checkable
 class SkillOperationContext(Protocol):
@@ -30,7 +27,6 @@ class SkillOperationContext(Protocol):
 
     @property
     def is_admin(self) -> bool: ...
-
 
 @dataclass
 class SkillInfo:
@@ -61,7 +57,6 @@ class SkillInfo:
             "tags": self.tags,
         }
 
-
 @dataclass
 class SkillContent:
     """Full skill content returned by load operations.
@@ -90,7 +85,6 @@ class SkillContent:
             "scripts": self.scripts,
             "references": self.references,
         }
-
 
 @dataclass
 class PromptContext:

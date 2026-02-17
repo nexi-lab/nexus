@@ -10,8 +10,6 @@ Key refactoring (Issue #1521):
 - Moved to services/ as an orchestration concern (Issue 1)
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -23,11 +21,13 @@ from nexus.services.llm_context_builder import ChunkLike, ContextBuilder
 
 logger = logging.getLogger(__name__)
 
+from nexus.core.filesystem import NexusFilesystem
+from nexus.llm.provider import LLMProvider
+from nexus.search.semantic import SemanticSearch
 if TYPE_CHECKING:
     from nexus.core.filesystem import NexusFilesystem
     from nexus.llm.provider import LLMProvider
     from nexus.search.semantic import SemanticSearch
-
 
 @dataclass
 class ReadChunk:
@@ -39,7 +39,6 @@ class ReadChunk:
     score: float | None = None
     start_offset: int | None = None
     end_offset: int | None = None
-
 
 class LLMDocumentReader:
     """LLM-powered document reading.

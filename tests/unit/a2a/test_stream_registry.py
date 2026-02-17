@@ -3,15 +3,12 @@
 TDD-first tests for the extracted SSE stream management component.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 
 import pytest
 
 from nexus.a2a.stream_registry import StreamRegistry
-
 
 class TestRegister:
     def test_register_returns_queue(self) -> None:
@@ -34,7 +31,6 @@ class TestRegister:
         q1 = registry.register("task-1")
         q2 = registry.register("task-1")
         assert q1 is not q2
-
 
 class TestUnregister:
     def test_unregister_removes_queue(self) -> None:
@@ -64,7 +60,6 @@ class TestUnregister:
         registry.unregister("task-1", queue)
         # Internal dict should be cleaned up
         assert "task-1" not in registry._active_streams
-
 
 class TestPushEvent:
     def test_push_event_to_subscriber(self) -> None:

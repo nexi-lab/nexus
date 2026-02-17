@@ -7,8 +7,6 @@ block other handlers or the caller.
 Designed as fallback when NATS is unavailable.
 """
 
-from __future__ import annotations
-
 import contextlib
 import logging
 from collections.abc import Awaitable, Callable
@@ -17,7 +15,6 @@ from dataclasses import dataclass
 logger = logging.getLogger(__name__)
 
 AgentStateHandler = Callable[["AgentStateEvent"], Awaitable[None]]
-
 
 @dataclass(frozen=True, slots=True)
 class AgentStateEvent:
@@ -36,7 +33,6 @@ class AgentStateEvent:
     new_state: str
     generation: int = 0
     zone_id: str | None = None
-
 
 class AgentStateEmitter:
     """In-process observer for agent state change events.

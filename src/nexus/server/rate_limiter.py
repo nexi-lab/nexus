@@ -33,8 +33,6 @@ Example Rate Limit Headers in Response:
     Retry-After: 60 (only on 429 responses)
 """
 
-from __future__ import annotations
-
 # Re-export key functions from rate_limiting module for convenience
 from nexus.server.rate_limiting import (
     RATE_LIMIT_ANONYMOUS,

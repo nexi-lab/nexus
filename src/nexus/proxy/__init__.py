@@ -59,7 +59,6 @@ _PROTOCOL_MAP: dict[str, type[ProxyBrick]] = {
     "agent_registry": ProxyAgentRegistryBrick,
 }
 
-
 def create_proxy_brick(
     protocol: str,
     config: ProxyBrickConfig,

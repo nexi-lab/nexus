@@ -4,15 +4,12 @@ Issue #1360 Phase 1: Stores Merkle roots computed over ranges of
 exchange audit log records for batch integrity verification.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base, _generate_uuid, _get_uuid_server_default
-
 
 class AuditCheckpointModel(Base):
     """Periodic Merkle root checkpoint over audit log records."""

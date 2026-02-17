@@ -31,7 +31,6 @@ down_revision: Union[str, Sequence[str], None] = "f1234567890a"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add user model tables for authentication."""
 
@@ -200,7 +199,6 @@ def upgrade() -> None:
 
     # Create index for external_user_services
     op.create_index("idx_external_service_name", "external_user_services", ["service_name"])
-
 
 def downgrade() -> None:
     """Remove user model tables."""

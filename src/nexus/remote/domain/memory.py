@@ -3,11 +3,8 @@
 Issue #1603: Decompose remote/client.py into domain clients.
 """
 
-from __future__ import annotations
-
 import builtins
 from typing import Any
-
 
 class MemoryClient:
     """Memory management domain client (sync).
@@ -290,7 +287,6 @@ class MemoryClient:
 
     def delete_batch(self, memory_ids: builtins.list[str]) -> dict[str, Any]:
         return self._call_rpc("delete_memory_batch", {"memory_ids": memory_ids})  # type: ignore[no-any-return]
-
 
 class AsyncMemoryClient:
     """Memory management domain client (async)."""

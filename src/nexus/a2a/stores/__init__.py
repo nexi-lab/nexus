@@ -7,8 +7,6 @@ Three pluggable backends:
 - ``DatabaseTaskStore`` — SQLAlchemy-backed (PostgreSQL/SQLite)
 """
 
-from __future__ import annotations
-
 from nexus.a2a.stores.in_memory import InMemoryTaskStore
 from nexus.a2a.stores.vfs import VFSTaskStore
 

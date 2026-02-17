@@ -73,7 +73,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 @register_connector(
     "gmail_connector",
     description="Gmail with OAuth 2.0 authentication (read-only)",

@@ -9,14 +9,11 @@ Features:
     - Snapshot for health API / push endpoint response
 """
 
-from __future__ import annotations
-
 import threading
 from collections import defaultdict
 from typing import Any
 
 _BACKEND_DEFAULTS = {"pushed": 0, "failed": 0, "conflicts": 0}
-
 
 class WriteBackMetrics:
     """Thread-safe in-process counters for write-back observability."""

@@ -3,8 +3,6 @@
 This module now delegates to nexus.auth brick providers (Issue #1399).
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -17,7 +15,6 @@ from nexus.auth.providers.oidc import MultiOIDCAuth, OIDCAuth
 from nexus.auth.providers.static_key import StaticAPIKeyAuth
 
 logger = logging.getLogger(__name__)
-
 
 def create_auth_provider(
     auth_type: str | None, auth_config: dict[str, Any] | None = None, **kwargs: Any

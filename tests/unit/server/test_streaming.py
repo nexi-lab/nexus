@@ -9,8 +9,6 @@ Tests cover:
 - _get_stream_secret: lazy initialization, caching
 """
 
-from __future__ import annotations
-
 import hmac
 import time
 from unittest.mock import patch
@@ -28,7 +26,6 @@ from nexus.server.streaming import (
 # Fixtures
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture(autouse=True)
 def clean_stream_secret():
     """Reset the module-level secret before and after every test."""
@@ -36,11 +33,9 @@ def clean_stream_secret():
     yield
     _reset_stream_secret()
 
-
 # ===========================================================================
 # _get_stream_secret
 # ===========================================================================
-
 
 class TestGetStreamSecret:
     """Tests for _get_stream_secret initialization."""
@@ -72,11 +67,9 @@ class TestGetStreamSecret:
         # astronomically unlikely.
         assert first != second
 
-
 # ===========================================================================
 # _sign_stream_token
 # ===========================================================================
-
 
 class TestSignStreamToken:
     """Tests for _sign_stream_token."""
@@ -129,11 +122,9 @@ class TestSignStreamToken:
             token_implicit = _sign_stream_token("/f.txt", expires_in=60)
         assert token_explicit == token_implicit
 
-
 # ===========================================================================
 # _verify_stream_token
 # ===========================================================================
-
 
 class TestVerifyStreamToken:
     """Tests for _verify_stream_token."""
@@ -209,11 +200,9 @@ class TestVerifyStreamToken:
             _verify_stream_token(token, "/test.txt")
             mock_cmp.assert_called_once()
 
-
 # ===========================================================================
 # _reset_stream_secret
 # ===========================================================================
-
 
 class TestResetStreamSecret:
     """Tests for _reset_stream_secret."""

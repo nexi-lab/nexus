@@ -11,8 +11,6 @@ Tests verify:
 - Performance: tracing adds < 5% overhead
 """
 
-from __future__ import annotations
-
 import time
 
 import pytest
@@ -73,11 +71,9 @@ except ImportError:
 
 requires_otel = pytest.mark.skipif(not _HAS_OTEL, reason="opentelemetry-sdk not installed")
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
 
 @pytest.fixture
 def engine():
@@ -103,7 +99,6 @@ def engine():
         )
     return eng
 
-
 @pytest.fixture
 def manager(engine):
     """Create EnhancedReBACManager for testing."""
@@ -119,14 +114,12 @@ def manager(engine):
     yield mgr
     mgr.close()
 
-
 @pytest.fixture(autouse=True)
 def _reset():
     """Reset tracer state before each test."""
     reset_tracer()
     yield
     reset_tracer()
-
 
 @pytest.fixture
 def otel_exporter():
@@ -151,11 +144,9 @@ def otel_exporter():
     provider.shutdown()
     reset_tracer()
 
-
 # ---------------------------------------------------------------------------
 # Test: Real permission check creates spans
 # ---------------------------------------------------------------------------
-
 
 class TestRealPermissionCheckSpans:
     """Test span creation during real permission checks."""
@@ -270,11 +261,9 @@ class TestRealPermissionCheckSpans:
         assert result is True
         # No assertion on spans — just verify no crash
 
-
 # ---------------------------------------------------------------------------
 # Test: Performance benchmark
 # ---------------------------------------------------------------------------
-
 
 class TestTracingPerformance:
     """Verify tracing doesn't add significant overhead."""

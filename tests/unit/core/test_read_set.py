@@ -16,7 +16,6 @@ from nexus.core.read_set import (
     set_global_registry,
 )
 
-
 class TestReadSetEntry:
     """Tests for ReadSetEntry dataclass."""
 
@@ -74,7 +73,6 @@ class TestReadSetEntry:
         assert restored.resource_type == entry.resource_type
         assert restored.resource_id == entry.resource_id
         assert restored.revision == entry.revision
-
 
 class TestReadSet:
     """Tests for ReadSet class."""
@@ -207,7 +205,6 @@ class TestReadSet:
         paths = [entry.resource_id for entry in rs]
         assert "/a.txt" in paths
         assert "/b.txt" in paths
-
 
 class TestReadSetRegistry:
     """Tests for ReadSetRegistry class."""
@@ -397,7 +394,6 @@ class TestReadSetRegistry:
         assert stats["registers"] == 1
         assert stats["lookups"] == 2
 
-
 class TestGlobalRegistry:
     """Tests for global registry singleton."""
 
@@ -426,7 +422,6 @@ class TestGlobalRegistry:
         # Should create a new one
         new_registry = get_global_registry()
         assert new_registry is not None
-
 
 class TestRWLockConcurrency:
     """Tests for ReadSetRegistry RWLock under concurrent access (Issue #1169)."""
@@ -515,7 +510,6 @@ class TestRWLockConcurrency:
         stats = registry.get_stats()
         assert stats["read_sets_count"] >= 0
 
-
 class TestAccessTypeEnum:
     """Tests for AccessType enum."""
 
@@ -525,7 +519,6 @@ class TestAccessTypeEnum:
         assert AccessType.METADATA == "metadata"
         assert AccessType.LIST == "list"
         assert AccessType.EXISTS == "exists"
-
 
 class TestResourceTypeEnum:
     """Tests for ResourceType enum."""

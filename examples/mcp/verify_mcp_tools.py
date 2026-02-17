@@ -7,7 +7,6 @@ can list all available tools.
 from nexus import connect
 from nexus.mcp import create_mcp_server
 
-
 def main() -> None:
     """Verify MCP server configuration."""
 
@@ -69,7 +68,6 @@ def main() -> None:
     print()
     print("For Claude Desktop, add to claude_desktop_config.json:")
     print("  See examples/mcp/claude_desktop_config.json")
-
 
 if __name__ == "__main__":
     main()

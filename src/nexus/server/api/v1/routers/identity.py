@@ -7,8 +7,6 @@ Provides agent cryptographic identity endpoints:
 Extracted from ``fastapi_server.py`` during monolith decomposition (#1288).
 """
 
-from __future__ import annotations
-
 import asyncio
 import base64
 import logging
@@ -22,7 +20,6 @@ from nexus.server.dependencies import require_auth
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["identity"])
-
 
 @router.get("/api/agents/{agent_id}/identity")
 async def get_agent_identity(
@@ -48,7 +45,6 @@ async def get_agent_identity(
         "created_at": newest.created_at.isoformat() if newest.created_at else None,
         "expires_at": newest.expires_at.isoformat() if newest.expires_at else None,
     }
-
 
 @router.post("/api/agents/{agent_id}/verify")
 async def verify_agent_signature(

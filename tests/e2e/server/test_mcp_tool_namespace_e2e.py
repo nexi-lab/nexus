@@ -14,8 +14,6 @@ Usage:
     uv run pytest tests/e2e/test_mcp_tool_namespace_e2e.py -v --tb=short -p no:xdist -o "addopts=" --log-cli-level=INFO
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import time
@@ -40,7 +38,6 @@ logger = logging.getLogger(__name__)
 # Fixtures
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture
 def rebac_engine():
     """In-memory SQLite engine with all ReBAC tables."""
@@ -48,12 +45,10 @@ def rebac_engine():
     Base.metadata.create_all(engine)
     return engine
 
-
 @pytest.fixture
 def rebac_manager(rebac_engine):
     """Real EnhancedReBACManager on in-memory SQLite."""
     return EnhancedReBACManager(engine=rebac_engine, cache_ttl_seconds=1)
-
 
 @pytest.fixture
 def middleware(rebac_manager):
@@ -64,7 +59,6 @@ def middleware(rebac_manager):
         cache_ttl=60,
         revision_window=1,
     )
-
 
 @pytest.fixture
 def mock_nx():
@@ -90,7 +84,6 @@ def mock_nx():
         }
     )
     return nx
-
 
 @pytest.fixture
 def profiles():
@@ -120,7 +113,6 @@ def profiles():
         }
     )
 
-
 def _make_ctx(subject_type: str, subject_id: str) -> Mock:
     """Create a mock FastMCP Context with subject state."""
     ctx = Mock()
@@ -132,16 +124,13 @@ def _make_ctx(subject_type: str, subject_id: str) -> Mock:
     )
     return ctx
 
-
 def _get_tool(server, name):
     """Get a tool callable from the MCP server."""
     return server._tool_manager._tools[name]
 
-
 # ---------------------------------------------------------------------------
 # E2E Lifecycle Test
 # ---------------------------------------------------------------------------
-
 
 class TestToolNamespaceE2E:
     """Full lifecycle: grant → discover → call → revoke → verify gone."""
@@ -219,11 +208,9 @@ class TestToolNamespaceE2E:
 
         logger.info("PASS: Full lifecycle test completed successfully")
 
-
 # ---------------------------------------------------------------------------
 # resolve_visible_tools() DRY path
 # ---------------------------------------------------------------------------
-
 
 class TestResolveVisibleToolsDRY:
     """Verify the DRY path: middleware.resolve_visible_tools() → server._get_visible_tool_names()."""
@@ -259,11 +246,9 @@ class TestResolveVisibleToolsDRY:
         ctx.get_state = Mock(return_value=None)
         assert middleware.resolve_visible_tools(ctx) is None
 
-
 # ---------------------------------------------------------------------------
 # Log validation
 # ---------------------------------------------------------------------------
-
 
 class TestLogOutput:
     """Verify [TOOL-NS] and [PROFILES] log messages are emitted."""
@@ -322,11 +307,9 @@ class TestLogOutput:
         assert "Rebuilt tool set" in caplog.text
         logger.info("PASS: Rebuild log validation")
 
-
 # ---------------------------------------------------------------------------
 # Performance validation
 # ---------------------------------------------------------------------------
-
 
 class TestPerformanceE2E:
     """E2E performance benchmarks for tool namespace operations."""
@@ -413,11 +396,9 @@ class TestPerformanceE2E:
         assert elapsed_ms < 50, f"Discovery search took {elapsed_ms:.1f}ms (expected <50ms)"
         logger.info("Discovery search: %.1fms, found %d tools", elapsed_ms, result["count"])
 
-
 # ---------------------------------------------------------------------------
 # Backward compatibility
 # ---------------------------------------------------------------------------
-
 
 class TestBackwardCompat:
     """No middleware → all tools visible (backward compat)."""

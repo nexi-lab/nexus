@@ -9,8 +9,6 @@ Error cases use regular client.post() since errors return JSON responses
 (not SSE streams).
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 from typing import Any
@@ -26,12 +24,10 @@ from nexus.a2a.task_manager import TaskManager
 # Fixtures
 # ======================================================================
 
-
 @pytest.fixture
 def task_manager() -> TaskManager:
     """Create a TaskManager shared between the app and tests."""
     return TaskManager()
-
 
 @pytest.fixture
 def app(task_manager: TaskManager) -> FastAPI:
@@ -40,7 +36,6 @@ def app(task_manager: TaskManager) -> FastAPI:
     router = build_router(base_url="http://testserver", task_manager=task_manager)
     app.include_router(router)
     return app
-
 
 def _make_rpc(
     method: str, params: dict[str, Any] | None = None, request_id: str | int = "req-1"
@@ -53,7 +48,6 @@ def _make_rpc(
     if params is not None:
         body["params"] = params
     return body
-
 
 def _parse_sse_events(content: str) -> list[dict[str, Any]]:
     """Parse SSE event stream into list of data payloads."""
@@ -68,7 +62,6 @@ def _parse_sse_events(content: str) -> list[dict[str, Any]]:
                 pass
     return events
 
-
 async def _close_streams_after(task_manager: TaskManager, delay: float = 0.05) -> None:
     """Push sentinel to all active SSE queues after a short delay.
 
@@ -79,7 +72,6 @@ async def _close_streams_after(task_manager: TaskManager, delay: float = 0.05) -
     for queues in task_manager.stream_registry._active_streams.values():
         for q in queues:
             q.put_nowait(None)
-
 
 def _streaming_message_body() -> dict[str, Any]:
     return _make_rpc(
@@ -92,11 +84,9 @@ def _streaming_message_body() -> dict[str, Any]:
         },
     )
 
-
 # ======================================================================
 # sendStreamingMessage
 # ======================================================================
-
 
 class TestSendStreamingMessage:
     @pytest.mark.asyncio
@@ -150,11 +140,9 @@ class TestSendStreamingMessage:
             assert resp.headers.get("cache-control") == "no-cache"
             assert resp.headers.get("x-accel-buffering") == "no"
 
-
 # ======================================================================
 # subscribeToTask
 # ======================================================================
-
 
 class TestSubscribeToTask:
     @pytest.mark.asyncio
@@ -206,11 +194,9 @@ class TestSubscribeToTask:
             assert "error" in data
             assert data["error"]["code"] == -32001  # Task not found
 
-
 # ======================================================================
 # SSE Event Format
 # ======================================================================
-
 
 class TestSSEFormat:
     @pytest.mark.asyncio
@@ -260,11 +246,9 @@ class TestSSEFormat:
             for event in events:
                 assert isinstance(event, dict)
 
-
 # ======================================================================
 # Streaming error handling
 # ======================================================================
-
 
 class TestStreamingErrors:
     @pytest.mark.asyncio

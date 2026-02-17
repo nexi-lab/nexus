@@ -8,7 +8,6 @@ from nexus.core.permissions import (
 )
 from nexus.services.permissions.enforcer import PermissionEnforcer
 
-
 class TestOperationContext:
     """Tests for OperationContext dataclass."""
 
@@ -80,7 +79,6 @@ class TestOperationContext:
         """Test that get_subject() defaults to user when subject_id is None."""
         ctx = OperationContext(user="alice", groups=["developers"])
         assert ctx.get_subject() == ("user", "alice")
-
 
 class TestPermissionEnforcer:
     """Tests for PermissionEnforcer class with ReBAC-only model."""
@@ -332,7 +330,6 @@ class TestPermissionEnforcer:
         assert result is True
         # Verify the normalized path was passed to ReBAC
         assert rebac.last_object_id == "/workspace/alice"
-
 
 class TestHasAccessibleDescendantsBatch:
     """Tests for has_accessible_descendants_batch() (Issue #1298)."""

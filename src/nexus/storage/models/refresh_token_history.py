@@ -7,15 +7,12 @@ Each row stores only the SHA-256 hash of the retired refresh token,
 never the plaintext.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base, _generate_uuid, _get_uuid_server_default
-
 
 class RefreshTokenHistoryModel(Base):
     """Immutable record of a retired refresh token.

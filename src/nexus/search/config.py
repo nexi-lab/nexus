@@ -12,11 +12,8 @@ Usage::
     print(config.fusion_method)    # "rrf"
 """
 
-from __future__ import annotations
-
 import os
 from dataclasses import dataclass
-
 
 def get_env_bool(key: str, default: bool = False) -> bool:
     """Read a boolean from an environment variable.
@@ -34,7 +31,6 @@ def get_env_bool(key: str, default: bool = False) -> bool:
     if not val:
         return default
     return val in ("true", "1", "yes")
-
 
 def get_env_float(key: str, default: float) -> float:
     """Read a float from an environment variable.
@@ -54,7 +50,6 @@ def get_env_float(key: str, default: float) -> float:
     except ValueError:
         return default
 
-
 def get_env_int(key: str, default: int) -> int:
     """Read an int from an environment variable.
 
@@ -72,7 +67,6 @@ def get_env_int(key: str, default: int) -> int:
         return int(val)
     except ValueError:
         return default
-
 
 @dataclass(frozen=True)
 class SearchConfig:
@@ -116,7 +110,6 @@ class SearchConfig:
 
     # Ranking (Issue #1092)
     enable_attribute_boosting: bool = True
-
 
 def search_config_from_env() -> SearchConfig:
     """Build SearchConfig from environment variables.

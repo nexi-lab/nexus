@@ -27,8 +27,6 @@ Usage::
     configure_logging(env="prod", log_level="DEBUG")  # Override level
 """
 
-from __future__ import annotations
-
 import logging
 import logging.config
 import os
@@ -44,7 +42,6 @@ from nexus.server.logging_processors import (
     otel_trace_processor,
 )
 
-
 def _orjson_serializer(data: dict[str, Any], **_kw: Any) -> str:
     """Serialize log event dict to JSON string using orjson.
 
@@ -57,7 +54,6 @@ def _orjson_serializer(data: dict[str, Any], **_kw: Any) -> str:
         default=str,
     )
     return raw.decode("utf-8")
-
 
 def configure_logging(
     env: str = "dev",

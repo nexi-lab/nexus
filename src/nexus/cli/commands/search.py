@@ -1,7 +1,5 @@
 """Search and discovery commands - glob, grep, find-duplicates."""
 
-from __future__ import annotations
-
 import sys
 from typing import Any, cast
 
@@ -15,14 +13,12 @@ from nexus.cli.utils import (
     handle_error,
 )
 
-
 def register_commands(cli: click.Group) -> None:
     """Register all search and discovery commands."""
     cli.add_command(glob)
     cli.add_command(grep)
     cli.add_command(find_duplicates)
     cli.add_command(semantic_search_group)
-
 
 @click.command()
 @click.argument("pattern", type=str)
@@ -112,7 +108,6 @@ def glob(
                 console.print(f"  {match}")
     except Exception as e:
         handle_error(e)
-
 
 @click.command()
 @click.argument("pattern", type=str)
@@ -235,7 +230,6 @@ def grep(
     except Exception as e:
         handle_error(e)
 
-
 @click.command(name="find-duplicates")
 @click.option("-p", "--path", default="/", help="Base path to search from")
 @click.option("--json", "json_output", is_flag=True, help="Output as JSON")
@@ -356,15 +350,12 @@ def find_duplicates(path: str, json_output: bool, backend_config: BackendConfig)
     except Exception as e:
         handle_error(e)
 
-
 # Semantic Search Commands (v0.4.0)
-
 
 @click.group(name="search")
 def semantic_search_group() -> None:
     """Semantic search commands using natural language queries."""
     pass
-
 
 @semantic_search_group.command(name="init")
 @click.option(
@@ -454,7 +445,6 @@ def search_init(
     except Exception as e:
         handle_error(e)
 
-
 @semantic_search_group.command(name="index")
 @click.argument("path", default="/")
 @click.option("--recursive/--no-recursive", default=True, help="Index directory recursively")
@@ -522,7 +512,6 @@ def search_index(
         nx.close()
     except Exception as e:
         handle_error(e)
-
 
 @semantic_search_group.command(name="query")
 @click.argument("query", type=str)
@@ -624,7 +613,6 @@ def search_query(
         nx.close()
     except Exception as e:
         handle_error(e)
-
 
 @semantic_search_group.command(name="stats")
 @add_backend_options

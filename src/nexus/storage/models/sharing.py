@@ -3,15 +3,12 @@
 Issue #1286: Extracted from monolithic __init__.py.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base, uuid_pk
-
 
 class ShareLinkModel(Base):
     """Capability URL-based share links for anonymous/external file access.
@@ -79,7 +76,6 @@ class ShareLinkModel(Base):
         return not (
             self.max_access_count is not None and self.access_count >= self.max_access_count
         )
-
 
 class ShareLinkAccessLogModel(Base):
     """Access log for share link usage tracking."""

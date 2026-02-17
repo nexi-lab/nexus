@@ -20,7 +20,6 @@ NEXUS_API_KEY = os.getenv(
     "NEXUS_API_KEY", "sk-default_admin_dddddddd_eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
 )
 
-
 def test_native_bash(file_count=1000):
     """Test native filesystem using bash commands."""
     print(f"\n{'=' * 70}")
@@ -95,7 +94,6 @@ def test_native_bash(file_count=1000):
 
     return results
 
-
 def test_native_python(file_count=1000):
     """Test native filesystem using Python pathlib."""
     print(f"\n{'=' * 70}")
@@ -157,7 +155,6 @@ def test_native_python(file_count=1000):
     }
 
     return results
-
 
 def test_nexus(file_count=1000):
     """Test Nexus filesystem."""
@@ -275,7 +272,6 @@ def test_nexus(file_count=1000):
 
     return results
 
-
 def test_sandbox_bash(file_count=1000):
     """Test Nexus mounted via FUSE in Docker sandbox using bash commands."""
     print(f"\n{'=' * 70}")
@@ -389,7 +385,6 @@ echo $count
             print(f"  ✓ Stopped sandbox {sandbox_id}")
         except Exception as e:
             print(f"  ⚠️ Error stopping sandbox: {e}")
-
 
 def test_sandbox_python(file_count=1000):
     """Test Nexus mounted via FUSE in Docker sandbox using Python."""
@@ -522,7 +517,6 @@ print(f"STAT|{stat_limit}|{{stat_duration:.4f}}")
         except Exception as e:
             print(f"  ⚠️ Error stopping sandbox: {e}")
 
-
 def write_csv(results, filename):
     """Write results to CSV file."""
     fieldnames = [
@@ -581,7 +575,6 @@ def write_csv(results, filename):
 
     print(f"\n✅ Results written to {filename}")
 
-
 def print_comparison_table(results):
     """Print formatted comparison table."""
     print(f"\n{'=' * 120}")
@@ -617,7 +610,6 @@ def print_comparison_table(results):
             print(
                 f"{'STAT':<15} {r['method']:<15} {r['stat_count']:<10} {r['stat_duration']:>9.4f}s  {r['stat_count'] / r['stat_duration']:>12,.0f} files/s"
             )
-
 
 def main():
     print(f"\n{'=' * 120}")
@@ -660,7 +652,6 @@ def main():
     print(f"\n{'=' * 120}")
     print(f"{'TEST COMPLETE!':^120}")
     print(f"{'=' * 120}")
-
 
 if __name__ == "__main__":
     main()

@@ -1,12 +1,9 @@
 """Runtime compatibility — pool creation with version detection."""
 
-from __future__ import annotations
-
 import sys
 from concurrent.futures import Executor, ProcessPoolExecutor
 
 SUPPORTS_SUBINTERPRETERS: bool = sys.version_info >= (3, 14)
-
 
 def create_isolation_pool(pool_size: int, *, force_process: bool = False) -> Executor:
     """Create the best available isolation pool.

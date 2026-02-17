@@ -27,8 +27,6 @@ Usage:
     results = await search.search("authentication", limit=10)
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import uuid
@@ -48,6 +46,7 @@ from nexus.search.contextual_chunking import (
 from nexus.search.embeddings import EmbeddingProvider
 from nexus.search.results import BaseSearchResult
 
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
@@ -55,10 +54,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 # AsyncSearchResult is identical to BaseSearchResult (Issue #1520: DRY unification)
 AsyncSearchResult = BaseSearchResult
-
 
 def create_async_engine_from_url(database_url: str) -> AsyncEngine:
     """Create async engine from database URL via RecordStoreABC.
@@ -78,7 +75,6 @@ def create_async_engine_from_url(database_url: str) -> AsyncEngine:
     # Trigger lazy async engine creation and return it
     _ = store.async_session_factory
     return cast("AsyncEngine", store._async_engine)
-
 
 class AsyncSemanticSearch:
     """Fully async semantic search for high-throughput scenarios.

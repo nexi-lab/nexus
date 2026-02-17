@@ -19,7 +19,6 @@ from nexus.core._compact_generated import CompactFileMetadata
 from nexus.core._metadata_generated import FileMetadata
 from nexus.core.adaptive_ttl import AdaptiveTTLMixin
 
-
 class AdaptiveTTLCache(dict[str, tuple[Any, float]]):
     """LRU cache with per-entry adaptive TTL support.
 
@@ -90,7 +89,6 @@ class AdaptiveTTLCache(dict[str, tuple[Any, float]]):
                 self._on_evict(key)
             return entry[0]
         return None
-
 
 class MetadataCache(AdaptiveTTLMixin):
     """
@@ -477,7 +475,6 @@ class MetadataCache(AdaptiveTTLMixin):
             stats["adaptive_ttl"] = self.get_adaptive_ttl_stats()
 
             return stats
-
 
 # Sentinel object to distinguish "not in cache" from "cached as None"
 _CACHE_MISS = object()

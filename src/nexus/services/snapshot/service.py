@@ -13,8 +13,6 @@ Architecture:
 Follows VersionService pattern (DI constructor, asyncio.to_thread for DB ops).
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import uuid
@@ -30,7 +28,6 @@ from nexus.services.snapshot.registry import TransactionRegistry
 
 logger = logging.getLogger(__name__)
 
-
 class TransactionConflictError(Exception):
     """Raised when commit detects conflicting writes."""
 
@@ -39,14 +36,12 @@ class TransactionConflictError(Exception):
         paths = ", ".join(c.path for c in conflicts)
         super().__init__(f"Conflict detected on {len(conflicts)} path(s): {paths}")
 
-
 class TransactionNotFoundError(Exception):
     """Raised when a transaction_id does not exist."""
 
     def __init__(self, transaction_id: str) -> None:
         self.transaction_id = transaction_id
         super().__init__(f"Transaction not found: {transaction_id}")
-
 
 class TransactionNotActiveError(Exception):
     """Raised when an operation targets a non-active transaction."""
@@ -55,7 +50,6 @@ class TransactionNotActiveError(Exception):
         self.transaction_id = transaction_id
         self.status = status
         super().__init__(f"Transaction {transaction_id} is not active (status={status})")
-
 
 def _model_to_info(model: Any) -> TransactionInfo:
     """Convert a TransactionSnapshotModel to a TransactionInfo dataclass."""
@@ -70,7 +64,6 @@ def _model_to_info(model: Any) -> TransactionInfo:
         entry_count=model.entry_count,
     )
 
-
 def _model_to_entry(model: Any) -> SnapshotEntry:
     """Convert a SnapshotEntryModel to a SnapshotEntry dataclass."""
     return SnapshotEntry(
@@ -83,7 +76,6 @@ def _model_to_entry(model: Any) -> SnapshotEntry:
         new_hash=model.new_hash,
         created_at=model.created_at,
     )
-
 
 class TransactionalSnapshotService:
     """Manages transactional filesystem snapshots.

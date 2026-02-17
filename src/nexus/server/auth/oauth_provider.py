@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-
 @dataclass
 class OAuthCredential:
     """OAuth 2.0 credential data structure.
@@ -126,7 +125,6 @@ class OAuthCredential:
             token_uri=data.get("token_uri"),
             metadata=data.get("metadata"),
         )
-
 
 class OAuthProvider(ABC):
     """Abstract base class for OAuth 2.0 providers.
@@ -262,7 +260,6 @@ class OAuthProvider(ABC):
             >>> is_valid = await provider.validate_token(token)
         """
         pass
-
 
 class OAuthError(Exception):
     """OAuth operation failed."""

@@ -13,12 +13,10 @@ from nexus.skills.models import Skill, SkillMetadata
 
 logger = logging.getLogger(__name__)
 
-
 class SkillParseError(SkillValidationError):
     """Raised when parsing a SKILL.md file fails."""
 
     pass
-
 
 class SkillParser:
     """Parser for SKILL.md files with YAML frontmatter.

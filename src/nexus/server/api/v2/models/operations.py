@@ -1,13 +1,10 @@
 """Operation request/response models for API v2 (Issue #1197, #1198)."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from pydantic import Field
 
 from nexus.server.api.v2.models.base import ApiModel
-
 
 class OperationResponse(ApiModel):
     """Single operation entry."""
@@ -20,7 +17,6 @@ class OperationResponse(ApiModel):
     status: str
     timestamp: str  # ISO-8601
     metadata: dict[str, Any] | None = None
-
 
 class OperationListResponse(ApiModel):
     """Response for GET /api/v2/operations.
@@ -36,7 +32,6 @@ class OperationListResponse(ApiModel):
     offset: int | None = None
     total: int | None = None
     next_cursor: str | None = None
-
 
 class AgentActivityResponse(ApiModel):
     """Response for GET /api/v2/operations/agents/{agent_id}/activity.

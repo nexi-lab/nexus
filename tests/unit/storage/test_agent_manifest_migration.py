@@ -7,8 +7,6 @@ Covers:
 4. _safe_json_loads edge cases (corrupt, None, empty, valid)
 """
 
-from __future__ import annotations
-
 import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
@@ -17,7 +15,6 @@ from sqlalchemy.pool import StaticPool
 from nexus.services.agents.agent_registry import AgentRegistry, _safe_json_loads
 from nexus.storage.models import Base
 from nexus.storage.models.agents import AgentRecordModel
-
 
 @pytest.fixture
 def engine():
@@ -30,21 +27,17 @@ def engine():
     Base.metadata.create_all(eng)
     return eng
 
-
 @pytest.fixture
 def session_factory(engine):
     return sessionmaker(bind=engine, expire_on_commit=False)
-
 
 @pytest.fixture
 def registry(session_factory):
     return AgentRegistry(session_factory=session_factory)
 
-
 # ---------------------------------------------------------------------------
 # Test 1: Fresh schema has context_manifest column
 # ---------------------------------------------------------------------------
-
 
 class TestFreshSchema:
     def test_fresh_schema_has_context_manifest_column(self, engine):
@@ -55,11 +48,9 @@ class TestFreshSchema:
         columns = {col["name"] for col in inspector.get_columns("agent_records")}
         assert "context_manifest" in columns
 
-
 # ---------------------------------------------------------------------------
 # Test 2: Default value is empty list
 # ---------------------------------------------------------------------------
-
 
 class TestDefaultValue:
     def test_default_value_is_empty_list(self, session_factory):
@@ -83,11 +74,9 @@ class TestDefaultValue:
         ).scalar_one()
         assert result.context_manifest == "[]"
 
-
 # ---------------------------------------------------------------------------
 # Test 3: Round-trip serialization
 # ---------------------------------------------------------------------------
-
 
 class TestRoundTrip:
     def test_round_trip_serialization(self, registry):
@@ -109,11 +98,9 @@ class TestRoundTrip:
         assert fetched is not None
         assert fetched.context_manifest == tuple(sources)
 
-
 # ---------------------------------------------------------------------------
 # Test 4: _safe_json_loads edge cases
 # ---------------------------------------------------------------------------
-
 
 class TestSafeJsonLoads:
     def test_none_returns_default(self):

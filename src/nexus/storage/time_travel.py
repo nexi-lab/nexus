@@ -4,8 +4,6 @@ Provides the ability to query filesystem state at any historical operation point
 enabling debugging, analysis, and understanding of agent behavior over time.
 """
 
-from __future__ import annotations
-
 import json
 from typing import TYPE_CHECKING, Any
 
@@ -14,11 +12,12 @@ from sqlalchemy import and_, or_, select
 from nexus.core.exceptions import NexusFileNotFoundError
 from nexus.storage.models import FilePathModel, OperationLogModel
 
+from nexus.storage.backend_base import Backend
+from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from nexus.storage.backend_base import Backend
-
 
 class TimeTravelReader:
     """Read filesystem state at historical operation points."""

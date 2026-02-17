@@ -5,13 +5,11 @@ import pytest
 from nexus.backends.passthrough import POINTER_PREFIX, PassthroughBackend
 from nexus.core.hash_fast import hash_content
 
-
 @pytest.fixture
 def temp_backend(tmp_path):
     """Create a temporary passthrough backend for testing."""
     backend = PassthroughBackend(base_path=tmp_path / "passthrough")
     yield backend
-
 
 class TestInitialization:
     """Tests for backend initialization."""
@@ -30,7 +28,6 @@ class TestInitialization:
     def test_backend_name(self, temp_backend):
         """Test that backend name property returns correct value."""
         assert temp_backend.name == "passthrough"
-
 
 class TestContentOperations:
     """Tests for CAS content operations."""
@@ -92,7 +89,6 @@ class TestContentOperations:
         assert cas_path.parent.name == content_hash[2:4]
         assert cas_path.parent.parent.name == content_hash[:2]
         assert cas_path.name == content_hash
-
 
 class TestPointerOperations:
     """Tests for pointer file operations."""
@@ -157,7 +153,6 @@ class TestPointerOperations:
         expected = temp_backend.pointers_root / "inbox" / "test.txt"
         assert physical == expected
 
-
 class TestDirectoryOperations:
     """Tests for directory operations."""
 
@@ -211,7 +206,6 @@ class TestDirectoryOperations:
         assert "normal.txt" in entries
         assert "temp.txt.tmp" not in entries
 
-
 class TestLocking:
     """Tests for advisory locking."""
 
@@ -256,7 +250,6 @@ class TestLocking:
         # Cleanup
         temp_backend.unlock(lock_id1)
         temp_backend.unlock(lock_id2)
-
 
 class TestMultiSlotLocking:
     """Tests for multi-slot advisory locking (semaphore mode)."""
@@ -349,7 +342,6 @@ class TestMultiSlotLocking:
         lock_id = temp_backend.lock("/reuse_test", timeout=1.0, max_holders=3)
         assert lock_id is not None
         temp_backend.unlock(lock_id)
-
 
 class TestEdgeCases:
     """Tests for edge cases and error handling."""

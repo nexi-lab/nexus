@@ -16,14 +16,12 @@ from pathlib import Path
 OUTPUT_DIR = Path("/tmp/nexus_perf_data")
 random.seed(42)
 
-
 def generate_log_line(i: int, is_error: bool = False) -> str:
     """Generate a single log line."""
     timestamp = f"2024-01-15 10:{i // 60 % 60:02d}:{i % 60:02d}"
     if is_error:
         return f"[ERROR] {timestamp} - Connection failed to database server"
     return f"[INFO] {timestamp} - Request {random.randint(1000, 9999)} processed"
-
 
 def generate_content(num_lines: int, error_rate: float = 0.1) -> str:
     """Generate log content with specified number of lines."""
@@ -32,7 +30,6 @@ def generate_content(num_lines: int, error_rate: float = 0.1) -> str:
         is_error = random.random() < error_rate
         lines.append(generate_log_line(i, is_error))
     return "\n".join(lines)
-
 
 def progress(current: int, total: int, desc: str, start_time: float):
     """Print progress."""
@@ -47,7 +44,6 @@ def progress(current: int, total: int, desc: str, start_time: float):
             flush=True,
         )
 
-
 def generate_flat_50k():
     """Generate 50k files in flat directory."""
     print("\n=== Generating 50k flat files ===")
@@ -59,7 +55,6 @@ def generate_flat_50k():
         (out_dir / f"file_{i:05d}.txt").write_text(f"content_{i}")
         progress(i + 1, 50_000, "Flat", start)
     print()
-
 
 def generate_nested_50k():
     """Generate 50k files in nested directory structure."""
@@ -80,7 +75,6 @@ def generate_nested_50k():
                 progress(count, 50_000, "Nested", start)
     print()
 
-
 def generate_grep_short():
     """Generate 1000 files with SHORT content (~10 lines each)."""
     print("\n=== Generating grep files (SHORT content, 10 lines) ===")
@@ -93,7 +87,6 @@ def generate_grep_short():
         (out_dir / f"file_{i:04d}.log").write_text(content)
         progress(i + 1, 1000, "Grep short", start)
     print()
-
 
 def generate_grep_long():
     """Generate 1000 files with LONG content (~1000 lines each)."""
@@ -108,7 +101,6 @@ def generate_grep_long():
         progress(i + 1, 1000, "Grep long", start)
     print()
 
-
 def generate_grep_medium_1k():
     """Generate 1k files with MEDIUM content (~250 lines each)."""
     print("\n=== Generating grep files (MEDIUM content, 250 lines, 1K files) ===")
@@ -122,7 +114,6 @@ def generate_grep_medium_1k():
         progress(i + 1, 1000, "Grep medium 1k", start)
     print()
 
-
 def generate_grep_medium_10k():
     """Generate 10k files with MEDIUM content (~250 lines each)."""
     print("\n=== Generating grep files (MEDIUM content, 250 lines, 10K files) ===")
@@ -135,7 +126,6 @@ def generate_grep_medium_10k():
         (out_dir / f"file_{i:04d}.txt").write_text(content)
         progress(i + 1, 10_000, "Grep medium 10k", start)
     print()
-
 
 def generate_grep_nested():
     """Generate nested structure with both short and long content."""
@@ -166,7 +156,6 @@ def generate_grep_nested():
         progress(count, total, "Grep nested", start)
     print()
 
-
 def generate_write_1k():
     """Generate content for 1k write benchmark."""
     print("\n=== Generating 1k write benchmark files ===")
@@ -187,7 +176,6 @@ def generate_write_1k():
         (out_dir / f"file_{i:04d}.txt").write_text(content)
         progress(i + 1, 1000, "Write 1k", start)
     print()
-
 
 def main():
     print("=" * 60)
@@ -215,7 +203,6 @@ def main():
             file_count = sum(1 for _ in subdir.rglob("*") if _.is_file())
             total_size = sum(f.stat().st_size for f in subdir.rglob("*") if f.is_file())
             print(f"  {subdir.name}: {file_count:,} files, {total_size / 1024 / 1024:.1f} MB")
-
 
 if __name__ == "__main__":
     main()

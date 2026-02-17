@@ -6,8 +6,6 @@ latency to sandbox creation, profile resolution, or input validation.
 Requires: Docker daemon running locally.
 """
 
-from __future__ import annotations
-
 import statistics
 import time
 
@@ -43,7 +41,6 @@ from nexus.sandbox.security_profile import SandboxSecurityProfile  # noqa: E402
 ALPINE_IMAGE = "alpine:3.19"
 N_ITERATIONS = 1000
 
-
 @pytest.fixture(scope="module")
 def docker_client() -> docker.DockerClient:
     client = docker.from_env()
@@ -53,11 +50,9 @@ def docker_client() -> docker.DockerClient:
         client.images.pull(ALPINE_IMAGE)
     return client
 
-
 # ---------------------------------------------------------------------------
 # Profile creation & conversion (hot path — called per sandbox creation)
 # ---------------------------------------------------------------------------
-
 
 class TestProfileCreationPerf:
     """Profile factory + to_docker_kwargs() must be < 0.1ms per call."""
@@ -105,11 +100,9 @@ class TestProfileCreationPerf:
         assert median_us < 100, f"to_docker_kwargs() median {median_us:.1f}µs > 100µs"
         assert p99_us < 500, f"to_docker_kwargs() p99 {p99_us:.1f}µs > 500µs"
 
-
 # ---------------------------------------------------------------------------
 # Trust tier resolution (called per sandbox creation)
 # ---------------------------------------------------------------------------
-
 
 class TestTrustTierResolutionPerf:
     """from_trust_tier() with case-insensitive lookup must be < 0.1ms."""
@@ -150,11 +143,9 @@ class TestTrustTierResolutionPerf:
             f"Case-insensitive {median_lower:.1f}µs > 3x exact {median_exact:.1f}µs"
         )
 
-
 # ---------------------------------------------------------------------------
 # Input validation (called per mount_nexus)
 # ---------------------------------------------------------------------------
-
 
 class TestInputValidationPerf:
     """Validation functions must be < 0.05ms per call."""
@@ -203,11 +194,9 @@ class TestInputValidationPerf:
         median_us = statistics.median(times) / 1000
         assert median_us < 50, f"validate_domain() median {median_us:.1f}µs > 50µs"
 
-
 # ---------------------------------------------------------------------------
 # Squid config generation (called when proxy starts/restarts)
 # ---------------------------------------------------------------------------
-
 
 class TestSquidConfigPerf:
     """Squid config generation must be < 1ms even with many domains."""
@@ -238,11 +227,9 @@ class TestSquidConfigPerf:
             f"build_squid_config(100 domains) median {median_us:.1f}µs > 1000µs"
         )
 
-
 # ---------------------------------------------------------------------------
 # Audit logging (fire-and-forget, must not block)
 # ---------------------------------------------------------------------------
-
 
 class TestAuditLoggingPerf:
     """Audit logger must be < 0.1ms per call (fire-and-forget)."""
@@ -272,11 +259,9 @@ class TestAuditLoggingPerf:
         median_us = statistics.median(times) / 1000
         assert median_us < 100, f"log_egress_attempt() median {median_us:.1f}µs > 100µs"
 
-
 # ---------------------------------------------------------------------------
 # Domain merging (called when sandbox registers/unregisters)
 # ---------------------------------------------------------------------------
-
 
 class TestDomainMergingPerf:
     """Per-sandbox domain merging must be < 0.5ms even with many sandboxes."""
@@ -315,11 +300,9 @@ class TestDomainMergingPerf:
         median_us = statistics.median(times) / 1000
         assert median_us < 500, f"_merged_domains(100 sandboxes) median {median_us:.1f}µs > 500µs"
 
-
 # ---------------------------------------------------------------------------
 # Container creation overhead (real Docker)
 # ---------------------------------------------------------------------------
-
 
 class TestContainerCreationOverhead:
     """Security profiles should not add meaningful overhead to container creation."""

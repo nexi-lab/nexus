@@ -10,8 +10,6 @@ Provides distributed locking endpoints using Redis/Dragonfly:
 Extracted from ``fastapi_server.py`` during monolith decomposition (#1288).
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -35,7 +33,6 @@ from nexus.server.dependencies import require_auth
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["locks"])
-
 
 @router.post("/api/locks", status_code=201, response_model=LockResponse)
 async def acquire_lock(
@@ -98,7 +95,6 @@ async def acquire_lock(
         fence_token=fence_token,
     )
 
-
 @router.get("/api/locks", response_model=LockListResponse)
 async def list_locks(
     limit: int = Query(100, ge=1, le=1000, description="Max number of locks to return"),
@@ -144,7 +140,6 @@ async def list_locks(
             )
 
     return LockListResponse(locks=locks, count=len(locks))
-
 
 @router.get("/api/locks/{path:path}", response_model=LockStatusResponse)
 async def get_lock_status(
@@ -192,7 +187,6 @@ async def get_lock_status(
 
     return LockStatusResponse(path=path, locked=True, lock_info=lock_info_response)
 
-
 @router.delete("/api/locks/{path:path}")
 async def release_lock(
     path: str,
@@ -229,7 +223,6 @@ async def release_lock(
             detail="Lock release failed: not owned by this lock_id or already expired",
         )
     return JSONResponse(content={"released": True})
-
 
 @router.patch("/api/locks/{path:path}", response_model=LockResponse)
 async def extend_lock(

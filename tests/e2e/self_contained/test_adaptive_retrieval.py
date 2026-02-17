@@ -3,8 +3,6 @@
 Tests the adaptive k calculation through the FastAPI /api/search/query endpoint.
 """
 
-from __future__ import annotations
-
 import logging
 import sys
 from pathlib import Path
@@ -20,7 +18,6 @@ logger = logging.getLogger(__name__)
 _llm_path = str(Path(__file__).parent.parent.parent.parent / "src" / "nexus" / "llm")
 if _llm_path not in sys.path:
     sys.path.insert(0, _llm_path)
-
 
 class TestAdaptiveRetrievalFastAPI:
     """E2E tests for adaptive retrieval through FastAPI endpoints."""
@@ -158,7 +155,6 @@ class TestAdaptiveRetrievalFastAPI:
             assert len(calls) > 0
             assert calls[-1]["adaptive_k"] is False, "adaptive_k should default to False"
 
-
 class TestAdaptiveRetrievalDaemon:
     """Test adaptive retrieval in the search daemon."""
 
@@ -205,7 +201,6 @@ class TestAdaptiveRetrievalDaemon:
             assert "complexity=" in log_msg
             assert "k_final=" in log_msg
             logger.info(f"[TEST] Adaptive k log: {log_msg}")
-
 
 class TestAdaptiveRetrievalComplexity:
     """Test query complexity estimation."""
@@ -264,7 +259,6 @@ class TestAdaptiveRetrievalComplexity:
             assert 5 <= k <= 15, f"k={k} out of bounds for query: {query}"
             logger.info(f"[TEST] '{query[:30]}...' -> k={k}")
 
-
 class TestAdaptiveRetrievalAPIContract:
     """Test the API contract for adaptive retrieval."""
 
@@ -293,7 +287,6 @@ class TestAdaptiveRetrievalAPIContract:
         assert adaptive_k_param.get("schema", {}).get("default") is False
 
         logger.info(f"[TEST] adaptive_k param: {adaptive_k_param}")
-
 
 # Standalone test runner
 if __name__ == "__main__":

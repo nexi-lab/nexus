@@ -9,8 +9,6 @@ When NEXUS_DATABASE_URL is set (e.g. in the PG CI job), that database is used
 instead.
 """
 
-from __future__ import annotations
-
 import os
 from pathlib import Path
 
@@ -22,12 +20,10 @@ from sqlalchemy.pool import StaticPool
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
 _ALEMBIC_INI = str(_PROJECT_ROOT / "alembic" / "alembic.ini")
 
-
 @pytest.fixture
 def alembic_config():
     """Point pytest-alembic at the project's alembic.ini."""
     return {"file": _ALEMBIC_INI}
-
 
 @pytest.fixture
 def alembic_engine():

@@ -12,8 +12,6 @@ Unlike unit tests which mock dependencies, these tests use real
 file operations and the actual NexusFS stack.
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 
 import pytest
@@ -26,7 +24,6 @@ from nexus.core.permissions import OperationContext
 # ============================================================================
 # FIXTURES
 # ============================================================================
-
 
 @pytest.fixture
 def local_folder(tmp_path: Path) -> Path:
@@ -43,12 +40,10 @@ def local_folder(tmp_path: Path) -> Path:
 
     return tmp_path
 
-
 @pytest.fixture
 def connector(local_folder: Path) -> LocalConnectorBackend:
     """Create a LocalConnectorBackend instance."""
     return LocalConnectorBackend(local_folder)
-
 
 @pytest.fixture
 def context() -> OperationContext:
@@ -60,11 +55,9 @@ def context() -> OperationContext:
         zone_id="test_zone",
     )
 
-
 # ============================================================================
 # REGISTRY INTEGRATION
 # ============================================================================
-
 
 class TestRegistryIntegration:
     """Test connector registry integration."""
@@ -99,11 +92,9 @@ class TestRegistryIntegration:
         assert info.name == "local_connector"
         assert "local" in info.description.lower()
 
-
 # ============================================================================
 # READ OPERATIONS
 # ============================================================================
-
 
 class TestReadOperations:
     """Test read operations through the connector."""
@@ -150,11 +141,9 @@ class TestReadOperations:
         assert result.success is False
         assert "not found" in result.error_message.lower()
 
-
 # ============================================================================
 # WRITE OPERATIONS
 # ============================================================================
-
 
 class TestWriteOperations:
     """Test write operations through the connector."""
@@ -218,11 +207,9 @@ class TestWriteOperations:
         assert result.success is False
         assert "read-only" in result.error_message
 
-
 # ============================================================================
 # DIRECTORY OPERATIONS
 # ============================================================================
-
 
 class TestDirectoryOperations:
     """Test directory operations."""
@@ -304,11 +291,9 @@ class TestDirectoryOperations:
         assert connector.is_dir("subdir") is True
         assert connector.is_dir("readme.txt") is False
 
-
 # ============================================================================
 # CACHE INTEGRATION
 # ============================================================================
-
 
 class TestCacheIntegration:
     """Test L1 cache integration."""
@@ -323,11 +308,9 @@ class TestCacheIntegration:
         """Should have has_virtual_filesystem=True for path-based reads."""
         assert connector.has_virtual_filesystem is True
 
-
 # ============================================================================
 # FILE WATCHER INTEGRATION
 # ============================================================================
-
 
 class TestFileWatcherIntegration:
     """Test FileWatcher integration points."""
@@ -341,11 +324,9 @@ class TestFileWatcherIntegration:
         """get_watch_root should return mount root."""
         assert connector.get_watch_root() == local_folder
 
-
 # ============================================================================
 # PATH SECURITY
 # ============================================================================
-
 
 class TestPathSecurity:
     """Test path security (symlink escape prevention)."""
@@ -379,11 +360,9 @@ class TestPathSecurity:
         # This should be caught by path resolution
         assert connector.exists("../../../etc/passwd") is False
 
-
 # ============================================================================
 # RENAME OPERATIONS
 # ============================================================================
-
 
 class TestRenameOperations:
     """Test rename/move operations."""
@@ -437,11 +416,9 @@ class TestRenameOperations:
         assert result.success is False
         assert "read-only" in result.error_message
 
-
 # ============================================================================
 # STAT OPERATIONS
 # ============================================================================
-
 
 class TestStatOperations:
     """Test stat/metadata operations."""
@@ -479,11 +456,9 @@ class TestStatOperations:
         assert result.success is True
         assert result.data["is_file"] is True
 
-
 # ============================================================================
 # GLOB OPERATIONS
 # ============================================================================
-
 
 class TestGlobOperations:
     """Test glob pattern matching."""
@@ -519,11 +494,9 @@ class TestGlobOperations:
         assert result.success is True
         assert result.data == []
 
-
 # ============================================================================
 # EMPTY FILE HANDLING
 # ============================================================================
-
 
 class TestEmptyFileHandling:
     """Test edge cases with empty files."""
@@ -554,11 +527,9 @@ class TestEmptyFileHandling:
         assert result.success is True
         assert result.data == b""
 
-
 # ============================================================================
 # LARGE FILE HANDLING
 # ============================================================================
-
 
 class TestLargeFileHandling:
     """Test handling of large files."""
@@ -591,11 +562,9 @@ class TestLargeFileHandling:
         assert len(result.data) == 1024 * 1024
         assert result.data == large_content
 
-
 # ============================================================================
 # UNICODE FILENAME HANDLING
 # ============================================================================
-
 
 class TestUnicodeFilenames:
     """Test handling of unicode filenames."""
@@ -636,11 +605,9 @@ class TestUnicodeFilenames:
         assert isinstance(result, list)
         assert "test_file.txt" in result
 
-
 # ============================================================================
 # CONCURRENT ACCESS
 # ============================================================================
-
 
 class TestConcurrentAccess:
     """Test concurrent read/write operations."""
@@ -697,11 +664,9 @@ class TestConcurrentAccess:
             assert success is True, f"Write {i} failed"
             assert (local_folder / f"concurrent_{i}.txt").exists()
 
-
 # ============================================================================
 # DIRECTORY EDGE CASES
 # ============================================================================
-
 
 class TestDirectoryEdgeCases:
     """Test directory operation edge cases."""
@@ -748,11 +713,9 @@ class TestDirectoryEdgeCases:
         assert result.success is False
         assert "read-only" in result.error_message
 
-
 # ============================================================================
 # ERROR HANDLING
 # ============================================================================
-
 
 class TestErrorHandling:
     """Test error handling scenarios."""

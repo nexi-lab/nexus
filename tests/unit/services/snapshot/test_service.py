@@ -4,8 +4,6 @@ Tests: Init, IsTracked, Begin, TrackWrite, TrackDelete, Commit, Rollback,
        Get, List, Cleanup, Performance, FailureInjection.
 """
 
-from __future__ import annotations
-
 import json
 import time
 from datetime import UTC, datetime, timedelta
@@ -19,7 +17,6 @@ from nexus.services.snapshot.service import (
     TransactionNotActiveError,
     TransactionNotFoundError,
 )
-
 
 class TestInit:
     """Tests for service initialization."""
@@ -42,7 +39,6 @@ class TestInit:
     def test_init_creates_registry(self, snapshot_service: TransactionalSnapshotService) -> None:
         assert snapshot_service.registry is not None
         assert snapshot_service.registry.active_count == 0
-
 
 class TestIsTracked:
     """Tests for is_tracked() fast-path."""
@@ -77,7 +73,6 @@ class TestIsTracked:
         avg_ns = elapsed_ns / iterations
         # Allow generous margin for CI: 50us
         assert avg_ns < 50_000, f"is_tracked() too slow: {avg_ns}ns avg"
-
 
 class TestBegin:
     """Tests for begin()."""
@@ -121,7 +116,6 @@ class TestBegin:
         await snapshot_service.begin(zone_id="zone-1")
         await snapshot_service.begin(zone_id="zone-1")
         assert snapshot_service.registry.active_count == 2
-
 
 class TestTrackWrite:
     """Tests for track_write()."""
@@ -200,7 +194,6 @@ class TestTrackWrite:
         # CAS release should be called since tracking failed
         mock_cas_store.release.assert_called_with("hash2")
 
-
 class TestTrackDelete:
     """Tests for track_delete()."""
 
@@ -218,7 +211,6 @@ class TestTrackDelete:
             original_metadata={"size": 100, "version": 1},
         )
         mock_cas_store.hold_reference.assert_called_with("abc123")
-
 
 class TestCommit:
     """Tests for commit()."""
@@ -351,7 +343,6 @@ class TestCommit:
         assert len(exc_info.value.conflicts) == 1
         assert exc_info.value.conflicts[0].path == "/file.txt"
 
-
 class TestRollback:
     """Tests for rollback()."""
 
@@ -470,7 +461,6 @@ class TestRollback:
         mock_metadata_store.delete.assert_called_with("/new-file.txt")
         mock_cas_store.release.assert_called_with("new-hash")
 
-
 class TestGetTransaction:
     """Tests for get_transaction()."""
 
@@ -513,7 +503,6 @@ class TestGetTransaction:
         assert result.transaction_id == "txn-1"
         assert result.status == "active"
 
-
 class TestListTransactions:
     """Tests for list_transactions()."""
 
@@ -528,7 +517,6 @@ class TestListTransactions:
         result = await snapshot_service.list_transactions(zone_id="root")
         assert result == []
 
-
 class TestCleanup:
     """Tests for cleanup_expired()."""
 
@@ -542,7 +530,6 @@ class TestCleanup:
 
         cleaned = await snapshot_service.cleanup_expired()
         assert cleaned == 0
-
 
 class TestFailureInjection:
     """Failure injection tests for error handling."""

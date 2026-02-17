@@ -8,8 +8,6 @@ Tables:
     spending_approvals — approval workflow records (Phase 2)
 """
 
-from __future__ import annotations
-
 from datetime import UTC, date, datetime
 
 from sqlalchemy import (
@@ -26,7 +24,6 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base, uuid_pk
-
 
 class SpendingPolicyModel(Base):
     """Declarative spending policy for an agent or zone.
@@ -67,7 +64,6 @@ class SpendingPolicyModel(Base):
         Index("ix_spending_policies_zone_priority", "zone_id", "priority"),
     )
 
-
 class SpendingLedgerModel(Base):
     """Period-based spending counter.
 
@@ -102,7 +98,6 @@ class SpendingLedgerModel(Base):
         ),
         Index("ix_spending_ledger_agent_zone", "agent_id", "zone_id"),
     )
-
 
 class SpendingApprovalModel(Base):
     """Approval workflow record (Phase 2).

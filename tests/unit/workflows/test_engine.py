@@ -14,7 +14,6 @@ from nexus.workflows.types import (
     WorkflowTrigger,
 )
 
-
 class TestWorkflowEngine:
     """Test WorkflowEngine."""
 

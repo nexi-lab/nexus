@@ -64,7 +64,6 @@ _optional_backends_registered = False
 _registration_lock = threading.Lock()
 _logger = logging.getLogger(__name__)
 
-
 def _register_optional_backends() -> None:
     """Register optional backends on first use (lazy loading)."""
     global _optional_backends_registered
@@ -83,7 +82,6 @@ def _register_optional_backends() -> None:
                 globals()[global_name] = getattr(module, class_name)
             except ImportError as e:
                 _logger.debug("Optional backend %s not available: %s", global_name, e)
-
 
 __all__ = [
     # Base classes

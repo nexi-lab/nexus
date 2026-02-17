@@ -16,8 +16,6 @@ Ledger update (record_spending):
 Default behavior: open by default (no policy = allow all transactions).
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import time
@@ -37,6 +35,8 @@ from nexus.pay.spending_policy import (
     SpendingPolicy,
 )
 
+from collections.abc import Callable
+from sqlalchemy.ext.asyncio import AsyncSession
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -48,7 +48,6 @@ logger = logging.getLogger(__name__)
 
 # Default approval expiry: 24 hours
 _APPROVAL_EXPIRY_HOURS = 24
-
 
 def _current_period_start(period_type: str, ref: date | None = None) -> date:
     """Calculate the start of the current period.
@@ -70,7 +69,6 @@ def _current_period_start(period_type: str, ref: date | None = None) -> date:
         return ref.replace(day=1)
     msg = f"Unknown period_type: {period_type}"
     raise ValueError(msg)
-
 
 class SpendingPolicyService:
     """Manages spending policies and evaluates transactions against them.
@@ -852,11 +850,9 @@ class SpendingPolicyService:
         self._hourly_counters.clear()
         self._daily_tx_counts.clear()
 
-
 # =============================================================================
 # Helpers
 # =============================================================================
-
 
 def _to_micro_or_none(value: Decimal | None) -> int | None:
     """Convert credits Decimal to micro-credits int, or None."""
@@ -864,8 +860,7 @@ def _to_micro_or_none(value: Decimal | None) -> int | None:
         return None
     return credits_to_micro(value)
 
-
-def _model_to_policy(model: SpendingPolicyModel) -> SpendingPolicy:
+def _model_to_policy(model: "SpendingPolicyModel") -> SpendingPolicy:
     """Convert SQLAlchemy model to frozen dataclass."""
     rules_parsed: list[dict[str, Any]] | None = None
     if model.rules is not None:
@@ -901,7 +896,6 @@ def _model_to_policy(model: SpendingPolicyModel) -> SpendingPolicy:
         created_at=model.created_at,
         updated_at=model.updated_at,
     )
-
 
 def _approval_model_to_dataclass(model: Any) -> SpendingApproval:
     """Convert SpendingApprovalModel to SpendingApproval dataclass."""

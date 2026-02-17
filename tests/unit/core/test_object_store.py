@@ -13,8 +13,6 @@ Tests:
 Parametrized across LocalBackend and MockBackend.
 """
 
-from __future__ import annotations
-
 import hashlib
 import time
 from unittest.mock import MagicMock
@@ -26,7 +24,6 @@ from nexus.backends.local import LocalBackend
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.object_store import BackendObjectStore, ObjectStoreABC, _validate_hash
 from nexus.core.response import HandlerResponse
-
 
 class MockBackend(Backend):
     """Minimal in-memory Backend for ObjectStoreABC conformance tests."""
@@ -96,9 +93,7 @@ class MockBackend(Backend):
     def is_directory(self, path, context=None) -> HandlerResponse[bool]:
         return HandlerResponse.ok(data=False, backend_name="mock")
 
-
 # === Fixtures ===
-
 
 @pytest.fixture
 def local_store(tmp_path) -> BackendObjectStore:
@@ -106,18 +101,15 @@ def local_store(tmp_path) -> BackendObjectStore:
     backend = LocalBackend(root_path=str(tmp_path))
     return BackendObjectStore(backend)
 
-
 @pytest.fixture
 def mock_backend() -> MockBackend:
     """Raw MockBackend for spy-based assertions."""
     return MockBackend()
 
-
 @pytest.fixture
 def mock_store(mock_backend) -> BackendObjectStore:
     """ObjectStoreABC backed by MockBackend."""
     return BackendObjectStore(mock_backend)
-
 
 @pytest.fixture(params=["local", "mock"])
 def store(request, tmp_path) -> BackendObjectStore:
@@ -129,9 +121,7 @@ def store(request, tmp_path) -> BackendObjectStore:
         backend = MockBackend()
         return BackendObjectStore(backend)
 
-
 # === Conformance Tests ===
-
 
 class TestObjectStoreConformance:
     """Core conformance tests — must pass for all ObjectStoreABC implementations."""
@@ -193,9 +183,7 @@ class TestObjectStoreConformance:
         h2 = store.write(content)
         assert h1 == h2
 
-
 # === Edge Case Tests (Issue 9A) ===
-
 
 class TestEdgeCases:
     """Edge cases that validate adapter boundary behavior."""
@@ -253,9 +241,7 @@ class TestEdgeCases:
         retrieved = store.read(content_hash)
         assert len(retrieved) == store.size(content_hash)
 
-
 # === Protocol isinstance Tests ===
-
 
 class TestProtocolConformance:
     def test_backend_object_store_isinstance(self, mock_store: BackendObjectStore) -> None:
@@ -270,9 +256,7 @@ class TestProtocolConformance:
     def test_local_store_name(self, local_store: BackendObjectStore) -> None:
         assert local_store.name == "local"
 
-
 # === Adapter Error Handling Tests (Issue 10A) ===
-
 
 class TestAdapterErrorHandling:
     def test_read_nonexistent_raises(self, mock_store: BackendObjectStore) -> None:
@@ -300,9 +284,7 @@ class TestAdapterErrorHandling:
         h2 = mock_store.write(content)
         assert h1 == h2
 
-
 # === Hash Validation Tests (Issue 5A) ===
-
 
 class TestHashValidation:
     """Validates _validate_hash rejects malformed hashes at adapter boundary."""
@@ -353,9 +335,7 @@ class TestHashValidation:
         with pytest.raises(ValueError, match="Invalid SHA-256"):
             mock_store.batch_read([valid, invalid])
 
-
 # === Context Propagation Tests (Issue 11A) ===
-
 
 class TestContextPropagation:
     """Verify OperationContext flows from adapter to backend."""
@@ -401,9 +381,7 @@ class TestContextPropagation:
         store.batch_read(["a" * 64])
         assert mock_backend._last_context is ctx
 
-
 # === Repr and Debuggability Tests (Issue 6A) ===
-
 
 class TestReprAndDebug:
     """Verify __repr__ and read-only properties work correctly."""
@@ -429,9 +407,7 @@ class TestReprAndDebug:
     def test_backend_property_returns_backend_type(self, local_store: BackendObjectStore) -> None:
         assert isinstance(local_store.backend, LocalBackend)
 
-
 # === Benchmark Tests ===
-
 
 class TestAdapterOverhead:
     def test_adapter_overhead_under_50us(self, mock_store: BackendObjectStore) -> None:

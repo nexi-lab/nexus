@@ -17,8 +17,6 @@ Environment Variables:
     DRAGONFLY_URL: Alternative Redis URL (Dragonfly-specific)
 """
 
-from __future__ import annotations
-
 import hashlib
 import os
 
@@ -33,7 +31,6 @@ from nexus.server.token_utils import parse_sk_token
 RATE_LIMIT_ANONYMOUS = os.environ.get("NEXUS_RATE_LIMIT_ANONYMOUS", "60/minute")
 RATE_LIMIT_AUTHENTICATED = os.environ.get("NEXUS_RATE_LIMIT_AUTHENTICATED", "300/minute")
 RATE_LIMIT_PREMIUM = os.environ.get("NEXUS_RATE_LIMIT_PREMIUM", "1000/minute")
-
 
 def _get_rate_limit_key(request: Request) -> str:
     """Extract rate limit key from request.
@@ -63,7 +60,6 @@ def _get_rate_limit_key(request: Request) -> str:
     # Fall back to IP address
     return str(get_remote_address(request))
 
-
 def _rate_limit_exceeded_handler(_request: Request, exc: Exception) -> JSONResponse:
     """Custom handler for rate limit exceeded errors."""
     detail = getattr(exc, "detail", str(exc))
@@ -77,7 +73,6 @@ def _rate_limit_exceeded_handler(_request: Request, exc: Exception) -> JSONRespo
         },
         headers={"Retry-After": str(retry_after)},
     )
-
 
 # Global limiter instance (initialized in create_app via fastapi_server.create_app).
 # Starts as a no-op limiter; replaced with a configured instance at app startup.

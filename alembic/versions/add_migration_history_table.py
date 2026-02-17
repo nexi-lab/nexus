@@ -26,7 +26,6 @@ down_revision: Union[str, Sequence[str], None] = "tune_hnsw_index_for_100k_vecto
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Create migration_history table."""
     op.create_table(
@@ -67,7 +66,6 @@ def upgrade() -> None:
         "migration_history",
         ["started_at"],
     )
-
 
 def downgrade() -> None:
     """Drop migration_history table."""

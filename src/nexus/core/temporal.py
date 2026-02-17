@@ -7,19 +7,15 @@ Based on SimpleMem research (arXiv:2601.02553) which achieves
 58.62 F1 on temporal reasoning vs 48.91 for Mem0.
 """
 
-from __future__ import annotations
-
 import re
 from datetime import UTC, datetime, timedelta
 from typing import NamedTuple
-
 
 class TemporalRange(NamedTuple):
     """A temporal range with start and end datetimes."""
 
     start: datetime
     end: datetime
-
 
 def parse_datetime(value: str | datetime | None) -> datetime | None:
     """Parse a datetime from string or pass through datetime object.
@@ -92,7 +88,6 @@ def parse_datetime(value: str | datetime | None) -> datetime | None:
 
     raise ValueError(f"Cannot parse datetime: {value!r}")
 
-
 def parse_temporal_range(value: str) -> TemporalRange:
     """Parse a partial date string into a start/end datetime range.
 
@@ -154,7 +149,6 @@ def parse_temporal_range(value: str) -> TemporalRange:
     if dt is None:
         raise ValueError(f"Cannot parse temporal range: {value!r}")
     return TemporalRange(dt, dt)
-
 
 def validate_temporal_params(
     after: str | datetime | None = None,

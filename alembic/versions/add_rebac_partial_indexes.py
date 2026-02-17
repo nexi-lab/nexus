@@ -30,7 +30,6 @@ down_revision: Union[str, None] = "add_tiger_cache"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Create partial indexes for non-expired ReBAC tuples.
 
@@ -112,7 +111,6 @@ def upgrade() -> None:
             ["relation", "object_type", "object_id", "subject_relation", "zone_id"],
             if_not_exists=True,
         )
-
 
 def downgrade() -> None:
     """Remove partial indexes."""

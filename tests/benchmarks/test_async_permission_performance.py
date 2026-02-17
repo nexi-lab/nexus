@@ -9,8 +9,6 @@ Goal: Permission enforcement should add <20ms overhead per operation.
 Converted to pytest-benchmark for CI integration (Issue #1304).
 """
 
-from __future__ import annotations
-
 import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -22,14 +20,12 @@ from nexus.core.permissions import OperationContext
 from nexus.rebac.async_permissions import AsyncPermissionEnforcer
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
-
 @pytest.fixture
 def metadata_store(tmp_path):
     """Create a local RaftMetadataStore for benchmarks."""
     store = RaftMetadataStore.embedded(str(tmp_path / "raft"))
     yield store
     store.close()
-
 
 @pytest.fixture
 def mock_rebac_manager():
@@ -38,7 +34,6 @@ def mock_rebac_manager():
     mock.rebac_check.return_value = True
     mock.rebac_check_bulk.return_value = {}
     return mock
-
 
 def test_write_performance_without_permissions(benchmark, tmp_path: Path, metadata_store):
     """Benchmark write operations WITHOUT permission enforcement."""
@@ -63,7 +58,6 @@ def test_write_performance_without_permissions(benchmark, tmp_path: Path, metada
         loop.run_until_complete(fs.close())
     finally:
         loop.close()
-
 
 def test_write_performance_with_permissions(
     benchmark, tmp_path: Path, metadata_store, mock_rebac_manager: AsyncMock
@@ -94,7 +88,6 @@ def test_write_performance_with_permissions(
     finally:
         loop.close()
 
-
 def test_read_performance_without_permissions(benchmark, tmp_path: Path, metadata_store):
     """Benchmark read operations WITHOUT permission enforcement."""
     loop = asyncio.new_event_loop()
@@ -123,7 +116,6 @@ def test_read_performance_without_permissions(benchmark, tmp_path: Path, metadat
         loop.run_until_complete(fs.close())
     finally:
         loop.close()
-
 
 def test_read_performance_with_permissions(
     benchmark, tmp_path: Path, metadata_store, mock_rebac_manager: AsyncMock
@@ -159,7 +151,6 @@ def test_read_performance_with_permissions(
         loop.run_until_complete(fs.close())
     finally:
         loop.close()
-
 
 @pytest.mark.benchmark_ci
 def test_permission_overhead_acceptable(

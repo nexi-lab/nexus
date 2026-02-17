@@ -1,13 +1,10 @@
 """Feedback request/response models for API v2."""
 
-from __future__ import annotations
-
 from typing import Any, Literal
 
 from pydantic import Field
 
 from nexus.server.api.v2.models.base import ApiModel
-
 
 class FeedbackAddRequest(ApiModel):
     """Request for POST /api/v2/feedback."""
@@ -21,7 +18,6 @@ class FeedbackAddRequest(ApiModel):
     message: str | None = Field(None, description="Feedback message")
     metrics: dict[str, Any] | None = Field(None, description="Feedback metrics")
 
-
 class FeedbackScoreRequest(ApiModel):
     """Request for POST /api/v2/feedback/score."""
 
@@ -30,14 +26,12 @@ class FeedbackScoreRequest(ApiModel):
         "latest", description="Scoring strategy"
     )
 
-
 class FeedbackRelearnRequest(ApiModel):
     """Request for POST /api/v2/feedback/relearn."""
 
     trajectory_id: str = Field(..., description="Trajectory to mark for relearning")
     reason: str = Field(..., description="Reason for relearning")
     priority: int = Field(5, ge=1, le=10, description="Relearning priority")
-
 
 class FeedbackResponse(ApiModel):
     """Response model for feedback objects."""
@@ -50,7 +44,6 @@ class FeedbackResponse(ApiModel):
     message: str | None = None
     created_at: str | None = None
 
-
 class TrajectoryFeedbackListResponse(ApiModel):
     """Response for GET /api/v2/feedback/{trajectory_id}."""
 
@@ -58,13 +51,11 @@ class TrajectoryFeedbackListResponse(ApiModel):
     feedbacks: list[dict[str, Any]]
     total: int
 
-
 class FeedbackAddResponse(ApiModel):
     """Response for POST /api/v2/feedback."""
 
     feedback_id: str
     status: str = "created"
-
 
 class FeedbackScoreResponse(ApiModel):
     """Response for POST /api/v2/feedback/score."""

@@ -19,7 +19,6 @@ down_revision: Union[str, Sequence[str], None] = "928a619dabf4"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Upgrade schema."""
     # Add is_default column to acl_entries table for default ACL entries
@@ -28,7 +27,6 @@ def upgrade() -> None:
         "acl_entries", sa.Column("is_default", sa.Boolean(), nullable=False, server_default="0")
     )
     op.create_index("idx_acl_entries_is_default", "acl_entries", ["is_default"], unique=False)
-
 
 def downgrade() -> None:
     """Downgrade schema."""

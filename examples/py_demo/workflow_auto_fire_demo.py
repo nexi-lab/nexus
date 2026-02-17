@@ -30,19 +30,16 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import nexus
 from nexus.workflows import WorkflowAPI, WorkflowLoader
 
-
 def print_header(title: str):
     """Print a formatted header."""
     print("\n" + "=" * 70)
     print(f"  {title}")
     print("=" * 70 + "\n")
 
-
 def print_step(step: int, description: str):
     """Print a step marker."""
     print(f"\n📍 Step {step}: {description}")
     print("-" * 70)
-
 
 async def main():
     """Run the workflow auto-fire demonstration."""
@@ -349,7 +346,6 @@ actions:
     # Close connection
     if hasattr(nx, "close"):
         nx.close()
-
 
 if __name__ == "__main__":
     try:

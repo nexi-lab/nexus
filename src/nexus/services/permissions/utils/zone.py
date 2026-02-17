@@ -6,12 +6,9 @@ Provides:
 - Zone role checks: is_zone_owner, is_zone_admin, can_invite_to_zone
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 DEFAULT_ZONE: str = "root"
-
 
 def normalize_zone_id(zone_id: str | None) -> str:
     """Return *zone_id* if truthy, otherwise the default zone sentinel.
@@ -25,11 +22,9 @@ def normalize_zone_id(zone_id: str | None) -> str:
     """
     return zone_id or DEFAULT_ZONE
 
-
 # ==============================================================================
 # ReBAC Group Naming Helpers
 # ==============================================================================
-
 
 def zone_group_id(zone_id: str) -> str:
     """Generate zone group ID from zone_id.
@@ -44,7 +39,6 @@ def zone_group_id(zone_id: str) -> str:
         zone_group_id("acme") -> "zone-acme"
     """
     return f"zone-{zone_id}"
-
 
 def parse_zone_from_group(group_id: str) -> str | None:
     """Extract zone_id from group ID.
@@ -63,7 +57,6 @@ def parse_zone_from_group(group_id: str) -> str | None:
         return group_id[len("zone-") :]
     return None
 
-
 def is_zone_group(group_id: str) -> bool:
     """Check if group ID is a zone group.
 
@@ -74,7 +67,6 @@ def is_zone_group(group_id: str) -> bool:
         True if group ID is a zone group (starts with "zone-")
     """
     return group_id.startswith("zone-")
-
 
 def is_zone_owner(
     rebac_manager: Any,
@@ -100,7 +92,6 @@ def is_zone_owner(
             zone_id=zone_id,
         )
     )
-
 
 def is_zone_admin(
     rebac_manager: Any,
@@ -129,7 +120,6 @@ def is_zone_admin(
             zone_id=zone_id,
         )
     )
-
 
 def can_invite_to_zone(
     rebac_manager: Any,

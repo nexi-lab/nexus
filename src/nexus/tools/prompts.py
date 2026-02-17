@@ -149,7 +149,6 @@ Help users accomplish a wide variety of tasks including coding, data analysis, r
 Be proactive, thorough, and adapt to the user's needs.
 """
 
-
 def get_skills_prompt(config: RunnableConfig, state: dict[str, Any] | None = None) -> str:
     """Generate a formatted skills prompt section from available Nexus skills.
 
@@ -210,7 +209,6 @@ def get_skills_prompt(config: RunnableConfig, state: dict[str, Any] | None = Non
         # In production, you might want to log this warning
         print(f"Warning: Could not fetch skills for prompt: {e}")
         return ""
-
 
 def get_prompt(
     config: RunnableConfig,
@@ -281,7 +279,6 @@ The user currently has the following file open in their editor:
 When the user asks questions or requests changes without specifying a file, they are likely referring to this currently opened file. Use this context to provide more relevant and targeted assistance."""
 
     return full_prompt
-
 
 # All available prompts
 __all__ = [

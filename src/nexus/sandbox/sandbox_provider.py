@@ -4,23 +4,19 @@ Provides a unified interface for managing sandboxes across different providers
 (E2B, Docker, Modal, etc.). Each provider implements create/run/pause/resume/destroy.
 """
 
-from __future__ import annotations
-
 import re
 import urllib.parse
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-if TYPE_CHECKING:
-    from nexus.sandbox.security_profile import SandboxSecurityProfile
-    from nexus.validation.models import ValidationResult
+from nexus.sandbox.security_profile import SandboxSecurityProfile
+from nexus.validation.models import ValidationResult
 
 # Validation patterns for shell-safe inputs
 _MOUNT_PATH_PATTERN = re.compile(r"^/[a-zA-Z0-9/_\-.]+$")
 _AGENT_ID_PATTERN = re.compile(r"^[a-zA-Z0-9_,\-.:@]+$")
-
 
 def validate_mount_path(path: str) -> str:
     """Validate a mount path is safe for shell interpolation.
@@ -40,7 +36,6 @@ def validate_mount_path(path: str) -> str:
             "alphanumeric, '/', '_', '-', '.' characters"
         )
     return path
-
 
 def validate_nexus_url(url: str) -> str:
     """Validate a Nexus server URL is safe for shell interpolation.
@@ -62,7 +57,6 @@ def validate_nexus_url(url: str) -> str:
         raise ValueError(f"URL contains shell metacharacters: {url!r}")
     return url
 
-
 def validate_agent_id(agent_id: str) -> str:
     """Validate an agent ID is safe for shell interpolation.
 
@@ -82,9 +76,7 @@ def validate_agent_id(agent_id: str) -> str:
         )
     return agent_id
 
-
 SUPPORTED_LANGUAGE_KEYS = frozenset({"python", "javascript", "js", "bash", "sh"})
-
 
 def validate_language(language: str, supported: dict[str, str] | None = None) -> str:
     """Validate a language key is supported.
@@ -107,7 +99,6 @@ def validate_language(language: str, supported: dict[str, str] | None = None) ->
         )
     return language
 
-
 @dataclass
 class CodeExecutionResult:
     """Result from code execution in sandbox."""
@@ -117,7 +108,6 @@ class CodeExecutionResult:
     exit_code: int
     execution_time: float  # Seconds
     validations: list[ValidationResult] | None = None
-
 
 @dataclass
 class SandboxInfo:
@@ -129,7 +119,6 @@ class SandboxInfo:
     provider: str
     template_id: str | None = None
     metadata: dict[str, Any] | None = None
-
 
 class SandboxProvider(ABC):
     """Abstract base class for sandbox providers.
@@ -289,42 +278,35 @@ class SandboxProvider(ABC):
         """
         ...
 
-
 class SandboxProviderError(Exception):
     """Base exception for sandbox provider errors."""
 
     pass
-
 
 class SandboxCreationError(SandboxProviderError):
     """Raised when sandbox creation fails."""
 
     pass
 
-
 class SandboxNotFoundError(SandboxProviderError):
     """Raised when sandbox doesn't exist."""
 
     pass
-
 
 class ExecutionTimeoutError(SandboxProviderError):
     """Raised when code execution times out."""
 
     pass
 
-
 class UnsupportedLanguageError(SandboxProviderError):
     """Raised when language is not supported."""
 
     pass
 
-
 class UnsupportedOperationError(SandboxProviderError):
     """Raised when operation is not supported by provider."""
 
     pass
-
 
 class EscalationNeeded(SandboxProviderError):
     """Raised when a sandbox provider cannot handle the code and needs escalation.

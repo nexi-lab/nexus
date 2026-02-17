@@ -9,8 +9,6 @@ Issue #1428 adds WorkspaceSnapshot, MemoryQuery, and Metrics integration tests.
 Uses tmp_path for filesystem and in-memory stubs for executors.
 """
 
-from __future__ import annotations
-
 import json
 import types
 from datetime import datetime
@@ -34,7 +32,6 @@ from nexus.services.context_manifest.resolver import ManifestResolver
 # Stub executors
 # ---------------------------------------------------------------------------
 
-
 class IntegrationOkExecutor:
     """Returns realistic-looking data for integration testing."""
 
@@ -51,7 +48,6 @@ class IntegrationOkExecutor:
             elapsed_ms=5.0,
         )
 
-
 def _make_all_ok_executors() -> dict[str, Any]:
     return {
         "mcp_tool": IntegrationOkExecutor(),
@@ -66,11 +62,9 @@ def _make_all_ok_executors() -> dict[str, Any]:
         ),
     }
 
-
 # ===========================================================================
 # Test 1: Full pipeline — multi-source resolution
 # ===========================================================================
-
 
 class TestFullPipeline:
     @pytest.mark.asyncio
@@ -106,11 +100,9 @@ class TestFullPipeline:
             assert "status" in data
             assert data["status"] == "ok"
 
-
 # ===========================================================================
 # Test 2: _index.json schema validation
 # ===========================================================================
-
 
 class TestIndexJsonSchema:
     @pytest.mark.asyncio
@@ -143,11 +135,9 @@ class TestIndexJsonSchema:
             assert "file" in source_entry
             assert "elapsed_ms" in source_entry
 
-
 # ===========================================================================
 # Test 3: Truncation writes truncated content to disk
 # ===========================================================================
-
 
 class LargeDataExecutor:
     async def execute(self, source: Any, variables: dict[str, str]) -> SourceResult:  # noqa: ARG002
@@ -158,7 +148,6 @@ class LargeDataExecutor:
             data="A" * 500_000,  # 500KB
             elapsed_ms=3.0,
         )
-
 
 class TestTruncationIntegration:
     @pytest.mark.asyncio
@@ -179,11 +168,9 @@ class TestTruncationIntegration:
         data = json.loads(result_files[0].read_text())
         assert data["status"] == "truncated"
 
-
 # ===========================================================================
 # Test 4: ManifestResult timing is reasonable
 # ===========================================================================
-
 
 class TestTimingMetrics:
     @pytest.mark.asyncio
@@ -197,11 +184,9 @@ class TestTimingMetrics:
         # Stubs are fast — should be well under 1 second
         assert 0 < result.total_ms < 1000
 
-
 # ===========================================================================
 # Test 5: AgentRecord manifest round-trip
 # ===========================================================================
-
 
 class TestAgentRecordManifestRoundTrip:
     def test_serialize_and_deserialize_manifest(self) -> None:
@@ -266,11 +251,9 @@ class TestAgentRecordManifestRoundTrip:
         )
         assert record.context_manifest == ()
 
-
 # ===========================================================================
 # Test 6: FileGlobExecutor e2e (Issue #1427)
 # ===========================================================================
-
 
 class TestFileGlobExecutorE2E:
     @pytest.mark.asyncio
@@ -297,11 +280,9 @@ class TestFileGlobExecutorE2E:
         assert "readme.md" not in result.data["files"]  # .md excluded by *.py pattern
         assert result.data["files"]["main.py"] == "print('main')"
 
-
 # ===========================================================================
 # Test 7: Full pipeline with real FileGlobExecutor (Issue #1427)
 # ===========================================================================
-
 
 class TestFullPipelineWithFileGlob:
     @pytest.mark.asyncio
@@ -348,11 +329,9 @@ class TestFullPipelineWithFileGlob:
         index = json.loads((output_dir / "_index.json").read_text())
         assert index["source_count"] == 2
 
-
 # ===========================================================================
 # Test 8: WorkspaceSnapshotExecutor with StubSnapshotLookup (Issue #1428)
 # ===========================================================================
-
 
 class StubSnapshotLookup:
     """Stub SnapshotLookup for integration testing."""
@@ -365,7 +344,6 @@ class StubSnapshotLookup:
 
     def get_latest_snapshot(self, workspace_path: str) -> dict[str, Any] | None:
         return None
-
 
 class TestWorkspaceSnapshotExecutorInPipeline:
     @pytest.mark.asyncio
@@ -404,11 +382,9 @@ class TestWorkspaceSnapshotExecutorInPipeline:
         assert result.sources[0].data["snapshot_id"] == "snap-int-001"
         assert result.sources[0].data["file_count"] == 5
 
-
 # ===========================================================================
 # Test 9: MemoryQueryExecutor with StubMemorySearch (Issue #1428)
 # ===========================================================================
-
 
 class StubMemorySearch:
     """Stub MemorySearch for integration testing."""
@@ -417,7 +393,6 @@ class StubMemorySearch:
         return [
             {"content": "test result", "score": 0.9, "memory_type": "fact"},
         ], search_mode
-
 
 class TestMemoryQueryExecutorInPipeline:
     @pytest.mark.asyncio
@@ -442,11 +417,9 @@ class TestMemoryQueryExecutorInPipeline:
         assert result.sources[0].data["total"] == 1
         assert result.sources[0].data["search_mode"] == "hybrid"
 
-
 # ===========================================================================
 # Test 10: MetricsObserver wired to resolver (Issue #1428)
 # ===========================================================================
-
 
 class TestMetricsObserverInPipeline:
     @pytest.mark.asyncio

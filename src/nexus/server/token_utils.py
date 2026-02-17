@@ -4,10 +4,7 @@ Provides a single source of truth for parsing sk-style API tokens
 used by both authentication and rate limiting.
 """
 
-from __future__ import annotations
-
 from typing import NamedTuple
-
 
 class SKTokenFields(NamedTuple):
     """Parsed fields from an sk-<zone>_<user>_<id>_<random> token."""
@@ -15,7 +12,6 @@ class SKTokenFields(NamedTuple):
     zone: str | None
     user: str | None
     key_id: str | None
-
 
 def parse_sk_token(token: str) -> SKTokenFields | None:
     """Parse an sk-style API token into its constituent fields.

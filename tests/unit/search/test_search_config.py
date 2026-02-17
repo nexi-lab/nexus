@@ -7,8 +7,6 @@ Validates:
 - get_env_bool/float/int helpers
 """
 
-from __future__ import annotations
-
 import dataclasses
 
 import pytest
@@ -24,7 +22,6 @@ from nexus.search.config import (
 # =============================================================================
 # SearchConfig defaults
 # =============================================================================
-
 
 class TestSearchConfigDefaults:
     """Verify all default values are correct."""
@@ -97,11 +94,9 @@ class TestSearchConfigDefaults:
         config = SearchConfig()
         assert config.enable_attribute_boosting is True
 
-
 # =============================================================================
 # Frozen (immutable)
 # =============================================================================
-
 
 class TestSearchConfigFrozen:
     """SearchConfig must be frozen — mutation raises FrozenInstanceError."""
@@ -125,11 +120,9 @@ class TestSearchConfigFrozen:
         assert config.chunk_size == 512
         assert config.fusion_method == "weighted"
 
-
 # =============================================================================
 # Environment variable helpers
 # =============================================================================
-
 
 class TestGetEnvBool:
     """Test get_env_bool() helper."""
@@ -154,7 +147,6 @@ class TestGetEnvBool:
         assert get_env_bool("TEST_BOOL") is False
         assert get_env_bool("TEST_BOOL", True) is True
 
-
 class TestGetEnvFloat:
     """Test get_env_float() helper."""
 
@@ -173,7 +165,6 @@ class TestGetEnvFloat:
     def test_unset_returns_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("TEST_FLOAT", raising=False)
         assert get_env_float("TEST_FLOAT", 1.23) == 1.23
-
 
 class TestGetEnvInt:
     """Test get_env_int() helper."""
@@ -194,11 +185,9 @@ class TestGetEnvInt:
         monkeypatch.delenv("TEST_INT", raising=False)
         assert get_env_int("TEST_INT", 99) == 99
 
-
 # =============================================================================
 # search_config_from_env()
 # =============================================================================
-
 
 class TestSearchConfigFromEnv:
     """Test search_config_from_env() factory."""

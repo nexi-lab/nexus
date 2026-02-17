@@ -7,7 +7,6 @@ import time
 
 from e2b import AsyncSandbox
 
-
 async def main() -> None:
     print("=" * 60)
     print("Rust FUSE Client Build & Benchmark")
@@ -157,7 +156,6 @@ nohup sudo NEXUS_URL="{nexus_url}" NEXUS_API_KEY="{nexus_api_key}" \
     finally:
         await sandbox.kill()
         print("\n=== Done ===")
-
 
 if __name__ == "__main__":
     asyncio.run(main())

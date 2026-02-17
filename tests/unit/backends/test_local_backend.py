@@ -6,13 +6,11 @@ from nexus.backends.local import LocalBackend
 from nexus.core.exceptions import BackendError, NexusFileNotFoundError
 from nexus.core.hash_fast import hash_content
 
-
 @pytest.fixture
 def temp_backend(tmp_path):
     """Create a temporary local backend for testing."""
     backend = LocalBackend(root_path=tmp_path / "backend")
     yield backend
-
 
 def test_initialization(tmp_path):
     """Test backend initialization creates required directories."""
@@ -25,11 +23,9 @@ def test_initialization(tmp_path):
     assert backend.cas_root.exists()
     assert backend.dir_root.exists()
 
-
 def test_backend_name(temp_backend):
     """Test that backend name property returns correct value."""
     assert temp_backend.name == "local"
-
 
 def test_write_and_read_content(temp_backend):
     """Test writing and reading content."""
@@ -44,7 +40,6 @@ def test_write_and_read_content(temp_backend):
     retrieved = temp_backend.read_content(content_hash).unwrap()
     assert retrieved == content
 
-
 def test_write_duplicate_content(temp_backend):
     """Test writing duplicate content returns same hash."""
     content = b"Duplicate test content"
@@ -58,14 +53,12 @@ def test_write_duplicate_content(temp_backend):
     retrieved = temp_backend.read_content(hash1).unwrap()
     assert retrieved == content
 
-
 def test_read_nonexistent_content(temp_backend):
     """Test reading non-existent content raises error."""
     fake_hash = "a" * 64
 
     with pytest.raises(NexusFileNotFoundError):
         temp_backend.read_content(fake_hash).unwrap()
-
 
 def test_delete_content(temp_backend):
     """Test deleting content."""
@@ -83,7 +76,6 @@ def test_delete_content(temp_backend):
     with pytest.raises(NexusFileNotFoundError):
         temp_backend.read_content(content_hash).unwrap()
 
-
 def test_delete_nonexistent_content(temp_backend):
     """Test deleting non-existent content doesn't raise error."""
     from contextlib import suppress
@@ -94,7 +86,6 @@ def test_delete_nonexistent_content(temp_backend):
     with suppress(NexusFileNotFoundError):  # Expected behavior
         temp_backend.delete_content(fake_hash).unwrap()
 
-
 def test_exists_content(temp_backend):
     """Test checking if content exists."""
     content = b"Existence test"
@@ -104,7 +95,6 @@ def test_exists_content(temp_backend):
 
     fake_hash = "c" * 64
     assert temp_backend.content_exists(fake_hash).unwrap() is False
-
 
 def test_hash_to_path(temp_backend):
     """Test hash to path conversion."""
@@ -117,12 +107,10 @@ def test_hash_to_path(temp_backend):
     assert path.parent.parent.name == "ab"
     assert path.name == content_hash
 
-
 def test_hash_to_path_invalid_hash(temp_backend):
     """Test hash to path with invalid hash length."""
     with pytest.raises(ValueError, match="Invalid hash length"):
         temp_backend._hash_to_path("abc")
-
 
 def test_compute_hash(temp_backend):
     """Test content hash computation (using BLAKE3)."""
@@ -131,7 +119,6 @@ def test_compute_hash(temp_backend):
     expected_hash = hash_content(content)
 
     assert computed_hash == expected_hash
-
 
 def test_write_empty_content(temp_backend):
     """Test writing empty content."""
@@ -146,7 +133,6 @@ def test_write_empty_content(temp_backend):
     retrieved = temp_backend.read_content(content_hash).unwrap()
     assert retrieved == b""
 
-
 def test_write_large_content(temp_backend):
     """Test writing large content."""
     # 10 MB of data
@@ -158,7 +144,6 @@ def test_write_large_content(temp_backend):
     assert len(retrieved) == len(content)
     assert retrieved == content
 
-
 def test_get_content_size(temp_backend):
     """Test getting content size."""
     content = b"Test content for size"
@@ -166,7 +151,6 @@ def test_get_content_size(temp_backend):
 
     size = temp_backend.get_content_size(content_hash).unwrap()
     assert size == len(content)
-
 
 def test_content_deduplication(temp_backend):
     """Test that duplicate content is deduplicated."""
@@ -188,7 +172,6 @@ def test_content_deduplication(temp_backend):
     retrieved = temp_backend.read_content(hash1).unwrap()
     assert retrieved == content
 
-
 def test_directory_creation(temp_backend):
     """Test creating directories."""
     dir_path = "/test/nested/directory"
@@ -199,7 +182,6 @@ def test_directory_creation(temp_backend):
     assert physical_path.exists()
     assert physical_path.is_dir()
 
-
 def test_directory_creation_existing(temp_backend):
     """Test creating directory that already exists."""
     dir_path = "/test/existing"
@@ -208,14 +190,12 @@ def test_directory_creation_existing(temp_backend):
     # Create again - should not raise
     temp_backend.mkdir(dir_path, exist_ok=True).unwrap()
 
-
 def test_is_directory(temp_backend):
     """Test checking if path is a directory."""
     dir_path = "/test/directory"
     temp_backend.mkdir(dir_path, parents=True).unwrap()
 
     assert temp_backend.is_directory(dir_path).unwrap() is True
-
 
 def test_backend_error_on_invalid_root():
     """Test that backend raises error for invalid root path."""
@@ -227,7 +207,6 @@ def test_backend_error_on_invalid_root():
         backend = LocalBackend(f.name)
         backend._ensure_roots()
 
-
 def test_binary_content(temp_backend):
     """Test handling of binary content."""
     # Binary data with all byte values
@@ -236,7 +215,6 @@ def test_binary_content(temp_backend):
 
     retrieved = temp_backend.read_content(content_hash).unwrap()
     assert retrieved == content
-
 
 def test_unicode_directory_names(temp_backend):
     """Test handling of unicode in directory names."""
@@ -249,7 +227,6 @@ def test_unicode_directory_names(temp_backend):
     except Exception:
         # Some filesystems may not support unicode
         pytest.skip("Filesystem doesn't support unicode directory names")
-
 
 def test_multiple_backends_same_root(tmp_path):
     """Test that multiple backend instances can share same root."""
@@ -266,7 +243,6 @@ def test_multiple_backends_same_root(tmp_path):
     retrieved = backend2.read_content(hash1).unwrap()
     assert retrieved == content
 
-
 def test_list_directory(temp_backend):
     """Test listing directory contents."""
     # Create a directory structure
@@ -279,7 +255,6 @@ def test_list_directory(temp_backend):
     # list_dir returns directories with trailing slashes
     assert "sub1/" in items
     assert "sub2/" in items
-
 
 def test_batch_read_content_basic(temp_backend):
     """Test batch reading multiple content items."""
@@ -300,7 +275,6 @@ def test_batch_read_content_basic(temp_backend):
     assert result[hash2] == content2
     assert result[hash3] == content3
 
-
 def test_batch_read_content_missing_hashes(temp_backend):
     """Test batch read with some missing content hashes."""
     # Write one content item
@@ -319,12 +293,10 @@ def test_batch_read_content_missing_hashes(temp_backend):
     assert result[fake_hash1] is None  # Missing content returns None
     assert result[fake_hash2] is None
 
-
 def test_batch_read_content_empty_list(temp_backend):
     """Test batch read with empty list."""
     result = temp_backend.batch_read_content([])
     assert result == {}
-
 
 def test_batch_read_content_deduplication(temp_backend):
     """Test that batch read handles duplicate hashes correctly."""
@@ -337,7 +309,6 @@ def test_batch_read_content_deduplication(temp_backend):
     # Dictionary can only have one entry per unique key
     assert len(result) == 1
     assert result[content_hash] == content
-
 
 def test_batch_read_content_with_cache(tmp_path):
     """Test that batch read leverages content cache."""
@@ -366,7 +337,6 @@ def test_batch_read_content_with_cache(tmp_path):
     assert result2[hash1] == content1
     assert result2[hash2] == content2
 
-
 def test_batch_read_content_parallel(tmp_path):
     """Test batch read uses parallel reads for multiple uncached files.
 
@@ -390,7 +360,6 @@ def test_batch_read_content_parallel(tmp_path):
     assert len(result) == 10
     for i, h in enumerate(hashes):
         assert result[h] == contents[i]
-
 
 def test_batch_read_content_parallel_performance(tmp_path):
     """Test that parallel batch read is faster than sequential for many files.
@@ -420,7 +389,6 @@ def test_batch_read_content_parallel_performance(tmp_path):
     # Even sequential reads of 20 small files should be < 1s
     assert elapsed < 5.0, f"Batch read took {elapsed:.2f}s, expected < 5s"
 
-
 def test_batch_read_content_single_file_no_threadpool(tmp_path):
     """Test that single file batch read doesn't use ThreadPoolExecutor overhead."""
     backend = LocalBackend(root_path=tmp_path / "backend")
@@ -435,7 +403,6 @@ def test_batch_read_content_single_file_no_threadpool(tmp_path):
     assert len(result) == 1
     assert result[content_hash] == content
 
-
 def test_batch_read_workers_configurable(tmp_path):
     """Test that batch_read_workers is configurable via constructor."""
     # Default is 8
@@ -449,7 +416,6 @@ def test_batch_read_workers_configurable(tmp_path):
     # Custom value for fast NVMe
     backend_nvme = LocalBackend(root_path=tmp_path / "backend3", batch_read_workers=16)
     assert backend_nvme.batch_read_workers == 16
-
 
 def test_batch_read_respects_worker_limit(tmp_path):
     """Test that batch read respects the configured worker limit."""
@@ -468,7 +434,6 @@ def test_batch_read_respects_worker_limit(tmp_path):
     for i, h in enumerate(hashes):
         assert result[h] == contents[i]
 
-
 def test_stream_content_small_file(temp_backend):
     """Test streaming a small file."""
     content = b"Small file content for streaming test"
@@ -483,7 +448,6 @@ def test_stream_content_small_file(temp_backend):
 
     # Verify streaming produced multiple chunks
     assert len(chunks) > 1
-
 
 def test_stream_content_large_file(temp_backend):
     """Test streaming a large file in chunks."""
@@ -502,7 +466,6 @@ def test_stream_content_large_file(temp_backend):
     # Verify chunk count (should be ~16 chunks for 1MB / 64KB)
     assert len(chunks) == 16
 
-
 def test_stream_content_exact_chunk_boundary(temp_backend):
     """Test streaming when file size is exact multiple of chunk size."""
     chunk_size = 100
@@ -515,14 +478,12 @@ def test_stream_content_exact_chunk_boundary(temp_backend):
     assert all(len(chunk) == chunk_size for chunk in chunks)
     assert b"".join(chunks) == content
 
-
 def test_stream_content_missing_file(temp_backend):
     """Test that streaming non-existent content raises error."""
     fake_hash = "0" * 64
 
     with pytest.raises(NexusFileNotFoundError):
         list(temp_backend.stream_content(fake_hash))
-
 
 def test_stream_content_memory_efficient(temp_backend):
     """Test that streaming doesn't load entire file into memory."""
@@ -539,13 +500,11 @@ def test_stream_content_memory_efficient(temp_backend):
 
     assert total_bytes == len(large_content)
 
-
 # ---------------------------------------------------------------------------
 # Concurrent sync tests (Issue #925: verify CASBlobStore integration)
 # ---------------------------------------------------------------------------
 
 NUM_THREADS = 50
-
 
 class TestConcurrentSync:
     """Concurrent tests for LocalBackend with CASBlobStore integration."""
@@ -619,9 +578,7 @@ class TestConcurrentSync:
         writes = [r for r in results if isinstance(r, str)]
         assert all(r == h for r in writes)
 
-
 # === Chunked + CAS Integration Tests (Issue #925, Decision #11) ===
-
 
 class TestChunkedCASIntegration:
     """Integration tests for chunked storage with CASBlobStore."""

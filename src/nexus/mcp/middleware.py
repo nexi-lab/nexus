@@ -25,8 +25,6 @@ References:
     - Kong: tool filtering at gateway level
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 from collections.abc import Sequence
@@ -39,13 +37,13 @@ from fastmcp.tools.tool import Tool, ToolResult
 from nexus.mcp.profiles import TOOL_PATH_PREFIX
 from nexus.mcp.tool_utils import tool_error
 
+from nexus.rebac.manager import EnhancedReBACManager
 if TYPE_CHECKING:
     import mcp.types as mt
 
     from nexus.rebac.manager import EnhancedReBACManager
 
 logger = logging.getLogger(__name__)
-
 
 class ToolNamespaceMiddleware(Middleware):
     """Filter MCP tools by per-subject ReBAC grants.
@@ -376,11 +374,9 @@ class ToolNamespaceMiddleware(Middleware):
             "enabled": self._enabled,
         }
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
 
 def _text_content(text: str) -> Any:
     """Create an MCP TextContent object.

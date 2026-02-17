@@ -50,7 +50,6 @@ from nexus_tools import get_nexus_tools
 
 from nexus.remote import RemoteNexusFS
 
-
 def connect_to_nexus(tenant_id: str = "openai-agents-demo", agent_id: str = "react-agent"):
     """
     Connect to Nexus filesystem (local or remote) with multi-tenancy support.
@@ -126,7 +125,6 @@ def connect_to_nexus(tenant_id: str = "openai-agents-demo", agent_id: str = "rea
         )
         print(f"✓ Using local filesystem at {data_dir}")
         return nx
-
 
 def run_demo():
     """Run the OpenAI Agent SDK demo."""
@@ -264,7 +262,6 @@ Always provide clear, concise summaries and well-structured reports.""",
         traceback.print_exc()
 
     print()
-
 
 if __name__ == "__main__":
     run_demo()

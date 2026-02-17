@@ -11,13 +11,10 @@ Tests verify:
 - Concurrent operation safety
 """
 
-from __future__ import annotations
-
 import asyncio
 from decimal import Decimal
 
 import pytest
-
 
 class TestCreditsServiceE2E:
     """End-to-end tests for CreditsService (disabled mode)."""
@@ -200,7 +197,6 @@ class TestCreditsServiceE2E:
         )
 
         assert transfer_id is not None
-
 
 class TestModuleExports:
     """Test that all expected exports are available."""

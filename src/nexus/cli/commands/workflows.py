@@ -1,7 +1,5 @@
 """Workflow Automation commands - manage and execute workflows."""
 
-from __future__ import annotations
-
 import asyncio
 import json
 import os
@@ -10,7 +8,6 @@ import click
 from rich.table import Table
 
 from nexus.cli.utils import console, handle_error
-
 
 def _get_engine_with_storage():  # type: ignore[no-untyped-def]
     """Get workflow engine from NexusFS (factory-created, no private access).
@@ -39,11 +36,9 @@ def _get_engine_with_storage():  # type: ignore[no-untyped-def]
 
     return engine
 
-
 def register_commands(cli: click.Group) -> None:
     """Register all workflow commands."""
     cli.add_command(workflows)
-
 
 @click.group(name="workflows")
 def workflows() -> None:
@@ -65,7 +60,6 @@ def workflows() -> None:
         nexus workflows disable process-invoices
     """
     pass
-
 
 @workflows.command(name="load")
 @click.argument("file_path", type=click.Path(exists=True))
@@ -97,7 +91,6 @@ def workflows_load(file_path: str, enabled: bool) -> None:
 
     except Exception as e:
         handle_error(e)
-
 
 @workflows.command(name="list")
 def workflows_list() -> None:
@@ -135,7 +128,6 @@ def workflows_list() -> None:
 
     except Exception as e:
         handle_error(e)
-
 
 @workflows.command(name="test")
 @click.argument("workflow_name")
@@ -196,7 +188,6 @@ def workflows_test(workflow_name: str, file_path: str | None, context: str) -> N
     except Exception as e:
         handle_error(e)
 
-
 @workflows.command(name="runs")
 @click.argument("workflow_name")
 @click.option("--limit", default=10, help="Number of executions to show")
@@ -209,7 +200,6 @@ def workflows_runs(workflow_name: str, limit: int) -> None:
 
     except Exception as e:
         handle_error(e)
-
 
 @workflows.command(name="enable")
 @click.argument("workflow_name")
@@ -225,7 +215,6 @@ def workflows_enable(workflow_name: str) -> None:
     except Exception as e:
         handle_error(e)
 
-
 @workflows.command(name="disable")
 @click.argument("workflow_name")
 def workflows_disable(workflow_name: str) -> None:
@@ -239,7 +228,6 @@ def workflows_disable(workflow_name: str) -> None:
 
     except Exception as e:
         handle_error(e)
-
 
 @workflows.command(name="unload")
 @click.argument("workflow_name")
@@ -257,7 +245,6 @@ def workflows_unload(workflow_name: str) -> None:
 
     except Exception as e:
         handle_error(e)
-
 
 @workflows.command(name="discover")
 @click.argument("directory", type=click.Path(exists=True), default=".nexus/workflows")

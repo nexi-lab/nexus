@@ -10,8 +10,6 @@ Provides search daemon endpoints:
 Extracted from ``fastapi_server.py`` during monolith decomposition (#1288).
 """
 
-from __future__ import annotations
-
 import logging
 import time
 from typing import Any
@@ -29,14 +27,11 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["search"])
 
-
 # Graph-enhanced search business logic extracted to service layer (Issue #434).
-
 
 # =============================================================================
 # Endpoints
 # =============================================================================
-
 
 @router.get("/api/search/health")
 async def search_daemon_health(
@@ -56,7 +51,6 @@ async def search_daemon_health(
     health: dict[str, Any] = search_daemon.get_health()
     return health
 
-
 @router.get("/api/search/stats")
 async def search_daemon_stats(
     search_daemon: Any = Depends(get_search_daemon),
@@ -67,7 +61,6 @@ async def search_daemon_stats(
     """
     stats: dict[str, Any] = search_daemon.get_stats()
     return stats
-
 
 @router.get("/api/search/query")
 async def search_query(
@@ -245,7 +238,6 @@ async def search_query(
         logger.error(f"Search error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Search error: {e}") from e
 
-
 @router.post("/api/search/refresh")
 async def search_refresh_notify(
     path: str = Query(..., description="Path of the changed file"),
@@ -272,7 +264,6 @@ async def search_refresh_notify(
         "path": path,
         "change_type": change_type,
     }
-
 
 @router.post("/api/search/expand")
 async def search_expand(

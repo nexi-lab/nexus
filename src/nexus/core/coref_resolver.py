@@ -15,13 +15,10 @@ Example:
     "She called him yesterday" -> "Alice called John yesterday"
 """
 
-from __future__ import annotations
-
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any
-
 
 @dataclass
 class CorefResult:
@@ -31,7 +28,6 @@ class CorefResult:
     original_text: str
     replacements: list[dict[str, Any]] = field(default_factory=list)
     method: str = "none"  # "llm", "heuristic", "none"
-
 
 class CorefResolver(ABC):
     """Abstract base class for coreference resolvers."""
@@ -55,7 +51,6 @@ class CorefResolver(ABC):
             CorefResult with resolved text and replacement details.
         """
         pass
-
 
 class LLMCorefResolver(CorefResolver):
     """LLM-based coreference resolver (recommended approach).
@@ -349,7 +344,6 @@ Resolved text:"""
 
         return replacements
 
-
 class HeuristicCorefResolver(CorefResolver):
     """Simple heuristic-based coreference resolver (fallback only).
 
@@ -550,11 +544,9 @@ class HeuristicCorefResolver(CorefResolver):
             )
         return None
 
-
 # Convenience functions
 
 _default_resolver: CorefResolver | None = None
-
 
 def get_resolver(llm_provider: Any = None) -> CorefResolver:
     """Get a coreference resolver.
@@ -574,7 +566,6 @@ def get_resolver(llm_provider: Any = None) -> CorefResolver:
         # Try to create LLM resolver with default provider
         _default_resolver = LLMCorefResolver()
     return _default_resolver
-
 
 def resolve_coreferences(
     text: str,

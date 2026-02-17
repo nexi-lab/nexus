@@ -27,7 +27,6 @@ import httpx
 
 from .oauth_provider import OAuthCredential, OAuthError, OAuthProvider
 
-
 class GoogleOAuthProvider(OAuthProvider):
     """Google OAuth 2.0 provider for all Google services.
 

@@ -7,8 +7,6 @@ Issue #929: Adaptive algorithm selection for search operations.
 Issue #1499: Shared query analysis patterns for query routing and expansion.
 """
 
-from __future__ import annotations
-
 from enum import StrEnum
 
 # Grep strategy thresholds
@@ -21,7 +19,6 @@ GREP_CACHED_TEXT_RATIO = 0.8  # Use cached text path if > 80% files have cached 
 
 # Glob strategy thresholds
 GLOB_RUST_THRESHOLD = 50  # Use Rust acceleration above this file count
-
 
 class SearchStrategy(StrEnum):
     """Strategy for grep operations (Issue #929).
@@ -36,7 +33,6 @@ class SearchStrategy(StrEnum):
     TRIGRAM_INDEX = "trigram_index"  # > 500 files with trigram index
     ZOEKT_INDEX = "zoekt_index"  # > 1000 files with Zoekt index
 
-
 class GlobStrategy(StrEnum):
     """Strategy for glob operations (Issue #929)."""
 
@@ -44,7 +40,6 @@ class GlobStrategy(StrEnum):
     REGEX_COMPILED = "regex_compiled"  # Complex patterns with **
     RUST_BULK = "rust_bulk"  # > 50 files with Rust available
     DIRECTORY_PRUNED = "directory_pruned"  # Pattern has static prefix
-
 
 # =============================================================================
 # Query Analysis Patterns (Issue #1499)

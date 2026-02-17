@@ -3,8 +3,6 @@
 Parses text output from `mypy --no-error-summary`.
 """
 
-from __future__ import annotations
-
 import logging
 import re
 import shlex
@@ -25,7 +23,6 @@ _SEVERITY_MAP: dict[str, _Severity] = {
     "warning": "warning",
     "note": "info",
 }
-
 
 class MypyValidator(Validator):
     """Parser for mypy text output."""

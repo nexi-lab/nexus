@@ -3,13 +3,10 @@
 Issue #1603: Decompose remote/client.py into domain clients.
 """
 
-from __future__ import annotations
-
 import builtins
 from typing import Any
 
 from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
-
 
 class OAuthClient:
     """OAuth management domain client (sync)."""
@@ -85,7 +82,6 @@ class OAuthClient:
             "oauth_test_credential",
             {"provider": provider, "user_email": user_email},
         )
-
 
 class AsyncOAuthClient:
     """OAuth management domain client (async)."""

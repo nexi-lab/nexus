@@ -12,8 +12,6 @@ Features:
     - Snapshot for health API consumption
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 import time
@@ -21,7 +19,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass(frozen=True, slots=True)
 class ManifestMetricsConfig:
@@ -39,7 +36,6 @@ class ManifestMetricsConfig:
     max_listener_errors: int = 10
     log_source_names: bool = True
 
-
 @dataclass(frozen=True, slots=True)
 class SourceEvent:
     """Captured source execution event."""
@@ -50,7 +46,6 @@ class SourceEvent:
     elapsed_ms: float
     is_slow: bool
     timestamp: float = field(default_factory=time.time)
-
 
 class ManifestMetricsObserver:
     """Collects metrics for manifest resolution and source execution.

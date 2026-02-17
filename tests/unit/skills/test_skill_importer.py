@@ -68,7 +68,6 @@ version: 1.0.0
 This is missing the required description field.
 """
 
-
 def create_mock_skill_zip(
     skill_name: str, skill_md_content: str, include_extras: bool = True
 ) -> bytes:
@@ -101,7 +100,6 @@ def create_mock_skill_zip(
 
     return zip_buffer.getvalue()
 
-
 def create_invalid_structure_zip() -> bytes:
     """Create a ZIP with invalid structure (SKILL.md not at root of skill directory)."""
     zip_buffer = io.BytesIO()
@@ -112,7 +110,6 @@ def create_invalid_structure_zip() -> bytes:
 
     return zip_buffer.getvalue()
 
-
 def create_no_skill_md_zip() -> bytes:
     """Create a ZIP without SKILL.md file."""
     zip_buffer = io.BytesIO()
@@ -121,7 +118,6 @@ def create_no_skill_md_zip() -> bytes:
         zip_file.writestr("test-skill/README.md", "# Test\n\nNo SKILL.md here.")
 
     return zip_buffer.getvalue()
-
 
 @pytest.fixture
 def mock_filesystem():
@@ -133,7 +129,6 @@ def mock_filesystem():
     mock_fs.write = MagicMock()
     return mock_fs
 
-
 @pytest.fixture
 def mock_registry():
     """Create a mock skill registry."""
@@ -141,12 +136,10 @@ def mock_registry():
     mock_reg.discover = AsyncMock()
     return mock_reg
 
-
 @pytest.fixture
 def importer(mock_filesystem, mock_registry):
     """Create a SkillImporter instance with mocks."""
     return SkillImporter(mock_filesystem, mock_registry)
-
 
 @pytest.fixture
 def admin_context():
@@ -165,7 +158,6 @@ def admin_context():
         request_id="test-request-123",
     )
 
-
 @pytest.fixture
 def user_context():
     """Create a regular user operation context."""
@@ -182,7 +174,6 @@ def user_context():
         admin_capabilities=set(),
         request_id="test-request-456",
     )
-
 
 class TestSkillImporter:
     """Test suite for SkillImporter."""
@@ -390,7 +381,6 @@ class TestSkillImporter:
         assert "skill-two" in result["imported_skills"]
         assert len(result["skill_paths"]) == 2
 
-
 class TestSkillValidation:
     """Test suite for skill ZIP validation."""
 
@@ -462,7 +452,6 @@ class TestSkillValidation:
         assert result["valid"] is True
         assert len(result["warnings"]) > 0
         assert any("author" in warning.lower() for warning in result["warnings"])
-
 
 class TestSkillNameValidation:
     """Test suite for skill name validation."""

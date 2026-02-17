@@ -14,13 +14,11 @@ from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
-
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
     """Create a temporary directory for tests."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
-
 
 @pytest.fixture
 def embedded(temp_dir: Path) -> Generator[NexusFS, None, None]:
@@ -35,7 +33,6 @@ def embedded(temp_dir: Path) -> Generator[NexusFS, None, None]:
     yield nx
     nx.close()
     # Note: Windows cleanup delay is handled by windows_cleanup_delay fixture in conftest.py
-
 
 def test_init_creates_directories(temp_dir: Path) -> None:
     """Test that initialization creates necessary directories."""
@@ -57,7 +54,6 @@ def test_init_creates_directories(temp_dir: Path) -> None:
 
     nx.close()
 
-
 def test_write_and_read(embedded: NexusFS) -> None:
     """Test writing and reading a file."""
     content = b"Hello, Nexus!"
@@ -69,7 +65,6 @@ def test_write_and_read(embedded: NexusFS) -> None:
     # Read file
     result = embedded.read(path)
     assert result == content
-
 
 def test_write_creates_metadata(embedded: NexusFS) -> None:
     """Test that writing creates metadata."""
@@ -88,7 +83,6 @@ def test_write_creates_metadata(embedded: NexusFS) -> None:
     assert meta.size == len(content)
     assert meta.version == 1
     assert meta.etag is not None
-
 
 def test_write_updates_version(embedded: NexusFS) -> None:
     """Test that rewriting a file updates version number.
@@ -119,14 +113,12 @@ def test_write_updates_version(embedded: NexusFS) -> None:
     assert meta3.version == 3  # Version tracking enabled in v0.3.5
     assert meta3.modified_at > meta2.modified_at
 
-
 def test_read_nonexistent_file_raises_error(embedded: NexusFS) -> None:
     """Test that reading nonexistent file raises error."""
     with pytest.raises(NexusFileNotFoundError) as exc_info:
         embedded.read("/nonexistent.txt")
 
     assert "/nonexistent.txt" in str(exc_info.value)
-
 
 def test_delete(embedded: NexusFS) -> None:
     """Test deleting a file."""
@@ -147,12 +139,10 @@ def test_delete(embedded: NexusFS) -> None:
     with pytest.raises(NexusFileNotFoundError):
         embedded.read(path)
 
-
 def test_delete_nonexistent_file_raises_error(embedded: NexusFS) -> None:
     """Test that deleting nonexistent file raises error."""
     with pytest.raises(NexusFileNotFoundError):
         embedded.delete("/nonexistent.txt")
-
 
 def test_delete_removes_metadata(embedded: NexusFS) -> None:
     """Test that deleting removes metadata."""
@@ -169,7 +159,6 @@ def test_delete_removes_metadata(embedded: NexusFS) -> None:
     assert not embedded.metadata.exists(path)
     assert embedded.metadata.get(path) is None
 
-
 def test_exists(embedded: NexusFS) -> None:
     """Test checking file existence."""
     path = "/test.txt"
@@ -185,7 +174,6 @@ def test_exists(embedded: NexusFS) -> None:
     embedded.delete(path)
     assert not embedded.exists(path)
 
-
 def test_list_files(embedded: NexusFS) -> None:
     """Test listing files."""
     # Create multiple files
@@ -200,7 +188,6 @@ def test_list_files(embedded: NexusFS) -> None:
     assert "/file1.txt" in files
     assert "/dir/file2.txt" in files
     assert "/dir/subdir/file3.txt" in files
-
 
 def test_list_with_prefix(embedded: NexusFS) -> None:
     """Test listing files with prefix."""
@@ -219,18 +206,15 @@ def test_list_with_prefix(embedded: NexusFS) -> None:
     assert "/file1.txt" not in files
     assert "/other/file4.txt" not in files
 
-
 def test_list_empty(embedded: NexusFS) -> None:
     """Test listing when no files exist."""
     files = embedded.list()
     assert len(files) == 0
 
-
 def test_path_validation_empty_path(embedded: NexusFS) -> None:
     """Test that empty path raises error."""
     with pytest.raises(InvalidPathError):
         embedded.read("")
-
 
 def test_path_validation_null_byte(embedded: NexusFS) -> None:
     """Test that path with null byte raises error."""
@@ -239,14 +223,12 @@ def test_path_validation_null_byte(embedded: NexusFS) -> None:
 
     assert "invalid character" in str(exc_info.value).lower()
 
-
 def test_path_validation_parent_directory(embedded: NexusFS) -> None:
     """Test that path with .. raises error."""
     with pytest.raises(InvalidPathError) as exc_info:
         embedded.read("/../etc/passwd")
 
     assert ".." in str(exc_info.value)
-
 
 def test_path_normalization_leading_slash(embedded: NexusFS) -> None:
     """Test that paths are normalized with leading slash."""
@@ -263,7 +245,6 @@ def test_path_normalization_leading_slash(embedded: NexusFS) -> None:
     assert embedded.exists("test.txt")
     assert embedded.exists("/test.txt")
 
-
 def test_binary_content(embedded: NexusFS) -> None:
     """Test handling of binary content."""
     # Create binary content with various byte values
@@ -273,7 +254,6 @@ def test_binary_content(embedded: NexusFS) -> None:
 
     result = embedded.read("/binary.bin")
     assert result == content
-
 
 def test_empty_file(embedded: NexusFS) -> None:
     """Test handling of empty files."""
@@ -287,7 +267,6 @@ def test_empty_file(embedded: NexusFS) -> None:
     assert meta is not None
     assert meta.size == 0
 
-
 def test_large_file(embedded: NexusFS) -> None:
     """Test handling of large files."""
     # Create 1MB of data
@@ -299,7 +278,6 @@ def test_large_file(embedded: NexusFS) -> None:
     assert len(result) == len(content)
     assert result == content
 
-
 def test_unicode_paths(embedded: NexusFS) -> None:
     """Test handling of unicode paths."""
     content = b"Unicode content"
@@ -310,7 +288,6 @@ def test_unicode_paths(embedded: NexusFS) -> None:
     result = embedded.read(path)
     assert result == content
     assert embedded.exists(path)
-
 
 def test_etag_changes_on_update(embedded: NexusFS) -> None:
     """Test that ETag changes when file is updated."""
@@ -331,7 +308,6 @@ def test_etag_changes_on_update(embedded: NexusFS) -> None:
     # ETags should be different
     assert etag1 != etag2
 
-
 def test_etag_same_for_same_content(embedded: NexusFS) -> None:
     """Test that ETag is the same for same content."""
     path1 = "/file1.txt"
@@ -349,7 +325,6 @@ def test_etag_same_for_same_content(embedded: NexusFS) -> None:
     assert meta2 is not None
     assert meta1.etag == meta2.etag
 
-
 def test_context_manager(temp_dir: Path) -> None:
     """Test using Embedded as context manager."""
     content = b"Test content"
@@ -364,7 +339,6 @@ def test_context_manager(temp_dir: Path) -> None:
         nx.write("/test.txt", content)
         result = nx.read("/test.txt")
         assert result == content
-
 
 def test_modified_at_updates(embedded: NexusFS) -> None:
     """Test that modified_at timestamp updates on write."""
@@ -391,7 +365,6 @@ def test_modified_at_updates(embedded: NexusFS) -> None:
         assert modified2 is not None
         assert modified2 > modified1
 
-
 def test_created_at_persists(embedded: NexusFS) -> None:
     """Test that created_at timestamp persists across updates."""
     path = "/test.txt"
@@ -412,7 +385,6 @@ def test_created_at_persists(embedded: NexusFS) -> None:
     assert created1 is not None
     assert created2 is not None
     assert created1 == created2
-
 
 def test_multiple_operations(embedded: NexusFS) -> None:
     """Test multiple file operations in sequence."""
@@ -440,7 +412,6 @@ def test_multiple_operations(embedded: NexusFS) -> None:
         else:
             assert embedded.exists(f"/file{i}.txt")
 
-
 def test_overwrite_preserves_path(embedded: NexusFS) -> None:
     """Test that overwriting a file preserves the path."""
     path = "/test.txt"
@@ -460,9 +431,7 @@ def test_overwrite_preserves_path(embedded: NexusFS) -> None:
     assert len(files) == 1
     assert files[0] == path
 
-
 # === File Discovery Operations Tests (v0.1.0 - Issue #6) ===
-
 
 def test_list_recursive(embedded: NexusFS) -> None:
     """Test recursive listing of files."""
@@ -499,7 +468,6 @@ def test_list_recursive(embedded: NexusFS) -> None:
     assert "/dir1/file2.txt" in files
     assert "/dir1/subdir/file3.txt" in files
 
-
 def test_list_with_details(embedded: NexusFS) -> None:
     """Test listing files with detailed metadata."""
     # Create files
@@ -522,7 +490,6 @@ def test_list_with_details(embedded: NexusFS) -> None:
     # Check file2
     file2 = next(f for f in files if f["path"] == "/file2.txt")
     assert file2["size"] == 6
-
 
 def test_glob_simple_pattern(embedded: NexusFS) -> None:
     """Test glob with simple wildcard patterns."""
@@ -549,7 +516,6 @@ def test_glob_simple_pattern(embedded: NexusFS) -> None:
     assert "/test1.txt" in files
     assert "/test2.txt" in files
 
-
 def test_glob_recursive_pattern(embedded: NexusFS) -> None:
     """Test glob with recursive ** pattern."""
     # Create nested structure
@@ -569,7 +535,6 @@ def test_glob_recursive_pattern(embedded: NexusFS) -> None:
     files = embedded.glob("**/*")
     assert len(files) == 4
 
-
 def test_glob_with_base_path(embedded: NexusFS) -> None:
     """Test glob with a base path."""
     # Create files
@@ -582,7 +547,6 @@ def test_glob_with_base_path(embedded: NexusFS) -> None:
     assert len(files) == 2
     assert "/data/file1.csv" in files
     assert "/data/file2.csv" in files
-
 
 def test_glob_question_mark_pattern(embedded: NexusFS) -> None:
     """Test glob with ? wildcard."""
@@ -597,7 +561,6 @@ def test_glob_question_mark_pattern(embedded: NexusFS) -> None:
     assert "/file1.txt" in files
     assert "/file2.txt" in files
     assert "/file10.txt" not in files
-
 
 def test_grep_simple_search(embedded: NexusFS) -> None:
     """Test basic grep search."""
@@ -618,7 +581,6 @@ def test_grep_simple_search(embedded: NexusFS) -> None:
     assert results[1]["line"] == 3
     assert "Hello Again" in results[1]["content"]
 
-
 def test_grep_regex_pattern(embedded: NexusFS) -> None:
     """Test grep with regex patterns."""
     # Create test file
@@ -630,7 +592,6 @@ def test_grep_regex_pattern(embedded: NexusFS) -> None:
     assert len(results) == 2
     assert results[0]["match"] == "def foo"
     assert results[1]["match"] == "def bar"
-
 
 def test_grep_with_file_pattern(embedded: NexusFS) -> None:
     """Test grep with file filtering."""
@@ -646,7 +607,6 @@ def test_grep_with_file_pattern(embedded: NexusFS) -> None:
     # Should not include file.txt
     assert all(r["file"].endswith(".py") for r in results)
 
-
 def test_grep_case_insensitive(embedded: NexusFS) -> None:
     """Test case-insensitive grep search."""
     # Create test file
@@ -660,7 +620,6 @@ def test_grep_case_insensitive(embedded: NexusFS) -> None:
     results = embedded.grep("ERROR", ignore_case=True)
     assert len(results) == 3
 
-
 def test_grep_max_results(embedded: NexusFS) -> None:
     """Test grep result limiting."""
     # Create file with many matches
@@ -670,7 +629,6 @@ def test_grep_max_results(embedded: NexusFS) -> None:
     # Limit results
     results = embedded.grep("MATCH", max_results=10)
     assert len(results) == 10
-
 
 def test_grep_skips_binary_files(embedded: NexusFS) -> None:
     """Test that grep skips binary files."""
@@ -685,14 +643,12 @@ def test_grep_skips_binary_files(embedded: NexusFS) -> None:
     assert len(results) == 1
     assert results[0]["file"] == "/text.txt"
 
-
 def test_grep_empty_results(embedded: NexusFS) -> None:
     """Test grep with no matches."""
     embedded.write("/file.txt", b"Hello World")
 
     results = embedded.grep("nonexistent")
     assert len(results) == 0
-
 
 def test_list_backward_compatibility(embedded: NexusFS) -> None:
     """Test that list() maintains backward compatibility."""

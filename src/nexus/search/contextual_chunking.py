@@ -15,28 +15,22 @@ Design decisions (from plan review):
 - Context and text stored separately, composed at index-time for embedding
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import re
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
-if TYPE_CHECKING:
-    from nexus.search.chunking import DocumentChunk, DocumentChunker
+from nexus.search.chunking import DocumentChunk, DocumentChunker
 
 logger = logging.getLogger(__name__)
-
 
 # ---------------------------------------------------------------------------
 # Data Models
 # ---------------------------------------------------------------------------
-
 
 class ChunkContext(BaseModel):
     """Validated LLM output — the situating context for a single chunk."""
@@ -54,7 +48,6 @@ class ChunkContext(BaseModel):
         description="Key entities mentioned in the chunk",
     )
 
-
 @dataclass(frozen=True)
 class ContextualChunk:
     """A document chunk enriched with LLM-generated context."""
@@ -70,7 +63,6 @@ class ContextualChunk:
         if self.context and self.context.situating_context:
             return f"{self.context.situating_context}\n\n{self.chunk.text}"
         return self.chunk.text
-
 
 @dataclass(frozen=True)
 class ContextualChunkResult:
@@ -89,7 +81,6 @@ class ContextualChunkResult:
             return 0.0
         return (self.chunks_with_context / self.total_chunks) * 100.0
 
-
 @dataclass(frozen=True)
 class ContextualChunkingConfig:
     """Configuration for contextual chunking."""
@@ -99,7 +90,6 @@ class ContextualChunkingConfig:
     batch_concurrency: int = 5  # Max parallel LLM calls
     use_heuristic_fallback: bool = True  # Use heuristic when LLM fails
 
-
 # Type alias for the context generator callable.
 # Args: (doc_summary, chunk_text, prev_chunks_texts, next_chunks_texts)
 # Returns: ChunkContext
@@ -108,11 +98,9 @@ ContextGenerator = Callable[
     Awaitable[ChunkContext],
 ]
 
-
 # ---------------------------------------------------------------------------
 # ContextualChunker
 # ---------------------------------------------------------------------------
-
 
 class ContextualChunker:
     """Enriches document chunks with LLM-generated situating context.
@@ -284,7 +272,6 @@ class ContextualChunker:
             return _heuristic_context(doc_summary, chunk.text, prev_chunks, position)
         return None
 
-
 # ---------------------------------------------------------------------------
 # Heuristic Context Generator (no LLM required)
 # ---------------------------------------------------------------------------
@@ -292,7 +279,6 @@ class ContextualChunker:
 # Simple regex patterns for entity extraction
 _CAPITALIZED_WORDS = re.compile(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b")
 _HEADING_PATTERN = re.compile(r"^#{1,6}\s+(.+)$", re.MULTILINE)
-
 
 def _heuristic_context(
     doc_summary: str,
@@ -347,7 +333,6 @@ def _heuristic_context(
         key_entities=entities,
     )
 
-
 def create_heuristic_generator() -> ContextGenerator:
     """Create a ``ContextGenerator`` that uses heuristics only (no LLM calls).
 
@@ -372,11 +357,9 @@ def create_heuristic_generator() -> ContextGenerator:
 
     return _generate
 
-
 # ---------------------------------------------------------------------------
 # LLM Context Generator Factory
 # ---------------------------------------------------------------------------
-
 
 async def create_context_generator(
     llm_generate: Callable[[str], Awaitable[str]],

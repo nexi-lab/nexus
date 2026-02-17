@@ -26,7 +26,6 @@ from nexus.core.exceptions import AuthenticationError, BackendError, NexusFileNo
 from nexus.core.permissions import OperationContext
 from nexus.server.auth import TokenManager
 
-
 async def main():
     """Main example function."""
     print("=" * 60)
@@ -110,7 +109,6 @@ async def main():
     print("3. Use with NexusFS for full filesystem operations")
 
     token_manager.close()
-
 
 async def google_docs_export_example():
     """Example: Export Google Docs to different formats.
@@ -196,7 +194,6 @@ async def google_docs_export_example():
     print("Export example completed!")
     print("=" * 60)
 
-
 async def shared_drive_example():
     """Example: Using shared drives (Google Workspace).
 
@@ -247,7 +244,6 @@ async def shared_drive_example():
     print("\n" + "=" * 60)
     print("Shared drive example completed!")
     print("=" * 60)
-
 
 if __name__ == "__main__":
     # Run main example

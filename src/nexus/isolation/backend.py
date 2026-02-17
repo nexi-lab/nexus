@@ -7,8 +7,6 @@ WARNING: This provides FAULT ISOLATION (state / crash isolation), NOT security
 sandboxing.  For untrusted-code security, use Docker / E2B sandbox providers.
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 from collections.abc import Iterator
@@ -24,12 +22,13 @@ from nexus.isolation.errors import (
     IsolationTimeoutError,
 )
 
+from nexus.core.permissions import OperationContext
+from nexus.rebac.permissions_enhanced import EnhancedOperationContext
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
     from nexus.rebac.permissions_enhanced import EnhancedOperationContext
 
 logger = logging.getLogger(__name__)
-
 
 class IsolatedBackend(Backend):
     """Fault-isolation wrapper for any Backend implementation.

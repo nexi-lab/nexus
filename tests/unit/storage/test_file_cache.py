@@ -4,7 +4,6 @@ from pathlib import Path
 
 from nexus.storage.file_cache import FileContentCache, get_file_cache
 
-
 class TestFileContentCache:
     """Test suite for FileContentCache functionality."""
 
@@ -223,7 +222,6 @@ class TestFileContentCache:
 
         # Content should be the newer one
         assert cache.read("zone1", "/file.txt") == b"content2"
-
 
 class TestGetFileCache:
     """Test global file cache accessor."""

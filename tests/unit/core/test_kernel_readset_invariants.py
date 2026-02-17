@@ -9,8 +9,6 @@ Invariants proven:
      when direct path match has older revision
 """
 
-from __future__ import annotations
-
 from hypothesis import example, given, settings
 from hypothesis import strategies as st
 
@@ -25,7 +23,6 @@ from tests.strategies.kernel import read_set_entry, valid_path
 # ---------------------------------------------------------------------------
 # Invariant 1: Serialization roundtrip
 # ---------------------------------------------------------------------------
-
 
 class TestReadSetSerializationInvariants:
     """ReadSet serialization roundtrip properties."""
@@ -67,11 +64,9 @@ class TestReadSetSerializationInvariants:
         assert restored.revision == entry.revision
         assert restored.access_type == entry.access_type
 
-
 # ---------------------------------------------------------------------------
 # Invariant 2: Staleness is monotonic
 # ---------------------------------------------------------------------------
-
 
 class TestStalenessInvariants:
     """ReadSetEntry staleness properties."""
@@ -105,11 +100,9 @@ class TestStalenessInvariants:
         # Any revision higher than stale_rev is also stale
         assert entry.is_stale(stale_rev + 1) is True
 
-
 # ---------------------------------------------------------------------------
 # Invariant 3: Overlap detection consistency
 # ---------------------------------------------------------------------------
-
 
 class TestOverlapInvariants:
     """ReadSet overlap detection properties."""
@@ -193,11 +186,9 @@ class TestOverlapInvariants:
             # Before bug fix, this returned False incorrectly
             assert rs.overlaps_with_write(file_path, write_rev) is True
 
-
 # ---------------------------------------------------------------------------
 # Invariant 4: Registry zone filter is subset of unfiltered
 # ---------------------------------------------------------------------------
-
 
 class TestRegistryInvariants:
     """ReadSetRegistry consistency properties."""

@@ -30,8 +30,6 @@ Usage::
     )
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 from collections.abc import Callable, Generator
@@ -49,7 +47,6 @@ logger = logging.getLogger(__name__)
 _tracer_resolved = False
 _tracer: Any = None  # opentelemetry.trace.Tracer | None
 _tracer_lock = threading.Lock()
-
 
 def _get_tracer() -> Any:
     """Return a cached tracer instance, or *None* when OTel is disabled.
@@ -70,20 +67,17 @@ def _get_tracer() -> Any:
             _tracer_resolved = True
     return _tracer
 
-
 def set_tracer(tracer: Any) -> None:
     """Inject a pre-built tracer instance (called from telemetry init)."""
     global _tracer_resolved, _tracer
     _tracer = tracer
     _tracer_resolved = True
 
-
 def reset_tracer() -> None:
     """Reset cached tracer — only for tests."""
     global _tracer_resolved, _tracer
     _tracer_resolved = False
     _tracer = None
-
 
 # ---------------------------------------------------------------------------
 # Attribute keys (authz.* namespace — Decision #4A)
@@ -133,11 +127,9 @@ ATTR_BATCH_ALLOWED = "authz.batch.allowed_count"
 ATTR_BATCH_DENIED = "authz.batch.denied_count"
 ATTR_BATCH_DURATION_MS = "authz.batch.duration_ms"
 
-
 # ---------------------------------------------------------------------------
 # Span helpers — rebac.check
 # ---------------------------------------------------------------------------
-
 
 @contextmanager
 def start_check_span(
@@ -176,7 +168,6 @@ def start_check_span(
             span.set_attribute(ATTR_CONSISTENCY, consistency)
         yield span
 
-
 def record_check_result(
     span: Any,
     *,
@@ -202,11 +193,9 @@ def record_check_result(
     if engine:
         span.set_attribute(ATTR_ENGINE, engine)
 
-
 # ---------------------------------------------------------------------------
 # Span helpers — rebac.cache_lookup
 # ---------------------------------------------------------------------------
-
 
 @contextmanager
 def start_cache_lookup_span() -> Generator[Any, None, None]:
@@ -218,7 +207,6 @@ def start_cache_lookup_span() -> Generator[Any, None, None]:
 
     with tracer.start_as_current_span("rebac.cache_lookup") as span:
         yield span
-
 
 def record_cache_result(
     span: Any,
@@ -243,11 +231,9 @@ def record_cache_result(
     if fallback:
         span.set_attribute(ATTR_CACHE_FALLBACK, True)
 
-
 # ---------------------------------------------------------------------------
 # Span helpers — rebac.graph_traversal
 # ---------------------------------------------------------------------------
-
 
 @contextmanager
 def start_graph_traversal_span(engine: str = "python") -> Generator[Any, None, None]:
@@ -264,7 +250,6 @@ def start_graph_traversal_span(engine: str = "python") -> Generator[Any, None, N
     with tracer.start_as_current_span("rebac.graph_traversal") as span:
         span.set_attribute(ATTR_ENGINE, engine)
         yield span
-
 
 def record_traversal_result(
     span: Any,
@@ -290,7 +275,6 @@ def record_traversal_result(
     span.set_attribute(ATTR_TRAVERSAL_QUERIES, db_queries)
     span.set_attribute(ATTR_TRAVERSAL_CACHE_HITS, cache_hits)
 
-
 def record_graph_limit_exceeded(span: Any, *, limit_type: str) -> None:
     """Record a graph limit violation as a span error.
 
@@ -307,11 +291,9 @@ def record_graph_limit_exceeded(span: Any, *, limit_type: str) -> None:
 
     span.set_status(StatusCode.ERROR, f"Graph limit exceeded: {limit_type}")
 
-
 # ---------------------------------------------------------------------------
 # Span helpers — rebac.check_batch
 # ---------------------------------------------------------------------------
-
 
 @contextmanager
 def start_batch_check_span(batch_size: int) -> Generator[Any, None, None]:
@@ -328,7 +310,6 @@ def start_batch_check_span(batch_size: int) -> Generator[Any, None, None]:
     with tracer.start_as_current_span("rebac.check_batch") as span:
         span.set_attribute(ATTR_BATCH_SIZE, batch_size)
         yield span
-
 
 def record_batch_result(
     span: Any,
@@ -351,11 +332,9 @@ def record_batch_result(
     span.set_attribute(ATTR_BATCH_DENIED, denied_count)
     span.set_attribute(ATTR_BATCH_DURATION_MS, duration_ms)
 
-
 # ---------------------------------------------------------------------------
 # OTel context propagation helper (Decision #5A)
 # ---------------------------------------------------------------------------
-
 
 def propagate_otel_context(fn: _F) -> _F:
     """Wrap *fn* so that the caller's OTel context is attached in the thread.

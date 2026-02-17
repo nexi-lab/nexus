@@ -20,7 +20,6 @@ from nexus.services.permissions.cache.visibility import (
     DirectoryVisibilityCache,
 )
 
-
 class TestInitialization:
     """Test DirectoryVisibilityCache initialization."""
 
@@ -56,7 +55,6 @@ class TestInitialization:
 
         assert cache._tiger_cache is None
         assert cache._ttl == 120
-
 
 class TestCacheHitMiss:
     """Test cache hit and miss behavior."""
@@ -131,7 +129,6 @@ class TestCacheHitMiss:
         entry = cache._cache[key]
 
         assert entry.reason == ""
-
 
 class TestTTLExpiration:
     """Test TTL expiration behavior."""
@@ -209,7 +206,6 @@ class TestTTLExpiration:
         monkeypatch.setattr(time, "time", lambda: current_time + 70)
         assert cache.is_visible("zone1", "user", "alice", "/workspace") is None
         assert cache.is_visible("zone1", "user", "bob", "/data") is False
-
 
 class TestEviction:
     """Test cache eviction at max_entries capacity."""
@@ -302,7 +298,6 @@ class TestEviction:
         cache._evict_oldest()
 
         assert len(cache) == 0
-
 
 class TestInvalidation:
     """Test cache invalidation with various filters."""
@@ -436,7 +431,6 @@ class TestInvalidation:
         ancestors = cache._get_ancestor_paths("/a/b/c/")
         assert ancestors == ["/a/b", "/a", "/"]
 
-
 class TestBitmapComputation:
     """Test bitmap-based visibility computation with Tiger Cache."""
 
@@ -549,7 +543,6 @@ class TestBitmapComputation:
         assert entry.visible is False
         assert entry.reason == "no_descendants_in_bitmap"
 
-
 class TestMetrics:
     """Test cache metrics tracking."""
 
@@ -621,7 +614,6 @@ class TestMetrics:
 
         assert metrics["bitmap_computes"] == 2
 
-
 class TestThreadSafety:
     """Test thread safety of cache operations."""
 
@@ -678,7 +670,6 @@ class TestThreadSafety:
 
         # Should not crash - results may be mixed (True, False, None)
         assert len(results) == 200
-
 
 class TestClearAndLen:
     """Test clear() and __len__() operations."""

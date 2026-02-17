@@ -4,8 +4,6 @@ Loads validators.yaml files from sandbox workspaces and caches parsed
 configurations to avoid repeated YAML parsing overhead.
 """
 
-from __future__ import annotations
-
 import logging
 import os
 from typing import Any
@@ -13,7 +11,6 @@ from typing import Any
 from nexus.validation.models import ValidationPipelineConfig, ValidatorConfig
 
 logger = logging.getLogger(__name__)
-
 
 def _parse_yaml_content(content: str) -> dict[str, Any]:
     """Parse YAML content string into a dict.
@@ -28,7 +25,6 @@ def _parse_yaml_content(content: str) -> dict[str, Any]:
     except Exception as e:
         logger.warning("Failed to parse YAML content: %s", e)
         return {}
-
 
 class ValidatorConfigLoader:
     """Loads validators.yaml with mtime-based cache invalidation."""

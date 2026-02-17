@@ -4,8 +4,6 @@ Tests happy paths, SQL failure injection, partial failures, and session exhausti
 Phase 1.1 of #1246/#1330 consolidation plan.
 """
 
-from __future__ import annotations
-
 import tempfile
 from collections.abc import Generator
 from datetime import UTC, datetime
@@ -20,12 +18,10 @@ from nexus.storage.models import FilePathModel, OperationLogModel, VersionHistor
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.record_store_syncer import RecordStoreSyncer
 
-
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
-
 
 @pytest.fixture
 def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]:
@@ -33,11 +29,9 @@ def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]
     yield rs
     rs.close()
 
-
 @pytest.fixture
 def syncer(record_store: SQLAlchemyRecordStore) -> RecordStoreSyncer:
     return RecordStoreSyncer(record_store.session_factory)
-
 
 def _make_metadata(
     path: str = "/test.txt",
@@ -64,11 +58,9 @@ def _make_metadata(
         owner_id=owner_id,
     )
 
-
 # =========================================================================
 # Happy path tests
 # =========================================================================
-
 
 class TestOnWriteHappyPath:
     """Test on_write() creates OperationLog + FilePathModel + VersionHistory."""
@@ -133,7 +125,6 @@ class TestOnWriteHappyPath:
             # Version 2 should have parent link to version 1
             assert vhs[1].parent_version_id == vhs[0].version_id
 
-
 class TestOnDeleteHappyPath:
     """Test on_delete() soft-deletes FilePathModel."""
 
@@ -184,7 +175,6 @@ class TestOnDeleteHappyPath:
             )
             assert len(ops) == 1  # Operation logged even if file didn't exist
 
-
 class TestOnRenameHappyPath:
     """Test on_rename() logs the rename operation."""
 
@@ -204,7 +194,6 @@ class TestOnRenameHappyPath:
             assert ops[0].operation_type == "rename"
             assert ops[0].path == "/old.txt"
             assert ops[0].new_path == "/new.txt"
-
 
 class TestOnWriteBatchHappyPath:
     """Test on_write_batch() handles multiple items in one transaction."""
@@ -229,11 +218,9 @@ class TestOnWriteBatchHappyPath:
             paths = {fp.virtual_path for fp in fps}
             assert paths == {"/a.txt", "/b.txt", "/c.txt"}
 
-
 # =========================================================================
 # Failure injection tests
 # =========================================================================
-
 
 class TestSQLFailure:
     """Test behavior when SQL operations fail."""
@@ -266,7 +253,6 @@ class TestSQLFailure:
 
         with pytest.raises(OperationalError):
             syncer.on_delete(path="/test.txt")
-
 
 class TestPartialFailure:
     """Test behavior when one sub-component fails mid-transaction."""
@@ -318,7 +304,6 @@ class TestPartialFailure:
             fps = session.query(FilePathModel).all()
             assert len(fps) == 0
 
-
 class TestSessionFactoryFailure:
     """Test behavior when session factory itself fails."""
 
@@ -333,7 +318,6 @@ class TestSessionFactoryFailure:
 
         with pytest.raises(ConnectionError, match="database unavailable"):
             syncer.on_write(metadata, is_new=True, path="/test.txt")
-
 
 class TestBatchPartialFailure:
     """Test batch operations with mid-batch failures."""
@@ -372,11 +356,9 @@ class TestBatchPartialFailure:
             fps = session.query(FilePathModel).all()
             assert len(fps) == 0
 
-
 # =========================================================================
 # Transactional outbox: delivered=FALSE tests (Issue #1241)
 # =========================================================================
-
 
 class TestDeliveredColumn:
     """Verify that all syncer operations create records with delivered=FALSE."""

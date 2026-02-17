@@ -24,7 +24,6 @@ down_revision: Union[str, Sequence[str], None] = "add_user_id_oauth"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Create content_cache table."""
     # Create the content_cache table
@@ -97,7 +96,6 @@ def upgrade() -> None:
     else:
         # SQLite: regular index
         op.create_index("idx_content_cache_stale", "content_cache", ["stale"])
-
 
 def downgrade() -> None:
     """Drop content_cache table."""

@@ -15,8 +15,6 @@ Contains:
   - AsyncFileMetadataWrapper: Async wrapper (derived from FileMetadataProtocol)
 """
 
-from __future__ import annotations
-
 import asyncio
 from abc import ABC, abstractmethod
 from collections.abc import Iterator, Sequence
@@ -27,12 +25,10 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from nexus.core._compact_generated import CompactFileMetadata
 
-
 # DirEntryType (from proto/nexus/core/metadata.proto)
 DT_REG = 0
 DT_DIR = 1
 DT_MOUNT = 2
-
 
 @dataclass
 class PaginatedResult:
@@ -63,7 +59,6 @@ class PaginatedResult:
             "has_more": self.has_more,
             "total_count": self.total_count,
         }
-
 
 @dataclass(slots=True)
 class FileMetadata:
@@ -129,7 +124,7 @@ class FileMetadata:
         if self.version < 1:
             raise ValidationError(f"version must be >= 1, got {self.version}", path=self.path)
 
-    def to_compact(self) -> CompactFileMetadata:
+    def to_compact(self) -> "CompactFileMetadata":
         """Convert to memory-efficient CompactFileMetadata.
 
         Uses string interning to deduplicate path/hash strings across instances.
@@ -143,7 +138,7 @@ class FileMetadata:
         return CompactFileMetadata.from_file_metadata(self)
 
     @classmethod
-    def from_compact(cls, compact: CompactFileMetadata) -> FileMetadata:
+    def from_compact(cls, compact: "CompactFileMetadata") -> "FileMetadata":
         """Create FileMetadata from CompactFileMetadata.
 
         Resolves interned string IDs back to full strings.
@@ -155,7 +150,6 @@ class FileMetadata:
             Full FileMetadata object
         """
         return compact.to_file_metadata()
-
 
 class FileMetadataProtocol(ABC):
     """Abstract interface for metadata storage.
@@ -271,7 +265,6 @@ class FileMetadataProtocol(ABC):
     def close(self) -> None:
         """Close the metadata store and release resources."""
         pass
-
 
 class AsyncFileMetadataWrapper:
     """Async wrapper around any FileMetadataProtocol implementation.

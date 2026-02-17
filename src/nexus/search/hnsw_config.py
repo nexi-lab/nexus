@@ -9,8 +9,6 @@ References:
 - https://neon.com/docs/ai/ai-vector-search-optimization
 """
 
-from __future__ import annotations
-
 import re
 from dataclasses import dataclass
 from enum import Enum
@@ -19,7 +17,6 @@ from typing import TYPE_CHECKING, ClassVar
 # Safe SQL identifier pattern (letters, digits, underscores only)
 _SAFE_IDENTIFIER = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
-
 def _validate_identifier(name: str, label: str) -> str:
     """Validate a SQL identifier to prevent injection."""
     if not _SAFE_IDENTIFIER.match(name):
@@ -27,10 +24,9 @@ def _validate_identifier(name: str, label: str) -> str:
         raise ValueError(msg)
     return name
 
-
+from sqlalchemy.orm import Session
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
-
 
 class DatasetScale(Enum):
     """Dataset scale categories for HNSW tuning."""
@@ -38,7 +34,6 @@ class DatasetScale(Enum):
     SMALL = "small"  # <100K vectors
     MEDIUM = "medium"  # 100K - 1M vectors
     LARGE = "large"  # >1M vectors
-
 
 @dataclass
 class HNSWConfig:
@@ -62,12 +57,12 @@ class HNSWConfig:
     max_parallel_workers: int = 2
 
     # Presets for different scales (initialized after class definition)
-    SMALL_SCALE: ClassVar[HNSWConfig]
-    MEDIUM_SCALE: ClassVar[HNSWConfig]
-    LARGE_SCALE: ClassVar[HNSWConfig]
+    SMALL_SCALE: ClassVar["HNSWConfig"]
+    MEDIUM_SCALE: ClassVar["HNSWConfig"]
+    LARGE_SCALE: ClassVar["HNSWConfig"]
 
     @classmethod
-    def for_dataset_size(cls, vector_count: int) -> HNSWConfig:
+    def for_dataset_size(cls, vector_count: int) -> "HNSWConfig":
         """Get optimal HNSW configuration based on dataset size.
 
         Args:
@@ -91,7 +86,7 @@ class HNSWConfig:
             return cls.large_scale()
 
     @classmethod
-    def small_scale(cls) -> HNSWConfig:
+    def small_scale(cls) -> "HNSWConfig":
         """Configuration for <100K vectors.
 
         Optimized for fast builds and low memory usage.
@@ -106,7 +101,7 @@ class HNSWConfig:
         )
 
     @classmethod
-    def medium_scale(cls) -> HNSWConfig:
+    def medium_scale(cls) -> "HNSWConfig":
         """Configuration for 100K-1M vectors.
 
         Balanced for good recall and reasonable build times.
@@ -121,7 +116,7 @@ class HNSWConfig:
         )
 
     @classmethod
-    def large_scale(cls) -> HNSWConfig:
+    def large_scale(cls) -> "HNSWConfig":
         """Configuration for >1M vectors.
 
         Optimized for high recall at scale.
@@ -211,7 +206,6 @@ class HNSWConfig:
             {"val": self.max_parallel_workers},
         )
 
-
 def get_vector_count(session: Session, table: str = "document_chunks") -> int:
     """Get the count of vectors in a table.
 
@@ -234,7 +228,6 @@ def get_vector_count(session: Session, table: str = "document_chunks") -> int:
         # embedding column doesn't exist yet
         return 0
 
-
 def get_recommended_config(session: Session) -> HNSWConfig:
     """Get recommended HNSW config based on current dataset.
 
@@ -246,7 +239,6 @@ def get_recommended_config(session: Session) -> HNSWConfig:
     """
     count = get_vector_count(session)
     return HNSWConfig.for_dataset_size(count)
-
 
 # Initialize class-level presets
 HNSWConfig.SMALL_SCALE = HNSWConfig.small_scale()

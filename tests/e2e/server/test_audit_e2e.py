@@ -12,8 +12,6 @@ Tests three user types:
 - Unauthenticated: rejected with 401
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket
@@ -29,13 +27,11 @@ import pytest
 
 _src_path = Path(__file__).parent.parent.parent / "src"
 
-
 def _find_free_port() -> int:
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
         s.bind(("", 0))
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         return s.getsockname()[1]
-
 
 def _wait_for_server(url: str, timeout: float = 60.0) -> bool:
     start = time.time()
@@ -49,11 +45,9 @@ def _wait_for_server(url: str, timeout: float = 60.0) -> bool:
         time.sleep(0.3)
     return False
 
-
 # =============================================================================
 # Fixtures
 # =============================================================================
-
 
 @pytest.fixture(scope="module")
 def audit_server(tmp_path_factory):
@@ -207,7 +201,6 @@ def audit_server(tmp_path_factory):
 
     _kill_process(process)
 
-
 def _kill_process(process: subprocess.Popen) -> None:
     """Kill a subprocess and its children."""
     if sys.platform != "win32":
@@ -221,7 +214,6 @@ def _kill_process(process: subprocess.Popen) -> None:
         process.kill()
         process.wait()
 
-
 @pytest.fixture(scope="module")
 def admin_client(audit_server) -> httpx.Client:
     """HTTP client with admin API key."""
@@ -233,7 +225,6 @@ def admin_client(audit_server) -> httpx.Client:
         headers=headers,
     ) as c:
         yield c
-
 
 @pytest.fixture(scope="module")
 def normal_user_client(audit_server) -> httpx.Client:
@@ -250,7 +241,6 @@ def normal_user_client(audit_server) -> httpx.Client:
     ) as c:
         yield c
 
-
 @pytest.fixture(scope="module")
 def unauthenticated_client(audit_server) -> httpx.Client:
     """HTTP client WITHOUT auth headers."""
@@ -261,11 +251,9 @@ def unauthenticated_client(audit_server) -> httpx.Client:
     ) as c:
         yield c
 
-
 # =============================================================================
 # Health check
 # =============================================================================
-
 
 class TestServerHealth:
     def test_health(self, admin_client: httpx.Client):
@@ -273,11 +261,9 @@ class TestServerHealth:
         assert resp.status_code == 200
         assert resp.json()["status"] == "healthy"
 
-
 # =============================================================================
 # Auth enforcement: unauthenticated requests rejected with 401
 # =============================================================================
-
 
 class TestUnauthenticatedAccess:
     """No API key → 401 on all audit endpoints."""
@@ -302,11 +288,9 @@ class TestUnauthenticatedAccess:
         resp = unauthenticated_client.get("/api/v2/audit/integrity/some-id")
         assert resp.status_code == 401, f"Expected 401, got {resp.status_code}: {resp.text}"
 
-
 # =============================================================================
 # Admin user: full access
 # =============================================================================
-
 
 class TestAdminAccess:
     """Admin API key → full access to all audit endpoints."""
@@ -429,11 +413,9 @@ class TestAdminAccess:
         resp = admin_client.get("/api/v2/audit/transactions", params={"limit": 0})
         assert resp.status_code == 422
 
-
 # =============================================================================
 # Normal user (non-admin): read access with permissions enforced
 # =============================================================================
-
 
 class TestNormalUserAccess:
     """Non-admin API key with permissions enabled.

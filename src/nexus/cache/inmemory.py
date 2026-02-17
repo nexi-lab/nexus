@@ -19,8 +19,6 @@ Usage:
             process(msg)
 """
 
-from __future__ import annotations
-
 import asyncio
 import time
 from collections import defaultdict
@@ -29,7 +27,6 @@ from contextlib import asynccontextmanager
 from fnmatch import fnmatch
 
 from nexus.core.cache_store import CacheStoreABC
-
 
 class InMemoryCacheStore(CacheStoreABC):
     """In-memory CacheStoreABC driver for dev/test.

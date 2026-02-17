@@ -23,8 +23,6 @@ Architecture Notes (Raft Zone Migration):
 Related: Issue #1106 Block 2, Issue #1159 (Raft Consensus Zones)
 """
 
-from __future__ import annotations
-
 import asyncio
 import os
 import sys
@@ -48,11 +46,9 @@ pytestmark = [
     ),
 ]
 
-
 # =============================================================================
 # Fixtures
 # =============================================================================
-
 
 @pytest.fixture
 def temp_nexus_dir(tmp_path):
@@ -61,18 +57,15 @@ def temp_nexus_dir(tmp_path):
     nexus_dir.mkdir(parents=True)
     return nexus_dir
 
-
 @pytest.fixture
 def db_path_agent1(temp_nexus_dir):
     """Create a database path for agent 1 (sled uses exclusive file locks)."""
     return temp_nexus_dir / "agent1.db"
 
-
 @pytest.fixture
 def db_path_agent2(temp_nexus_dir):
     """Create a database path for agent 2 (sled uses exclusive file locks)."""
     return temp_nexus_dir / "agent2.db"
-
 
 @pytest.fixture
 async def shared_event_bus(redis_client):
@@ -83,7 +76,6 @@ async def shared_event_bus(redis_client):
     await bus.start()
     yield bus
     await bus.stop()
-
 
 @pytest.fixture
 async def redis_client():
@@ -104,7 +96,6 @@ async def redis_client():
     yield client
 
     await client.disconnect()
-
 
 @pytest.fixture
 async def nexus_fs(temp_nexus_dir, db_path_agent1, shared_event_bus):
@@ -140,7 +131,6 @@ async def nexus_fs(temp_nexus_dir, db_path_agent1, shared_event_bus):
 
     # Stop cache invalidation
     nexus._stop_cache_invalidation()
-
 
 @pytest.fixture
 async def second_nexus_fs(temp_nexus_dir, db_path_agent2, shared_event_bus):
@@ -182,11 +172,9 @@ async def second_nexus_fs(temp_nexus_dir, db_path_agent2, shared_event_bus):
     # Stop cache invalidation
     nexus._stop_cache_invalidation()
 
-
 # =============================================================================
 # Wait + Read Patterns (Event Propagation)
 # =============================================================================
-
 
 class TestWaitThenRead:
     """Tests for wait_for_changes() + read() composed pattern.
@@ -242,11 +230,9 @@ class TestWaitThenRead:
 
         assert change is None
 
-
 # =============================================================================
 # Lock + Write Patterns (Single-Instance Raft Locks)
 # =============================================================================
-
 
 class TestLockThenWrite:
     """Tests for lock() + write() + unlock() composed pattern.
@@ -298,11 +284,9 @@ class TestLockThenWrite:
         assert operation_failed is True
         assert lock_released is True
 
-
 # =============================================================================
 # Concurrent Access Patterns
 # =============================================================================
-
 
 class TestConcurrentAccess:
     """Tests for concurrent read/write scenarios."""
@@ -386,11 +370,9 @@ class TestConcurrentAccess:
             # No partial reads
             assert not (b"A" in content and b"B" in content)
 
-
 # =============================================================================
 # Event Notification Patterns
 # =============================================================================
-
 
 class TestEventNotification:
     """Tests for event emission and notification patterns."""
@@ -493,11 +475,9 @@ class TestEventNotification:
         assert received_event["event"] is not None
         assert received_event["event"]["type"] == "file_rename"
 
-
 # =============================================================================
 # Error Handling Patterns
 # =============================================================================
-
 
 class TestErrorHandling:
     """Tests for error handling in composed patterns."""

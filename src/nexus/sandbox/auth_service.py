@@ -15,8 +15,6 @@ Design decisions:
     - #4A / #16C: Events emitted synchronously from this service
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from dataclasses import dataclass, field
@@ -24,6 +22,10 @@ from typing import TYPE_CHECKING, Any
 
 from nexus.services.agents.agent_record import AgentRecord, AgentState
 
+from nexus.rebac.namespace_manager import NamespaceManager
+from nexus.sandbox.events import AgentEventLog
+from nexus.sandbox.sandbox_manager import SandboxManager
+from nexus.services.agents.agent_registry import AgentRegistry
 if TYPE_CHECKING:
     from nexus.rebac.namespace_manager import NamespaceManager
     from nexus.sandbox.events import AgentEventLog
@@ -31,7 +33,6 @@ if TYPE_CHECKING:
     from nexus.services.agents.agent_registry import AgentRegistry
 
 logger = logging.getLogger(__name__)
-
 
 @dataclass(frozen=True)
 class SandboxAuthResult:
@@ -41,7 +42,6 @@ class SandboxAuthResult:
     agent_record: AgentRecord
     mount_table: list[Any] = field(default_factory=list)  # list[MountEntry]
     budget_checked: bool = False
-
 
 class SandboxAuthService:
     """Orchestrates sandbox creation through Agent Registry.

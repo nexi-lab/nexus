@@ -4,12 +4,9 @@ Tests: Registry stress, CAS hold concurrent, Conflict detection,
        Deterministic interleaving.
 """
 
-from __future__ import annotations
-
 from concurrent.futures import ThreadPoolExecutor
 
 from nexus.services.snapshot.registry import TransactionRegistry
-
 
 class TestRegistryStress:
     """Stress test for TransactionRegistry under high concurrency."""
@@ -45,7 +42,6 @@ class TestRegistryStress:
         assert registry.active_count == 0
         assert registry.tracked_path_count == 0
 
-
 class TestCASHoldConcurrent:
     """Concurrent CAS hold_reference tests."""
 
@@ -72,7 +68,6 @@ class TestCASHoldConcurrent:
         assert all(results)
         assert ref_count["count"] == 1 + num_threads
 
-
 class TestConflictDetection:
     """Tests for conflict detection under concurrency."""
 
@@ -87,7 +82,6 @@ class TestConflictDetection:
 
         # Only txn-A should own the path
         assert registry.get_transaction_for_path("/shared.txt") == "txn-A"
-
 
 class TestDeterministicInterleaving:
     """Deterministic interleaving tests for race condition detection."""

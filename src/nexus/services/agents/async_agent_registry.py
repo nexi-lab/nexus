@@ -15,19 +15,19 @@ References:
     - Issue #1274: Astraea-style state-aware scheduler
 """
 
-from __future__ import annotations
-
 import asyncio
 from typing import TYPE_CHECKING, Any
 
 from nexus.services.agents.agent_record import AgentState
 from nexus.services.protocols.agent_registry import AgentInfo
 
+from nexus.scheduler.events import AgentStateEmitter
+from nexus.services.agents.agent_record import AgentRecord
+from nexus.services.agents.agent_registry import AgentRegistry
 if TYPE_CHECKING:
     from nexus.scheduler.events import AgentStateEmitter
     from nexus.services.agents.agent_record import AgentRecord
     from nexus.services.agents.agent_registry import AgentRegistry
-
 
 def _to_agent_info(record: AgentRecord) -> AgentInfo:
     """Convert an ``AgentRecord`` to the protocol-level ``AgentInfo``.
@@ -43,7 +43,6 @@ def _to_agent_info(record: AgentRecord) -> AgentInfo:
         state=record.state.value,
         generation=record.generation,
     )
-
 
 class AsyncAgentRegistry:
     """Async adapter for ``AgentRegistry`` conforming to ``AgentRegistryProtocol``.

@@ -21,7 +21,6 @@ find_brick_files = _mod.find_brick_files
 is_import_line = _mod.is_import_line
 main = _mod.main
 
-
 @pytest.fixture()
 def brick_file(tmp_path: Path):
     """Helper to create a temporary Python file simulating a brick module."""
@@ -32,7 +31,6 @@ def brick_file(tmp_path: Path):
         return f
 
     return _make
-
 
 class TestCheckFile:
     """Tests for check_file()."""
@@ -166,7 +164,6 @@ class TestCheckFile:
         violations = check_file(path)
         assert len(violations) == 1
 
-
 class TestFindBrickFiles:
     """Tests for find_brick_files()."""
 
@@ -190,7 +187,6 @@ class TestFindBrickFiles:
         (bricks / "brick_b" / "__init__.py").write_text("")
         result = find_brick_files(tmp_path)
         assert len(result) == 2
-
 
 class TestMain:
     """Tests for main() entry point."""
@@ -228,7 +224,6 @@ class TestMain:
             ["check_brick_imports.py", str(tmp_path / "src" / "nexus" / "core" / "foo.py")],
         )
         assert main() == 0  # Non-brick file is filtered out
-
 
 class TestIsImportLine:
     """Tests for is_import_line()."""

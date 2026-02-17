@@ -19,7 +19,6 @@ down_revision: Union[str, Sequence[str], None] = "add_temporal_metadata"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add relationship extraction fields to memories table.
 
@@ -39,7 +38,6 @@ def upgrade() -> None:
 
     # Add index for filtering memories with relationships
     op.create_index("idx_memory_relationship_count", "memories", ["relationship_count"])
-
 
 def downgrade() -> None:
     """Remove relationship extraction fields from memories table."""

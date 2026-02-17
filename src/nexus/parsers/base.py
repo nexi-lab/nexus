@@ -6,7 +6,6 @@ from typing import Any
 
 from nexus.parsers.types import ParseResult
 
-
 class Parser(ABC):
     """Abstract base class for all document parsers.
 

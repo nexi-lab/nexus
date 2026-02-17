@@ -28,7 +28,6 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from nexus import connect
 
-
 async def main():
     """Run LLM document reading demo."""
     print("╔══════════════════════════════════════════════════════════╗")
@@ -372,7 +371,6 @@ ACTION ITEMS FOR Q1 2025:
         print("  • Use with remote Nexus server")
         print("  • Build custom RAG applications")
         print()
-
 
 if __name__ == "__main__":
     asyncio.run(main())

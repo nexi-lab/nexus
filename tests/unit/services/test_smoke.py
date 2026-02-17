@@ -4,14 +4,11 @@ Quick validation that services can be instantiated and basic methods work.
 Not comprehensive - just enough to catch major bugs before integration.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest
 
 from nexus.core.permissions import OperationContext
-
 
 @pytest.fixture
 def mock_metadata():
@@ -20,14 +17,12 @@ def mock_metadata():
     mock.engine.url = "sqlite:///test.db"
     return mock
 
-
 @pytest.fixture
 def mock_cas():
     """Mock CAS store."""
     mock = MagicMock()
     mock.read_content.return_value = b"test content"
     return mock
-
 
 @pytest.fixture
 def mock_router():
@@ -38,7 +33,6 @@ def mock_router():
     route = MagicMock(backend=backend, readonly=False)
     mock.route.return_value = route
     return mock
-
 
 @pytest.fixture
 def operation_context():
@@ -51,11 +45,9 @@ def operation_context():
         is_admin=False,
     )
 
-
 # =============================================================================
 # VersionService Smoke Tests
 # =============================================================================
-
 
 class TestVersionServiceSmoke:
     """Smoke tests for VersionService."""
@@ -93,11 +85,9 @@ class TestVersionServiceSmoke:
         result = await service.list_versions("/test.txt")
         assert isinstance(result, list)
 
-
 # =============================================================================
 # MCPService Smoke Tests
 # =============================================================================
-
 
 class TestMCPServiceSmoke:
     """Smoke tests for MCPService."""
@@ -121,11 +111,9 @@ class TestMCPServiceSmoke:
         with pytest.raises(ValidationError, match="Either command or url is required"):
             await service.mcp_mount(name="test")
 
-
 # =============================================================================
 # LLMService Smoke Tests
 # =============================================================================
-
 
 class TestLLMServiceSmoke:
     """Smoke tests for LLMService."""
@@ -146,11 +134,9 @@ class TestLLMServiceSmoke:
         with pytest.raises(RuntimeError, match="NexusFS not configured"):
             service.create_llm_reader()
 
-
 # =============================================================================
 # OAuthService Smoke Tests
 # =============================================================================
-
 
 class TestOAuthServiceSmoke:
     """Smoke tests for OAuthService."""
@@ -178,11 +164,9 @@ class TestOAuthServiceSmoke:
             # May raise if config not found, that's ok for smoke test
             pass
 
-
 # =============================================================================
 # SearchService Smoke Tests
 # =============================================================================
-
 
 class TestSearchServiceSmoke:
     """Smoke tests for SearchService."""
@@ -235,11 +219,9 @@ class TestSearchServiceSmoke:
             # May fail if database connection fails, that's ok for smoke test
             pass
 
-
 # =============================================================================
 # SkillService Smoke Tests
 # =============================================================================
-
 
 class TestSkillServiceSmoke:
     """Smoke tests for SkillService."""
@@ -267,11 +249,9 @@ class TestSkillServiceSmoke:
         # Service should be initialized even with mock gateway
         assert service._gw is mock_gateway
 
-
 # =============================================================================
 # MountService Smoke Tests
 # =============================================================================
-
 
 class TestMountServiceSmoke:
     """Smoke tests for MountService."""
@@ -294,11 +274,9 @@ class TestMountServiceSmoke:
         result = await service.list_mounts()
         assert isinstance(result, list)
 
-
 # =============================================================================
 # ReBACService Smoke Tests
 # =============================================================================
-
 
 class TestReBACServiceSmoke:
     """Smoke tests for ReBACService."""
@@ -326,11 +304,9 @@ class TestReBACServiceSmoke:
                 object=("file", "/test.txt"),
             )
 
-
 # =============================================================================
 # Integration Smoke Test
 # =============================================================================
-
 
 class TestServiceIntegrationSmoke:
     """Smoke test for service integration patterns."""

@@ -51,7 +51,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 @register_connector(
     "s3_connector",
     description="AWS S3 with direct path mapping",

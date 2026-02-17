@@ -5,8 +5,6 @@ concerns (Decision 1 / #1585).  Contains the SSE event loop,
 streaming send/subscribe handlers, and SSE response factory.
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging
@@ -27,7 +25,6 @@ logger = logging.getLogger(__name__)
 # SSE configuration
 SSE_KEEPALIVE_INTERVAL = 15  # seconds
 SSE_MAX_LIFETIME = 1800  # 30 minutes
-
 
 async def sse_event_loop(
     task: Any,
@@ -74,7 +71,6 @@ async def sse_event_loop(
     finally:
         stream_registry.unregister(task_id, queue)
 
-
 def _sse_response(
     task: Any,
     queue: asyncio.Queue[dict[str, Any] | None],
@@ -93,7 +89,6 @@ def _sse_response(
             "X-Accel-Buffering": "no",
         },
     )
-
 
 async def handle_streaming(
     *,
@@ -115,7 +110,6 @@ async def handle_streaming(
         return await handle_subscribe(params, request_id, zone_id, task_manager, stream_registry)
     else:
         raise InvalidParamsError(data={"method": method})
-
 
 async def handle_send_streaming(
     params: dict[str, Any],
@@ -140,7 +134,6 @@ async def handle_send_streaming(
     queue = stream_registry.register(task.id)
     return _sse_response(task, queue, stream_registry)
 
-
 async def handle_subscribe(
     params: dict[str, Any],
     _request_id: str | int,
@@ -157,7 +150,6 @@ async def handle_subscribe(
     task = await task_manager.get_task(subscribe_params.taskId, zone_id=zone_id)
     queue = stream_registry.register(task.id)
     return _sse_response(task, queue, stream_registry)
-
 
 def format_sse_event(data: dict[str, Any]) -> str:
     """Format a dict as an SSE event string."""

@@ -1,7 +1,5 @@
 """Tests for HookEngineProtocol and hook data models (Issue #1383)."""
 
-from __future__ import annotations
-
 import dataclasses
 
 import pytest
@@ -28,7 +26,6 @@ from nexus.services.protocols.hook_engine import (
 # HookId frozen dataclass tests
 # ---------------------------------------------------------------------------
 
-
 class TestHookId:
     def test_frozen(self) -> None:
         hid = HookId(id="h1")
@@ -38,11 +35,9 @@ class TestHookId:
     def test_slots(self) -> None:
         assert hasattr(HookId, "__slots__")
 
-
 # ---------------------------------------------------------------------------
 # HookSpec frozen dataclass tests
 # ---------------------------------------------------------------------------
-
 
 class TestHookSpec:
     def test_frozen(self) -> None:
@@ -61,11 +56,9 @@ class TestHookSpec:
         fields = {f.name for f in dataclasses.fields(HookSpec)}
         assert fields == {"phase", "handler_name", "priority"}
 
-
 # ---------------------------------------------------------------------------
 # HookContext frozen dataclass tests
 # ---------------------------------------------------------------------------
-
 
 class TestHookContext:
     def test_frozen(self) -> None:
@@ -98,11 +91,9 @@ class TestHookContext:
         fields = {f.name for f in dataclasses.fields(HookContext)}
         assert fields == {"phase", "path", "zone_id", "agent_id", "payload"}
 
-
 # ---------------------------------------------------------------------------
 # HookResult frozen dataclass tests
 # ---------------------------------------------------------------------------
-
 
 class TestHookResult:
     def test_frozen(self) -> None:
@@ -127,11 +118,9 @@ class TestHookResult:
         fields = {f.name for f in dataclasses.fields(HookResult)}
         assert fields == {"proceed", "modified_context", "error"}
 
-
 # ---------------------------------------------------------------------------
 # Phase constants
 # ---------------------------------------------------------------------------
-
 
 class TestPhaseConstants:
     def test_phase_values(self) -> None:
@@ -161,11 +150,9 @@ class TestPhaseConstants:
         ):
             assert isinstance(phase, str)
 
-
 # ---------------------------------------------------------------------------
 # Protocol structural tests
 # ---------------------------------------------------------------------------
-
 
 class TestHookEngineProtocol:
     def test_expected_methods(self) -> None:
@@ -177,11 +164,9 @@ class TestHookEngineProtocol:
         }
         assert expected <= actual
 
-
 # ---------------------------------------------------------------------------
 # Conformance test against existing PluginHooks (partial)
 # ---------------------------------------------------------------------------
-
 
 class TestPluginHooksConformance:
     """Verify PluginHooks has analogous methods.

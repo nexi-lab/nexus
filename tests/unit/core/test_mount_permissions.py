@@ -5,8 +5,6 @@ Tests cover:
 - list_saved_mounts: User-based filtering of saved mount configurations
 """
 
-from __future__ import annotations
-
 import tempfile
 from collections.abc import Generator
 from pathlib import Path
@@ -20,13 +18,11 @@ from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
-
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
     """Create a temporary directory for tests."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
-
 
 @pytest.fixture
 def nx_with_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
@@ -41,7 +37,6 @@ def nx_with_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
     yield nx
     nx.close()
 
-
 @pytest.fixture
 def nx_without_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance without permissions (backward compatibility)."""
@@ -54,7 +49,6 @@ def nx_without_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
     )
     yield nx
     nx.close()
-
 
 class TestListMountsPermissionFiltering:
     """Tests for list_mounts permission-based filtering."""
@@ -256,7 +250,6 @@ class TestListMountsPermissionFiltering:
             # The mount should be excluded due to permission check failure
             assert "/mnt/test" not in mount_points
 
-
 class TestListSavedMountsUserFiltering:
     """Tests for list_saved_mounts user-based filtering."""
 
@@ -440,7 +433,6 @@ class TestListSavedMountsUserFiltering:
 
         assert "/mnt/agent" in agent_mount_points
 
-
 class TestCrossZoneIsolation:
     """Tests for cross-zone isolation in mount operations."""
 
@@ -551,7 +543,6 @@ class TestCrossZoneIsolation:
         zone2_saved_mount_points = [m["mount_point"] for m in zone2_saved_mounts]
         assert "/mnt/zone2_saved" in zone2_saved_mount_points
         assert "/mnt/zone1_saved" not in zone2_saved_mount_points
-
 
 class TestSaveMountAutoPopulation:
     """Tests for save_mount auto-population of owner_user_id and zone_id from context."""

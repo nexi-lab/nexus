@@ -15,8 +15,6 @@ Tests cover:
 All tests use a mock flush_callback — no DB needed.
 """
 
-from __future__ import annotations
-
 import logging
 import threading
 import time
@@ -31,13 +29,11 @@ from nexus.core.heartbeat_buffer import HeartbeatBuffer
 # Fixtures
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture
 def mock_callback() -> MagicMock:
     """A mock flush callback that returns the buffer size."""
     cb = MagicMock(side_effect=lambda buf: len(buf))
     return cb
-
 
 @pytest.fixture
 def buffer(mock_callback: MagicMock) -> HeartbeatBuffer:
@@ -48,11 +44,9 @@ def buffer(mock_callback: MagicMock) -> HeartbeatBuffer:
         max_buffer_size=50_000,
     )
 
-
 # ---------------------------------------------------------------------------
 # Record tests
 # ---------------------------------------------------------------------------
-
 
 class TestRecord:
     """Tests for HeartbeatBuffer.record()."""
@@ -84,11 +78,9 @@ class TestRecord:
         buffer.record("agent-1")  # duplicate agent, still counts
         assert buffer.stats()["total_recorded"] == 3
 
-
 # ---------------------------------------------------------------------------
 # Flush tests
 # ---------------------------------------------------------------------------
-
 
 class TestFlush:
     """Tests for HeartbeatBuffer.flush()."""
@@ -136,11 +128,9 @@ class TestFlush:
         assert stats["total_flushed"] == 2
         assert stats["flush_count"] == 2
 
-
 # ---------------------------------------------------------------------------
 # Auto-flush tests
 # ---------------------------------------------------------------------------
-
 
 class TestAutoFlush:
     """Tests for auto-flush triggered by record()."""
@@ -168,11 +158,9 @@ class TestAutoFlush:
         assert len(buf._buffer) == 1
         mock_callback.assert_not_called()
 
-
 # ---------------------------------------------------------------------------
 # Capacity warning tests
 # ---------------------------------------------------------------------------
-
 
 class TestCapacityWarning:
     """Tests for 80% buffer capacity warning."""
@@ -210,11 +198,9 @@ class TestCapacityWarning:
                 buf.record(f"agent-{i}")
             assert "capacity" not in caplog.text
 
-
 # ---------------------------------------------------------------------------
 # Restore buffer tests
 # ---------------------------------------------------------------------------
-
 
 class TestRestoreBuffer:
     """Tests for _restore_buffer() on flush failure."""
@@ -310,11 +296,9 @@ class TestRestoreBuffer:
         newer_ts = buf._buffer["agent-1"]
         assert newer_ts >= restored_ts
 
-
 # ---------------------------------------------------------------------------
 # recently_heartbeated tests
 # ---------------------------------------------------------------------------
-
 
 class TestRecentlyHeartbeated:
     """Tests for recently_heartbeated()."""
@@ -343,11 +327,9 @@ class TestRecentlyHeartbeated:
         cutoff = datetime.now(UTC) - timedelta(hours=1)
         assert buffer.recently_heartbeated(cutoff) == set()
 
-
 # ---------------------------------------------------------------------------
 # Remove tests
 # ---------------------------------------------------------------------------
-
 
 class TestRemove:
     """Tests for HeartbeatBuffer.remove()."""
@@ -362,11 +344,9 @@ class TestRemove:
         """remove() on nonexistent agent is a no-op."""
         buffer.remove("no-such-agent")  # Should not raise
 
-
 # ---------------------------------------------------------------------------
 # Concurrent tests
 # ---------------------------------------------------------------------------
-
 
 class TestConcurrent:
     """Thread-based concurrent tests."""
@@ -435,11 +415,9 @@ class TestConcurrent:
 
         assert len(errors) == 0
 
-
 # ---------------------------------------------------------------------------
 # Stats tests
 # ---------------------------------------------------------------------------
-
 
 class TestStats:
     """Tests for HeartbeatBuffer.stats()."""
@@ -475,11 +453,9 @@ class TestStats:
         buffer.remove("agent-1")
         assert buffer.stats()["buffer_size"] == 1
 
-
 # ---------------------------------------------------------------------------
 # Edge case tests
 # ---------------------------------------------------------------------------
-
 
 class TestEdgeCases:
     """Edge cases for HeartbeatBuffer."""

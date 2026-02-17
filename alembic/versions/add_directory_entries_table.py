@@ -45,7 +45,6 @@ down_revision: Union[str, Sequence[str], None] = (
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Create directory_entries table with indexes."""
     conn = op.get_bind()
@@ -93,7 +92,6 @@ def upgrade() -> None:
             ["parent_path"],
             postgresql_ops={"parent_path": "text_pattern_ops"},
         )
-
 
 def downgrade() -> None:
     """Drop directory_entries table and indexes."""

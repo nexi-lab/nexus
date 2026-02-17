@@ -12,8 +12,6 @@ Write performance: callers should use ``asyncio.create_task()`` to
 fire-and-forget audit writes so they never block the hot path.
 """
 
-from __future__ import annotations
-
 import hashlib
 import json
 import logging
@@ -31,28 +29,23 @@ from nexus.storage.query_mixin import AppendOnlyQueryMixin
 
 logger = logging.getLogger(__name__)
 
-
 # ---------------------------------------------------------------------------
 # Immutability guards (Decision #3)
 # ---------------------------------------------------------------------------
-
 
 @event.listens_for(ExchangeAuditLogModel, "before_update")
 def _reject_update(mapper: Any, connection: Any, target: Any) -> None:  # noqa: ARG001
     """Prevent any UPDATE on audit log records at the ORM level."""
     raise RuntimeError("Exchange audit log records are immutable: UPDATE not allowed")
 
-
 @event.listens_for(ExchangeAuditLogModel, "before_delete")
 def _reject_delete(mapper: Any, connection: Any, target: Any) -> None:  # noqa: ARG001
     """Prevent any DELETE on audit log records at the ORM level."""
     raise RuntimeError("Exchange audit log records are immutable: DELETE not allowed")
 
-
 # ---------------------------------------------------------------------------
 # Hash helpers
 # ---------------------------------------------------------------------------
-
 
 def _normalize_amount(amount: Decimal | str) -> str:
     """Normalize amount to 6 decimal places for deterministic hashing.
@@ -63,7 +56,6 @@ def _normalize_amount(amount: Decimal | str) -> str:
     """
     d = Decimal(str(amount))
     return f"{d:.6f}"
-
 
 def compute_record_hash(
     *,
@@ -101,14 +93,12 @@ def compute_record_hash(
     )
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
-
 def compute_metadata_hash(metadata: dict[str, Any] | None) -> str | None:
     """SHA-256 of deterministically-serialized metadata, or None."""
     if not metadata:
         return None
     serialized = json.dumps(metadata, sort_keys=True, default=str)
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
-
 
 def _build_merkle_root(hashes: list[str]) -> str:
     """Build a Merkle root from a list of hex-encoded SHA-256 hashes.
@@ -131,11 +121,9 @@ def _build_merkle_root(hashes: list[str]) -> str:
 
     return current_level[0]
 
-
 # ---------------------------------------------------------------------------
 # ExchangeAuditLogger
 # ---------------------------------------------------------------------------
-
 
 class ExchangeAuditLogger:
     """Append-only exchange transaction logger with query capabilities.

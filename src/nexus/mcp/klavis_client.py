@@ -30,8 +30,6 @@ References:
     - https://github.com/Klavis-AI/klavis
 """
 
-from __future__ import annotations
-
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -39,7 +37,6 @@ from typing import Any
 import httpx
 
 logger = logging.getLogger(__name__)
-
 
 class KlavisError(Exception):
     """Error from Klavis API."""
@@ -49,7 +46,6 @@ class KlavisError(Exception):
         self.status_code = status_code
         self.response = response
 
-
 @dataclass
 class KlavisOAuthResult:
     """Result from Klavis OAuth URL request."""
@@ -58,7 +54,6 @@ class KlavisOAuthResult:
     state: str | None = None
     provider: str | None = None
     instance_id: str | None = None
-
 
 @dataclass
 class KlavisMCPInstance:
@@ -70,7 +65,6 @@ class KlavisMCPInstance:
     user_id: str | None = None
     transport: str = "sse"
     oauth_url: str | None = None  # OAuth URL if OAuth is required
-
 
 class KlavisClient:
     """Client for Klavis AI MCP hosting platform.

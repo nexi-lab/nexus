@@ -19,7 +19,6 @@ down_revision: Union[str, Sequence[str], None] = "4f0aaaec2735"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Upgrade schema - Add admin bypass audit table (P0-4)."""
 
@@ -43,7 +42,6 @@ def upgrade() -> None:
     op.create_index("idx_audit_timestamp", "admin_bypass_audit", ["timestamp"])
     op.create_index("idx_audit_user_timestamp", "admin_bypass_audit", ["user_id", "timestamp"])
     op.create_index("idx_audit_tenant_timestamp", "admin_bypass_audit", ["tenant_id", "timestamp"])
-
 
 def downgrade() -> None:
     """Downgrade schema - Remove admin bypass audit table."""

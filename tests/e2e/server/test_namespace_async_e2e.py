@@ -7,8 +7,6 @@ Tests namespace visibility with:
 - No admin bypass - pure user permission testing
 """
 
-from __future__ import annotations
-
 import os
 import shutil
 import signal
@@ -29,12 +27,10 @@ for _key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
     os.environ.pop(_key, None)
 os.environ["NO_PROXY"] = "*"
 
-
 def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
         return s.getsockname()[1]
-
 
 def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> None:
     deadline = time.monotonic() + timeout
@@ -50,7 +46,6 @@ def _wait_for_health(base_url: str, timeout: float = SERVER_STARTUP_TIMEOUT) -> 
         time.sleep(0.3)
     client.close()
     raise TimeoutError(f"Server did not start within {timeout}s at {base_url}")
-
 
 @pytest.fixture(scope="module")
 def server():
@@ -124,11 +119,9 @@ def server():
                 proc.kill()
         shutil.rmtree(data_dir, ignore_errors=True)
 
-
 @pytest.fixture()
 def base_url(server: dict) -> str:
     return server["base_url"]
-
 
 @pytest.fixture()
 def client() -> httpx.Client:
@@ -136,12 +129,10 @@ def client() -> httpx.Client:
     yield c
     c.close()
 
-
 def test_health(base_url: str, client: httpx.Client) -> None:
     """Server started successfully with namespace manager."""
     resp = client.get(f"{base_url}/health")
     assert resp.status_code == 200
-
 
 def test_zero_grants_invisible(base_url: str, client: httpx.Client) -> None:
     """User with no grants gets 404 for any path (fail-closed)."""
@@ -155,7 +146,6 @@ def test_zero_grants_invisible(base_url: str, client: httpx.Client) -> None:
         headers=alice_headers,
     )
     assert resp.status_code == 404, "User without grants should get 404 on all paths"
-
 
 def test_namespace_blocks_unauthorized_access(base_url: str, client: httpx.Client) -> None:
     """Namespace manager blocks access to paths without grants.
@@ -191,7 +181,6 @@ def test_namespace_blocks_unauthorized_access(base_url: str, client: httpx.Clien
         assert resp.status_code in (404, 500), (
             f"Path {path} should be invisible for write without grant"
         )
-
 
 def test_multiple_users_all_blocked(base_url: str, client: httpx.Client) -> None:
     """Multiple users without grants all get 404 (namespace isolation).
@@ -232,7 +221,6 @@ def test_multiple_users_all_blocked(base_url: str, client: httpx.Client) -> None
     assert alice_resp.status_code == 404
     assert bob_resp.status_code == 404
     assert charlie_resp.status_code == 404
-
 
 if __name__ == "__main__":
     pytest.main([__file__, "-xvs"])

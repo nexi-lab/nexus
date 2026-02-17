@@ -23,7 +23,6 @@ down_revision: Union[str, Sequence[str], None] = "add_memory_evolution_fields"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add delivered column + partial index for outbox polling."""
     op.add_column(
@@ -53,7 +52,6 @@ def upgrade() -> None:
             "operation_log",
             ["delivered", "created_at"],
         )
-
 
 def downgrade() -> None:
     """Remove delivered column and its index."""

@@ -31,7 +31,6 @@ down_revision: Union[str, Sequence[str], None] = "add_filesystem_version_sequenc
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add bi-temporal validity fields to memories table.
 
@@ -66,7 +65,6 @@ def upgrade() -> None:
             ["valid_at"],
             postgresql_using="brin",
         )
-
 
 def downgrade() -> None:
     """Remove bi-temporal validity fields from memories table."""

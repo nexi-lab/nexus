@@ -8,8 +8,6 @@ Tests cover:
 - Edge cases: self-transitions, exhaustive coverage of transition table
 """
 
-from __future__ import annotations
-
 import types
 from dataclasses import FrozenInstanceError
 from datetime import UTC, datetime
@@ -26,7 +24,6 @@ from nexus.services.agents.agent_record import (
 # ---------------------------------------------------------------------------
 # AgentState enum tests
 # ---------------------------------------------------------------------------
-
 
 class TestAgentState:
     """Tests for the AgentState enum."""
@@ -59,11 +56,9 @@ class TestAgentState:
         with pytest.raises(ValueError):
             AgentState("INVALID")
 
-
 # ---------------------------------------------------------------------------
 # VALID_TRANSITIONS allowlist tests
 # ---------------------------------------------------------------------------
-
 
 class TestValidTransitions:
     """Tests for the VALID_TRANSITIONS strict allowlist (Decision #8A)."""
@@ -112,7 +107,6 @@ class TestValidTransitions:
         """SUSPENDED can only transition to CONNECTED."""
         assert VALID_TRANSITIONS[AgentState.SUSPENDED] == frozenset({AgentState.CONNECTED})
 
-
 # ---------------------------------------------------------------------------
 # validate_transition() parametrized 16-cell matrix (Decision #9A)
 # ---------------------------------------------------------------------------
@@ -121,7 +115,6 @@ _U = AgentState.UNKNOWN
 _C = AgentState.CONNECTED
 _I = AgentState.IDLE
 _S = AgentState.SUSPENDED
-
 
 class TestValidateTransition:
     """Parametrized 16-cell state transition matrix (Decision #9A)."""
@@ -173,11 +166,9 @@ class TestValidateTransition:
         """Each cell in the 4x4 transition matrix returns expected validity."""
         assert validate_transition(current, target) == valid
 
-
 # ---------------------------------------------------------------------------
 # AgentRecord frozen dataclass tests
 # ---------------------------------------------------------------------------
-
 
 class TestAgentRecord:
     """Tests for the AgentRecord frozen dataclass."""

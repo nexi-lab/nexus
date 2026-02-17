@@ -30,7 +30,6 @@ down_revision: Union[str, Sequence[str], None] = "add_sync_jobs"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add inherit_permissions column to api_keys table.
 
@@ -51,7 +50,6 @@ def upgrade() -> None:
             comment="Whether agent inherits owner's permissions (0=no, 1=yes)",
         ),
     )
-
 
 def downgrade() -> None:
     """Remove inherit_permissions column."""

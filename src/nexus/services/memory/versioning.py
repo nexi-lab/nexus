@@ -12,8 +12,6 @@ Usage:
     versioning.rollback("mem_123", version=1)
 """
 
-from __future__ import annotations
-
 import builtins
 import difflib
 import logging
@@ -26,7 +24,6 @@ from nexus.services.memory.memory_router import MemoryViewRouter
 from nexus.services.permissions.memory_permission_enforcer import MemoryPermissionEnforcer
 
 logger = logging.getLogger(__name__)
-
 
 class MemoryVersioning:
     """Version tracking operations for memories (#1184, #1188).

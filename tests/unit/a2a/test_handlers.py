@@ -4,8 +4,6 @@ TDD-first tests for the extracted handler module.  Tests verify
 pure async handler functions in isolation (no HTTP layer).
 """
 
-from __future__ import annotations
-
 from typing import Any
 
 import pytest
@@ -22,11 +20,9 @@ from nexus.a2a.models import Message, TaskState, TextPart
 from nexus.a2a.stores.in_memory import InMemoryTaskStore
 from nexus.a2a.task_manager import TaskManager
 
-
 @pytest.fixture
 def tm() -> TaskManager:
     return TaskManager(store=InMemoryTaskStore())
-
 
 def _user_msg(text: str = "hello") -> dict[str, Any]:
     """Build a raw message dict (as comes from JSON-RPC params)."""
@@ -34,10 +30,8 @@ def _user_msg(text: str = "hello") -> dict[str, Any]:
         "message": {"role": "user", "parts": [{"type": "text", "text": text}]},
     }
 
-
 def _user_message(text: str = "hello") -> Message:
     return Message(role="user", parts=[TextPart(text=text)])
-
 
 class TestHandleSend:
     @pytest.mark.asyncio
@@ -81,7 +75,6 @@ class TestHandleSend:
         with pytest.raises(InvalidParamsError):
             await handle_send(params, zone_id="root", agent_id=None, task_manager=tm)
 
-
 class TestHandleGet:
     @pytest.mark.asyncio
     async def test_returns_task(self, tm: TaskManager) -> None:
@@ -105,7 +98,6 @@ class TestHandleGet:
         )
         assert len(result["history"]) == 1
 
-
 class TestHandleCancel:
     @pytest.mark.asyncio
     async def test_cancels_task(self, tm: TaskManager) -> None:
@@ -119,7 +111,6 @@ class TestHandleCancel:
         await tm.update_task_state(task.id, TaskState.CANCELED)
         with pytest.raises(TaskNotCancelableError):
             await handle_cancel({"taskId": task.id}, zone_id="root", task_manager=tm)
-
 
 class TestDispatch:
     @pytest.mark.asyncio

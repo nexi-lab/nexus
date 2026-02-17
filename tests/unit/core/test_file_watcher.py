@@ -9,8 +9,6 @@ Tests cover:
 Related: Issue #1106 Block 2
 """
 
-from __future__ import annotations
-
 import asyncio
 import sys
 from unittest.mock import MagicMock
@@ -22,7 +20,6 @@ from nexus.core.file_watcher import ChangeType, FileChange, FileWatcher
 # =============================================================================
 # FileWatcher Lifecycle Tests
 # =============================================================================
-
 
 class TestFileWatcherLifecycle:
     """Tests for FileWatcher start/stop lifecycle."""
@@ -107,11 +104,9 @@ class TestFileWatcherLifecycle:
         finally:
             watcher.close()
 
-
 # =============================================================================
 # Callback Registration Tests
 # =============================================================================
-
 
 class TestCallbackRegistration:
     """Tests for add_watch/remove_watch callback registration."""
@@ -203,11 +198,9 @@ class TestCallbackRegistration:
             watcher.stop()
             watcher.close()
 
-
 # =============================================================================
 # Callback Invocation Tests
 # =============================================================================
-
 
 class TestCallbackInvocation:
     """Tests for callback invocation on file changes."""
@@ -357,11 +350,9 @@ class TestCallbackInvocation:
             watcher.stop()
             watcher.close()
 
-
 # =============================================================================
 # Recursive Watching Tests
 # =============================================================================
-
 
 class TestRecursiveWatching:
     """Tests for recursive directory watching."""
@@ -404,11 +395,9 @@ class TestRecursiveWatching:
             watcher.stop()
             watcher.close()
 
-
 # =============================================================================
 # Backward Compatibility Tests
 # =============================================================================
-
 
 class TestBackwardCompatibility:
     """Tests for backward compatibility with wait_for_change()."""
@@ -454,11 +443,9 @@ class TestBackwardCompatibility:
         finally:
             watcher.close()
 
-
 # =============================================================================
 # FileChange Dataclass Tests
 # =============================================================================
-
 
 class TestFileChangeDataclass:
     """Tests for FileChange dataclass."""
@@ -503,11 +490,9 @@ class TestFileChangeDataclass:
         assert result["path"] == "/test/new.txt"
         assert result["old_path"] == "/test/old.txt"
 
-
 # =============================================================================
 # ChangeType Enum Tests
 # =============================================================================
-
 
 class TestChangeTypeEnum:
     """Tests for ChangeType enum."""

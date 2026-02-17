@@ -6,8 +6,6 @@ and verifies WAL segment files are created on disk.
 Issue #1397
 """
 
-from __future__ import annotations
-
 import base64
 import os
 import subprocess
@@ -16,11 +14,9 @@ import sys
 import httpx
 import pytest
 
-
 def _encode_bytes(data: bytes) -> dict:
     """Encode bytes for JSON-RPC transport."""
     return {"__type__": "bytes", "data": base64.b64encode(data).decode()}
-
 
 def _rpc(client: httpx.Client, method: str, params: dict, api_key: str) -> dict:
     """Send a JSON-RPC request to the server."""
@@ -30,7 +26,6 @@ def _rpc(client: httpx.Client, method: str, params: dict, api_key: str) -> dict:
         headers={"Authorization": f"Bearer {api_key}"},
     )
     return resp.json()
-
 
 @pytest.fixture(scope="function")
 def nexus_server_with_wal(isolated_db, tmp_path):
@@ -105,7 +100,6 @@ def nexus_server_with_wal(isolated_db, tmp_path):
         process.kill()
         process.wait()
 
-
 class TestWALServerIntegration:
     """E2E: server startup with WAL, file operations create WAL segments."""
 
@@ -165,7 +159,6 @@ class TestWALServerIntegration:
             assert parts[0] == "wal", f"Bad segment name: {seg.name}"
             assert len(parts) == 3, f"Expected wal-{{seq}}-{{epoch}}, got: {seg.name}"
 
-
 def _mint_jwt(secret: str, subject_id: str, zone_id: str, is_admin: bool = False) -> str:
     """Mint a JWT token for testing."""
     import time as _time
@@ -186,7 +179,6 @@ def _mint_jwt(secret: str, subject_id: str, zone_id: str, is_admin: bool = False
     }
     token = jose_jwt.encode(header, payload, secret)
     return token.decode() if isinstance(token, bytes) else token
-
 
 @pytest.fixture(scope="function")
 def nexus_server_with_permissions(isolated_db, tmp_path):
@@ -265,7 +257,6 @@ def nexus_server_with_permissions(isolated_db, tmp_path):
     except subprocess.TimeoutExpired:
         process.kill()
         process.wait()
-
 
 class TestWALWithPermissions:
     """E2E: WAL works for non-admin users with enforced permissions."""
@@ -371,7 +362,6 @@ class TestWALWithPermissions:
             )
             # Should get a permission error (JSON-RPC error response)
             assert "error" in result, f"Expected permission error, got: {result}"
-
 
 class TestPGFallback:
     """E2E: verify PG fallback when Rust extension is hidden."""

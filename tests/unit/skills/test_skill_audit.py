@@ -6,7 +6,6 @@ import pytest
 
 from nexus.skills.audit import AuditAction, AuditLogEntry, SkillAuditLogger
 
-
 @pytest.mark.asyncio
 async def test_log_audit_entry() -> None:
     """Test logging an audit entry."""
@@ -28,7 +27,6 @@ async def test_log_audit_entry() -> None:
     assert entry.agent_id == "alice"
     assert entry.details == {"execution_time": 1.5, "success": True}
 
-
 @pytest.mark.asyncio
 async def test_log_different_actions() -> None:
     """Test logging different audit actions."""
@@ -49,7 +47,6 @@ async def test_log_different_actions() -> None:
     assert AuditAction.PUBLISHED in actions
     assert AuditAction.EXECUTED in actions
 
-
 @pytest.mark.asyncio
 async def test_query_logs_by_skill() -> None:
     """Test querying logs by skill name."""
@@ -65,7 +62,6 @@ async def test_query_logs_by_skill() -> None:
 
     assert len(logs) == 2
     assert all(log.skill_name == "skill1" for log in logs)
-
 
 @pytest.mark.asyncio
 async def test_query_logs_by_action() -> None:
@@ -83,7 +79,6 @@ async def test_query_logs_by_action() -> None:
     assert len(logs) == 2
     assert all(log.action == AuditAction.EXECUTED for log in logs)
 
-
 @pytest.mark.asyncio
 async def test_query_logs_by_agent() -> None:
     """Test querying logs by agent ID."""
@@ -99,7 +94,6 @@ async def test_query_logs_by_agent() -> None:
 
     assert len(logs) == 2
     assert all(log.agent_id == "alice" for log in logs)
-
 
 @pytest.mark.asyncio
 async def test_query_logs_by_time_range() -> None:
@@ -152,7 +146,6 @@ async def test_query_logs_by_time_range() -> None:
 
     assert len(logs) == 2  # entry2 and entry3
 
-
 @pytest.mark.asyncio
 async def test_query_logs_with_limit() -> None:
     """Test querying logs with result limit."""
@@ -166,7 +159,6 @@ async def test_query_logs_with_limit() -> None:
     logs = await audit.query_logs(limit=5)
 
     assert len(logs) == 5
-
 
 @pytest.mark.asyncio
 async def test_query_logs_multiple_filters() -> None:
@@ -193,7 +185,6 @@ async def test_query_logs_multiple_filters() -> None:
     assert logs[0].agent_id == "alice"
     assert logs[0].zone_id == "zone1"
 
-
 @pytest.mark.asyncio
 async def test_get_skill_activity() -> None:
     """Test getting activity summary for a skill."""
@@ -219,7 +210,6 @@ async def test_get_skill_activity() -> None:
     assert activity["action_counts"]["executed"] == 2
     assert activity["action_counts"]["created"] == 1
     assert activity["action_counts"]["forked"] == 1
-
 
 @pytest.mark.asyncio
 async def test_generate_compliance_report() -> None:
@@ -251,7 +241,6 @@ async def test_generate_compliance_report() -> None:
 
     # Check recent activity
     assert len(report["recent_activity"]) == 4
-
 
 @pytest.mark.asyncio
 async def test_generate_compliance_report_with_time_range() -> None:
@@ -291,7 +280,6 @@ async def test_generate_compliance_report_with_time_range() -> None:
 
     assert report["total_operations"] == 1  # Only recent_entry
     assert report["skills_used"] == 1
-
 
 @pytest.mark.asyncio
 async def test_audit_log_entry_validation() -> None:

@@ -36,7 +36,6 @@ down_revision: Union[str, Sequence[str], None] = "add_pg_textsearch_bm25"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Convert embedding column from vector to halfvec."""
     conn = op.get_bind()
@@ -116,7 +115,6 @@ def upgrade() -> None:
             WITH (m = 24, ef_construction = 128)
         """)
     )
-
 
 def downgrade() -> None:
     """Revert halfvec back to vector (float32)."""

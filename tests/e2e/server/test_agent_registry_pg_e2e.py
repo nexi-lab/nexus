@@ -15,8 +15,6 @@ Run with:
     pytest tests/e2e/test_agent_registry_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket
@@ -50,14 +48,12 @@ _src_path = Path(__file__).parent.parent.parent / "src"
 if str(_src_path) not in sys.path:
     sys.path.insert(0, str(_src_path))
 
-
 def find_free_port() -> int:
     """Find a free port on localhost."""
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
         s.bind(("", 0))
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         return s.getsockname()[1]
-
 
 def wait_for_server(url: str, timeout: float = 30.0) -> bool:
     """Wait for server to be ready by polling /health endpoint."""
@@ -72,11 +68,9 @@ def wait_for_server(url: str, timeout: float = 30.0) -> bool:
         time.sleep(0.1)
     return False
 
-
 # ---------------------------------------------------------------------------
 # PostgreSQL fixtures
 # ---------------------------------------------------------------------------
-
 
 @pytest.fixture(scope="module")
 def pg_engine():
@@ -99,12 +93,10 @@ def pg_engine():
 
     engine.dispose()
 
-
 @pytest.fixture
 def pg_session_factory(pg_engine):
     """Create a session factory for PostgreSQL."""
     return sessionmaker(bind=pg_engine, expire_on_commit=False)
-
 
 @pytest.fixture
 def pg_registry(pg_session_factory):
@@ -117,11 +109,9 @@ def pg_registry(pg_session_factory):
         session.execute(text("DELETE FROM agent_records WHERE agent_id LIKE 'e2e-%'"))
         session.commit()
 
-
 # ---------------------------------------------------------------------------
 # 1. PostgreSQL table creation and schema validation
 # ---------------------------------------------------------------------------
-
 
 class TestPostgreSQLSchema:
     """Verify agent_records table is properly created in PostgreSQL."""
@@ -169,11 +159,9 @@ class TestPostgreSQLSchema:
         assert "generation" in columns
         assert "last_heartbeat" in columns
 
-
 # ---------------------------------------------------------------------------
 # 2. AgentRegistry lifecycle with PostgreSQL
 # ---------------------------------------------------------------------------
-
 
 class TestAgentRegistryPostgreSQL:
     """Test AgentRegistry operations against real PostgreSQL."""
@@ -258,11 +246,9 @@ class TestAgentRegistryPostgreSQL:
         assert pg_registry.unregister("e2e-unreg-1") is True
         assert pg_registry.get("e2e-unreg-1") is None
 
-
 # ---------------------------------------------------------------------------
 # 3. Optimistic locking with real PostgreSQL concurrency
 # ---------------------------------------------------------------------------
-
 
 class TestOptimisticLockingPostgreSQL:
     """Test optimistic locking with real PostgreSQL transactions."""
@@ -325,11 +311,9 @@ class TestOptimisticLockingPostgreSQL:
         assert final.state is AgentState.CONNECTED
         assert final.generation == 2
 
-
 # ---------------------------------------------------------------------------
 # 4. Heartbeat batch flush with PostgreSQL
 # ---------------------------------------------------------------------------
-
 
 class TestHeartbeatPostgreSQL:
     """Test heartbeat buffer and batch flush with PostgreSQL."""
@@ -394,11 +378,9 @@ class TestHeartbeatPostgreSQL:
         stale_ids = {a.agent_id for a in stale}
         assert "e2e-stale-detect-1" in stale_ids
 
-
 # ---------------------------------------------------------------------------
 # 5. Server E2E: database auth + agent registration + namespace visibility
 # ---------------------------------------------------------------------------
-
 
 class TestServerE2E:
     """E2E test with real FastAPI server, PostgreSQL, and database auth."""
@@ -602,11 +584,9 @@ class TestServerE2E:
         else:
             assert response.status_code in (401, 403)
 
-
 # ---------------------------------------------------------------------------
 # 6. Namespace visibility E2E with PostgreSQL
 # ---------------------------------------------------------------------------
-
 
 class TestNamespaceE2E:
     """Test namespace visibility with agent permissions against PostgreSQL."""
@@ -672,11 +652,9 @@ class TestNamespaceE2E:
                     rebac.rebac_delete(tid)
             rebac.close()
 
-
 # ---------------------------------------------------------------------------
 # 7. Alembic Migration E2E
 # ---------------------------------------------------------------------------
-
 
 class TestAlembicMigration:
     """Verify Alembic migration generates correct SQL for agent_records.
@@ -751,11 +729,9 @@ class TestAlembicMigration:
         assert "DROP TABLE agent_records" in sql
         assert "DROP INDEX idx_agent_records_owner" in sql
 
-
 # ---------------------------------------------------------------------------
 # 8. RPC Endpoints E2E (Server with database auth)
 # ---------------------------------------------------------------------------
-
 
 class TestRPCEndpoints:
     """Test new agent RPC endpoints via HTTP against real server."""
@@ -1058,11 +1034,9 @@ class TestRPCEndpoints:
         )
         assert result.get("error") is not None, f"Expected stale generation error, got: {result}"
 
-
 # ---------------------------------------------------------------------------
 # 9. Dual-Write Bridge E2E
 # ---------------------------------------------------------------------------
-
 
 class TestDualWriteBridge:
     """Test that register_agent writes to both EntityRegistry and AgentRegistry."""

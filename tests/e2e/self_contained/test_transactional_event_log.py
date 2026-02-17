@@ -7,8 +7,6 @@ End-to-end flow:
 4. Verify retry on dispatch failure
 """
 
-from __future__ import annotations
-
 import tempfile
 import time
 from collections.abc import Generator
@@ -24,12 +22,10 @@ from nexus.storage.models import OperationLogModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
 from nexus.storage.record_store_syncer import RecordStoreSyncer
 
-
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
-
 
 @pytest.fixture
 def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]:
@@ -37,11 +33,9 @@ def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]
     yield rs
     rs.close()
 
-
 @pytest.fixture
 def syncer(record_store: SQLAlchemyRecordStore) -> RecordStoreSyncer:
     return RecordStoreSyncer(record_store.session_factory)
-
 
 def _make_metadata(
     path: str = "/test.txt",
@@ -64,7 +58,6 @@ def _make_metadata(
         created_by="test_user",
         owner_id="user1",
     )
-
 
 class TestTransactionalOutboxIntegration:
     """Full cycle: write → undelivered → delivery worker → delivered."""

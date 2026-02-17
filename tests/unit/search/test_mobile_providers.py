@@ -7,8 +7,6 @@ Tests cover:
 - MobileSearchService lifecycle
 """
 
-from __future__ import annotations
-
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -35,7 +33,6 @@ from nexus.search.mobile_providers import (
 # =============================================================================
 # Provider class selection
 # =============================================================================
-
 
 class TestProviderClassSelection:
     """Test _get_embedding_provider_class for each ModelProvider."""
@@ -73,7 +70,6 @@ class TestProviderClassSelection:
         with pytest.raises(ValueError, match="Unsupported embedding provider"):
             _get_embedding_provider_class(config)
 
-
 class TestRerankerProviderClassSelection:
     """Test _get_reranker_provider_class for each ModelProvider."""
 
@@ -97,11 +93,9 @@ class TestRerankerProviderClassSelection:
         with pytest.raises(ValueError, match="Unsupported reranker provider"):
             _get_reranker_provider_class(config)
 
-
 # =============================================================================
 # Provider initialization with missing imports
 # =============================================================================
-
 
 class TestProviderImportErrors:
     """Test providers raise ImportError when dependencies missing."""
@@ -166,11 +160,9 @@ class TestProviderImportErrors:
         ):
             await provider.load()
 
-
 # =============================================================================
 # MobileSearchService lifecycle
 # =============================================================================
-
 
 class TestMobileSearchServiceLifecycle:
     """Test MobileSearchService init → embed → shutdown."""

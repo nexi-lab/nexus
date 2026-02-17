@@ -5,12 +5,9 @@ following the pattern from the Beads project for git-friendly backups
 and zero-downtime migrations.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Literal
-
 
 @dataclass
 class ExportFilter:
@@ -27,7 +24,6 @@ class ExportFilter:
     path_prefix: str = ""
     after_time: datetime | None = None
     include_deleted: bool = False
-
 
 @dataclass
 class CollisionDetail:
@@ -47,9 +43,7 @@ class CollisionDetail:
     resolution: str
     message: str
 
-
 ConflictMode = Literal["skip", "overwrite", "remap", "auto"]
-
 
 @dataclass
 class ImportOptions:
@@ -68,7 +62,6 @@ class ImportOptions:
     dry_run: bool = False
     conflict_mode: ConflictMode = "skip"
     preserve_ids: bool = True
-
 
 @dataclass
 class ImportResult:

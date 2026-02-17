@@ -4,8 +4,6 @@ Moved from server/auth/zone_helpers.py. Pure functions for zone
 validation, creation, and email domain classification.
 """
 
-from __future__ import annotations
-
 import re
 
 from sqlalchemy.orm import Session
@@ -13,11 +11,9 @@ from sqlalchemy.orm import Session
 from nexus.auth.constants import PERSONAL_EMAIL_DOMAINS, RESERVED_ZONE_IDS
 from nexus.storage.models import ZoneModel
 
-
 def is_personal_email_domain(domain: str) -> bool:
     """Check if email domain is a personal/free email provider."""
     return domain.lower() in PERSONAL_EMAIL_DOMAINS
-
 
 def get_zone_strategy_from_email(
     email: str,
@@ -39,7 +35,6 @@ def get_zone_strategy_from_email(
         domain_slug = domain.replace(".", "-")
         company_name = domain.split(".")[0].replace("-", " ").title()
         return domain_slug, company_name, domain, False
-
 
 def validate_zone_id(zone_id: str) -> tuple[bool, str | None]:
     """Validate zone_id format and check for reserved names.
@@ -65,12 +60,10 @@ def validate_zone_id(zone_id: str) -> tuple[bool, str | None]:
 
     return True, None
 
-
 def is_zone_id_available(session: Session, zone_id: str) -> bool:
     """Check if zone_id is available (not already taken)."""
     existing = session.get(ZoneModel, zone_id)
     return existing is None
-
 
 def suggest_zone_id(base_name: str, session: Session) -> str:
     """Suggest an available zone_id based on a base name."""
@@ -90,7 +83,6 @@ def suggest_zone_id(base_name: str, session: Session) -> str:
 
     return f"{zone_id}-{int(time.time())}"
 
-
 def normalize_to_slug(name: str) -> str:
     """Normalize a name to a valid zone_id slug format."""
     slug = name.lower()
@@ -105,7 +97,6 @@ def normalize_to_slug(name: str) -> str:
         slug = slug[:63].rstrip("-")
 
     return slug
-
 
 def create_zone(
     session: Session,

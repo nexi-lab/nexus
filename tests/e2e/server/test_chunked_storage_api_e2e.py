@@ -7,8 +7,6 @@ Run with:
     pytest tests/e2e/test_chunked_storage_api_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import base64
 import os
 
@@ -16,14 +14,12 @@ import pytest
 
 from nexus.backends.chunked_storage import CDC_THRESHOLD_BYTES
 
-
 def encode_bytes_param(data: bytes) -> dict:
     """Encode bytes for RPC transmission.
 
     The RPC protocol expects bytes as {"__type__": "bytes", "data": "<base64>"}
     """
     return {"__type__": "bytes", "data": base64.b64encode(data).decode("utf-8")}
-
 
 def rpc_call(test_app, method: str, params: dict, timeout: float = 30.0):
     """Make an RPC call to the NexusFS API."""
@@ -33,7 +29,6 @@ def rpc_call(test_app, method: str, params: dict, timeout: float = 30.0):
         timeout=timeout,
     )
     return response
-
 
 def decode_bytes_result(result):
     """Decode bytes from RPC response.
@@ -48,7 +43,6 @@ def decode_bytes_result(result):
         return result
     else:
         raise ValueError(f"Unexpected result type: {type(result)}")
-
 
 class TestChunkedStorageHTTPAPI:
     """End-to-end tests for chunked storage through FastAPI HTTP endpoints."""

@@ -4,8 +4,6 @@ CAS-backed version tracking for files and skills with full history.
 Every file write creates a new version, preserving all previous versions.
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 from typing import cast
 
@@ -20,7 +18,6 @@ from nexus.cli.utils import (
     handle_error,
 )
 
-
 def register_commands(cli: click.Group) -> None:
     """Register version tracking commands with the CLI.
 
@@ -28,7 +25,6 @@ def register_commands(cli: click.Group) -> None:
         cli: The main CLI group to register commands with
     """
     cli.add_command(version_group)
-
 
 @click.group(name="versions")
 def version_group() -> None:
@@ -44,7 +40,6 @@ def version_group() -> None:
         nexus versions rollback /workspace/file.txt --version 1
     """
     pass
-
 
 @version_group.command(name="history")
 @click.argument("path")
@@ -111,7 +106,6 @@ def version_history(path: str, limit: int | None, backend_config: BackendConfig)
     except Exception as e:
         handle_error(e)
 
-
 @version_group.command(name="get")
 @click.argument("path")
 @click.option("--version", "-v", type=int, required=True, help="Version number to retrieve")
@@ -146,7 +140,6 @@ def version_get(path: str, version: int, output: str | None, backend_config: Bac
 
     except Exception as e:
         handle_error(e)
-
 
 @version_group.command(name="diff")
 @click.argument("path")
@@ -230,7 +223,6 @@ def version_diff(path: str, v1: int, v2: int, mode: str, backend_config: Backend
 
     except Exception as e:
         handle_error(e)
-
 
 @version_group.command(name="rollback")
 @click.argument("path")

@@ -6,8 +6,6 @@ Zone membership has moved to: nexus.server.services.zone_membership
 This file re-exports all symbols for backward compatibility.
 """
 
-from __future__ import annotations
-
 # OAuth lookup stays here (not moving in Phase 1)
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -48,7 +46,6 @@ from nexus.storage.models import (
     UserOAuthAccountModel,
 )
 
-
 def get_user_by_external_id(
     session: Session,
     external_user_id: str,
@@ -63,7 +60,6 @@ def get_user_by_external_id(
             UserModel.deleted_at.is_(None),
         )
     )
-
 
 def get_user_by_oauth_provider(
     session: Session,

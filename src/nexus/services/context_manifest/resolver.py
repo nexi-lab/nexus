@@ -16,8 +16,6 @@ References:
     - Stripe Minions: https://stripe.dev/blog/minions-stripes-one-shot-end-to-end-coding-agents
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging
@@ -40,11 +38,9 @@ from nexus.services.context_manifest.template import resolve_template
 
 logger = logging.getLogger(__name__)
 
-
 # ===========================================================================
 # SourceExecutor Protocol
 # ===========================================================================
-
 
 @runtime_checkable
 class SourceExecutor(Protocol):
@@ -64,7 +60,6 @@ class SourceExecutor(Protocol):
         source: ContextSourceProtocol,
         variables: dict[str, str],
     ) -> SourceResult: ...
-
 
 @runtime_checkable
 class MetricsObserver(Protocol):
@@ -97,11 +92,9 @@ class MetricsObserver(Protocol):
         error: bool = False,
     ) -> None: ...
 
-
 # ===========================================================================
 # ManifestResolver
 # ===========================================================================
-
 
 class ManifestResolver:
     """Resolves a context manifest by executing all sources in parallel.
@@ -142,7 +135,7 @@ class ManifestResolver:
         self._max_resolve_seconds = max_resolve_seconds
         self._metrics = metrics_observer
 
-    def with_executors(self, extra: dict[str, SourceExecutor]) -> ManifestResolver:
+    def with_executors(self, extra: dict[str, SourceExecutor]) -> "ManifestResolver":
         """Return a new resolver with additional executors merged in.
 
         Existing executors are preserved; *extra* executors override on conflict.
@@ -505,7 +498,6 @@ class ManifestResolver:
         }
         async with aiofiles.open(output_dir / "_index.json", "w", encoding="utf-8") as f:
             await f.write(json.dumps(index_data, indent=2))
-
 
 def _sanitize_filename(name: str) -> str:
     """Convert a source name to a safe filename component.

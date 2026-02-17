@@ -34,7 +34,6 @@ down_revision: Union[str, Sequence[str], None] = "eb7fb97cf314"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Change workspace_snapshots to use workspace_path instead of tenant_id+agent_id."""
 
@@ -68,7 +67,6 @@ def upgrade() -> None:
     # Drop old columns
     op.drop_column("workspace_snapshots", "tenant_id")
     op.drop_column("workspace_snapshots", "agent_id")
-
 
 def downgrade() -> None:
     """Revert to tenant_id+agent_id based workspace identification."""

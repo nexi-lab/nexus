@@ -41,7 +41,6 @@ from collections import defaultdict
 from pathlib import Path
 from urllib.parse import urlparse
 
-
 def sanitize_filename(name: str) -> str:
     """Sanitize a string to be used as a filename."""
     # Replace spaces and special characters with underscores
@@ -52,7 +51,6 @@ def sanitize_filename(name: str) -> str:
     name = name.strip("_")
     return name or "unnamed"
 
-
 def extract_repo_from_link(link: str) -> str:
     """Extract repository name from GitHub PR link."""
     # Example: https://github.com/mattermost/mattermost-server/pull/2776
@@ -62,7 +60,6 @@ def extract_repo_from_link(link: str) -> str:
         return path_parts[1]  # Return repo name (e.g., mattermost-server)
     return "unknown"
 
-
 def write_jsonl(filepath: Path, records: list):
     """Write records to a JSONL file (one JSON object per line)."""
     filepath.parent.mkdir(parents=True, exist_ok=True)
@@ -70,20 +67,17 @@ def write_jsonl(filepath: Path, records: list):
         for record in records:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
-
 def write_json(filepath: Path, data: dict):
     """Write data to a JSON file."""
     filepath.parent.mkdir(parents=True, exist_ok=True)
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
-
 def write_markdown(filepath: Path, content: str):
     """Write content to a markdown file."""
     filepath.parent.mkdir(parents=True, exist_ok=True)
     with open(filepath, "w", encoding="utf-8") as f:
         f.write(content)
-
 
 def transform_slack(slack_messages: list, output_dir: Path):
     """Transform Slack messages to JSONL files grouped by channel."""
@@ -133,7 +127,6 @@ def transform_slack(slack_messages: list, output_dir: Path):
 
     return len(channels)
 
-
 def transform_documents(documents: list, output_dir: Path):
     """Transform documents to Markdown files with index."""
     docs_dir = output_dir / "docs"
@@ -176,7 +169,6 @@ def transform_documents(documents: list, output_dir: Path):
     write_jsonl(docs_dir / "_index.jsonl", index_records)
 
     return len(documents)
-
 
 def transform_meetings(transcripts: list, chats: list, output_dir: Path):
     """Transform meeting transcripts and chats to Markdown and text files."""
@@ -235,7 +227,6 @@ def transform_meetings(transcripts: list, chats: list, output_dir: Path):
     write_jsonl(meetings_dir / "_index.jsonl", index_records)
 
     return len(transcripts)
-
 
 def transform_prs(prs: list, output_dir: Path):
     """Transform PRs to JSONL files grouped by repository."""
@@ -303,7 +294,6 @@ def transform_prs(prs: list, output_dir: Path):
 
     return len(prs), len(repos)
 
-
 def transform_urls(urls: list, output_dir: Path):
     """Transform URLs to JSONL file."""
     if not urls:
@@ -322,7 +312,6 @@ def transform_urls(urls: list, output_dir: Path):
     write_jsonl(output_dir / "urls.jsonl", records)
     return len(urls)
 
-
 def flatten_org_member(
     member: dict, vp_id: str = None, lead_id: str = None, role_type: str = None
 ) -> dict:
@@ -337,7 +326,6 @@ def flatten_org_member(
         "reports_to_vp": vp_id,
         "reports_to_lead": lead_id,
     }
-
 
 def transform_metadata(metadata_dir: Path, output_dir: Path):
     """Transform HERB metadata files to grep-friendly format."""
@@ -481,7 +469,6 @@ def transform_metadata(metadata_dir: Path, output_dir: Path):
 
     return stats
 
-
 def transform_product(input_file: Path, output_dir: Path):
     """Transform a single product JSON file."""
     print(f"Processing {input_file.name}...")
@@ -540,7 +527,6 @@ def transform_product(input_file: Path, output_dir: Path):
 
     print(f"  ✓ Created {product_dir}")
     return stats
-
 
 def main():
     if len(sys.argv) < 3:
@@ -603,7 +589,6 @@ def main():
 
         stats = transform_product(input_file, output_dir)
         print(f"\nStats: {json.dumps(stats, indent=2)}")
-
 
 if __name__ == "__main__":
     main()

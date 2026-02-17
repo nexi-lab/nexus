@@ -23,7 +23,6 @@ down_revision: Union[str, Sequence[str], None] = "add_agent_events_table"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add persistent_namespace_views table with indexes."""
     op.create_table(
@@ -65,7 +64,6 @@ def upgrade() -> None:
         "persistent_namespace_views",
         ["zone_id"],
     )
-
 
 def downgrade() -> None:
     """Remove persistent_namespace_views table."""

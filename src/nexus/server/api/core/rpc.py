@@ -3,8 +3,6 @@
 Extracted from fastapi_server.py (#1602).
 """
 
-from __future__ import annotations
-
 import hashlib
 import logging
 from typing import Any
@@ -34,7 +32,6 @@ from nexus.server.rate_limiting import RATE_LIMIT_AUTHENTICATED, limiter
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
 
 @router.post("/api/nfs/{method}")
 @limiter.limit(RATE_LIMIT_AUTHENTICATED)
@@ -186,7 +183,6 @@ async def rpc_endpoint(
         logger.exception(f"Error executing method {method}")
         return _error_response(None, RPCErrorCode.INTERNAL_ERROR, f"Internal error: {e}")
 
-
 def get_cache_headers(method: str, result: Any) -> dict[str, str]:
     """Generate appropriate cache headers based on method and result."""
     headers: dict[str, str] = {}
@@ -218,7 +214,6 @@ def get_cache_headers(method: str, result: Any) -> dict[str, str]:
         headers["Cache-Control"] = "private, no-cache"
 
     return headers
-
 
 def _error_response(
     request_id: Any,

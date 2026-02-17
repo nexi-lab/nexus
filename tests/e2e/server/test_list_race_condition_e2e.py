@@ -20,14 +20,11 @@ Run with:
     pytest tests/e2e/test_list_race_condition_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import base64
 import uuid
 
 import httpx
 import pytest
-
 
 def make_rpc_request(
     client: httpx.Client,
@@ -52,13 +49,11 @@ def make_rpc_request(
     )
     return response.json()
 
-
 def encode_bytes(content: str | bytes) -> dict:
     """Encode content for JSON-RPC transport."""
     if isinstance(content, str):
         content = content.encode("utf-8")
     return {"__type__": "bytes", "data": base64.b64encode(content).decode("utf-8")}
-
 
 def parse_list_result(list_response: dict) -> list[dict]:
     """Parse list API response to extract file entries.
@@ -75,7 +70,6 @@ def parse_list_result(list_response: dict) -> list[dict]:
         return result
     return []
 
-
 def get_file_names(files: list) -> list[str]:
     """Extract file names from list result entries."""
     names = []
@@ -89,7 +83,6 @@ def get_file_names(files: list) -> list[str]:
         else:
             names.append(str(f))
     return names
-
 
 class TestListRaceConditionE2E:
     """E2E tests for Issue #1147: List API race condition with newly created files."""
@@ -320,7 +313,6 @@ class TestListRaceConditionE2E:
                 f"not visible to client A. Files: {file_names}"
             )
 
-
 class TestPushdownFallbackBehavior:
     """Tests for the predicate pushdown fallback mechanism."""
 
@@ -398,7 +390,6 @@ class TestPushdownFallbackBehavior:
             f"Inconsistent list results across calls: {results}. "
             f"This suggests cache staleness issues."
         )
-
 
 class TestReadYourWritesConsistency:
     """Tests specifically for read-your-writes consistency pattern."""

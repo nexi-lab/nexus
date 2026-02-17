@@ -28,7 +28,6 @@ L1_TTL_SECONDS = 300  # 5 minutes
 L2_DEFAULT_TTL_SECONDS = 3600  # 1 hour
 CACHE_KEY_PREFIX = "nexus:cache:"
 
-
 class CacheManager:
     """Two-tier distributed cache manager.
 
@@ -82,7 +81,6 @@ class CacheManager:
             "l1_max_size": self.l1_max_size,
             "hit_ratio": 0.947,  # Example metric
         }
-
 
 class CacheInvalidator:
     """Handles cache invalidation across distributed instances.

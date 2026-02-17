@@ -6,8 +6,6 @@ process) owns exactly one ``Backend`` instance that is lazily created on the
 first call and reused for subsequent calls.
 """
 
-from __future__ import annotations
-
 import importlib
 import logging
 from typing import Any
@@ -19,7 +17,6 @@ _BACKEND_INSTANCE: Any = None
 _BACKEND_SPEC: tuple[str, str, tuple[tuple[str, Any], ...]] | None = (
     None  # (module, class, kwargs_items)
 )
-
 
 def _ensure_backend(
     module_path: str,
@@ -62,7 +59,6 @@ def _ensure_backend(
     _BACKEND_SPEC = spec
     return _BACKEND_INSTANCE
 
-
 def worker_call(
     module_path: str,
     class_name: str,
@@ -79,7 +75,6 @@ def worker_call(
     backend = _ensure_backend(module_path, class_name, init_kwargs)
     return getattr(backend, method_name)(*method_args, **method_kwargs)
 
-
 def worker_get_property(
     module_path: str,
     class_name: str,
@@ -89,7 +84,6 @@ def worker_get_property(
     """Read a Backend property in the isolated worker context."""
     backend = _ensure_backend(module_path, class_name, init_kwargs)
     return getattr(backend, prop_name)
-
 
 def worker_shutdown() -> None:
     """Disconnect and release the worker-local Backend instance."""

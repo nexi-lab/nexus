@@ -27,7 +27,6 @@ except Exception:
 # The 7 methods the skills module uses
 REQUIRED_METHODS = {"read", "write", "list", "exists", "mkdir", "delete", "is_directory"}
 
-
 def test_protocol_is_subset_of_abc() -> None:
     """Verify all narrow Protocol methods exist on the core ABC.
 
@@ -52,7 +51,6 @@ def test_protocol_is_subset_of_abc() -> None:
         f"Narrow Protocol has methods not on ABC: {sorted(missing_from_abc)}"
     )
 
-
 def test_protocol_covers_required_methods() -> None:
     """Verify the narrow Protocol defines all required methods."""
     protocol_methods = set()
@@ -65,7 +63,6 @@ def test_protocol_covers_required_methods() -> None:
 
     missing = REQUIRED_METHODS - protocol_methods
     assert not missing, f"Protocol missing required methods: {sorted(missing)}"
-
 
 @pytest.mark.skipif(not _raft_available, reason="Raft metastore not available")
 def test_nexus_fs_satisfies_narrow_protocol() -> None:
@@ -92,7 +89,6 @@ def test_nexus_fs_satisfies_narrow_protocol() -> None:
 
         # isinstance check with @runtime_checkable
         assert isinstance(nx, NexusFilesystemProtocol)
-
 
 def test_minimal_mock_satisfies_protocol() -> None:
     """Verify a minimal mock with just the 7 methods passes isinstance()."""
@@ -131,13 +127,11 @@ def test_minimal_mock_satisfies_protocol() -> None:
     mock = MinimalFilesystem()
     assert isinstance(mock, NexusFilesystemProtocol)
 
-
 def test_protocol_documentation() -> None:
     """Verify Protocol has proper documentation."""
     doc = NexusFilesystemProtocol.__doc__
     assert doc is not None, "Protocol should have docstring"
     assert "skills" in doc.lower(), "Documentation should mention skills module"
-
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

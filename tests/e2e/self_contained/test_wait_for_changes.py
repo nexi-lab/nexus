@@ -18,13 +18,11 @@ from nexus.core.file_watcher import ChangeType, FileChange, FileWatcher
 
 pytestmark = pytest.mark.quarantine
 
-
 @pytest.fixture
 def temp_backend(tmp_path):
     """Create a temporary passthrough backend for testing."""
     backend = PassthroughBackend(base_path=tmp_path / "passthrough")
     yield backend
-
 
 @pytest.fixture
 def file_watcher():
@@ -32,7 +30,6 @@ def file_watcher():
     watcher = FileWatcher()
     yield watcher
     watcher.close()
-
 
 class TestWatchDirectory:
     """Tests for watching directories."""
@@ -196,7 +193,6 @@ class TestWatchDirectory:
         finally:
             await create_task
 
-
 class TestWatchFile:
     """Tests for watching specific files."""
 
@@ -280,7 +276,6 @@ class TestWatchFile:
         finally:
             await rename_task
 
-
 class TestWatchTimeout:
     """Tests for timeout behavior."""
 
@@ -314,7 +309,6 @@ class TestWatchTimeout:
         with pytest.raises(NotImplementedError):
             await file_watcher.wait_for_change(watch_path, timeout=1.0)
 
-
 class TestFileChangeDataclass:
     """Tests for FileChange dataclass."""
 
@@ -339,7 +333,6 @@ class TestFileChangeDataclass:
             "path": "new_name.txt",
             "old_path": "old_name.txt",
         }
-
 
 class TestPassthroughBackendIntegration:
     """Integration tests for PassthroughBackend with file watching."""
@@ -430,7 +423,6 @@ class TestPassthroughBackendIntegration:
         # Check for errors
         assert len(errors) == 0, f"Atomic update errors: {errors}"
 
-
 class TestLocking:
     """Tests for advisory locking functionality."""
 
@@ -508,7 +500,6 @@ class TestLocking:
     def test_is_locked_nonexistent_path(self, temp_backend):
         """Check is_locked on never-locked path -> False."""
         assert temp_backend.is_locked("/never/locked.txt") is False
-
 
 class TestCASIntegration:
     """Tests for CAS (Content-Addressable Storage) integration with file watching."""
@@ -625,11 +616,9 @@ class TestCASIntegration:
         retrieved = temp_backend.read_content(content_hash).unwrap()
         assert retrieved == original_content
 
-
 # =============================================================================
 # Path Pattern Matching Tests (Layer 1)
 # =============================================================================
-
 
 class TestPathPatternMatching:
     """Tests for glob pattern matching in Layer 1 file watching.
@@ -728,11 +717,9 @@ class TestPathPatternMatching:
         finally:
             await create_task
 
-
 # =============================================================================
 # Event Ordering Tests
 # =============================================================================
-
 
 class TestEventOrdering:
     """Tests for event ordering guarantees."""
@@ -774,11 +761,9 @@ class TestEventOrdering:
         # Should have received at least one event
         assert len(events_received) >= 1
 
-
 # =============================================================================
 # Stress Tests
 # =============================================================================
-
 
 class TestStressScenarios:
     """Stress tests for high-volume event handling."""

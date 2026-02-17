@@ -3,19 +3,15 @@
 TDD: Tests written first per Decision 10.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest
 
 from nexus.services.permissions.object_type_mapper import ObjectTypeMapper
 
-
 @pytest.fixture
 def mapper() -> ObjectTypeMapper:
     return ObjectTypeMapper()
-
 
 class TestGetObjectType:
     def test_default_mapping_returns_file(self, mapper: ObjectTypeMapper) -> None:
@@ -35,7 +31,6 @@ class TestGetObjectType:
         backend = MagicMock()
         backend.get_object_type.side_effect = Exception("boom")
         assert mapper.get_object_type(backend, "broken/path") == "file"
-
 
 class TestGetObjectId:
     def test_file_type_uses_virtual_path(self, mapper: ObjectTypeMapper) -> None:

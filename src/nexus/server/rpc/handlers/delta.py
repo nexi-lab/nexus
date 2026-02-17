@@ -4,16 +4,14 @@ Extracted from fastapi_server.py (#1602). Provides rsync-style incremental
 file updates via binary diffs (bsdiff4).
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.core.nexus_fs import NexusFS
 if TYPE_CHECKING:
     from nexus.core.nexus_fs import NexusFS
 
 logger = logging.getLogger(__name__)
-
 
 def handle_delta_read(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     """Handle delta_read method for rsync-style incremental updates.
@@ -109,7 +107,6 @@ def handle_delta_read(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str,
         "original_size": len(content),
         "compression_ratio": 1.0 - delta_ratio,
     }
-
 
 def handle_delta_write(nexus_fs: NexusFS, params: Any, context: Any) -> dict[str, Any]:
     """Handle delta_write method for rsync-style incremental updates.

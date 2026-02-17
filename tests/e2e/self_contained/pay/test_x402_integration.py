@@ -6,8 +6,6 @@ These tests verify the complete x402 flow with a real FastAPI app:
 3. Full topup flow from request to credit
 """
 
-from __future__ import annotations
-
 import base64
 import json
 from decimal import Decimal
@@ -25,7 +23,6 @@ from nexus.server.middleware.x402 import X402PaymentMiddleware
 # Fixtures
 # =============================================================================
 
-
 @pytest.fixture
 def x402_client():
     """Real X402Client for testing."""
@@ -36,7 +33,6 @@ def x402_client():
         webhook_secret="test-secret-123",
     )
 
-
 @pytest.fixture
 def mock_credits_service():
     """Mock CreditsService that tracks calls."""
@@ -45,7 +41,6 @@ def mock_credits_service():
     service.provision_wallet = AsyncMock()
     service.get_balance = AsyncMock(return_value=Decimal("100.00"))
     return service
-
 
 @pytest.fixture
 def app(x402_client, mock_credits_service):
@@ -84,17 +79,14 @@ def app(x402_client, mock_credits_service):
 
     return app
 
-
 @pytest.fixture
 def client(app):
     """Test client for the app."""
     return TestClient(app)
 
-
 # =============================================================================
 # Free Endpoint Tests
 # =============================================================================
-
 
 class TestFreeEndpoints:
     """Test endpoints that don't require payment."""
@@ -118,11 +110,9 @@ class TestFreeEndpoints:
         assert data["network"] == "base"
         assert data["wallet_address"] == "0x1234567890123456789012345678901234567890"
 
-
 # =============================================================================
 # Protected Endpoint Tests
 # =============================================================================
-
 
 class TestProtectedEndpoints:
     """Test endpoints that require x402 payment."""
@@ -214,11 +204,9 @@ class TestProtectedEndpoints:
         data = response.json()
         assert "verification failed" in data["error"].lower()
 
-
 # =============================================================================
 # Webhook Integration Tests
 # =============================================================================
-
 
 class TestWebhookIntegration:
     """Test webhook endpoint with full processing."""
@@ -307,11 +295,9 @@ class TestWebhookIntegration:
         assert response.status_code == 400
         assert "agent_id" in response.json()["detail"].lower()
 
-
 # =============================================================================
 # Topup Flow Tests
 # =============================================================================
-
 
 class TestTopupFlow:
     """Test the complete topup flow."""
@@ -377,11 +363,9 @@ class TestTopupFlow:
         assert call_kwargs["agent_id"] == "agent-full-flow"
         assert call_kwargs["amount"] == Decimal("50")  # 50000000 micro = 50 USDC
 
-
 # =============================================================================
 # Error Handling Tests
 # =============================================================================
-
 
 class TestErrorHandling:
     """Test error handling in various scenarios."""

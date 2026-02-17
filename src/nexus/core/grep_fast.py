@@ -35,7 +35,6 @@ except ImportError:
     except ImportError:
         pass
 
-
 def grep_bulk(
     pattern: str,
     file_contents: dict[str, bytes],
@@ -73,16 +72,13 @@ def grep_bulk(
         # If Rust grep fails for any reason, return None to fallback to Python
         return None
 
-
 def is_available() -> bool:
     """Check if Rust grep is available."""
     return RUST_AVAILABLE
 
-
 def is_mmap_available() -> bool:
     """Check if memory-mapped grep is available."""
     return MMAP_AVAILABLE
-
 
 def grep_files_mmap(
     pattern: str,

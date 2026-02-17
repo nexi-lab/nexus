@@ -9,8 +9,6 @@ This module implements the core ReBAC APIs:
 Based on Google Zanzibar design with optimizations for embedded/local use.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import threading
@@ -41,12 +39,12 @@ from nexus.services.permissions.rebac_fast import (
 )
 from nexus.services.permissions.tuples.repository import TupleRepository
 
+from sqlalchemy.engine import Engine
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
 # P0-6: Logger for security-critical denials
 logger = logging.getLogger(__name__)
-
 
 class ReBACManager:
     """Manager for ReBAC operations.

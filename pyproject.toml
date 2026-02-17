@@ -3,7 +3,7 @@ name = "nexus-ai-fs"
 version = "0.7.2.dev0"
 description = "AI-Native Distributed Filesystem Architecture"
 readme = "README.md"
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 license = {text = "MIT"}
 authors = [
     {name = "Nexus Team", email = "team@nexus.example.com"}
@@ -27,8 +27,6 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.12",
-    "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: System :: Filesystems",
@@ -359,7 +357,7 @@ exclude_lines = [
 
 [tool.mypy]
 # Type checking configuration - Phase 3 will enable full strict mode
-python_version = "3.11"
+python_version = "3.14"
 exclude = [
     "_pb2(_grpc)?\\.py$",  # Generated gRPC/protobuf stubs
 ]
@@ -679,7 +677,7 @@ disable_error_code = ["attr-defined", "union-attr", "no-any-return", "misc"]
 warn_unused_ignores = false
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py314"
 line-length = 100
 exclude = [
     "benchmarks/",

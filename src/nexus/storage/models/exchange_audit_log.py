@@ -10,15 +10,12 @@ Design decisions:
 - 5 strategic indexes (2 composite B-tree, 2 BRIN, 1 unique).
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from sqlalchemy import DateTime, Index, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base, _generate_uuid, _get_uuid_server_default
-
 
 class ExchangeAuditLogModel(Base):
     """Immutable audit log for exchange transactions.

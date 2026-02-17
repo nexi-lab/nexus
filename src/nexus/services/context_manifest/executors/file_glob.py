@@ -11,8 +11,6 @@ Performance:
     - Blocking I/O runs in thread pool to avoid blocking the event loop.
 """
 
-from __future__ import annotations
-
 import asyncio
 import glob as glob_module
 import logging
@@ -30,7 +28,6 @@ from nexus.services.context_manifest.executors.executor_utils import (
 from nexus.services.context_manifest.models import ContextSourceProtocol, SourceResult
 
 logger = logging.getLogger(__name__)
-
 
 class FileGlobExecutor:
     """Execute file_glob sources by resolving glob patterns against workspace root.
@@ -184,14 +181,12 @@ class FileGlobExecutor:
             elapsed_ms=elapsed_ms,
         )
 
-
 def _safe_mtime(p: Path) -> float:
     """Get file mtime safely, returning 0.0 if file was deleted (TOCTOU)."""
     try:
         return p.stat().st_mtime
     except OSError:
         return 0.0
-
 
 def _is_under(path: Path, root: Path) -> bool:
     """Check whether *path* is under *root* (resolved, no symlink escape)."""

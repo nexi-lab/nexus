@@ -30,7 +30,6 @@ down_revision: Union[str, Sequence[str], None] = "tiger_cache_remove_tenant"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add posix_uid column to file_paths table."""
     bind = op.get_bind()
@@ -86,7 +85,6 @@ def upgrade() -> None:
               )
         """)
         )
-
 
 def downgrade() -> None:
     """Remove posix_uid column from file_paths table."""

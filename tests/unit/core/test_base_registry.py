@@ -4,7 +4,6 @@ import pytest
 
 from nexus.core.registry import BaseRegistry
 
-
 class TestRegisterAndGet:
     """register / get / get_or_raise."""
 
@@ -43,7 +42,6 @@ class TestRegisterAndGet:
         reg.register("a", 99, allow_overwrite=True)
         assert reg.get("a") == 99
 
-
 class TestUnregister:
     def test_unregister_returns_item(self) -> None:
         reg: BaseRegistry[str] = BaseRegistry("s")
@@ -54,7 +52,6 @@ class TestUnregister:
     def test_unregister_missing_returns_none(self) -> None:
         reg: BaseRegistry[str] = BaseRegistry("s")
         assert reg.unregister("nope") is None
-
 
 class TestListAndIteration:
     def test_list_names_sorted(self) -> None:
@@ -75,7 +72,6 @@ class TestListAndIteration:
         reg.register("b", 2)
         reg.register("a", 1)
         assert list(reg) == ["a", "b"]
-
 
 class TestClearLenContains:
     def test_clear(self) -> None:
@@ -98,7 +94,6 @@ class TestClearLenContains:
         assert "a" in reg
         assert "b" not in reg
 
-
 class TestRepr:
     def test_repr(self) -> None:
         reg: BaseRegistry[int] = BaseRegistry("my_reg")
@@ -107,7 +102,6 @@ class TestRepr:
         assert "BaseRegistry" in r
         assert "my_reg" in r
         assert "x" in r
-
 
 class TestProtocolValidation:
     def test_register_with_protocol_passes(self) -> None:
@@ -140,7 +134,6 @@ class TestProtocolValidation:
         reg: BaseRegistry[Bad] = BaseRegistry("p", protocol=HasName)
         with pytest.raises(TypeError, match="does not satisfy"):
             reg.register("b", Bad())
-
 
 class TestDiscoverFromPackage:
     def test_discover_parsers(self) -> None:

@@ -11,8 +11,6 @@ Usage:
     pytest tests/integration/test_delta_sync_e2e.py -v --tb=short -o "addopts="
 """
 
-from __future__ import annotations
-
 import os
 import signal
 import socket
@@ -40,7 +38,6 @@ DB_URL = os.environ.get(
 
 _src_path = Path(__file__).parent.parent.parent / "src"
 
-
 def is_postgres_available() -> bool:
     """Check if PostgreSQL test database is available."""
     try:
@@ -52,24 +49,20 @@ def is_postgres_available() -> bool:
     except Exception:
         return False
 
-
 pytestmark = pytest.mark.skipif(
     not is_postgres_available(),
     reason="PostgreSQL not available (start with: docker compose --profile test up -d postgres-test)",
 )
 
-
 # ============================================================================
 # Part 1: Server + Auth tests (real FastAPI server with PostgreSQL)
 # ============================================================================
-
 
 def find_free_port() -> int:
     with closing(socket.socket(socket.AF_INET, socket.SOCK_STREAM)) as s:
         s.bind(("", 0))
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         return s.getsockname()[1]
-
 
 def wait_for_server(url: str, timeout: float = 30.0) -> bool:
     start = time.time()
@@ -83,13 +76,11 @@ def wait_for_server(url: str, timeout: float = 30.0) -> bool:
         time.sleep(0.2)
     return False
 
-
 @pytest.fixture(scope="module")
 def pg_engine():
     engine = create_engine(DB_URL, echo=False)
     yield engine
     engine.dispose()
-
 
 @pytest.fixture()
 def clean_db(pg_engine):
@@ -100,7 +91,6 @@ def clean_db(pg_engine):
     Base.metadata.create_all(pg_engine)
     yield
     Base.metadata.drop_all(pg_engine, checkfirst=True)
-
 
 @pytest.fixture()
 def admin_api_key(pg_engine, clean_db):
@@ -129,7 +119,6 @@ def admin_api_key(pg_engine, clean_db):
         )
         session.commit()
     return raw_key
-
 
 @pytest.fixture()
 def nexus_server_pg(tmp_path, admin_api_key):
@@ -181,12 +170,10 @@ def nexus_server_pg(tmp_path, admin_api_key):
         process.kill()
         process.wait()
 
-
 @pytest.fixture()
 def client(nexus_server_pg):
     with httpx.Client(base_url=nexus_server_pg["base_url"], timeout=30.0, trust_env=False) as c:
         yield c
-
 
 class TestServerWithPostgresAuth:
     """Verify FastAPI server starts with PostgreSQL + database auth."""
@@ -215,11 +202,9 @@ class TestServerWithPostgresAuth:
         data = resp.json()
         assert "result" in data, f"Expected result in response: {data}"
 
-
 # ============================================================================
 # Part 1b: Non-admin user permission tests (server with enforce_permissions=true)
 # ============================================================================
-
 
 @pytest.fixture()
 def non_admin_api_key(pg_engine, clean_db):
@@ -248,7 +233,6 @@ def non_admin_api_key(pg_engine, clean_db):
         )
         session.commit()
     return raw_key
-
 
 @pytest.fixture()
 def nexus_server_pg_with_users(tmp_path, admin_api_key, non_admin_api_key):
@@ -305,7 +289,6 @@ def nexus_server_pg_with_users(tmp_path, admin_api_key, non_admin_api_key):
         process.kill()
         process.wait()
 
-
 class TestNonAdminPermissions:
     """Verify non-admin users are subject to permission enforcement."""
 
@@ -353,11 +336,9 @@ class TestNonAdminPermissions:
                 f"User response unexpected: {user_data}"
             )
 
-
 # ============================================================================
 # Part 2: Direct SyncService + LocalConnectorBackend + PostgreSQL
 # ============================================================================
-
 
 @pytest.fixture()
 def pg_session_factory(pg_engine, clean_db):
@@ -366,7 +347,6 @@ def pg_session_factory(pg_engine, clean_db):
 
     BackendChangeLogModel.__table__.create(pg_engine, checkfirst=True)
     return sessionmaker(bind=pg_engine)
-
 
 @pytest.fixture()
 def mock_context():
@@ -378,7 +358,6 @@ def mock_context():
     ctx.subject_id = "admin"
     ctx.backend_path = None
     return ctx
-
 
 @pytest.fixture()
 def sync_service_with_pg(pg_session_factory):
@@ -392,7 +371,6 @@ def sync_service_with_pg(pg_session_factory):
 
     service = SyncService(gateway)
     return service, gateway
-
 
 @pytest.fixture()
 def local_connector_mount(tmp_path):
@@ -411,7 +389,6 @@ def local_connector_mount(tmp_path):
 
     backend = LocalConnectorBackend(local_path=str(mount_dir))
     return backend, mount_dir
-
 
 class TestDeltaSyncWithPostgres:
     """Test SyncService delta sync with real PostgreSQL and real LocalConnectorBackend."""
@@ -653,11 +630,9 @@ class TestDeltaSyncWithPostgres:
             f"updated={result3.files_updated}, skipped={result3.files_skipped}"
         )
 
-
 # ============================================================================
 # Part 3: Non-admin permission enforcement with direct SyncService
 # ============================================================================
-
 
 @pytest.fixture()
 def non_admin_context():
@@ -672,7 +647,6 @@ def non_admin_context():
         subject_type="user",
         subject_id="regular_user",
     )
-
 
 class TestNonAdminSyncPermissions:
     """Verify SyncService enforces permissions for non-admin users."""

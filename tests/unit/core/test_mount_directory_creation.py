@@ -18,7 +18,6 @@ import pytest
 from nexus.core.config import PermissionConfig
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 
-
 @pytest.fixture
 def nx_with_mount():
     """Create NexusFS instance with mount manager support."""
@@ -43,7 +42,6 @@ def nx_with_mount():
         yield nx, tmpdir
 
         nx.close()
-
 
 def test_mount_creates_directory_entry(nx_with_mount):
     """Test that adding a mount creates directory metadata entry."""
@@ -72,7 +70,6 @@ def test_mount_creates_directory_entry(nx_with_mount):
     assert test_meta is not None
     assert test_meta.mime_type == "inode/directory"
 
-
 def test_mount_appears_in_listing(nx_with_mount):
     """Test that mount points appear when listing parent directories."""
     nx, tmpdir = nx_with_mount
@@ -96,7 +93,6 @@ def test_mount_appears_in_listing(nx_with_mount):
 
     # /mnt/gcs_demo should appear in /mnt listing
     assert "/mnt/gcs_demo" in mnt_list, f"Expected /mnt/gcs_demo in {mnt_list}"
-
 
 def test_mount_appears_in_detailed_listing(nx_with_mount):
     """Test that mount points appear with correct metadata in detailed listings."""
@@ -126,7 +122,6 @@ def test_mount_appears_in_detailed_listing(nx_with_mount):
     assert alice_entry is not None, f"Expected /personal/alice in {personal_list}"
     assert alice_entry["is_directory"] is True
 
-
 def test_nested_mount_creates_all_parents(nx_with_mount):
     """Test that mounting at /a/b/c/mount creates /a, /a/b, /a/b/c, /a/b/c/mount."""
     nx, tmpdir = nx_with_mount
@@ -150,7 +145,6 @@ def test_nested_mount_creates_all_parents(nx_with_mount):
         meta = nx.metadata.get(path)
         assert meta is not None, f"Expected metadata for {path}"
         assert meta.mime_type == "inode/directory", f"Expected directory type for {path}"
-
 
 def test_sync_mount_ensures_directory_exists(nx_with_mount):
     """Test that sync_mount creates directory entry if missing."""
@@ -186,7 +180,6 @@ def test_sync_mount_ensures_directory_exists(nx_with_mount):
     # Sync result should be returned
     assert "files_scanned" in result
 
-
 def test_add_mount_via_api_creates_directory(nx_with_mount):
     """Test that add_mount() API creates directory entry via _grant_mount_owner_permission."""
     nx, tmpdir = nx_with_mount
@@ -214,7 +207,6 @@ def test_add_mount_via_api_creates_directory(nx_with_mount):
     api_list = nx.list("/api", recursive=False, details=False)
     assert "/api/mount" in api_list
 
-
 def test_mount_exist_ok_does_not_fail(nx_with_mount):
     """Test that creating mount directory with exist_ok=True doesn't fail if already exists."""
     nx, tmpdir = nx_with_mount
@@ -227,7 +219,6 @@ def test_mount_exist_ok_does_not_fail(nx_with_mount):
 
     # Verify it still exists
     assert nx.metadata.exists("/mnt/test")
-
 
 def test_multiple_mounts_in_same_parent(nx_with_mount):
     """Test that multiple mounts under same parent all appear in listing."""

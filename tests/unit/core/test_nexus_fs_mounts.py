@@ -11,8 +11,6 @@ Tests cover mount management operations:
 - sync_mount: Sync metadata from connector backend
 """
 
-from __future__ import annotations
-
 import contextlib
 import tempfile
 from collections.abc import Generator
@@ -26,13 +24,11 @@ from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
-
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
     """Create a temporary directory for tests."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
-
 
 @pytest.fixture
 def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
@@ -47,7 +43,6 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     yield nx
     nx.close()
 
-
 @pytest.fixture
 def nx_with_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
     """Create a NexusFS instance with permissions enabled."""
@@ -60,7 +55,6 @@ def nx_with_permissions(temp_dir: Path) -> Generator[NexusFS, None, None]:
     )
     yield nx
     nx.close()
-
 
 class TestListMounts:
     """Tests for list_mounts method."""
@@ -110,7 +104,6 @@ class TestListMounts:
         assert test_mount["readonly"] is False
         assert test_mount["backend_type"] == "LocalBackend"
 
-
 class TestGetMount:
     """Tests for get_mount method."""
 
@@ -144,7 +137,6 @@ class TestGetMount:
         assert mount["priority"] == 5
         assert mount["readonly"] is True
 
-
 class TestHasMount:
     """Tests for has_mount method."""
 
@@ -170,7 +162,6 @@ class TestHasMount:
         )
 
         assert nx.has_mount("/mnt/test") is True
-
 
 class TestAddMount:
     """Tests for add_mount method."""
@@ -258,7 +249,6 @@ class TestAddMount:
 
         assert nx_with_permissions.has_mount("/mnt/alice")
 
-
 class TestRemoveMount:
     """Tests for remove_mount method."""
 
@@ -303,7 +293,6 @@ class TestRemoveMount:
         assert "permissions_cleaned" in result
         assert "errors" in result
         assert result["removed"] is True
-
 
 class TestSaveMount:
     """Tests for save_mount method."""
@@ -352,7 +341,6 @@ class TestSaveMount:
 
         assert mount_id is not None
 
-
 class TestListSavedMounts:
     """Tests for list_saved_mounts method."""
 
@@ -375,7 +363,6 @@ class TestListSavedMounts:
         finally:
             nx.close()
 
-
 class TestLoadMount:
     """Tests for load_mount method."""
 
@@ -395,7 +382,6 @@ class TestLoadMount:
                     nx.load_mount("/mnt/test")
         finally:
             nx.close()
-
 
 class TestDeleteSavedMount:
     """Tests for delete_saved_mount method."""
@@ -419,7 +405,6 @@ class TestDeleteSavedMount:
         finally:
             nx.close()
 
-
 class TestLoadAllSavedMounts:
     """Tests for load_all_saved_mounts method."""
 
@@ -441,7 +426,6 @@ class TestLoadAllSavedMounts:
         assert "synced" in result
         assert "failed" in result
         assert "errors" in result
-
 
 class TestSyncMount:
     """Tests for sync_mount method."""
@@ -554,7 +538,6 @@ class TestSyncMount:
 
         assert "files_scanned" in result
         assert "errors" in result
-
 
 class TestMountPermissionEnforcement:
     """Tests for mount operation permission enforcement."""
@@ -728,7 +711,6 @@ class TestMountPermissionEnforcement:
         result = nx.remove_mount("/mnt/no_ctx", context=None)
         assert result["removed"] is True
 
-
 class TestGrantMountOwnerPermission:
     """Tests for _grant_mount_owner_permission helper method."""
 
@@ -751,7 +733,6 @@ class TestGrantMountOwnerPermission:
 
         # Should not raise
         nx_with_permissions._grant_mount_owner_permission("/mnt/test", context)
-
 
 class TestMountIntegration:
     """Integration tests for mount functionality."""
@@ -827,7 +808,6 @@ class TestMountIntegration:
         # Read from each
         assert nx.read("/mnt/one/file.txt") == b"Mount 1"
         assert nx.read("/mnt/two/file.txt") == b"Mount 2"
-
 
 class TestMountContextUtilsIntegration:
     """Tests for mount operations using context_utils functions."""

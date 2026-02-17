@@ -10,8 +10,6 @@ Classification rules:
 4. Starvation promotion: BACKGROUND → BATCH if wait > threshold
 """
 
-from __future__ import annotations
-
 from nexus.scheduler.constants import (
     STARVATION_PROMOTION_THRESHOLD_SECS,
     TIER_TO_CLASS,
@@ -19,7 +17,6 @@ from nexus.scheduler.constants import (
     PriorityTier,
     RequestState,
 )
-
 
 def classify_request(
     tier: PriorityTier,
@@ -50,7 +47,6 @@ def classify_request(
         base_class = PriorityClass.BATCH
 
     return base_class
-
 
 def should_promote_for_starvation(
     wait_seconds: float,

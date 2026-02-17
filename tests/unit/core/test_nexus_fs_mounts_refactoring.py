@@ -6,8 +6,6 @@ Tests cover the refactoring improvements:
 - MetadataSyncResult: Named tuple for metadata sync results
 """
 
-from __future__ import annotations
-
 import tempfile
 from collections.abc import Generator
 from dataclasses import dataclass
@@ -21,7 +19,6 @@ from nexus.core.permissions import OperationContext
 from nexus.factory import create_nexus_fs
 from nexus.storage.raft_metadata_store import RaftMetadataStore
 from nexus.storage.record_store import SQLAlchemyRecordStore
-
 
 # Backward compat types moved from nexus_fs_mounts (Issue #1387)
 @dataclass
@@ -41,20 +38,17 @@ class SyncMountContext:
     created_by: str | None = None
     has_hierarchy: bool = False
 
-
 class MetadataSyncResult(NamedTuple):
     """Result of metadata sync operation (backward compatibility)."""
 
     stats: dict[str, Any]
     files_found_in_backend: set[str]
 
-
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
     """Create a temporary directory for tests."""
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
-
 
 @pytest.fixture
 def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
@@ -68,7 +62,6 @@ def nx(temp_dir: Path) -> Generator[NexusFS, None, None]:
     )
     yield nx
     nx.close()
-
 
 class TestMatchesPatterns:
     """Tests for _matches_patterns() helper method."""
@@ -149,7 +142,6 @@ class TestMatchesPatterns:
         assert nx._matches_patterns("/test/file.txt", [], None) is True
         assert nx._matches_patterns("/test/file.md", None, []) is True
 
-
 class TestSyncMountContext:
     """Tests for SyncMountContext dataclass."""
 
@@ -229,7 +221,6 @@ class TestSyncMountContext:
         assert ctx.created_by == "user:alice"
         assert ctx.has_hierarchy is True
 
-
 class TestMetadataSyncResult:
     """Tests for MetadataSyncResult NamedTuple."""
 
@@ -277,7 +268,6 @@ class TestMetadataSyncResult:
 
         with pytest.raises(AttributeError):
             result.files_found_in_backend = set()  # type: ignore[misc]
-
 
 class TestSyncMountIntegration:
     """Integration tests for sync_mount with refactored code."""

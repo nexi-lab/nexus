@@ -11,8 +11,6 @@ Tests cover:
   - Background loop lifecycle
 """
 
-from __future__ import annotations
-
 import asyncio
 import concurrent.futures
 import time
@@ -31,29 +29,24 @@ from nexus.core.sync_bridge import (
 # Helpers
 # ---------------------------------------------------------------------------
 
-
 async def _add(a: int, b: int) -> int:
     """Simple async function for testing."""
     return a + b
-
 
 async def _slow(seconds: float) -> str:
     """Async function that takes time."""
     await asyncio.sleep(seconds)
     return "done"
 
-
 async def _fail() -> None:
     """Async function that always raises."""
     raise ValueError("intentional error")
-
 
 async def _nested_async() -> int:
     """Async function that itself calls other coroutines."""
     r1 = await _add(1, 2)
     r2 = await _add(3, 4)
     return r1 + r2
-
 
 def _run_with_loop(coro_fn):
     """Run an async test function using an explicit event loop."""
@@ -63,11 +56,9 @@ def _run_with_loop(coro_fn):
     finally:
         loop.close()
 
-
 # ---------------------------------------------------------------------------
 # run_sync — sync context (no running event loop)
 # ---------------------------------------------------------------------------
-
 
 class TestRunSyncFromSyncContext:
     """run_sync() called from regular synchronous code (e.g. CLI)."""
@@ -98,11 +89,9 @@ class TestRunSyncFromSyncContext:
         result = run_sync(returns_dict())
         assert result == {"a": 1, "b": 2}
 
-
 # ---------------------------------------------------------------------------
 # run_sync — async context (running event loop)
 # ---------------------------------------------------------------------------
-
 
 class TestRunSyncFromAsyncContext:
     """run_sync() called from within an async event loop (e.g. FastAPI worker thread)."""
@@ -157,11 +146,9 @@ class TestRunSyncFromAsyncContext:
 
         _run_with_loop(_test)
 
-
 # ---------------------------------------------------------------------------
 # run_sync — timeout
 # ---------------------------------------------------------------------------
-
 
 class TestRunSyncTimeout:
     def test_timeout_exceeded_via_background_loop(self) -> None:
@@ -181,11 +168,9 @@ class TestRunSyncTimeout:
         result = run_sync(_slow(0.01))
         assert result == "done"
 
-
 # ---------------------------------------------------------------------------
 # run_sync — concurrent usage
 # ---------------------------------------------------------------------------
-
 
 class TestRunSyncConcurrent:
     def test_concurrent_workers(self) -> None:
@@ -201,11 +186,9 @@ class TestRunSyncConcurrent:
 
         _run_with_loop(_test)
 
-
 # ---------------------------------------------------------------------------
 # fire_and_forget
 # ---------------------------------------------------------------------------
-
 
 class TestFireAndForget:
     def test_from_sync_context(self) -> None:
@@ -244,11 +227,9 @@ class TestFireAndForget:
             # The warning callback should have fired.
             assert mock_logger.warning.called
 
-
 # ---------------------------------------------------------------------------
 # Background loop lifecycle
 # ---------------------------------------------------------------------------
-
 
 class TestBackgroundLoopLifecycle:
     def test_ensure_background_loop_is_idempotent(self) -> None:
@@ -274,11 +255,9 @@ class TestBackgroundLoopLifecycle:
         shutdown_sync_bridge()
         shutdown_sync_bridge()
 
-
 # ---------------------------------------------------------------------------
 # Cleanup
 # ---------------------------------------------------------------------------
-
 
 @pytest.fixture(autouse=True)
 def _cleanup_bridge():

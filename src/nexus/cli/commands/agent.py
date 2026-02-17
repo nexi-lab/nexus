@@ -3,8 +3,6 @@
 Manage AI agents for delegation and multi-agent workflows.
 """
 
-from __future__ import annotations
-
 import click
 from rich.console import Console
 from rich.table import Table
@@ -12,7 +10,6 @@ from rich.table import Table
 from nexus.cli.utils import BackendConfig, add_backend_options, get_filesystem, handle_error
 
 console = Console()
-
 
 @click.group(name="agent")
 def agent() -> None:
@@ -38,7 +35,6 @@ def agent() -> None:
         nexus agent delete alice
     """
     pass
-
 
 @agent.command(name="register")
 @click.argument("agent_id", type=str)
@@ -98,7 +94,6 @@ def register_cmd(
     except Exception as e:
         handle_error(e)
 
-
 @agent.command(name="list")
 @add_backend_options
 def list_cmd(
@@ -152,7 +147,6 @@ def list_cmd(
     except Exception as e:
         handle_error(e)
 
-
 @agent.command(name="info")
 @click.argument("agent_id", type=str)
 @add_backend_options
@@ -189,7 +183,6 @@ def info_cmd(
 
     except Exception as e:
         handle_error(e)
-
 
 @agent.command(name="delete")
 @click.argument("agent_id", type=str)
@@ -235,7 +228,6 @@ def delete_cmd(
 
     except Exception as e:
         handle_error(e)
-
 
 def register_commands(cli: click.Group) -> None:
     """Register agent commands with the CLI."""

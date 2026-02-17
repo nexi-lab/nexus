@@ -7,8 +7,6 @@ Note: Some tests require event infrastructure (Redis or same-box backend).
 Tests gracefully handle the 501 response when events are not available.
 """
 
-from __future__ import annotations
-
 import asyncio
 from typing import TYPE_CHECKING, cast
 
@@ -18,9 +16,7 @@ from starlette.testclient import TestClient
 if TYPE_CHECKING:
     from nexus import NexusFS
 
-
 # Note: nexus_fs fixture is provided by conftest.py
-
 
 class TestWatchAPIValidation:
     """Tests for parameter validation (don't require event infrastructure)."""
@@ -46,7 +42,6 @@ class TestWatchAPIValidation:
             response = client.get("/api/watch", params={"path": "/inbox/", "timeout": 0.01})
 
             assert response.status_code == 422  # Validation error
-
 
 class TestWatchAPIEndpoint:
     """Tests for GET /api/watch endpoint (may return 501 without event infrastructure)."""
@@ -127,7 +122,6 @@ class TestWatchAPIEndpoint:
                 assert response.status_code == 501
                 assert "Watch not available" in response.json()["detail"]
 
-
 class TestWatchAPIWithEvents:
     """Tests for watch endpoint detecting actual changes.
 
@@ -173,7 +167,6 @@ class TestWatchAPIWithEvents:
                 assert "changes" in data
                 assert "timeout" in data
 
-
 class TestWatchAPIErrorHandling:
     """Tests for error handling in watch endpoint."""
 
@@ -203,7 +196,6 @@ class TestWatchAPIErrorHandling:
                 detail = response.json()["detail"]
                 # Should mention what's needed
                 assert "Redis" in detail or "event bus" in detail or "same-box" in detail
-
 
 class TestWatchAPIDocumentation:
     """Tests to verify API documentation is correct."""

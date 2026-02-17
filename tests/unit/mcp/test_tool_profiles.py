@@ -7,8 +7,6 @@ Tests cover:
 - ReBAC grant generation and revocation
 """
 
-from __future__ import annotations
-
 from pathlib import Path
 from unittest.mock import MagicMock, call
 
@@ -30,7 +28,6 @@ from nexus.mcp.profiles import (
 # ---------------------------------------------------------------------------
 # ToolProfile data model
 # ---------------------------------------------------------------------------
-
 
 class TestToolProfile:
     def test_create_minimal_profile(self):
@@ -66,7 +63,6 @@ class TestToolProfile:
         with pytest.raises(AttributeError):
             profile.name = "changed"  # type: ignore[misc]
 
-
 class TestToolProfileConfig:
     def test_get_profile(self):
         p = ToolProfile(name="minimal", tools=frozenset(["a"]))
@@ -88,11 +84,9 @@ class TestToolProfileConfig:
         config = ToolProfileConfig(profiles=profiles)
         assert config.profile_names == ["a_profile", "m_profile", "z_profile"]
 
-
 # ---------------------------------------------------------------------------
 # Inheritance resolution
 # ---------------------------------------------------------------------------
-
 
 class TestResolveInheritance:
     def test_single_root_profile(self):
@@ -183,11 +177,9 @@ class TestResolveInheritance:
         assert result["read_only"].tools == frozenset(["read"])
         assert result["write_only"].tools == frozenset(["write"])
 
-
 # ---------------------------------------------------------------------------
 # YAML loading
 # ---------------------------------------------------------------------------
-
 
 class TestLoadProfiles:
     def test_load_from_dict(self):
@@ -252,11 +244,9 @@ default_profile: minimal
         with pytest.raises(yaml.YAMLError):
             load_profiles(config_file)
 
-
 # ---------------------------------------------------------------------------
 # ReBAC grant generation
 # ---------------------------------------------------------------------------
-
 
 class TestGrantToolsForProfile:
     def _make_mock_rebac(self) -> MagicMock:
@@ -335,7 +325,6 @@ class TestGrantToolsForProfile:
             zone_id=None,
         )
 
-
 class TestRevokeToolsByTupleIds:
     def test_revoke_deletes_all_tuples(self):
         rebac = MagicMock()
@@ -372,7 +361,6 @@ class TestRevokeToolsByTupleIds:
         assert deleted == 0
         rebac.rebac_delete.assert_not_called()
 
-
 class TestGrantToolsFailure:
     """#9B: Verify grant_tools_for_profile raises on rebac_write failure."""
 
@@ -393,11 +381,9 @@ class TestGrantToolsFailure:
                 profile=profile,
             )
 
-
 # ---------------------------------------------------------------------------
 # YAML config validation (#12A)
 # ---------------------------------------------------------------------------
-
 
 class TestDefaultConfigValidity:
     """Validate that default tool_profiles.yaml tool names match registered MCP tools."""
@@ -464,11 +450,9 @@ class TestDefaultConfigValidity:
             f"Registered tools: {sorted(registered_tools)}"
         )
 
-
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-
 
 class TestConstants:
     def test_tool_path_prefix(self):

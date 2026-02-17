@@ -9,7 +9,6 @@ from nexus.parsers.types import ParseResult, TextChunk
 
 logger = logging.getLogger(__name__)
 
-
 class UnstructuredProvider(ParseProvider):
     """Parse provider using Unstructured.io API.
 

@@ -20,7 +20,6 @@ Admin bypass flow:
 from nexus.core.permissions import OperationContext, Permission
 from nexus.services.permissions.enforcer import PermissionEnforcer
 
-
 class MockReBACManager:
     """Mock ReBAC manager for testing."""
 
@@ -55,7 +54,6 @@ class MockReBACManager:
             results[check] = self.rebac_check(subject, permission, obj, zone_id)
         return results
 
-
 class MockAuditStore:
     """Mock audit store for testing bypass logging."""
 
@@ -65,7 +63,6 @@ class MockAuditStore:
     def log_bypass(self, entry):
         """Log a bypass attempt."""
         self.entries.append(entry)
-
 
 class TestAdminBypassRequiresCapabilities:
     """Test that admin bypass requires specific capabilities."""
@@ -165,7 +162,6 @@ class TestAdminBypassRequiresCapabilities:
         # No ReBAC checks
         assert len(rebac.checks) == 0
 
-
 class TestAdminBypassKillSwitch:
     """Test the allow_admin_bypass kill-switch (P0-4 security)."""
 
@@ -213,7 +209,6 @@ class TestAdminBypassKillSwitch:
 
         assert result is True, "Admin should bypass when kill-switch is ON"
         assert len(rebac.checks) == 0
-
 
 class TestAdminBypassPathAllowlist:
     """Test path-based allowlist for scoped admin bypass."""
@@ -316,7 +311,6 @@ class TestAdminBypassPathAllowlist:
         assert result is False
         assert len(rebac.checks) > 0  # Fell through to ReBAC
 
-
 class TestAdminBypassWithReBAC:
     """Test interaction between admin bypass and ReBAC permissions."""
 
@@ -362,7 +356,6 @@ class TestAdminBypassWithReBAC:
 
         # ReBAC not checked
         assert len(rebac.checks) == 0
-
 
 class TestAdminBypassAuditLogging:
     """Test audit logging for admin bypass attempts."""
@@ -444,7 +437,6 @@ class TestAdminBypassAuditLogging:
 
         # Should not raise error
         assert enforcer.check("/file.txt", Permission.READ, ctx) is True
-
 
 class TestCapabilityScoping:
     """Test that different operations require different capabilities."""

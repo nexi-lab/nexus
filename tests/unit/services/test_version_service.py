@@ -5,14 +5,11 @@ Tests are organized by functionality and cover success paths, error paths,
 edge cases, and permission enforcement.
 """
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock
 
 import pytest
 
 from nexus.services.version_service import VersionService
-
 
 class TestVersionServiceInit:
     """Test VersionService initialization."""
@@ -50,7 +47,6 @@ class TestVersionServiceInit:
         )
 
         assert service._enforce_permissions is False
-
 
 class TestVersionServiceGetVersion:
     """Test VersionService.get_version() method."""
@@ -154,7 +150,6 @@ class TestVersionServiceGetVersion:
     #             context=context,
     #         )
 
-
 class TestVersionServiceListVersions:
     """Test VersionService.list_versions() method."""
 
@@ -231,7 +226,6 @@ class TestVersionServiceListVersions:
     #             path="/nonexistent.txt",
     #             context=operation_context,
     #         )
-
 
 class TestVersionServiceRollback:
     """Test VersionService.rollback() method."""
@@ -320,7 +314,6 @@ class TestVersionServiceRollback:
     #             version=2,
     #             context=context,
     #         )
-
 
 class TestVersionServiceDiffVersions:
     """Test VersionService.diff_versions() method."""
@@ -420,7 +413,6 @@ class TestVersionServiceDiffVersions:
     #             context=operation_context,
     #         )
 
-
 class TestVersionServiceHelpers:
     """Test VersionService helper methods."""
 
@@ -453,7 +445,6 @@ class TestVersionServiceHelpers:
 
         result = service._validate_path("/")
         assert result == "/"
-
 
 # =============================================================================
 # Integration Test Examples (Commented out until implementation extracted)

@@ -9,8 +9,6 @@ Provides 6 endpoints for playbook management:
 - POST   /api/v2/playbooks/{id}/usage - Record usage
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -29,11 +27,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v2/playbooks", tags=["playbooks"])
 
-
 # =============================================================================
 # Endpoints
 # =============================================================================
-
 
 @router.get("")
 async def list_playbooks(
@@ -64,7 +60,6 @@ async def list_playbooks(
         logger.error(f"Playbook list error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to list playbooks") from e
 
-
 @router.post("", response_model=PlaybookCreateResponse, status_code=status.HTTP_201_CREATED)
 async def create_playbook(
     request: PlaybookCreateRequest,
@@ -86,7 +81,6 @@ async def create_playbook(
         logger.error(f"Playbook create error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to create playbook") from e
 
-
 @router.get("/{playbook_id}", response_model=PlaybookGetResponse)
 async def get_playbook(
     playbook_id: str,
@@ -106,7 +100,6 @@ async def get_playbook(
     except Exception as e:
         logger.error(f"Playbook get error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to retrieve playbook") from e
-
 
 @router.put("/{playbook_id}")
 async def update_playbook(
@@ -138,7 +131,6 @@ async def update_playbook(
         logger.error(f"Playbook update error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to update playbook") from e
 
-
 @router.delete("/{playbook_id}")
 async def delete_playbook(
     playbook_id: str,
@@ -161,7 +153,6 @@ async def delete_playbook(
     except Exception as e:
         logger.error(f"Playbook delete error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to delete playbook") from e
-
 
 @router.post("/{playbook_id}/usage")
 async def record_usage(

@@ -4,8 +4,6 @@ Uses real aiosqlite queue + httpx MockTransport to test the full
 ProxyBrick stack without a real server.
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 from typing import Any
@@ -19,7 +17,6 @@ from nexus.proxy.config import ProxyBrickConfig
 from nexus.proxy.errors import OfflineQueuedError
 from nexus.proxy.transport import HttpTransport
 
-
 def _make_rpc_response(result: Any) -> httpx.Response:
     """Build a successful JSON-RPC response."""
     return httpx.Response(
@@ -27,10 +24,8 @@ def _make_rpc_response(result: Any) -> httpx.Response:
         json={"jsonrpc": "2.0", "id": "1", "result": result},
     )
 
-
 def _make_error_response(status: int = 500) -> httpx.Response:
     return httpx.Response(status, json={"error": "internal error"})
-
 
 class TestOnlineRoundTrip:
     @pytest.mark.asyncio
@@ -80,7 +75,6 @@ class TestOnlineRoundTrip:
         finally:
             await proxy.stop()
 
-
 class TestOfflineQueueReplay:
     @pytest.mark.asyncio
     async def test_offline_queue_replay(self, tmp_path) -> None:  # noqa: ANN001
@@ -128,7 +122,6 @@ class TestOfflineQueueReplay:
         finally:
             await proxy.stop()
 
-
 class TestCircuitBreakerIntegration:
     @pytest.mark.asyncio
     async def test_circuit_breaker_trip_and_recover(self, tmp_path) -> None:  # noqa: ANN001
@@ -172,7 +165,6 @@ class TestCircuitBreakerIntegration:
         finally:
             await proxy.stop()
 
-
 class TestLargePayloadStreaming:
     @pytest.mark.asyncio
     async def test_large_payload_uses_streaming(self, tmp_path) -> None:  # noqa: ANN001
@@ -202,7 +194,6 @@ class TestLargePayloadStreaming:
             assert streamed
         finally:
             await proxy.stop()
-
 
 class TestAuthHeaderForwarded:
     @pytest.mark.asyncio

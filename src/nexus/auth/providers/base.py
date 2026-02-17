@@ -3,15 +3,12 @@
 Re-exports AuthResult from nexus.auth.types for backward compatibility.
 """
 
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
 
 from nexus.auth.types import AuthResult
 
 # Re-export so existing code can import from here
 __all__ = ["AuthProvider", "AuthResult"]
-
 
 class AuthProvider(ABC):
     """Abstract base class for authentication providers.

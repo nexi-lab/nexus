@@ -6,12 +6,9 @@ enabling dynamic tool discovery and external MCP server mounting.
 Based on: https://www.anthropic.com/engineering/code-execution-with-mcp
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
-
 
 @dataclass
 class MCPToolExample:
@@ -21,7 +18,6 @@ class MCPToolExample:
     input: dict[str, Any]
     output: dict[str, Any] | None = None
     description: str | None = None
-
 
 @dataclass
 class MCPToolConfig:
@@ -106,7 +102,7 @@ class MCPToolConfig:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> MCPToolConfig:
+    def from_dict(cls, data: dict[str, Any]) -> "MCPToolConfig":
         """Create from dictionary."""
         examples = []
         for ex_data in data.get("examples", []):
@@ -130,7 +126,6 @@ class MCPToolConfig:
             examples=examples,
             category=data.get("category"),
         )
-
 
 @dataclass
 class MCPMount:
@@ -229,7 +224,7 @@ class MCPMount:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> MCPMount:
+    def from_dict(cls, data: dict[str, Any]) -> "MCPMount":
         """Create from dictionary."""
         mounted_at = None
         if data.get("mounted_at"):
@@ -261,7 +256,6 @@ class MCPMount:
             tools=data.get("tools", []),
             tier=data.get("tier"),
         )
-
 
 @dataclass
 class MCPToolDefinition:
@@ -324,7 +318,7 @@ class MCPToolDefinition:
         return result
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> MCPToolDefinition:
+    def from_dict(cls, data: dict[str, Any]) -> "MCPToolDefinition":
         """Create from dictionary."""
         mcp_config = None
         if data.get("mcp_config"):

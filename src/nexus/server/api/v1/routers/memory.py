@@ -9,8 +9,6 @@ Provides memory management endpoints:
 Extracted from ``fastapi_server.py`` during monolith decomposition (#1288).
 """
 
-from __future__ import annotations
-
 import logging
 from typing import Any
 
@@ -22,7 +20,6 @@ from nexus.server.dependencies import get_operation_context, require_auth
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["memory"])
-
 
 @router.get("/api/memory/query")
 async def memory_query(
@@ -127,7 +124,6 @@ async def memory_query(
         logger.error(f"Memory query error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Memory query error: {e}") from e
 
-
 @router.get("/api/memory/list")
 async def memory_list(
     scope: str | None = Query(None, description="Filter by scope"),
@@ -193,7 +189,6 @@ async def memory_list(
         logger.error(f"Memory list error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Memory list error: {e}") from e
 
-
 @router.post("/api/memory/store")
 async def memory_store(
     request: Request,
@@ -252,7 +247,6 @@ async def memory_store(
     except Exception as e:
         logger.error(f"Memory store error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Memory store error: {e}") from e
-
 
 @router.get("/api/memory/{memory_id}")
 async def memory_get(

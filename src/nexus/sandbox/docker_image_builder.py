@@ -3,8 +3,6 @@
 This module provides functionality to build Docker images from Dockerfiles.
 """
 
-from __future__ import annotations
-
 import asyncio
 import logging
 from pathlib import Path
@@ -21,7 +19,6 @@ try:
 except ImportError:
     DOCKER_AVAILABLE = False
     logger.warning("docker package not installed. DockerImageBuilder will not work.")
-
 
 class DockerImageBuilder:
     """Builds custom Docker images from Dockerfiles."""

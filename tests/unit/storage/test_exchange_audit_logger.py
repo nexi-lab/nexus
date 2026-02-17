@@ -5,8 +5,6 @@ tamper detection, cursor pagination, filtering, aggregations, and
 ORM immutability guards.
 """
 
-from __future__ import annotations
-
 import hashlib
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -29,7 +27,6 @@ from nexus.storage.models.exchange_audit_log import ExchangeAuditLogModel
 # Fixtures
 # ---------------------------------------------------------------------------
 
-
 @pytest.fixture
 def engine():
     eng = create_engine("sqlite:///:memory:")
@@ -37,11 +34,9 @@ def engine():
     yield eng
     eng.dispose()
 
-
 @pytest.fixture
 def session_factory(engine):
     return sessionmaker(bind=engine)
-
 
 @pytest.fixture
 def session(session_factory):
@@ -49,11 +44,9 @@ def session(session_factory):
     yield s
     s.close()
 
-
 @pytest.fixture
 def audit_logger(session_factory):
     return ExchangeAuditLogger(session_factory=session_factory)
-
 
 def _make_record_kwargs(**overrides: Any) -> dict[str, Any]:
     """Build a default set of kwargs for audit_logger.record()."""
@@ -73,11 +66,9 @@ def _make_record_kwargs(**overrides: Any) -> dict[str, Any]:
     defaults.update(overrides)
     return defaults
 
-
 # ---------------------------------------------------------------------------
 # Record creation
 # ---------------------------------------------------------------------------
-
 
 class TestRecordCreation:
     def test_creates_record_with_all_fields(
@@ -146,11 +137,9 @@ class TestRecordCreation:
         ids = {audit_logger.record(**_make_record_kwargs(transfer_id=f"tx-{i}")) for i in range(5)}
         assert len(ids) == 5
 
-
 # ---------------------------------------------------------------------------
 # Hash computation (golden values)
 # ---------------------------------------------------------------------------
-
 
 class TestHashComputation:
     def test_record_hash_golden_value(self) -> None:
@@ -240,11 +229,9 @@ class TestHashComputation:
         assert compute_metadata_hash(None) is None
         assert compute_metadata_hash({}) is None
 
-
 # ---------------------------------------------------------------------------
 # Merkle tree (golden values)
 # ---------------------------------------------------------------------------
-
 
 class TestMerkleTree:
     def test_empty_list(self) -> None:
@@ -275,11 +262,9 @@ class TestMerkleTree:
         root = audit_logger.compute_merkle_root(ids[0], ids[-1])
         assert len(root) == 64  # SHA-256 hex
 
-
 # ---------------------------------------------------------------------------
 # Tamper detection
 # ---------------------------------------------------------------------------
-
 
 class TestTamperDetection:
     def test_verify_integrity_valid(self, audit_logger: ExchangeAuditLogger) -> None:
@@ -306,11 +291,9 @@ class TestTamperDetection:
     def test_verify_integrity_missing_record(self, audit_logger: ExchangeAuditLogger) -> None:
         assert audit_logger.verify_integrity("nonexistent-id") is False
 
-
 # ---------------------------------------------------------------------------
 # Cursor-based pagination
 # ---------------------------------------------------------------------------
-
 
 class TestCursorPagination:
     def test_first_page(self, audit_logger: ExchangeAuditLogger) -> None:
@@ -346,11 +329,9 @@ class TestCursorPagination:
         assert len(rows) == 3
         assert cursor is None
 
-
 # ---------------------------------------------------------------------------
 # Filtering
 # ---------------------------------------------------------------------------
-
 
 class TestFiltering:
     def test_filter_by_protocol(self, audit_logger: ExchangeAuditLogger) -> None:
@@ -414,11 +395,9 @@ class TestFiltering:
         assert audit_logger.count_transactions(status="settled") == 3
         assert audit_logger.count_transactions(status="failed") == 2
 
-
 # ---------------------------------------------------------------------------
 # Aggregations
 # ---------------------------------------------------------------------------
-
 
 class TestAggregations:
     def test_basic_aggregation(self, audit_logger: ExchangeAuditLogger) -> None:
@@ -457,11 +436,9 @@ class TestAggregations:
         assert agg["tx_count"] == 0
         assert float(agg["total_volume"]) == 0
 
-
 # ---------------------------------------------------------------------------
 # ORM immutability guard
 # ---------------------------------------------------------------------------
-
 
 class TestImmutabilityGuard:
     def test_update_rejected(self, audit_logger: ExchangeAuditLogger, session_factory) -> None:
@@ -495,11 +472,9 @@ class TestImmutabilityGuard:
             session.flush()
         session.close()
 
-
 # ---------------------------------------------------------------------------
 # Get transaction
 # ---------------------------------------------------------------------------
-
 
 class TestGetTransaction:
     def test_get_existing(self, audit_logger: ExchangeAuditLogger) -> None:

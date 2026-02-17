@@ -13,8 +13,6 @@ Requirements:
 Related: Issue #1106 Block 3
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import os
@@ -35,18 +33,15 @@ pytestmark = pytest.mark.skip(
     reason="TODO: https://github.com/nexi-lab/nexus/issues/1702 — RedisLockManager removed from source; tests need rewrite for RaftLockManager",
 )
 
-
 # =============================================================================
 # Fixtures
 # =============================================================================
-
 
 @pytest.fixture
 def temp_dir():
     """Create a temporary directory for file storage."""
     with tempfile.TemporaryDirectory(prefix="nexus_lock_test_") as tmp:
         yield Path(tmp)
-
 
 @pytest.fixture
 async def redis_client():
@@ -71,7 +66,6 @@ async def redis_client():
 
     await client.disconnect()
 
-
 @pytest.fixture
 async def nx_with_lock(temp_dir, redis_client, isolated_db):
     """Create a NexusFS instance with distributed lock manager configured."""
@@ -92,7 +86,6 @@ async def nx_with_lock(temp_dir, redis_client, isolated_db):
     yield nx
 
     nx.close()
-
 
 @pytest.fixture
 async def nx_pair_with_lock(temp_dir, redis_client, isolated_db, tmp_path):
@@ -133,7 +126,6 @@ async def nx_pair_with_lock(temp_dir, redis_client, isolated_db, tmp_path):
     nx1.close()
     nx2.close()
 
-
 @pytest.fixture
 def nx_sync_with_lock(temp_dir, isolated_db):
     """Create a NexusFS instance with lock manager for SYNC tests only.
@@ -170,11 +162,9 @@ def nx_sync_with_lock(temp_dir, isolated_db):
     nx.close()
     # No need to disconnect - connections are created/closed per-operation
 
-
 # =============================================================================
 # LockTimeout Exception Tests (No Redis Required)
 # =============================================================================
-
 
 class TestLockTimeoutException:
     """Tests for LockTimeout exception."""
@@ -198,11 +188,9 @@ class TestLockTimeoutException:
 
         assert "Custom lock error" in str(exc)
 
-
 # =============================================================================
 # locked() Context Manager Tests
 # =============================================================================
-
 
 class TestLockedContextManager:
     """Tests for the locked() async context manager."""
@@ -281,11 +269,9 @@ class TestLockedContextManager:
         # Agent 1 should acquire first, then Agent 2 after release
         assert acquired_order == ["agent1", "agent2"]
 
-
 # =============================================================================
 # write(lock=True) Tests
 # =============================================================================
-
 
 class TestWriteWithLock:
     """Tests for write(lock=True) parameter.
@@ -457,11 +443,9 @@ class TestWriteWithLock:
             nx1.close()
             nx2.close()
 
-
 # =============================================================================
 # atomic_update() Tests
 # =============================================================================
-
 
 class TestAtomicUpdate:
     """Tests for atomic_update() method."""
@@ -549,11 +533,9 @@ class TestAtomicUpdate:
         async with nx_with_lock.locked("/test.txt", timeout=1.0):
             pass  # Should succeed if lock was released
 
-
 # =============================================================================
 # Combined Scenarios
 # =============================================================================
-
 
 class TestCombinedScenarios:
     """Tests combining multiple lock APIs."""
@@ -624,11 +606,9 @@ class TestCombinedScenarios:
         # write(lock=True) should have been blocked
         assert len(blocked) == 1
 
-
 # =============================================================================
 # Edge Cases and Error Handling
 # =============================================================================
-
 
 class TestEdgeCases:
     """Edge cases and error handling tests."""
@@ -707,11 +687,9 @@ class TestEdgeCases:
         result = nx_with_lock.read("/binary.bin")
         assert result == binary_content + bytes([0xFF])
 
-
 # =============================================================================
 # Performance and Stress Tests
 # =============================================================================
-
 
 class TestPerformance:
     """Performance and stress tests."""
@@ -758,11 +736,9 @@ class TestPerformance:
         content = json.loads(nx.read("/counter.json"))
         assert content["count"] == 50
 
-
 # =============================================================================
 # TRUE Multi-threading Contention Tests
 # =============================================================================
-
 
 class TestMultiThreadingContention:
     """Tests with REAL multi-threading to verify lock correctness under true concurrency.
@@ -1151,11 +1127,9 @@ class TestMultiThreadingContention:
             f"Expected version {NUM_OPERATIONS * 2}, got {final['version']}"
         )
 
-
 # =============================================================================
 # Lock Isolation Tests
 # =============================================================================
-
 
 class TestLockIsolation:
     """Tests for lock isolation (different paths, different zones)."""

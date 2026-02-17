@@ -33,8 +33,6 @@ Usage (preferred — with structlog configured):
     # error_classification_processor auto-adds error_expected + should_alert
 """
 
-from __future__ import annotations
-
 import logging
 import re
 from typing import Any, Literal
@@ -53,7 +51,6 @@ from typing import Any, Literal
 
 _REDACTED = "[REDACTED]"
 
-
 class _RedactionPattern:
     """A named, pre-compiled redaction pattern."""
 
@@ -65,7 +62,6 @@ class _RedactionPattern:
         self.name = name
         self.regex = re.compile(pattern, flags)
         self.replacement = replacement
-
 
 # --- Templar TS parity patterns (10 patterns) ---
 
@@ -149,7 +145,6 @@ _GENERIC_API_KEY_ASSIGNMENT = _RedactionPattern(
     r"(?:api_key|apikey|api-key|access_token|auth_token)\s*[=:]\s*[\"']?[^\s\"']{10,}[\"']?",
 )
 
-
 # The default set of patterns, ordered from most specific to least specific
 # to minimize false-positive overlap.
 BUILT_IN_SECRET_PATTERNS: tuple[_RedactionPattern, ...] = (
@@ -198,7 +193,6 @@ _TRIGGER_SUBSTRINGS: tuple[str, ...] = (
     "api-key",
 )
 
-
 def redact_text(text: str, patterns: tuple[_RedactionPattern, ...] | None = None) -> str:
     """Apply redaction patterns to a text string.
 
@@ -232,7 +226,6 @@ def redact_text(text: str, patterns: tuple[_RedactionPattern, ...] | None = None
     for rp in patterns:
         result = rp.regex.sub(rp.replacement, result)
     return result
-
 
 class RedactingFormatter(logging.Formatter):
     """A logging.Formatter that masks secrets in log output.
@@ -269,13 +262,11 @@ class RedactingFormatter(logging.Formatter):
             return formatted
         return redact_text(formatted, self._patterns)
 
-
 # ============================================================================
 # LOGGING SETUP
 # ============================================================================
 
 _DEFAULT_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-
 
 def setup_logging(
     *,
@@ -320,11 +311,9 @@ def setup_logging(
         uv_logger.addHandler(handler)
         uv_logger.propagate = False
 
-
 # ============================================================================
 # ERROR CLASSIFICATION (existing functionality)
 # ============================================================================
-
 
 def log_error(
     logger: logging.Logger,
@@ -379,7 +368,6 @@ def log_error(
     else:
         logger.error(f"System error{context_str}: {error}", exc_info=include_traceback)
 
-
 def log_exception(
     logger: logging.Logger,
     error: Exception,
@@ -419,7 +407,6 @@ def log_exception(
     else:
         logger.error(f"{message}{context_str}: {error}", exc_info=True)
 
-
 def should_alert(error: Exception) -> bool:
     """Determine if an error should trigger an alert.
 
@@ -440,7 +427,6 @@ def should_alert(error: Exception) -> bool:
         True  # Unexpected error, should alert
     """
     return not getattr(error, "is_expected", False)
-
 
 def get_log_level_for_error(error: Exception) -> int:
     """Get the appropriate log level for an error.

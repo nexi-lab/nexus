@@ -43,7 +43,6 @@ from typing import Any
 
 import requests
 
-
 def make_rpc_call(
     base_url: str,
     method: str,
@@ -94,7 +93,6 @@ def make_rpc_call(
     except json.JSONDecodeError as e:
         print(f"❌ Invalid JSON response: {e}")
         sys.exit(1)
-
 
 def test_agent_no_api_key(base_url: str, api_key: str) -> None:
     """Test agent registration without API key.
@@ -270,7 +268,6 @@ def test_agent_no_api_key(base_url: str, api_key: str) -> None:
     print("=" * 70)
     print("✅ All tests passed!")
     print("=" * 70)
-
 
 def test_agent_with_api_key(base_url: str, api_key: str) -> None:
     """Test agent registration with API key and verify limited access.
@@ -527,7 +524,6 @@ def test_agent_with_api_key(base_url: str, api_key: str) -> None:
     print("✅ All tests passed!")
     print("=" * 70)
 
-
 def test_agent_with_api_key_and_inheritance(base_url: str, api_key: str) -> None:
     """Test agent registration with API key and permission inheritance.
 
@@ -774,7 +770,6 @@ def test_agent_with_api_key_and_inheritance(base_url: str, api_key: str) -> None
     print("=" * 70)
     print("✅ All tests passed!")
     print("=" * 70)
-
 
 def test_agent_with_granular_permissions(base_url: str, api_key: str) -> None:
     """Test agent registration with API key and granular permissions via ReBAC.
@@ -1118,7 +1113,6 @@ def test_agent_with_granular_permissions(base_url: str, api_key: str) -> None:
     print("✅ All tests passed!")
     print("=" * 70)
 
-
 def main() -> None:
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -1277,7 +1271,6 @@ def main() -> None:
 
         traceback.print_exc()
         sys.exit(1)
-
 
 if __name__ == "__main__":
     main()

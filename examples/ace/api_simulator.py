@@ -10,7 +10,6 @@ import time
 from pathlib import Path
 from typing import Any
 
-
 class SimulatedAPIResponse:
     """Simulated HTTP response."""
 
@@ -28,7 +27,6 @@ class SimulatedAPIResponse:
     def json(self) -> dict:
         """Get response data as JSON."""
         return self.data
-
 
 class SimulatedAPI:
     """Simulated API with configurable failure rates.
@@ -137,7 +135,6 @@ class SimulatedAPI:
         """Reset all statistics counters."""
         self.call_count.clear()
         self.success_count.clear()
-
 
 # Example usage for testing
 if __name__ == "__main__":

@@ -7,21 +7,21 @@ PolicyEnforcedPayment (Lego Architecture Mechanism 2).
 Wrapper chain: GovernanceEnforcedPayment → PolicyEnforcedPayment → CreditsPaymentProtocol
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
 from nexus.core.sync_bridge import fire_and_forget
 from nexus.pay.audit_types import TransactionProtocol
 
+from nexus.pay.protocol import ProtocolTransferRequest, ProtocolTransferResult
+from nexus.services.governance.protocols import AnomalyServiceProtocol, GovernanceGraphProtocol
+from nexus.services.protocols.payment import PaymentProtocol
 if TYPE_CHECKING:
     from nexus.pay.protocol import ProtocolTransferRequest, ProtocolTransferResult
     from nexus.services.governance.protocols import AnomalyServiceProtocol, GovernanceGraphProtocol
     from nexus.services.protocols.payment import PaymentProtocol
 
 logger = logging.getLogger(__name__)
-
 
 class GovernanceBlockedError(Exception):
     """Raised when a transaction is blocked by a governance constraint."""
@@ -30,14 +30,12 @@ class GovernanceBlockedError(Exception):
         super().__init__(message)
         self.edge_id = edge_id
 
-
 class GovernanceApprovalRequired(Exception):
     """Raised when a transaction requires governance approval."""
 
     def __init__(self, message: str, *, edge_id: str | None = None) -> None:
         super().__init__(message)
         self.edge_id = edge_id
-
 
 class GovernanceEnforcedPayment:
     """Wraps a PaymentProtocol with governance constraint checks.

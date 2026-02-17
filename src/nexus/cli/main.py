@@ -4,8 +4,6 @@ This module provides the main CLI entry point for the Nexus command-line tool.
 It creates the main command group and registers all commands from the modular structure.
 """
 
-from __future__ import annotations
-
 import warnings
 
 import click
@@ -21,7 +19,6 @@ warnings.filterwarnings("ignore", message="Couldn't find ffmpeg or avconv", cate
 # This affects all asyncio.run() calls throughout the CLI
 # Can be disabled with NEXUS_USE_UVLOOP=false
 setup_uvloop()
-
 
 @click.group()
 @click.version_option(version=nexus.__version__, prog_name="nexus")
@@ -62,10 +59,8 @@ def main() -> None:
     """
     pass
 
-
 # Register all commands from the modular structure
 register_all_commands(main)
-
 
 # For backwards compatibility and direct execution
 if __name__ == "__main__":

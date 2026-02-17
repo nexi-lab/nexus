@@ -7,8 +7,6 @@ Tests properties:
 - Cursor stability (re-running same cursor yields same results)
 """
 
-from __future__ import annotations
-
 import tempfile
 import uuid
 from collections.abc import Generator
@@ -23,19 +21,16 @@ from nexus.services.event_log.replay_service import EventReplayService
 from nexus.storage.models import OperationLogModel
 from nexus.storage.record_store import SQLAlchemyRecordStore
 
-
 @pytest.fixture
 def temp_dir() -> Generator[Path, None, None]:
     with tempfile.TemporaryDirectory() as tmpdir:
         yield Path(tmpdir)
-
 
 @pytest.fixture
 def record_store(temp_dir: Path) -> Generator[SQLAlchemyRecordStore, None, None]:
     rs = SQLAlchemyRecordStore(db_path=temp_dir / "hypothesis_test.db")
     yield rs
     rs.close()
-
 
 def _seed_events(session_factory, count: int) -> list[str]:
     """Insert count events with sequential sequence_numbers."""
@@ -57,7 +52,6 @@ def _seed_events(session_factory, count: int) -> list[str]:
             op_ids.append(op_id)
         session.commit()
     return op_ids
-
 
 class TestReplayProperties:
     """Property-based tests for replay pagination."""

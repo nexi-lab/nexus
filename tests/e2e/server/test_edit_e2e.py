@@ -14,19 +14,15 @@ Run with:
     pytest tests/e2e/test_edit_e2e.py -v --override-ini="addopts="
 """
 
-from __future__ import annotations
-
 import base64
 import uuid
 
 import httpx
 import pytest
 
-
 def encode_bytes(content: bytes) -> dict:
     """Encode bytes for JSON-RPC transport."""
     return {"__type__": "bytes", "data": base64.b64encode(content).decode("utf-8")}
-
 
 def decode_bytes(data: dict | list) -> bytes | dict | list:
     """Decode bytes from JSON-RPC response."""
@@ -36,11 +32,9 @@ def decode_bytes(data: dict | list) -> bytes | dict | list:
         return bytes(data)
     return data
 
-
 # ==============================================================================
 # Helper Functions
 # ==============================================================================
-
 
 def make_rpc_request(
     client: httpx.Client,
@@ -74,7 +68,6 @@ def make_rpc_request(
         headers=headers,
     )
     return response.json()
-
 
 def register_user(
     client: httpx.Client,
@@ -126,34 +119,28 @@ def register_user(
         "api_key": None,
     }
 
-
 # ==============================================================================
 # Fixtures (using conftest.py fixtures: test_app, isolated_db, nexus_fs)
 # ==============================================================================
-
 
 @pytest.fixture
 def user1(test_app):
     """Create first test user."""
     return register_user(test_app, "user1@example.com", username="user1")
 
-
 @pytest.fixture
 def user2(test_app):
     """Create second test user."""
     return register_user(test_app, "user2@example.com", username="user2")
-
 
 @pytest.fixture
 def user3(test_app):
     """Create third test user."""
     return register_user(test_app, "user3@example.com", username="user3")
 
-
 # ==============================================================================
 # Test: Basic Edit Operations
 # ==============================================================================
-
 
 class TestEditBasicOperations:
     """Test basic edit operations."""
@@ -265,11 +252,9 @@ class TestEditBasicOperations:
         content_bytes = decode_bytes(read_result["result"])
         assert content_bytes == b"goodbye world\n"
 
-
 # ==============================================================================
 # Test: Edit Preview Mode
 # ==============================================================================
-
 
 class TestEditPreviewMode:
     """Test edit preview functionality."""
@@ -317,11 +302,9 @@ class TestEditPreviewMode:
         content_bytes = decode_bytes(read_result["result"])
         assert content_bytes == original_content
 
-
 # ==============================================================================
 # Test: Fuzzy Matching
 # ==============================================================================
-
 
 class TestEditFuzzyMatching:
     """Test fuzzy matching functionality."""
@@ -392,11 +375,9 @@ class TestEditFuzzyMatching:
         assert result["success"] is False
         assert any("Could not find match" in err for err in result.get("errors", []))
 
-
 # ==============================================================================
 # Test: Error Handling
 # ==============================================================================
-
 
 class TestEditErrorHandling:
     """Test edit error handling."""
@@ -517,11 +498,9 @@ class TestEditErrorHandling:
         assert result["success"] is False
         assert any("UTF-8" in err for err in result.get("errors", []))
 
-
 # ==============================================================================
 # Test: Optimistic Concurrency
 # ==============================================================================
-
 
 class TestEditConcurrency:
     """Test edit with optimistic concurrency control."""
@@ -602,11 +581,9 @@ class TestEditConcurrency:
             "result" in edit_result and edit_result["result"].get("success") is False
         )
 
-
 # ==============================================================================
 # Test: Multi-User Scenarios
 # ==============================================================================
-
 
 class TestEditMultiUser:
     """Test edit operations with multiple users."""
@@ -702,11 +679,9 @@ class TestEditMultiUser:
         assert "LINE 2 (user2)" in final_content
         assert "LINE 3 (user3)" in final_content
 
-
 # ==============================================================================
 # Test: Edit with Line Hints
 # ==============================================================================
-
 
 class TestEditLineHints:
     """Test edit with line number hints for middle-out search."""
@@ -749,11 +724,9 @@ class TestEditLineHints:
         assert result["success"] is True
         assert result["matches"][0]["line_start"] == 51
 
-
 # ==============================================================================
 # Test: Edge Cases
 # ==============================================================================
-
 
 class TestEditEdgeCases:
     """Test edit edge cases."""

@@ -44,7 +44,6 @@ PARSEABLE_EXTENSIONS = {
     ".epub",
 }
 
-
 def parse_virtual_path(path: str, exists_fn: Callable[[str], bool]) -> tuple[str, str | None]:
     """Parse virtual path to extract original path and view type.
 
@@ -97,7 +96,6 @@ def parse_virtual_path(path: str, exists_fn: Callable[[str], bool]) -> tuple[str
     # Not a virtual view, return as-is
     return (path, None)
 
-
 def get_parsed_content(
     content: bytes,
     path: str,
@@ -141,7 +139,6 @@ def get_parsed_content(
     # Fallback to raw content if parsing fails
     return content
 
-
 def should_add_virtual_views(file_path: str) -> bool:
     """Check if a file should have a virtual _parsed.{ext}.md view added.
 
@@ -172,7 +169,6 @@ def should_add_virtual_views(file_path: str) -> bool:
     # Only add virtual views for parseable file types
     return any(file_path.endswith(ext) for ext in PARSEABLE_EXTENSIONS)
 
-
 @overload
 def add_virtual_views_to_listing(
     files: list[str],
@@ -180,14 +176,12 @@ def add_virtual_views_to_listing(
     show_parsed: bool = True,
 ) -> list[str]: ...
 
-
 @overload
 def add_virtual_views_to_listing(
     files: list[dict[str, Any]],
     is_directory_fn: Callable[[str], bool],
     show_parsed: bool = True,
 ) -> list[dict[str, Any]]: ...
-
 
 def add_virtual_views_to_listing(
     files: list[str] | list[dict[str, Any]],

@@ -27,7 +27,6 @@ from cachetools import TTLCache
 
 logger = logging.getLogger(__name__)
 
-
 @dataclass
 class CachedResult:
     """Represents a cached result set for paginated queries."""
@@ -39,12 +38,10 @@ class CachedResult:
     created_at: float  # Timestamp for TTL tracking
     zone_id: str  # For zone-based invalidation
 
-
 class CursorExpiredError(Exception):
     """Raised when a pagination cursor has expired or been invalidated."""
 
     pass
-
 
 class IteratorCache:
     """

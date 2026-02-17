@@ -11,8 +11,6 @@ Reference: SimpleMem: Efficient Lifelong Memory for LLM Agents
 https://arxiv.org/html/2601.02553
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import uuid
@@ -31,11 +29,11 @@ from nexus.services.ace.affinity import (
 from nexus.services.protocols.llm_provider import LLMProviderProtocol
 from nexus.storage.models import MemoryModel
 
+from nexus.search.embeddings import EmbeddingProvider
 if TYPE_CHECKING:
     from nexus.search.embeddings import EmbeddingProvider
 
 logger = logging.getLogger(__name__)
-
 
 def _run_coroutine(coro: Any) -> Any:
     """Run a coroutine from synchronous code.
@@ -52,7 +50,6 @@ def _run_coroutine(coro: Any) -> Any:
     from nexus.core.sync_bridge import run_sync
 
     return run_sync(coro)
-
 
 class ConsolidationEngine:
     """Consolidate memories based on importance and similarity.

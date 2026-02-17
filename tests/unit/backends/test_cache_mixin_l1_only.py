@@ -9,7 +9,6 @@ from unittest.mock import MagicMock, patch
 
 from nexus.backends.cache_mixin import CacheConnectorMixin
 
-
 class MockL1OnlyBackend(CacheConnectorMixin):
     """Mock backend with l1_only=True for testing."""
 
@@ -25,7 +24,6 @@ class MockL1OnlyBackend(CacheConnectorMixin):
         clean = virtual_path.lstrip("/")
         return self.physical_root / clean
 
-
 class MockL1L2Backend(CacheConnectorMixin):
     """Mock backend with L1+L2 (default) for comparison."""
 
@@ -34,7 +32,6 @@ class MockL1L2Backend(CacheConnectorMixin):
     def __init__(self, session_factory):
         self.name = "test_l1_l2"
         self.session_factory = session_factory
-
 
 class TestL1OnlyMode:
     """Test L1-only mode behavior."""
@@ -126,7 +123,6 @@ class TestL1OnlyMode:
             # disk_path should be the physical path from get_physical_path()
             call_kwargs = mock_l1_cache.put.call_args.kwargs
             assert call_kwargs["disk_path"] == str(subdir / "file.txt")
-
 
 class TestL1OnlyVsL1L2:
     """Test differences between L1-only and L1+L2 modes."""

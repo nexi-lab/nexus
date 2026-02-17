@@ -12,7 +12,6 @@ from nexus.plugins.registry import PluginRegistry
 
 console = Console()
 
-
 def _run_async(coro: Any) -> Any:
     """Run an async coroutine from sync Click command context."""
     try:
@@ -27,7 +26,6 @@ def _run_async(coro: Any) -> Any:
             return pool.submit(asyncio.run, coro).result()
     return asyncio.run(coro)
 
-
 @click.group(name="plugins")
 @click.pass_context
 def plugins_cli(ctx: click.Context) -> None:
@@ -37,7 +35,6 @@ def plugins_cli(ctx: click.Context) -> None:
         registry = PluginRegistry()
         _run_async(registry.discover())
         ctx.obj["registry"] = registry
-
 
 @plugins_cli.command(name="list")
 @click.pass_context
@@ -63,7 +60,6 @@ def list_plugins(ctx: click.Context) -> None:
         table.add_row(metadata.name, metadata.version, metadata.description, status)
 
     console.print(table)
-
 
 @plugins_cli.command(name="info")
 @click.argument("plugin_name")
@@ -104,7 +100,6 @@ def plugin_info(ctx: click.Context, plugin_name: str) -> None:
     status = "Enabled" if plugin.is_enabled() else "Disabled"
     console.print(f"\n[bold]Status:[/bold] {status}")
 
-
 @plugins_cli.command(name="enable")
 @click.argument("plugin_name")
 @click.pass_context
@@ -124,7 +119,6 @@ def enable_plugin(ctx: click.Context, plugin_name: str) -> None:
     registry.enable_plugin(plugin_name)
     console.print(f"[green]Enabled plugin '{plugin_name}'[/green]")
 
-
 @plugins_cli.command(name="disable")
 @click.argument("plugin_name")
 @click.pass_context
@@ -143,7 +137,6 @@ def disable_plugin(ctx: click.Context, plugin_name: str) -> None:
 
     registry.disable_plugin(plugin_name)
     console.print(f"[green]Disabled plugin '{plugin_name}'[/green]")
-
 
 @plugins_cli.command(name="install")
 @click.argument("plugin_name")
@@ -168,7 +161,6 @@ def install_plugin(plugin_name: str) -> None:
     except subprocess.CalledProcessError as e:
         console.print(f"[red]Failed to install {package_name}[/red]")
         console.print(f"Error: {e.stderr.decode() if e.stderr else str(e)}")
-
 
 @plugins_cli.command(name="uninstall")
 @click.argument("plugin_name")
@@ -200,7 +192,6 @@ def uninstall_plugin(plugin_name: str, yes: bool) -> None:
     except subprocess.CalledProcessError as e:
         console.print(f"[red]Failed to uninstall {package_name}[/red]")
         console.print(f"Error: {e.stderr.decode() if e.stderr else str(e)}")
-
 
 @plugins_cli.command(name="init")
 @click.argument("name")

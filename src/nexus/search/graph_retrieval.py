@@ -14,34 +14,28 @@ References:
     - LightRAG GitHub: https://github.com/HKUDS/LightRAG
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from nexus.search.fusion import normalize_scores_minmax
 from nexus.search.results import BaseSearchResult
 
-if TYPE_CHECKING:
-    from nexus.search.embeddings import EmbeddingProvider
-    from nexus.search.graph_store import Entity, GraphStore, Relationship
-    from nexus.search.semantic import SemanticSearch, SemanticSearchResult
+from nexus.search.embeddings import EmbeddingProvider
+from nexus.search.graph_store import Entity, GraphStore, Relationship
+from nexus.search.semantic import SemanticSearch, SemanticSearchResult
 
 # Type alias for HierarchicalMemoryManager (Issue #1520: avoid nexus.services import)
 HierarchicalMemoryManager = Any
 
 logger = logging.getLogger(__name__)
 
-
 # =============================================================================
 # Configuration
 # =============================================================================
 
-
 VALID_GRAPH_MODES = {"none", "low", "high", "dual"}
-
 
 @dataclass
 class GraphRetrievalConfig:
@@ -92,11 +86,9 @@ class GraphRetrievalConfig:
         if self.neighbor_hops < 0 or self.neighbor_hops > 10:
             raise ValueError("neighbor_hops must be between 0 and 10")
 
-
 # =============================================================================
 # Result Data Classes
 # =============================================================================
-
 
 @dataclass
 class GraphContext:
@@ -137,7 +129,6 @@ class GraphContext:
             "graph_proximity_score": self.graph_proximity_score,
         }
 
-
 @dataclass
 class GraphEnhancedSearchResult(BaseSearchResult):
     """Search result with graph context enrichment.
@@ -157,7 +148,7 @@ class GraphEnhancedSearchResult(BaseSearchResult):
         cls,
         result: SemanticSearchResult,
         chunk_id: str | None = None,
-    ) -> GraphEnhancedSearchResult:
+    ) -> "GraphEnhancedSearchResult":
         """Create from a SemanticSearchResult."""
         return cls(
             path=result.path,
@@ -190,11 +181,9 @@ class GraphEnhancedSearchResult(BaseSearchResult):
             "graph_context": self.graph_context.to_dict() if self.graph_context else None,
         }
 
-
 # =============================================================================
 # Graph-Enhanced Fusion
 # =============================================================================
-
 
 def graph_enhanced_fusion(
     keyword_results: list[dict[str, Any]],
@@ -300,11 +289,9 @@ def graph_enhanced_fusion(
 
     return sorted_results[:limit]
 
-
 # =============================================================================
 # Main Orchestrator Class
 # =============================================================================
-
 
 class GraphEnhancedRetriever:
     """Orchestrates graph-enhanced retrieval with dual-level search.

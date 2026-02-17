@@ -11,13 +11,11 @@ import nexus_fast
 # Counter for unique tuple_version values (cache invalidation between tests)
 _test_version = 0
 
-
 def _next_version() -> int:
     """Get a unique tuple_version for each test to avoid cache reuse."""
     global _test_version
     _test_version += 1
     return _test_version
-
 
 def test_basic_permission() -> None:
     """Test basic direct permission check"""
@@ -44,7 +42,6 @@ def test_basic_permission() -> None:
     print(f"  Result: {result}")
     assert result[("user", "alice", "read", "file", "doc1")]
     print("  ✓ Passed")
-
 
 def test_permission_with_namespace() -> None:
     """Test permission with namespace configuration"""
@@ -80,7 +77,6 @@ def test_permission_with_namespace() -> None:
     print(f"  Result: {result}")
     assert result[("user", "alice", "editor", "file", "doc1")]
     print("  ✓ Passed")
-
 
 def test_tuple_to_userset() -> None:
     """Test tuple-to-userset (parent relation)"""
@@ -126,7 +122,6 @@ def test_tuple_to_userset() -> None:
     assert result[("user", "alice", "read", "file", "doc1")]
     print("  ✓ Passed")
 
-
 def test_bulk_performance() -> None:
     """Test bulk permission checking performance"""
     print("\nTest 4: Bulk performance test (1000 checks)...")
@@ -160,7 +155,6 @@ def test_bulk_performance() -> None:
     assert all(result[key] for key in result)
     print("  ✓ Passed")
 
-
 def test_negative_case() -> None:
     """Test permission denial"""
     print("\nTest 5: Permission denial (negative case)...")
@@ -187,7 +181,6 @@ def test_negative_case() -> None:
     assert not result[("user", "alice", "read", "file", "doc1")]
     print("  ✓ Passed")
 
-
 def test_single_permission_check() -> None:
     """Test compute_permission_single function"""
     print("\nTest 6: Single permission check (new function)...")
@@ -211,7 +204,6 @@ def test_single_permission_check() -> None:
     print(f"  Result: {result}")
     assert result is True
     print("  ✓ Passed")
-
 
 def test_single_with_hierarchy() -> None:
     """Test single check with parent hierarchy"""
@@ -255,7 +247,6 @@ def test_single_with_hierarchy() -> None:
     assert result is True
     print("  ✓ Passed")
 
-
 def test_filter_paths_basic() -> None:
     """Test basic path filtering"""
     print("\nTest 8: Basic path filtering...")
@@ -280,7 +271,6 @@ def test_filter_paths_basic() -> None:
     assert result == expected, f"Expected {expected}, got {result}"
     print("  ✓ Passed")
 
-
 def test_filter_paths_with_directories() -> None:
     """Test path filtering with full paths"""
     print("\nTest 9: Path filtering with directories...")
@@ -304,7 +294,6 @@ def test_filter_paths_with_directories() -> None:
     ]
     assert result == expected, f"Expected {expected}, got {result}"
     print("  ✓ Passed")
-
 
 def test_filter_paths_performance() -> None:
     """Test path filtering performance with 10k paths"""
@@ -333,7 +322,6 @@ def test_filter_paths_performance() -> None:
     # Should filter out 20% of paths
     assert len(result) == 8000, f"Expected 8000 paths, got {len(result)}"
     print("  ✓ Passed")
-
 
 if __name__ == "__main__":
     print("=" * 60)

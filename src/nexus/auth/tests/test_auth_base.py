@@ -1,11 +1,8 @@
 """Unit tests for base authentication provider interface."""
 
-from __future__ import annotations
-
 import pytest
 
 from nexus.auth.providers.base import AuthProvider, AuthResult
-
 
 def test_auth_result_basic():
     """Create AuthResult with all fields, assert values."""
@@ -25,7 +22,6 @@ def test_auth_result_basic():
     assert result.agent_generation is None
     assert result.inherit_permissions is True
 
-
 def test_auth_result_with_metadata():
     """AuthResult with metadata dict."""
     metadata = {"key_id": "key_123", "key_name": "Test Key"}
@@ -42,7 +38,6 @@ def test_auth_result_with_metadata():
     assert result.metadata["key_id"] == "key_123"
     assert result.metadata["key_name"] == "Test Key"
 
-
 def test_auth_result_failed():
     """AuthResult(authenticated=False), check defaults."""
     result = AuthResult(authenticated=False)
@@ -54,7 +49,6 @@ def test_auth_result_failed():
     assert result.metadata is None
     assert result.agent_generation is None
     assert result.inherit_permissions is True
-
 
 def test_auth_result_different_subject_types():
     """Test user, agent, service, session subject types."""
@@ -91,7 +85,6 @@ def test_auth_result_different_subject_types():
     )
     assert session_result.subject_type == "session"
 
-
 def test_auth_result_admin_flag():
     """Test is_admin True/False."""
     admin_result = AuthResult(
@@ -109,7 +102,6 @@ def test_auth_result_admin_flag():
         is_admin=False,
     )
     assert normal_result.is_admin is False
-
 
 class ConcreteAuthProvider(AuthProvider):
     """Concrete provider for testing the ABC interface."""
@@ -129,7 +121,6 @@ class ConcreteAuthProvider(AuthProvider):
     def close(self) -> None:
         pass
 
-
 @pytest.mark.asyncio
 async def test_auth_provider_interface():
     """Async test with concrete provider implementing authenticate/validate_token/close."""
@@ -144,7 +135,6 @@ async def test_auth_provider_interface():
 
     assert await provider.validate_token("valid_token") is True
     assert await provider.validate_token("invalid_token") is False
-
 
 def test_auth_provider_close():
     """close() doesn't raise."""

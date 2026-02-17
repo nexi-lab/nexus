@@ -4,8 +4,6 @@ Extracted from server/dependencies.py. Provides TTL-based caching
 for authentication results with explicit invalidation for revocation.
 """
 
-from __future__ import annotations
-
 import hashlib
 import logging
 from typing import Any
@@ -17,7 +15,6 @@ logger = logging.getLogger(__name__)
 # Defaults
 _DEFAULT_TTL = 900  # 15 minutes
 _DEFAULT_MAX_SIZE = 1000
-
 
 class AuthCache:
     """TTL cache for auth results with invalidation support.

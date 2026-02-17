@@ -35,7 +35,6 @@ from nexus.server.subscriptions.models import (
 # Global subscription manager instance (set by FastAPI server)
 _global_subscription_manager: SubscriptionManager | None = None
 
-
 def get_subscription_manager() -> SubscriptionManager | None:
     """Get the global subscription manager instance.
 
@@ -43,7 +42,6 @@ def get_subscription_manager() -> SubscriptionManager | None:
         SubscriptionManager if initialized, None otherwise
     """
     return _global_subscription_manager
-
 
 def set_subscription_manager(manager: SubscriptionManager | None) -> None:
     """Set the global subscription manager instance.
@@ -53,7 +51,6 @@ def set_subscription_manager(manager: SubscriptionManager | None) -> None:
     """
     global _global_subscription_manager
     _global_subscription_manager = manager
-
 
 __all__ = [
     "SubscriptionManager",

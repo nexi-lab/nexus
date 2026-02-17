@@ -13,8 +13,6 @@ Tests cover:
 - Performance: _forward() overhead < 5ms, enqueue < 5ms
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import logging
@@ -32,7 +30,6 @@ from nexus.proxy.errors import CircuitOpenError, OfflineQueuedError, RemoteCallE
 from nexus.proxy.transport import HttpTransport
 
 logger = logging.getLogger(__name__)
-
 
 def _create_test_app(tmp_path: Path, enforce_permissions: bool = True):
     """Create a FastAPI app with real NexusFS for testing."""
@@ -67,15 +64,12 @@ def _create_test_app(tmp_path: Path, enforce_permissions: bool = True):
     app = create_app(nexus_fs=nx, api_key=api_key, database_url=db_url)
     return app, api_key
 
-
 def _make_rpc_response(result):  # noqa: ANN001
     return httpx.Response(200, json={"jsonrpc": "2.0", "id": "1", "result": result})
-
 
 # ======================================================================
 # 1. Real FastAPI server with permissions=True — authenticated user
 # ======================================================================
-
 
 class TestProxyWithRealFastAPIPermissions:
     """Proxy → HttpTransport → real FastAPI (enforce_permissions=True) → VFS.
@@ -176,11 +170,9 @@ class TestProxyWithRealFastAPIPermissions:
             await proxy.stop()
             await client.aclose()
 
-
 # ======================================================================
 # 2. Permission denied — unauthenticated / wrong key via real server
 # ======================================================================
-
 
 class TestProxyPermissionDeniedRealServer:
     """Non-authenticated or wrong-key requests through proxy → real FastAPI.
@@ -280,11 +272,9 @@ class TestProxyPermissionDeniedRealServer:
             await proxy.stop()
             await client.aclose()
 
-
 # ======================================================================
 # 3. Mock-based permission tests (independent of server wiring)
 # ======================================================================
-
 
 class TestProxyPermissionDeniedMock:
     """Permission denial with mock transport — validates proxy error handling."""
@@ -315,11 +305,9 @@ class TestProxyPermissionDeniedMock:
         finally:
             await proxy.stop()
 
-
 # ======================================================================
 # 4. Offline queue replay E2E
 # ======================================================================
-
 
 class TestProxyOfflineQueueReplayE2E:
     """Queue operations while 'offline' → replay → verify."""
@@ -473,11 +461,9 @@ class TestProxyOfflineQueueReplayE2E:
         finally:
             await proxy.stop()
 
-
 # ======================================================================
 # 5. Performance validation
 # ======================================================================
-
 
 class TestProxyPerformance:
     """Verify no performance regressions in the proxy layer."""

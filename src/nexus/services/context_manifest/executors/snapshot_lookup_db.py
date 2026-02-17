@@ -7,14 +7,11 @@ SnapshotLookup: retrieve snapshot metadata by ID or latest.
 ManifestReader: read file paths from a CAS-stored workspace manifest.
 """
 
-from __future__ import annotations
-
 import json
 import logging
 from typing import Any, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
-
 
 @runtime_checkable
 class SnapshotLookup(Protocol):
@@ -28,7 +25,6 @@ class SnapshotLookup(Protocol):
         """Get the most recent snapshot for a workspace path. Returns None if none exist."""
         ...
 
-
 @runtime_checkable
 class ManifestReader(Protocol):
     """Protocol for reading workspace manifest file paths from CAS."""
@@ -36,7 +32,6 @@ class ManifestReader(Protocol):
     def read_file_paths(self, manifest_hash: str) -> list[str] | None:
         """Read file paths from a CAS-stored manifest. Returns None on failure."""
         ...
-
 
 class DatabaseSnapshotLookup:
     """SQLAlchemy-backed implementation of SnapshotLookup.
@@ -76,7 +71,6 @@ class DatabaseSnapshotLookup:
                 return None
             return _model_to_dict(model)
 
-
 class CASManifestReader:
     """CAS-backed implementation of ManifestReader.
 
@@ -104,7 +98,6 @@ class CASManifestReader:
         except Exception as exc:
             logger.warning("Failed to read manifest %s: %s", manifest_hash, exc)
             return None
-
 
 def _model_to_dict(model: Any) -> dict[str, Any]:
     """Convert a WorkspaceSnapshotModel to a dict matching WorkspaceManager schema."""

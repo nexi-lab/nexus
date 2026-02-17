@@ -7,8 +7,6 @@ These functions depend on a ReBAC manager instance and are therefore
 part of the server composition layer (not a standalone brick).
 """
 
-from __future__ import annotations
-
 import contextlib
 from datetime import UTC, datetime
 from typing import Any
@@ -21,7 +19,6 @@ from nexus.storage.models import UserModel
 # ReBAC Group Naming Helpers
 # ==============================================================================
 
-
 def zone_group_id(zone_id: str) -> str:
     """Generate zone group ID from zone_id.
 
@@ -29,7 +26,6 @@ def zone_group_id(zone_id: str) -> str:
         zone_group_id("acme") -> "zone-acme"
     """
     return f"zone-{zone_id}"
-
 
 def parse_zone_from_group(group_id: str) -> str | None:
     """Extract zone_id from group ID.
@@ -42,16 +38,13 @@ def parse_zone_from_group(group_id: str) -> str | None:
         return group_id[len("zone-") :]
     return None
 
-
 def is_zone_group(group_id: str) -> bool:
     """Check if group ID is a zone group (starts with "zone-")."""
     return group_id.startswith("zone-")
 
-
 # ==============================================================================
 # Zone Role Checks
 # ==============================================================================
-
 
 def is_zone_owner(
     rebac_manager: Any,
@@ -72,7 +65,6 @@ def is_zone_owner(
             zone_id=zone_id,
         )
     )
-
 
 def is_zone_admin(
     rebac_manager: Any,
@@ -97,7 +89,6 @@ def is_zone_admin(
         )
     )
 
-
 def can_invite_to_zone(
     rebac_manager: Any,
     user_id: str,
@@ -106,11 +97,9 @@ def can_invite_to_zone(
     """Check if user can invite others to zone (admin or owner)."""
     return is_zone_admin(rebac_manager, user_id, zone_id)
 
-
 # ==============================================================================
 # Zone Membership Operations
 # ==============================================================================
-
 
 def add_user_to_zone(
     rebac_manager: Any,
@@ -168,7 +157,6 @@ def add_user_to_zone(
     )
     return result.tuple_id  # type: ignore[no-any-return]
 
-
 def remove_user_from_zone(
     rebac_manager: Any,
     user_id: str,
@@ -202,7 +190,6 @@ def remove_user_from_zone(
         zone_id=zone_id,
     )
 
-
 def get_user_zones(rebac_manager: Any, user_id: str) -> list[str]:
     """Get list of zone IDs that user belongs to.
 
@@ -227,7 +214,6 @@ def get_user_zones(rebac_manager: Any, user_id: str) -> list[str]:
         pass
     return zone_ids
 
-
 def user_belongs_to_zone(rebac_manager: Any, user_id: str, zone_id: str) -> bool:
     """Check if user belongs to zone."""
     try:
@@ -244,11 +230,9 @@ def user_belongs_to_zone(rebac_manager: Any, user_id: str, zone_id: str) -> bool
     except Exception:
         return False
 
-
 # ==============================================================================
 # Default Zone Selection
 # ==============================================================================
-
 
 def get_user_default_zone(rebac_manager: Any, user_id: str, _session: Session) -> str | None:
     """Get user's default zone.
@@ -262,7 +246,6 @@ def get_user_default_zone(rebac_manager: Any, user_id: str, _session: Session) -
     if not zone_ids:
         return None
     return zone_ids[0]
-
 
 def require_zone_context(
     rebac_manager: Any,
@@ -294,11 +277,9 @@ def require_zone_context(
     else:
         raise ValueError(f"User {user_id} has no zone memberships")
 
-
 # ==============================================================================
 # User Soft Delete
 # ==============================================================================
-
 
 def soft_delete_user(session: Session, user_id: str) -> UserModel | None:
     """Soft delete a user (sets is_active=0 and deleted_at=now())."""
@@ -311,7 +292,6 @@ def soft_delete_user(session: Session, user_id: str) -> UserModel | None:
     session.add(user)
     session.flush()
     return user
-
 
 def restore_user(session: Session, user_id: str) -> UserModel | None:
     """Restore a soft-deleted user (sets is_active=1 and deleted_at=None)."""

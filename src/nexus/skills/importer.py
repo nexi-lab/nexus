@@ -1,7 +1,5 @@
 """Skill importer for ZIP/archive packages."""
 
-from __future__ import annotations
-
 import io
 import logging
 import re
@@ -15,17 +13,16 @@ from nexus.skills.parser import SkillParseError, SkillParser
 from nexus.skills.protocols import NexusFilesystem
 from nexus.skills.registry import SkillRegistry
 
+from nexus.core.permissions import OperationContext
 if TYPE_CHECKING:
     from nexus.core.permissions import OperationContext
 
 logger = logging.getLogger(__name__)
 
-
 class SkillImportError(SkillValidationError):
     """Raised when skill import fails."""
 
     pass
-
 
 class SkillImporter:
     """Import skills from ZIP/archive packages.

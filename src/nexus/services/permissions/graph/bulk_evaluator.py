@@ -11,11 +11,10 @@ reusable from both Python and Rust acceleration paths.
 Related: Issue #1459 Phase 11, Performance optimization
 """
 
-from __future__ import annotations
-
 import logging
 from typing import TYPE_CHECKING, Any
 
+from nexus.core.rebac import Entity
 if TYPE_CHECKING:
     from nexus.core.rebac import Entity
 
@@ -23,7 +22,6 @@ logger = logging.getLogger(__name__)
 
 # Maximum traversal depth to prevent infinite recursion
 MAX_DEPTH = 50
-
 
 def compute_permission(
     subject: Entity,
@@ -245,7 +243,6 @@ def compute_permission(
     # Direct relation check (base case)
     return _store(check_direct_relation(subject, permission, obj, tuples_graph))
 
-
 def check_direct_relation(
     subject: Entity,
     permission: str,
@@ -268,7 +265,6 @@ def check_direct_relation(
         ):
             return True
     return False
-
 
 def find_related_objects(
     obj: Entity,
@@ -293,7 +289,6 @@ def find_related_objects(
         ):
             related.append(_Entity(tuple_data["object_type"], tuple_data["object_id"]))
     return related
-
 
 def find_subjects(
     obj: Entity,

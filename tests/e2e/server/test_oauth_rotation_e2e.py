@@ -6,8 +6,6 @@ Issue #997: Exercises the full lifecycle through FastAPI endpoints:
 Uses FastAPI TestClient with mock OAuth provider and real SQLite DB.
 """
 
-from __future__ import annotations
-
 import gc
 import logging
 import tempfile
@@ -32,7 +30,6 @@ if TYPE_CHECKING:
     from nexus import NexusFS
 
 logger = logging.getLogger(__name__)
-
 
 @pytest.fixture
 def e2e_setup():
@@ -59,7 +56,6 @@ def e2e_setup():
     engine.dispose()
     gc.collect()
     Path(db_path).unlink(missing_ok=True)
-
 
 class TestOAuthRotationE2E:
     """Full lifecycle E2E test."""
@@ -327,18 +323,15 @@ class TestOAuthRotationE2E:
         assert len(reuse_events) >= 1
         assert reuse_events[0].actor_id == "victim@test.com"
 
-
 # ==========================================================================
 # FastAPI TestClient e2e — secrets audit REST endpoints
 # ==========================================================================
-
 
 class _FakeNexusFS:
     """Minimal NexusFS stub for secrets audit endpoint testing."""
 
     def __init__(self, session_local: Any) -> None:
         self.SessionLocal = session_local
-
 
 @pytest.fixture
 def fastapi_e2e(monkeypatch):
@@ -388,7 +381,6 @@ def fastapi_e2e(monkeypatch):
     engine.dispose()
     gc.collect()
     Path(db_path).unlink(missing_ok=True)
-
 
 class TestSecretsAuditRestE2E:
     """FastAPI TestClient e2e tests for /api/v2/secrets-audit/* endpoints."""

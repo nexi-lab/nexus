@@ -10,8 +10,6 @@ Usage:
     state_mgr.invalidate("mem_123", invalid_at="2026-01-15")
 """
 
-from __future__ import annotations
-
 import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -23,7 +21,6 @@ from nexus.services.memory.memory_router import MemoryViewRouter
 from nexus.services.permissions.memory_permission_enforcer import MemoryPermissionEnforcer
 
 logger = logging.getLogger(__name__)
-
 
 class MemoryStateManager:
     """State transition operations for memories (#368, #1183, #1188).

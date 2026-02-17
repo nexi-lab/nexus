@@ -9,8 +9,6 @@ Phase 4 (Issue #940): Full async permission enforcement integration with
 AsyncReBACManager for non-blocking permission checks.
 """
 
-from __future__ import annotations
-
 import logging
 import re
 from collections.abc import AsyncIterator
@@ -34,12 +32,13 @@ from nexus.core.exceptions import (
 from nexus.core.permissions import OperationContext, Permission
 from nexus.storage.content_cache import ContentCache
 
+from nexus.core._metadata_generated import FileMetadataProtocol
+from nexus.rebac.async_permissions import AsyncPermissionEnforcer
 if TYPE_CHECKING:
     from nexus.core._metadata_generated import FileMetadataProtocol
     from nexus.rebac.async_permissions import AsyncPermissionEnforcer
 
 logger = logging.getLogger(__name__)
-
 
 class AsyncNexusFS:
     """

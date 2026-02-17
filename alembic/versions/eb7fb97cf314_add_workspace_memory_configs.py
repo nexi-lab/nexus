@@ -31,7 +31,6 @@ down_revision: Union[str, Sequence[str], None] = "p0_api_key_cols"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
-
 def upgrade() -> None:
     """Add workspace_configs and memory_configs tables."""
 
@@ -68,7 +67,6 @@ def upgrade() -> None:
 
     # Create indexes for memory_configs
     op.create_index("idx_memory_configs_created_at", "memory_configs", ["created_at"])
-
 
 def downgrade() -> None:
     """Remove workspace_configs and memory_configs tables."""

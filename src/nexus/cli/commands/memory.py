@@ -18,12 +18,10 @@ from nexus.cli.utils import (
 
 console = Console()
 
-
 @click.group()
 def memory() -> None:
     """Agent memory management and registry commands."""
     pass
-
 
 @memory.command()
 @click.argument("content")
@@ -73,7 +71,6 @@ def store(
     except Exception as e:
         click.echo(f"Error storing memory: {e}", err=True)
         raise click.Abort() from e
-
 
 @memory.command()
 @click.option("--user-id", default=None, help="Filter by user ID")
@@ -170,7 +167,6 @@ def query(
     except Exception as e:
         click.echo(f"Error querying memories: {e}", err=True)
         raise click.Abort() from e
-
 
 @memory.command()
 @click.argument("query_text")
@@ -305,7 +301,6 @@ def search(
         click.echo(f"Error searching memories: {e}", err=True)
         raise click.Abort() from e
 
-
 @memory.command()
 @click.option("--scope", default=None, help="Filter by scope")
 @click.option("--type", "memory_type", default=None, help="Filter by memory type")
@@ -394,7 +389,6 @@ def list(
         click.echo(f"Error listing memories: {e}", err=True)
         raise click.Abort() from e
 
-
 @memory.command()
 @click.argument("memory_id")
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
@@ -432,7 +426,6 @@ def get(memory_id: str, output_json: bool) -> None:
     except Exception as e:
         click.echo(f"Error getting memory: {e}", err=True)
         raise click.Abort() from e
-
 
 @memory.command()
 @click.argument("path")
@@ -474,7 +467,6 @@ def retrieve(path: str, output_json: bool) -> None:
         click.echo(f"Error retrieving memory: {e}", err=True)
         raise click.Abort() from e
 
-
 @memory.command()
 @click.argument("memory_id")
 def delete(memory_id: str) -> None:
@@ -496,7 +488,6 @@ def delete(memory_id: str) -> None:
     except Exception as e:
         click.echo(f"Error deleting memory: {e}", err=True)
         raise click.Abort() from e
-
 
 @memory.command()
 @click.argument("memory_id")
@@ -520,7 +511,6 @@ def approve(memory_id: str) -> None:
         click.echo(f"Error approving memory: {e}", err=True)
         raise click.Abort() from e
 
-
 @memory.command()
 @click.argument("memory_id")
 def deactivate(memory_id: str) -> None:
@@ -542,7 +532,6 @@ def deactivate(memory_id: str) -> None:
     except Exception as e:
         click.echo(f"Error deactivating memory: {e}", err=True)
         raise click.Abort() from e
-
 
 @memory.command(name="approve-batch")
 @click.argument("memory_ids", nargs=-1, required=True)
@@ -572,7 +561,6 @@ def approve_batch(memory_ids: tuple[str, ...], output_json: bool) -> None:
         click.echo(f"Error approving memories: {e}", err=True)
         raise click.Abort() from e
 
-
 @memory.command(name="deactivate-batch")
 @click.argument("memory_ids", nargs=-1, required=True)
 @click.option("--json", "output_json", is_flag=True, help="Output as JSON")
@@ -600,7 +588,6 @@ def deactivate_batch(memory_ids: tuple[str, ...], output_json: bool) -> None:
     except Exception as e:
         click.echo(f"Error deactivating memories: {e}", err=True)
         raise click.Abort() from e
-
 
 @memory.command(name="delete-batch")
 @click.argument("memory_ids", nargs=-1, required=True)
@@ -630,9 +617,7 @@ def delete_batch(memory_ids: tuple[str, ...], output_json: bool) -> None:
         click.echo(f"Error deleting memories: {e}", err=True)
         raise click.Abort() from e
 
-
 # ===== Memory Registry Commands (v0.7.0) =====
-
 
 @memory.command(name="register")
 @click.argument("path", type=str)
@@ -701,7 +686,6 @@ def register_memory_cmd(
     except Exception as e:
         handle_error(e)
 
-
 @memory.command(name="list-registered")
 @add_backend_options
 def list_registered_cmd(
@@ -744,7 +728,6 @@ def list_registered_cmd(
 
     except Exception as e:
         handle_error(e)
-
 
 @memory.command(name="unregister")
 @click.argument("path", type=str)
@@ -802,7 +785,6 @@ def unregister_memory_cmd(
     except Exception as e:
         handle_error(e)
 
-
 @memory.command(name="info")
 @click.argument("path", type=str)
 @add_backend_options
@@ -839,7 +821,6 @@ def memory_info_cmd(
 
     except Exception as e:
         handle_error(e)
-
 
 def _parse_ttl(ttl_str: str) -> timedelta:
     """Parse TTL string to timedelta.
@@ -878,15 +859,12 @@ def _parse_ttl(ttl_str: str) -> timedelta:
     else:
         raise ValueError(f"Invalid time unit: '{unit}'")
 
-
 # ========== ACE (Agentic Context Engineering) Commands (v0.5.0) ==========
-
 
 @memory.group(name="trajectory")
 def trajectory_group() -> None:
     """Manage execution trajectories for learning."""
     pass
-
 
 @trajectory_group.command("start")
 @click.argument("task_description")
@@ -910,7 +888,6 @@ def trajectory_start(task_description: str, task_type: str | None, output_json: 
         nx.close()
         handle_error(e)
 
-
 @trajectory_group.command("log")
 @click.argument("trajectory_id")
 @click.argument("description")
@@ -932,7 +909,6 @@ def trajectory_log(trajectory_id: str, description: str, step_type: str) -> None
         nx.close()
         handle_error(e)
 
-
 @trajectory_group.command("complete")
 @click.argument("trajectory_id")
 @click.option("--status", type=click.Choice(["success", "failure", "partial"]), required=True)
@@ -951,7 +927,6 @@ def trajectory_complete(trajectory_id: str, status: str, score: float | None) ->
     except Exception as e:
         nx.close()
         handle_error(e)
-
 
 @trajectory_group.command("list")
 @click.option("--agent-id", help="Filter by agent ID")
@@ -1009,7 +984,6 @@ def trajectory_list(
     except Exception as e:
         nx.close()
         handle_error(e)
-
 
 @memory.command("reflect")
 @click.argument("trajectory_id", required=False)
@@ -1090,12 +1064,10 @@ def reflect_cmd(
         nx.close()
         handle_error(e)
 
-
 @memory.group(name="playbook")
 def playbook_group() -> None:
     """Manage agent playbooks with learned strategies."""
     pass
-
 
 @playbook_group.command("get")
 @click.argument("name", default="default")
@@ -1139,7 +1111,6 @@ def playbook_get(name: str, output_json: bool) -> None:
         nx.close()
         handle_error(e)
 
-
 @playbook_group.command("update")
 @click.argument("name", default="default")
 @click.option("--strategies", required=True, help="Path to strategies JSON file")
@@ -1175,7 +1146,6 @@ def playbook_update(name: str, strategies: str) -> None:
         nx.close()
         handle_error(e)
 
-
 @playbook_group.command("curate")
 @click.option("--reflections", required=True, help="Comma-separated reflection memory IDs")
 @click.option("--name", default="default", help="Playbook name")
@@ -1202,7 +1172,6 @@ def playbook_curate(reflections: str, name: str, output_json: bool) -> None:
     except Exception as e:
         nx.close()
         handle_error(e)
-
 
 @playbook_group.command("list")
 @click.option("--scope", help="Filter by scope")
@@ -1244,7 +1213,6 @@ def playbook_list(scope: str | None, output_json: bool) -> None:
     except Exception as e:
         nx.close()
         handle_error(e)
-
 
 @memory.command("consolidate")
 @click.option("--type", "memory_type", help="Filter by memory type")
@@ -1288,7 +1256,6 @@ def consolidate_cmd(
     except Exception as e:
         nx.close()
         handle_error(e)
-
 
 @memory.command("process-relearning")
 @click.option("--limit", type=int, default=10, help="Maximum trajectories to process")

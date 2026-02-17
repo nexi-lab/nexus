@@ -42,6 +42,7 @@ from nexus.rebac.consistency.zone_manager import (
     ZoneIsolationError,  # noqa: F401 — re-exported for backward compat
     ZoneManager,
 )
+from nexus.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 from nexus.rebac.directory.expander import DirectoryExpander
 from nexus.rebac.graph.bulk_evaluator import (
     check_direct_relation as _check_direct_relation_in_graph,
@@ -83,7 +84,6 @@ from nexus.rebac.types import (
 )
 from nexus.rebac.utils.changelog import insert_changelog_entry
 from nexus.rebac.utils.zone import normalize_zone_id
-from nexus.services.permissions.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 
 if TYPE_CHECKING:
     from sqlalchemy.engine import Engine

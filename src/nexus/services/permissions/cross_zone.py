@@ -1,18 +1,10 @@
-"""Cross-zone sharing constants for ReBAC federation.
+"""Cross-zone sharing constants — re-exported from rebac brick.
 
-These constants define which relations are allowed to span zone boundaries.
-They belong in the services layer, not in core/, because cross-zone sharing
-is a federation-specific policy concept (KERNEL-ARCHITECTURE §3).
+The canonical definition lives in ``nexus.rebac.cross_zone`` (the brick
+owns its own relation semantics).  This module re-exports for callers
+within ``services.permissions``.
 """
 
-from __future__ import annotations
+from nexus.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 
-# Relations that are allowed to cross zone boundaries.
-# These relations can link subjects and objects from different zones.
-CROSS_ZONE_ALLOWED_RELATIONS: frozenset[str] = frozenset(
-    {
-        "shared-viewer",  # Read access via cross-zone share
-        "shared-editor",  # Read + Write access via cross-zone share
-        "shared-owner",  # Full access via cross-zone share
-    }
-)
+__all__ = ["CROSS_ZONE_ALLOWED_RELATIONS"]

@@ -8,7 +8,6 @@ Provides utility functions for:
 """
 
 import logging
-from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -609,55 +608,3 @@ def require_zone_context(
         )
     else:
         raise ValueError(f"User {user_id} has no zone memberships")
-
-
-# ==============================================================================
-# User Soft Delete
-# ==============================================================================
-
-
-def soft_delete_user(session: Session, user_id: str) -> UserModel | None:
-    """Soft delete a user.
-
-    Sets is_active=0 and deleted_at=now().
-    This preserves audit trail and allows email/username reuse.
-
-    Args:
-        session: Database session
-        user_id: User ID to soft delete
-
-    Returns:
-        Updated UserModel or None if not found
-    """
-    user = session.get(UserModel, user_id)
-    if not user:
-        return None
-
-    user.is_active = 0
-    user.deleted_at = datetime.now(UTC)
-    session.add(user)
-    session.flush()
-    return user
-
-
-def restore_user(session: Session, user_id: str) -> UserModel | None:
-    """Restore a soft-deleted user.
-
-    Sets is_active=1 and deleted_at=None.
-
-    Args:
-        session: Database session
-        user_id: User ID to restore
-
-    Returns:
-        Updated UserModel or None if not found
-    """
-    user = session.get(UserModel, user_id)
-    if not user:
-        return None
-
-    user.is_active = 1
-    user.deleted_at = None
-    session.add(user)
-    session.flush()
-    return user

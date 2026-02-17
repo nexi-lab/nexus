@@ -44,12 +44,6 @@ def get_auth_provider() -> DatabaseLocalAuth:
     return _auth_provider
 
 
-def reset_auth_provider() -> None:
-    """Reset auth provider to None — only for tests."""
-    global _auth_provider
-    _auth_provider = None
-
-
 def set_oauth_provider(provider: OAuthUserAuth) -> None:
     """Inject the OAuth authentication provider. Called by server layer at startup."""
     global _oauth_provider
@@ -61,12 +55,6 @@ def get_oauth_provider() -> OAuthUserAuth | None:
     return _oauth_provider
 
 
-def reset_oauth_provider() -> None:
-    """Reset OAuth provider to None — only for tests."""
-    global _oauth_provider
-    _oauth_provider = None
-
-
 def set_nexus_instance(nexus_fs: Any) -> None:
     """Inject the NexusFS instance for user provisioning. Called by server layer at startup."""
     global _nexus_fs_instance
@@ -76,12 +64,6 @@ def set_nexus_instance(nexus_fs: Any) -> None:
 def get_nexus_instance() -> Any | None:
     """Return the injected NexusFS instance, or None if not configured."""
     return _nexus_fs_instance
-
-
-def reset_nexus_instance() -> None:
-    """Reset NexusFS instance to None — only for tests."""
-    global _nexus_fs_instance
-    _nexus_fs_instance = None
 
 
 async def get_authenticated_user(

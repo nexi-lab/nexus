@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
     from nexus.core.rebac import NamespaceConfig
-    from nexus.services.permissions.tiger_cache import TigerCache
+    from nexus.services.permissions.cache.tiger.bitmap_cache import TigerCache
 
 logger = logging.getLogger(__name__)
 

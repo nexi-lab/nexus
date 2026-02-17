@@ -86,8 +86,9 @@ if TYPE_CHECKING:
     from sqlalchemy.engine import Engine
 
     from nexus.services.permissions.cache.leopard import LeopardIndex
+    from nexus.services.permissions.cache.tiger.bitmap_cache import TigerCache
+    from nexus.services.permissions.cache.tiger.updater import TigerCacheUpdater
     from nexus.services.permissions.rebac_iterator_cache import IteratorCache
-    from nexus.services.permissions.tiger_cache import TigerCache, TigerCacheUpdater
 
 logger = logging.getLogger(__name__)
 
@@ -170,10 +171,14 @@ class EnhancedReBACManager(ReBACManager):
         self._tiger_cache: TigerCache | None = None
         self._tiger_updater: TigerCacheUpdater | None = None
         if enable_tiger_cache and engine.dialect.name == "postgresql":
-            from nexus.services.permissions.tiger_cache import (
+            from nexus.services.permissions.cache.tiger.bitmap_cache import (
                 TigerCache,
-                TigerCacheUpdater,
+            )
+            from nexus.services.permissions.cache.tiger.resource_map import (
                 TigerResourceMap,
+            )
+            from nexus.services.permissions.cache.tiger.updater import (
+                TigerCacheUpdater,
             )
 
             resource_map = TigerResourceMap(engine)

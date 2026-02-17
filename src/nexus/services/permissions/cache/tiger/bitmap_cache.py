@@ -139,7 +139,8 @@ class TigerCache:
         self._dragonfly = dragonfly_cache
         if dragonfly_cache:
             # Cache URL for sync Redis operations
-            self._dragonfly_url = getattr(dragonfly_cache._client, "_url", None)
+            _client = getattr(dragonfly_cache, "_client", None)
+            self._dragonfly_url = getattr(_client, "_url", None) if _client else None
             # Create persistent thread pool (max 4 workers for L2 ops)
             import concurrent.futures
 

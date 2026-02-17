@@ -60,6 +60,7 @@ from nexus.core.exceptions import (
     ValidationError,
 )
 from nexus.core.rpc_codec import decode_rpc_message, encode_rpc_message
+from nexus.core.rpc_types import RPCErrorCode, RPCRequest
 
 # --- Extracted modules (re-exported for backward compatibility) ---
 from nexus.server.dependencies import (  # noqa: F401, E402
@@ -75,7 +76,6 @@ from nexus.server.path_utils import (
     unscope_internal_path,
     unscope_result,
 )
-from nexus.core.rpc_types import RPCErrorCode, RPCRequest
 from nexus.server.protocol import parse_method_params
 from nexus.server.rate_limiting import (  # noqa: E402
     RATE_LIMIT_ANONYMOUS,

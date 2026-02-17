@@ -1356,6 +1356,8 @@ class Memory:
         stmt = select(MemoryModel).where(
             MemoryModel.namespace == namespace, MemoryModel.path_key == path_key
         )
+        if self.zone_id is not None:
+            stmt = stmt.where(MemoryModel.zone_id == self.zone_id)
         memory = self.session.execute(stmt).scalar_one_or_none()
 
         if not memory:

@@ -1301,6 +1301,10 @@ def create_app(
             app.state.subscription_manager = SubscriptionManager(nexus_fs.SessionLocal)
             nexus_fs.subscription_manager = app.state.subscription_manager
             set_subscription_manager(app.state.subscription_manager)
+            # Wire broadcast callback into delivery worker (avoids services→server import)
+            dw = getattr(getattr(nexus_fs, "_services", None), "delivery_worker", None)
+            if dw is not None and hasattr(dw, "set_broadcast_fn"):
+                dw.set_broadcast_fn(app.state.subscription_manager.broadcast)
             logger.info("Subscription manager initialized and injected into NexusFS")
     except Exception as e:
         logger.warning(f"Failed to initialize subscription manager: {e}")

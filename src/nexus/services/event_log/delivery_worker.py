@@ -21,17 +21,29 @@ Tracked by: Issue #1241, #1138
 import asyncio
 import logging
 import threading
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from nexus.core.event_bus import FileEvent, FileEventType
 from nexus.core.operation_types import OperationType
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Coroutine
 
     from sqlalchemy.orm import Session
 
     from nexus.services.event_log.exporter_registry import ExporterRegistry
+
+
+class BroadcastFn(Protocol):
+    """Protocol for event broadcast callback (e.g. SubscriptionManager.broadcast)."""
+
+    def __call__(
+        self,
+        *,
+        event_type: str,
+        data: dict[str, Any],
+        zone_id: str,
+    ) -> "Coroutine[Any, Any, int]": ...
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +99,7 @@ class EventDeliveryWorker:
         event_bus: Any | None = None,
         exporter_registry: "ExporterRegistry | None" = None,
         *,
+        broadcast_fn: "BroadcastFn | None" = None,
         event_loop: asyncio.AbstractEventLoop | None = None,
         poll_interval_ms: int = 200,
         batch_size: int = 50,
@@ -96,6 +109,7 @@ class EventDeliveryWorker:
         self._session_factory = session_factory
         self._event_bus = event_bus
         self._exporter_registry = exporter_registry
+        self._broadcast_fn = broadcast_fn
         self._event_loop = event_loop
         self._poll_interval_s = poll_interval_ms / 1000.0
         self._batch_size = batch_size
@@ -113,6 +127,10 @@ class EventDeliveryWorker:
         self._total_dispatched = 0
         self._total_failed = 0
         self._total_dlq = 0
+
+    def set_broadcast_fn(self, fn: "BroadcastFn | None") -> None:
+        """Set the broadcast callback (for late-binding by server lifespan)."""
+        self._broadcast_fn = fn
 
     # ---- Lifecycle -----------------------------------------------------------
 
@@ -253,29 +271,24 @@ class EventDeliveryWorker:
         if bus is not None:
             _run_async(bus.publish(event), self._event_loop)
 
-        # 2. Broadcast to webhook subscriptions
-        try:
-            from nexus.server.subscriptions import get_subscription_manager
+        # 2. Broadcast to webhook subscriptions via injected callback
+        if self._broadcast_fn is not None:
+            event_type_str = str(event.type)
 
-            sub_manager = get_subscription_manager()
-            if sub_manager is not None:
-                event_type_str = str(event.type)
+            async def _broadcast() -> None:
+                assert self._broadcast_fn is not None
+                await self._broadcast_fn(
+                    event_type=event_type_str,
+                    data={
+                        "file_path": event.path,
+                        "old_path": event.old_path,
+                        "size": event.size,
+                        "timestamp": event.timestamp,
+                    },
+                    zone_id=event.zone_id or "root",
+                )
 
-                async def _broadcast() -> None:
-                    await sub_manager.broadcast(
-                        event_type=event_type_str,
-                        data={
-                            "file_path": event.path,
-                            "old_path": event.old_path,
-                            "size": event.size,
-                            "timestamp": event.timestamp,
-                        },
-                        zone_id=event.zone_id or "root",
-                    )
-
-                _run_async(_broadcast(), self._event_loop)
-        except ImportError:
-            pass  # Subscription manager not available
+            _run_async(_broadcast(), self._event_loop)
 
         logger.debug(
             "[DELIVERY] Dispatched: %s %s (op=%s)",

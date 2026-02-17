@@ -999,10 +999,15 @@ def create_mcp_server(
         )
 
     # Check if sandbox support is available
-    # Detection: call _ensure_sandbox_manager, then check _sandbox_manager.providers
+    # First check the explicit sandbox_available property, then probe internals
     sandbox_available = False
     try:
-        if hasattr(_default_nx, "_ensure_sandbox_manager"):
+        sa = getattr(_default_nx, "sandbox_available", None)
+        if sa is False:
+            sandbox_available = False
+        elif sa is True:
+            sandbox_available = True
+        elif hasattr(_default_nx, "_ensure_sandbox_manager"):
             _default_nx._ensure_sandbox_manager()
             mgr = getattr(_default_nx, "_sandbox_manager", None)
             if mgr is not None and getattr(mgr, "providers", None):

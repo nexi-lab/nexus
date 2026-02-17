@@ -9,11 +9,12 @@ All async service methods are tested via asyncio.run().
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, create_autospec
 
 import pytest
 
 from nexus.core.permissions import OperationContext
+from nexus.core.protocols.connector import PassthroughProtocol
 from nexus.services.events_service import EventsService
 
 # =============================================================================
@@ -23,8 +24,12 @@ from nexus.services.events_service import EventsService
 
 @pytest.fixture
 def mock_backend_passthrough():
-    """Create a mock passthrough backend (same-box mode)."""
-    backend = MagicMock()
+    """Create a mock passthrough backend (same-box mode).
+
+    Uses create_autospec so isinstance(mock, PassthroughProtocol)
+    works on Python 3.12+ where @runtime_checkable checks are stricter.
+    """
+    backend = create_autospec(PassthroughProtocol, instance=True)
     backend.is_passthrough = True
     backend.base_path = "/tmp/test_data"
     backend.lock = MagicMock(return_value="lock-123")

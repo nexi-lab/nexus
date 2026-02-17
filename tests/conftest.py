@@ -162,9 +162,9 @@ def make_test_nexus(
 
             metadata_store = RaftMetadataStore.embedded(str(tmp_path / "raft"))
         else:
-            from tests.helpers.in_memory_metadata_store import InMemoryFileMetadataStore
+            from tests.helpers.in_memory_metadata_store import InMemoryMetastore
 
-            metadata_store = InMemoryFileMetadataStore()
+            metadata_store = InMemoryMetastore()
 
     return NexusFS(
         backend=backend,

@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from nexus.core._metadata_generated import DT_DIR, DT_MOUNT, FileMetadata
+from nexus.core.metadata import DT_DIR, DT_MOUNT, FileMetadata
 
 if TYPE_CHECKING:
     from nexus.storage.raft_metadata_store import RaftMetadataStore

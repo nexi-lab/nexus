@@ -562,7 +562,7 @@ async def test_batch_read_permission_filter(tmp_path: Path) -> None:
     """Test batch_read uses batch permission filter, denied paths return None."""
     from unittest.mock import AsyncMock, MagicMock
 
-    from nexus.core._metadata_generated import FileMetadata
+    from nexus.core.metadata import FileMetadata
     from nexus.core.permissions import OperationContext
 
     mock_enforcer = AsyncMock()
@@ -652,7 +652,7 @@ async def test_batch_read_permissions_disabled(tmp_path: Path) -> None:
     """Test backward compat: batch_read returns all data when permissions disabled."""
     from unittest.mock import AsyncMock, MagicMock
 
-    from nexus.core._metadata_generated import FileMetadata
+    from nexus.core.metadata import FileMetadata
 
     mock_metadata = MagicMock()
 

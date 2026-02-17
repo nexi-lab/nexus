@@ -19,7 +19,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core._metadata_generated import FileMetadata
+from nexus.core.metadata import FileMetadata
 from nexus.core.workspace_manifest import ManifestEntry, WorkspaceManifest
 from nexus.services.overlay_resolver import (
     OverlayConfig,
@@ -30,7 +30,7 @@ from nexus.services.overlay_resolver import (
 class InMemoryMetadata:
     """Simple in-memory metadata store for integration testing.
 
-    Implements the subset of FileMetadataProtocol needed by OverlayResolver.
+    Implements the subset of MetastoreABC needed by OverlayResolver.
     """
 
     def __init__(self) -> None:

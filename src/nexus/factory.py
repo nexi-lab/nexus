@@ -667,6 +667,16 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
     except Exception as exc:
         logger.warning("[BOOT:SYSTEM] ContextBranchService unavailable: %s", exc)
 
+    # --- Brick Lifecycle Manager (Issue #1704) ---
+    brick_lifecycle_manager: Any = None
+    try:
+        from nexus.services.brick_lifecycle import BrickLifecycleManager
+
+        brick_lifecycle_manager = BrickLifecycleManager()
+        logger.debug("[BOOT:SYSTEM] BrickLifecycleManager created")
+    except Exception as exc:
+        logger.warning("[BOOT:SYSTEM] BrickLifecycleManager unavailable: %s", exc)
+
     # TODO: EventLog, Hook, Scheduler services (not yet implemented)
 
     result = {
@@ -679,6 +689,7 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
         "observability_subsystem": observability_subsystem,
         "resiliency_manager": resiliency_manager,
         "context_branch_service": context_branch_service,
+        "brick_lifecycle_manager": brick_lifecycle_manager,
     }
 
     elapsed = time.perf_counter() - t0
@@ -1067,6 +1078,7 @@ def create_nexus_services(
         async_namespace_manager=system["async_namespace_manager"],
         async_vfs_router=system["async_vfs_router"],
         resiliency_manager=system["resiliency_manager"],
+        brick_lifecycle_manager=system.get("brick_lifecycle_manager"),
         # Brick tier
         overlay_resolver=None,
         wallet_provisioner=brick["wallet_provisioner"],

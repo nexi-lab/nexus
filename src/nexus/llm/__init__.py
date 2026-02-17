@@ -1,4 +1,4 @@
-"""LLM provider abstraction layer for Nexus.
+"""LLM provider abstraction layer for Nexus (LLM Brick).
 
 Provides a unified interface for multiple LLM providers with:
 - Multi-provider support (Anthropic, OpenAI, Google, etc.)
@@ -7,6 +7,10 @@ Provides a unified interface for multiple LLM providers with:
 - Token counting
 - Cost tracking
 - Response caching with Nexus CAS
+
+Issue #1521: Orchestration concerns (document_reader, context_builder,
+citation) moved to nexus.services.llm_* modules. This brick now only
+exports provider primitives.
 """
 
 from nexus.llm.cancellation import (
@@ -17,10 +21,7 @@ from nexus.llm.cancellation import (
     reset_shutdown_flag,
     should_continue,
 )
-from nexus.llm.citation import Citation, CitationExtractor, DocumentReadResult
 from nexus.llm.config import LLMConfig
-from nexus.llm.context_builder import ContextBuilder
-from nexus.llm.document_reader import LLMDocumentReader
 from nexus.llm.exceptions import (
     LLMAuthenticationError,
     LLMCancellationError,
@@ -34,6 +35,7 @@ from nexus.llm.exceptions import (
     LLMTimeoutError,
     LLMTokenCountError,
 )
+from nexus.llm.manifest import LLMBrickManifest, verify_imports
 from nexus.llm.message import (
     ContentType,
     ImageContent,
@@ -48,18 +50,15 @@ from nexus.llm.metrics import LLMMetrics, ResponseLatency, TokenUsage
 from nexus.llm.provider import LiteLLMProvider, LLMProvider, LLMResponse
 
 __all__ = [
+    # Manifest
+    "LLMBrickManifest",
+    "verify_imports",
     # Config
     "LLMConfig",
     # Providers
     "LLMProvider",
     "LiteLLMProvider",
     "LLMResponse",
-    # Document Reading
-    "LLMDocumentReader",
-    "DocumentReadResult",
-    "Citation",
-    "CitationExtractor",
-    "ContextBuilder",
     # Messages
     "Message",
     "MessageRole",

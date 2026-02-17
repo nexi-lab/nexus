@@ -3,8 +3,6 @@
 Issue #1286: Extracted from monolithic __init__.py.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 
 from sqlalchemy import (
@@ -22,7 +20,6 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from nexus.core.exceptions import ValidationError
 from nexus.storage.models._base import Base, uuid_pk
-
 
 class TrajectoryModel(Base):
     """Trajectory tracking for ACE (Agentic Context Engineering).
@@ -72,7 +69,7 @@ class TrajectoryModel(Base):
     session_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
-    parent_trajectory: Mapped[TrajectoryModel | None] = relationship(
+    parent_trajectory: Mapped["TrajectoryModel | None"] = relationship(
         "TrajectoryModel", remote_side=[trajectory_id], foreign_keys=[parent_trajectory_id]
     )
 
@@ -107,7 +104,6 @@ class TrajectoryModel(Base):
             raise ValidationError(
                 f"success_score must be between 0.0 and 1.0, got {self.success_score}"
             )
-
 
 class TrajectoryFeedbackModel(Base):
     """Dynamic feedback for trajectories.
@@ -145,7 +141,6 @@ class TrajectoryFeedbackModel(Base):
 
     def __repr__(self) -> str:
         return f"<TrajectoryFeedbackModel(feedback_id={self.feedback_id}, trajectory_id={self.trajectory_id}, type={self.feedback_type})>"
-
 
 class PlaybookModel(Base):
     """Playbook storage for ACE (Agentic Context Engineering).

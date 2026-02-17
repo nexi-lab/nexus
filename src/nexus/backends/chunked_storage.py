@@ -35,8 +35,6 @@ Example:
     >>> assert content == large_50mb_file
 """
 
-from __future__ import annotations
-
 import json
 import logging
 import time
@@ -45,10 +43,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
 from nexus.core.hash_fast import hash_content
+from nexus.core.permissions import OperationContext
 
 if TYPE_CHECKING:
     from nexus.backends.cas_blob_store import CASBlobStore
-    from nexus.core.permissions import OperationContext
 
 logger = logging.getLogger(__name__)
 
@@ -67,11 +65,9 @@ CDC_MAX_CHUNK_SIZE = 4 * 1024 * 1024  # 4MB maximum
 # Parallel I/O configuration
 CDC_PARALLEL_WORKERS = 8  # Optimal for SSD, reduce for HDD
 
-
 # =============================================================================
 # Data Classes
 # =============================================================================
-
 
 @dataclass(frozen=True, slots=True)
 class ChunkInfo:
@@ -96,14 +92,13 @@ class ChunkInfo:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ChunkInfo:
+    def from_dict(cls, data: dict[str, Any]) -> "ChunkInfo":
         """Deserialize from JSON dict."""
         return cls(
             chunk_hash=data["chunk_hash"],
             offset=data["offset"],
             length=data["length"],
         )
-
 
 @dataclass(frozen=True, slots=True)
 class ChunkedReference:
@@ -155,7 +150,7 @@ class ChunkedReference:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ChunkedReference:
+    def from_dict(cls, data: dict[str, Any]) -> "ChunkedReference":
         """Deserialize from JSON dict."""
         return cls(
             type=data.get("type", "chunked_manifest_v1"),
@@ -171,7 +166,7 @@ class ChunkedReference:
         return json.dumps(self.to_dict(), separators=(",", ":")).encode("utf-8")
 
     @classmethod
-    def from_json(cls, data: bytes) -> ChunkedReference:
+    def from_json(cls, data: bytes) -> "ChunkedReference":
         """Deserialize from JSON bytes."""
         return cls.from_dict(json.loads(data))
 
@@ -197,11 +192,9 @@ class ChunkedReference:
         except (json.JSONDecodeError, UnicodeDecodeError):
             return False
 
-
 # =============================================================================
 # ChunkedStorageMixin
 # =============================================================================
-
 
 class ChunkedStorageMixin:
     """Mixin that adds CDC chunking support to storage backends.
@@ -231,7 +224,7 @@ class ChunkedStorageMixin:
         - content_cache (optional attribute)
     """
 
-    _cas: CASBlobStore
+    _cas: "CASBlobStore"
 
     # Configuration (can be overridden in subclass or __init__)
     cdc_threshold: int = CDC_THRESHOLD_BYTES

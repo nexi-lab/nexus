@@ -38,8 +38,6 @@ See also:
     - https://skiplabs.io/blog/cache_invalidation (Skip invalidation)
 """
 
-from __future__ import annotations
-
 import contextlib
 import logging
 import os
@@ -50,11 +48,12 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
+from collections.abc import Generator, Iterator
+
 if TYPE_CHECKING:
-    from collections.abc import Generator, Iterator
+    pass
 
 logger = logging.getLogger(__name__)
-
 
 class AccessType(StrEnum):
     """Type of access performed on a resource."""
@@ -64,14 +63,12 @@ class AccessType(StrEnum):
     LIST = "list"  # List directory contents
     EXISTS = "exists"  # Check if file exists
 
-
 class ResourceType(StrEnum):
     """Type of resource being accessed."""
 
     FILE = "file"
     DIRECTORY = "directory"
     METADATA = "metadata"
-
 
 @dataclass(slots=True)
 class ReadSetEntry:
@@ -126,7 +123,7 @@ class ReadSetEntry:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ReadSetEntry:
+    def from_dict(cls, data: dict[str, Any]) -> "ReadSetEntry":
         """Create from dictionary."""
         return cls(
             resource_type=data["resource_type"],
@@ -135,7 +132,6 @@ class ReadSetEntry:
             access_type=data.get("access_type", AccessType.CONTENT),
             timestamp=data.get("timestamp", time.time()),
         )
-
 
 @dataclass
 class ReadSet:
@@ -322,7 +318,7 @@ class ReadSet:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> ReadSet:
+    def from_dict(cls, data: dict[str, Any]) -> "ReadSet":
         """Create from dictionary."""
         entries = [ReadSetEntry.from_dict(e) for e in data.get("entries", [])]
         return cls(
@@ -334,7 +330,7 @@ class ReadSet:
         )
 
     @classmethod
-    def create(cls, zone_id: str, ttl_seconds: float | None = None) -> ReadSet:
+    def create(cls, zone_id: str, ttl_seconds: float | None = None) -> "ReadSet":
         """Factory method to create a new read set with auto-generated ID.
 
         Args:
@@ -351,7 +347,6 @@ class ReadSet:
             created_at=now,
             expires_at=now + ttl_seconds if ttl_seconds else None,
         )
-
 
 class RWLock:
     """Read-Write Lock for concurrent read access with exclusive writes.
@@ -408,7 +403,6 @@ class RWLock:
             with self._condition:
                 self._writer = False
                 self._condition.notify_all()
-
 
 class ReadSetRegistry:
     """Global registry of active read sets with reverse indexing.
@@ -696,11 +690,9 @@ class ReadSetRegistry:
         with self._lock.read_lock():
             return len(self._read_sets)
 
-
 # Module-level singleton for global access
 _global_registry: ReadSetRegistry | None = None
 _registry_lock = threading.Lock()
-
 
 def get_global_registry() -> ReadSetRegistry:
     """Get or create the global ReadSetRegistry singleton.
@@ -714,7 +706,6 @@ def get_global_registry() -> ReadSetRegistry:
             if _global_registry is None:
                 _global_registry = ReadSetRegistry()
     return _global_registry
-
 
 def set_global_registry(registry: ReadSetRegistry | None) -> None:
     """Set the global ReadSetRegistry (for testing).

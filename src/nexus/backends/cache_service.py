@@ -13,8 +13,6 @@ Bug fixes applied:
 Part of: #1628 (Split CacheConnectorMixin into focused units)
 """
 
-from __future__ import annotations
-
 import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
@@ -42,7 +40,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 class CacheService:
     """Core cache logic for connector backends.
 
@@ -61,15 +58,15 @@ class CacheService:
     def __init__(
         self,
         connector: Any,
-        l1_cache: L1MetadataCache | None = None,
-        backend_io: BackendIOService | None = None,
+        l1_cache: "L1MetadataCache | None" = None,
+        backend_io: "BackendIOService | None" = None,
     ) -> None:
         self._connector = connector
         self._l1_cache = l1_cache
         self._backend_io = backend_io
 
     @property
-    def backend_io(self) -> BackendIOService:
+    def backend_io(self) -> "BackendIOService":
         """Lazy-initialize BackendIOService."""
         if self._backend_io is None:
             from nexus.backends.backend_io import BackendIOService
@@ -187,7 +184,7 @@ class CacheService:
             return context.backend_path
         return None
 
-    def get_db_session(self) -> Session:
+    def get_db_session(self) -> "Session":
         """Get database session from connector."""
         connector = self._connector
         if hasattr(connector, "session_factory") and connector.session_factory is not None:
@@ -198,7 +195,7 @@ class CacheService:
             return cast("Session", connector._db_session)
         raise RuntimeError("No database session available for caching")
 
-    def get_path_id(self, path: str, session: Session) -> str | None:
+    def get_path_id(self, path: str, session: "Session") -> str | None:
         """Get path_id for a virtual path."""
         stmt = select(FilePathModel.path_id).where(
             FilePathModel.virtual_path == path,
@@ -208,7 +205,7 @@ class CacheService:
         row: str | None = result.scalar_one_or_none()
         return row
 
-    def get_path_ids_bulk(self, paths: list[str], session: Session) -> dict[str, str]:
+    def get_path_ids_bulk(self, paths: list[str], session: "Session") -> dict[str, str]:
         """Get path_ids for multiple virtual paths in a single query."""
         if not paths:
             return {}

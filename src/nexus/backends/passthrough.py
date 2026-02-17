@@ -17,8 +17,6 @@ can use OS-native APIs (inotify on Linux, ReadDirectoryChangesW on Windows)
 to detect changes without polling.
 """
 
-from __future__ import annotations
-
 import contextlib
 import logging
 import os
@@ -36,15 +34,15 @@ from nexus.core.exceptions import BackendError
 from nexus.core.hash_fast import hash_content
 from nexus.core.response import HandlerResponse
 
+from nexus.core.permissions import OperationContext
+
 if TYPE_CHECKING:
-    from nexus.core.permissions import OperationContext
     from nexus.rebac.permissions_enhanced import EnhancedOperationContext
 
 logger = logging.getLogger(__name__)
 
 # Pointer file format prefix
 POINTER_PREFIX = "cas:"
-
 
 @dataclass
 class _LockInfo:
@@ -53,7 +51,6 @@ class _LockInfo:
     lock_id: str
     path: str
     acquired_at: float
-
 
 @register_connector(
     "passthrough",
@@ -490,7 +487,7 @@ class PassthroughBackend(Backend):
         path: str,
         parents: bool = False,
         exist_ok: bool = False,
-        context: OperationContext | EnhancedOperationContext | None = None,
+        context: "OperationContext | EnhancedOperationContext | None" = None,
     ) -> HandlerResponse[None]:
         """Create a directory in the pointers layer."""
         start_time = time.perf_counter()
@@ -541,7 +538,7 @@ class PassthroughBackend(Backend):
         self,
         path: str,
         recursive: bool = False,
-        context: OperationContext | EnhancedOperationContext | None = None,
+        context: "OperationContext | EnhancedOperationContext | None" = None,
     ) -> HandlerResponse[None]:
         """Remove a directory from the pointers layer."""
         import shutil

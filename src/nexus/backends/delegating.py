@@ -14,17 +14,11 @@ Design reference:
     - Issue #1449: Recursive Protocol wrapping + describe() for composition chains
 """
 
-from __future__ import annotations
+from typing import Any
 
-from typing import TYPE_CHECKING, Any
-
-from nexus.backends.backend import Backend
-
-if TYPE_CHECKING:
-    from nexus.backends.backend import HandlerStatusResponse
-    from nexus.core.permissions import OperationContext
-    from nexus.core.response import HandlerResponse
-
+from nexus.backends.backend import Backend, HandlerStatusResponse
+from nexus.core.permissions import OperationContext
+from nexus.core.response import HandlerResponse
 
 class DelegatingBackend(Backend):
     """Base class for wrappers that implement the same Backend Protocol.

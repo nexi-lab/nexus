@@ -3,8 +3,6 @@
 Issue #1286: Extracted from monolithic __init__.py.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -27,7 +25,6 @@ from nexus.storage.models._base import Base, ResourceConfigMixin, uuid_pk
 
 if TYPE_CHECKING:
     pass
-
 
 class MemoryModel(Base):
     """Memory storage for AI agents.
@@ -184,7 +181,6 @@ class MemoryModel(Base):
                 f"temporal_stability must be one of {valid_stabilities}, got {self.temporal_stability}"
             )
 
-
 class MemoryConfigModel(ResourceConfigMixin, Base):
     """Memory configuration registry.
 
@@ -209,7 +205,6 @@ class MemoryConfigModel(ResourceConfigMixin, Base):
 
     def __repr__(self) -> str:
         return f"<MemoryConfigModel(path={self.path}, name={self.name})>"
-
 
 class EntityRegistryModel(Base):
     """Entity registry for identity-based memory system.
@@ -254,7 +249,6 @@ class EntityRegistryModel(Base):
                 f"parent_type must be one of {valid_types}, got {self.parent_type}"
             )
 
-
 class EntityModel(Base):
     """Entity registry for knowledge graph.
 
@@ -289,19 +283,19 @@ class EntityModel(Base):
         onupdate=lambda: datetime.now(UTC),
     )
 
-    source_relationships: Mapped[list[RelationshipModel]] = relationship(
+    source_relationships: Mapped[list["RelationshipModel"]] = relationship(
         "RelationshipModel",
         foreign_keys="RelationshipModel.source_entity_id",
         back_populates="source_entity",
         cascade="all, delete-orphan",
     )
-    target_relationships: Mapped[list[RelationshipModel]] = relationship(
+    target_relationships: Mapped[list["RelationshipModel"]] = relationship(
         "RelationshipModel",
         foreign_keys="RelationshipModel.target_entity_id",
         back_populates="target_entity",
         cascade="all, delete-orphan",
     )
-    mentions: Mapped[list[EntityMentionModel]] = relationship(
+    mentions: Mapped[list["EntityMentionModel"]] = relationship(
         "EntityMentionModel",
         back_populates="entity",
         cascade="all, delete-orphan",
@@ -347,7 +341,6 @@ class EntityModel(Base):
             )
         if self.merge_count < 1:
             raise ValidationError(f"merge_count must be at least 1, got {self.merge_count}")
-
 
 class RelationshipModel(Base):
     """Relationships between entities (adjacency list).
@@ -451,7 +444,6 @@ class RelationshipModel(Base):
             raise ValidationError(
                 "Self-loops are not allowed (source_entity_id == target_entity_id)"
             )
-
 
 class EntityMentionModel(Base):
     """Entity mentions linking entities to source chunks/memories (provenance)."""

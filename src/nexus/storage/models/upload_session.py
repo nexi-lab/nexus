@@ -3,8 +3,6 @@
 Persists tus.io upload session state for resumable uploads.
 """
 
-from __future__ import annotations
-
 import json
 from datetime import UTC, datetime
 from typing import Any
@@ -13,7 +11,6 @@ from sqlalchemy import DateTime, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from nexus.storage.models._base import Base, _generate_uuid, _get_uuid_server_default
-
 
 class UploadSessionModel(Base):
     """Persistent storage for chunked upload sessions.
@@ -96,7 +93,7 @@ class UploadSessionModel(Base):
         }
 
     @classmethod
-    def from_upload_session(cls, session: Any) -> UploadSessionModel:
+    def from_upload_session(cls, session: Any) -> "UploadSessionModel":
         """Create model from an UploadSession dataclass."""
         metadata_json = json.dumps(session.metadata) if session.metadata else None
         return cls(

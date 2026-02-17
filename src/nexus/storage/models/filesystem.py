@@ -3,8 +3,6 @@
 Issue #1286: Extracted from monolithic __init__.py.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -25,7 +23,6 @@ from nexus.storage.models._base import Base, uuid_pk
 
 if TYPE_CHECKING:
     from nexus.storage.models.file_path import FilePathModel
-
 
 class DirectoryEntryModel(Base):
     """Sparse directory index for O(1) non-recursive listings (Issue #924).
@@ -83,7 +80,6 @@ class DirectoryEntryModel(Base):
                 f"entry_type must be 'file' or 'directory', got {self.entry_type!r}"
             )
 
-
 class FileMetadataModel(Base):
     """File metadata storage — stores arbitrary key-value metadata for files."""
 
@@ -102,7 +98,7 @@ class FileMetadataModel(Base):
         DateTime, nullable=False, default=lambda: datetime.now(UTC)
     )
 
-    file_path: Mapped[FilePathModel] = relationship(
+    file_path: Mapped["FilePathModel"] = relationship(
         "FilePathModel", back_populates="metadata_entries"
     )
 
@@ -124,7 +120,6 @@ class FileMetadataModel(Base):
             raise ValidationError(
                 f"metadata key must be 255 characters or less, got {len(self.key)}"
             )
-
 
 class ContentChunkModel(Base):
     """Content chunks for deduplication.
@@ -176,7 +171,6 @@ class ContentChunkModel(Base):
         if self.ref_count is not None and self.ref_count < 0:
             raise ValidationError(f"ref_count cannot be negative, got {self.ref_count}")
 
-
 class WorkspaceSnapshotModel(Base):
     """Workspace snapshot tracking for registered workspaces.
 
@@ -219,7 +213,6 @@ class WorkspaceSnapshotModel(Base):
 
     def __repr__(self) -> str:
         return f"<WorkspaceSnapshotModel(snapshot_id={self.snapshot_id}, workspace={self.workspace_path}, version={self.snapshot_number})>"
-
 
 class DocumentChunkModel(Base):
     """Document chunks for semantic search.

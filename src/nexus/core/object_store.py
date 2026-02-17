@@ -11,17 +11,15 @@ Design:
     - No capability flags — those stay on Backend
 """
 
-from __future__ import annotations
-
 import re
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
+from nexus.core.permissions import OperationContext
+
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
-    from nexus.core.permissions import OperationContext
 
 _HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
-
 
 def _validate_hash(content_hash: str) -> None:
     """Validate that a content hash is a well-formed SHA-256 hex string.
@@ -37,7 +35,6 @@ def _validate_hash(content_hash: str) -> None:
             f"Invalid SHA-256 content hash: {content_hash!r} "
             f"(expected 64-character lowercase hex string)"
         )
-
 
 @runtime_checkable
 class ObjectStoreABC(Protocol):
@@ -138,7 +135,6 @@ class ObjectStoreABC(Protocol):
         """
         ...
 
-
 class BackendObjectStore:
     """Adapts a Backend instance to the ObjectStoreABC interface.
 
@@ -148,14 +144,14 @@ class BackendObjectStore:
 
     def __init__(
         self,
-        backend: Backend,
+        backend: "Backend",
         context: OperationContext | None = None,
     ) -> None:
         self._backend = backend
         self._context = context
 
     @property
-    def backend(self) -> Backend:
+    def backend(self) -> "Backend":
         """The underlying Backend instance (read-only)."""
         return self._backend
 

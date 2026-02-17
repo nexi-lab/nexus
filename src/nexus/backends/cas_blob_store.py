@@ -23,8 +23,6 @@ Architecture:
     └── cleanup_empty_dirs() — remove empty parent dirs up to cas_root
 """
 
-from __future__ import annotations
-
 import contextlib
 import json
 import logging
@@ -48,7 +46,6 @@ logger = logging.getLogger(__name__)
 # CASMeta — frozen metadata container
 # ---------------------------------------------------------------------------
 
-
 @dataclass(frozen=True, slots=True)
 class WriteResult:
     """Result of a streaming write to CAS.
@@ -60,7 +57,6 @@ class WriteResult:
     content_hash: str
     size: int
     is_new: bool
-
 
 @dataclass(frozen=True, slots=True)
 class CASMeta:
@@ -87,26 +83,24 @@ class CASMeta:
         return d
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> CASMeta:
+    def from_dict(cls, data: dict[str, Any]) -> "CASMeta":
         """Deserialize from a dict, capturing unknown keys in *extra*."""
         ref_count = int(data.get("ref_count", 0))
         size = int(data.get("size", 0))
         extra = tuple((k, v) for k, v in data.items() if k not in ("ref_count", "size"))
         return cls(ref_count=ref_count, size=size, extra=extra)
 
-    def inc_ref(self) -> CASMeta:
+    def inc_ref(self) -> "CASMeta":
         """Return a new CASMeta with ref_count incremented by 1."""
         return CASMeta(ref_count=self.ref_count + 1, size=self.size, extra=self.extra)
 
-    def dec_ref(self) -> CASMeta:
+    def dec_ref(self) -> "CASMeta":
         """Return a new CASMeta with ref_count decremented by 1 (min 0)."""
         return CASMeta(ref_count=max(0, self.ref_count - 1), size=self.size, extra=self.extra)
-
 
 # ---------------------------------------------------------------------------
 # Retry helper
 # ---------------------------------------------------------------------------
-
 
 def cas_retry(
     fn: Callable[[], _T],
@@ -141,13 +135,11 @@ def cas_retry(
     assert last_exc is not None  # noqa: S101 — guaranteed by max_attempts >= 1
     raise last_exc
 
-
 # ---------------------------------------------------------------------------
 # Stripe lock — lightweight in-memory coordination for metadata updates
 # ---------------------------------------------------------------------------
 
 _NUM_STRIPES = 64  # power of 2 for fast modulo
-
 
 class _StripeLock:
     """Fixed-size array of threading.Lock objects indexed by hash.
@@ -181,11 +173,9 @@ class _StripeLock:
             lock.acquire()
         return lock
 
-
 # ---------------------------------------------------------------------------
 # CASBlobStore
 # ---------------------------------------------------------------------------
-
 
 class CASBlobStore:
     """CAS engine with lock-free blob writes and striped metadata locks.

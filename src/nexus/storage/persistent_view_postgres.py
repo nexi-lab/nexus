@@ -18,8 +18,7 @@ from sqlalchemy import text
 from nexus.core.persistent_view_store import PersistentView
 from nexus.storage.models._base import _generate_uuid
 
-if TYPE_CHECKING:
-    from nexus.storage.record_store import RecordStoreABC
+from nexus.storage.record_store import RecordStoreABC
 
 logger = logging.getLogger(__name__)
 

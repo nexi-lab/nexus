@@ -13,8 +13,6 @@ Usage:
     >>> backend = BackendFactory.create("gcs_connector", config, session_factory=sf)
 """
 
-from __future__ import annotations
-
 import functools
 import inspect
 import logging
@@ -25,7 +23,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 class BackendFactory:
     """Centralized factory for creating backend instances by type name.
 
@@ -34,7 +31,7 @@ class BackendFactory:
     """
 
     @staticmethod
-    def create(backend_type: str, config: dict[str, Any], **extra_kwargs: Any) -> Backend:
+    def create(backend_type: str, config: dict[str, Any], **extra_kwargs: Any) -> "Backend":
         """Create a backend instance by type name and config dict.
 
         Uses ConnectorRegistry for all registered connectors. Extra kwargs

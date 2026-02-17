@@ -3,8 +3,6 @@
 Issue #1246 Phase 4: Extracted from monolithic models.py.
 """
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
@@ -15,7 +13,6 @@ from nexus.storage.models._base import Base, _generate_uuid, _get_uuid_server_de
 
 if TYPE_CHECKING:
     from nexus.storage.models import FileMetadataModel
-
 
 class FilePathModel(Base):
     """Core table for virtual path mapping.
@@ -73,7 +70,7 @@ class FilePathModel(Base):
     posix_uid: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Relationships
-    metadata_entries: Mapped[list[FileMetadataModel]] = relationship(
+    metadata_entries: Mapped[list["FileMetadataModel"]] = relationship(
         "FileMetadataModel", back_populates="file_path", cascade="all, delete-orphan"
     )
 

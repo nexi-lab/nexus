@@ -3,8 +3,6 @@
 Issue #1286: Extracted from monolithic __init__.py.
 """
 
-from __future__ import annotations
-
 import json
 import uuid
 from datetime import UTC, datetime
@@ -18,7 +16,6 @@ from nexus.storage.models._base import Base, uuid_pk
 
 if TYPE_CHECKING:
     from nexus.storage.zone_settings import ZoneSettings
-
 
 class UserModel(Base):
     """Core user account model.
@@ -65,7 +62,7 @@ class UserModel(Base):
     )
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
 
-    oauth_accounts: Mapped[list[UserOAuthAccountModel]] = relationship(
+    oauth_accounts: Mapped[list["UserOAuthAccountModel"]] = relationship(
         "UserOAuthAccountModel", back_populates="user", cascade="all, delete-orphan"
     )
 
@@ -85,7 +82,6 @@ class UserModel(Base):
     def is_deleted(self) -> bool:
         """Check if user is soft deleted."""
         return self.is_active == 0 or self.deleted_at is not None
-
 
 class UserOAuthAccountModel(Base):
     """OAuth provider accounts linked to users for authentication."""
@@ -128,7 +124,6 @@ class UserOAuthAccountModel(Base):
     def __repr__(self) -> str:
         return f"<UserOAuthAccountModel(oauth_account_id={self.oauth_account_id}, provider={self.provider}, user_id={self.user_id})>"
 
-
 class APIKeyModel(Base):
     """Database-backed API key storage with HMAC-SHA256 hashing."""
 
@@ -153,7 +148,6 @@ class APIKeyModel(Base):
     revoked: Mapped[int] = mapped_column(Integer, default=0, index=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-
 
 class OAuthAPIKeyModel(Base):
     """Stores encrypted API key values for OAuth users."""
@@ -182,7 +176,6 @@ class OAuthAPIKeyModel(Base):
 
     def __repr__(self) -> str:
         return f"<OAuthAPIKeyModel(key_id={self.key_id}, user_id={self.user_id})>"
-
 
 class OAuthCredentialModel(Base):
     """OAuth 2.0 credential storage for backend integrations.
@@ -280,7 +273,6 @@ class OAuthCredentialModel(Base):
             except json.JSONDecodeError as e:
                 raise ValidationError(f"scopes must be valid JSON: {e}") from None
 
-
 class ZoneModel(Base):
     """Zone metadata model.
 
@@ -316,7 +308,7 @@ class ZoneModel(Base):
     )
 
     @property
-    def parsed_settings(self) -> ZoneSettings:
+    def parsed_settings(self) -> "ZoneSettings":
         """Parse settings JSON into a ZoneSettings Pydantic model."""
         from nexus.storage.zone_settings import ZoneSettings
 
@@ -329,7 +321,6 @@ class ZoneModel(Base):
             f"<ZoneModel(zone_id={self.zone_id}, name={self.name}, "
             f"domain={self.domain}, is_active={self.is_active})>"
         )
-
 
 class ExternalUserServiceModel(Base):
     """Configuration for external user management services."""

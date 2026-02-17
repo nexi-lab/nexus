@@ -760,7 +760,10 @@ Provide only the consolidated summary, no additional commentary.
                 )
 
                 # Persist to database
-                memory = self.session.query(MemoryModel).filter_by(memory_id=old.memory_id).first()
+                emb_query = self.session.query(MemoryModel).filter_by(memory_id=old.memory_id)
+                if self.zone_id:
+                    emb_query = emb_query.filter_by(zone_id=self.zone_id)
+                memory = emb_query.first()
                 if memory:
                     memory.embedding = json.dumps(embeddings[batch_idx])
                     memory.embedding_model = getattr(embedding_provider, "model", "unknown")

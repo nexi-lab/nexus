@@ -96,7 +96,7 @@ async def get_conflict(
 ) -> ConflictDetailResponse:
     """Get a conflict record by ID."""
     try:
-        record = store.get_conflict(conflict_id)
+        record = store.get_conflict(conflict_id, zone_id=_auth_result.get("zone_id"))
         if record is None:
             raise HTTPException(status_code=404, detail=f"Conflict {conflict_id} not found")
         return _record_to_response(record)
@@ -125,7 +125,7 @@ async def resolve_conflict(
         ) from err
 
     try:
-        updated = store.resolve_conflict_manually(conflict_id, outcome)
+        updated = store.resolve_conflict_manually(conflict_id, outcome, zone_id=_auth_result.get("zone_id"))
         if not updated:
             raise HTTPException(
                 status_code=404,

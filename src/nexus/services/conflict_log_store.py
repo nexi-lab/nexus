@@ -133,11 +133,12 @@ class ConflictLogStore(SyncStoreBase):
                 query = query.filter(ConflictLogModel.zone_id == zone_id)
             return int(query.count())
 
-    def get_conflict(self, conflict_id: str) -> ConflictRecord | None:
+    def get_conflict(self, conflict_id: str, zone_id: str | None = None) -> ConflictRecord | None:
         """Look up a conflict record by ID.
 
         Args:
             conflict_id: UUID of the conflict record
+            zone_id: Zone scope for federation isolation
 
         Returns:
             ConflictRecord if found, None otherwise
@@ -145,17 +146,23 @@ class ConflictLogStore(SyncStoreBase):
         from nexus.storage.models import ConflictLogModel
 
         with self._with_session() as session:
-            row = session.query(ConflictLogModel).filter_by(id=conflict_id).first()
+            query = session.query(ConflictLogModel).filter_by(id=conflict_id)
+            if zone_id is not None:
+                query = query.filter(ConflictLogModel.zone_id == zone_id)
+            row = query.first()
             if row is None:
                 return None
             return self._row_to_record(row)
 
-    def resolve_conflict_manually(self, conflict_id: str, outcome: ResolutionOutcome) -> bool:
+    def resolve_conflict_manually(
+        self, conflict_id: str, outcome: ResolutionOutcome, zone_id: str | None = None,
+    ) -> bool:
         """Update a conflict record to manually_resolved status.
 
         Args:
             conflict_id: UUID of the conflict record
             outcome: The chosen resolution outcome
+            zone_id: Zone scope for federation isolation
 
         Returns:
             True if updated, False if not found or already resolved
@@ -163,20 +170,19 @@ class ConflictLogStore(SyncStoreBase):
         from nexus.storage.models import ConflictLogModel
 
         with self._with_session() as session:
-            updated = (
-                session.query(ConflictLogModel)
-                .filter(
-                    ConflictLogModel.id == conflict_id,
-                    ConflictLogModel.status == ConflictStatus.MANUAL_PENDING,
-                )
-                .update(
-                    {
-                        "status": ConflictStatus.MANUALLY_RESOLVED,
-                        "outcome": str(outcome),
-                        "resolved_at": datetime.now(UTC),
-                    },
-                    synchronize_session="fetch",
-                )
+            query = session.query(ConflictLogModel).filter(
+                ConflictLogModel.id == conflict_id,
+                ConflictLogModel.status == ConflictStatus.MANUAL_PENDING,
+            )
+            if zone_id is not None:
+                query = query.filter(ConflictLogModel.zone_id == zone_id)
+            updated = query.update(
+                {
+                    "status": ConflictStatus.MANUALLY_RESOLVED,
+                    "outcome": str(outcome),
+                    "resolved_at": datetime.now(UTC),
+                },
+                synchronize_session="fetch",
             )
             return bool(updated > 0)
 

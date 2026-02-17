@@ -626,7 +626,11 @@ class PermissionEnforcer:
         # Threshold 3 avoids rebac_check_bulk SQLite race on some platforms.
         depth = object_id.count("/") if object_id else 0
 
-        if depth <= SEQUENTIAL_DEPTH_THRESHOLD or permission_name not in ("read", "write", "traverse"):
+        if depth <= SEQUENTIAL_DEPTH_THRESHOLD or permission_name not in (
+            "read",
+            "write",
+            "traverse",
+        ):
             return self._check_rebac_sequential(
                 subject, permission_name, object_type, object_id, zone_id
             )

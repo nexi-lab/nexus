@@ -1406,6 +1406,33 @@ class ReBACManager:
                 return True
         return False
 
+    def register_namespace_invalidator(
+        self,
+        callback_id: str,
+        callback: Any,
+    ) -> None:
+        """Register a namespace cache invalidation callback (Issue #1244).
+
+        Delegates to CacheCoordinator. Called on every rebac_write/rebac_delete
+        to immediately invalidate the affected subject's dcache entries.
+
+        Args:
+            callback_id: Unique identifier for this callback
+            callback: Function(subject_type, subject_id, zone_id)
+        """
+        self._cache_coordinator.register_namespace_invalidator(callback_id, callback)
+
+    def unregister_namespace_invalidator(self, callback_id: str) -> bool:
+        """Unregister a namespace cache invalidation callback.
+
+        Args:
+            callback_id: ID of callback to remove
+
+        Returns:
+            True if callback was found and removed, False otherwise
+        """
+        return self._cache_coordinator.unregister_namespace_invalidator(callback_id)
+
     def _notify_dir_visibility_invalidators(
         self,
         zone_id: str,
@@ -2167,17 +2194,21 @@ class ReBACManager:
     # End Zone-Aware Methods
     # ============================================================================
 
-    def rebac_delete(self, tuple_id: str) -> bool:
+    def rebac_delete(self, tuple_id: str | WriteResult) -> bool:
         """Delete a relationship tuple with cache invalidation.
 
         Overrides parent to invalidate the zone graph cache after deletes.
 
         Args:
-            tuple_id: ID of tuple to delete
+            tuple_id: ID of tuple to delete (str or WriteResult from rebac_write)
 
         Returns:
             True if tuple was deleted, False if not found
         """
+        # Accept WriteResult for convenience (rebac_write returns WriteResult)
+        if isinstance(tuple_id, WriteResult):
+            tuple_id = tuple_id.tuple_id
+
         # First, get the tuple info to know which zone to invalidate
         # and for Leopard closure update
         tuple_info: dict[str, Any] | None = None

@@ -332,6 +332,7 @@ class IndexingPipeline:
         embeddings: list[list[float]] | None,
     ) -> None:
         """PostgreSQL bulk insert using batched INSERT with unnest."""
+        assert self._async_session_factory is not None  # guarded by _bulk_insert
         now = datetime.now(UTC)
         embedding_model = (
             self._embedding_provider.__class__.__name__ if self._embedding_provider else None
@@ -409,6 +410,7 @@ class IndexingPipeline:
         _embeddings: list[list[float]] | None,
     ) -> None:
         """SQLite bulk insert using executemany."""
+        assert self._async_session_factory is not None  # guarded by _bulk_insert
         now = datetime.now(UTC)
         embedding_model = (
             self._embedding_provider.__class__.__name__ if self._embedding_provider else None

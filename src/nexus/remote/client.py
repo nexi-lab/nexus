@@ -59,7 +59,7 @@ from nexus.core.filesystem import NexusFilesystem
 from nexus.core.rpc_codec import decode_rpc_message, encode_rpc_message
 from nexus.remote.base_client import BaseRemoteNexusFS
 from nexus.remote.rpc_proxy import RPCProxyBase
-from nexus.server.protocol import RPCRequest, RPCResponse
+from nexus.core.rpc_types import RPCRequest, RPCResponse
 
 logger = logging.getLogger(__name__)
 

@@ -379,7 +379,7 @@ class PermissionComputer:
         computed_userset = ttu["computedUserset"]
 
         # Pattern 1 (parent-style): Find objects where (obj, tupleset_relation, ?)
-        related_objects = self._repo.find_related_objects(obj, tupleset_relation)
+        related_objects = self._repo.find_related_objects(obj, tupleset_relation, zone_id)
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
                 "  [depth=%d] Pattern 1 (parent): Found %d related objects via tupleset '%s'",
@@ -407,7 +407,7 @@ class PermissionComputer:
                 return True
 
         # Pattern 2 (group-style): Find subjects where (?, tupleset_relation, obj)
-        related_subjects = self._repo.find_subjects_with_relation(obj, tupleset_relation)
+        related_subjects = self._repo.find_subjects_with_relation(obj, tupleset_relation, zone_id)
         if logger.isEnabledFor(logging.DEBUG):
             logger.debug(
                 "  [depth=%d] Pattern 2 (group): Found %d subjects with '%s' on %s",
@@ -927,9 +927,9 @@ class PermissionComputer:
             computed_userset = ttu["computedUserset"]
 
             # Pattern 1 (parent-style)
-            related_objects = self._repo.find_related_objects(obj, tupleset_relation)
+            related_objects = self._repo.find_related_objects(obj, tupleset_relation, zone_id)
             # Pattern 2 (group-style)
-            related_subjects = self._repo.find_subjects_with_relation(obj, tupleset_relation)
+            related_subjects = self._repo.find_subjects_with_relation(obj, tupleset_relation, zone_id)
 
             path_entry["tupleToUserset"] = {
                 "tupleset": tupleset_relation,

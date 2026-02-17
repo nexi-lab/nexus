@@ -519,15 +519,20 @@ class TupleRepository:
                 for row in cursor.fetchall()
             ]
 
-    def find_related_objects(self, obj: Entity, relation: str) -> list[Entity]:
+    def find_related_objects(
+        self, obj: Entity, relation: str, zone_id: str | None = None
+    ) -> list[Entity]:
         """Find all objects related to obj via relation.
 
         For tupleToUserset traversal: finds tuples where (obj, relation, object).
         Example: parent of file X = tuples where subject=X, relation='parent'.
 
+        SECURITY FIX (P0): Enforces zone_id filtering to prevent cross-zone leaks.
+
         Args:
             obj: Object entity (the subject of the tuple)
             relation: Relation type (e.g., "parent")
+            zone_id: Optional zone ID for multi-zone isolation
 
         Returns:
             List of related object entities
@@ -542,18 +547,40 @@ class TupleRepository:
         with self.connection() as conn:
             cursor = self.create_cursor(conn)
 
-            cursor.execute(
-                self.fix_sql_placeholders(
-                    """
-                    SELECT object_type, object_id
-                    FROM rebac_tuples
-                    WHERE subject_type = ? AND subject_id = ?
-                      AND relation = ?
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                    """
-                ),
-                (obj.entity_type, obj.entity_id, relation, datetime.now(UTC).isoformat()),
-            )
+            if zone_id is None:
+                cursor.execute(
+                    self.fix_sql_placeholders(
+                        """
+                        SELECT object_type, object_id
+                        FROM rebac_tuples
+                        WHERE zone_id IS NULL
+                          AND subject_type = ? AND subject_id = ?
+                          AND relation = ?
+                          AND (expires_at IS NULL OR expires_at >= ?)
+                        """
+                    ),
+                    (obj.entity_type, obj.entity_id, relation, datetime.now(UTC).isoformat()),
+                )
+            else:
+                cursor.execute(
+                    self.fix_sql_placeholders(
+                        """
+                        SELECT object_type, object_id
+                        FROM rebac_tuples
+                        WHERE zone_id = ?
+                          AND subject_type = ? AND subject_id = ?
+                          AND relation = ?
+                          AND (expires_at IS NULL OR expires_at >= ?)
+                        """
+                    ),
+                    (
+                        zone_id,
+                        obj.entity_type,
+                        obj.entity_id,
+                        relation,
+                        datetime.now(UTC).isoformat(),
+                    ),
+                )
 
             results = []
             for row in cursor.fetchall():
@@ -565,15 +592,20 @@ class TupleRepository:
 
             return results
 
-    def find_subjects_with_relation(self, obj: Entity, relation: str) -> list[Entity]:
+    def find_subjects_with_relation(
+        self, obj: Entity, relation: str, zone_id: str | None = None
+    ) -> list[Entity]:
         """Find all subjects that have a relation to obj.
 
         Reverse of find_related_objects: finds tuples where (subject, relation, obj).
         Used for group permission inheritance patterns.
 
+        SECURITY FIX (P0): Enforces zone_id filtering to prevent cross-zone leaks.
+
         Args:
             obj: Object entity
             relation: Relation type (e.g., "direct_viewer")
+            zone_id: Optional zone ID for multi-zone isolation
 
         Returns:
             List of subject entities
@@ -588,18 +620,40 @@ class TupleRepository:
         with self.connection() as conn:
             cursor = self.create_cursor(conn)
 
-            cursor.execute(
-                self.fix_sql_placeholders(
-                    """
-                    SELECT subject_type, subject_id
-                    FROM rebac_tuples
-                    WHERE object_type = ? AND object_id = ?
-                      AND relation = ?
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                    """
-                ),
-                (obj.entity_type, obj.entity_id, relation, datetime.now(UTC).isoformat()),
-            )
+            if zone_id is None:
+                cursor.execute(
+                    self.fix_sql_placeholders(
+                        """
+                        SELECT subject_type, subject_id
+                        FROM rebac_tuples
+                        WHERE zone_id IS NULL
+                          AND object_type = ? AND object_id = ?
+                          AND relation = ?
+                          AND (expires_at IS NULL OR expires_at >= ?)
+                        """
+                    ),
+                    (obj.entity_type, obj.entity_id, relation, datetime.now(UTC).isoformat()),
+                )
+            else:
+                cursor.execute(
+                    self.fix_sql_placeholders(
+                        """
+                        SELECT subject_type, subject_id
+                        FROM rebac_tuples
+                        WHERE zone_id = ?
+                          AND object_type = ? AND object_id = ?
+                          AND relation = ?
+                          AND (expires_at IS NULL OR expires_at >= ?)
+                        """
+                    ),
+                    (
+                        zone_id,
+                        obj.entity_type,
+                        obj.entity_id,
+                        relation,
+                        datetime.now(UTC).isoformat(),
+                    ),
+                )
 
             results = []
             for row in cursor.fetchall():
@@ -611,12 +665,17 @@ class TupleRepository:
 
             return results
 
-    def get_direct_subjects(self, relation: str, obj: Entity) -> list[tuple[str, str]]:
+    def get_direct_subjects(
+        self, relation: str, obj: Entity, zone_id: str | None = None
+    ) -> list[tuple[str, str]]:
         """Get all subjects with direct relation to object.
+
+        SECURITY FIX (P0): Enforces zone_id filtering to prevent cross-zone leaks.
 
         Args:
             relation: Relation type
             obj: Object entity
+            zone_id: Optional zone ID for multi-zone isolation
 
         Returns:
             List of (subject_type, subject_id) tuples
@@ -624,18 +683,40 @@ class TupleRepository:
         with self.connection() as conn:
             cursor = self.create_cursor(conn)
 
-            cursor.execute(
-                self.fix_sql_placeholders(
-                    """
-                    SELECT subject_type, subject_id
-                    FROM rebac_tuples
-                    WHERE relation = ?
-                      AND object_type = ? AND object_id = ?
-                      AND (expires_at IS NULL OR expires_at >= ?)
-                    """
-                ),
-                (relation, obj.entity_type, obj.entity_id, datetime.now(UTC).isoformat()),
-            )
+            if zone_id is None:
+                cursor.execute(
+                    self.fix_sql_placeholders(
+                        """
+                        SELECT subject_type, subject_id
+                        FROM rebac_tuples
+                        WHERE zone_id IS NULL
+                          AND relation = ?
+                          AND object_type = ? AND object_id = ?
+                          AND (expires_at IS NULL OR expires_at >= ?)
+                        """
+                    ),
+                    (relation, obj.entity_type, obj.entity_id, datetime.now(UTC).isoformat()),
+                )
+            else:
+                cursor.execute(
+                    self.fix_sql_placeholders(
+                        """
+                        SELECT subject_type, subject_id
+                        FROM rebac_tuples
+                        WHERE zone_id = ?
+                          AND relation = ?
+                          AND object_type = ? AND object_id = ?
+                          AND (expires_at IS NULL OR expires_at >= ?)
+                        """
+                    ),
+                    (
+                        zone_id,
+                        relation,
+                        obj.entity_type,
+                        obj.entity_id,
+                        datetime.now(UTC).isoformat(),
+                    ),
+                )
 
             return [(row["subject_type"], row["subject_id"]) for row in cursor.fetchall()]
 

@@ -463,15 +463,20 @@ class TupleRepository:
                 for row in sa_conn.execute(stmt)
             ]
 
-    def find_related_objects(self, obj: Entity, relation: str) -> list[Entity]:
+    def find_related_objects(
+        self, obj: Entity, relation: str, zone_id: str | None = None
+    ) -> list[Entity]:
         """Find all objects related to obj via relation.
 
         For tupleToUserset traversal: finds tuples where (obj, relation, object).
         Example: parent of file X = tuples where subject=X, relation='parent'.
 
+        SECURITY FIX (P0): Enforces zone_id filtering to prevent cross-zone leaks.
+
         Args:
             obj: Object entity (the subject of the tuple)
             relation: Relation type (e.g., "parent")
+            zone_id: Optional zone ID for multi-zone isolation
 
         Returns:
             List of related object entities
@@ -493,6 +498,11 @@ class TupleRepository:
             expires_filter,
         )
 
+        if zone_id is None:
+            stmt = stmt.where(RT.zone_id.is_(None))
+        else:
+            stmt = stmt.where(RT.zone_id == zone_id)
+
         with self.engine.connect() as sa_conn:
             results = [Entity(row.object_type, row.object_id) for row in sa_conn.execute(stmt)]
 
@@ -501,15 +511,20 @@ class TupleRepository:
 
         return results
 
-    def find_subjects_with_relation(self, obj: Entity, relation: str) -> list[Entity]:
+    def find_subjects_with_relation(
+        self, obj: Entity, relation: str, zone_id: str | None = None
+    ) -> list[Entity]:
         """Find all subjects that have a relation to obj.
 
         Reverse of find_related_objects: finds tuples where (subject, relation, obj).
         Used for group permission inheritance patterns.
 
+        SECURITY FIX (P0): Enforces zone_id filtering to prevent cross-zone leaks.
+
         Args:
             obj: Object entity
             relation: Relation type (e.g., "direct_viewer")
+            zone_id: Optional zone ID for multi-zone isolation
 
         Returns:
             List of subject entities
@@ -531,6 +546,11 @@ class TupleRepository:
             expires_filter,
         )
 
+        if zone_id is None:
+            stmt = stmt.where(RT.zone_id.is_(None))
+        else:
+            stmt = stmt.where(RT.zone_id == zone_id)
+
         with self.engine.connect() as sa_conn:
             results = [Entity(row.subject_type, row.subject_id) for row in sa_conn.execute(stmt)]
 
@@ -539,12 +559,17 @@ class TupleRepository:
 
         return results
 
-    def get_direct_subjects(self, relation: str, obj: Entity) -> list[tuple[str, str]]:
+    def get_direct_subjects(
+        self, relation: str, obj: Entity, zone_id: str | None = None
+    ) -> list[tuple[str, str]]:
         """Get all subjects with direct relation to object.
+
+        SECURITY FIX (P0): Enforces zone_id filtering to prevent cross-zone leaks.
 
         Args:
             relation: Relation type
             obj: Object entity
+            zone_id: Optional zone ID for multi-zone isolation
 
         Returns:
             List of (subject_type, subject_id) tuples
@@ -558,6 +583,11 @@ class TupleRepository:
             RT.object_id == obj.entity_id,
             expires_filter,
         )
+
+        if zone_id is None:
+            stmt = stmt.where(RT.zone_id.is_(None))
+        else:
+            stmt = stmt.where(RT.zone_id == zone_id)
 
         with self.engine.connect() as sa_conn:
             return [(row.subject_type, row.subject_id) for row in sa_conn.execute(stmt)]

@@ -46,12 +46,14 @@ class ExpandEngine:
         self,
         permission: str,
         object: tuple[str, str],
+        zone_id: str | None = None,
     ) -> list[tuple[str, str]]:
         """Find all subjects with a given permission on an object.
 
         Args:
             permission: Permission to check
             object: (object_type, object_id) tuple
+            zone_id: Optional zone ID for multi-zone isolation
 
         Returns:
             List of (subject_type, subject_id) tuples
@@ -70,11 +72,12 @@ class ExpandEngine:
         namespace = self._namespace_resolver(object_entity.entity_type)
         if not namespace:
             # No namespace - return direct relations only
-            return self._repo.get_direct_subjects(permission, object_entity)
+            return self._repo.get_direct_subjects(permission, object_entity, zone_id)
 
         # Recursively expand permission via namespace config
         self._expand_permission(
-            permission, object_entity, namespace, subjects, visited=set(), depth=0
+            permission, object_entity, namespace, subjects, visited=set(), depth=0,
+            zone_id=zone_id,
         )
 
         return list(subjects)
@@ -87,6 +90,7 @@ class ExpandEngine:
         subjects: set[tuple[str, str]],
         visited: set[tuple[str, str, str]],
         depth: int,
+        zone_id: str | None = None,
     ) -> None:
         """Recursively expand permission to find all subjects.
 
@@ -97,6 +101,7 @@ class ExpandEngine:
             subjects: Set to accumulate subjects
             visited: Set of visited (permission, object_type, object_id) to detect cycles
             depth: Current traversal depth
+            zone_id: Optional zone ID for multi-zone isolation
         """
         # Check depth limit
         if depth > self._max_depth:
@@ -112,7 +117,7 @@ class ExpandEngine:
         rel_config = namespace.get_relation_config(permission)
         if not rel_config:
             # Permission not defined in namespace - check for direct relations
-            direct_subjects = self._repo.get_direct_subjects(permission, obj)
+            direct_subjects = self._repo.get_direct_subjects(permission, obj, zone_id)
             for subj in direct_subjects:
                 subjects.add(subj)
             return
@@ -121,7 +126,10 @@ class ExpandEngine:
         if namespace.has_union(permission):
             union_relations = namespace.get_union_relations(permission)
             for rel in union_relations:
-                self._expand_permission(rel, obj, namespace, subjects, visited.copy(), depth + 1)
+                self._expand_permission(
+                    rel, obj, namespace, subjects, visited.copy(), depth + 1,
+                    zone_id=zone_id,
+                )
             return
 
         # Handle intersection (find subjects that have ALL relations)
@@ -135,7 +143,8 @@ class ExpandEngine:
             for rel in intersection_relations:
                 rel_subjects: set[tuple[str, str]] = set()
                 self._expand_permission(
-                    rel, obj, namespace, rel_subjects, visited.copy(), depth + 1
+                    rel, obj, namespace, rel_subjects, visited.copy(), depth + 1,
+                    zone_id=zone_id,
                 )
                 relation_subjects.append(rel_subjects)
 
@@ -164,7 +173,9 @@ class ExpandEngine:
                 computed_userset = ttu["computedUserset"]
 
                 # Find all related objects
-                related_objects = self._repo.find_related_objects(obj, tupleset_relation)
+                related_objects = self._repo.find_related_objects(
+                    obj, tupleset_relation, zone_id
+                )
 
                 # Expand permission on related objects
                 for related_obj in related_objects:
@@ -177,10 +188,11 @@ class ExpandEngine:
                             subjects,
                             visited.copy(),
                             depth + 1,
+                            zone_id=zone_id,
                         )
             return
 
         # Direct relation - add all subjects
-        direct_subjects = self._repo.get_direct_subjects(permission, obj)
+        direct_subjects = self._repo.get_direct_subjects(permission, obj, zone_id)
         for subj in direct_subjects:
             subjects.add(subj)

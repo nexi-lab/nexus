@@ -5292,13 +5292,17 @@ class ReBACManager:
         """Find all subject sets with a relation to an object. Delegates to TupleRepository."""
         return self._repo.find_subject_sets(relation, obj, zone_id)
 
-    def _find_related_objects(self, obj: Entity, relation: str) -> list[Entity]:
+    def _find_related_objects(
+        self, obj: Entity, relation: str, zone_id: str | None = None
+    ) -> list[Entity]:
         """Find all objects related to obj via relation. Delegates to TupleRepository."""
-        return self._repo.find_related_objects(obj, relation)
+        return self._repo.find_related_objects(obj, relation, zone_id)
 
-    def _find_subjects_with_relation(self, obj: Entity, relation: str) -> list[Entity]:
+    def _find_subjects_with_relation(
+        self, obj: Entity, relation: str, zone_id: str | None = None
+    ) -> list[Entity]:
         """Find all subjects with a relation to obj. Delegates to TupleRepository."""
-        return self._repo.find_subjects_with_relation(obj, relation)
+        return self._repo.find_subjects_with_relation(obj, relation, zone_id)
 
     def _evaluate_conditions(
         self, conditions: dict[str, Any] | None, context: dict[str, Any] | None
@@ -5308,9 +5312,11 @@ class ReBACManager:
 
         return TupleRepository.evaluate_conditions(conditions, context)
 
-    def _get_direct_subjects(self, relation: str, obj: Entity) -> list[tuple[str, str]]:
+    def _get_direct_subjects(
+        self, relation: str, obj: Entity, zone_id: str | None = None
+    ) -> list[tuple[str, str]]:
         """Get all subjects with direct relation to object. Delegates to TupleRepository."""
-        return self._repo.get_direct_subjects(relation, obj)
+        return self._repo.get_direct_subjects(relation, obj, zone_id)
 
     # ====================================================================================
     # Cache Methods

@@ -2172,13 +2172,17 @@ class ReBACManager:
         """Find all subject sets with a relation to an object. Delegates to TupleRepository."""
         return self._repo.find_subject_sets(relation, obj, zone_id)
 
-    def _find_related_objects(self, obj: Entity, relation: str) -> list[Entity]:
+    def _find_related_objects(
+        self, obj: Entity, relation: str, zone_id: str | None = None
+    ) -> list[Entity]:
         """Find all objects related to obj via relation. Delegates to TupleRepository."""
-        return self._repo.find_related_objects(obj, relation)
+        return self._repo.find_related_objects(obj, relation, zone_id)
 
-    def _find_subjects_with_relation(self, obj: Entity, relation: str) -> list[Entity]:
+    def _find_subjects_with_relation(
+        self, obj: Entity, relation: str, zone_id: str | None = None
+    ) -> list[Entity]:
         """Find all subjects with a relation to obj. Delegates to TupleRepository."""
-        return self._repo.find_subjects_with_relation(obj, relation)
+        return self._repo.find_subjects_with_relation(obj, relation, zone_id)
 
     def _evaluate_conditions(
         self, conditions: dict[str, Any] | None, context: dict[str, Any] | None
@@ -2190,12 +2194,13 @@ class ReBACManager:
         self,
         permission: str,
         object: tuple[str, str],
+        zone_id: str | None = None,
     ) -> list[tuple[str, str]]:
         """Find all subjects with a given permission on an object.
 
         Delegates to ExpandEngine (Issue #1459 Phase 8).
         """
-        return self._expander.expand(permission, object)
+        return self._expander.expand(permission, object, zone_id)
 
     def get_cross_zone_shared_paths(
         self,
@@ -2254,9 +2259,11 @@ class ReBACManager:
                 paths.append(path)
             return paths
 
-    def _get_direct_subjects(self, relation: str, obj: Entity) -> list[tuple[str, str]]:
+    def _get_direct_subjects(
+        self, relation: str, obj: Entity, zone_id: str | None = None
+    ) -> list[tuple[str, str]]:
         """Get all subjects with direct relation to object. Delegates to TupleRepository."""
-        return self._repo.get_direct_subjects(relation, obj)
+        return self._repo.get_direct_subjects(relation, obj, zone_id)
 
     def _get_cached_check(
         self, subject: Entity, permission: str, obj: Entity, zone_id: str | None = None

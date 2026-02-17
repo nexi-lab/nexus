@@ -37,6 +37,7 @@ from nexus.core.exceptions import (
 from nexus.core.filters import is_os_metadata_file
 from nexus.core.nexus_fs import NexusFS
 from nexus.core.rpc_codec import decode_rpc_message, encode_rpc_message
+from nexus.core.rpc_types import RPCErrorCode, RPCRequest, RPCResponse
 from nexus.core.virtual_views import (
     add_virtual_views_to_listing,
     get_parsed_content,
@@ -47,12 +48,7 @@ from nexus.server.path_utils import (
     unscope_internal_path,
     unscope_result,
 )
-from nexus.server.protocol import (
-    RPCErrorCode,
-    RPCRequest,
-    RPCResponse,
-    parse_method_params,
-)
+from nexus.server.protocol import parse_method_params
 
 logger = logging.getLogger(__name__)
 

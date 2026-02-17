@@ -6,8 +6,8 @@ import httpx
 import pytest
 
 from nexus.core.exceptions import NexusError, NexusFileNotFoundError, NexusPermissionError
+from nexus.core.rpc_types import RPCErrorCode
 from nexus.remote.client import RemoteNexusFS
-from nexus.server.protocol import RPCErrorCode
 
 
 class TestRemoteNexusFS:

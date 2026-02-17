@@ -23,12 +23,9 @@ from nexus.core.exceptions import (
     ValidationError,
 )
 from nexus.core.rpc_codec import decode_rpc_message, encode_rpc_message
+from nexus.core.rpc_types import RPCErrorCode, RPCRequest
 from nexus.server.dependencies import require_auth
-from nexus.server.protocol import (
-    RPCErrorCode,
-    RPCRequest,
-    parse_method_params,
-)
+from nexus.server.protocol import parse_method_params
 from nexus.server.rate_limiting import RATE_LIMIT_AUTHENTICATED, limiter
 
 logger = logging.getLogger(__name__)

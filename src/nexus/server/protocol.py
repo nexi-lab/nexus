@@ -49,11 +49,6 @@ from nexus.constants import DEFAULT_OAUTH_REDIRECT_URI
 # Import decorator from core module to avoid circular imports
 from nexus.core.rpc_decorator import rpc_expose  # noqa: F401, E402
 
-# Issue #1519, 1A: RPC types extracted to core/rpc_types.py so core/ modules
-# (rpc_transport, rpc_codec) can use them without importing from server/.
-# Re-exported here for backward compatibility.
-from nexus.core.rpc_types import RPCErrorCode, RPCRequest, RPCResponse  # noqa: F401
-
 # ============================================================
 # Method-specific parameter schemas
 # ============================================================

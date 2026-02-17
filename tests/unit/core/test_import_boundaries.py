@@ -173,12 +173,6 @@ class TestRPCTypesInCore:
         assert RPCRequest().jsonrpc == "2.0"
         assert RPCResponse.success(1, "ok").result == "ok"
 
-    def test_rpc_types_re_exported_from_server_protocol(self):
-        from nexus.core.rpc_types import RPCErrorCode as CoreCode
-        from nexus.server.protocol import RPCErrorCode as ServerCode
-
-        assert CoreCode is ServerCode
-
 
 class TestZoneHelpersInCore:
     """Verify zone helpers are importable from core (Issue #1519, 3A)."""

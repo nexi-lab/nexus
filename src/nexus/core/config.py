@@ -132,6 +132,9 @@ class KernelServices:
     workspace_registry: Any = None
     mount_manager: Any = None
     workspace_manager: Any = None
+    context_branch_service: Any = None  # Issue #1315: workspace branching
+
+    # Sync/versioning
     write_observer: Any = None
     version_service: Any = None
     overlay_resolver: Any = None

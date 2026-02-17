@@ -48,7 +48,7 @@ from nexus.services.protocols.hook_engine import (
     HookResult,
     HookSpec,
 )
-from nexus.services.protocols.llm import LLMProtocol
+from nexus.services.protocols.llm import LLMProtocol, LLMServiceProtocol
 from nexus.services.protocols.lock import LockProtocol
 from nexus.services.protocols.mcp import MCPProtocol
 from nexus.services.protocols.mount import MountProtocol, ProgressCallback
@@ -88,6 +88,7 @@ __all__ = [
     "HookSpec",
     "LLMProtocol",
     "LLMProviderProtocol",
+    "LLMServiceProtocol",
     "LockProtocol",
     "MCPProtocol",
     "MetadataStoreProtocol",

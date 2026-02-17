@@ -10,13 +10,13 @@ from typing import Any, Literal
 
 from sqlalchemy.orm import Session
 
-from nexus.llm.provider import LLMProvider
 from nexus.services.ace.consolidation import ConsolidationEngine
 from nexus.services.ace.curation import Curator
 from nexus.services.ace.feedback import FeedbackManager
 from nexus.services.ace.playbook import PlaybookManager
 from nexus.services.ace.reflection import Reflector
 from nexus.services.ace.trajectory import TrajectoryManager
+from nexus.services.protocols.llm_provider import LLMProviderProtocol
 
 
 class LearningLoop:
@@ -33,7 +33,7 @@ class LearningLoop:
         self,
         session: Session,
         backend: Any,
-        llm_provider: LLMProvider,
+        llm_provider: LLMProviderProtocol,
         user_id: str,
         agent_id: str | None = None,
         zone_id: str | None = None,

@@ -659,6 +659,15 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
     except ImportError:
         logger.debug("[BOOT:BRICK] Search brick manifest not available")
 
+    # --- LLM Brick Import Validation (Issue #1521) ---
+    try:
+        from nexus.llm.manifest import verify_imports as _verify_llm
+
+        _llm_status = _verify_llm()
+        logger.debug("[BOOT:BRICK] LLM brick imports: %s", _llm_status)
+    except ImportError:
+        logger.debug("[BOOT:BRICK] LLM brick manifest not available")
+
     # Wire zoekt callbacks into backends (Issue #1520)
     try:
         from nexus.search.zoekt_client import notify_zoekt_sync_complete, notify_zoekt_write

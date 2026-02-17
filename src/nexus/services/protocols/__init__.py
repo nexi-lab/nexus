@@ -49,6 +49,7 @@ from nexus.services.protocols.hook_engine import (
     HookSpec,
 )
 from nexus.services.protocols.llm import LLMProtocol, LLMServiceProtocol
+from nexus.services.protocols.llm_provider import LLMProviderProtocol
 from nexus.services.protocols.lock import LockProtocol
 from nexus.services.protocols.mcp import MCPProtocol
 from nexus.services.protocols.mount import MountProtocol, ProgressCallback
@@ -66,9 +67,9 @@ from nexus.services.protocols.share_link import ShareLinkProtocol
 from nexus.services.protocols.skills import SkillsProtocol
 from nexus.services.protocols.watch import WatchProtocol
 from nexus.workflows.protocol import (
-    LLMProviderProtocol,
     MetadataStoreProtocol,
     NexusOperationsProtocol,
+    WorkflowLLMProtocol,
     WorkflowProtocol,
 )
 
@@ -119,5 +120,6 @@ __all__ = [
     "ShareLinkProtocol",
     "SkillsProtocol",
     "WatchProtocol",
+    "WorkflowLLMProtocol",
     "WorkflowProtocol",
 ]

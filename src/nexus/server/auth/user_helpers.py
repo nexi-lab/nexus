@@ -1,7 +1,7 @@
 """User management helper functions.
 
 Provides utility functions for:
-- User lookup by various identifiers (email, username, OAuth, external ID)
+- User lookup by various identifiers (email, username, external ID)
 - ReBAC group-based zone membership management
 - Zone group naming conventions
 - User creation with uniqueness checks
@@ -14,10 +14,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from nexus.storage.models import (
-    UserModel,
-    UserOAuthAccountModel,
-)
+from nexus.storage.models import UserModel
 
 logger = logging.getLogger(__name__)
 
@@ -426,39 +423,6 @@ def get_user_by_external_id(
     )
 
 
-def get_user_by_oauth_provider(
-    session: Session,
-    provider: str,
-    provider_user_id: str,
-) -> UserModel | None:
-    """Get user via OAuth account.
-
-    Args:
-        session: Database session
-        provider: OAuth provider (e.g., 'google', 'github')
-        provider_user_id: User ID from OAuth provider
-
-    Returns:
-        UserModel or None if not found or inactive
-    """
-    oauth_account = session.scalar(
-        select(UserOAuthAccountModel).where(
-            UserOAuthAccountModel.provider == provider,
-            UserOAuthAccountModel.provider_user_id == provider_user_id,
-        )
-    )
-    if not oauth_account:
-        return None
-
-    return session.scalar(
-        select(UserModel).where(
-            UserModel.user_id == oauth_account.user_id,
-            UserModel.is_active == 1,
-            UserModel.deleted_at.is_(None),
-        )
-    )
-
-
 # ==============================================================================
 # User Creation with Uniqueness Checks
 # ==============================================================================
@@ -530,85 +494,6 @@ def validate_user_uniqueness(
 
     if username and not check_username_available(session, username):
         raise ValueError(f"Username {username} already exists")
-
-
-# ==============================================================================
-# Default Zone Selection
-# ==============================================================================
-
-
-def get_user_default_zone(rebac_manager: Any, user_id: str, _session: Session) -> str | None:
-    """Get user's default zone.
-
-    Priority:
-    1. User's session preference (stored in session/cookie) - TODO: implement
-    2. First zone in membership list
-    3. None if user has no zones
-
-    Args:
-        rebac_manager: ReBAC manager instance
-        user_id: User ID
-        session: Database session (for future session preference lookup)
-
-    Returns:
-        Zone ID or None if user has no zone memberships
-    """
-    # Get user's zone memberships
-    zone_ids = get_user_zones(rebac_manager, user_id)
-
-    if not zone_ids:
-        return None
-
-    # TODO: Add session preference lookup here
-    # For now, return first zone
-    return zone_ids[0]
-
-
-def require_zone_context(
-    rebac_manager: Any,
-    user_id: str,
-    zone_id: str | None,
-    session: Session,
-    auto_create: bool = False,
-) -> str:
-    """Require zone context for operation.
-
-    If zone_id not provided, use default zone.
-    If no default zone, raise error or create default.
-
-    Args:
-        rebac_manager: ReBAC manager instance
-        user_id: User ID
-        zone_id: Optional zone ID from request
-        session: Database session
-        auto_create: If True, create default zone if user has none
-
-    Returns:
-        Zone ID (guaranteed to be set)
-
-    Raises:
-        ValueError: If user has no zone memberships and auto_create=False
-    """
-    if zone_id:
-        # Verify user belongs to this zone
-        if not user_belongs_to_zone(rebac_manager, user_id, zone_id):
-            raise ValueError(f"User {user_id} does not belong to zone {zone_id}")
-        return zone_id
-
-    # Get default zone
-    default_zone = get_user_default_zone(rebac_manager, user_id, session)
-    if default_zone:
-        return default_zone
-
-    # No zone - create default or error
-    if auto_create:
-        # TODO: Implement default zone creation
-        # For now, raise error
-        raise ValueError(
-            f"User {user_id} has no zone memberships. Auto-create not yet implemented."
-        )
-    else:
-        raise ValueError(f"User {user_id} has no zone memberships")
 
 
 # ==============================================================================

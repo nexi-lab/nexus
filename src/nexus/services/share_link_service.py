@@ -272,13 +272,17 @@ class ShareLinkService:
 
             try:
                 with session_factory() as session:
-                    link = session.query(ShareLinkModel).filter_by(link_id=link_id).first()
+                    zone_id, user_id, is_admin = self._extract_context_info(context)
+
+                    query = session.query(ShareLinkModel).filter_by(link_id=link_id)
+                    if zone_id is not None:
+                        query = query.filter_by(zone_id=zone_id)
+                    link = query.first()
                     if not link:
                         return HandlerResponse.error(
                             f"Share link not found: {link_id}", code=404, is_expected=True
                         )
 
-                    zone_id, user_id, is_admin = self._extract_context_info(context)
                     is_owner = link.created_by == user_id and link.zone_id == zone_id
 
                     if not is_owner and not is_admin:
@@ -421,7 +425,10 @@ class ShareLinkService:
 
             try:
                 with session_factory() as session:
-                    link = session.query(ShareLinkModel).filter_by(link_id=link_id).first()
+                    query = session.query(ShareLinkModel).filter_by(link_id=link_id)
+                    if zone_id is not None:
+                        query = query.filter_by(zone_id=zone_id)
+                    link = query.first()
                     if not link:
                         return HandlerResponse.error(
                             f"Share link not found: {link_id}", code=404, is_expected=True
@@ -617,7 +624,10 @@ class ShareLinkService:
 
             try:
                 with session_factory() as session:
-                    link = session.query(ShareLinkModel).filter_by(link_id=link_id).first()
+                    query = session.query(ShareLinkModel).filter_by(link_id=link_id)
+                    if zone_id is not None:
+                        query = query.filter_by(zone_id=zone_id)
+                    link = query.first()
                     if not link:
                         return HandlerResponse.error(
                             f"Share link not found: {link_id}", code=404, is_expected=True

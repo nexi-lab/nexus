@@ -199,9 +199,10 @@ class AgentRegistry:
 
         with self._get_session() as session:
             # Check for existing
-            existing = session.execute(
-                select(AgentRecordModel).where(AgentRecordModel.agent_id == agent_id)
-            ).scalar_one_or_none()
+            existing_stmt = select(AgentRecordModel).where(AgentRecordModel.agent_id == agent_id)
+            if zone_id is not None:
+                existing_stmt = existing_stmt.where(AgentRecordModel.zone_id == zone_id)
+            existing = session.execute(existing_stmt).scalar_one_or_none()
 
             if existing is not None:
                 record = self._model_to_record(existing)
@@ -227,9 +228,12 @@ class AgentRegistry:
             except IntegrityError:
                 # Concurrent insert — re-read the winner's record
                 session.rollback()
-                existing = session.execute(
-                    select(AgentRecordModel).where(AgentRecordModel.agent_id == agent_id)
-                ).scalar_one()
+                fallback_stmt = select(AgentRecordModel).where(
+                    AgentRecordModel.agent_id == agent_id
+                )
+                if zone_id is not None:
+                    fallback_stmt = fallback_stmt.where(AgentRecordModel.zone_id == zone_id)
+                existing = session.execute(fallback_stmt).scalar_one()
                 record = self._model_to_record(existing)
                 return record
 
@@ -263,7 +267,7 @@ class AgentRegistry:
         logger.debug("[AGENT-REG] Registered agent %s (owner=%s)", agent_id, owner_id)
         return record
 
-    def get(self, agent_id: str) -> AgentRecord | None:
+    def get(self, agent_id: str, zone_id: str | None = None) -> AgentRecord | None:
         """Get an agent record by ID.
 
         Uses a TTLCache to avoid per-request DB hits. Cache is invalidated
@@ -282,9 +286,10 @@ class AgentRegistry:
             return cast("AgentRecord | None", cached)
 
         with self._get_session() as session:
-            model = session.execute(
-                select(AgentRecordModel).where(AgentRecordModel.agent_id == agent_id)
-            ).scalar_one_or_none()
+            get_stmt = select(AgentRecordModel).where(AgentRecordModel.agent_id == agent_id)
+            if zone_id is not None:
+                get_stmt = get_stmt.where(AgentRecordModel.zone_id == zone_id)
+            model = session.execute(get_stmt).scalar_one_or_none()
 
             if model is None:
                 with self._cache_lock:
@@ -302,6 +307,7 @@ class AgentRegistry:
         agent_id: str,
         target_state: AgentState,
         expected_generation: int | None = None,
+        zone_id: str | None = None,
     ) -> AgentRecord:
         """Transition an agent to a new state with optimistic locking.
 
@@ -327,9 +333,10 @@ class AgentRegistry:
             StaleAgentError: If expected_generation doesn't match (concurrent modification).
         """
         with self._get_session() as session:
-            model = session.execute(
-                select(AgentRecordModel).where(AgentRecordModel.agent_id == agent_id)
-            ).scalar_one_or_none()
+            trans_stmt = select(AgentRecordModel).where(AgentRecordModel.agent_id == agent_id)
+            if zone_id is not None:
+                trans_stmt = trans_stmt.where(AgentRecordModel.zone_id == zone_id)
+            model = session.execute(trans_stmt).scalar_one_or_none()
 
             if model is None:
                 raise ValueError(f"Agent '{agent_id}' not found")
@@ -348,7 +355,7 @@ class AgentRegistry:
             now = datetime.now(UTC)
 
             # Build WHERE clause with state CAS to prevent TOCTOU races
-            stmt = (
+            upd_stmt = (
                 update(AgentRecordModel)
                 .where(AgentRecordModel.agent_id == agent_id)
                 .where(AgentRecordModel.state == current_state.value)
@@ -358,21 +365,24 @@ class AgentRegistry:
                     updated_at=now,
                 )
             )
+            if zone_id is not None:
+                upd_stmt = upd_stmt.where(AgentRecordModel.zone_id == zone_id)
 
             # Add generation guard for optimistic locking
             if expected_generation is not None:
-                stmt = stmt.where(AgentRecordModel.generation == expected_generation)
+                upd_stmt = upd_stmt.where(AgentRecordModel.generation == expected_generation)
 
-            rows_updated: int = getattr(session.execute(stmt), "rowcount", 0)
+            rows_updated: int = getattr(session.execute(upd_stmt), "rowcount", 0)
             session.flush()
 
             if rows_updated == 0:
                 if expected_generation is not None:
                     raise StaleAgentError(agent_id, expected_generation)
                 # State changed between SELECT and UPDATE — re-read and report
-                refreshed = session.execute(
-                    select(AgentRecordModel).where(AgentRecordModel.agent_id == agent_id)
-                ).scalar_one()
+                refresh_stmt = select(AgentRecordModel).where(AgentRecordModel.agent_id == agent_id)
+                if zone_id is not None:
+                    refresh_stmt = refresh_stmt.where(AgentRecordModel.zone_id == zone_id)
+                refreshed = session.execute(refresh_stmt).scalar_one()
                 actual_state = AgentState(refreshed.state)
                 raise InvalidTransitionError(agent_id, actual_state, target_state)
 
@@ -547,21 +557,23 @@ class AgentRegistry:
             return False
         return record.owner_id == owner_id
 
-    def unregister(self, agent_id: str) -> bool:
+    def unregister(self, agent_id: str, zone_id: str | None = None) -> bool:
         """Unregister an agent, removing its record.
 
         Also removes from entity_registry if bridge is configured.
 
         Args:
             agent_id: Agent identifier.
+            zone_id: Zone ID for multi-tenant isolation.
 
         Returns:
             True if the agent was removed, False if not found.
         """
         with self._get_session() as session:
-            model = session.execute(
-                select(AgentRecordModel).where(AgentRecordModel.agent_id == agent_id)
-            ).scalar_one_or_none()
+            unreg_stmt = select(AgentRecordModel).where(AgentRecordModel.agent_id == agent_id)
+            if zone_id is not None:
+                unreg_stmt = unreg_stmt.where(AgentRecordModel.zone_id == zone_id)
+            model = session.execute(unreg_stmt).scalar_one_or_none()
 
             if model is None:
                 return False
@@ -594,6 +606,7 @@ class AgentRegistry:
         self,
         agent_id: str,
         manifest: list[dict[str, Any]],
+        zone_id: str | None = None,
     ) -> AgentRecord:
         """Replace the context manifest for an existing agent.
 
@@ -609,15 +622,18 @@ class AgentRegistry:
         """
         with self._get_session() as session:
             # Verify agent exists
-            existing = session.execute(
-                select(AgentRecordModel.agent_id).where(AgentRecordModel.agent_id == agent_id)
-            ).scalar_one_or_none()
+            check_stmt = select(AgentRecordModel.agent_id).where(
+                AgentRecordModel.agent_id == agent_id
+            )
+            if zone_id is not None:
+                check_stmt = check_stmt.where(AgentRecordModel.zone_id == zone_id)
+            existing = session.execute(check_stmt).scalar_one_or_none()
 
             if existing is None:
                 raise ValueError(f"Agent '{agent_id}' not found")
 
             now = datetime.now(UTC)
-            stmt = (
+            manifest_stmt = (
                 update(AgentRecordModel)
                 .where(AgentRecordModel.agent_id == agent_id)
                 .values(
@@ -625,13 +641,16 @@ class AgentRegistry:
                     updated_at=now,
                 )
             )
-            session.execute(stmt)
+            if zone_id is not None:
+                manifest_stmt = manifest_stmt.where(AgentRecordModel.zone_id == zone_id)
+            session.execute(manifest_stmt)
             session.flush()
 
             # Re-read for immutable snapshot
-            refreshed = session.execute(
-                select(AgentRecordModel).where(AgentRecordModel.agent_id == agent_id)
-            ).scalar_one()
+            reread_stmt = select(AgentRecordModel).where(AgentRecordModel.agent_id == agent_id)
+            if zone_id is not None:
+                reread_stmt = reread_stmt.where(AgentRecordModel.zone_id == zone_id)
+            refreshed = session.execute(reread_stmt).scalar_one()
             record = self._model_to_record(refreshed)
 
         # Invalidate cache
@@ -645,7 +664,9 @@ class AgentRegistry:
         )
         return record
 
-    def detect_stale(self, threshold_seconds: int = 300) -> list[AgentRecord]:
+    def detect_stale(
+        self, threshold_seconds: int = 300, zone_id: str | None = None
+    ) -> list[AgentRecord]:
         """Find CONNECTED agents with stale heartbeats.
 
         An agent is stale if its last_heartbeat is older than the threshold
@@ -676,6 +697,8 @@ class AgentRegistry:
                     | (AgentRecordModel.last_heartbeat < cutoff)
                 )
             )
+            if zone_id is not None:
+                stmt = stmt.where(AgentRecordModel.zone_id == zone_id)
             models = list(session.execute(stmt).scalars().all())
             records = [self._model_to_record(m) for m in models]
 

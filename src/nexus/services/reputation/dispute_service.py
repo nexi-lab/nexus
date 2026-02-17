@@ -82,9 +82,10 @@ class DisputeService(SessionMixin):
 
         with self._get_session() as session:
             # Check for existing dispute
-            existing = session.execute(
-                select(DisputeModel).where(DisputeModel.exchange_id == exchange_id)
-            ).scalar_one_or_none()
+            dup_stmt = select(DisputeModel).where(DisputeModel.exchange_id == exchange_id)
+            if zone_id is not None:
+                dup_stmt = dup_stmt.where(DisputeModel.zone_id == zone_id)
+            existing = session.execute(dup_stmt).scalar_one_or_none()
 
             if existing is not None:
                 raise DuplicateDisputeError(f"Dispute already exists for exchange {exchange_id}")
@@ -115,11 +116,12 @@ class DisputeService(SessionMixin):
 
         return record
 
-    def auto_mediate(self, dispute_id: str) -> DisputeRecord:
+    def auto_mediate(self, dispute_id: str, zone_id: str | None = None) -> DisputeRecord:
         """Transition dispute to auto_mediating state.
 
         Args:
             dispute_id: Dispute to mediate.
+            zone_id: Zone ID for multi-tenant isolation.
 
         Returns:
             Updated DisputeRecord.
@@ -129,7 +131,7 @@ class DisputeService(SessionMixin):
             InvalidTransitionError: Current state does not allow this transition.
         """
         with self._get_session() as session:
-            model = self._transition(session, dispute_id, "auto_mediating")
+            model = self._transition(session, dispute_id, "auto_mediating", zone_id=zone_id)
             return self._model_to_record(model)
 
     def resolve(
@@ -137,6 +139,7 @@ class DisputeService(SessionMixin):
         dispute_id: str,
         resolution: str,
         evidence_hash: str | None = None,
+        zone_id: str | None = None,
     ) -> DisputeRecord:
         """Resolve a dispute.
 
@@ -153,7 +156,7 @@ class DisputeService(SessionMixin):
             InvalidTransitionError: Current state does not allow this transition.
         """
         with self._get_session() as session:
-            model = self._transition(session, dispute_id, "resolved")
+            model = self._transition(session, dispute_id, "resolved", zone_id=zone_id)
             model.resolution = resolution
             model.resolution_evidence_hash = evidence_hash
             model.resolved_at = datetime.now(UTC)
@@ -161,12 +164,13 @@ class DisputeService(SessionMixin):
             session.flush()
             return self._model_to_record(model)
 
-    def dismiss(self, dispute_id: str, reason: str) -> DisputeRecord:
+    def dismiss(self, dispute_id: str, reason: str, zone_id: str | None = None) -> DisputeRecord:
         """Dismiss a dispute.
 
         Args:
             dispute_id: Dispute to dismiss.
             reason: Reason for dismissal.
+            zone_id: Zone ID for multi-tenant isolation.
 
         Returns:
             Updated DisputeRecord.
@@ -176,22 +180,27 @@ class DisputeService(SessionMixin):
             InvalidTransitionError: Current state does not allow this transition.
         """
         with self._get_session() as session:
-            model = self._transition(session, dispute_id, "dismissed")
+            model = self._transition(session, dispute_id, "dismissed", zone_id=zone_id)
             model.resolution = reason
             model.resolved_at = datetime.now(UTC)
             session.flush()
             return self._model_to_record(model)
 
-    def get_dispute(self, dispute_id: str) -> DisputeRecord | None:
+    def get_dispute(self, dispute_id: str, zone_id: str | None = None) -> DisputeRecord | None:
         """Get a dispute by ID.
+
+        Args:
+            dispute_id: Dispute identifier.
+            zone_id: Zone ID for multi-tenant isolation.
 
         Returns:
             DisputeRecord or None if not found.
         """
         with self._get_session() as session:
-            model = session.execute(
-                select(DisputeModel).where(DisputeModel.id == dispute_id)
-            ).scalar_one_or_none()
+            get_stmt = select(DisputeModel).where(DisputeModel.id == dispute_id)
+            if zone_id is not None:
+                get_stmt = get_stmt.where(DisputeModel.zone_id == zone_id)
+            model = session.execute(get_stmt).scalar_one_or_none()
 
             if model is None:
                 return None
@@ -241,6 +250,7 @@ class DisputeService(SessionMixin):
         session: Session,
         dispute_id: str,
         new_status: str,
+        zone_id: str | None = None,
     ) -> DisputeModel:
         """Validate and apply a state transition.
 
@@ -248,9 +258,10 @@ class DisputeService(SessionMixin):
             DisputeNotFoundError: Dispute does not exist.
             InvalidTransitionError: Transition not allowed.
         """
-        model = session.execute(
-            select(DisputeModel).where(DisputeModel.id == dispute_id)
-        ).scalar_one_or_none()
+        trans_stmt = select(DisputeModel).where(DisputeModel.id == dispute_id)
+        if zone_id is not None:
+            trans_stmt = trans_stmt.where(DisputeModel.zone_id == zone_id)
+        model = session.execute(trans_stmt).scalar_one_or_none()
 
         if model is None:
             raise DisputeNotFoundError(f"Dispute {dispute_id} not found")

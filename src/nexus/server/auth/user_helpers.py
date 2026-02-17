@@ -22,22 +22,26 @@ from nexus.auth.user_queries import (  # noqa: F401
     validate_user_uniqueness,
 )
 
-# Zone membership functions (now in server composition layer)
-from nexus.server.services.zone_membership import (  # noqa: F401
+# Zone helper functions (canonical: core.zone_helpers, re-exported for backward compat)
+from nexus.core.zone_helpers import (  # noqa: F401
     add_user_to_zone,
     can_invite_to_zone,
-    get_user_default_zone,
     get_user_zones,
     is_zone_admin,
     is_zone_group,
     is_zone_owner,
     parse_zone_from_group,
     remove_user_from_zone,
+    user_belongs_to_zone,
+    zone_group_id,
+)
+
+# Extended zone membership functions (server composition layer)
+from nexus.server.services.zone_membership import (  # noqa: F401
+    get_user_default_zone,
     require_zone_context,
     restore_user,
     soft_delete_user,
-    user_belongs_to_zone,
-    zone_group_id,
 )
 from nexus.storage.models import (
     UserModel,

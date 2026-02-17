@@ -331,7 +331,6 @@ async def get_exchange_audit_logger(
 
 
 async def get_reputation_context(
-    request: Request,
     nexus_fs: Any = Depends(get_nexus_fs),
     auth_result: dict[str, Any] = Depends(_get_require_auth()),
 ) -> tuple[Any, Any, dict[str, Any]]:
@@ -352,8 +351,8 @@ async def get_reputation_context(
     )
 
     # Prefer singleton from lifespan DI (#1619)
-    app_state = request.app.state
-    reputation_service = getattr(app_state, "reputation_service", None)
+    # TODO(#1619): wire app_state via FastAPI dependency injection
+    reputation_service: Any = None
     if reputation_service is None:
         reputation_service = ReputationService(
             session_factory=session_factory,

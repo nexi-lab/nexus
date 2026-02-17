@@ -13,11 +13,30 @@ Design:
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
     from nexus.core.permissions import OperationContext
+
+_HASH_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _validate_hash(content_hash: str) -> None:
+    """Validate that a content hash is a well-formed SHA-256 hex string.
+
+    Args:
+        content_hash: Value to validate
+
+    Raises:
+        ValueError: If content_hash is not a 64-character lowercase hex string
+    """
+    if not _HASH_PATTERN.match(content_hash):
+        raise ValueError(
+            f"Invalid SHA-256 content hash: {content_hash!r} "
+            f"(expected 64-character lowercase hex string)"
+        )
 
 
 @runtime_checkable
@@ -124,6 +143,7 @@ class BackendObjectStore:
     """Adapts a Backend instance to the ObjectStoreABC interface.
 
     Translates HandlerResponse[T] → T (raises on failure via .unwrap()).
+    Validates content hashes at the boundary before delegating to Backend.
     """
 
     def __init__(
@@ -135,22 +155,35 @@ class BackendObjectStore:
         self._context = context
 
     @property
+    def backend(self) -> Backend:
+        """The underlying Backend instance (read-only)."""
+        return self._backend
+
+    @property
     def name(self) -> str:
         return self._backend.name
+
+    def __repr__(self) -> str:
+        ctx = f", context={self._context!r}" if self._context is not None else ""
+        return f"BackendObjectStore(backend={self._backend.name!r}{ctx})"
 
     def write(self, content: bytes) -> str:
         return self._backend.write_content(content, context=self._context).unwrap()
 
     def read(self, content_hash: str) -> bytes:
+        _validate_hash(content_hash)
         return self._backend.read_content(content_hash, context=self._context).unwrap()
 
     def delete(self, content_hash: str) -> None:
+        _validate_hash(content_hash)
         self._backend.delete_content(content_hash, context=self._context).unwrap()
 
     def exists(self, content_hash: str) -> bool:
+        _validate_hash(content_hash)
         return self._backend.content_exists(content_hash, context=self._context).unwrap()
 
     def size(self, content_hash: str) -> int:
+        _validate_hash(content_hash)
         return self._backend.get_content_size(content_hash, context=self._context).unwrap()
 
     def batch_read(
@@ -159,6 +192,14 @@ class BackendObjectStore:
         *,
         contexts: dict[str, OperationContext] | None = None,
     ) -> dict[str, bytes | None]:
-        return self._backend.batch_read_content(
-            content_hashes, context=self._context, contexts=contexts
-        )
+        for h in content_hashes:
+            _validate_hash(h)
+        try:
+            return self._backend.batch_read_content(
+                content_hashes, context=self._context, contexts=contexts
+            )
+        except Exception:
+            # Re-raise domain exceptions (NexusFileNotFoundError, BackendError) as-is.
+            # batch_read_content should return None for missing items, but if a backend
+            # raises unexpectedly, let the caller see the real exception.
+            raise

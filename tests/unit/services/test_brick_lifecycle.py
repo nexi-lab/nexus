@@ -532,14 +532,14 @@ class BrickLifecycleStateMachine(RuleBasedStateMachine):
     def mount_brick(self, name: str) -> None:
         status = self.manager.get_status(name)
         if status is not None and status.state == BrickState.REGISTERED:
-            asyncio.get_event_loop().run_until_complete(self.manager.mount(name))
+            asyncio.run(self.manager.mount(name))
             self._mounted.add(name)
 
     @rule(name=bricks)
     def unmount_brick(self, name: str) -> None:
         status = self.manager.get_status(name)
         if status is not None and status.state == BrickState.ACTIVE:
-            asyncio.get_event_loop().run_until_complete(self.manager.unmount(name))
+            asyncio.run(self.manager.unmount(name))
             self._mounted.discard(name)
 
     @rule()

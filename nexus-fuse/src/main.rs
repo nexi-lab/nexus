@@ -3,12 +3,8 @@
 //! This is a Rust implementation of the Nexus FUSE client, designed for
 //! fast startup time (<100ms vs ~10s for Python version).
 
-mod cache;
-pub mod client;
-pub mod error;
-mod fs;
-
 use clap::{Parser, Subcommand};
+use nexus_fuse::{cache, client, daemon, fs};
 use fuser::MountOption;
 use log::{error, info};
 use std::path::PathBuf;
@@ -45,6 +41,24 @@ enum Commands {
         /// Run in foreground (don't daemonize)
         #[arg(long, short = 'f', default_value = "false")]
         foreground: bool,
+
+        /// Agent ID for file attribution
+        #[arg(long, env = "NEXUS_AGENT_ID")]
+        agent_id: Option<String>,
+    },
+    /// Run as Unix socket IPC daemon for Python integration
+    Daemon {
+        /// Nexus server URL
+        #[arg(long, env = "NEXUS_URL")]
+        url: String,
+
+        /// Nexus API key
+        #[arg(long, env = "NEXUS_API_KEY")]
+        api_key: String,
+
+        /// Unix socket path (default: /tmp/nexus-fuse-{pid}.sock)
+        #[arg(long)]
+        socket: Option<PathBuf>,
 
         /// Agent ID for file attribution
         #[arg(long, env = "NEXUS_AGENT_ID")]
@@ -131,6 +145,32 @@ fn main() -> anyhow::Result<()> {
             }
 
             info!("Filesystem unmounted");
+        }
+        Commands::Daemon {
+            url,
+            api_key,
+            socket,
+            agent_id,
+        } => {
+            // Determine socket path
+            let socket_path = socket.unwrap_or_else(|| {
+                let pid = std::process::id();
+                PathBuf::from(format!("/tmp/nexus-fuse-{}.sock", pid))
+            });
+
+            // Create daemon config
+            let config = daemon::DaemonConfig {
+                socket_path,
+                nexus_url: url,
+                api_key,
+                agent_id,
+            };
+
+            // Create daemon
+            let daemon = daemon::Daemon::new(config)?;
+
+            // Run daemon (async)
+            tokio::runtime::Runtime::new()?.block_on(daemon.run())?;
         }
         Commands::Version => {
             println!("nexus-fuse {}", env!("CARGO_PKG_VERSION"));

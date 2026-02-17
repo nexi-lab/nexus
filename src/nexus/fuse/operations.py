@@ -190,6 +190,7 @@ class NexusFUSEOperations(Operations):
         cache_config: dict[str, Any] | None = None,
         context: OperationContext | None = None,
         namespace_manager: NamespaceManager | None = None,
+        use_rust: bool = False,
     ) -> None:
         """Initialize FUSE operations.
 
@@ -208,11 +209,43 @@ class NexusFUSEOperations(Operations):
             namespace_manager: Optional NamespaceManager for direct O(log m) visibility
                     checks (A2-B). When provided, _check_namespace_visible() bypasses the
                     full RPC/PermissionEnforcer pipeline and calls is_visible() directly.
+            use_rust: Use high-performance Rust FUSE daemon for hot path operations (Issue #1569).
         """
         self.nexus_fs = nexus_fs
         self.mode = mode
         self._context = context
         self._namespace_manager = namespace_manager
+        self._use_rust = use_rust
+        self._rust_client = None
+
+        # Initialize Rust client if requested (Issue #1569)
+        if use_rust:
+            try:
+                from nexus.fuse.rust_client import RustFUSEClient
+
+                # Extract connection details from nexus_fs
+                # For RemoteNexusFS, we have _base_url and _api_key
+                if hasattr(nexus_fs, "_base_url") and hasattr(nexus_fs, "_api_key"):
+                    nexus_url = nexus_fs._base_url  # type: ignore[attr-defined]
+                    api_key = nexus_fs._api_key  # type: ignore[attr-defined]
+                    agent_id = getattr(nexus_fs, "_agent_id", None)  # type: ignore[attr-defined]
+
+                    logger.info("[FUSE] Initializing Rust FUSE daemon (10-100x faster)")
+                    self._rust_client = RustFUSEClient(
+                        nexus_url=nexus_url,
+                        api_key=api_key,
+                        agent_id=agent_id,
+                    )
+                    logger.info("[FUSE] ✓ Rust daemon ready")
+                else:
+                    logger.warning(
+                        "[FUSE] --use-rust requires RemoteNexusFS. Falling back to Python client."
+                    )
+                    self._use_rust = False
+            except Exception as e:
+                logger.error(f"[FUSE] Failed to initialize Rust client: {e}")
+                logger.warning("[FUSE] Falling back to Python client")
+                self._use_rust = False
         self.fd_counter = 0
         self.open_files: dict[int, dict[str, Any]] = {}
         self._files_lock = threading.RLock()
@@ -478,6 +511,38 @@ class NexusFUSEOperations(Operations):
         if path == "/.raw":
             return self._dir_attrs()
 
+        # Issue #1569: Delegate to Rust daemon for stat (10-100x faster)
+        if self._use_rust and self._rust_client and not self._context and not view_type:
+            try:
+                metadata = self._rust_client.stat(original_path)
+                if metadata.is_directory:
+                    attrs = self._dir_attrs()
+                else:
+                    now = time.time()
+                    attrs = {
+                        "st_mode": stat.S_IFREG | 0o644,
+                        "st_nlink": 1,
+                        "st_size": metadata.size,
+                        "st_ctime": now,
+                        "st_mtime": now,
+                        "st_atime": now,
+                        "st_uid": os.getuid() if hasattr(os, "getuid") else 0,
+                        "st_gid": os.getgid() if hasattr(os, "getgid") else 0,
+                    }
+                # Cache and return
+                self.cache.put_attr(path, attrs)
+                elapsed = time.time() - start_time
+                logger.debug(f"[FUSE-PERF] getattr via RUST: path={path}, {elapsed:.3f}s")
+                return attrs
+            except OSError as e:
+                if e.errno == errno.ENOENT:
+                    raise FuseOSError(errno.ENOENT) from None
+                logger.warning(f"[FUSE-GETATTR] Rust failed for {path}: {e}, using Python")
+                # Fall through to Python implementation
+            except Exception as e:
+                logger.warning(f"[FUSE-GETATTR] Rust failed for {path}: {e}, using Python")
+                # Fall through to Python implementation
+
         # Check if it's a directory
         # Issue #1305: Pass context for namespace-scoped visibility
         if self.nexus_fs.is_directory(original_path, context=self._context):
@@ -621,6 +686,31 @@ class NexusFUSEOperations(Operations):
         # At root level, add .raw directory
         if path == "/":
             entries.append(".raw")
+
+        # Issue #1569: Delegate to Rust daemon for directory listing (10-100x faster)
+        if self._use_rust and self._rust_client and not self._context:
+            try:
+                list_start = time.time()
+                file_entries = self._rust_client.list(path)
+                list_elapsed = time.time() - list_start
+                logger.info(
+                    f"[FUSE-PERF] readdir list() via RUST took {list_elapsed:.3f}s, "
+                    f"returned {len(file_entries)} items"
+                )
+                # Convert Rust FileEntry to names
+                entries.extend([f.name for f in file_entries])
+
+                # Cache and return
+                elapsed = time.time() - start_time
+                logger.info(
+                    f"[FUSE-PERF] readdir DONE: path={path}, {len(entries)} entries, {elapsed:.3f}s"
+                )
+                with self._dir_cache_lock:
+                    self._dir_cache[cache_key] = entries
+                return entries
+            except Exception as e:
+                logger.warning(f"[FUSE-READDIR] Rust failed for {path}: {e}, using Python")
+                # Fall through to Python implementation
 
         # List files in directory (non-recursive) - returns list[dict] with details
         # Using details=True gets directory status in bulk, avoiding individual is_directory() calls
@@ -822,6 +912,15 @@ class NexusFUSEOperations(Operations):
         original_path = file_info["path"]
         view_type = file_info["view_type"]
 
+        # Issue #1569: Delegate to Rust daemon for raw reads (10-100x faster)
+        if self._use_rust and self._rust_client and view_type is None:
+            try:
+                content = self._rust_client.read(original_path)
+                return content[offset : offset + size]
+            except Exception as e:
+                logger.warning(f"[FUSE-READ] Rust failed for {original_path}: {e}, using Python")
+                # Fall through to Python implementation
+
         # Issue #1073: Check readahead buffer first (fast path for sequential reads)
         # Only use readahead for raw/binary reads (not parsed views)
         if self._readahead and view_type is None:
@@ -895,8 +994,17 @@ class NexusFUSEOperations(Operations):
         # Combine content
         new_content = existing_content[:offset] + data + existing_content[offset + len(data) :]
 
-        # Write to Nexus
-        self.nexus_fs.write(original_path, new_content, context=ctx)
+        # Issue #1569: Delegate to Rust daemon for writes (10-100x faster)
+        if self._use_rust and self._rust_client and not ctx:  # Only for non-context writes
+            try:
+                self._rust_client.write(original_path, new_content)
+            except Exception as e:
+                logger.warning(f"[FUSE-WRITE] Rust failed for {original_path}: {e}, using Python")
+                # Fall through to Python implementation
+                self.nexus_fs.write(original_path, new_content, context=ctx)
+        else:
+            # Write to Nexus (Python)
+            self.nexus_fs.write(original_path, new_content, context=ctx)
 
         # Invalidate caches for this path
         self.cache.invalidate_path(original_path)
@@ -1006,7 +1114,15 @@ class NexusFUSEOperations(Operations):
         # Issue #1305: Pre-flight namespace check (delete() has no context param)
         self._check_namespace_visible(original_path)
 
-        self.nexus_fs.delete(original_path)
+        # Issue #1569: Delegate to Rust daemon for delete (10-100x faster)
+        if self._use_rust and self._rust_client and not self._context:
+            try:
+                self._rust_client.delete(original_path)
+            except Exception as e:
+                logger.warning(f"[FUSE-UNLINK] Rust failed for {original_path}: {e}, using Python")
+                self.nexus_fs.delete(original_path)
+        else:
+            self.nexus_fs.delete(original_path)
 
         # Invalidate caches for this path
         self.cache.invalidate_path(original_path)
@@ -1035,7 +1151,15 @@ class NexusFUSEOperations(Operations):
         # Issue #1305: Pre-flight namespace check (mkdir() has no context param)
         self._check_namespace_visible(path)
 
-        self.nexus_fs.mkdir(path, parents=True, exist_ok=True)
+        # Issue #1569: Delegate to Rust daemon for mkdir (10-100x faster)
+        if self._use_rust and self._rust_client and not self._context:
+            try:
+                self._rust_client.mkdir(path)
+            except Exception as e:
+                logger.warning(f"[FUSE-MKDIR] Rust failed for {path}: {e}, using Python")
+                self.nexus_fs.mkdir(path, parents=True, exist_ok=True)
+        else:
+            self.nexus_fs.mkdir(path, parents=True, exist_ok=True)
 
         # Issue #1115: Fire directory create event
         if HAS_EVENT_BUS and FileEventType is not None:
@@ -1132,8 +1256,20 @@ class NexusFUSEOperations(Operations):
         else:
             # Handle file rename/move using metadata-only operation
             logger.debug(f"Renaming file {old_path} to {new_path}")
-            # Metadata-only rename - instant, no content copy!
-            self.nexus_fs.rename(old_path, new_path)
+
+            # Issue #1569: Delegate to Rust daemon for rename (10-100x faster)
+            if self._use_rust and self._rust_client and not self._context:
+                try:
+                    self._rust_client.rename(old_path, new_path)
+                except Exception as e:
+                    logger.warning(
+                        f"[FUSE-RENAME] Rust failed for {old_path}->{new_path}: {e}, using Python"
+                    )
+                    # Metadata-only rename - instant, no content copy!
+                    self.nexus_fs.rename(old_path, new_path)
+            else:
+                # Metadata-only rename - instant, no content copy!
+                self.nexus_fs.rename(old_path, new_path)
 
         # Invalidate caches for both old and new paths
         self.cache.invalidate_path(old_path)

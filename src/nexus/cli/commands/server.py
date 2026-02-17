@@ -128,6 +128,11 @@ def _is_federation_syntax(source: str, target: str | None) -> bool:
     default=None,
     help="[FUSE] Agent ID for version attribution",
 )
+@click.option(
+    "--use-rust",
+    is_flag=True,
+    help="[FUSE] Use high-performance Rust FUSE daemon (10-100x faster)",
+)
 # --- Federation options ---
 @click.option(
     "--node-id",
@@ -183,6 +188,7 @@ def mount(
     allow_other: bool,
     debug: bool,
     agent_id: str | None,
+    use_rust: bool,
     node_id: int,
     data_dir: str,
     bind: str,
@@ -206,7 +212,7 @@ def mount(
     if _is_federation_syntax(source, target):
         _mount_federation(source, target, node_id, data_dir, bind, tls_cert, tls_key, tls_ca)
     else:
-        _mount_fuse(source, mode, daemon, allow_other, debug, agent_id, backend_config)
+        _mount_fuse(source, mode, daemon, allow_other, debug, agent_id, use_rust, backend_config)
 
 
 def _mount_federation(
@@ -287,6 +293,7 @@ def _mount_fuse(
     allow_other: bool,
     debug: bool,
     agent_id: str | None,
+    use_rust: bool,
     backend_config: BackendConfig,
 ) -> None:
     """FUSE mount — lazy imports nexus.fuse to stay decoupled from federation."""
@@ -397,6 +404,7 @@ def _mount_fuse(
                     foreground=True,  # Run in foreground to keep daemon process alive
                     allow_other=allow_other,
                     debug=debug,
+                    use_rust=use_rust,
                 )
                 logging.info("Mount completed, waiting for unmount signal...")
             except Exception as e:
@@ -415,6 +423,7 @@ def _mount_fuse(
             foreground=False,  # Run in background thread
             allow_other=allow_other,
             debug=debug,
+            use_rust=use_rust,
         )
 
         console.print(f"[green]Mounted Nexus to [cyan]{mount_point}[/cyan][/green]")

@@ -803,6 +803,28 @@ wheels = [
 ]
 
 [[package]]
+name = "cloud-sql-python-connector"
+version = "1.20.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "aiofiles" },
+    { name = "aiohttp" },
+    { name = "cryptography" },
+    { name = "dnspython" },
+    { name = "google-auth" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/cc/9a/b349d7fe9d4dd5f7b72d58b1b3c422d4e3e62854c5871355b7f4faf66281/cloud_sql_python_connector-1.20.0.tar.gz", hash = "sha256:fdd96153b950040b0252453115604c142922b72cf3636146165a648ac5f6fc30", size = 44208, upload-time = "2026-01-13T01:09:11.405Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/19/1a/5d5015c7c1175d9abf985c07b0665151394c497649ba8026985ba7aba26b/cloud_sql_python_connector-1.20.0-py3-none-any.whl", hash = "sha256:aa7c30631c5f455d14d561d7b0b414a97652a1b582a301f5570ba2cea2aa9105", size = 50101, upload-time = "2026-01-13T01:09:09.748Z" },
+]
+
+[package.optional-dependencies]
+asyncpg = [
+    { name = "asyncpg" },
+]
+
+[[package]]
 name = "cobble"
 version = "0.1.4"
 source = { registry = "https://pypi.org/simple" }
@@ -3172,6 +3194,9 @@ all = [
     { name = "psycopg2-binary" },
     { name = "sqlite-vec" },
 ]
+cloud-sql = [
+    { name = "cloud-sql-python-connector", extra = ["asyncpg"] },
+]
 dev = [
     { name = "freezegun" },
     { name = "hypothesis" },
@@ -3266,6 +3291,7 @@ requires-dist = [
     { name = "bsdiff4", specifier = ">=1.2.0" },
     { name = "cachetools", specifier = ">=6.2.2" },
     { name = "click", specifier = ">=8.1.7" },
+    { name = "cloud-sql-python-connector", extras = ["asyncpg"], marker = "extra == 'cloud-sql'", specifier = ">=1.14.0" },
     { name = "cryptography", specifier = ">=41.0.0" },
     { name = "docker", marker = "extra == 'docker'", specifier = ">=7.0.0" },
     { name = "dotenv", specifier = ">=0.9.9" },
@@ -3364,7 +3390,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.38.0" },
     { name = "uvloop", marker = "sys_platform != 'win32'", specifier = ">=0.22.1" },
 ]
-provides-extras = ["performance", "mobile", "sandbox-monty", "sentry", "profiling", "dev", "test", "fuse", "postgres", "semantic-search", "semantic-search-remote", "e2b", "docker", "all"]
+provides-extras = ["performance", "mobile", "sandbox-monty", "sentry", "profiling", "dev", "test", "fuse", "postgres", "cloud-sql", "semantic-search", "semantic-search-remote", "e2b", "docker", "all"]
 
 [package.metadata.requires-dev]
 dev = [

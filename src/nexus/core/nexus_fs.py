@@ -108,6 +108,7 @@ class NexusFS(  # type: ignore[misc]
         memory: MemoryConfig | None = None,
         parsing: ParseConfig | None = None,
         services: KernelServices | None = None,
+        parse_fn: Any | None = None,
     ):
         """Initialize NexusFS kernel.
 
@@ -124,6 +125,8 @@ class NexusFS(  # type: ignore[misc]
             memory: Memory paging config. Defaults to MemoryConfig().
             parsing: File parsing config. Defaults to ParseConfig().
             services: Injected service dependencies. Defaults to KernelServices().
+            parse_fn: Pre-built parse callback ``(bytes, str) -> bytes | None``
+                for virtual views. Created by factory.py via create_default_parse_fn().
         """
         # Apply defaults — config dataclasses are SSOT for default values
         cache = cache or CacheConfig()
@@ -198,10 +201,8 @@ class NexusFS(  # type: ignore[misc]
         self.parser_registry = ParserRegistry()
         self.parser_registry.register(MarkItDownParser())
 
-        # Provide parse callback for virtual views (core/ must not import parsers directly)
-        from nexus.parsers import create_default_parse_fn
-
-        self._virtual_view_parse_fn = create_default_parse_fn()
+        # Parse callback for virtual views — injected by factory.py (Issue #668)
+        self._virtual_view_parse_fn = parse_fn
 
         # Initialize new provider registry for read(parsed=True) support
         from nexus.parsers.providers import ProviderRegistry

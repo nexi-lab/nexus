@@ -1351,6 +1351,11 @@ def create_nexus_fs(
 
         services = _dc_replace(services, workflow_engine=workflow_engine)
 
+    # Create parse callback for virtual views (Issue #668: factory creates services)
+    from nexus.parsers import create_default_parse_fn
+
+    _parse_fn = create_default_parse_fn()
+
     nx = NexusFS(
         backend=backend,
         metadata_store=metadata_store,
@@ -1364,6 +1369,7 @@ def create_nexus_fs(
         memory=memory,
         parsing=parsing,
         services=services,
+        parse_fn=_parse_fn,
     )
 
     # Post-construction I/O (mount restoration, etc.)

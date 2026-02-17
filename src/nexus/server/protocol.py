@@ -1293,6 +1293,7 @@ class AddMountParams:
     backend_config: dict[str, Any]
     priority: int = 0
     readonly: bool = False
+    io_profile: str = "balanced"
 
 
 @dataclass
@@ -1349,6 +1350,7 @@ class SaveMountParams:
     backend_config: dict[str, Any]
     priority: int = 0
     readonly: bool = False
+    io_profile: str = "balanced"
     owner_user_id: str | None = None
     zone_id: str | None = None
     description: str | None = None

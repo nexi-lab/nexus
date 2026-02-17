@@ -61,6 +61,12 @@ def mounts_group() -> None:
 @click.argument("config_json", type=str)
 @click.option("--priority", type=int, default=0, help="Mount priority (higher = preferred)")
 @click.option("--readonly", is_flag=True, help="Mount as read-only")
+@click.option(
+    "--io-profile",
+    type=click.Choice(["fast_read", "fast_write", "edit", "append_only", "balanced", "archive"]),
+    default="balanced",
+    help="I/O profile for the mount (default: balanced)",
+)
 @click.option("--owner", type=str, default=None, help="Owner user ID")
 @click.option("--zone", type=str, default=None, help="Zone ID")
 @add_backend_options
@@ -70,6 +76,7 @@ def add_mount(
     config_json: str,
     priority: int,
     readonly: bool,
+    io_profile: str,
     owner: str | None,
     zone: str | None,
     backend_config: BackendConfig,
@@ -116,6 +123,7 @@ def add_mount(
                 backend_config=config_dict,
                 priority=priority,
                 readonly=readonly,
+                io_profile=io_profile,
             )
             console.print(f"[green]✓[/green] Mount added successfully (ID: {mount_id})")
         except AttributeError:
@@ -131,6 +139,7 @@ def add_mount(
         console.print(f"  Backend Type: [cyan]{backend_type}[/cyan]")
         console.print(f"  Priority: [cyan]{priority}[/cyan]")
         console.print(f"  Read-Only: [cyan]{readonly}[/cyan]")
+        console.print(f"  IO Profile: [cyan]{io_profile}[/cyan]")
         if owner:
             console.print(f"  Owner: [cyan]{owner}[/cyan]")
         if zone:

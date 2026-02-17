@@ -125,6 +125,12 @@ class DelegateRequest(BaseModel):
     scope: DelegationScopeModel | None = Field(
         default=None, description="Fine-grained scope constraints"
     )
+    min_trust_score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Minimum trust score threshold for coordinator (0.0 = disabled)",
+    )
 
 
 class DelegateResponse(BaseModel):
@@ -182,6 +188,15 @@ class DelegationChainResponse(BaseModel):
 
     chain: list[DelegationChainItem]
     total_depth: int
+
+
+class CompleteDelegationRequest(BaseModel):
+    """Request to complete a delegation with outcome feedback (#1619)."""
+
+    outcome: str = Field(description="Delegation outcome: 'completed', 'failed', or 'timeout'")
+    quality_score: float | None = Field(
+        default=None, ge=0.0, le=1.0, description="Optional quality rating (0.0-1.0)"
+    )
 
 
 # =============================================================================
@@ -254,6 +269,7 @@ async def create_delegation(
             intent=body.intent,
             can_sub_delegate=body.can_sub_delegate,
             scope=scope,
+            min_trust_score=request.min_trust_score,
         )
     except Exception as e:
         _handle_delegation_error(e)
@@ -400,6 +416,64 @@ async def get_delegation_chain(
     return DelegationChainResponse(chain=items, total_depth=len(chain) - 1)
 
 
+@router.post("/{delegation_id}/complete")
+async def complete_delegation(
+    delegation_id: str,
+    request: CompleteDelegationRequest,
+    http_request: Request,
+    auth_result: dict[str, Any] = Depends(_get_require_auth()),
+) -> dict[str, Any]:
+    """Complete a delegation and submit outcome feedback (#1619)."""
+    subject_type = auth_result.get("subject_type", "")
+    if subject_type != "agent":
+        raise HTTPException(
+            status_code=403,
+            detail="Only agents can complete delegations.",
+        )
+
+    service = _get_delegation_service(http_request)
+
+    # Ownership check: only the parent agent can complete its delegation
+    record = service.get_delegation_by_id(delegation_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"Delegation {delegation_id} not found.")
+
+    agent_id = auth_result.get("subject_id", "")
+    if record.parent_agent_id != agent_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Only the parent agent can complete a delegation.",
+        )
+
+    # Parse outcome
+    from nexus.services.delegation.models import DelegationOutcome
+
+    try:
+        outcome = DelegationOutcome(request.outcome)
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid outcome: {request.outcome!r}. "
+            "Must be 'completed', 'failed', or 'timeout'.",
+        ) from e
+
+    try:
+        updated = service.complete_delegation(
+            delegation_id=delegation_id,
+            outcome=outcome,
+            quality_score=request.quality_score,
+        )
+    except Exception as e:
+        _handle_delegation_error(e)
+        raise  # unreachable, but satisfies type checker
+
+    return {
+        "status": updated.status.value,
+        "delegation_id": delegation_id,
+        "outcome": request.outcome,
+    }
+
+
 # =============================================================================
 # Error handling
 # =============================================================================
@@ -412,10 +486,13 @@ def _handle_delegation_error(e: Exception) -> None:
         DelegationNotFoundError,
         DepthExceededError,
         EscalationError,
+        InsufficientTrustError,
         InvalidPrefixError,
         TooManyGrantsError,
     )
 
+    if isinstance(e, InsufficientTrustError):
+        raise HTTPException(status_code=403, detail=str(e)) from e
     if isinstance(e, EscalationError):
         raise HTTPException(status_code=403, detail=str(e)) from e
     if isinstance(e, TooManyGrantsError):

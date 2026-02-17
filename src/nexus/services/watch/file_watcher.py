@@ -212,7 +212,8 @@ class FileWatcher:
 
         # Register inotify fd with asyncio event loop
         # When fd is readable, _on_inotify_events will be called
-        self._loop.add_reader(self._inotify.fd, self._on_inotify_events)  # type: ignore[union-attr]
+        assert self._loop is not None  # guaranteed by start() caller
+        self._loop.add_reader(self._inotify.fd, self._on_inotify_events)
 
     def _stop_linux(self) -> None:
         """Clean up inotify resources."""

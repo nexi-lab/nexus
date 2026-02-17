@@ -157,11 +157,10 @@ user-facing operations (read, write, list, mkdir, mount). NexusFS contains
 + services and wires them together. NexusFS receives pre-built dependencies via its
 constructor and never auto-creates services.
 
-> *Gap:* NexusFS still contains 2 event-related mixins (`NexusFSEventsMixin`,
-> `FileWatcher` — inotify/FSEvents, maps to `WatchProtocol` Service tier, not kernel;
-> Linux analogue: `fs/notify/`, not core VFS) and ~40 lazy service imports in
-> `_wire_services()`. Migration: extract → `services/watch/`, then replace
-> `KernelServices` dataclass with `ServiceRegistry`. Tracked by #573, #656, #706.
+> *Resolved:* Event mixins fully extracted — `NexusFSEventsMixin` removed (#573),
+> `FileWatcher` moved to `services/watch/` (#706), orphaned kernel attrs cleaned (#656).
+> Remaining: ~40 lazy service imports in `_wire_services()` (#194), replace
+> `KernelServices` dataclass with `ServiceRegistry`.
 
 ### Service Protocols (`nexus.services.protocols`)
 

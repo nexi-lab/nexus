@@ -30,9 +30,9 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from nexus.core.distributed_lock import LockManagerBase
     from nexus.core.event_bus import EventBusBase
-    from nexus.core.file_watcher import FileWatcher
     from nexus.core.permissions import OperationContext
     from nexus.core.protocols.connector import ConnectorProtocol
+    from nexus.services.watch.file_watcher import FileWatcher
 
 
 class EventsService:
@@ -53,7 +53,6 @@ class EventsService:
         backend: ConnectorProtocol,
         event_bus: EventBusBase | None = None,
         lock_manager: LockManagerBase | None = None,
-        file_watcher: FileWatcher | None = None,
         zone_id: str | None = None,
         metadata_cache: Any = None,
     ):
@@ -63,14 +62,13 @@ class EventsService:
             backend: Storage backend (needed for same-box detection)
             event_bus: Distributed event bus (EventBus) or None
             lock_manager: Distributed lock manager or None
-            file_watcher: OS-native file watcher or None (lazy init for same-box)
             zone_id: Default zone ID
             metadata_cache: Metadata cache instance for invalidation
         """
         self._backend = backend
         self._event_bus = event_bus
         self._lock_manager = lock_manager
-        self._file_watcher = file_watcher
+        self._file_watcher: FileWatcher | None = None  # lazy init in _get_file_watcher()
         self._zone_id = zone_id
         self._metadata_cache = metadata_cache
         self._cache_invalidation_started = False
@@ -103,7 +101,7 @@ class EventsService:
             )
 
         if self._file_watcher is None:
-            from nexus.core.file_watcher import FileWatcher
+            from nexus.services.watch.file_watcher import FileWatcher
 
             self._file_watcher = FileWatcher()
 

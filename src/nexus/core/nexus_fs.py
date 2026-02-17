@@ -289,18 +289,9 @@ class NexusFS(  # type: ignore[misc]
         # v0.8.0: Subscription manager for webhook notifications (set by server)
         self.subscription_manager: Any = None
 
-        # Issue #913: Track async event tasks to prevent memory leaks
-        self._event_tasks: set[asyncio.Task[Any]] = set()
-
-        # Issue #1106: File watcher for same-box event detection (lazy initialized)
-        self._file_watcher: Any = None
-
         # Distributed coordination clients (may be set by factory)
         self._coordination_client: Any = None
         self._event_client: Any = None
-
-        # Issue #1106: Auto-start flag for cache invalidation
-        self._cache_invalidation_started: bool = False
 
         # VFS lock manager — accept pre-built or create (Issue #657)
         if vfs_lock_manager is not None:
@@ -483,7 +474,6 @@ class NexusFS(  # type: ignore[misc]
                 backend=self.backend,
                 event_bus=self._event_bus,
                 lock_manager=self._lock_manager,
-                file_watcher=self._file_watcher,
                 zone_id=None,
                 metadata_cache=metadata_cache,
             )

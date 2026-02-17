@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from nexus.core.file_watcher import ChangeType, FileChange, FileWatcher
+from nexus.services.watch.file_watcher import ChangeType, FileChange, FileWatcher
 
 # =============================================================================
 # FileWatcher Lifecycle Tests

@@ -74,7 +74,7 @@ from nexus.rebac.tuples.repository import TupleRepository
 from nexus.rebac.types import (
     CheckResult,
     ConsistencyLevel,
-    ConsistencyMode,  # noqa: F401 — re-exported for backward compatibility
+    ConsistencyMode,
     ConsistencyRequirement,
     GraphLimitExceeded,
     GraphLimits,

@@ -23,6 +23,7 @@ class Curator:
         session: Session,
         backend: Any,
         playbook_manager: PlaybookManager,
+        zone_id: str | None = None,
     ):
         """Initialize curator.
 
@@ -30,10 +31,12 @@ class Curator:
             session: Database session
             backend: Storage backend for CAS content
             playbook_manager: Playbook manager for updating playbooks
+            zone_id: Zone scope for federation isolation
         """
         self.session = session
         self.backend = backend
         self.playbook_manager = playbook_manager
+        self.zone_id = zone_id
 
     def curate_playbook(
         self,
@@ -116,15 +119,14 @@ class Curator:
         Returns:
             Curation results or None if no reflections found
         """
-        # Find reflection memories for this trajectory
-        reflection_memories = (
-            self.session.query(MemoryModel)
-            .filter_by(
-                trajectory_id=trajectory_id,
-                memory_type="reflection",
-            )
-            .all()
+        # Find reflection memories for this trajectory (zone-scoped)
+        query = self.session.query(MemoryModel).filter_by(
+            trajectory_id=trajectory_id,
+            memory_type="reflection",
         )
+        if self.zone_id is not None:
+            query = query.filter(MemoryModel.zone_id == self.zone_id)
+        reflection_memories = query.all()
 
         if not reflection_memories:
             return None
@@ -141,7 +143,10 @@ class Curator:
         Returns:
             Reflection data or None if not found
         """
-        memory = self.session.query(MemoryModel).filter_by(memory_id=memory_id).first()
+        query = self.session.query(MemoryModel).filter_by(memory_id=memory_id)
+        if self.zone_id is not None:
+            query = query.filter(MemoryModel.zone_id == self.zone_id)
+        memory = query.first()
         if not memory:
             return None
 

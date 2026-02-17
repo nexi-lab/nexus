@@ -209,6 +209,7 @@ async def get_curator(
         session=session,
         backend=backend,
         playbook_manager=playbook_manager,
+        zone_id=context.zone_id,
     )
 
 async def get_consolidation_engine(

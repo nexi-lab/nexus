@@ -123,7 +123,7 @@ class AceFacade:
         if self._curator is None:
             from nexus.services.ace.curation import Curator
 
-            self._curator = Curator(self._session, self._backend, self.playbook)
+            self._curator = Curator(self._session, self._backend, self.playbook, zone_id=self._zone_id)
         return self._curator
 
     @property

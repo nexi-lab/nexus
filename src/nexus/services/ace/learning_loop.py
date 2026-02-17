@@ -65,7 +65,7 @@ class LearningLoop:
         self.reflector = Reflector(
             session, backend, llm_provider, self.trajectory_manager, user_id, agent_id, zone_id
         )
-        self.curator = Curator(session, backend, self.playbook_manager)
+        self.curator = Curator(session, backend, self.playbook_manager, zone_id=zone_id)
         self.consolidation_engine = ConsolidationEngine(
             session, backend, llm_provider, user_id, agent_id, zone_id
         )

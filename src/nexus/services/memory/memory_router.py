@@ -172,7 +172,9 @@ class MemoryViewRouter:
             return None
         return memory
 
-    def _get_memory_by_id_raw(self, memory_id: str) -> MemoryModel | None:
+    def _get_memory_by_id_raw(
+        self, memory_id: str, zone_id: str | None = None
+    ) -> MemoryModel | None:
         """Get memory by canonical ID, including soft-deleted rows.
 
         Internal method for operations that need access to deleted memories
@@ -180,11 +182,14 @@ class MemoryViewRouter:
 
         Args:
             memory_id: Memory ID.
+            zone_id: Zone ID for zone isolation.
 
         Returns:
             MemoryModel or None if not found.
         """
         stmt = select(MemoryModel).where(MemoryModel.memory_id == memory_id)
+        if zone_id is not None:
+            stmt = stmt.where(MemoryModel.zone_id == zone_id)
         return self.session.execute(stmt).scalar_one_or_none()
 
     def query_memories(

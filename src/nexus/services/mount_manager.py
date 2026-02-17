@@ -109,8 +109,10 @@ class MountManager:
             ... )
         """
         with self._session_factory() as session:
-            # Check if mount already exists
+            # Check if mount already exists (zone-scoped)
             stmt = select(MountConfigModel).where(MountConfigModel.mount_point == mount_point)
+            if zone_id is not None:
+                stmt = stmt.where(MountConfigModel.zone_id == zone_id)
             existing = session.execute(stmt).scalar_one_or_none()
 
             if existing:
@@ -147,6 +149,7 @@ class MountManager:
         priority: int | None = None,
         readonly: bool | None = None,
         description: str | None = None,
+        zone_id: str | None = None,
     ) -> bool:
         """Update an existing mount configuration.
 
@@ -169,6 +172,8 @@ class MountManager:
         """
         with self._session_factory() as session:
             stmt = select(MountConfigModel).where(MountConfigModel.mount_point == mount_point)
+            if zone_id is not None:
+                stmt = stmt.where(MountConfigModel.zone_id == zone_id)
             mount_model = session.execute(stmt).scalar_one_or_none()
 
             if not mount_model:
@@ -194,7 +199,7 @@ class MountManager:
 
             return True
 
-    def get_mount(self, mount_point: str) -> dict | None:
+    def get_mount(self, mount_point: str, zone_id: str | None = None) -> dict | None:
         """Get a mount configuration from database.
 
         Args:
@@ -211,6 +216,8 @@ class MountManager:
         """
         with self._session_factory() as session:
             stmt = select(MountConfigModel).where(MountConfigModel.mount_point == mount_point)
+            if zone_id is not None:
+                stmt = stmt.where(MountConfigModel.zone_id == zone_id)
             mount_model = session.execute(stmt).scalar_one_or_none()
 
             if not mount_model:
@@ -283,7 +290,7 @@ class MountManager:
                 for m in results
             ]
 
-    def remove_mount(self, mount_point: str) -> bool:
+    def remove_mount(self, mount_point: str, zone_id: str | None = None) -> bool:
         """Remove a mount configuration from database.
 
         Args:
@@ -298,6 +305,8 @@ class MountManager:
         """
         with self._session_factory() as session:
             stmt = select(MountConfigModel).where(MountConfigModel.mount_point == mount_point)
+            if zone_id is not None:
+                stmt = stmt.where(MountConfigModel.zone_id == zone_id)
             mount_model = session.execute(stmt).scalar_one_or_none()
 
             if not mount_model:

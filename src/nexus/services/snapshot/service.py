@@ -107,7 +107,7 @@ class TransactionalSnapshotService:
         Args:
             session_factory: SQLAlchemy session factory for DB persistence.
             cas_store: CASBlobStore for hold_reference/release.
-            metadata_store: FileMetadataProtocol for reading current file state.
+            metadata_store: MetastoreABC for reading current file state.
         """
         self._session_factory = session_factory
         self._cas_store = cas_store
@@ -397,7 +397,7 @@ class TransactionalSnapshotService:
     @staticmethod
     def _restore_metadata_from_snapshot(path: str, original_hash: str, metadata_json: str) -> Any:
         """Build a FileMetadata from a JSON snapshot (used during rollback)."""
-        from nexus.core._metadata_generated import FileMetadata
+        from nexus.core.metadata import FileMetadata
 
         meta_dict = json.loads(metadata_json)
         return FileMetadata(

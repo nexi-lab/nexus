@@ -1,6 +1,6 @@
 """Federated metadata proxy for cross-zone DT_MOUNT traversal.
 
-Implements FileMetadataProtocol and routes each operation to the
+Implements MetastoreABC and routes each operation to the
 correct zone's RaftMetadataStore via ZonePathResolver.
 
 Usage:
@@ -22,7 +22,8 @@ from collections.abc import Iterator, Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
-from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol, PaginatedResult
+from nexus.core.metadata import FileMetadata, PaginatedResult
+from nexus.core.metastore import MetastoreABC
 from nexus.raft.zone_manager import ROOT_ZONE_ID
 
 if TYPE_CHECKING:
@@ -32,7 +33,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class FederatedMetadataProxy(FileMetadataProtocol):
+class FederatedMetadataProxy(MetastoreABC):
     """Proxy that routes metadata operations across zones via DT_MOUNT.
 
     Transparent to callers — all paths are in the global namespace.
@@ -121,7 +122,7 @@ class FederatedMetadataProxy(FileMetadataProtocol):
         return replace(metadata, path=resolved.path)
 
     # =========================================================================
-    # FileMetadataProtocol — abstract methods
+    # MetastoreABC — abstract methods
     # =========================================================================
 
     def get(self, path: str) -> FileMetadata | None:

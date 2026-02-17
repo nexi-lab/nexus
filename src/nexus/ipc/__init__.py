@@ -37,6 +37,7 @@ from nexus.ipc.exceptions import (
     MessageExpiredError,
 )
 from nexus.ipc.provisioning import AgentProvisioner
+from nexus.ipc.signing import MessageSigner, MessageVerifier, SigningMode, VerifyResult
 from nexus.ipc.storage.cross_zone_driver import CrossZoneStorageDriver
 from nexus.ipc.sweep import TTLSweeper
 
@@ -57,6 +58,11 @@ __all__ = [
     "DeliveryMode",
     "MessageSender",
     "MessageProcessor",
+    # Signing (#1729)
+    "MessageSigner",
+    "MessageVerifier",
+    "SigningMode",
+    "VerifyResult",
     # Cross-zone
     "CrossZoneStorageDriver",
     # Discovery

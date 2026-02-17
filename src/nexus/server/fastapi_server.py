@@ -567,13 +567,22 @@ async def lifespan(_app: FastAPI) -> Any:
                 entropy_alpha=float(os.getenv("NEXUS_ENTROPY_ALPHA", "0.5")),
             )
 
-            _app.state.search_daemon = SearchDaemon(config)
+            # Inject async_session_factory from RecordStoreABC (Issue #615)
+            _record_store = getattr(_app.state.nexus_fs, "_record_store", None)
+            _async_sf = None
+            if _record_store is not None:
+                with suppress(Exception):
+                    _async_sf = _record_store.async_session_factory
+
+            _app.state.search_daemon = SearchDaemon(config, async_session_factory=_async_sf)
             await _app.state.search_daemon.startup()
             _app.state.search_daemon_enabled = True
             set_search_daemon(_app.state.search_daemon)
 
-            # Set NexusFS reference for index refresh (Issue #1024)
-            _app.state.search_daemon._nexus_fs = _app.state.nexus_fs
+            # Issue #1520: Set FileReaderProtocol for index refresh
+            from nexus.factory import _NexusFSFileReader
+
+            _app.state.search_daemon._file_reader = _NexusFSFileReader(_app.state.nexus_fs)
 
             stats = _app.state.search_daemon.get_stats()
             logger.info(

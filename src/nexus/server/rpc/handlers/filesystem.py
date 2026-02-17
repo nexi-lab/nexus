@@ -190,22 +190,6 @@ async def handle_read_async(nexus_fs: NexusFS, params: Any, context: Any) -> byt
     return parsed_content
 
 
-def handle_read(nexus_fs: NexusFS, params: Any, context: Any) -> bytes | dict[str, Any]:
-    """Handle read method (sync version - kept for compatibility)."""
-    kwargs: dict[str, Any] = {"context": context}
-    if hasattr(params, "return_metadata") and params.return_metadata is not None:
-        kwargs["return_metadata"] = params.return_metadata
-    if hasattr(params, "parsed") and params.parsed is not None:
-        kwargs["parsed"] = params.parsed
-
-    result = nexus_fs.read(params.path, **kwargs)
-    if isinstance(result, bytes):
-        return result
-    if isinstance(result, dict):
-        result = unscope_internal_dict(result, ["path", "virtual_path"])
-    return result
-
-
 # ---------------------------------------------------------------------------
 # Write / mutate handlers
 # ---------------------------------------------------------------------------

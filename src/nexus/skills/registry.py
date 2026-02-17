@@ -8,8 +8,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from nexus.skills.exceptions import (
+    SkillDependencyError,
+    SkillNotFoundError,
     SkillPermissionDeniedError,
-    SkillValidationError,
 )
 from nexus.skills.models import Skill, SkillMetadata
 from nexus.skills.parser import SkillParseError, SkillParser
@@ -20,18 +21,6 @@ if TYPE_CHECKING:
     from nexus.rebac.manager import ReBACManager
 
 logger = logging.getLogger(__name__)
-
-
-class SkillNotFoundError(SkillValidationError):
-    """Raised when a skill is not found in the registry."""
-
-    pass
-
-
-class SkillDependencyError(SkillValidationError):
-    """Raised when skill dependencies cannot be resolved."""
-
-    pass
 
 
 class SkillRegistry:

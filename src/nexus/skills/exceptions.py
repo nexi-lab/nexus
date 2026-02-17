@@ -60,3 +60,9 @@ class SkillParseError(SkillValidationError):
     """Raised when parsing a SKILL.md file fails."""
 
     pass
+
+
+class SkillImportError(SkillValidationError):
+    """Raised when skill import fails."""
+
+    pass

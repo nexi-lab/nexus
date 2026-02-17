@@ -269,7 +269,7 @@ async def create_delegation(
             intent=body.intent,
             can_sub_delegate=body.can_sub_delegate,
             scope=scope,
-            min_trust_score=request.min_trust_score,
+            min_trust_score=body.min_trust_score,
         )
     except Exception as e:
         _handle_delegation_error(e)

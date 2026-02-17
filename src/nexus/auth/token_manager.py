@@ -357,10 +357,10 @@ class TokenManager:
                             # Reuse detection: if the old hash is already in history,
                             # another caller already rotated it — our copy is stale
                             if old_refresh_hash and self._rotation_store.detect_reuse(
-                                session, model.token_family_id, old_refresh_hash
+                                session, model.token_family_id, old_refresh_hash, zone_id=zone_id
                             ):
                                 count = self._rotation_store.invalidate_family(
-                                    session, model.token_family_id
+                                    session, model.token_family_id, zone_id=zone_id
                                 )
                                 session.commit()
                                 await self._invalidate_cache(provider, user_email, zone_id)
@@ -471,16 +471,16 @@ class TokenManager:
 
             return credential.access_token
 
-    def detect_reuse(self, token_family_id: str, refresh_token_hash: str) -> bool:
+    def detect_reuse(self, token_family_id: str, refresh_token_hash: str, zone_id: str | None = None) -> bool:
         """Check if a refresh token hash exists in the rotation history.
 
         If it does, the token was already rotated out and this is a
         replay attack.  Returns True if reuse is detected.
         """
         with self.SessionLocal() as session:
-            return self._rotation_store.detect_reuse(session, token_family_id, refresh_token_hash)
+            return self._rotation_store.detect_reuse(session, token_family_id, refresh_token_hash, zone_id=zone_id)
 
-    def invalidate_family(self, token_family_id: str) -> int:
+    def invalidate_family(self, token_family_id: str, zone_id: str | None = None) -> int:
         """Invalidate all credentials in a token family.
 
         Called when token reuse is detected.  Revokes all credentials
@@ -490,7 +490,7 @@ class TokenManager:
             Number of credentials revoked.
         """
         with self.SessionLocal() as session:
-            count = self._rotation_store.invalidate_family(session, token_family_id)
+            count = self._rotation_store.invalidate_family(session, token_family_id, zone_id=zone_id)
             session.commit()
 
             if count > 0:

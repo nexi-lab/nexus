@@ -351,8 +351,8 @@ async def get_reputation_context(
     )
 
     # Prefer singleton from lifespan DI (#1619)
-    app_state = _get_app_state()
-    reputation_service = getattr(app_state, "reputation_service", None)
+    # TODO(#1619): wire app_state via FastAPI dependency injection
+    reputation_service: Any = None
     if reputation_service is None:
         reputation_service = ReputationService(
             session_factory=session_factory,

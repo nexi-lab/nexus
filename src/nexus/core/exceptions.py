@@ -66,6 +66,22 @@ class NexusError(Exception):
         return self.message
 
 
+class BootError(NexusError):
+    """Fatal boot-time error — a kernel-tier service failed to initialize.
+
+    Raised when a service required for NexusFS boot cannot be constructed.
+    This is an unexpected error — indicates a misconfiguration or missing
+    dependency that prevents the system from starting.
+    """
+
+    is_expected = False  # Fatal boot failure
+
+    def __init__(self, message: str, *, tier: str = "kernel", service_name: str = "") -> None:
+        super().__init__(message)
+        self.tier = tier
+        self.service_name = service_name
+
+
 class NexusFileNotFoundError(NexusError, FileNotFoundError):
     """Raised when a file or directory does not exist.
 

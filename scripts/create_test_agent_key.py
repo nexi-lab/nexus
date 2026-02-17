@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
-from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 from nexus.storage.models import APIKeyModel
 
 

@@ -19,9 +19,9 @@ from sqlalchemy.orm import Session
 
 from nexus.core.permissions import OperationContext, Permission
 from nexus.core.temporal import parse_datetime, validate_temporal_params
+from nexus.rebac.entity_registry import EntityRegistry
+from nexus.rebac.memory_permission_enforcer import MemoryPermissionEnforcer
 from nexus.services.memory.memory_router import MemoryViewRouter
-from nexus.services.permissions.entity_registry import EntityRegistry
-from nexus.services.permissions.memory_permission_enforcer import MemoryPermissionEnforcer
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +125,7 @@ class Memory:
         # Initialize ReBAC manager for permission checks
         from sqlalchemy import Engine
 
-        from nexus.services.permissions.rebac_manager_enhanced import EnhancedReBACManager
+        from nexus.rebac.manager import EnhancedReBACManager
 
         bind = session.get_bind()
         assert isinstance(bind, Engine), "Expected Engine, got Connection"

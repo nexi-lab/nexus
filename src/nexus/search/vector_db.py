@@ -81,6 +81,7 @@ class VectorDatabase:
             "vec_enabled": self.vec_available,
             "bm25_enabled": self.bm25_available,
             "db_type": self.db_type,
+            "initialized": self._initialized,
         }
 
     def initialize(self) -> None:
@@ -400,16 +401,3 @@ class VectorDatabase:
             limit=limit,
             id_key="chunk_id",
         )
-
-    def get_stats(self) -> dict[str, Any]:
-        """Return diagnostic statistics about the vector database.
-
-        Returns:
-            Dict with database type, extension availability, and init state.
-        """
-        return {
-            "db_type": self.db_type,
-            "vec_enabled": self.vec_available,
-            "bm25_enabled": self.bm25_available,
-            "initialized": self._initialized,
-        }

@@ -78,9 +78,12 @@ class DisputeService(SessionMixin):
             raise ValueError(msg)
 
         with self._get_session() as session:
-            # Check for existing dispute
+            # Check for existing dispute (zone-scoped)
             existing = session.execute(
-                select(DisputeModel).where(DisputeModel.exchange_id == exchange_id)
+                select(DisputeModel).where(
+                    DisputeModel.exchange_id == exchange_id,
+                    DisputeModel.zone_id == zone_id,
+                )
             ).scalar_one_or_none()
 
             if existing is not None:
@@ -179,16 +182,23 @@ class DisputeService(SessionMixin):
             session.flush()
             return self._model_to_record(model)
 
-    def get_dispute(self, dispute_id: str) -> DisputeRecord | None:
+    def get_dispute(
+        self, dispute_id: str, zone_id: str | None = None,
+    ) -> DisputeRecord | None:
         """Get a dispute by ID.
+
+        Args:
+            dispute_id: Dispute to look up.
+            zone_id: Optional zone scope for federation isolation.
 
         Returns:
             DisputeRecord or None if not found.
         """
         with self._get_session() as session:
-            model = session.execute(
-                select(DisputeModel).where(DisputeModel.id == dispute_id)
-            ).scalar_one_or_none()
+            stmt = select(DisputeModel).where(DisputeModel.id == dispute_id)
+            if zone_id is not None:
+                stmt = stmt.where(DisputeModel.zone_id == zone_id)
+            model = session.execute(stmt).scalar_one_or_none()
 
             if model is None:
                 return None

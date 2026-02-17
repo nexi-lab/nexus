@@ -381,7 +381,9 @@ def get_dispute(
     """Get dispute status by ID."""
     _reputation_service, dispute_service, _auth_ctx = deps
 
-    dispute = dispute_service.get_dispute(dispute_id)
+    dispute = dispute_service.get_dispute(
+        dispute_id, zone_id=_auth_ctx.get("zone_id"),
+    )
     if dispute is None:
         raise HTTPException(status_code=404, detail="Dispute not found")
 

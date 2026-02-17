@@ -131,7 +131,7 @@ class ReputationProtocol(Protocol):
         """
         ...
 
-    def get_dispute(self, dispute_id: str) -> Any | None:
+    def get_dispute(self, dispute_id: str, zone_id: str | None = None) -> Any | None:
         """Get a dispute by ID.
 
         Returns:

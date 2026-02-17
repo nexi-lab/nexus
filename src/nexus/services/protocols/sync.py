@@ -10,12 +10,11 @@ References:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from nexus.core.permissions import OperationContext
 
 # Type alias matching the service's ProgressCallback

@@ -26,9 +26,11 @@ if TYPE_CHECKING:
 
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from nexus.services.governance.anomaly_service import AnomalyService
-    from nexus.services.governance.collusion_service import CollusionService
-    from nexus.services.governance.governance_graph_service import GovernanceGraphService
+    from nexus.services.governance.protocols import (
+        AnomalyServiceProtocol,
+        CollusionServiceProtocol,
+        GovernanceGraphProtocol,
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -50,9 +52,9 @@ class ResponseService:
     def __init__(
         self,
         session_factory: Callable[[], AsyncSession],
-        anomaly_service: AnomalyService | None = None,
-        collusion_service: CollusionService | None = None,
-        graph_service: GovernanceGraphService | None = None,
+        anomaly_service: AnomalyServiceProtocol | None = None,
+        collusion_service: CollusionServiceProtocol | None = None,
+        graph_service: GovernanceGraphProtocol | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._anomaly_service = anomaly_service

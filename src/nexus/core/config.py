@@ -13,12 +13,14 @@ Note: ``CacheConfig`` configures the kernel's **in-memory LRU caches**
 """
 
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nexus.constants import DEFAULT_NATS_URL
 from nexus.core.cache_invalidation import CacheInvalidationObserver
-from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
-from nexus.workflows.protocol import WorkflowProtocol
+
+if TYPE_CHECKING:
+    from nexus.services.protocols.namespace_manager import NamespaceManagerProtocol
+    from nexus.workflows.protocol import WorkflowProtocol
 
 # ---------------------------------------------------------------------------
 # Config dataclasses (frozen — immutable, use dataclasses.replace() to copy)
@@ -136,7 +138,7 @@ class KernelServices:
     # --- Tier 2: BRICK — infrastructure ---
     event_bus: Any = None
     lock_manager: Any = None
-    workflow_engine: WorkflowProtocol | None = None
+    workflow_engine: "WorkflowProtocol | None" = None
 
     # Auth services — injected from server layer (Issue #1519, 3A)
     api_key_creator: Any = None  # APIKeyCreatorProtocol
@@ -153,7 +155,7 @@ class KernelServices:
 
     # --- Tier 1: SYSTEM — kernel protocol services (Issue #1502) ---
     agent_registry: Any = None
-    namespace_manager: NamespaceManagerProtocol | None = None
+    namespace_manager: "NamespaceManagerProtocol | None" = None
     async_agent_registry: Any = None
     async_namespace_manager: Any = None
     async_vfs_router: Any = None

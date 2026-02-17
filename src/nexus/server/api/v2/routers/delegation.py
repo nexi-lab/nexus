@@ -34,43 +34,33 @@ def _get_require_auth() -> Any:
 
 
 def _get_delegation_service(request: Request) -> Any:
-    """Lazily construct DelegationService from app state."""
+    """Lazily construct DelegationService from app state.
+
+    All dependencies come from ``app.state`` which is populated during
+    server startup (``fastapi_server.py`` + lifespan helpers).  No
+    NexusFS private attribute access (Issue #701).
+    """
     state = request.app.state
     cached = getattr(state, "_delegation_service", None)
     if cached is not None:
         return cached
 
-    # Construct from available components
-    session_factory = getattr(state, "session_factory", None) or getattr(
-        getattr(state, "nexus_fs", None), "SessionLocal", None
-    )
+    session_factory = getattr(state, "session_factory", None)
     if session_factory is None:
         raise HTTPException(status_code=503, detail="Session factory not available")
 
-    rebac_manager = getattr(state, "rebac_manager", None) or getattr(
-        getattr(state, "nexus_fs", None), "_rebac_manager", None
-    )
+    rebac_manager = getattr(state, "rebac_manager", None)
     if rebac_manager is None:
         raise HTTPException(status_code=503, detail="ReBAC manager not available")
-
-    namespace_manager = getattr(state, "namespace_manager", None) or getattr(
-        getattr(state, "nexus_fs", None), "_namespace_manager", None
-    )
-    entity_registry = getattr(state, "entity_registry", None) or getattr(
-        getattr(state, "nexus_fs", None), "_entity_registry", None
-    )
-    agent_registry = getattr(state, "agent_registry", None) or getattr(
-        getattr(state, "nexus_fs", None), "_agent_registry", None
-    )
 
     from nexus.services.delegation.service import DelegationService
 
     service = DelegationService(
         session_factory=session_factory,
         rebac_manager=rebac_manager,
-        namespace_manager=namespace_manager,
-        entity_registry=entity_registry,
-        agent_registry=agent_registry,
+        namespace_manager=getattr(state, "namespace_manager", None),
+        entity_registry=getattr(state, "entity_registry", None),
+        agent_registry=getattr(state, "agent_registry", None),
     )
     state._delegation_service = service
     return service

@@ -69,7 +69,7 @@ def grep_bulk(
             pattern, file_contents, ignore_case, max_results
         )
         return result
-    except Exception:
+    except (OSError, ValueError, RuntimeError):
         # If Rust grep fails for any reason, return None to fallback to Python
         return None
 
@@ -127,6 +127,6 @@ def grep_files_mmap(
             pattern, file_paths, ignore_case, max_results
         )
         return result
-    except Exception:
+    except (OSError, ValueError, RuntimeError):
         # If Rust grep fails for any reason, return None to fallback
         return None

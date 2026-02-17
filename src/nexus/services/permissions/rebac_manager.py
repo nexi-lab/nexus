@@ -23,7 +23,7 @@ from nexus.core.rebac import (
     Entity,
     NamespaceConfig,
 )
-from nexus.services.permissions.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
+from nexus.rebac.cross_zone import CROSS_ZONE_ALLOWED_RELATIONS
 from nexus.services.permissions.default_namespaces import (
     DEFAULT_FILE_NAMESPACE,
     DEFAULT_GROUP_NAMESPACE,

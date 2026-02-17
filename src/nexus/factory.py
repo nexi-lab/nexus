@@ -81,6 +81,7 @@ class _BootContext:
     backend: Any
     router: Any
     engine: Any
+    read_engine: Any  # Read replica engine (Issue #725); same as engine when no replica
     session_factory: Any
     perm: Any  # PermissionConfig
     cache_ttl_seconds: int | None
@@ -297,12 +298,16 @@ def create_record_store(
     db_path: str | None = None,
     create_tables: bool = True,
 ) -> RecordStoreABC:
-    """Create a RecordStore with Cloud SQL support auto-detected from env.
+    """Create a RecordStore with Cloud SQL and read replica support auto-detected from env.
 
     When the ``CLOUD_SQL_INSTANCE`` environment variable is set, the
     Cloud SQL Python Connector is used for IAM-authenticated connections
     (no passwords, no public IP).  Otherwise, the standard URL-based
     connection path is used.
+
+    Read replica support (Issue #725):
+    - ``NEXUS_READ_REPLICA_URL``: Standard read replica connection string
+    - ``CLOUD_SQL_READ_INSTANCE``: Cloud SQL read replica instance
 
     Args:
         db_url: Explicit database URL. Falls back to env vars.
@@ -317,6 +322,8 @@ def create_record_store(
 
     from nexus.storage.record_store import SQLAlchemyRecordStore
 
+    read_replica_url = os.getenv("NEXUS_READ_REPLICA_URL")
+
     cloud_sql_instance = os.getenv("CLOUD_SQL_INSTANCE")
     if cloud_sql_instance:
         from nexus.storage.cloud_sql import create_cloud_sql_creators
@@ -326,17 +333,37 @@ def create_record_store(
             db_user=os.getenv("CLOUD_SQL_USER", "nexus"),
             db_name=os.getenv("CLOUD_SQL_DB", "nexus"),
         )
+
+        # Cloud SQL read replica support (Issue #725)
+        read_replica_creator = None
+        async_read_replica_creator = None
+        cloud_sql_read_instance = os.getenv("CLOUD_SQL_READ_INSTANCE")
+        if cloud_sql_read_instance:
+            read_sync, read_async = create_cloud_sql_creators(
+                instance_connection_name=cloud_sql_read_instance,
+                db_user=os.getenv("CLOUD_SQL_USER", "nexus"),
+                db_name=os.getenv("CLOUD_SQL_DB", "nexus"),
+            )
+            read_replica_creator = read_sync
+            async_read_replica_creator = read_async
+            # Use placeholder URL for read replica engine
+            read_replica_url = read_replica_url or "postgresql://"
+
         return SQLAlchemyRecordStore(
             db_url=db_url or "postgresql://",  # placeholder, creator overrides
             create_tables=create_tables,
             creator=sync_creator,
             async_creator=async_creator,
+            read_replica_url=read_replica_url,
+            read_replica_creator=read_replica_creator,
+            async_read_replica_creator=async_read_replica_creator,
         )
 
     return SQLAlchemyRecordStore(
         db_url=db_url,
         db_path=db_path,
         create_tables=create_tables,
+        read_replica_url=read_replica_url,
     )
 
 
@@ -365,6 +392,7 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
             enforce_zone_isolation=ctx.perm.enforce_zone_isolation,
             enable_graph_limits=True,
             enable_tiger_cache=ctx.perm.enable_tiger_cache,
+            read_engine=ctx.read_engine,
         )
 
         # --- Circuit Breaker for ReBAC DB Resilience (Issue #726) ---
@@ -601,9 +629,13 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
         from nexus.core.config import ObservabilityConfig
         from nexus.services.subsystems.observability_subsystem import ObservabilitySubsystem
 
+        # Instrument both primary and replica pools (Issue #725)
+        obs_engines = [ctx.engine]
+        if ctx.record_store.has_read_replica:
+            obs_engines.append(ctx.read_engine)
         observability_subsystem = ObservabilitySubsystem(
             config=ObservabilityConfig(),
-            engines=[ctx.engine],
+            engines=obs_engines,
         )
     except Exception as exc:
         logger.warning("[BOOT:SYSTEM] ObservabilitySubsystem unavailable: %s", exc)
@@ -986,6 +1018,7 @@ def create_nexus_services(
         backend=backend,
         router=router,
         engine=record_store.engine,
+        read_engine=record_store.read_engine,
         session_factory=record_store.session_factory,
         perm=perm,
         cache_ttl_seconds=cache_cfg.ttl_seconds,

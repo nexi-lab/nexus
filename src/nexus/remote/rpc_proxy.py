@@ -18,42 +18,16 @@ from nexus.remote.method_registry import METHOD_REGISTRY, MethodSpec
 
 logger = logging.getLogger(__name__)
 
-# Set of attribute names that should NOT be intercepted by __getattr__.
-# These are either Python internals or attributes managed by the class itself.
+# Public attribute names that should NOT be intercepted by __getattr__.
+# Private/dunder attrs are already excluded by the ``name.startswith("_")``
+# check in __getattr__, so only public instance attrs need listing here.
 _INTERNAL_ATTRS = frozenset(
     {
-        # Python internals
-        "__class__",
-        "__dict__",
-        "__doc__",
-        "__module__",
-        "__weakref__",
-        # Pickle / copy
-        "__getstate__",
-        "__setstate__",
-        "__reduce__",
-        "__reduce_ex__",
-        "__copy__",
-        "__deepcopy__",
-        # Class inspection
-        "__abstractmethods__",
-        "__subclasshook__",
-        # Instance attributes set in __init__
         "server_url",
         "api_key",
         "timeout",
         "connect_timeout",
         "session",
-        "_client",
-        "_zone_id",
-        "_agent_id",
-        "_negative_bloom",
-        "_negative_cache_capacity",
-        "_negative_cache_fp_rate",
-        "_memory_api",
-        "_semantic_search",
-        "_initialized",
-        "_llm_service_instance",
         "max_retries",
     }
 )

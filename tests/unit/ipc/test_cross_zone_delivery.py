@@ -135,22 +135,16 @@ class FakePermissionChecker:
 # ── Fixtures ───────────────────────────────────────────────────────────
 
 
-def _provision_inbox(storage: InMemoryStorageDriver, agent_id: str, zone_id: str) -> None:
-    """Synchronously set up inbox/outbox/dead_letter dirs for an agent."""
-    import asyncio
-
-    async def _setup() -> None:
-        await storage.mkdir(f"/agents/{agent_id}", zone_id)
-        await storage.mkdir(f"/agents/{agent_id}/inbox", zone_id)
-        await storage.mkdir(f"/agents/{agent_id}/outbox", zone_id)
-        await storage.mkdir(f"/agents/{agent_id}/processed", zone_id)
-        await storage.mkdir(f"/agents/{agent_id}/dead_letter", zone_id)
-
-    asyncio.get_event_loop().run_until_complete(_setup())
+async def _provision_agent(
+    storage: InMemoryStorageDriver, agent_id: str, zone_id: str
+) -> None:
+    """Set up IPC directory structure for an agent in the given zone."""
+    for subdir in ("inbox", "outbox", "processed", "dead_letter"):
+        await storage.mkdir(f"/agents/{agent_id}/{subdir}", zone_id)
 
 
 @pytest.fixture()
-def setup():
+async def setup():
     """Build a two-zone test environment with CrossZoneStorageDriver."""
     storage = InMemoryStorageDriver()
     registry = FakeAgentRegistry()
@@ -166,15 +160,8 @@ def setup():
     registry.add("agent-b", zone_b)
 
     # Provision inboxes in their respective zones
-    import asyncio
-
-    loop = asyncio.get_event_loop()
-    for agent_id, zone_id in [("agent-a", zone_a), ("agent-b", zone_b)]:
-        loop.run_until_complete(storage.mkdir(f"/agents/{agent_id}", zone_id))
-        loop.run_until_complete(storage.mkdir(f"/agents/{agent_id}/inbox", zone_id))
-        loop.run_until_complete(storage.mkdir(f"/agents/{agent_id}/outbox", zone_id))
-        loop.run_until_complete(storage.mkdir(f"/agents/{agent_id}/processed", zone_id))
-        loop.run_until_complete(storage.mkdir(f"/agents/{agent_id}/dead_letter", zone_id))
+    await _provision_agent(storage, "agent-a", zone_a)
+    await _provision_agent(storage, "agent-b", zone_b)
 
     cross_zone = CrossZoneStorageDriver(
         inner=storage,

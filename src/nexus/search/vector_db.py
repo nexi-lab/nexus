@@ -75,6 +75,15 @@ class VectorDatabase:
         self.bm25_available = False  # Set to True if pg_textsearch BM25 is available
         self._sqlite_vec_loaded = False  # Track if we've set up the event listener
 
+    def get_stats(self) -> dict[str, Any]:
+        """Return statistics about the vector database."""
+        return {
+            "vec_enabled": self.vec_available,
+            "bm25_enabled": self.bm25_available,
+            "db_type": self.db_type,
+            "initialized": self._initialized,
+        }
+
     def initialize(self) -> None:
         """Initialize vector extensions and create FTS tables."""
         if self._initialized:
@@ -283,14 +292,14 @@ class VectorDatabase:
             List of results if BM25S succeeded, None to fall back to FTS
         """
         try:
-            from nexus.search.bm25s_search import get_bm25s_index, is_bm25s_available
+            from nexus.search.bm25s_search import BM25SIndex, is_bm25s_available
         except ImportError:
             return None
 
         if not is_bm25s_available():
             return None
 
-        index = get_bm25s_index()
+        index = BM25SIndex.get_instance()
 
         # Check if index is initialized and has documents (Issue #1520)
         if not _run_sync(index.initialize()):
@@ -392,16 +401,3 @@ class VectorDatabase:
             limit=limit,
             id_key="chunk_id",
         )
-
-    def get_stats(self) -> dict[str, Any]:
-        """Return diagnostic statistics about the vector database.
-
-        Returns:
-            Dict with database type, extension availability, and init state.
-        """
-        return {
-            "db_type": self.db_type,
-            "vec_enabled": self.vec_available,
-            "bm25_enabled": self.bm25_available,
-            "initialized": self._initialized,
-        }

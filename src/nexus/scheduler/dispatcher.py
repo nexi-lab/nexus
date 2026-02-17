@@ -41,11 +41,12 @@ class TaskDispatcher:
     def __init__(
         self,
         scheduler_service: SchedulerService,
-        db_dsn: str = "",
         poll_interval: int = 30,
+        *,
+        record_store: Any | None = None,
     ) -> None:
         self._scheduler = scheduler_service
-        self._dsn = db_dsn
+        self._record_store = record_store
         self._poll_interval = poll_interval
         self._running = False
         self._task_group_task: asyncio.Task[None] | None = None
@@ -84,7 +85,7 @@ class TaskDispatcher:
                 tg.create_task(self._dispatch_loop())
                 tg.create_task(self._aging_loop())
                 tg.create_task(self._starvation_loop())
-                if self._dsn:
+                if self._record_store is not None:
                     tg.create_task(self._listen_loop())
         except* asyncio.CancelledError:
             logger.info("Dispatcher TaskGroup cancelled")
@@ -155,21 +156,34 @@ class TaskDispatcher:
             await asyncio.sleep(_STARVATION_CHECK_INTERVAL)
 
     async def _listen_loop(self) -> None:
-        """LISTEN for task_enqueued notifications."""
-        try:
-            import asyncpg
+        """LISTEN for task_enqueued notifications via RecordStoreABC (Issue #608).
 
-            conn = await asyncpg.connect(self._dsn)
-            try:
-                await conn.add_listener("task_enqueued", self._on_notification)
+        Uses the async engine from RecordStoreABC to obtain a dedicated raw
+        connection for PostgreSQL LISTEN/NOTIFY. A long-lived connection is
+        required because LISTEN subscriptions are per-connection.
+        """
+        if self._record_store is None:
+            return
+
+        try:
+            engine = self._record_store._async_engine
+            if engine is None:
+                # Trigger lazy async engine creation
+                _ = self._record_store.async_session_factory
+                engine = self._record_store._async_engine
+            if engine is None:
+                logger.warning("No async engine available, using poll-only mode")
+                return
+
+            # Acquire a raw connection from the async engine for LISTEN
+            async with engine.connect() as sa_conn:
+                raw = await sa_conn.get_raw_connection()
+                driver_conn = raw.driver_connection
+                await driver_conn.add_listener("task_enqueued", self._on_notification)
                 logger.info("Listening for task_enqueued notifications")
 
                 while self._running:
                     await asyncio.sleep(1)
-            finally:
-                await conn.close()
-        except ImportError:
-            logger.warning("asyncpg not available, using poll-only mode")
         except Exception:
             logger.exception("LISTEN connection failed, falling back to polling")
 

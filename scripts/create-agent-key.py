@@ -111,7 +111,7 @@ Agent Identity System (v0.5.0):
 
         if args.with_key:
             # Create API key via DatabaseAPIKeyAuth directly
-            from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+            from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
 
             session = SessionFactory()
             try:

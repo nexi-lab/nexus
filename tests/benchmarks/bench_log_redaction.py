@@ -10,7 +10,7 @@ import logging
 
 import pytest
 
-from nexus.core.logging_utils import RedactingFormatter, redact_text
+from nexus.server.logging_processors import RedactingFormatter, redact_text
 
 # --- Test data ---
 

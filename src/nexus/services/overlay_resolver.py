@@ -24,7 +24,8 @@ from cachetools import LRUCache
 from nexus.core.workspace_manifest import ManifestEntry, WorkspaceManifest
 
 if TYPE_CHECKING:
-    from nexus.core._metadata_generated import FileMetadata, FileMetadataProtocol
+    from nexus.core.metadata import FileMetadata
+    from nexus.core.metastore import MetastoreABC
     from nexus.core.protocols.connector import ConnectorProtocol
 
 logger = logging.getLogger(__name__)
@@ -101,7 +102,7 @@ class OverlayResolver:
 
     def __init__(
         self,
-        metadata: FileMetadataProtocol,
+        metadata: MetastoreABC,
         backend: ConnectorProtocol,
         *,
         max_cached_manifests: int = 256,
@@ -213,7 +214,7 @@ class OverlayResolver:
             path: Full absolute path to the file being deleted
             overlay_config: Overlay configuration for this workspace
         """
-        from nexus.core._metadata_generated import FileMetadata
+        from nexus.core.metadata import FileMetadata
 
         whiteout_meta = FileMetadata(
             path=path,
@@ -416,7 +417,7 @@ class OverlayResolver:
         Returns:
             FileMetadata pointing to the CAS content
         """
-        from nexus.core._metadata_generated import FileMetadata
+        from nexus.core.metadata import FileMetadata
 
         return FileMetadata(
             path=full_path,

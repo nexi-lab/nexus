@@ -91,7 +91,7 @@ def _create_test_app(mock_service: Any, auth_result: dict[str, Any]) -> FastAPI:
     from nexus.server.api.v2.routers.delegation import _get_require_auth
 
     app = FastAPI()
-    app.state._delegation_service = mock_service
+    app.state.delegation_service = mock_service
 
     # Get the actual auth dependency resolved at module load time
     actual_auth_dep = _get_require_auth()

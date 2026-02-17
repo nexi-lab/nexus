@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from collections.abc import Callable
 
-    from nexus.core._metadata_generated import FileMetadataProtocol
+    from nexus.core.metastore import MetastoreABC
     from nexus.core.permissions import OperationContext
     from nexus.core.router import PathRouter
     from nexus.rebac.async_permissions import AsyncPermissionEnforcer
@@ -89,7 +89,7 @@ class VersionService:
 
     def __init__(
         self,
-        metadata_store: FileMetadataProtocol,
+        metadata_store: MetastoreABC,
         cas_store: Any,  # Backend with read_content method
         permission_enforcer: AsyncPermissionEnforcer | None = None,
         router: PathRouter | None = None,

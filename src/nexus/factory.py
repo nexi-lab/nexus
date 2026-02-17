@@ -47,13 +47,13 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from nexus.backends.backend import Backend
-    from nexus.core._metadata_generated import FileMetadataProtocol
     from nexus.core.config import (
         CacheConfig,
         DistributedConfig,
         KernelServices,
         PermissionConfig,
     )
+    from nexus.core.metastore import MetastoreABC
     from nexus.core.nexus_fs import NexusFS
     from nexus.core.router import PathRouter
     from nexus.storage.record_store import RecordStoreABC
@@ -81,6 +81,7 @@ class _BootContext:
     backend: Any
     router: Any
     engine: Any
+    read_engine: Any  # Read replica engine (Issue #725); same as engine when no replica
     session_factory: Any
     perm: Any  # PermissionConfig
     cache_ttl_seconds: int | None
@@ -297,12 +298,16 @@ def create_record_store(
     db_path: str | None = None,
     create_tables: bool = True,
 ) -> RecordStoreABC:
-    """Create a RecordStore with Cloud SQL support auto-detected from env.
+    """Create a RecordStore with Cloud SQL and read replica support auto-detected from env.
 
     When the ``CLOUD_SQL_INSTANCE`` environment variable is set, the
     Cloud SQL Python Connector is used for IAM-authenticated connections
     (no passwords, no public IP).  Otherwise, the standard URL-based
     connection path is used.
+
+    Read replica support (Issue #725):
+    - ``NEXUS_READ_REPLICA_URL``: Standard read replica connection string
+    - ``CLOUD_SQL_READ_INSTANCE``: Cloud SQL read replica instance
 
     Args:
         db_url: Explicit database URL. Falls back to env vars.
@@ -317,6 +322,8 @@ def create_record_store(
 
     from nexus.storage.record_store import SQLAlchemyRecordStore
 
+    read_replica_url = os.getenv("NEXUS_READ_REPLICA_URL")
+
     cloud_sql_instance = os.getenv("CLOUD_SQL_INSTANCE")
     if cloud_sql_instance:
         from nexus.storage.cloud_sql import create_cloud_sql_creators
@@ -326,17 +333,37 @@ def create_record_store(
             db_user=os.getenv("CLOUD_SQL_USER", "nexus"),
             db_name=os.getenv("CLOUD_SQL_DB", "nexus"),
         )
+
+        # Cloud SQL read replica support (Issue #725)
+        read_replica_creator = None
+        async_read_replica_creator = None
+        cloud_sql_read_instance = os.getenv("CLOUD_SQL_READ_INSTANCE")
+        if cloud_sql_read_instance:
+            read_sync, read_async = create_cloud_sql_creators(
+                instance_connection_name=cloud_sql_read_instance,
+                db_user=os.getenv("CLOUD_SQL_USER", "nexus"),
+                db_name=os.getenv("CLOUD_SQL_DB", "nexus"),
+            )
+            read_replica_creator = read_sync
+            async_read_replica_creator = read_async
+            # Use placeholder URL for read replica engine
+            read_replica_url = read_replica_url or "postgresql://"
+
         return SQLAlchemyRecordStore(
             db_url=db_url or "postgresql://",  # placeholder, creator overrides
             create_tables=create_tables,
             creator=sync_creator,
             async_creator=async_creator,
+            read_replica_url=read_replica_url,
+            read_replica_creator=read_replica_creator,
+            async_read_replica_creator=async_read_replica_creator,
         )
 
     return SQLAlchemyRecordStore(
         db_url=db_url,
         db_path=db_path,
         create_tables=create_tables,
+        read_replica_url=read_replica_url,
     )
 
 
@@ -365,6 +392,7 @@ def _boot_kernel_services(ctx: _BootContext) -> dict[str, Any]:
             enforce_zone_isolation=ctx.perm.enforce_zone_isolation,
             enable_graph_limits=True,
             enable_tiger_cache=ctx.perm.enable_tiger_cache,
+            read_engine=ctx.read_engine,
         )
 
         # --- Circuit Breaker for ReBAC DB Resilience (Issue #726) ---
@@ -601,9 +629,13 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
         from nexus.core.config import ObservabilityConfig
         from nexus.services.subsystems.observability_subsystem import ObservabilitySubsystem
 
+        # Instrument both primary and replica pools (Issue #725)
+        obs_engines = [ctx.engine]
+        if ctx.record_store.has_read_replica:
+            obs_engines.append(ctx.read_engine)
         observability_subsystem = ObservabilitySubsystem(
             config=ObservabilityConfig(),
-            engines=[ctx.engine],
+            engines=obs_engines,
         )
     except Exception as exc:
         logger.warning("[BOOT:SYSTEM] ObservabilitySubsystem unavailable: %s", exc)
@@ -619,6 +651,32 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
     except Exception as exc:
         logger.warning("[BOOT:SYSTEM] ResiliencyManager unavailable: %s", exc)
 
+    # --- Context Branch Service (Issue #1315) ---
+    context_branch_service: Any = None
+    try:
+        from nexus.services.context_branch import ContextBranchService
+
+        context_branch_service = ContextBranchService(
+            workspace_manager=kernel["workspace_manager"],
+            session_factory=ctx.session_factory,
+            rebac_manager=kernel["rebac_manager"],
+            default_zone_id=ctx.zone_id,
+            default_agent_id=ctx.agent_id,
+        )
+        logger.debug("[BOOT:SYSTEM] ContextBranchService created")
+    except Exception as exc:
+        logger.warning("[BOOT:SYSTEM] ContextBranchService unavailable: %s", exc)
+
+    # --- Brick Lifecycle Manager (Issue #1704) ---
+    brick_lifecycle_manager: Any = None
+    try:
+        from nexus.services.brick_lifecycle import BrickLifecycleManager
+
+        brick_lifecycle_manager = BrickLifecycleManager()
+        logger.debug("[BOOT:SYSTEM] BrickLifecycleManager created")
+    except Exception as exc:
+        logger.warning("[BOOT:SYSTEM] BrickLifecycleManager unavailable: %s", exc)
+
     # TODO: EventLog, Hook, Scheduler services (not yet implemented)
 
     result = {
@@ -630,12 +688,40 @@ def _boot_system_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str
         "delivery_worker": delivery_worker,
         "observability_subsystem": observability_subsystem,
         "resiliency_manager": resiliency_manager,
+        "context_branch_service": context_branch_service,
+        "brick_lifecycle_manager": brick_lifecycle_manager,
     }
 
     elapsed = time.perf_counter() - t0
     active = sum(1 for v in result.values() if v is not None)
     logger.info("[BOOT:SYSTEM] %d/%d services ready (%.3fs)", active, len(result), elapsed)
     return result
+
+
+def _resolve_tasks_db_path(backend: Any) -> str:
+    """Resolve the fjall database path for TaskQueueService.
+
+    Priority:
+    1. NEXUS_TASKS_DB_PATH environment variable
+    2. NEXUS_DATA_DIR/tasks-db
+    3. backend.root_path/../tasks-db (alongside backend storage)
+    4. .nexus-data/tasks-db (fallback)
+    """
+    import os
+
+    env_path = os.environ.get("NEXUS_TASKS_DB_PATH")
+    if env_path:
+        return env_path
+
+    data_dir = os.environ.get("NEXUS_DATA_DIR")
+    if data_dir:
+        return os.path.join(data_dir, "tasks-db")
+
+    root_path = getattr(backend, "root_path", None)
+    if root_path is not None:
+        return os.path.join(str(root_path), "tasks-db")
+
+    return os.path.join(".nexus-data", "tasks-db")
 
 
 def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str, Any]:
@@ -658,15 +744,6 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
         logger.debug("[BOOT:BRICK] Search brick imports: %s", _search_status)
     except ImportError:
         logger.debug("[BOOT:BRICK] Search brick manifest not available")
-
-    # --- LLM Brick Import Validation (Issue #1521) ---
-    try:
-        from nexus.llm.manifest import verify_imports as _verify_llm
-
-        _llm_status = _verify_llm()
-        logger.debug("[BOOT:BRICK] LLM brick imports: %s", _llm_status)
-    except ImportError:
-        logger.debug("[BOOT:BRICK] LLM brick manifest not available")
 
     # Wire zoekt callbacks into backends (Issue #1520)
     try:
@@ -821,30 +898,29 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
     except ImportError:
         pass  # Server auth not available (e.g. embedded mode)
 
-    # --- RLM Inference Service (Issue #1306) ---
-    rlm_service: Any = None
+    # --- TransactionalSnapshotService (Issue #1752) ---
+    snapshot_service: Any = None
     try:
-        from nexus.rlm.service import RLMInferenceService
+        from nexus.services.snapshot.service import TransactionalSnapshotService
 
-        sandbox_mgr = kernel.get("sandbox_manager")
-        llm_provider = kernel.get("llm_provider")
-        if sandbox_mgr is not None:
-            import os
+        snapshot_service = TransactionalSnapshotService(
+            session_factory=ctx.session_factory,
+            cas_store=ctx.backend,
+            metadata_store=ctx.metadata_store,
+        )
+    except ImportError as _snap_exc:
+        logger.debug("[BOOT:BRICK] TransactionalSnapshotService unavailable: %s", _snap_exc)
 
-            rlm_service = RLMInferenceService(
-                sandbox_manager=sandbox_mgr,
-                llm_provider=llm_provider,
-                nexus_api_url=os.environ.get("NEXUS_API_URL", "http://localhost:2026"),
-                max_concurrent=int(os.environ.get("NEXUS_RLM_MAX_CONCURRENT", "8")),
-            )
-            logger.debug(
-                "[BOOT:BRICK] RLM inference service created (max_concurrent=%d)",
-                int(os.environ.get("NEXUS_RLM_MAX_CONCURRENT", "8")),
-            )
-        else:
-            logger.debug("[BOOT:BRICK] RLM skipped: sandbox_manager not available")
-    except ImportError as _e:
-        logger.debug("[BOOT:BRICK] RLM brick not available: %s", _e)
+    # --- TaskQueueService (Issue #655) ---
+    task_queue_service: Any = None
+    try:
+        from nexus.services.task_queue_service import TaskQueueService
+
+        task_queue_service = TaskQueueService(
+            db_path=_resolve_tasks_db_path(ctx.backend),
+        )
+    except Exception as _tq_exc:
+        logger.debug("[BOOT:BRICK] TaskQueueService unavailable: %s", _tq_exc)
 
     result = {
         "wallet_provisioner": wallet_provisioner,
@@ -856,7 +932,8 @@ def _boot_brick_services(ctx: _BootContext, kernel: dict[str, Any]) -> dict[str,
         "lock_manager": lock_manager,
         "workflow_engine": workflow_engine,
         "api_key_creator": api_key_creator,
-        "rlm_service": rlm_service,
+        "snapshot_service": snapshot_service,
+        "task_queue_service": task_queue_service,
     }
 
     elapsed = time.perf_counter() - t0
@@ -895,7 +972,7 @@ def _start_background_services(kernel: dict[str, Any], system: dict[str, Any]) -
 
 def create_nexus_services(
     record_store: RecordStoreABC,
-    metadata_store: FileMetadataProtocol,
+    metadata_store: MetastoreABC,
     backend: Backend,
     router: PathRouter,
     *,
@@ -923,7 +1000,7 @@ def create_nexus_services(
 
     Args:
         record_store: RecordStoreABC instance (provides engine + session_factory).
-        metadata_store: FileMetadataProtocol instance (for PermissionEnforcer).
+        metadata_store: MetastoreABC instance (for PermissionEnforcer).
         backend: Backend instance (for WorkspaceManager).
         router: PathRouter instance (for PermissionEnforcer object type resolution).
         permissions: Permission config (defaults from PermissionConfig()).
@@ -952,6 +1029,7 @@ def create_nexus_services(
         backend=backend,
         router=router,
         engine=record_store.engine,
+        read_engine=record_store.read_engine,
         session_factory=record_store.session_factory,
         perm=perm,
         cache_ttl_seconds=cache_cfg.ttl_seconds,
@@ -990,6 +1068,7 @@ def create_nexus_services(
         workspace_registry=kernel["workspace_registry"],
         mount_manager=kernel["mount_manager"],
         workspace_manager=kernel["workspace_manager"],
+        context_branch_service=system.get("context_branch_service"),
         write_observer=kernel["write_observer"],
         version_service=kernel["version_service"],
         # System tier
@@ -999,6 +1078,7 @@ def create_nexus_services(
         async_namespace_manager=system["async_namespace_manager"],
         async_vfs_router=system["async_vfs_router"],
         resiliency_manager=system["resiliency_manager"],
+        brick_lifecycle_manager=system.get("brick_lifecycle_manager"),
         # Brick tier
         overlay_resolver=None,
         wallet_provisioner=brick["wallet_provisioner"],
@@ -1013,12 +1093,14 @@ def create_nexus_services(
         tool_namespace_middleware=brick["tool_namespace_middleware"],
         delivery_worker=system["delivery_worker"],
         api_key_creator=brick["api_key_creator"],
+        snapshot_service=brick["snapshot_service"],
+        task_queue_service=brick["task_queue_service"],
     )
 
 
 def _create_distributed_infra(
     dist: DistributedConfig,
-    metadata_store: FileMetadataProtocol,
+    metadata_store: MetastoreABC,
     session_factory: Any,
     coordination_url: str | None,
 ) -> tuple[Any, Any]:
@@ -1119,6 +1201,34 @@ def _create_workflow_engine(record_store: Any, glob_match_fn: Any = None) -> Any
         return None
 
 
+def _create_provider_registry(parsing: Any) -> Any:
+    """Create ProviderRegistry with auto-discovered providers (Issue #657)."""
+    from nexus.parsers.providers import ProviderRegistry
+    from nexus.parsers.providers.base import ProviderConfig
+
+    registry = ProviderRegistry()
+    if parsing is None:
+        registry.auto_discover()
+        return registry
+    parse_providers = [dict(p) for p in parsing.providers] if parsing.providers else None
+    if parse_providers:
+        configs = [
+            ProviderConfig(
+                name=p.get("name", "unknown"),
+                enabled=p.get("enabled", True),
+                priority=p.get("priority", 50),
+                api_key=p.get("api_key"),
+                api_url=p.get("api_url"),
+                supported_formats=p.get("supported_formats"),
+            )
+            for p in parse_providers
+        ]
+        registry.auto_discover(configs)
+    else:
+        registry.auto_discover()
+    return registry
+
+
 def _post_init(nx: NexusFS) -> None:
     """Post-construction steps: mount restoration.
 
@@ -1159,7 +1269,7 @@ def _post_init(nx: NexusFS) -> None:
 
 def create_nexus_fs(
     backend: Backend,
-    metadata_store: FileMetadataProtocol,
+    metadata_store: MetastoreABC,
     record_store: RecordStoreABC | None = None,
     *,
     cache_store: Any = None,
@@ -1211,7 +1321,7 @@ def create_nexus_fs(
 
     Args:
         backend: Backend instance for file storage.
-        metadata_store: FileMetadataProtocol instance.
+        metadata_store: MetastoreABC instance.
         record_store: Optional RecordStoreABC. When provided, all services
             (ReBAC, Audit, Permissions, etc.) are created and injected.
         cache: CacheConfig object (or build from legacy flat params).
@@ -1322,6 +1432,24 @@ def create_nexus_fs(
             router.register_namespace(ns_config)
     router.add_mount("/", backend, priority=0)
 
+    # KERNEL-ARCHITECTURE §2: No CacheStore → EventBus disabled.
+    # When no real CacheStore is provided (None or NullCacheStore), disable
+    # EventBus to prevent creating a standalone Redis/Dragonfly connection
+    # for events that would violate the graceful-degradation invariant.
+    _has_real_cache = cache_store is not None
+    if _has_real_cache:
+        from nexus.core.cache_store import NullCacheStore as _NullCacheStore
+
+        if isinstance(cache_store, _NullCacheStore):
+            _has_real_cache = False
+    if not _has_real_cache:
+        _base_dist = distributed or _DistributedConfig()
+        if _base_dist.enable_events:
+            from dataclasses import replace as _dc_replace
+
+            distributed = _dc_replace(_base_dist, enable_events=False)
+            logger.debug("EventBus disabled: no CacheStore provided (KERNEL-ARCHITECTURE §2)")
+
     # Create services if record_store is provided and no pre-built services
     if services is None and record_store is not None:
         services = create_nexus_services(
@@ -1353,6 +1481,24 @@ def create_nexus_fs(
 
         services = _dc_replace(services, workflow_engine=workflow_engine)
 
+    # Create ParsersBrick — owns both registries (Issue #1523)
+    from nexus.parsers.brick import ParsersBrick
+
+    parsers_brick = ParsersBrick(parsing_config=parsing)
+    _parse_fn = parsers_brick.create_parse_fn()
+
+    # Create content cache (Issue #657)
+    _content_cache = None
+    if cache is not None and cache.enable_content_cache and backend.has_root_path is True:
+        from nexus.storage.content_cache import ContentCache
+
+        _content_cache = ContentCache(max_size_mb=cache.content_cache_size_mb)
+
+    # Create VFS lock manager (Issue #657)
+    from nexus.core.lock_fast import create_vfs_lock_manager
+
+    _vfs_lock_manager = create_vfs_lock_manager()
+
     nx = NexusFS(
         backend=backend,
         metadata_store=metadata_store,
@@ -1366,6 +1512,11 @@ def create_nexus_fs(
         memory=memory,
         parsing=parsing,
         services=services,
+        parse_fn=_parse_fn,
+        content_cache=_content_cache,
+        parser_registry=parsers_brick.parser_registry,
+        provider_registry=parsers_brick.provider_registry,
+        vfs_lock_manager=_vfs_lock_manager,
     )
 
     # Post-construction I/O (mount restoration, etc.)

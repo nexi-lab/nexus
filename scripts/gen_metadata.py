@@ -5,7 +5,8 @@ SSOT: proto/nexus/core/metadata.proto is the single source of truth
 for FileMetadata fields. This script generates:
 
   - src/nexus/core/metadata_pb2.py         (protobuf stubs via grpc_tools.protoc)
-  - src/nexus/core/_metadata_generated.py  (FileMetadata + PaginatedResult + FileMetadataProtocol ABC)
+  - src/nexus/core/metadata.py             (FileMetadata + PaginatedResult data classes)
+  - src/nexus/core/metastore.py            (MetastoreABC + AsyncMetastoreWrapper)
   - src/nexus/core/_compact_generated.py   (CompactFileMetadata + interning)
 
 Usage:
@@ -21,7 +22,8 @@ from pathlib import Path
 # Resolve paths relative to repo root
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PROTO_PATH = REPO_ROOT / "proto" / "nexus" / "core" / "metadata.proto"
-METADATA_OUT = REPO_ROOT / "src" / "nexus" / "core" / "_metadata_generated.py"
+METADATA_OUT = REPO_ROOT / "src" / "nexus" / "core" / "metadata.py"
+METASTORE_OUT = REPO_ROOT / "src" / "nexus" / "core" / "metastore.py"
 COMPACT_OUT = REPO_ROOT / "src" / "nexus" / "core" / "_compact_generated.py"
 MAPPER_OUT = REPO_ROOT / "src" / "nexus" / "storage" / "_metadata_mapper_generated.py"
 
@@ -29,14 +31,16 @@ MAPPER_OUT = REPO_ROOT / "src" / "nexus" / "storage" / "_metadata_mapper_generat
 # Canonical names exported by each generated module.
 # The SSOT audit checks all downstream imports match these.
 GENERATED_NAMES: dict[str, set[str]] = {
-    "_metadata_generated": {
+    "metadata": {
         "FileMetadata",
         "PaginatedResult",
-        "FileMetadataProtocol",
-        "AsyncFileMetadataWrapper",
         "DT_REG",
         "DT_DIR",
         "DT_MOUNT",
+    },
+    "metastore": {
+        "MetastoreABC",
+        "AsyncMetastoreWrapper",
     },
     "_compact_generated": {"CompactFileMetadata", "get_intern_pool_stats", "clear_intern_pool"},
     "_metadata_mapper_generated": {"MetadataMapper"},
@@ -319,15 +323,11 @@ To modify FileMetadata:
 Contains:
   - FileMetadata: Core file metadata dataclass
   - PaginatedResult: Cursor-based pagination container
-  - FileMetadataProtocol: Abstract base class for metadata storage backends
-  - AsyncFileMetadataWrapper: Async wrapper (derived from FileMetadataProtocol)
+  - DT_REG, DT_DIR, DT_MOUNT: Directory entry type constants
 """
 
 from __future__ import annotations
 
-import asyncio
-from abc import ABC, abstractmethod
-from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
@@ -431,133 +431,17 @@ class FileMetadata:
             Full FileMetadata object
         """
         return compact.to_file_metadata()
-
-
-class FileMetadataProtocol(ABC):
-    """Abstract interface for metadata storage.
-
-    Generated from: proto/nexus/core/metadata.proto
-
-    Stores mapping between virtual paths and backend physical locations.
-    All storage backends (SQLAlchemy, Raft, etc.) implement this interface.
-    """
-
-    @abstractmethod
-    def get(self, path: str) -> FileMetadata | None:
-        """Get metadata for a file."""
-        pass
-
-    @abstractmethod
-    def put(self, metadata: FileMetadata, *, consistency: str = "sc") -> int | None:
-        """Store or update file metadata.
-
-        Returns:
-            EC mode: write token (int) for polling via is_committed().
-            SC mode: None (write is already committed when this returns).
-        """
-        pass
-
-    def is_committed(self, token: int) -> str | None:
-        """Check if an EC write token has been replicated to a majority.
-
-        Args:
-            token: Write token returned by put() with consistency="ec".
-
-        Returns:
-            "committed" — replicated to majority.
-            "pending" — local only, awaiting replication.
-            None — invalid token or no replication log.
-        """
-        return None
-
-    @abstractmethod
-    def delete(self, path: str, *, consistency: str = "sc") -> dict[str, Any] | None:
-        """Delete file metadata. Returns deleted file info or None."""
-        pass
-
-    @abstractmethod
-    def exists(self, path: str) -> bool:
-        """Check if metadata exists for a path."""
-        pass
-
-    @abstractmethod
-    def list(self, prefix: str = "", recursive: bool = True, **kwargs: Any) -> list[FileMetadata]:
-        """List all files with given path prefix."""
-        pass
-
-    def list_iter(
-        self,
-        prefix: str = "",
-        recursive: bool = True,
-        **kwargs: Any,
-    ) -> Iterator[FileMetadata]:
-        """Iterate over file metadata matching prefix.
-
-        Memory-efficient alternative to list(). Yields results one at a time
-        instead of materializing the full list in memory.
-
-        Subclasses may override for true streaming from the underlying store.
-        The default implementation delegates to list() for backward compatibility.
-        """
-        yield from self.list(prefix, recursive, **kwargs)
-
-    def list_paginated(
-        self,
-        prefix: str = "",
-        recursive: bool = True,
-        limit: int = 1000,
-        cursor: str | None = None,  # noqa: ARG002
-        zone_id: str | None = None,  # noqa: ARG002
-    ) -> PaginatedResult:
-        """List files with cursor-based pagination.
-
-        Uses keyset pagination for O(log n) performance regardless of page depth.
-        """
-        all_items = self.list(prefix, recursive)
-        return PaginatedResult(
-            items=all_items[:limit],
-            next_cursor=None,
-            has_more=len(all_items) > limit,
-            total_count=len(all_items),
-        )
-
-    def get_batch(self, paths: Sequence[str]) -> dict[str, FileMetadata | None]:
-        """Get metadata for multiple files in a single query."""
-        return {{path: self.get(path) for path in paths}}
-
-    def delete_batch(self, paths: Sequence[str]) -> None:
-        """Delete multiple files in a single transaction."""
-        for path in paths:
-            self.delete(path)
-
-    def put_batch(self, metadata_list: Sequence[FileMetadata]) -> None:
-        """Store or update multiple file metadata entries in a single transaction."""
-        for metadata in metadata_list:
-            self.put(metadata)
-
-    def batch_get_content_ids(self, paths: Sequence[str]) -> dict[str, str | None]:
-        """Get content IDs (hashes) for multiple paths in a single query."""
-        result: dict[str, str | None] = {{}}
-        for path in paths:
-            metadata = self.get(path)
-            result[path] = metadata.etag if metadata else None
-        return result
-
-    @abstractmethod
-    def close(self) -> None:
-        """Close the metadata store and release resources."""
-        pass
 '''
 
 
 def _extract_protocol_methods(source: str) -> list[tuple[str, str, str]]:
-    """Extract method signatures from the generated FileMetadataProtocol text.
+    """Extract method signatures from the generated MetastoreABC text.
 
     Returns list of (method_name, params_after_self, return_type).
     This derives async wrapper signatures from the protocol — true SSOT.
     """
-    # Isolate the FileMetadataProtocol class body
-    proto_match = re.search(r"class FileMetadataProtocol.*?(?=\nclass |\Z)", source, re.DOTALL)
+    # Isolate the MetastoreABC class body
+    proto_match = re.search(r"class MetastoreABC.*?(?=\nclass |\Z)", source, re.DOTALL)
     if not proto_match:
         return []
 
@@ -618,7 +502,7 @@ def _params_to_call_args(params: str) -> str:
 
 
 def generate_async_wrapper(metadata_source: str) -> str:
-    """Generate AsyncFileMetadataWrapper by parsing FileMetadataProtocol.
+    """Generate AsyncMetastoreWrapper by parsing MetastoreABC.
 
     Derives method signatures from the protocol text so that adding
     a method to the protocol automatically produces its async counterpart.
@@ -644,17 +528,17 @@ def generate_async_wrapper(metadata_source: str) -> str:
 
     return f'''
 
-class AsyncFileMetadataWrapper:
-    """Async wrapper around any FileMetadataProtocol implementation.
+class AsyncMetastoreWrapper:
+    """Async wrapper around any MetastoreABC implementation.
 
     Generated from: scripts/gen_metadata.py
-    Derived from: FileMetadataProtocol method signatures (SSOT).
+    Derived from: MetastoreABC method signatures (SSOT).
 
     Each ``aXXX(...)`` method delegates to ``asyncio.to_thread(store.XXX, ...)``.
     Performance: sled ~5 us + to_thread ~50 us = 55 us per call.
     """
 
-    def __init__(self, store: FileMetadataProtocol) -> None:
+    def __init__(self, store: MetastoreABC) -> None:
         self._store = store
 
 {methods_block}
@@ -732,7 +616,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from nexus.core._metadata_generated import FileMetadata
+    from nexus.core.metadata import FileMetadata
 
 # --- String interning ---
 # Single global pool: string -> int ID, and reverse lookup.
@@ -791,7 +675,7 @@ class CompactFileMetadata:
 
     def to_file_metadata(self) -> FileMetadata:
         """Convert back to FileMetadata."""
-        from nexus.core._metadata_generated import FileMetadata
+        from nexus.core.metadata import FileMetadata
 
         return FileMetadata(
 {fm_block}
@@ -927,7 +811,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from nexus.core._metadata_generated import FileMetadata
+    from nexus.core.metadata import FileMetadata
 
 logger = logging.getLogger(__name__)
 
@@ -990,7 +874,7 @@ class MetadataMapper:
     @staticmethod
     def from_proto(proto: Any) -> FileMetadata:
         """Convert protobuf message to FileMetadata dataclass."""
-        from nexus.core._metadata_generated import FileMetadata
+        from nexus.core.metadata import FileMetadata
 
 {datetime_parse_block}
 
@@ -1010,7 +894,7 @@ class MetadataMapper:
     @staticmethod
     def from_json(obj: dict[str, Any]) -> FileMetadata:
         """Convert JSON dict to FileMetadata dataclass."""
-        from nexus.core._metadata_generated import FileMetadata
+        from nexus.core.metadata import FileMetadata
 
         # Migration: convert legacy is_directory -> entry_type
         if "is_directory" in obj:
@@ -1124,8 +1008,13 @@ def apply_renames(renames: dict[str, str]) -> list[str]:
     old_names = sorted(renames.keys(), key=len, reverse=True)  # longest first
     pattern = re.compile(r"\b(" + "|".join(re.escape(n) for n in old_names) + r")\b")
 
-    # Files to skip (generated by this script)
-    skip = {METADATA_OUT.resolve(), COMPACT_OUT.resolve(), MAPPER_OUT.resolve()}
+    # Files to skip (generated or managed by this script)
+    skip = {
+        METADATA_OUT.resolve(),
+        METASTORE_OUT.resolve(),
+        COMPACT_OUT.resolve(),
+        MAPPER_OUT.resolve(),
+    }
 
     modified = []
     for search_dir in [src_dir, tests_dir]:
@@ -1148,7 +1037,7 @@ def apply_renames(renames: dict[str, str]) -> list[str]:
 def audit_ssot_coverage() -> list[str]:
     """Audit that all downstream imports from generated modules use valid names.
 
-    Scans src/ and tests/ for imports from _metadata_generated and
+    Scans src/ and tests/ for imports from metadata, metastore,
     _compact_generated, and checks every imported name is in GENERATED_NAMES.
 
     Returns list of warnings (empty = all clean).
@@ -1156,14 +1045,12 @@ def audit_ssot_coverage() -> list[str]:
     src_dir = REPO_ROOT / "src"
     tests_dir = REPO_ROOT / "tests"
 
-    # Match single-line and multi-line imports from generated modules
-    # e.g. from nexus.core._metadata_generated import FileMetadata, PaginatedResult
-    # e.g. from nexus.core._compact_generated import (
-    #          CompactFileMetadata,
-    #          get_intern_pool_stats as get_pool_stats,
-    #      )
+    # Match single-line and multi-line imports from generated/managed modules
+    # e.g. from nexus.core.metadata import FileMetadata, PaginatedResult
+    # e.g. from nexus.core.metastore import MetastoreABC
+    # e.g. from nexus.core._compact_generated import CompactFileMetadata
     import_re = re.compile(
-        r"from\s+nexus\.core\.(_(?:metadata|compact)_generated)\s+import\s+"
+        r"from\s+nexus\.core\.(metadata|metastore|_compact_generated)\s+import\s+"
         r"(?:\(([^)]*)\)|(.+?))\s*$",
         re.MULTILINE | re.DOTALL,
     )
@@ -1228,18 +1115,14 @@ def main() -> None:
     # 1. Generate protobuf stubs (metadata_pb2.py)
     generate_protobuf_stubs()
 
-    # 2. Generate Python dataclass (FileMetadata + FileMetadataProtocol ABC)
+    # 2. Generate Python dataclass (FileMetadata + PaginatedResult)
     metadata_content = generate_metadata_py(fields, enums)
-
-    # 2b. Derive AsyncFileMetadataWrapper from FileMetadataProtocol (SSOT)
-    async_wrapper = generate_async_wrapper(metadata_content)
-    if async_wrapper:
-        metadata_content += async_wrapper
-        methods = _extract_protocol_methods(metadata_content)
-        print(f"  AsyncFileMetadataWrapper: {len(methods)} methods derived from protocol")
-
     METADATA_OUT.write_text(metadata_content, encoding="utf-8")
     print(f"Generated: {METADATA_OUT}")
+
+    # 2b. MetastoreABC + AsyncMetastoreWrapper are hand-maintained in metastore.py
+    # (not generated — the ABC methods are designed by hand, not derived from proto)
+    print(f"Skipped:   {METASTORE_OUT} (hand-maintained)")
 
     # 3. Generate compact metadata (CompactFileMetadata + interning)
     compact_content = generate_compact_py(fields)

@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
     from nexus.backends.multipart_upload_mixin import MultipartUploadMixin
-    from nexus.core._metadata_generated import FileMetadataProtocol
+    from nexus.core.metastore import MetastoreABC
     from nexus.core.protocols.connector import ConnectorProtocol
 
 logger = logging.getLogger(__name__)
@@ -96,7 +96,7 @@ class ChunkedUploadService:
         self,
         session_factory: Callable[[], Session],
         backend: ConnectorProtocol,
-        metadata_store: FileMetadataProtocol | None = None,
+        metadata_store: MetastoreABC | None = None,
         config: ChunkedUploadConfig | None = None,
     ):
         self._session_factory = session_factory
@@ -410,12 +410,16 @@ class ChunkedUploadService:
         def _query_expired() -> list[dict[str, Any]]:
             db = self._session_factory()
             try:
+                from sqlalchemy import select
+
                 rows = (
-                    db.query(UploadSessionModel)
-                    .filter(
-                        UploadSessionModel.expires_at < now,
-                        UploadSessionModel.status.in_(["created", "in_progress"]),
+                    db.execute(
+                        select(UploadSessionModel).where(
+                            UploadSessionModel.expires_at < now,
+                            UploadSessionModel.status.in_(["created", "in_progress"]),
+                        )
                     )
+                    .scalars()
                     .all()
                 )
                 return [row.to_session_dict() for row in rows]
@@ -494,7 +498,13 @@ class ChunkedUploadService:
         def _read(uid: str) -> dict[str, Any] | None:
             db = self._session_factory()
             try:
-                model = db.query(UploadSessionModel).filter_by(upload_id=uid).first()
+                from sqlalchemy import select
+
+                model = (
+                    db.execute(select(UploadSessionModel).filter_by(upload_id=uid))
+                    .scalars()
+                    .first()
+                )
                 if model is None:
                     return None
                 return model.to_session_dict()
@@ -512,7 +522,13 @@ class ChunkedUploadService:
         def _write(s: UploadSession) -> None:
             db = self._session_factory()
             try:
-                model = db.query(UploadSessionModel).filter_by(upload_id=s.upload_id).first()
+                from sqlalchemy import select
+
+                model = (
+                    db.execute(select(UploadSessionModel).filter_by(upload_id=s.upload_id))
+                    .scalars()
+                    .first()
+                )
                 if model is None:
                     raise UploadNotFoundError(s.upload_id)
                 model.upload_offset = s.upload_offset
@@ -535,7 +551,9 @@ class ChunkedUploadService:
         def _delete(uid: str) -> None:
             db = self._session_factory()
             try:
-                db.query(UploadSessionModel).filter_by(upload_id=uid).delete()
+                from sqlalchemy import delete
+
+                db.execute(delete(UploadSessionModel).filter_by(upload_id=uid))
                 db.commit()
             except Exception:
                 db.rollback()

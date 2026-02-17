@@ -14,7 +14,7 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from nexus.core._metadata_generated import FileMetadata
+from nexus.core.metadata import FileMetadata
 from nexus.storage.models import Base, FilePathModel, OperationLogModel
 from nexus.storage.write_buffer import EventType, WriteBuffer, WriteEvent
 

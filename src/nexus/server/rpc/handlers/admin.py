@@ -26,7 +26,7 @@ def handle_admin_create_key(auth_provider: Any, params: Any, context: Any) -> di
     import uuid
     from datetime import timedelta
 
-    from nexus.server.auth.database_key import DatabaseAPIKeyAuth
+    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
     from nexus.services.permissions.entity_registry import EntityRegistry
 
     require_admin(context)
@@ -178,8 +178,8 @@ def handle_admin_get_key(auth_provider: Any, params: Any, context: Any) -> dict[
 
 def handle_admin_revoke_key(auth_provider: Any, params: Any, context: Any) -> dict[str, Any]:
     """Handle admin_revoke_key method."""
+    from nexus.auth.providers.database_key import DatabaseAPIKeyAuth
     from nexus.core.exceptions import NexusFileNotFoundError
-    from nexus.server.auth.database_key import DatabaseAPIKeyAuth
 
     require_admin(context)
 
